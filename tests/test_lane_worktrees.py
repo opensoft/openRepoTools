@@ -148,9 +148,6 @@ class Estate:
             FAKE_HELPER_SPEC=str(self.spec_file), FAKE_HELPER_LOG=str(self.helper_log),
             FAKE_GH_PRS=str(self.prs_file), CLAUDE_CODE_SESSION_ID=ME,
             LANE_WORKTREES_SANDBOX_ROOTS=str(self.sandboxes), LANES_WORKSTATION="Eagle",
-            # --yes is switched off for a real estate until #170; the suite's
-            # estates are not one.
-            LANE_WORKTREES_ENABLE_YES="1",
             GIT_CONFIG_NOSYSTEM="1",
             PATH=str(self.fakebin) + os.pathsep + _clean_path())
         self.env = env
@@ -1140,20 +1137,19 @@ def test_the_porcelain_exit_codes_lane_end_reads(estate):
     assert refused.returncode == 2 and "refused\t" in refused.stdout
 
 
-def test_yes_is_switched_off_without_the_enabling_variable(estate):
-    """Until #170 lands `--yes` and `--expire --yes` are refused, exit 2,
-    changing nothing; the dry run and its porcelain are untouched."""
-    estate.worktree("w", "feat/w")
-    _archive(estate, 120, None)
-    before = snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json"))
-    off = {"LANE_WORKTREES_ENABLE_YES": None}
-    for args in ((LANE, "--yes"), (LANE, "--yes", "--porcelain"), ("--expire", "--yes")):
-        proc = estate.sweep(*args, env=off)
-        assert proc.returncode == 2, (args, proc.stdout, proc.stderr)
-        assert "--yes is disabled until opensoft/openRepoTools#170 lands" in proc.stderr
-    assert snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json")) == before
-    assert estate.sweep(LANE, "--porcelain", env=off).returncode == 3
-    assert estate.sweep("--expire", "--porcelain", env=off).returncode == 3
+def test_yes_needs_no_enabling_variable(estate):
+    """#170 landed: `--yes` and `--expire --yes` act with no switch in the
+    environment (LANE_WORKTREES_ENABLE_YES is gone)."""
+    tree = estate.worktree("w", "feat/w")
+    estate.git("push", "-q", "-u", "origin", "feat/w", cwd=tree)
+    old = _archive(estate, 120, None)
+    assert "LANE_WORKTREES_ENABLE_YES" not in estate.env
+    yes = estate.sweep(LANE, "--yes", "--porcelain")
+    assert yes.returncode == 0, yes.stdout + yes.stderr
+    assert not tree.exists()
+    expire = estate.sweep("--expire", "--yes")
+    assert expire.returncode == 0, expire.stdout + expire.stderr
+    assert not old.exists()
 
 
 def test_trees_under_the_lanes_root_or_carrying_its_trailer_are_its_own(estate):

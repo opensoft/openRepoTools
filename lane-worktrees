@@ -77,11 +77,6 @@ file or an issue. It changes nothing. `lane-start` runs it once a day per
 workstation, detached (`LANE_WORKTREES_REPORT=off` is the switch). It exits 0,
 or 1 when `--post` could not deliver it (the report is then printed).
 
-`--yes` (and `--expire --yes`) is SWITCHED OFF until opensoft/openRepoTools
-#170 lands: it is refused, exit 2, unless the environment carries
-LANE_WORKTREES_ENABLE_YES=1 - which the test suite sets, and which is not for a
-real estate until #170. The dry run, `--porcelain` and `--report` are whole.
-
 PORCELAIN: one row per line, fields separated by one TAB. In every field a
 backslash is written `\\`, a TAB `\t`, a newline `\n` and a carriage
 return `\r`, so a path holding any of them is still one field of one row.
@@ -93,7 +88,7 @@ Exit codes:
   2  refused: the lane is bound elsewhere, held by another live session,
      managed-owned, has trees but no #97 snapshot, or a read failed (a lane
      root, a registration list, another lane's claim, the register's fetch
-     under --yes) - or `--yes` is switched off, or an error no read caught -
+     under --yes) - or an error no read caught -
      nothing was changed; or, under --yes, the self-check refused a removal
      (what was done before it is recorded, nothing after it was acted on)
   1  --yes: an act failed part-way; what was done is recorded and the
@@ -4703,7 +4698,6 @@ def parse(argv: list):
     return parser.parse_args(argv)
 
 
-YES_SWITCH = "LANE_WORKTREES_ENABLE_YES"
 _ACTIVE: dict = {}
 
 
@@ -4760,17 +4754,6 @@ def _main(argv: list) -> int:
                  "--dry-run --report [--post <path|owner/repo#n>]")
             return 64
         return report_all(ns)
-    # `--yes` IS SWITCHED OFF until the data-loss paths the reviews found are
-    # closed (opensoft/openRepoTools#170). The dry run, the porcelain #163's
-    # gate reads and the report stay whole; acting takes the switch, which the
-    # suite sets and a real estate does not.
-    if ns.yes and os.environ.get(YES_SWITCH, "") != "1":
-        why = (f"--yes is disabled until opensoft/openRepoTools#170 lands; the dry run is "
-               f"unaffected ({YES_SWITCH}=1 enables it, and is not for a real estate until #170)")
-        if ns.porcelain:
-            prow("refused", why)
-        note("REFUSED: " + why)
-        return 2
     if ns.expire:
         if ns.lane:
             note("usage: sweep --expire takes no lane: it reads every lane's archives")

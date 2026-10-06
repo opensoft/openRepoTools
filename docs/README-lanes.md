@@ -3504,13 +3504,6 @@ place, under one rule: **nothing is deleted that is not first on origin or in a
 bundle under the sweeps directory, and a tree a live writer owns is never
 touched.**
 
-> **`--yes` is switched off until opensoft/openRepoTools#170 lands.** Reviews
-> of this act found data-loss paths under `--yes` and `--expire --yes` that are
-> listed there and not yet closed. Until they are, both are refused, exit **2**,
-> changing nothing, unless the environment carries `LANE_WORKTREES_ENABLE_YES=1`
-> — which the test suite sets, and which is **not for a real estate until #170**.
-> The dry run, `--porcelain` (#163's gate) and `--report` are unaffected.
-
 ```sh
 lane-worktrees sweep <lane>                     # the DRY RUN: the table, nothing changed
 lane-worktrees sweep <lane> --yes [--live <path>|--live none]
@@ -3714,7 +3707,7 @@ lane's on disk, live or not, a stale registration, an unpublished or merged
 branch of the lane's, included scratch), or **2** (refused: bound elsewhere,
 held by another session, managed, a lane with trees and no #97 snapshot, a read
 failed — a lane root, a registration list, another lane's claim, the register's
-lane logs, or under `--yes` the register's fetch — `--yes` switched off — or an
+lane logs, or under `--yes` the register's fetch — or an
 error no read caught, which is never a traceback's exit 1 on a dry run). FOREIGN trees, links,
 caches and sandboxes are never the lane's to retire. `--yes` exits 0 when every
 act completed, 1 when one failed part-way (the rest go on — unless a register
