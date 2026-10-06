@@ -29,16 +29,19 @@ LANES_NO_FETCH does not skip it), then fetches origin in every repository it
 acts in, with a pinned refspec that never prunes a local branch or tag.
 
 BEFORE EACH REMOVAL git is asked which commits it would take - a worktree's
-HEAD and reflog, a clone's every ref and reflog, a pruned registration's -
+HEAD and reflog, a clone's every ref (an annotated tag's object included)
+and reflog, a pruned registration's, a `--branches` delete's tip and reflog -
 and any that no origin ref, surviving branch, tag or stash keeps go to a
 bundle first (ONLY-COPY bundles are rows of rescues.tsv, and `--expire`
 never removes their archive). The same question is the SELF-CHECK right
 before the removal: anything neither on origin nor in a verified bundle is
 refused, exit 2, and nothing after it is acted on; so is everything after a
 register line that could not be written. Untracked files are never pushed
-(the bundle only) unless `--push-untracked`; a branch an open pull request
-or another lane owns is never pushed onto (a rescue branch instead); where
-git-lfs is configured the push runs its hooks.
+(the bundle only) unless `--push-untracked`, and untracked git-lfs content,
+which a bundle would carry as a pointer only, keeps its tree; a branch an open
+pull request or another lane owns is never pushed onto (a rescue branch
+instead); where git-lfs is configured the push runs its hooks. A cache, or an
+unmarked `tmp.*` sandbox, that holds a repository is never removed.
 
 WHICH TREES ARE THE LANE'S is #97's inventory (`lanes-edit.sh lane-trees`)
 and the disk - never the derived index (Amendment 14 clause (b)). A tree the
