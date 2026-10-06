@@ -2424,3 +2424,25 @@ def test_a_gone_worktrees_kept_submodule_repository_is_never_pruned(estate):
     assert estate.sweep(LANE, "--yes").returncode == 0
     assert str(tree) in estate.git("worktree", "list", "--porcelain")
     assert estate.git("cat-file", "-t", own, cwd=module) == "commit"
+
+
+def test_a_clones_local_lfs_store_keeps_it_when_a_bundle_would_be_the_only_copy(estate):
+    """#174 Copilot round 2: a clean clone with an experiment only its
+    reflog names had that commit bundled - its LFS pointers with it - and was
+    removed with `.git/lfs/objects`, the only copy of the bytes behind them."""
+    clone, env = _foreign_clone(estate, "assets")
+    main = estate.git("rev-parse", "HEAD", cwd=clone)
+    own = estate.git("commit-tree", estate.git("rev-parse", "HEAD^{tree}", cwd=clone),
+                     "-p", main, "-m", "an experiment", cwd=clone)
+    estate.git("update-ref", "-m", "experiment", "refs/heads/exp", own, cwd=clone)
+    estate.git("update-ref", "-m", "back", "refs/heads/exp", main, cwd=clone)
+    oid = "ab" * 32
+    store = clone / ".git" / "lfs" / "objects" / oid[:2] / oid[2:4]
+    store.mkdir(parents=True)
+    (store / oid).write_bytes(b"PRECIOUS weights\n")
+    proc = estate.sweep(LANE, "--include-foreign", "--word", "go", "--yes", "--porcelain",
+                        env=env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    row = rows_of(proc.stdout)[str(clone)]
+    assert row[0] == "keep" and "local git-lfs store" in row[2], row
+    assert (store / oid).read_bytes() == b"PRECIOUS weights\n"

@@ -3092,6 +3092,8 @@ class Sweep:
         elif disp in ("remove", "remove+delete-branch"):
             refs_to_bundle = [t.branch or "HEAD"] if self.opts.bundle and t.head else []
         elif disp == "bundle+remove":
+            if t.kind == "clone" and lfs_store_holds(t.common):
+                raise _Keep(LFS_STORE_WHY)
             refs_to_bundle = [t.branch or "HEAD"]
             only_copy = t.head
         # 2. THE BUNDLE - always for a rescue, and for everything under --bundle.
@@ -3108,6 +3110,11 @@ class Sweep:
         # detached commit) is in no ref, so no push and no ref bundle above
         # carried it. It goes to a bundle of its own.
         lost = self._lost(t)
+        # A CLONE'S LOCAL GIT-LFS STORE GOES WITH IT (#174, Copilot round 2): a
+        # bundle carries the pointers of commits only it holds, never the bytes
+        # under `.git/lfs/objects`, and no push uploaded them.
+        if lost and t.kind == "clone" and lfs_store_holds(t.common):
+            raise _Keep(LFS_STORE_WHY)
         if lost and os.environ.get(SEAM_NO_LOSS_BUNDLE, "") != "1":
             t.lost_bundle = self._bundle_lost(t, lost, "unreachable")
         # 3. IGNORED WORK no commit could carry.
@@ -3775,6 +3782,26 @@ def lfs_untracked_why(path: str, rels: list) -> str:
     return (f"{len(hits)} untracked file(s) are git-lfs content (e.g. {hits[0]}): untracked files "
             "go to a bundle only, a bundle carries an LFS pointer and never its bytes, and they "
             "are never pushed - move them out, or commit and push them, then sweep again")
+
+
+LFS_STORE_WHY = ("it is a CLONE with a local git-lfs store (.git/lfs/objects), and commits only a "
+                 "bundle would keep may point into it - a bundle carries LFS pointers, never their "
+                 "bytes, and the clone's removal takes the store; push them with git-lfs, or move "
+                 "the store's objects out, then sweep again")
+
+
+def lfs_store_holds(common: str) -> bool:
+    """`<common>/lfs/objects` holds at least one file - a local git-lfs store
+    whose bytes a clone's removal would take. One that cannot be read is
+    read as holding some."""
+    top = os.path.join(common or "", "lfs", "objects")
+    if not common or not os.path.lexists(top):
+        return False
+    errors: list = []
+    for _base, _dirs, files in os.walk(top, onerror=errors.append):
+        if files:
+            return True
+    return bool(errors)
 
 
 def module_repos(gitdir: str) -> tuple:
