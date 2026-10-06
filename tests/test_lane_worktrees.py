@@ -2405,3 +2405,22 @@ def test_a_landed_line_never_lets_commits_onto_a_branch_gh_answers_open(estate, 
     heads = estate.remote_heads()
     assert heads["feat/reg"] == head, "the open pull request's branch was pushed onto"
     assert [b for b, s in heads.items() if b.startswith(f"rescue/{LANE}/reg-") and s == ahead]
+
+
+def test_a_gone_worktrees_kept_submodule_repository_is_never_pruned(estate):
+    """#174 Copilot round 2: a registration whose directory is gone keeps
+    its submodules' repositories under `<admin>/modules/`, and the prune -
+    which reads only the superproject's HEAD and reflog - took them, a
+    branch no remote holds with them."""
+    tree, sub = _with_submodule(estate, "gonesub")
+    estate.git("checkout", "-q", "-b", "local", cwd=sub)
+    own = estate.commit(sub, "local only", {"l.txt": "PRECIOUS\n"})
+    estate.git("checkout", "-q", "--detach", "origin/main", cwd=sub)
+    module = Path(estate.git("rev-parse", "--absolute-git-dir", cwd=tree)) / "modules" / "sub"
+    shutil.rmtree(tree)
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(tree)][0] == "keep", rows[str(tree)]
+    assert "its branch local holds commits every remote of it lacks" in rows[str(tree)][2]
+    assert estate.sweep(LANE, "--yes").returncode == 0
+    assert str(tree) in estate.git("worktree", "list", "--porcelain")
+    assert estate.git("cat-file", "-t", own, cwd=module) == "commit"

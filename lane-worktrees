@@ -2425,6 +2425,15 @@ class Sweep:
                     put("keep", "its directory is gone and the registration is LOCKED; "
                                 f"git -C {t.checkout} worktree unlock {t.path} first")
                     return
+                # ITS GIT DIRECTORY MAY KEEP SUBMODULE REPOSITORIES (#174, Copilot
+                # round 2): `<admin>/modules/<name>`, with branches, a stash or a
+                # reflog no remote holds, goes with the registration.
+                admin = worktree_admin(t.checkout, t.path) if t.checkout else ""
+                mod_why = module_repos_why(admin) if admin else ""
+                if mod_why:
+                    put("keep", "its directory is gone, and " + mod_why + "; pruning the "
+                                "registration would take that repository with it")
+                    return
                 # THE REGISTRATION MAY BE THE ONLY POINTER TO ITS COMMITS (#170
                 # A4): a detached HEAD, or a reflog entry, that no branch, tag or
                 # origin holds is lost with the registration's git directory.
@@ -3217,6 +3226,11 @@ class Sweep:
             t.result = "left: the directory reappeared after it was read as gone; sweep again"
             return
         co = t.checkout
+        admin = worktree_admin(co, t.path) if co else ""
+        mod_why = module_repos_why(admin) if admin else ""
+        if mod_why:
+            raise _Keep("its git directory keeps a submodule repository that would be lost: "
+                        + mod_why)
         lost = self._lost(t)
         head = (t.reg or {}).get("head", "")
         if lost and head in lost and git_out(co, "config", "--get", "remote.origin.url"):
