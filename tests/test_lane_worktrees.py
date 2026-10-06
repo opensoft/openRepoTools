@@ -483,7 +483,9 @@ def test_yes_performs_the_table_and_records_every_act(estate):
     stamp = wip[0].rsplit("-", 1)[1]
     assert stamp in subject
     assert estate.git("show", f"{rescues[wip[0]]}:w.txt", cwd=estate.origin) == "changed"
-    assert estate.git("show", f"{rescues[wip[0]]}:new.txt", cwd=estate.origin) == "untracked"
+    # AN UNTRACKED FILE IS NEVER PUSHED (#170 A9): it is in the bundle only.
+    assert "new.txt" not in estate.git("ls-tree", "--name-only", rescues[wip[0]],
+                                       cwd=estate.origin).split()
     parent = estate.git("rev-parse", f"{rescues[wip[0]]}^", cwd=estate.origin)
     assert parent == tips["dirty"], "the WIP commit sits on the tree's own head"
     # STALE: pruned.
@@ -500,6 +502,8 @@ def test_yes_performs_the_table_and_records_every_act(estate):
         digest, name = line.split("  ", 1)
         assert hashlib.sha256((archive / name).read_bytes()).hexdigest() == digest, name
     assert any(n.startswith("dirty") and n.endswith(".bundle") for n in files), files
+    held = [r for r in _ledger(archive) if r[0] == "-" and r[1].startswith("bundle:dirty")]
+    assert len(held) == 1 and estate.git("show", f"{held[0][2]}:new.txt") == "untracked"
     assert any(n.startswith("diverged") and n.endswith(".bundle") for n in files), files
     with tarfile.open(archive / "dirty-ignored.tar.gz") as tf:
         names = tf.getnames()
@@ -598,14 +602,17 @@ def test_yes_is_refused_for_a_lane_live_elsewhere_or_unread(estate, holder, bind
     tree = estate.worktree("w", "feat/w")
     estate.commit(tree, "w", {"w.txt": "w\n"})
     estate.holder, estate.binding = holder, binding
-    before = snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json"))
+    # THE REGISTER'S FETCH (#170 A1) is the one write a refused --yes makes,
+    # in the workspace repository: the estate is snapshotted without it.
+    skip = ("helper.log", "helper-spec.json", "prs.json", "workspace")
+    before = snapshot(estate.root, skip=skip)
     dry = estate.sweep(LANE, "--dry-run", "--porcelain")
     assert dry.returncode == 2, dry.stdout + dry.stderr
     assert dry.stdout.splitlines()[1].startswith("refused\t") and word in dry.stdout
     yes = estate.sweep(LANE, "--yes", "--live", "none")
     assert yes.returncode == 2 and word in yes.stdout
     assert tree.is_dir()
-    assert snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json")) == before
+    assert snapshot(estate.root, skip=skip) == before
     assert estate.notes() == []
 
 
@@ -712,11 +719,13 @@ def test_an_unreadable_claim_of_another_lane_refuses_before_any_write(estate):
     other = estate.root / "lane-state" / "repoA-7" / "trees"
     other.mkdir(parents=True)
     (other / "c1.yaml").write_text("schema: 1\n")
-    before = snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json"))
+    # (the register's fetch under --yes, #170 A1, is in the workspace only)
+    skip = ("helper.log", "helper-spec.json", "prs.json", "workspace")
+    before = snapshot(estate.root, skip=skip)
     proc = estate.sweep(LANE, "--yes", "--porcelain")
     assert proc.returncode == 2, proc.stdout + proc.stderr
     assert "lane repoA-7's inventory record c1.yaml (it names no path)" in proc.stdout
-    assert snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json")) == before
+    assert snapshot(estate.root, skip=skip) == before
 
 
 def test_a_submodules_ignored_files_keep_its_tree(estate):
@@ -771,14 +780,15 @@ def test_an_unreadable_inventory_record_refuses_the_sweep(estate):
     unknown, so the sweep refuses rather than report nothing to retire."""
     estate.worktree("fine", "feat/fine")
     estate.inventory.append(US.join(["c9-odd", str(estate.lane_root / "odd"), "x", "y", "none",
-                                     "0", "0", ME, "2026-10-05T00:00:00Z", str(estate.checkout),
-                                     "1", "op-1", "9"]))
-    before = snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json"))
+                                     "0", "0", WRITER, "2026-10-05T00:00:00Z",
+                                     str(estate.checkout), "1", "op-1", "9"]))
+    skip = ("helper.log", "helper-spec.json", "prs.json", "workspace")
+    before = snapshot(estate.root, skip=skip)
     for args in (("--dry-run", "--porcelain"), ("--yes",)):
         proc = estate.sweep(LANE, *args)
         assert proc.returncode == 2, (args, proc.stdout, proc.stderr)
         assert "c9-odd is unreadable or of schema 9" in proc.stdout
-    assert snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json")) == before
+    assert snapshot(estate.root, skip=skip) == before
 
 
 def test_the_lane_name_is_resolved_before_anything_is_derived_from_it(estate):
