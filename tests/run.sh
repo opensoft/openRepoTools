@@ -42,6 +42,29 @@
 # atomicity POSIX guarantees; the holder's pid is left inside it so a lock a
 # killed run left behind is taken over rather than waited on for ever.
 #
+# NOTHING NEW LANDS BESIDE THE CODE (opensoft/openRepoTools#162, causes 3 and
+# 4). A suite run used to leave `tests/__pycache__`, `.pytest_cache` and a
+# killed run's sandboxes behind in whichever worktree ran it, and a lane's
+# leftovers were 968 of 1,000 removals in the estate's cleanup. So:
+#
+#   * BYTECODE goes to `${XDG_CACHE_HOME:-$HOME/.cache}/openRepoTools/pycache`
+#     (`PYTHONPYCACHEPREFIX`), never into a checkout;
+#   * pytest's cache is off (`-p no:cacheprovider`);
+#   * EVERY TEMPORARY DIRECTORY of the run - pytest's `--basetemp` and the
+#     `TMPDIR` the suite's own `mktemp`s use - is under ONE run root,
+#     `${XDG_STATE_HOME:-$HOME/.local/state}/openRepoTools/tmp/<UTC>-<pid>/`,
+#     which an EXIT trap removes however the run ends. A SIGKILL is the one
+#     end no trap sees; the pid in the root's name is what lets
+#     `lane-worktrees sweep --include-sandboxes` tell its owner is gone.
+#   * the suite runs from the repository's own virtual environment where one
+#     is there and has pytest (`${XDG_CACHE_HOME:-$HOME/.cache}/openRepoTools/
+#     venvs/openRepoTools`, which `openRepoTools --install` names), put FIRST
+#     on PATH so the command line still reads `python3 -m pytest` - the shape
+#     every other lane's poll counts.
+#
+# THE LOCK IS COMPUTED BEFORE `TMPDIR` IS MOVED: it is the workstation's, and
+# a run that locked a file under its own run root would lock nothing.
+#
 # bash 3.2 (Apple's stock `/bin/bash`) parses this file in CI, like every other
 # bash file here: no `${x,,}`, no `mapfile`, no `declare -A`, no `local -n`.
 
@@ -79,13 +102,106 @@ wait_for_pytest() {   # <where> — block while any other suite is running
   return 0
 }
 
+# THE RUN ROOT AND ITS CLEANUP. `cleanup` is the EXIT trap: it stops whatever
+# is left of the suite's PROCESS GROUP, then removes the run root and, on the
+# `mkdir` path, the lock it holds. The INT and TERM handlers stop the suite and
+# EXIT, so the EXIT trap runs - a handler that only cleaned up and returned
+# would release the lock while the suite carried on.
+#
+# THE GROUP, NOT THE PID: pytest is waiting on a shell suite, a `git`, a
+# fixture's `sleep` when the signal comes, and a TERM to pytest alone leaves
+# them running with their temp root deleted under them and the lock released
+# around them. The suite is started in a process group of its own (below), and
+# the whole group is stopped and waited for, KILLed after ten seconds.
+RUN_ROOT=""
+LOCKDIR_HELD=""
+SUITE_PID=""
+SUITE_PGID=""
+# A member still RUNNING, read from `ps` and never from `kill -0`: a zombie
+# answers `kill -0` until whoever adopted it reaps it, which may be never.
+group_alive() {
+  ps -A -o pgid= -o stat= 2>/dev/null |
+    awk -v g="$SUITE_PGID" '$1 == g && $2 !~ /^Z/ { n++ } END { exit n ? 0 : 1 }'
+}
+stop_group() {
+  [ -n "$SUITE_PGID" ] || return 0
+  kill -TERM -- "-$SUITE_PGID" 2>/dev/null || return 0
+  if [ -n "$SUITE_PID" ]; then wait "$SUITE_PID" 2>/dev/null || :; fi
+  sg_n=0
+  while group_alive && [ "$sg_n" -lt 50 ]; do
+    sleep 0.2
+    sg_n=$((sg_n + 1))
+  done
+  kill -KILL -- "-$SUITE_PGID" 2>/dev/null || :
+  return 0
+}
+cleanup() {
+  stop_group
+  [ -n "$RUN_ROOT" ] && rm -rf -- "$RUN_ROOT"
+  [ -n "$LOCKDIR_HELD" ] && rm -rf -- "$LOCKDIR_HELD"
+  return 0
+}
+on_signal() {   # <exit code>
+  stop_group
+  exit "$1"
+}
+
+make_run_root() {
+  run_base="${XDG_STATE_HOME:-$HOME/.local/state}/openRepoTools/tmp"
+  RUN_ROOT="$run_base/$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  mkdir -p -- "$RUN_ROOT/tmp" "$RUN_ROOT/basetemp" || {
+    printf '%s: cannot create the run root %s\n' "$prog" "$RUN_ROOT" >&2
+    exit 1
+  }
+  chmod 700 "$RUN_ROOT" 2>/dev/null || :
+  export TMPDIR="$RUN_ROOT/tmp"
+  export PYTHONPYCACHEPREFIX="${XDG_CACHE_HOME:-$HOME/.cache}/openRepoTools/pycache"
+  venv="${XDG_CACHE_HOME:-$HOME/.cache}/openRepoTools/venvs/openRepoTools"
+  if [ -x "$venv/bin/python3" ] && "$venv/bin/python3" -c 'import pytest' >/dev/null 2>&1; then
+    PATH="$venv/bin:$PATH"; export PATH
+    printf '%s: the suite runs from the repository venv %s\n' "$prog" "$venv" >&2
+  fi
+}
+
 # `${1+"$@"}` AND NEVER A BARE `"$@"`: under `set -u`, BASH 3.2 — Apple's stock
 # shell, and the one this file's `mkdir` lock exists for — treats `"$@"` with no
 # positional parameters as an unbound variable and exits. `"${*:-}"` is the same
 # rule for the line that echoes them.
+#
+# THE SUITE RUNS IN THE BACKGROUND AND IS WAITED FOR, because bash runs a trap
+# only once its FOREGROUND child returns: a TERM sent to this wrapper while
+# pytest ran in the foreground waited out the whole suite. `wait` is
+# interrupted by a trapped signal; the handler then stops the suite itself.
+# `<&0` keeps the suite's stdin this shell's: a background command's default
+# stdin, with job control off, is /dev/null.
+#
+# `set -m` FOR THE ONE LINE THAT STARTS IT puts the suite in a process group of
+# its own, whose id is its pid, so `stop_group` reaches every process it
+# started (one that made a session or group of its own is beyond any wrapper).
+# Monitor mode is off again before the `wait`, so no job notice is printed.
+#
+# A TERMINAL ON STDIN RUNS THE SUITE IN THE FOREGROUND instead, in this
+# wrapper's own process group - the terminal's foreground group. A background
+# group reading the terminal (`--pdb`, `breakpoint()`, `input()`) is stopped by
+# SIGTTIN, and this wrapper would wait on it for ever holding the
+# workstation's lock. In the foreground a Ctrl-C reaches every process of the
+# suite from the terminal itself; the cost is that a TERM sent to this wrapper
+# from elsewhere is acted on once the suite returns.
 run_suite() {
-  printf '%s: python3 -m pytest tests -q %s\n' "$prog" "${*:-}" >&2
-  python3 -m pytest tests -q ${1+"$@"}
+  printf '%s: python3 -m pytest tests -q -p no:cacheprovider %s\n' "$prog" "${*:-}" >&2
+  if [ -t 0 ]; then
+    python3 -m pytest tests -q -p no:cacheprovider --basetemp="$RUN_ROOT/basetemp" ${1+"$@"}
+    return $?
+  fi
+  set -m
+  python3 -m pytest tests -q -p no:cacheprovider --basetemp="$RUN_ROOT/basetemp" ${1+"$@"} <&0 &
+  SUITE_PID=$!
+  SUITE_PGID=$SUITE_PID
+  set +m
+  wait "$SUITE_PID"
+  rs_rc=$?
+  SUITE_PID=""
+  return "$rs_rc"
 }
 
 wait_for_pytest "before the lock"
@@ -95,7 +211,11 @@ if command -v flock >/dev/null 2>&1; then
   # by its exit — including a kill, which no `rm` in a trap would survive.
   exec 9> "$LOCK" || { printf '%s: cannot open the lock file %s\n' "$prog" "$LOCK" >&2; exit 1; }
   flock 9 || { printf '%s: could not take the lock %s\n' "$prog" "$LOCK" >&2; exit 1; }
+  trap cleanup EXIT
+  trap 'on_signal 130' INT
+  trap 'on_signal 143' TERM
   wait_for_pytest "inside the lock"
+  make_run_root
   run_suite ${1+"$@"}
   exit $?
 fi
@@ -162,9 +282,11 @@ printf '%s\n' "$$" > "$LOCKDIR/pid" 2>/dev/null || :
 # THE SIGNAL HANDLERS EXIT, and that is the whole point of writing them out
 # separately: a handler that only cleans up and RETURNS releases the lock while
 # this suite carries on running, which is the collision the lock exists for.
-trap 'rm -rf -- "$LOCKDIR"' EXIT
-trap 'rm -rf -- "$LOCKDIR"; exit 130' INT
-trap 'rm -rf -- "$LOCKDIR"; exit 143' TERM
+LOCKDIR_HELD="$LOCKDIR"
+trap cleanup EXIT
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
 wait_for_pytest "inside the lock"
+make_run_root
 run_suite ${1+"$@"}
 exit $?

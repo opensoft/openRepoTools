@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shlex
 import shutil
 import signal
 import stat
@@ -2374,3 +2375,38 @@ def test_a_fetching_install_follows_the_ref_it_was_given(offline_github,
     assert result.returncode == 0, result.stderr + result.stdout
     for name in INSTALLED:
         assert (bin_dir / name).is_file(), name
+
+
+def test_install_names_the_repository_venv_and_whether_it_is_there(tmp_path):
+    """One virtual environment per repository, outside the estate (#162):
+    `--install` names this repository's, says whether it is there, and - when
+    it is not - prints the two commands that make it. It never makes one: that
+    needs pip and the network, and an install from a checkout needs neither."""
+    cache = tmp_path / "cache"
+    venv = cache / "openRepoTools" / "venvs" / "openRepoTools"
+    first = run_cmd("--install", home=tmp_path, env={"XDG_CACHE_HOME": str(cache)})
+    assert first.returncode == 0, first.stderr
+    assert (f"openRepoTools: this repository's virtual environment is {venv} "
+            "(not created; one per repository, outside the estate):") in first.stdout
+    assert f"python3 -m venv {venv} && {venv}/bin/python3 -m pip install pytest" in first.stdout
+    assert not venv.exists(), "the install made a venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "bin" / "python3").write_text("#!/bin/sh\nexit 0\n")
+    (venv / "bin" / "python3").chmod(0o755)
+    second = run_cmd("--install", home=tmp_path, env={"XDG_CACHE_HOME": str(cache)})
+    assert second.returncode == 0, second.stderr
+    assert f"virtual environment is {venv} (present;" in second.stdout
+
+
+def test_the_printed_venv_command_survives_a_path_with_a_space(tmp_path):
+    """Copilot round 2 on #169: the command is pasted into a shell, and the
+    cache directory is the person's to choose."""
+    cache = tmp_path / "my cache"
+    venv = cache / "openRepoTools" / "venvs" / "openRepoTools"
+    result = run_cmd("--install", home=tmp_path, env={"XDG_CACHE_HOME": str(cache)})
+    assert result.returncode == 0, result.stderr
+    (line,) = [ln.strip() for ln in result.stdout.splitlines()
+               if ln.strip().startswith("python3 -m venv ")]
+    words = shlex.split(line)
+    assert words[:4] == ["python3", "-m", "venv", str(venv)], words
+    assert words[5] == str(venv / "bin" / "python3"), words

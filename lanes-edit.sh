@@ -362,6 +362,7 @@
 #   lanes-edit.sh lane-tree-now   <worktree path>
 #   lanes-edit.sh lane-reconcile  <lane>
 #   lanes-edit.sh worktrees       [<lane> | --all] [--index] [--fetch]
+#   lanes-edit.sh pathspec-check  <path>...          # opensoft/openRepoTools#162
 #
 #   A lane is RUNNING, SWAPPING, SWAPPED or CLOSED, and WHICH OF THOSE IT IS
 #   WITH NO LIVE HOLDER is what says where its session stopped: `RUNNING` with
@@ -428,7 +429,9 @@
 #      checkout that cannot be rebased, — Amendment 15 — a register holding
 #      two rows whose lane names differ only by case, which every writer and
 #      `canon-lane` refuse until 15(d)'s merge, or AMENDMENT 12's BLOCKED
-#      PROMPT. SIX MEANINGS ON ONE NUMBER, and they
+#      PROMPT, or — opensoft/openRepoTools#162 — a commit whose pathspec
+#      would stage bytecode, a cache or a virtual environment
+#      (`commit_push`, `pathspec-check`). SEVEN MEANINGS ON ONE NUMBER, and they
 #      stay readable only because of where each can occur: bad arguments to a
 #      subcommand that predates Amendment 11; `register-row`'s "not lane-shaped";
 #      AN UNKNOWN SUBCOMMAND (the `*)` arm below), which is how a caller detects
@@ -1856,6 +1859,71 @@ git_timeout_die() {   # <the command, for the reader>
   die "timed out after ${GIT_TIMEOUT}s on '$1' — the mutex is released and your commit is local; nothing was lost." 3
 }
 
+# BYTECODE NEVER RIDES A WORKSPACE COMMIT (opensoft/openRepoTools#162, cause
+# 19: a handoff's attachments were committed with a whole virtualenv's
+# `__pycache__` inside them, and the workspace repository carries them for
+# ever). What `git add` WOULD stage for a pathspec is asked of git itself
+# (`add --dry-run`, which honours `.gitignore` exactly as the real add does),
+# and every path in that answer with a cache, bytecode or environment
+# component is printed. Empty means the pathspec is clean.
+# ONE PER LINE AND READ WITH `read`, never word-split: `*.pyc` unquoted is a
+# glob, and the shell would expand it against whatever directory this runs in.
+BYTECODE_IGNORES='__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+.venv/
+venv/
+site-packages/'
+bytecode_in_pathspec() {   # <repo> <pathspec>...
+  bip_repo="${1-}"; shift || :
+  [ "$#" -gt 0 ] || return 0
+  # WHAT THE ADD WOULD STAGE, AND WHAT IS STAGED ALREADY: `add --dry-run` says
+  # nothing of a path the index already holds at these bytes, and the commit
+  # takes it all the same. A staged DELETION of bytecode is a cleanup and is
+  # let through (`--diff-filter=d`).
+  {
+    git -C "$bip_repo" add --dry-run --ignore-missing -- "$@" 2>/dev/null |
+      sed -n "s/^add '\(.*\)'\$/\1/p"
+    git -C "$bip_repo" diff --cached --name-only --diff-filter=d -- "$@" 2>/dev/null
+  } |
+    awk '!seen[$0]++ {
+      n = split($0, part, "/"); hit = 0
+      for (i = 1; i <= n; i++)
+        if (part[i] == "__pycache__" || part[i] == ".pytest_cache" ||
+            part[i] == ".mypy_cache" || part[i] == ".ruff_cache" ||
+            part[i] == "node_modules" || part[i] == ".venv" ||
+            part[i] == "venv" || part[i] == "site-packages") hit = 1
+      if ($0 ~ /\.py[co]$/) hit = 1
+      if (hit) print }'
+}
+
+# The refusal's words, and the OFFER beside them: the ignore lines the
+# workspace's own `.gitignore` lacks, with the one command that adds them.
+# `openRepoTools wip init` seeds them into a new workspace; an older one is
+# offered them here, where they are missing.
+bytecode_refusal_text() {   # <the offending paths, one per line>
+  brt_n="$(printf '%s\n' "${1-}" | awk 'NF { n++ } END { print n + 0 }')"
+  brt_missing=""
+  while IFS= read -r brt_l; do
+    [ -n "$brt_l" ] || continue
+    command grep -Fqx -- "$brt_l" "$LANES_REPO/.gitignore" 2>/dev/null ||
+      brt_missing="$brt_missing '$brt_l'"
+  done <<BRT_EOF
+$BYTECODE_IGNORES
+BRT_EOF
+  printf '%s path(s) of this commit are bytecode, a cache, a dependency tree or a virtual environment, and none of them is ever a workspace repository'"'"'s (opensoft/openRepoTools#162):\n%s\n' \
+    "$brt_n" "$(printf '%s\n' "${1-}" | head -n 10 | sed 's/^/    /')"
+  if [ -n "$brt_missing" ]; then
+    printf 'This workspace'"'"'s .gitignore lacks%s; add them and they are never staged again:\n    printf '"'"'%%s\\n'"'"'%s >> %s/.gitignore\n' \
+      "$brt_missing" "$brt_missing" "$LANES_REPO"
+  fi
+  printf 'Nothing was staged or committed. Unstage or delete those paths, then re-run.'
+}
+
 # commit_push "<subject>" [<pathspec>...] — the pathspecs default to the
 # register alone, which is every caller that predates Amendment 7. A LANDING
 # or LANDED writes TWO (the register and the lane's log) so that both halves
@@ -1923,6 +1991,8 @@ commit_push() {
       || die "git update-index --force-remove $cp_ren failed — the log is already renamed on disk and git still holds the old path, so nothing was committed. Re-run; if it refuses again, \`git -C $LANES_REPO rm --cached -- $cp_ren\` is the same act by hand." 6
   fi
   if [ "$cp_add_n" -gt 0 ]; then
+    cp_byte="$(bytecode_in_pathspec "$LANES_REPO" ${cp_add[@]+"${cp_add[@]}"})"
+    [ -z "$cp_byte" ] || die "$(bytecode_refusal_text "$cp_byte")" 2
     git -C "$LANES_REPO" -c "$CP_EXACT" add -- ${cp_add[@]+"${cp_add[@]}"} || die "git add failed" 6
   fi
   if git -C "$LANES_REPO" -c "$CP_EXACT" diff --cached --quiet -- "${CP_PATHS[@]}"; then
@@ -16923,7 +16993,24 @@ EOF
     fi
     ;;
 
+  # opensoft/openRepoTools#162 — WHAT A HAND COMMIT OF A HANDOFF'S ATTACHMENTS
+  # WOULD STAGE THAT IS BYTECODE, asked BEFORE the commit. `commit_push`
+  # refuses such a pathspec for every write this file makes; attachments are
+  # committed by hand, so this is the same question for a person to ask first.
+  #   0  nothing in those paths would stage bytecode, a cache or an environment
+  #   2  something would: the paths on stdout, the offer on stderr
+  #  64  usage
+  pathspec-check)
+    [ "$#" -gt 0 ] || die "usage: pathspec-check <path>...   (relative to the workspace repository $LANES_REPO)" 64
+    pck_out="$(bytecode_in_pathspec "$LANES_REPO" "$@")"
+    if [ -n "$pck_out" ]; then
+      printf '%s\n' "$pck_out"
+      note "$(bytecode_refusal_text "$pck_out")"
+      exit 2
+    fi
+    ;;
+
   *)
-    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|retire-rows|archive-rows|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|binding|request-handoff|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|duplicate-holder|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|register-row-local|retired-identity|canon-lane|resolve-home|managed-projection|lane-state|set-lane-state|lane-trees|set-lane-tree|lane-tree-now|lane-reconcile|lane-holders|legacy-restart-check|publish-handoff|restart-intent|set-restart-intent|worktrees)" 2
+    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|retire-rows|archive-rows|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|binding|request-handoff|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|duplicate-holder|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|register-row-local|retired-identity|canon-lane|resolve-home|managed-projection|lane-state|set-lane-state|lane-trees|set-lane-tree|lane-tree-now|lane-reconcile|lane-holders|legacy-restart-check|publish-handoff|restart-intent|set-restart-intent|worktrees|pathspec-check)" 2
     ;;
 esac

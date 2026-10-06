@@ -257,9 +257,9 @@ The run itself is minutes of bash and hundreds of `git` processes, and
 several lanes build in sibling worktrees of one checkout: the wrapper waits
 for any live run, takes `${TMPDIR:-/tmp}/openrepotools-pytest.lock` (`flock`
 where there is one, a `mkdir` lock on macOS, which has none), waits again
-inside it, then runs `python3 -m pytest tests -q "$@"`. Every lane on one
-workstation must name the SAME lock file or there is no lock, which is the
-whole reason the path is written here as well as in the file.
+inside it, then runs `python3 -m pytest tests -q "$@"` (no cache or temp left in
+the checkout: #162). Every lane on one workstation must name the SAME lock file
+or there is no lock, which is the whole reason the path is written here too.
 
 Two measured defects on 2026-09-14 (opensoft/openRepoTools#51), both of them
 inside a guard that had been copied into four briefs:
