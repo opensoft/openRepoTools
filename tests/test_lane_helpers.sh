@@ -15687,7 +15687,7 @@ cg_lane() {   # <lane> [<dir>] — a row, and a log whose STARTED line records t
   git -C "$WIP" push -q origin main 2>/dev/null
   return 0
 }
-for cg_l in repoCG-1 repoCG-2 repoCG-3 repoCG-4 repoCG-5 repoCG-6 repoCG-7 repoCG-8 repoCG-11 repoCG-12; do cg_lane "$cg_l"; done
+for cg_l in repoCG-1 repoCG-2 repoCG-3 repoCG-4 repoCG-5 repoCG-6 repoCG-7 repoCG-8 repoCG-11 repoCG-12 repoCG-13; do cg_lane "$cg_l"; done
 # repoCG-10 was started in a directory that is NO repository: it has no branches,
 # which is an absence and not a read that failed.
 mkdir -p "$CG_EST/plain"
@@ -15878,6 +15878,24 @@ Lane: repoCG-11"
   has   "…naming the branch the sweep did find as well" "$err" "cg11-old"
   git -C "$CG_DIR" branch -q -D cg11-old 2>/dev/null || :
 fi
+
+# A STANDALONE CLONE UNDER THE LANE'S OWN ROOT IS NOT "NOTHING LEFT" (S1 of the
+# review of #175). The sweep keeps it FOREIGN — a lane creates worktrees, never
+# clones — and a FOREIGN row is counted for nobody, so it names nothing for the
+# residue read either: the clone, unpushed commit and all, is residue.
+git clone -q "$CG_ORIGIN" "$CG_ROOT/repoCG-13/clone" >/dev/null 2>&1
+git -C "$CG_ROOT/repoCG-13/clone" config user.email "test@example.invalid"
+git -C "$CG_ROOT/repoCG-13/clone" config user.name "lane helper tests"
+printf 'thirteen\n' > "$CG_ROOT/repoCG-13/clone/thirteen.txt"
+git -C "$CG_ROOT/repoCG-13/clone" add thirteen.txt
+git -C "$CG_ROOT/repoCG-13/clone" commit -q -m "work in a clone, never pushed"
+cg13_row="$(cg_row repoCG-13)"
+run "$END" repoCG-13
+is    "a standalone clone with an unpushed commit under the lane's own root refuses although the sweep answered 0" "$rc" 2
+has   "…named as residue, because its FOREIGN row names nothing" "$err" "residue  $CG_ROOT/repoCG-13/clone"
+hasnt "…and never passed as nothing left on disk" "$err" "nothing of lane repoCG-13's is left on disk"
+is    "…and nothing is written: the row is as it was" "$(cg_row repoCG-13)" "$cg13_row"
+hasnt "…so it never says NOTHING IN FLIGHT" "$(cg_row repoCG-13)" "NOTHING IN FLIGHT"
 
 # --------------------------------- a branch of the lane's own, with no tree
 

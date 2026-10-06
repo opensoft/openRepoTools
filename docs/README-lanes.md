@@ -537,7 +537,9 @@ no tree, scratch or cache row names is **residue** — the ignored leftovers no
 row of the sweep reaches — and it refuses even where the sweep answered 0, as
 a cache row does; a root that cannot be listed is the gate unread (exit 1,
 whatever the sweep answered), never an empty one. Other lanes' trees in a shared checkout are FOREIGN, are
-counted for nobody, and never hold this lane.
+counted for nobody, and never hold this lane — but a FOREIGN row names nothing
+for the residue read either, so a standalone clone directly under the lane's own
+root, which the sweep keeps FOREIGN, is residue and holds it.
 
 `--inventory-only` is **the one door past the gate**: the lane ends although the
 gate found something, refused, or could not be read, nothing on disk is touched,

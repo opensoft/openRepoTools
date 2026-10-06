@@ -1983,10 +1983,13 @@ while IFS="$TAB" read -r g_kind g_a g_b g_c g_d g_e g_f; do
     refused) gate_refused="${g_a:-}" ;;
     tree)
       g_path="$(printf '%b' "${g_c:-}")"
-      gate_named="${gate_named}$(gate_real "$g_path")${gate_lf}"
+      # A FOREIGN ROW NAMES NOTHING FOR THE RESIDUE READ (S1 of the review of
+      # #175): it is counted for nobody, so a standalone clone under the lane's
+      # own root, which the sweep keeps FOREIGN, must still hold the gate.
       case "${g_a:-}" in
         foreign) gate_foreign=$((gate_foreign + 1)); continue ;;
       esac
+      gate_named="${gate_named}$(gate_real "$g_path")${gate_lf}"
       [ "${g_b:-}" = retire ] || continue
       gate_trees=$((gate_trees + 1))
       case "${g_a:-}" in keep | live | load-bearing) gate_person=$((gate_person + 1)) ;; esac
