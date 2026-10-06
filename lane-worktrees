@@ -4173,8 +4173,12 @@ def sandbox_provenance(path: str) -> tuple:
     layout (`basetemp/` beside `tmp/`) - or ('', 0): no proof a suite made
     it."""
     for name, what in ((".lock", "a pytest .lock"), (RUN_MARKER, "tests/run.sh's marker")):
-        if os.path.isfile(os.path.join(path, name)):
-            return what, _lock_pid(os.path.join(path, name))
+        # A MARK THAT NAMES NO PID PROVES NOTHING (#174, Copilot round 2): an
+        # empty or malformed `.lock` made a person's `tmp.*` a suite's, past
+        # the 14-day rule and the repository guard.
+        pid = _lock_pid(os.path.join(path, name))
+        if pid > 0:
+            return what, pid
     if os.path.isdir(os.path.join(path, "basetemp")) and os.path.isdir(os.path.join(path, "tmp")):
         return "tests/run.sh's run-root layout", 0
     return "", 0

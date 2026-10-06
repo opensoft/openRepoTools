@@ -2446,3 +2446,21 @@ def test_a_clones_local_lfs_store_keeps_it_when_a_bundle_would_be_the_only_copy(
     row = rows_of(proc.stdout)[str(clone)]
     assert row[0] == "keep" and "local git-lfs store" in row[2], row
     assert (store / oid).read_bytes() == b"PRECIOUS weights\n"
+
+
+@pytest.mark.parametrize("marker", [".lock", ".openrepotools-run"])
+def test_a_suite_mark_that_names_no_pid_is_no_proof(estate, marker):
+    """#174 Copilot round 2: an EMPTY `.lock` (or run.sh marker) counted as
+    a suite's mark though it names no pid, so a two-hour-old `tmp.*` with a
+    checkout in it was removed - past the 14-day rule and the repository
+    guard both."""
+    saved = estate.sandboxes / "tmp.saved06"
+    estate.git("init", "-q", "-b", "main", saved / "work", cwd=estate.root)
+    own = estate.commit(saved / "work", "unpushed", {"w.txt": "PRECIOUS\n"})
+    (saved / marker).write_text("")
+    _age(saved, 7200)
+    proc = estate.sweep(LANE, "--include-sandboxes", "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    row = items_of(proc.stdout, "sandbox")[str(saved)]
+    assert row[0] == "list" and "no mark of a test suite" in row[3], row
+    assert estate.git("rev-parse", "HEAD", cwd=saved / "work") == own
