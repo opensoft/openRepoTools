@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -239,6 +240,31 @@ def test_the_report_finds_every_kind_of_leftover_and_changes_nothing(tmp_path):
     assert f"estate read at {e.projects}" in status
     assert "| rescue branches (all ages) | 1 |" in out
     assert before == after, sorted(set(before.items()) ^ set(after.items()))[:10]
+
+
+def _old_git(e) -> dict:
+    """A PATH whose `git` answers `--format=%cs` as git before 2.21 does:
+    with the placeholder itself, where the date belongs."""
+    shim = e.root / "oldgit"
+    shim.mkdir(exist_ok=True)
+    (shim / "git").write_text(
+        "#!/bin/sh\nfor a in \"$@\"; do\n  case \"$a\" in --format=%cs) echo '%cs'; exit 0 ;; "
+        f"esac\ndone\nexec \"{shutil.which('git')}\" \"$@\"\n")
+    (shim / "git").chmod(0o755)
+    return {"PATH": f"{shim}{os.pathsep}{e.env['PATH']}"}
+
+
+def test_a_foreign_clones_date_needs_no_git_2_21(tmp_path):
+    """#170 (d): the FOREIGN section dated a clone's last commit with
+    `--format=%cs`, which git learned in 2.21; an older git prints `%cs`."""
+    e = LW.Estate(tmp_path)
+    f = build_estate(e)
+    proc = report(e, env=_old_git(e))
+    assert proc.returncode == 0, proc.stderr
+    foreign = section(proc.stdout, "FOREIGN repositories")
+    row = [ln for ln in foreign.splitlines() if ln.startswith(f"- {f['clone']} ")]
+    assert row and re.search(r" \u00b7 \d{4}-\d\d-\d\d \u00b7 ", row[0]), row
+    assert "%cs" not in foreign
 
 
 def test_status_reads_the_estate_the_report_resolved(tmp_path):

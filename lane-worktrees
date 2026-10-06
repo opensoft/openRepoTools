@@ -4830,7 +4830,9 @@ class Report:
                     "taken as its checkout)" if ambiguous else "")
             if not why:
                 continue
-            last = git_out(c, "log", "-1", "--format=%cs") or "?"
+            # `%cd --date=short`, never `%cs`: `%cs` is git 2.21's, and an older git
+            # prints the placeholder itself where the date belongs (#170 (d)).
+            last = git_out(c, "log", "-1", "--date=short", "--format=%cd") or "?"
             msg = git_out(c, "log", "-1", "--format=%B") or ""
             owner = (re.findall(r"^Lane:\s*(\S+)", msg, re.MULTILINE) or ["-"])[-1]
             lean = leaned_on(c, git_common_dir(c), self.deps)
