@@ -112,6 +112,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import socket
 import stat
@@ -4885,6 +4886,13 @@ class Report:
             proc = git(wroot, "grep", "-E", "-e",
                        "^(STARTED|RESUMED|PAUSED|ENDED|RETIRED) — lane ",
                        f"origin/{branch}", "--", "lanes/log")
+            if proc.returncode not in (0, 1):
+                # A GREP THAT FAILED IS NO "NO EVENTS" (#170 G3): exit 1 is no
+                # match; anything else - a ref that is not there, a repository
+                # git cannot read - leaves every log-only ENDED lane unknown.
+                self.unreadable.setdefault(
+                    f"the register's ENDED and RETIRED lines (origin/{branch})",
+                    f"git grep exited {proc.returncode}: " + _first_line(proc.stderr))
             last: dict = {}
             for line in proc.stdout.splitlines():
                 _ref, _, rest = line.partition(":")
@@ -5043,20 +5051,26 @@ class Report:
         for r in repos:
             proc = git(r, "ls-files", "--others", "--ignored", "--exclude-standard",
                        "--directory", "-z")
-            ignored = [p.rstrip("/") for p in proc.stdout.split("\0") if p.endswith("/")]
+            if proc.returncode != 0:
+                self.unreadable.setdefault(r, "its ignored files could not be listed")
+            # EVERY IGNORED ENTRY IS EVIDENCE-SHAPED OR NOT BY ITS NAME (#170 item
+            # 9): an ignored `junit-results.xml` is a FILE, and keeping only the
+            # directories (which `du` sizes) dropped it from the evidence match.
+            entries = [p for p in proc.stdout.split("\0") if p] if proc.returncode == 0 else []
+            ignored = [p.rstrip("/") for p in entries if p.endswith("/")]
             sizes = _du([os.path.join(r, p) for p in ignored]) if ignored else {}
             for path, size in sizes.items():
                 if size >= threshold:
                     big.append([path, human_size(size)])
             unt = git(r, "ls-files", "--others", "--exclude-standard", "--directory", "-z")
-            for p in (unt.stdout.split("\0") + [i + "/" for i in ignored]):
+            for p in (unt.stdout.split("\0") + entries):
                 name = p.rstrip("/").rsplit("/", 1)[-1]
                 if p and EVIDENCE_NAME_RE.search(name):
                     evidence.append([os.path.join(r, p.rstrip("/")), "untracked or ignored in "
                                      + os.path.basename(r)])
         if self.root:
             repo_set = set(repos)
-            for n in sorted(os.listdir(self.root)):
+            for n in self._ls(self.root):
                 full = os.path.join(self.root, n)
                 if full in repo_set or not os.path.isdir(full) or n.startswith(".lane-") \
                         or n.endswith("-worktrees"):
@@ -5102,8 +5116,11 @@ class Report:
         rows = []
         wroot = self.helper.workspace_root() if self.helper.path else ""
         if wroot:
+            # SURROGATEESCAPE, as every other reader here (#170 G10): one byte that
+            # is not UTF-8 in the workspace's `.gitignore` aborted the report.
             try:
-                with open(os.path.join(wroot, ".gitignore"), encoding="utf-8") as fh:
+                with open(os.path.join(wroot, ".gitignore"), encoding="utf-8",
+                          errors="surrogateescape") as fh:
                     have = set(fh.read().splitlines())
             except OSError:
                 have = set()
@@ -5111,9 +5128,11 @@ class Report:
                     ".ruff_cache/", "node_modules/", ".venv/", "venv/", "site-packages/"]
             missing = [w for w in want if w not in have]
             if missing:
+                # THE PATH IS QUOTED (#170 item 10): the command is offered to be
+                # pasted, and a workspace path with a space in it split the redirect.
                 rows.append([os.path.join(wroot, ".gitignore"), "lacks " + " ".join(missing),
                              "printf '%s\\n' " + " ".join(f"'{m}'" for m in missing)
-                             + f" >> {wroot}/.gitignore"])
+                             + " >> " + shlex.quote(os.path.join(wroot, ".gitignore"))])
             hist = git(wroot, "log", "--all", "--format=", "--name-only", "--",
                        "*.pyc", "*__pycache__*")
             paths = sorted({p for p in hist.stdout.splitlines() if p})
@@ -5196,7 +5215,9 @@ def report_all(opts) -> int:
     m = re.match(r"^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\d+)$", post)
     if m:
         fd, tmp = tempfile.mkstemp(prefix="lane-worktrees-report.", suffix=".md")
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        # SURROGATEESCAPE (#170 G11, G12): a row holding a path that is not
+        # UTF-8 is that path's bytes, never an internal error before `gh` runs.
+        with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape") as fh:
             fh.write(text)
         try:
             proc = run(["gh", "issue", "comment", m.group(2), "--repo", m.group(1),
@@ -5211,7 +5232,7 @@ def report_all(opts) -> int:
         return 0
     try:
         os.makedirs(os.path.dirname(os.path.abspath(post)), exist_ok=True)
-        with open(post, "w", encoding="utf-8") as fh:
+        with open(post, "w", encoding="utf-8", errors="surrogateescape") as fh:
             fh.write(text)
     except OSError as exc:
         note(f"the report could not be written to {post}: {exc}")

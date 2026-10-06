@@ -333,6 +333,101 @@ def test_an_empty_section_says_what_could_not_be_read_never_none(tmp_path):
         assert "_none found in what could be read;" in found and "_none_" not in found, found
 
 
+def test_a_register_grep_that_failed_is_a_finding_never_no_events(tmp_path):
+    """#170 G3: the ENDED/RETIRED lines are read with one `git grep` of the
+    register, and a grep that FAILED (exit 128: the branch is not there)
+    read as "no events" - every log-only ENDED lane dropped out and the
+    orphan section read clean."""
+    e = LW.Estate(tmp_path)
+    build_estate(e)
+    proc = report(e, env={"LANES_BRANCH": "no-such-branch"})
+    assert proc.returncode == 0, proc.stderr
+    unread = section(proc.stdout, "Records the report could not read")
+    assert "the register's ENDED and RETIRED lines (origin/no-such-branch) \u00b7 git grep " \
+        "exited 128" in unread, unread
+
+
+def _latin1_clone(e) -> Path:
+    """A FOREIGN clone at a path that is not UTF-8 (`caf\\xe9`), so a report
+    row holds a surrogate-escaped path."""
+    clone = e.lane_root / os.fsdecode(b"caf\xe9")
+    e.git("clone", "-q", LW.GH_URL, clone, cwd=e.root)
+    return clone
+
+
+def test_bytes_that_are_not_utf8_never_abort_the_report(tmp_path):
+    """#170 G10, G11, G12: the workspace `.gitignore` was read, and the
+    report written to `--post <file>` and to `--post owner/repo#n`'s body
+    file, as STRICT UTF-8 - one Latin-1 byte, in the `.gitignore` or in a
+    row's path, aborted the daily report with an internal error."""
+    e = LW.Estate(tmp_path)
+    f = build_estate(e)
+    (f["wip"] / ".gitignore").write_bytes(b"*.swp\n# caf\xe9\n")
+    clone = _latin1_clone(e)
+    target = e.state / "openRepoTools" / "reports" / "latin1.md"
+    proc = report(e, "--post", str(target))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    body = target.read_bytes()
+    assert os.fsencode(str(clone)) in body and b"lacks __pycache__/" in body
+    log = e.root / "gh.log"
+    (e.fakebin / "gh").write_text(
+        "#!/bin/sh\n[ \"$1 $2\" = 'issue comment' ] && { cat \"$7\" >> \"$FAKE_GH_LOG\"; "
+        "echo https://github.com/opensoft/repoA/issues/9#c1; exit 0; }\nexit 1\n")
+    proc = report(e, "--post", "opensoft/repoA#9", env={"FAKE_GH_LOG": str(log)})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert os.fsencode(str(clone)) in log.read_bytes()
+
+
+def test_an_estate_root_that_cannot_be_listed_is_a_finding(tmp_path):
+    """#170 E10: the evidence scan listed the estate root with a bare
+    `os.listdir`, so a root that could not be listed aborted the report."""
+    if os.geteuid() == 0:
+        pytest.skip("root lists a mode-000 directory")
+    e = LW.Estate(tmp_path)
+    build_estate(e)
+    e.projects.chmod(0o300)
+    try:
+        proc = report(e)
+    finally:
+        e.projects.chmod(0o755)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"{e.projects} \u00b7 could not be listed" in section(
+        proc.stdout, "Records the report could not read")
+
+
+def test_an_ignored_evidence_file_is_found(tmp_path):
+    """#170 item 9: the evidence match read only ignored DIRECTORIES (the
+    list `du` sizes), so an ignored `junit-ci.xml` was never considered."""
+    e = LW.Estate(tmp_path)
+    build_estate(e)
+    (e.checkout / ".gitignore").write_text((e.checkout / ".gitignore").read_text()
+                                           + "junit-ci.xml\n")
+    (e.checkout / "junit-ci.xml").write_text("<testsuite/>\n")
+    proc = report(e)
+    assert proc.returncode == 0, proc.stderr
+    assert str(e.checkout / "junit-ci.xml") in section(proc.stdout, "Evidence-shaped paths")
+
+
+def test_the_gitignore_repair_command_survives_a_space_in_the_path(tmp_path):
+    """#170 item 10: the hygiene row offers a command to paste, and the
+    workspace path in its redirect was unquoted - one space split it."""
+    e = LW.Estate(tmp_path)
+    f = build_estate(e)
+    spaced = e.projects / "my wip"
+    shutil.move(str(f["wip"]), str(spaced))
+    e.workspace = str(spaced)
+    proc = report(e)
+    assert proc.returncode == 0, proc.stderr
+    row = [ln for ln in section(proc.stdout, "Workspace repository hygiene").splitlines()
+           if "lacks __pycache__/" in ln]
+    assert row, proc.stdout
+    command = row[0].split(" \u00b7 ")[-1]
+    ran = subprocess.run(["bash", "-c", command], cwd=str(e.root), capture_output=True,
+                         text=True)
+    assert ran.returncode == 0, (command, ran.stderr)
+    assert "__pycache__/" in (spaced / ".gitignore").read_text().splitlines(), command
+
+
 def test_post_writes_a_file_or_comments_on_an_issue(tmp_path):
     e = LW.Estate(tmp_path)
     build_estate(e)
