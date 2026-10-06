@@ -40,8 +40,12 @@ register line that could not be written. Untracked files are never pushed
 (the bundle only) unless `--push-untracked`, and untracked git-lfs content,
 which a bundle would carry as a pointer only, keeps its tree; a branch an open
 pull request or another lane owns is never pushed onto (a rescue branch
-instead); where git-lfs is configured the push runs its hooks. A cache, or an
-unmarked `tmp.*` sandbox, that holds a repository is never removed.
+instead, and gh's OPEN wins over a LANDED line); where git-lfs is configured
+the push runs its hooks, and a clone whose local git-lfs store a bundle alone
+would have to stand for is kept. A cache, or an unmarked `tmp.*` sandbox, that
+holds a repository is never removed, nor a tree or registration whose git
+directory keeps a submodule repository (a deinitialized one's included) with
+work no remote of it holds.
 
 WHICH TREES ARE THE LANE'S is #97's inventory (`lanes-edit.sh lane-trees`)
 and the disk - never the derived index (Amendment 14 clause (b)). A tree the
