@@ -655,3 +655,30 @@ def test_a_report_directory_that_cannot_be_made_private_runs_no_report(tmp_path)
     assert "the estate's daily report is running" not in result.stderr, result.stderr
     assert not list((state / "openRepoTools").glob("report-*.stamp"))
     assert not log.exists() or log.read_text() == ""
+
+
+# ===================================================== #179, Copilot round 2
+
+def test_an_untracked_listing_that_failed_is_a_finding_never_evidence(tmp_path):
+    """#179 Copilot round 2: the evidence scan's untracked listing was taken
+    whatever its exit, so a `git ls-files` that failed silently dropped the
+    untracked evidence - or offered its partial output as the repository's
+    files - while the ignored listing beside it recorded its failure."""
+    e = LW.Estate(tmp_path)
+    build_estate(e)
+    shim = tmp_path / "untracked-shim"
+    shim.mkdir()
+    real_git = shutil.which("git")
+    (shim / "git").write_text(
+        "#!/bin/sh\n"
+        'case " $* " in *" ls-files --others --exclude-standard "*)\n'
+        "  printf 'junit-partial.xml\\0'; echo 'fatal: the shim refuses' >&2; exit 128 ;;\n"
+        "esac\n"
+        f'exec "{real_git}" "$@"\n')
+    (shim / "git").chmod(0o755)
+    proc = report(e, env={"PATH": f"{shim}{os.pathsep}{e.env['PATH']}"})
+    assert proc.returncode == 0, proc.stderr
+    unread = section(proc.stdout, "Records the report could not read")
+    assert "its untracked files could not be listed" in unread, unread
+    assert "junit-partial.xml" not in section(proc.stdout, "Evidence-shaped paths")
+

@@ -5109,8 +5109,14 @@ class Report:
             for path, size in sizes.items():
                 if size >= threshold:
                     big.append([path, human_size(size)])
+            # THE UNTRACKED LISTING IS READ LIKE THE IGNORED ONE (#179, Copilot
+            # round 2): one that failed is a finding, and its stdout is never
+            # taken for the repository's untracked files.
             unt = git(r, "ls-files", "--others", "--exclude-standard", "--directory", "-z")
-            for p in (unt.stdout.split("\0") + entries):
+            if unt.returncode != 0:
+                self._unread(r, "its untracked files could not be listed", record=False)
+            untracked = unt.stdout.split("\0") if unt.returncode == 0 else []
+            for p in (untracked + entries):
                 name = p.rstrip("/").rsplit("/", 1)[-1]
                 if p and EVIDENCE_NAME_RE.search(name):
                     evidence.append([os.path.join(r, p.rstrip("/")), "untracked or ignored in "
