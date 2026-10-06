@@ -1351,3 +1351,24 @@ def test_yes_reads_the_register_now_or_refuses(tmp_path, case):
         assert "could not be fetched" in refused[0]
     else:
         assert "raven" in refused[0]
+
+
+def test_a_mirror_style_fetch_refspec_prunes_no_local_branch(estate):
+    """#170 item 6: with `remote.origin.fetch = +refs/heads/*:refs/heads/*`,
+    `git fetch --prune origin` deletes every local branch origin lacks - before
+    anything was classified or rescued. The sweep's fetch pins its refspec."""
+    estate.git("config", "--replace-all", "remote.origin.fetch", "+refs/heads/*:refs/heads/*")
+    estate.git("checkout", "-q", "-b", "feat/local-only")
+    local_only = estate.commit(estate.checkout, "local only", {"lo.txt": "lo\n"})
+    # NOTHING CHECKED OUT THAT ORIGIN HAS: git refuses to fetch into a checked
+    # out branch, which would have hidden the prune.
+    estate.git("checkout", "-q", "--detach", "origin/main")
+    estate.git("tag", "local-tag", local_only)
+    tree = estate.worktree("det")
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert estate.git("rev-parse", "-q", "--verify", "refs/heads/feat/local-only",
+                      check=False) == local_only, "a local-only branch was pruned"
+    assert estate.git("rev-parse", "-q", "--verify", "refs/tags/local-tag",
+                      check=False) == local_only
+    assert not tree.exists()

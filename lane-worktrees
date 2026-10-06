@@ -1631,7 +1631,16 @@ class Sweep:
             if not git_out(probe, "config", "--get", "remote.origin.url"):
                 self.fetched[common] = "no origin remote"
                 continue
-            proc = git(probe, "fetch", "--prune", "--quiet", "origin", timeout=GIT_NET_TIMEOUT)
+            # THE REFSPEC IS PINNED, as `status --fetch` pins it (#170 item 6):
+            # a mirror-style `remote.origin.fetch` (`+refs/heads/*:refs/heads/*`)
+            # would let `--prune` delete local-only branches before they were
+            # classified or rescued. `--refmap` keeps the configured refspec from
+            # mapping anything, and neither `fetch.pruneTags` nor the remote's
+            # `pruneTags` may take a local tag with it.
+            proc = git(probe, "-c", "fetch.pruneTags=false", "-c", "remote.origin.pruneTags=false",
+                       "fetch", "--prune", "--quiet", "--recurse-submodules=no",
+                       "--refmap=+refs/heads/*:refs/remotes/origin/*", "origin",
+                       "+refs/heads/*:refs/remotes/origin/*", timeout=GIT_NET_TIMEOUT)
             self.fetched[common] = "ok" if proc.returncode == 0 else (
                 "fetch failed: " + _first_line(proc.stderr))
 
