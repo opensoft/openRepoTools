@@ -1487,3 +1487,110 @@ def test_another_lanes_claim_is_read_wherever_its_control_root_is(estate, where)
     assert f"lane {other}'s inventory names it too" in rows[str(tree)][2]
     assert estate.sweep(LANE, "--yes").returncode == 0
     assert tree.is_dir()
+
+
+@pytest.mark.parametrize("flag", ["--skip-worktree", "--assume-unchanged"])
+def test_an_edit_git_status_hides_keeps_the_tree(estate, flag):
+    """#170 A2: a file flagged skip-worktree or assume-unchanged reads as
+    clean in `git status` and `git add -A` skips it, so its edit was in no
+    rescue and the tree was removed with it."""
+    tree = estate.worktree("hidden", "feat/hidden")
+    estate.commit(tree, "cfg", {"config.yml": "shared: 1\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/hidden", cwd=tree)
+    estate.git("update-index", flag, "config.yml", cwd=tree)
+    (tree / "config.yml").write_text("shared: 1\nlocal_secret: PRECIOUS\n")
+    assert estate.git("status", "--porcelain", cwd=tree) == ""
+    dry = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert dry[str(tree)][0] == "keep", dry[str(tree)]
+    assert "skip-worktree or assume-unchanged differ" in dry[str(tree)][2]
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert (tree / "config.yml").read_text().endswith("PRECIOUS\n")
+
+
+def test_a_sparse_checkouts_absent_files_are_no_edit(estate):
+    """A skip-worktree file that is NOT in the tree (a sparse checkout's) is
+    no edit: the tree is still removed."""
+    tree = estate.worktree("sparse", "feat/sparse")
+    estate.commit(tree, "two", {"keep/a.txt": "a\n", "drop/b.txt": "b\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/sparse", cwd=tree)
+    estate.git("update-index", "--skip-worktree", "drop/b.txt", cwd=tree)
+    (tree / "drop" / "b.txt").unlink()
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not tree.exists()
+
+
+def test_a_clone_inside_a_venv_keeps_its_tree(estate):
+    """#170 A3: `pip install -e git+...` clones into `<venv>/src/<pkg>`, and
+    the nested-repository walk passed over venvs before it looked for a
+    `.git` - so the dependency's unpushed fix was deleted with the tree."""
+    tree = estate.worktree("venvsrc", "feat/venvsrc")
+    estate.commit(tree, "ignore venv", {".gitignore": ".env\n__pycache__/\n*.pyc\n.venv/\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/venvsrc", cwd=tree)
+    venv = tree / ".venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("home = /usr\n")
+    dep = venv / "src" / "somedep"
+    estate.git("init", "-q", "-b", "main", dep, cwd=estate.root)
+    estate.commit(dep, "my unpushed fix", {"fix.py": "FIX = 1\n"})
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(tree)][0] == "keep", rows[str(tree)]
+    assert f"nested inside it at {dep}" in rows[str(tree)][2]
+    assert estate.sweep(LANE, "--yes").returncode == 0
+    assert (dep / "fix.py").is_file()
+
+
+def test_a_clones_tag_only_commits_keep_it(estate):
+    """#170 item 4: a clone can hold unpublished commits reachable only
+    from a local tag; the clone check read branches and the stash only."""
+    clone = estate.lane_root / "tagged"
+    estate.git("clone", "-q", GH_URL, clone, cwd=estate.root)
+    estate.commit(clone, "released locally", {"r.txt": "r\n"})
+    estate.git("tag", "-a", "-m", "v1", "v1.0", cwd=clone)
+    estate.git("reset", "-q", "--hard", "origin/main", cwd=clone)
+    conf = estate.root / "sweep.conf"
+    conf.write_text("foreign_quiet_hours=0\n")
+    env = {"LANE_WORKTREES_CONF": str(conf)}
+    proc = estate.sweep(LANE, "--include-foreign", "--word", "go", "--yes", "--porcelain", env=env)
+    rows = rows_of(proc.stdout)
+    assert rows[str(clone)][0] == "keep", rows[str(clone)]
+    assert "its tag v1.0 holds commits origin lacks" in rows[str(clone)][2]
+    assert estate.git("cat-file", "-t", "v1.0", cwd=clone) == "tag"
+
+
+def _with_submodule(estate, name: str) -> tuple:
+    sub_origin = estate.remotes / "sub.git"
+    estate.git("init", "-q", "--bare", "-b", "main", sub_origin, cwd=estate.root)
+    seed = estate.root / "sub-seed"
+    estate.git("clone", "-q", sub_origin, seed, cwd=estate.root)
+    estate.commit(seed, "sub", {"s.txt": "s\n"})
+    estate.git("push", "-q", "origin", "main", cwd=seed)
+    tree = estate.worktree(name, f"feat/{name}", record=False)
+    estate.git("submodule", "add", "-q", str(sub_origin), "sub", cwd=tree)
+    estate.commit(tree, "add sub")
+    estate.git("push", "-q", "-u", "origin", f"feat/{name}", cwd=tree)
+    estate.record(tree)
+    return tree, tree / "sub"
+
+
+@pytest.mark.parametrize("what", ["branch", "stash"])
+def test_a_submodules_unpublished_branch_or_stash_keeps_its_tree(estate, what):
+    """#170 item 5: only a submodule's HEAD was checked, while a worktree's
+    submodule keeps its whole repository under `.git/worktrees/<id>/modules/`
+    - its branches and stash went with the tree."""
+    tree, sub = _with_submodule(estate, "withsub")
+    if what == "branch":
+        estate.git("checkout", "-q", "-b", "side", cwd=sub)
+        estate.commit(sub, "side work", {"side.txt": "x\n"})
+        estate.git("checkout", "-q", "--detach", "origin/main", cwd=sub)
+    else:
+        (sub / "s.txt").write_text("stashed\n")
+        estate.git("stash", "-q", cwd=sub)
+    assert estate.git("status", "--porcelain", cwd=tree) == ""
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(tree)][0] == "keep", rows[str(tree)]
+    want = "its branch side holds commits" if what == "branch" else "has a stash"
+    assert f"submodule sub" in rows[str(tree)][2] and want in rows[str(tree)][2]
+    assert estate.sweep(LANE, "--yes").returncode == 0
+    assert tree.is_dir()
