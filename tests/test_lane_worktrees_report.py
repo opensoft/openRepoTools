@@ -351,6 +351,16 @@ def _latin1_clone(e) -> Path:
     """A FOREIGN clone at a path that is not UTF-8 (`caf\\xe9`), so a report
     row holds a surrogate-escaped path."""
     clone = e.lane_root / os.fsdecode(b"caf\xe9")
+    # A FILESYSTEM THAT REFUSES THE NAME HAS NO SUCH CLONE TO REPORT (#177).
+    # APFS, the macOS runner's, answers a non-UTF-8 name with EILSEQ ("Illegal
+    # byte sequence"). The directory is made first so the refusal is the
+    # filesystem's and not a fixture traceback; where it is made, the case
+    # stays live, and git clones into an existing empty directory.
+    e.lane_root.mkdir(parents=True, exist_ok=True)
+    try:
+        os.mkdir(clone)
+    except OSError as exc:
+        pytest.skip(f"filesystem refuses non-UTF-8 names: {exc}")
     e.git("clone", "-q", LW.GH_URL, clone, cwd=e.root)
     return clone
 
