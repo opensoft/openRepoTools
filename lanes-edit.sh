@@ -1858,17 +1858,27 @@ node_modules/
 .venv/
 venv/
 site-packages/'
-bytecode_in_pathspec() {   # <repo> <pathspec>...
+bytecode_in_pathspec() {   # <repo> <pathspec>...   0 read (the paths printed) · 3 a read FAILED
   bip_repo="${1-}"; shift || :
   [ "$#" -gt 0 ] || return 0
   # WHAT THE ADD WOULD STAGE, AND WHAT IS STAGED ALREADY: `add --dry-run` says
   # nothing of a path the index already holds at these bytes, and the commit
   # takes it all the same. A staged DELETION of bytecode is a cleanup and is
   # let through (`--diff-filter=d`).
+  #
+  # A READ THAT FAILED IS NO "CLEAN" (#170 G13): a malformed magic pathspec, or
+  # an index git cannot read, made both reads exit 128 with their stderr thrown
+  # away and printed nothing, and the check passed. Each status is kept now.
+  # `add --dry-run`'s 1 is the one answer that is not a failure: it means some
+  # NAMED path is ignored, which the add would not stage.
+  bip_add=""; bip_rc=0
+  bip_add="$(git -C "$bip_repo" add --dry-run --ignore-missing -- "$@" 2>/dev/null)" || bip_rc=$?
+  [ "$bip_rc" -le 1 ] || return 3
+  bip_staged=""
+  bip_staged="$(git -C "$bip_repo" diff --cached --name-only --diff-filter=d -- "$@" 2>/dev/null)" || return 3
   {
-    git -C "$bip_repo" add --dry-run --ignore-missing -- "$@" 2>/dev/null |
-      sed -n "s/^add '\(.*\)'\$/\1/p"
-    git -C "$bip_repo" diff --cached --name-only --diff-filter=d -- "$@" 2>/dev/null
+    printf '%s\n' "$bip_add" | sed -n "s/^add '\(.*\)'\$/\1/p"
+    printf '%s\n' "$bip_staged"
   } |
     awk '!seen[$0]++ {
       n = split($0, part, "/"); hit = 0
@@ -1971,7 +1981,9 @@ commit_push() {
       || die "git update-index --force-remove $cp_ren failed — the log is already renamed on disk and git still holds the old path, so nothing was committed. Re-run; if it refuses again, \`git -C $LANES_REPO rm --cached -- $cp_ren\` is the same act by hand." 6
   fi
   if [ "$cp_add_n" -gt 0 ]; then
-    cp_byte="$(bytecode_in_pathspec "$LANES_REPO" ${cp_add[@]+"${cp_add[@]}"})"
+    cp_brc=0
+    cp_byte="$(bytecode_in_pathspec "$LANES_REPO" ${cp_add[@]+"${cp_add[@]}"})" || cp_brc=$?
+    [ "$cp_brc" = 0 ] || die "git could not read what this commit would stage (a pathspec it cannot parse, or an index it cannot read), so whether it carries bytecode is unknown; nothing was staged or committed (opensoft/openRepoTools#170 G13)" 2
     [ -z "$cp_byte" ] || die "$(bytecode_refusal_text "$cp_byte")" 2
     git -C "$LANES_REPO" -c "$CP_EXACT" add -- ${cp_add[@]+"${cp_add[@]}"} || die "git add failed" 6
   fi
@@ -16713,7 +16725,12 @@ EOF
   #  64  usage
   pathspec-check)
     [ "$#" -gt 0 ] || die "usage: pathspec-check <path>...   (relative to the workspace repository $LANES_REPO)" 64
-    pck_out="$(bytecode_in_pathspec "$LANES_REPO" "$@")"
+    pck_rc=0
+    pck_out="$(bytecode_in_pathspec "$LANES_REPO" "$@")" || pck_rc=$?
+    if [ "$pck_rc" != 0 ]; then
+      note "git could not read what that pathspec would stage (a pathspec it cannot parse, or an index it cannot read), so whether it holds bytecode is unknown, and an unknown is never reported clean (opensoft/openRepoTools#170 G13)"
+      exit 2
+    fi
     if [ -n "$pck_out" ]; then
       printf '%s\n' "$pck_out"
       note "$(bytecode_refusal_text "$pck_out")"

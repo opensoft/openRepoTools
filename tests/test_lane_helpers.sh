@@ -15551,6 +15551,16 @@ has  "…a venv under any name included, by its site-packages" "$out" "$B162_REL
 has  "…and the line that covers it is among those offered" "$err" "'site-packages/'"
 run "$E" pathspec-check "$B162_REL/r1/notes.md"
 is   "a pathspec with nothing of the kind passes" "$rc" 0
+# A READ THAT FAILED IS NO "CLEAN" (#170 G13): a malformed magic pathspec makes
+# both git reads exit 128, and the check printed nothing and passed.
+run "$E" pathspec-check ':(bogus)x'
+is   "a pathspec git cannot read is refused, never reported clean" "$rc" 2
+has  "…saying the read failed" "$err" "could not read what that pathspec would stage"
+b162_head="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_LANE=repoA-1 LANES_PATH=':(bogus)x' "$E" commit "attach nothing"
+is   "…and the commit path refuses it before the add" "$rc" 2
+has  "…saying so" "$err" "could not read what this commit would stage"
+is   "…committing nothing" "$(git -C "$WIP" rev-parse HEAD)" "$b162_head"
 b162_head="$(git -C "$WIP" rev-parse HEAD)"
 run env LANES_LANE=repoA-1 LANES_PATH="$B162_REL" "$E" commit "attach r1"
 is   "the commit path refuses the same pathspec" "$rc" 2
