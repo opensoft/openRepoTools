@@ -2745,6 +2745,13 @@ class Sweep:
                 continue
             try:
                 self._act_item(i)
+            except _SelfCheck as exc:
+                i.result = "REFUSED by the self-check: " + str(exc)
+                self.refused_check = f"{i.path}: {exc}"
+                self.halt = (f"the self-check refused {i.kind} {i.path} ({exc}); no further act "
+                             "is taken until that is understood")
+                note(f"REFUSED by the self-check before deleting {i.kind} {i.path}: {exc}")
+                self._archive_dir()
             except (_ActFailed, OSError) as exc:
                 i.result = "FAILED: " + str(exc)
                 self.failed += 1
@@ -2872,6 +2879,26 @@ class Sweep:
                              "rev-list failed); left in place")
         return lost
 
+    def _branch_lost(self, co: str, branch: str, tip: str) -> list:
+        """What deleting `refs/heads/<branch>` (at `tip`) in `co` would take
+        that no origin ref, other branch, tag, stash, push or bundle of this
+        run keeps: its tip and every commit its reflog names. Raises when
+        that cannot be read - unknown is never 'nothing'."""
+        common = self._common(co)
+        if not common:
+            raise _ActFailed("the repository's git directory could not be read; the branch is left")
+        logs, why = reflog_shas([os.path.join(common, "logs", "refs", "heads", *branch.split("/"))])
+        if logs is None:
+            raise _ActFailed(why + "; the branch is left")
+        keep = ["--remotes=origin", f"--exclude={branch}", "--branches", "--tags",
+                "--glob=refs/stash"]
+        kept = sorted(self.verified.get(common, set()) | self.bundled.get(common, set()))
+        lost = lost_tips(co, [tip] + logs, keep + kept)
+        if lost is None:
+            raise _ActFailed("whether its commits are kept elsewhere could not be read (git "
+                             "rev-list failed); the branch is left")
+        return lost
+
     def _self_check(self, t: Tree) -> None:
         """NOTHING IS DELETED THAT IS NOT FIRST ON ORIGIN OR IN A BUNDLE, asked
         one last time of git itself, right before the removal: every commit
@@ -2892,28 +2919,33 @@ class Sweep:
         (`refs/lane-worktrees/<slice>-<UTC>/<label>-<n>`, the name it carries
         in the bundle), the bundle is made and verified, and the refs are
         deleted. The ledger records it as the only copy."""
-        where = t.gitpath
-        prefix = f"refs/lane-worktrees/{t.slice}-{self.stamp}"
+        return self._bundle_lost_at(t.gitpath, t.slice, lost, label, t.checkout or "", t.path)
+
+    def _bundle_lost_at(self, where: str, slice_: str, lost: list, label: str,
+                        checkout: str, what: str) -> str:
+        prefix = f"refs/lane-worktrees/{slice_}-{self.stamp}"
         made = []
         try:
             for n, sha in enumerate(lost, 1):
                 ref = f"{prefix}/{label}-{n}"
                 self._git_or_fail(where, "update-ref", ref, sha, "")
                 made.append(ref)
-            out = self._bundle(t, made)
+            out = self._bundle_at(where, slice_, made)
         finally:
             for ref in made:
                 git(where, "update-ref", "-d", ref)
-        self._ledger_bundle(t, out, lost[0])
+        self._ledger_row(out, lost[0], checkout, what)
         return out
 
     def _ledger_bundle(self, t: Tree, bundle: str, sha: str) -> None:
+        self._ledger_row(bundle, sha, t.checkout or "", t.path)
+
+    def _ledger_row(self, bundle: str, sha: str, checkout: str, what: str) -> None:
         """`rescues.tsv`'s row for a bundle that is the ONLY copy of what it
         holds (#170 item 8): origin `-`, branch `bundle:<file>`. `--expire`
         reads such a row as "no other copy" and never expires the archive."""
         if sha:
-            self.rescues.append(("-", f"bundle:{os.path.basename(bundle)}", sha,
-                                 t.checkout or "", t.path))
+            self.rescues.append(("-", f"bundle:{os.path.basename(bundle)}", sha, checkout, what))
 
     def _act_tree(self, t: Tree) -> None:
         # LIVENESS IS ASKED AGAIN AT THE MOMENT OF THE ACT, not trusted from the
@@ -3229,12 +3261,14 @@ class Sweep:
         prerequisites are on origin), or the whole history where that would be
         empty or origin has no default branch here. Its heads are recorded:
         they are what the self-check counts as bundled."""
-        where = t.gitpath
-        out = os.path.join(self._archive_dir(), f"{t.slice}.bundle")
+        return self._bundle_at(t.gitpath, t.slice, refs)
+
+    def _bundle_at(self, where: str, slice_: str, refs: list) -> str:
+        out = os.path.join(self._archive_dir(), f"{slice_}.bundle")
         n = 1
         while os.path.exists(out):
             n += 1
-            out = os.path.join(self._archive_dir(), f"{t.slice}-{n}.bundle")
+            out = os.path.join(self._archive_dir(), f"{slice_}-{n}.bundle")
         base = git_out(where, "symbolic-ref", "-q", "refs/remotes/origin/HEAD") or ""
         if not base and git(where, "rev-parse", "-q", "--verify",
                             "refs/remotes/origin/main").returncode == 0:
@@ -3350,11 +3384,30 @@ class Sweep:
             rmtree(i.path)
             i.result = "removed"
         elif i.kind == "branch" and i.disposition in ("delete", "delete+remote"):
-            done, why = delete_local_branch(i.extra["checkout"], i.extra["branch"],
-                                            i.extra.get("tip", ""))
+            # THE BRANCH'S REFLOG GOES WITH THE REF (#174, Copilot round 1): an
+            # experiment committed on it and reset away from is reachable from
+            # that reflog alone, and `update-ref -d` deleted its last pointer
+            # with no loss plan, no bundle and no self-check. The same three a
+            # tree's branch delete has are asked here.
+            co, branch, tip = i.extra["checkout"], i.extra["branch"], i.extra.get("tip", "")
+            slice_ = "branch-" + safe_ref_part(branch)
+            lost = self._branch_lost(co, branch, tip)
+            if lost and os.environ.get(SEAM_NO_LOSS_BUNDLE, "") != "1":
+                i.extra["bundle"] = self._bundle_lost_at(co, slice_, lost, "reflog", co,
+                                                         f"{co} branch {branch}")
+            try:
+                still = self._branch_lost(co, branch, tip)
+            except _ActFailed as exc:
+                raise _SelfCheck(str(exc))
+            if still:
+                raise _SelfCheck(f"{len(still)} commit(s) its delete would take are neither on "
+                                 f"origin nor in a bundle (e.g. {short(still[0])})")
+            done, why = delete_local_branch(co, branch, tip)
             if not done:
                 raise _ActFailed("the local branch was not deleted: " + why)
             i.result = "local branch deleted"
+            if i.extra.get("bundle"):
+                i.result += f"; commits only its reflog named {tilde(i.extra['bundle'])}"
             if i.disposition == "delete+remote":
                 done, why = delete_remote_branch(i.extra["checkout"], i.extra["branch"],
                                                  i.extra.get("remote_tip", ""))
@@ -3366,7 +3419,8 @@ class Sweep:
                     self.failed += 1
 
     def _register_items(self) -> None:
-        done = [i for i in self.items if i.result and not i.result.startswith(("FAILED", "left"))]
+        done = [i for i in self.items if i.result
+                and not i.result.startswith(("FAILED", "left", "REFUSED"))]
         scratch = [i for i in done if i.kind == "scratch"]
         branches = [i for i in done if i.kind == "branch"]
         cleaned = [i for i in done if i.kind in ("cache", "sandbox")]

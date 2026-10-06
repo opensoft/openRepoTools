@@ -2149,3 +2149,53 @@ def test_an_old_unmarked_tmp_dir_holding_a_repository_is_listed_never_removed(es
     row = items_of(proc.stdout, "sandbox")[str(checkout)]
     assert row[0] == "list" and f"a repository lies inside it ({checkout / 'work'})" in row[3], row
     assert estate.git("rev-parse", "HEAD", cwd=checkout / "work") == own
+
+
+def _merged_branch_with_an_experiment(estate) -> tuple:
+    """`feat/old`, merged by PR #61 and held by no worktree, whose reflog
+    alone names an experiment: committed, reset away from, and the worktree
+    it was made in removed (taking its HEAD reflog)."""
+    tree = estate.worktree("old", "feat/old", record=False)
+    own = estate.commit(tree, "an experiment", {"exp.txt": "PRECIOUS\n"})
+    estate.git("reset", "-q", "--hard", "HEAD~1", cwd=tree)
+    tip = estate.commit(tree, "the work", {"w.txt": "w\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/old", cwd=tree)
+    estate.git("worktree", "remove", tree)
+    estate.pr(61, "feat/old", "MERGED", tip)
+    assert own in estate.git("rev-list", "--reflog").split()
+    return own, tip
+
+
+def test_a_branch_deletes_reflog_only_commit_is_bundled_first(estate):
+    """#174 Copilot round 1: `--branches --yes` deleted a merged branch with
+    `update-ref -d`, which takes its reflog - the last pointer to an
+    experiment committed on it and reset away from - with no loss plan, no
+    bundle and no self-check. It is bundled first now, as a tree's is, and
+    the ledger records the bundle as the only copy."""
+    own, _tip = _merged_branch_with_an_experiment(estate)
+    proc = estate.sweep(LANE, "--branches", "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    item = items_of(proc.stdout, "branch")["feat/old"]
+    assert "local branch deleted" in item[3] and "commits only its reflog named" in item[3], item
+    assert "feat/old" not in estate.git("branch", "--format=%(refname:short)").splitlines()
+    (archive,) = estate.archives()
+    bundles = sorted(archive.glob("branch-feat-old*.bundle"))
+    assert bundles and _bundle_holds(estate, bundles[0], own)
+    assert [r for r in _ledger(archive) if r[0] == "-" and r[2] == own], _ledger(archive)
+
+
+def test_the_self_check_refuses_a_branch_delete_that_would_lose_a_commit(estate):
+    """... and with that bundle switched off (the suite's seam), the
+    self-check is what stands between the delete and the experiment: it
+    refuses, exit 2, DISPOSITION.md says so, and the branch stays."""
+    own, tip = _merged_branch_with_an_experiment(estate)
+    proc = estate.sweep(LANE, "--branches", "--yes", "--porcelain",
+                        env={"LANE_WORKTREES_SEAM_NO_LOSS_BUNDLE": "1"})
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    item = items_of(proc.stdout, "branch")["feat/old"]
+    assert item[3].endswith(f"REFUSED by the self-check: 1 commit(s) its delete would take are "
+                            f"neither on origin nor in a bundle (e.g. {own[:12]})"), item
+    assert estate.git("rev-parse", "refs/heads/feat/old") == tip
+    assert "feat/old" in estate.remote_heads()
+    (archive,) = estate.archives()
+    assert "REFUSED by the self-check" in (archive / "DISPOSITION.md").read_text()
