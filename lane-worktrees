@@ -307,15 +307,24 @@ def human_size(n: int) -> str:
 
 def rmtree(path: str) -> None:
     """`shutil.rmtree` that also clears git's read-only object files. A path
-    that is already gone is already removed."""
+    that is already gone is already removed.
+
+    A SYMLINK IS NEVER CHMOD-ED OR REMOVED THROUGH (#170 E4): `os.chmod`
+    follows a link, so the retry for an entry that would not go changed the
+    mode of whatever the link pointed at - a clone elsewhere - and a path that
+    IS a link was "removed" by an rmtree that refused it in silence. A link
+    at the top is refused; one inside is retried without a chmod."""
     if not os.path.lexists(path):
         return
+    if os.path.islink(path):
+        raise OSError(f"{path} is a symbolic link; nothing is removed through one")
 
     def clear(func, target, _exc):
-        try:
-            os.chmod(target, stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
-        except OSError:
-            pass
+        if not os.path.islink(target):
+            try:
+                os.chmod(target, stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
+            except OSError:
+                pass
         func(target)
     shutil.rmtree(path, onerror=clear)
 
@@ -617,9 +626,15 @@ class Helper:
             cache[uuid] = {0: "live", 8: "none"}.get(proc.returncode, "unknown")
         return cache[uuid]
 
-    def note_line(self, lane: str, text: str):
+    def note_line(self, lane: str, text: str, session: str = ""):
+        """The NOTED line, written AS THIS SESSION (#170 E7): `LANES_SESSION`
+        is passed, so the line names the session that swept and not
+        whatever the helper would find on its own."""
+        extra = {"LANES_LANE": lane}
+        if session:
+            extra["LANES_SESSION"] = session
         return self.call("log", "NOTED", f"lane:{lane}", register_text(text),
-                         env_extra={"LANES_LANE": lane}, fetch=False)
+                         env_extra=extra, fetch=False)
 
 
 LANE_LINE_RE = re.compile(r"^(?:STARTED|PAUSED|RESUMED|ENDED|RETIRED) — lane [^,]+, "
@@ -710,6 +725,11 @@ class ProcScan:
     def _scan(self) -> None:
         me = os.getpid()
         uid = os.getuid()
+        if os.environ.get(SEAM_NO_PROCSCAN, "") == "1":
+            # THE SUITE'S SEAM (#170 C5): a host with no `/proc` and no `lsof`,
+            # on a host that has both.
+            self.why = "this host has no /proc and no lsof (the suite's seam)"
+            return
         if os.path.isdir("/proc/self/fd"):
             self.available = True
             pending = []             # (pid, comm, ppid, hints, anywhere)
@@ -954,15 +974,18 @@ class MergeEvidence:
                 self._landed.add((m.group(2).lower(), int(m.group(1))))
         return self._landed
 
-    def prs(self, slug: str):
+    def prs(self, slug: str, branch: str):
+        """Every pull request whose head is `branch`, ASKED BY THAT BRANCH
+        (#170 E5): one `--limit 1000` list of the whole repository missed the
+        PR of a branch older than its thousandth, which then read as none."""
         if not slug or not self.gh_ok:
             return None
-        if slug in self._prs:
-            return self._prs[slug]
+        if (slug, branch) in self._prs:
+            return self._prs[(slug, branch)]
         env = dict(os.environ, GH_PROMPT_DISABLED="1", GH_NO_UPDATE_NOTIFIER="1")
-        proc = run(["gh", "pr", "list", "--repo", slug, "--state", "all", "--limit", "1000",
-                    "--json", "number,state,mergedAt,headRefName,headRefOid,baseRefName,"
-                    "isCrossRepository"],
+        proc = run(["gh", "pr", "list", "--repo", slug, "--state", "all", "--head", branch,
+                    "--limit", "200", "--json", "number,state,mergedAt,headRefName,headRefOid,"
+                    "baseRefName,isCrossRepository"],
                    env=env, timeout=120)
         rows = None
         if proc.returncode == 0:
@@ -971,8 +994,8 @@ class MergeEvidence:
             except ValueError:
                 rows = None
         if rows is None:
-            self.gh_why = f"gh pr list --repo {slug} failed: " + _first_line(proc.stderr)
-        self._prs[slug] = rows
+            self.gh_why = f"gh pr list --repo {slug} --head {branch} failed: " + _first_line(proc.stderr)
+        self._prs[(slug, branch)] = rows
         return rows
 
     @staticmethod
@@ -987,7 +1010,7 @@ class MergeEvidence:
     def judge(self, repo: str, slug: str, branch: str, tip: str) -> dict:
         """{'state': merged|moved|elsewhere|open|closed|none|unknown, 'pr': n,
         'source': ..., 'why': ...} for `branch` at `tip`."""
-        rows = self.prs(slug)
+        rows = self.prs(slug, branch)
         if rows is None:
             return {"state": "unknown", "pr": 0, "source": "",
                     "why": "no pull request could be read for it (" + (self.gh_why or
@@ -3598,7 +3621,7 @@ class Sweep:
     def _note(self, t, text: str) -> None:
         if self.opts.foreign and self.opts.word and t is not None and t.owner == "foreign":
             text += f"; foreign on the word '{self.opts.word}'"
-        proc = self.helper.note_line(self.lane, text)
+        proc = self.helper.note_line(self.lane, text, self.caller)
         line = "NOTED " + utc_now() if proc.returncode == 0 else \
             f"NOT WRITTEN (lanes-edit.sh log exited {proc.returncode}: {_first_line(proc.stderr)})"
         if t is not None:
@@ -3610,9 +3633,13 @@ class Sweep:
             # register that refused one line will refuse the next.
             self.halt = self.halt or ("the register refused a line (NOT WRITTEN); nothing more "
                                       "is acted on until it is written by hand")
+            # THE COMMAND IS QUOTED FOR THE SHELL (#170 E6): it is printed to be
+            # pasted, and a path with a quote or a `$` in it broke it.
             note(f"the register line for {t.path if t else 'this sweep'} was NOT written "
-                 f"(exit {proc.returncode}); write it by hand: LANES_LANE={self.lane} "
-                 f"lanes-edit.sh log NOTED lane:{self.lane} \"{register_text(text)}\"")
+                 f"(exit {proc.returncode}); write it by hand: "
+                 + " ".join(shlex.quote(a) for a in (
+                     f"LANES_LANE={self.lane}", "lanes-edit.sh", "log", "NOTED",
+                     f"lane:{self.lane}", register_text(text))))
         self.dispositions.append((t.path if t else "-", text, line))
 
     def _record(self, t: Tree) -> None:
@@ -3689,6 +3716,9 @@ class _SelfCheck(Exception):
 #: The suite's seam: skips the reflog bundle (#170 A5) so the self-check is
 #: what stands between the removal and a commit only a reflog names.
 SEAM_NO_LOSS_BUNDLE = "LANE_WORKTREES_SEAM_NO_LOSS_BUNDLE"
+
+#: The suite's seam: a process scan that cannot be made (#170 C5).
+SEAM_NO_PROCSCAN = "LANE_WORKTREES_SEAM_NO_PROCSCAN"
 
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
