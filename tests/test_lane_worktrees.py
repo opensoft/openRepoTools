@@ -2363,3 +2363,22 @@ def test_a_repository_under_a_cache_named_directory_keeps_the_scratch(estate):
     row = items_of(proc.stdout, "scratch")[str(scratch)]
     assert row[0] == "keep" and f"a repository lies under it ({work})" in row[3], row
     assert estate.git("rev-parse", "HEAD", cwd=work) == own
+
+
+def test_another_lanes_claim_inside_a_repository_is_read_before_a_clone_goes(estate):
+    """#174 Copilot round 2: the whole-estate walk found `.lane-state` under a
+    plain directory inside a repository - `host/vendor/.lane-state` - and the
+    sweep threw it away; with no log naming that place, another lane's claim
+    on a clone was missed and the clone removed."""
+    clone, env = _foreign_clone(estate, "theirs")
+    host = estate.projects / "host"
+    estate.git("init", "-q", "-b", "main", host, cwd=estate.root)
+    claims = host / "vendor" / ".lane-state" / "repoD-5" / "trees"
+    claims.mkdir(parents=True)
+    (claims / "c1.yaml").write_text(f"schema: 1\npath: {clone}\n")
+    proc = estate.sweep(LANE, "--include-foreign", "--word", "go", "--yes", "--porcelain",
+                        env=env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    row = rows_of(proc.stdout)[str(clone)]
+    assert row[0] == "foreign" and "lane repoD-5's inventory names it" in row[2], row
+    assert clone.is_dir()

@@ -1901,6 +1901,7 @@ class Sweep:
         self.failed = 0
         self.deps: dict = {}
         self.deps_partial: list = []
+        self.walk_lane_states: list = []
         self.shape_repos: list = []
         self.estate_root = ""
         self.fetched: dict = {}
@@ -1986,6 +1987,12 @@ class Sweep:
         for tree in self.trees:
             read_tree(tree)
         self._dependents()
+        # EVERY CONTROL ROOT THE WHOLE-ESTATE WALK FOUND IS A PLACE ANOTHER LANE'S
+        # CLAIM MAY BE (#174, Copilot round 2): `host/vendor/.lane-state`, with
+        # `host` a repository and no log naming it, was found by that walk and
+        # thrown away - and a clone another lane claims from there was removed.
+        if self.walk_lane_states:
+            self._other_lanes(self.walk_lane_states)
         for tree in self.trees:
             self._liveness(tree)
             if tree.is_git and tree.exists:
@@ -2012,6 +2019,7 @@ class Sweep:
         if whole:
             walk = walk_estate(self.estate_root)
             unread += walk.unread
+            self.walk_lane_states = walk.lane_states
             self.deps = dependents_map(walk.repos, unread)
             self.deps_partial = unread
         else:
@@ -2148,7 +2156,7 @@ class Sweep:
                 seen[real(full)] = Tree(full, "foreign", kind)
         self.trees = sorted(seen.values(), key=lambda t: (t.owner != "inventory", t.path))
 
-    def _other_lanes(self) -> None:
+    def _other_lanes(self, extra: list = ()) -> None:
         """A FOREIGN tree another lane's inventory names is THAT lane's.
 
         EVERY LANE'S CONTROL ROOT IS READ, wherever #97 keeps it (#170 G6): a
@@ -2170,6 +2178,7 @@ class Sweep:
             parents.add(os.path.join(os.environ["PROJECTS_ROOT"], ".lane-state"))
         parents.update(os.path.join(os.path.dirname(r.rstrip("/")), ".lane-state")
                        for r in self.shape_repos)
+        parents.update(extra)
         claimed: dict = {}
 
         def unreadable(what: str) -> None:
