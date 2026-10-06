@@ -2081,7 +2081,8 @@ def test_a_tmp_dir_is_listed_and_never_removed_marked_or_old(estate):
     for d in (unmarked, ancient, marked, layout):
         d.mkdir()
         (d / "f").write_text("x")
-    (marked / ".lock").write_text(f"{_dead_pid()}\n")
+    dead_pid = _dead_pid()
+    (marked / ".lock").write_text(f"{dead_pid}\n")
     (layout / "basetemp").mkdir()
     (layout / "tmp").mkdir()
     for d in (unmarked, marked, layout):
@@ -2095,7 +2096,7 @@ def test_a_tmp_dir_is_listed_and_never_removed_marked_or_old(estate):
         assert "never removed" in rows[str(d)][3], rows[str(d)]
     for d in (unmarked, ancient):
         assert "no mark of a test suite" in rows[str(d)][3], rows[str(d)]
-    assert "a pytest .lock (pid 999999, gone)" in rows[str(marked)][3]
+    assert f"a pytest .lock (pid {dead_pid}, gone)" in rows[str(marked)][3]
     assert "run-root layout" in rows[str(layout)][3]
 
 
