@@ -1539,6 +1539,14 @@ def tree_guards(tree: Tree) -> str:
         if sstash.returncode != 0 or sstash.stdout.strip():
             return (f"submodule {parts[1]} has a stash (or its stash could not be read), which "
                     "the tree's removal would take with it")
+        # ITS REFLOGS TOO (#174, Copilot round 1): a commit made in the
+        # submodule and checked out away from is in no branch, tag or stash -
+        # only a reflog under its git directory names it - and the tree's
+        # removal takes that directory, which no loss plan of the tree reads.
+        why = unpublished_reflog(spath, "--remotes", "every remote of it")
+        if why:
+            return (f"submodule {parts[1]}: {why} - push it there first; the tree's removal "
+                    "takes the submodule's repository with it")
     # A REPOSITORY NESTED ANYWHERE IN IT - a venv's `src/` (`pip install -e
     # git+...`) and node_modules included (#170 A3): only bytecode caches are
     # passed over, and a directory that cannot be read keeps the tree.
@@ -1656,6 +1664,28 @@ def unpublished_ref(path: str, remotes: str, where: str) -> str:
         if ref.startswith(prefix):
             return f"its {kind}{ref[len(prefix):]} holds commits {where} lacks"
     return f"its {ref} holds commits {where} lacks"
+
+
+def unpublished_reflog(path: str, remotes: str, where: str) -> str:
+    """'' when every commit a reflog of the repository at `path` names is in
+    a remote-tracking ref `remotes` names; else how many are not, or that
+    the reflogs could not be read - both keep."""
+    gitdir = git_out(path, "rev-parse", "--absolute-git-dir")
+    if not gitdir:
+        return f"its git directory could not be read, so whether {where} holds what its reflogs name is unknown"
+    files, why = reflog_files(gitdir)
+    if files is None:
+        return why
+    shas, why = reflog_shas(files)
+    if shas is None:
+        return why
+    lost = lost_tips(path, shas, [remotes])
+    if lost is None:
+        return f"whether {where} holds the commits its reflogs name could not be read"
+    if lost:
+        return (f"its reflog names {len(lost)} commit(s) {where} lacks (e.g. {short(lost[0])}), "
+                "in no branch, tag or stash")
+    return ""
 
 
 def hidden_edits(path: str):

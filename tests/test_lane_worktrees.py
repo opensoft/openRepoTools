@@ -2081,3 +2081,22 @@ def test_a_clones_reflogs_that_cannot_be_listed_remove_nothing(estate):
     row = rows_of(proc.stdout)[str(clone)]
     assert "could not be listed" in row[2] and "left in place" in row[2], row
     assert proc.returncode == 1, proc.stdout + proc.stderr
+
+
+def test_a_submodule_commit_only_its_reflog_names_keeps_the_tree(estate):
+    """#174 Copilot round 1: a submodule's experiment, made detached and
+    checked out away from, is in no branch, tag or stash of it - only its
+    reflog names it - so every guard passed, and the tree's removal took
+    the submodule's repository (under the tree's own git directory) and
+    the experiment with it."""
+    tree, sub = _with_submodule(estate, "subexp")
+    estate.git("checkout", "-q", "--detach", cwd=sub)
+    own = estate.commit(sub, "an experiment", {"exp.txt": "PRECIOUS\n"})
+    estate.git("checkout", "-q", "--detach", "origin/main", cwd=sub)
+    assert estate.git("status", "--porcelain", cwd=tree) == ""
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(tree)][0] == "keep", rows[str(tree)]
+    assert "submodule sub: its reflog names 1 commit(s)" in rows[str(tree)][2]
+    assert estate.sweep(LANE, "--yes").returncode == 0
+    assert tree.is_dir()
+    assert estate.git("cat-file", "-t", own, cwd=sub) == "commit"
