@@ -2026,3 +2026,20 @@ def test_an_inventory_row_with_no_id_refuses_the_dry_run(estate):
     proc = estate.sweep(LANE, "--dry-run", "--porcelain")
     assert proc.returncode == 2, proc.stdout + proc.stderr
     assert "inventory record ? is unreadable" in proc.stdout
+
+
+def test_a_dot_git_file_that_is_no_pointer_leaves_the_scan_whole(estate):
+    """uv keeps an EMPTY `.git` file in its cache to stop git looking upward.
+    It is no repository, and no reason to call the dependents scan partial
+    (measured on Eagle: two of them kept every clone and scratch)."""
+    marker = estate.projects / "tool-cache" / "uv" / "sdists-v9"
+    marker.mkdir(parents=True)
+    (marker / ".git").write_text("")
+    store = estate.lane_root / "store"
+    estate.git("clone", "-q", GH_URL, store, cwd=estate.root)
+    conf = estate.root / "sweep.conf"
+    conf.write_text("foreign_quiet_hours=0\n")
+    proc = estate.sweep(LANE, "--include-foreign", "--word", "go", "--yes", "--porcelain",
+                        env={"LANE_WORKTREES_CONF": str(conf)})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not store.exists(), rows_of(proc.stdout)[str(store)]

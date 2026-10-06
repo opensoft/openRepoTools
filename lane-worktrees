@@ -1189,8 +1189,15 @@ def dependents_map(repos: list, unread: list | None = None) -> dict:
     for repo in repos:
         common = git_common_dir(repo)
         if not common:
-            if unread is not None:
-                unread.append(f"{repo}/.git (its git directory could not be resolved)")
+            # A `.git` FILE THAT IS NO POINTER IS NO REPOSITORY: uv keeps an empty
+            # one in its cache to stop git looking upward. Only one that cannot
+            # be read leaves the leaning unknown.
+            try:
+                with open(os.path.join(repo, ".git"), "rb") as fh:
+                    fh.read(1)
+            except OSError as exc:
+                if unread is not None:
+                    unread.append(f"{repo}/.git ({exc.strerror or exc})")
             continue
         try:
             with open(os.path.join(common, "objects", "info", "alternates"),
