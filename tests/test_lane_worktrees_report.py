@@ -598,3 +598,34 @@ def test_the_daily_report_is_private_and_survives_its_panes_hangup(tmp_path):
     assert hup == "ignored", hup
     for d in (state / "openRepoTools", state / "openRepoTools" / "reports"):
         assert d.stat().st_mode & 0o777 == 0o700, (d, oct(d.stat().st_mode))
+
+
+# ===================================================== #179, Copilot round 1
+
+def test_a_failure_that_is_no_record_leaves_an_empty_section_none(tmp_path):
+    """#179 Copilot round 1: the orphan and aging sections said "none found in
+    what could be read; N record(s) could not be read" whenever ANYTHING
+    could not be read - an ignored-file listing that failed included, which
+    bears on no lane's records - so an honest "none" read as unknown. Such a
+    failure is still a row of "Records the report could not read"."""
+    e = LW.Estate(tmp_path)
+    (e.fakebin / "status").write_text(FAKE_STATUS)
+    (e.fakebin / "status").chmod(0o755)
+    e.env["LANE_WORKTREES_STATUS"] = str(e.fakebin / "status")
+    shim = tmp_path / "ignored-shim"
+    shim.mkdir()
+    real_git = shutil.which("git")
+    (shim / "git").write_text(
+        "#!/bin/sh\n"
+        'case " $* " in *" ls-files --others --ignored "*)\n'
+        "  echo 'fatal: the shim refuses' >&2; exit 128 ;;\n"
+        "esac\n"
+        f'exec "{real_git}" "$@"\n')
+    (shim / "git").chmod(0o755)
+    proc = report(e, env={"PATH": f"{shim}{os.pathsep}{e.env['PATH']}"})
+    assert proc.returncode == 0, proc.stderr
+    unread = section(proc.stdout, "Records the report could not read")
+    assert "its ignored files could not be listed" in unread, unread
+    for title in ("Orphaned worktrees of ENDED lanes", "Awaiting disposition"):
+        found = section(proc.stdout, title)
+        assert "_none_" in found and "none found in what could be read" not in found, found
