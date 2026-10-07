@@ -1307,6 +1307,45 @@ def test_an_unreadable_pytest_sandbox_root_is_a_row_not_a_traceback(estate):
         assert rows[str(root)][0] == "keep" and "could not be listed" in rows[str(root)][3]
 
 
+@pytest.mark.parametrize("breakage", ["head-removed", "gitfile-to-missing-gitdir", "objects-removed", "mode-000"])
+def test_a_lane_dir_whose_repository_git_cannot_read_still_refuses(estate, breakage):
+    """#170 G5 against a REAL failure, which the shim of
+    test_registrations_that_cannot_be_read_refuse_the_dry_run never makes: the
+    lane's recorded checkout IS a repository and `git worktree list` fails in
+    it. `rev-parse` then says "not a git repository" too, so a guard that reads
+    that answer alone as an absence would let the gate pass over it."""
+    import shutil as _sh
+    gitdir = estate.checkout / ".git"
+    if breakage == "head-removed":
+        (gitdir / "HEAD").unlink()
+    elif breakage == "gitfile-to-missing-gitdir":
+        _sh.rmtree(gitdir)
+        gitdir.write_text(f"gitdir: {estate.root / 'gone' / '.git'}\n")
+    elif breakage == "objects-removed":
+        _sh.rmtree(gitdir / "objects")
+    else:
+        if os.geteuid() == 0:
+            pytest.skip("root reads a mode-000 directory")
+        gitdir.chmod(0)
+    try:
+        proc = estate.sweep(LANE, "--dry-run", "--porcelain")
+    finally:
+        if breakage == "mode-000":
+            gitdir.chmod(0o755)
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert f"the worktree registrations of {estate.checkout} could not be read" in proc.stdout
+
+
+def test_a_lane_dir_that_holds_no_repository_is_an_absence(estate):
+    """The repoQ-1 shape (#163): a recorded `dir` with no `.git` at all has no
+    registrations to read, so it is never G5's refusal."""
+    import shutil as _sh
+    _sh.rmtree(estate.checkout / ".git")
+    proc = estate.sweep(LANE, "--dry-run", "--porcelain")
+    assert "could not be read (git worktree list failed)" not in proc.stdout, proc.stdout + proc.stderr
+    assert proc.returncode in (0, 3), proc.stdout + proc.stderr
+
+
 def test_usage_errors_are_64(estate):
     for argv in (["--bogus"], [], ["--word", "x"]):
         proc = estate.sweep(*argv) if argv != [] else estate.sweep()

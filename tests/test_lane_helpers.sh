@@ -49,7 +49,7 @@ TESTS_DIR="$(cd -- "$(dirname -- "$SELF")" && pwd)"
 # the root of `opensoft/openRepoTools` now and this suite is in `tests/`.
 SRC_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
 
-for f in lane-start lane-end lanes-edit.sh link-estates lane lanes lane-rename; do
+for f in lane-start lane-end lanes-edit.sh link-estates lane lanes lane-rename lane-worktrees; do
   [ -x "$SRC_DIR/$f" ] || { echo "missing or not executable: $SRC_DIR/$f" >&2; exit 1; }
 done
 [ -f "$SRC_DIR/repos.tsv" ] || { echo "missing: $SRC_DIR/repos.tsv" >&2; exit 1; }
@@ -489,11 +489,13 @@ export OPENREPOTOOLS_BIN_DIR="$SANDBOX/bin"
 mkdir -p "$OPENREPOTOOLS_BIN_DIR"
 cp -p "$SRC_DIR/lane-start" "$SRC_DIR/lane-end" "$SRC_DIR/lanes-edit.sh" \
       "$SRC_DIR/link-estates" "$SRC_DIR/lane" "$SRC_DIR/lanes" \
-      "$SRC_DIR/lane-rename" "$SRC_DIR/repos.tsv" "$OPENREPOTOOLS_BIN_DIR/"
+      "$SRC_DIR/lane-rename" "$SRC_DIR/repos.tsv" "$SRC_DIR/lane-worktrees" \
+      "$OPENREPOTOOLS_BIN_DIR/"
 chmod 755 "$OPENREPOTOOLS_BIN_DIR"/lane-start "$OPENREPOTOOLS_BIN_DIR"/lane-end \
           "$OPENREPOTOOLS_BIN_DIR"/lanes-edit.sh "$OPENREPOTOOLS_BIN_DIR"/link-estates \
           "$OPENREPOTOOLS_BIN_DIR"/lane "$OPENREPOTOOLS_BIN_DIR"/lanes \
-          "$OPENREPOTOOLS_BIN_DIR"/lane-rename "$OPENREPOTOOLS_BIN_DIR"/repos.tsv
+          "$OPENREPOTOOLS_BIN_DIR"/lane-rename "$OPENREPOTOOLS_BIN_DIR"/repos.tsv \
+          "$OPENREPOTOOLS_BIN_DIR"/lane-worktrees
 # AFTER the fake bin, which must still win for `tmux` and `claude`.
 export PATH="$SANDBOX/fakebin:$OPENREPOTOOLS_BIN_DIR:$PATH"
 
@@ -14628,7 +14630,12 @@ is   "lanes-edit.sh claim with the seam unset exits 0" "$rc" 0
 has  "…and stamps the same host on the CLAIMED line it writes" \
      "$(grep '^CLAIMED' "$LOGD/repoWS-1.md" | tail -n1)" "@$WS_HOST,"
 
-run env -u LANES_WORKSTATION LANES_IN_CONTAINER=0 "$END" repoWS-1 --force
+# `--inventory-only` BESIDE `--force` (#163): this case is about the workstation
+# name, and since the close-out gate a lane-end asks #162's sweep first — which
+# refuses while ANY lane's inventory under the same control root cannot be read,
+# and the #91 section above leaves dangling sidecars there on purpose. The door
+# takes a gate that is not this case's subject out of it, and says so in the row.
+run env -u LANES_WORKSTATION LANES_IN_CONTAINER=0 "$END" repoWS-1 --force --inventory-only
 is   "lane-end with the seam unset exits 0" "$rc" 0
 has  "…and its row status names the same host" \
      "$(grep '^| `repoWS-1`' "$LANES")" "lane-end on $WS_HOST:"
@@ -15636,6 +15643,353 @@ git -C "$WIP" reset -q -- "$B162_REL"
 rm -rf "$WIP/handoffs/sandbox"
 if [ -n "$B162_IGN" ]; then printf '%s\n' "$B162_IGN" > "$WIP/.gitignore"; else rm -f "$WIP/.gitignore"; fi
 git -C "$WIP" checkout -q -- .gitignore 2>/dev/null || :
+
+# =========================================================================
+echo "== opensoft/openRepoTools#163: lane-end's close-out gate, and lane-worktrees add =="
+#
+# WORKSPACE CREATION OUTPACES WORKSPACE CLOSEOUT, and #163 is both ends of it.
+# `lane-worktrees add` makes a lane's worktree AND records it in the lane's #97
+# inventory in one act, so no tree the tooling makes is ever unrecorded; and
+# `lane-end` asks #162's sweep, as a dry run, before it ends a lane, and refuses
+# while anything of the lane's is still on disk — naming it, and the sweep that
+# retires it — unless `--inventory-only` is the word, which ends the lane and
+# writes down why. EVERYTHING THIS SECTION USES IS ITS OWN: its own repository
+# and bare origin, its own lanes (`repoCG-*`), its own `.lane-worktrees` roots
+# and its own lifecycle control root, all under the suite's sandbox and BESIDE
+# `$HOME/projects` rather than in it. That is not tidiness: the sweep reads
+# every OTHER lane's inventory under the same control root before it judges a
+# tree, and refuses where one cannot be read (#162) — and the #91 section above
+# leaves dangling sidecars there on purpose. A gate asked under that root would
+# answer for those fixtures, not for these lanes. The control root this section
+# exports is put back at its end.
+CG_E="$OPENREPOTOOLS_BIN_DIR/lanes-edit.sh"
+CG_LW="$OPENREPOTOOLS_BIN_DIR/lane-worktrees"
+CG_ID="16300001-1111-4000-8000-163000011111"
+CG_EST="$SANDBOX/cgp"
+CG_DIR="$CG_EST/repoCG"
+CG_ORIGIN="$SANDBOX/repoCG-origin.git"
+CG_ROOT="$CG_EST/.lane-worktrees"
+CG_STATE="$SANDBOX/cg-state"
+CG_LOGD="$WIP/lanes/log"
+cg_had_lsr="${LANES_LANE_STATE_ROOT+set}"; cg_lsr="${LANES_LANE_STATE_ROOT-}"
+export LANES_LANE_STATE_ROOT="$CG_STATE"
+mkdir -p "$CG_LOGD" "$CG_EST" "$CG_STATE"
+git init -q --bare -b main "$CG_ORIGIN"
+git init -q -b main "$CG_DIR"
+git -C "$CG_DIR" config user.email "test@example.invalid"
+git -C "$CG_DIR" config user.name "lane helper tests"
+git -C "$CG_DIR" remote add origin "$CG_ORIGIN"
+printf '.env\nnode_modules/\n' > "$CG_DIR/.gitignore"
+printf 'seed\n' > "$CG_DIR/a.txt"
+git -C "$CG_DIR" add -A >/dev/null 2>&1
+git -C "$CG_DIR" commit -q -m "the close-out estate's first commit"
+git -C "$CG_DIR" push -q origin main 2>/dev/null
+
+cg_lane() {   # <lane> [<dir>] — a row, and a log whose STARTED line records the lane's directory
+  "$CG_E" add-row "| \`$1\` | harness \`$CG_ID\` | Eagle / test / brett | 2026-10-06T00:00Z | none | handoffs/repoCG/$1.md | ACTIVE |" >/dev/null 2>&1
+  { printf '# lane %s — object log (lane-collision-protocol Amendment 7)\n' "$1"
+    printf 'STARTED — lane %s, session %s@Eagle, 2026-10-06T00:00:00Z, lane:%s → home opensoft/repoCG; dir %s; profile team-01a\n' \
+      "$1" "$CG_ID" "$1" "${2:-$CG_DIR}"
+  } > "$CG_LOGD/$1.md"
+  git -C "$WIP" add -- "lanes/log/$1.md"
+  git -C "$WIP" commit -q -m "LOG($1@Eagle): seed"
+  git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+  git -C "$WIP" push -q origin main 2>/dev/null
+  return 0
+}
+for cg_l in repoCG-1 repoCG-2 repoCG-3 repoCG-4 repoCG-5 repoCG-6 repoCG-7 repoCG-8 repoCG-11 repoCG-12 repoCG-13; do cg_lane "$cg_l"; done
+# repoCG-10 was started in a directory that is NO repository: it has no branches,
+# which is an absence and not a read that failed.
+mkdir -p "$CG_EST/plain"
+cg_lane repoCG-10 "$CG_EST/plain"
+cg_row() { grep "^| \`$1\`" "$LANES"; }
+cg_last() { tail -n 1 "$CG_LOGD/$1.md"; }
+
+# ------------------------------------- lane-worktrees add: made AND recorded
+
+CG_W1="$CG_ROOT/repoCG-2/w1"
+run "$CG_LW" add repoCG-2 w1 --dry-run
+is    "lane-worktrees add --dry-run exits 0" "$rc" 0
+is    "…printing the path the tree WOULD have, under the lane's own root" "$out" "$CG_W1"
+is    "…and makes nothing" "$( [ -e "$CG_W1" ] && echo made || echo none )" none
+
+run "$CG_LW" add repoCG-2 w1
+is    "lane-worktrees add makes the lane's worktree" "$rc" 0
+is    "…printing its path on stdout" "$out" "$CG_W1"
+is    "…as a git worktree of the lane's checkout" "$(git -C "$CG_DIR" worktree list --porcelain | grep -c '/repoCG-2/w1$' || :)" 1
+is    "…on a branch named for the slice" "$(git -C "$CG_W1" symbolic-ref -q --short HEAD)" w1
+run "$CG_E" lane-trees repoCG-2
+is    "…and RECORDS it in the lane's #97 inventory in the same act" "$rc" 0
+is    "…by its path" "$(printf '%s\n' "$out" | awk -F'\037' 'NR == 1 { print $2 }')" "$CG_W1"
+is    "…its branch" "$(printf '%s\n' "$out" | awk -F'\037' 'NR == 1 { print $3 }')" w1
+is    "…and its checkout" "$(printf '%s\n' "$out" | awk -F'\037' 'NR == 1 { print $10 }')" "$CG_DIR"
+
+CG_W2="$CG_ROOT/repoCG-2/w2"
+run "$CG_LW" add repoCG-2 w2 --branch feat/cg-w2 --from origin/main
+is    "add --branch --from makes a new branch from that start" "$rc" 0
+is    "…named as asked" "$(git -C "$CG_W2" symbolic-ref -q --short HEAD)" feat/cg-w2
+is    "…and TRACKING NOTHING, so a bare git push never aims a writer's commits at main" \
+      "$(git -C "$CG_W2" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1 && echo tracks || echo none)" none
+is    "…and recorded too" "$("$CG_E" lane-trees repoCG-2 2>/dev/null | awk -F'\037' -v p="$CG_W2" '$2 == p { n++ } END { print n + 0 }')" 1
+
+run "$CG_LW" add repoCG-2 w1
+is    "add refuses a path that is already there" "$rc" 2
+has   "…naming the record a tree already there takes instead" "$err" "set-lane-tree repoCG-2"
+run "$CG_LW" add repoCG-9 w1
+is    "add refuses a lane that records no directory" "$rc" 2
+is    "…and makes nothing" "$( [ -e "$CG_ROOT/repoCG-9" ] && echo made || echo none )" none
+run "$CG_LW" add repoCG-2 'not/one'
+is    "a slice that is not one path component is usage" "$rc" 64
+has   "…naming what a slice is" "$err" "is not a slice name"
+run "$CG_LW" add repoCG-2 w3 --porcelain
+is    "…and so is a word that is the sweep's" "$rc" 64
+has   "…saying whose word it is" "$err" "belong to sweep, not to add"
+run "$CG_LW" add repoCG-2 w3 --push-untracked
+is    "…--push-untracked, #174's word for the sweep, included" "$rc" 64
+has   "…named as the sweep's" "$err" "--push-untracked belong to sweep, not to add"
+
+if [ "$(id -u)" = 0 ]; then
+  skip "a record that fails takes the fresh tree back out" "root writes through a read-only directory, so the record cannot be made to fail here"
+else
+  mkdir -p "$CG_STATE/repoCG-4/trees"
+  chmod 555 "$CG_STATE/repoCG-4/trees"
+  run "$CG_LW" add repoCG-4 w9
+  chmod 755 "$CG_STATE/repoCG-4/trees"
+  is    "a record that fails after the tree is made refuses" "$rc" 2
+  has   "…saying the fresh tree was taken back out" "$err" "removed again"
+  is    "…so no unrecorded tree is left" "$( [ -e "$CG_ROOT/repoCG-4/w9" ] && echo left || echo none )" none
+  is    "…and no branch the act made" "$(git -C "$CG_DIR" rev-parse -q --verify refs/heads/w9 >/dev/null 2>&1 && echo left || echo none)" none
+fi
+
+# A `worktree add` THAT FAILS AFTER MAKING THE TREE (Copilot round 1 on #175): a
+# failing `post-checkout` hook runs after the checkout, and git returns its
+# status with the tree registered and the branch made. Both are taken back.
+printf '#!/bin/sh\nexit 1\n' > "$CG_DIR/.git/hooks/post-checkout"
+chmod +x "$CG_DIR/.git/hooks/post-checkout"
+run "$CG_LW" add repoCG-12 w8
+rm -f "$CG_DIR/.git/hooks/post-checkout"
+is    "a worktree add that fails after making the tree refuses" "$rc" 2
+has   "…saying what failed" "$err" "git worktree add failed"
+has   "…and that the fresh tree was taken back out" "$err" "removed again"
+is    "…so no unrecorded tree is left on disk" "$( [ -e "$CG_ROOT/repoCG-12/w8" ] && echo left || echo none )" none
+is    "…or registered" "$(git -C "$CG_DIR" worktree list --porcelain | grep -c '/repoCG-12/w8$' || :)" 0
+is    "…and no branch the act made" "$(git -C "$CG_DIR" rev-parse -q --verify refs/heads/w8 >/dev/null 2>&1 && echo left || echo none)" none
+
+# AND A COMMIT MADE ON THE NEW BRANCH MEANWHILE IS NEVER MADE UNREACHABLE
+# (Copilot round 2 on #175): the hook commits, then fails; the take-back removes
+# the clean tree and KEEPS the branch, which now holds that commit.
+printf '#!/bin/sh\ngit commit -q --allow-empty -m "made by the hook"\nexit 1\n' > "$CG_DIR/.git/hooks/post-checkout"
+chmod +x "$CG_DIR/.git/hooks/post-checkout"
+run "$CG_LW" add repoCG-12 w7
+rm -f "$CG_DIR/.git/hooks/post-checkout"
+is    "a worktree add whose hook committed and failed leaves something, so it is exit 1" "$rc" 1
+has   "…naming the branch it kept" "$err" "branch w7, which this act made at"
+is    "…which still holds the hook's commit" "$(git -C "$CG_DIR" log -1 --format=%s refs/heads/w7 2>/dev/null)" "made by the hook"
+is    "…while the clean tree itself was taken back out" "$( [ -e "$CG_ROOT/repoCG-12/w7" ] && echo left || echo none )" none
+git -C "$CG_DIR" branch -q -D w7 2>/dev/null || :
+
+# ---------------------------------------------- lane-end: the gate passes
+
+# OTHER LANES' TREES IN THE SAME CHECKOUT ARE NOT THIS LANE'S: repoCG-2's two
+# are registered in repoCG's checkout, and repoCG-1 ends past them.
+run "$END" repoCG-1
+is    "a lane with nothing of its own on disk ends as it always has" "$rc" 0
+has   "…saying the gate asked" "$err" "close-out gate: nothing of lane repoCG-1's is left on disk"
+has   "…and the closing phrase is the ordinary one" "$(cg_row repoCG-1)" "window closing; NOTHING IN FLIGHT"
+hasnt "…with no door taken" "$(cg_row repoCG-1)" "inventory-only"
+
+run "$END" repoCG-10
+is    "a lane started outside any repository ends: no repository is no branch, not a read that failed" "$rc" 0
+hasnt "…and its gate names no branch it could not read" "$err" "the branches could not be read"
+
+# A RECORDED DIRECTORY GIT CANNOT READ IS NOT ONE THAT HOLDS NO REPOSITORY (lane
+# 2's and lane 3's reviews of #175 at 49bfa40). git answers "not a git
+# repository" for a `.git` it cannot use as well as for none, so only a
+# directory with NO `.git` entry of its own is an absence; any other is #170
+# G5's failed read, and the gate refuses it.
+if [ "$(id -u)" = 0 ]; then
+  skip "a lane checkout whose .git is mode 000 refuses" "root reads a mode-000 directory"
+else
+  git clone -q "$CG_ORIGIN" "$CG_EST/cg14" >/dev/null 2>&1
+  git -C "$CG_EST/cg14" config user.email "test@example.invalid"
+  git -C "$CG_EST/cg14" config user.name "lane helper tests"
+  git -C "$CG_EST/cg14" checkout -q -b cg14-work
+  git -C "$CG_EST/cg14" commit -q --allow-empty -m "lane fourteen's own work
+
+Lane: repoCG-14"
+  cg_lane repoCG-14 "$CG_EST/cg14"
+  chmod 000 "$CG_EST/cg14/.git"
+  run "$CG_LW" sweep repoCG-14 --branches --include-scratch --include-caches --dry-run --porcelain
+  cg14_rc="$rc"; cg14_out="$out"
+  run "$END" repoCG-14 --dry-run
+  chmod 755 "$CG_EST/cg14/.git"
+  is    "a lane checkout whose .git is mode 000, an unpublished branch of the lane's in it, is a read that failed: the sweep refuses (2)" "$cg14_rc" 2
+  has   "…naming the registrations it could not read" "$cg14_out" "the worktree registrations of $CG_EST/cg14 could not be read"
+  is    "…and lane-end --dry-run refuses on it" "$rc" 2
+  has   "…relaying that reason" "$err" "the worktree registrations of $CG_EST/cg14 could not be read"
+fi
+mkdir -p "$CG_EST/cg15"
+printf 'gitdir: %s\n' "$SANDBOX/cg15-nowhere/.git" > "$CG_EST/cg15/.git"
+printf 'notes\n' > "$CG_EST/cg15/notes.txt"
+cg_lane repoCG-15 "$CG_EST/cg15"
+run "$CG_LW" sweep repoCG-15 --branches --include-scratch --include-caches --dry-run --porcelain
+is    "a lane directory whose .git file points nowhere refuses as well (2)" "$rc" 2
+has   "…for the same reason" "$out" "the worktree registrations of $CG_EST/cg15 could not be read"
+mkdir -p "$CG_EST/cg16"
+printf 'notes\n' > "$CG_EST/cg16/notes.txt"
+cg_lane repoCG-16 "$CG_EST/cg16"
+run "$CG_LW" sweep repoCG-16 --branches --include-scratch --include-caches --dry-run --porcelain
+is    "while a directory with no .git entry at all holds no repository: the sweep answers 0" "$rc" 0
+hasnt "…and says no registration read failed" "$out" "could not be read"
+
+# ----------------------------------- lane-end: the gate refuses, and names it
+
+printf 'SECRET=1\n' > "$CG_W1/.env"
+printf 'work\n' > "$CG_W2/scratch.txt"
+mkdir -p "$CG_ROOT/repoCG-2/notes-scratch"
+printf 'notes\n' > "$CG_ROOT/repoCG-2/notes-scratch/n.md"
+cg2_row="$(cg_row repoCG-2)"; cg2_log="$(cksum < "$CG_LOGD/repoCG-2.md")"
+run "$END" repoCG-2
+is    "lane-end REFUSES a lane whose trees are still on disk (the sweep answers 3)" "$rc" 2
+has   "…saying it is not ended" "$err" "lane repoCG-2 is NOT ended"
+has   "…naming the first tree" "$err" "$CG_W1"
+has   "…and the second" "$err" "$CG_W2"
+has   "…reading each with git status --ignored, so an ignored .env is named and the tree is not called clean" "$err" "1 ignored (.env)"
+has   "…and untracked work" "$err" "1 untracked"
+has   "…naming the lane's scratch" "$err" "$CG_ROOT/repoCG-2/notes-scratch"
+has   "…the exact table that lists them" "$err" "lane-worktrees sweep repoCG-2 --branches --include-scratch --include-caches"
+has   "…the act that retires them" "$err" "--include-caches --yes"
+has   "…and what that act removes, now that --yes is on" "$err" "removes only what is on origin or in a bundle"
+has   "…and the one door past it" "$err" "lane-end repoCG-2 --inventory-only"
+is    "…and writes NOTHING: the row is as it was" "$(cg_row repoCG-2)" "$cg2_row"
+is    "…and the lane's log is as it was" "$(cksum < "$CG_LOGD/repoCG-2.md")" "$cg2_log"
+
+run "$END" repoCG-2 --dry-run
+is    "the gate is asked on a dry run too" "$rc" 2
+
+run "$END" repoCG-2 --sweep
+is    "--sweep is refused" "$rc" 2
+has   "…by name, as an act that is not built" "$err" "--sweep is not built"
+
+run "$END" repoCG-2 --inventory-only
+is    "--inventory-only ends the lane past the gate" "$rc" 0
+has   "…and the row says the door was taken" "$(cg_row repoCG-2)" "ENDED WITH --inventory-only"
+has   "…and what the gate found" "$(cg_row repoCG-2)" "sweep exit 3"
+has   "…while the lane's own ENDED line LOGS the reason it was let past" "$(cg_last repoCG-2)" "inventory-only: the close-out gate (sweep exit 3) found 2 tree(s) and 1 scratch dir(s) left"
+is    "…it touches nothing on disk: the tree is still there" "$( [ -f "$CG_W1/.env" ] && echo there || echo gone )" there
+is    "…and still in the lane's inventory" "$("$CG_E" lane-trees repoCG-2 2>/dev/null | awk -F'\037' -v p="$CG_W1" '$2 == p { n++ } END { print n + 0 }')" 1
+
+# --------------------------------------- the sweep refusing is a refusal too
+
+git -C "$CG_DIR" worktree add -q -b cg3 "$CG_ROOT/repoCG-3/hand" >/dev/null 2>&1
+run "$END" repoCG-3
+is    "a lane the SWEEP refuses (2: trees and no #97 snapshot) is not ended" "$rc" 2
+has   "…relaying the sweep's own reason" "$err" "no #97 snapshot"
+has   "…naming the tree it would not judge" "$err" "$CG_ROOT/repoCG-3/hand"
+hasnt "…and offering no --yes the sweep would refuse in the same words" "$err" "--yes"
+
+# ------------------------- residue: what the sweep's rows never reach, counted
+
+mkdir -p "$CG_ROOT/repoCG-5/leftover"
+printf 'kept by nobody\n' > "$CG_ROOT/repoCG-5/leftover/notes.txt"
+run "$END" repoCG-5
+is    "residue under the lane's own root refuses although the sweep answered 0" "$rc" 2
+has   "…named as residue" "$err" "residue  $CG_ROOT/repoCG-5/leftover"
+has   "…with the place such things go instead" "$err" "openRepoTools/lanes/repoCG-5/scratch/"
+rm -rf "$CG_ROOT/repoCG-5"
+run "$END" repoCG-5
+is    "…and once it is gone the lane ends" "$rc" 0
+
+mkdir -p "$CG_ROOT/repoCG-8/node_modules/pkg"
+printf 'x\n' > "$CG_ROOT/repoCG-8/node_modules/pkg/i.js"
+run "$END" repoCG-8
+is    "a cache under the lane's own root refuses too" "$rc" 2
+has   "…named as a cache" "$err" "cache    remove  $CG_ROOT/repoCG-8/node_modules"
+
+# A ROOT NOBODY MAY LIST IS NOT AN EMPTY ONE (Copilot round 1 on #175).
+if [ "$(id -u)" = 0 ]; then
+  skip "a lane root that cannot be listed is the gate unread" "root lists a directory whatever its mode"
+else
+  mkdir -p "$CG_ROOT/repoCG-11/kept"
+  chmod 000 "$CG_ROOT/repoCG-11"
+  cg11_row="$(cg_row repoCG-11)"
+  run "$END" repoCG-11
+  is    "a lane root that cannot be listed is the gate unread (1), never an empty root" "$rc" 1
+  has   "…saying so" "$err" "could not be listed"
+  is    "…and nothing is written" "$(cg_row repoCG-11)" "$cg11_row"
+  # …AND IT IS 1 WHATEVER THE SWEEP ANSWERED (Copilot round 2 on #175): here the
+  # sweep answers 3, for an unpublished branch of the lane's own.
+  git -C "$CG_DIR" branch -q cg11-old main
+  git -C "$CG_DIR" worktree add -q "$SANDBOX/cg11-tmp" cg11-old >/dev/null 2>&1
+  git -C "$SANDBOX/cg11-tmp" commit -q --allow-empty -m "lane eleven's own work
+
+Lane: repoCG-11"
+  git -C "$CG_DIR" worktree remove "$SANDBOX/cg11-tmp" >/dev/null 2>&1
+  run "$END" repoCG-11
+  chmod 755 "$CG_ROOT/repoCG-11"
+  is    "…and still 1 where the sweep answered 3: an unread root is the environment on every answer" "$rc" 1
+  has   "…naming the branch the sweep did find as well" "$err" "cg11-old"
+  git -C "$CG_DIR" branch -q -D cg11-old 2>/dev/null || :
+fi
+
+# A STANDALONE CLONE UNDER THE LANE'S OWN ROOT IS NOT "NOTHING LEFT" (S1 of the
+# review of #175). The sweep keeps it FOREIGN — a lane creates worktrees, never
+# clones — and a FOREIGN row is counted for nobody, so it names nothing for the
+# residue read either: the clone, unpushed commit and all, is residue.
+git clone -q "$CG_ORIGIN" "$CG_ROOT/repoCG-13/clone" >/dev/null 2>&1
+git -C "$CG_ROOT/repoCG-13/clone" config user.email "test@example.invalid"
+git -C "$CG_ROOT/repoCG-13/clone" config user.name "lane helper tests"
+printf 'thirteen\n' > "$CG_ROOT/repoCG-13/clone/thirteen.txt"
+git -C "$CG_ROOT/repoCG-13/clone" add thirteen.txt
+git -C "$CG_ROOT/repoCG-13/clone" commit -q -m "work in a clone, never pushed"
+cg13_row="$(cg_row repoCG-13)"
+run "$END" repoCG-13
+is    "a standalone clone with an unpushed commit under the lane's own root refuses although the sweep answered 0" "$rc" 2
+has   "…named as residue, because its FOREIGN row names nothing" "$err" "residue  $CG_ROOT/repoCG-13/clone"
+hasnt "…and never passed as nothing left on disk" "$err" "nothing of lane repoCG-13's is left on disk"
+is    "…and nothing is written: the row is as it was" "$(cg_row repoCG-13)" "$cg13_row"
+hasnt "…so it never says NOTHING IN FLIGHT" "$(cg_row repoCG-13)" "NOTHING IN FLIGHT"
+
+# --------------------------------- a branch of the lane's own, with no tree
+
+git -C "$CG_DIR" branch -q cg6-old main
+git -C "$CG_DIR" worktree add -q "$SANDBOX/cg6-tmp" cg6-old >/dev/null 2>&1
+printf 'six\n' > "$SANDBOX/cg6-tmp/six.txt"
+git -C "$SANDBOX/cg6-tmp" add six.txt
+git -C "$SANDBOX/cg6-tmp" commit -q -m "lane six's own work
+
+Lane: repoCG-6"
+git -C "$CG_DIR" worktree remove "$SANDBOX/cg6-tmp" >/dev/null 2>&1
+run "$END" repoCG-6
+is    "a local branch the lane made, unpublished and held by no tree, refuses" "$rc" 2
+has   "…naming the branch" "$err" "cg6-old"
+has   "…and saying --yes leaves a listed branch to a person as well" "$err" "left by --yes as well"
+
+# ------------------------------- a gate nobody could read is never a pass
+
+printf '#!/usr/bin/env bash\nexit 7\n' > "$SANDBOX/cg-broken-sweep"
+chmod +x "$SANDBOX/cg-broken-sweep"
+cg7_row="$(cg_row repoCG-7)"
+run env LANE_WORKTREES="$SANDBOX/cg-broken-sweep" "$END" repoCG-7
+is    "a sweep exit that is none of 0, 3 and 2 refuses as the environment (1)" "$rc" 1
+has   "…saying the gate could not be read" "$err" "could not be read"
+is    "…and writes nothing" "$(cg_row repoCG-7)" "$cg7_row"
+run env LANE_WORKTREES="$SANDBOX/cg-no-such-sweep" "$END" repoCG-7
+is    "no lane-worktrees at all is the same refusal" "$rc" 1
+run env LANE_WORKTREES="$SANDBOX/cg-broken-sweep" "$END" repoCG-7 --inventory-only
+is    "--inventory-only ends it past a gate nobody read" "$rc" 0
+has   "…and says so in the row" "$(cg_row repoCG-7)" "could not be read"
+
+# --------------------------------- the door belongs to a lane's ending only
+
+run "$END" repoCG-1 --retire 999999 --inventory-only
+is    "--inventory-only with a fork's --retire is refused" "$rc" 2
+has   "…by name" "$err" "--inventory-only is the door past a lane's close-out gate"
+run "$END" --retire-dormant repoCG --inventory-only
+is    "…and with the dormant sweep" "$rc" 2
+has   "…by name" "$err" "--inventory-only is the door past ONE lane's close-out gate"
+
+if [ -n "$cg_had_lsr" ]; then export LANES_LANE_STATE_ROOT="$cg_lsr"; else unset LANES_LANE_STATE_ROOT; fi
 
 # ------------------------------------------------------- nothing real touched
 #
