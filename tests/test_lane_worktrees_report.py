@@ -134,6 +134,7 @@ def build_estate(e) -> dict:
     f["sandbox"] = e.sandboxes / "tmp.killedrun1"
     f["sandbox"].mkdir()
     (f["sandbox"] / "f").write_text("x")
+    os.utime(f["sandbox"] / "f", (old, old))
     os.utime(f["sandbox"], (old, old))
     # IGNORED over the threshold (0 MB in this estate's sweep.conf), and
     # EVIDENCE: an untracked JUnit file, and a directory of reports.

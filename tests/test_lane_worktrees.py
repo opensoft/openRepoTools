@@ -58,6 +58,10 @@ LANES_EDIT = REPO / "lanes-edit.sh"
 LANE = "repoA-1"
 ME = "11111111-1111-4111-8111-111111111111"
 OTHER = "22222222-2222-4222-8222-222222222222"
+#: The session that recorded the inventory: an EARLIER one, which the fake
+#: `transcript-holders` answers is not live. A tree THIS session (ME) recorded
+#: wants the coordinator's writer count under `--yes` (#170 B5).
+WRITER = "44444444-4444-4444-8444-444444444444"
 SLUG = "opensoft/repoA"
 GH_URL = f"git@github.com:{SLUG}.git"
 US = "\x1f"
@@ -144,9 +148,6 @@ class Estate:
             FAKE_HELPER_SPEC=str(self.spec_file), FAKE_HELPER_LOG=str(self.helper_log),
             FAKE_GH_PRS=str(self.prs_file), CLAUDE_CODE_SESSION_ID=ME,
             LANE_WORKTREES_SANDBOX_ROOTS=str(self.sandboxes), LANES_WORKSTATION="Eagle",
-            # --yes is switched off for a real estate until #170; the suite's
-            # estates are not one.
-            LANE_WORKTREES_ENABLE_YES="1",
             GIT_CONFIG_NOSYSTEM="1",
             PATH=str(self.fakebin) + os.pathsep + _clean_path())
         self.env = env
@@ -179,6 +180,28 @@ class Estate:
         self.git("add", "-A")
         self.commit(self.checkout, "seed")
         self.git("push", "-q", "origin", "main")
+        # THE WORKSPACE REPOSITORY, which `--yes` fetches before it reads a
+        # binding (#170 A1) and whose lane logs name every lane's directory
+        # (#170 G6). Outside `projects/`, so it is no repository of the estate.
+        ws_origin = self.root / "workspace.git"
+        ws = self.root / "workspace"
+        self.git("init", "-q", "--bare", "-b", "main", ws_origin, cwd=self.root)
+        self.git("clone", "-q", ws_origin, ws, cwd=self.root)
+        (ws / "lanes" / "log").mkdir(parents=True)
+        (ws / "lanes" / "LANES.md").write_text("# register\n")
+        self.git("add", "-A", cwd=ws)
+        self.git("commit", "-q", "-m", "seed", cwd=ws)
+        self.git("push", "-q", "origin", "main", cwd=ws)
+        self.workspace = str(ws)
+
+    def register_line(self, lane: str, line: str) -> None:
+        """One line appended to `lane`'s log in the workspace, pushed."""
+        ws = Path(self.workspace)
+        log = ws / "lanes" / "log" / f"{lane}.md"
+        log.write_text((log.read_text() if log.exists() else "") + line + "\n")
+        self.git("add", "-A", cwd=ws)
+        self.git("commit", "-q", "-m", f"log {lane}", cwd=ws)
+        self.git("push", "-q", "origin", "main", cwd=ws)
 
     def commit(self, cwd: Path, message: str, files: dict | None = None,
                lane: str | None = LANE) -> str:
@@ -204,13 +227,14 @@ class Estate:
             self.record(path)
         return path
 
-    def record(self, path: Path, branch: str = "", head: str = "") -> None:
+    def record(self, path: Path, branch: str = "", head: str = "",
+               writer: str = WRITER) -> None:
         """An inventory row, as `lanes-edit.sh lane-trees` prints one."""
         if path.is_dir():
             branch = self.git("symbolic-ref", "-q", "--short", "HEAD", cwd=path, check=False) or "detached"
             head = self.git("rev-parse", "HEAD", cwd=path)
         row = [f"c{len(self.inventory)}-{path.name}", str(path), branch or "unknown",
-               head or "unknown", "none", "0", "0", ME, "2026-10-05T00:00:00Z",
+               head or "unknown", "none", "0", "0", writer, "2026-10-05T00:00:00Z",
                str(self.checkout), "1", "op-1", "1"]
         self.inventory.append(US.join(row))
 
@@ -456,7 +480,9 @@ def test_yes_performs_the_table_and_records_every_act(estate):
     stamp = wip[0].rsplit("-", 1)[1]
     assert stamp in subject
     assert estate.git("show", f"{rescues[wip[0]]}:w.txt", cwd=estate.origin) == "changed"
-    assert estate.git("show", f"{rescues[wip[0]]}:new.txt", cwd=estate.origin) == "untracked"
+    # AN UNTRACKED FILE IS NEVER PUSHED (#170 A9): it is in the bundle only.
+    assert "new.txt" not in estate.git("ls-tree", "--name-only", rescues[wip[0]],
+                                       cwd=estate.origin).split()
     parent = estate.git("rev-parse", f"{rescues[wip[0]]}^", cwd=estate.origin)
     assert parent == tips["dirty"], "the WIP commit sits on the tree's own head"
     # STALE: pruned.
@@ -473,6 +499,8 @@ def test_yes_performs_the_table_and_records_every_act(estate):
         digest, name = line.split("  ", 1)
         assert hashlib.sha256((archive / name).read_bytes()).hexdigest() == digest, name
     assert any(n.startswith("dirty") and n.endswith(".bundle") for n in files), files
+    held = [r for r in _ledger(archive) if r[0] == "-" and r[1].startswith("bundle:dirty")]
+    assert len(held) == 1 and estate.git("show", f"{held[0][2]}:new.txt") == "untracked"
     assert any(n.startswith("diverged") and n.endswith(".bundle") for n in files), files
     with tarfile.open(archive / "dirty-ignored.tar.gz") as tf:
         names = tf.getnames()
@@ -571,14 +599,17 @@ def test_yes_is_refused_for_a_lane_live_elsewhere_or_unread(estate, holder, bind
     tree = estate.worktree("w", "feat/w")
     estate.commit(tree, "w", {"w.txt": "w\n"})
     estate.holder, estate.binding = holder, binding
-    before = snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json"))
+    # THE REGISTER'S FETCH (#170 A1) is the one write a refused --yes makes,
+    # in the workspace repository: the estate is snapshotted without it.
+    skip = ("helper.log", "helper-spec.json", "prs.json", "workspace")
+    before = snapshot(estate.root, skip=skip)
     dry = estate.sweep(LANE, "--dry-run", "--porcelain")
     assert dry.returncode == 2, dry.stdout + dry.stderr
     assert dry.stdout.splitlines()[1].startswith("refused\t") and word in dry.stdout
     yes = estate.sweep(LANE, "--yes", "--live", "none")
     assert yes.returncode == 2 and word in yes.stdout
     assert tree.is_dir()
-    assert snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json")) == before
+    assert snapshot(estate.root, skip=skip) == before
     assert estate.notes() == []
 
 
@@ -685,11 +716,13 @@ def test_an_unreadable_claim_of_another_lane_refuses_before_any_write(estate):
     other = estate.root / "lane-state" / "repoA-7" / "trees"
     other.mkdir(parents=True)
     (other / "c1.yaml").write_text("schema: 1\n")
-    before = snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json"))
+    # (the register's fetch under --yes, #170 A1, is in the workspace only)
+    skip = ("helper.log", "helper-spec.json", "prs.json", "workspace")
+    before = snapshot(estate.root, skip=skip)
     proc = estate.sweep(LANE, "--yes", "--porcelain")
     assert proc.returncode == 2, proc.stdout + proc.stderr
     assert "lane repoA-7's inventory record c1.yaml (it names no path)" in proc.stdout
-    assert snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json")) == before
+    assert snapshot(estate.root, skip=skip) == before
 
 
 def test_a_submodules_ignored_files_keep_its_tree(estate):
@@ -744,14 +777,15 @@ def test_an_unreadable_inventory_record_refuses_the_sweep(estate):
     unknown, so the sweep refuses rather than report nothing to retire."""
     estate.worktree("fine", "feat/fine")
     estate.inventory.append(US.join(["c9-odd", str(estate.lane_root / "odd"), "x", "y", "none",
-                                     "0", "0", ME, "2026-10-05T00:00:00Z", str(estate.checkout),
-                                     "1", "op-1", "9"]))
-    before = snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json"))
+                                     "0", "0", WRITER, "2026-10-05T00:00:00Z",
+                                     str(estate.checkout), "1", "op-1", "9"]))
+    skip = ("helper.log", "helper-spec.json", "prs.json", "workspace")
+    before = snapshot(estate.root, skip=skip)
     for args in (("--dry-run", "--porcelain"), ("--yes",)):
         proc = estate.sweep(LANE, *args)
         assert proc.returncode == 2, (args, proc.stdout, proc.stderr)
         assert "c9-odd is unreadable or of schema 9" in proc.stdout
-    assert snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json")) == before
+    assert snapshot(estate.root, skip=skip) == before
 
 
 def test_the_lane_name_is_resolved_before_anything_is_derived_from_it(estate):
@@ -961,8 +995,13 @@ def test_killed_suite_sandboxes_whose_owner_is_gone_are_removed(estate):
     for d in (dead, young, held):
         d.mkdir()
         (d / "f").write_text("x")
+    # A SUITE'S MARK IN A `tmp.*` IS NO PROOF (#170 item 1, option (b)):
+    # pytest's `.lock`, naming a pid that is gone - listed, never removed.
+    (dead / ".lock").write_text("999999\n")
     for d in (dead, held):
-        os.utime(d, (old, old))
+        for p in (d / "f", d / ".lock", d):
+            if p.exists():
+                os.utime(p, (old, old))
     pyroot = base / f"pytest-of-{user}"
     gone_run = pyroot / "pytest-7"
     live_run = pyroot / "pytest-8"
@@ -977,7 +1016,8 @@ def test_killed_suite_sandboxes_whose_owner_is_gone_are_removed(estate):
         sleeper.kill()
         sleeper.wait()
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert not dead.exists() and not gone_run.exists()
+    assert not gone_run.exists()
+    assert dead.is_dir() and items_of(proc.stdout, "sandbox")[str(dead)][0] == "list"
     assert young.is_dir(), "younger than the minimum age"
     assert held.is_dir(), "a live process stands in it"
     assert live_run.is_dir(), "its .lock names a live pid"
@@ -1099,20 +1139,19 @@ def test_the_porcelain_exit_codes_lane_end_reads(estate):
     assert refused.returncode == 2 and "refused\t" in refused.stdout
 
 
-def test_yes_is_switched_off_without_the_enabling_variable(estate):
-    """Until #170 lands `--yes` and `--expire --yes` are refused, exit 2,
-    changing nothing; the dry run and its porcelain are untouched."""
-    estate.worktree("w", "feat/w")
-    _archive(estate, 120, None)
-    before = snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json"))
-    off = {"LANE_WORKTREES_ENABLE_YES": None}
-    for args in ((LANE, "--yes"), (LANE, "--yes", "--porcelain"), ("--expire", "--yes")):
-        proc = estate.sweep(*args, env=off)
-        assert proc.returncode == 2, (args, proc.stdout, proc.stderr)
-        assert "--yes is disabled until opensoft/openRepoTools#170 lands" in proc.stderr
-    assert snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json")) == before
-    assert estate.sweep(LANE, "--porcelain", env=off).returncode == 3
-    assert estate.sweep("--expire", "--porcelain", env=off).returncode == 3
+def test_yes_needs_no_enabling_variable(estate):
+    """#170 landed: `--yes` and `--expire --yes` act with no switch in the
+    environment (LANE_WORKTREES_ENABLE_YES is gone)."""
+    tree = estate.worktree("w", "feat/w")
+    estate.git("push", "-q", "-u", "origin", "feat/w", cwd=tree)
+    old = _archive(estate, 120, None)
+    assert "LANE_WORKTREES_ENABLE_YES" not in estate.env
+    yes = estate.sweep(LANE, "--yes", "--porcelain")
+    assert yes.returncode == 0, yes.stdout + yes.stderr
+    assert not tree.exists()
+    expire = estate.sweep("--expire", "--yes")
+    assert expire.returncode == 0, expire.stdout + expire.stderr
+    assert not old.exists()
 
 
 def test_trees_under_the_lanes_root_or_carrying_its_trailer_are_its_own(estate):
@@ -1146,6 +1185,34 @@ def test_trees_under_the_lanes_root_or_carrying_its_trailer_are_its_own(estate):
     assert none.returncode == 2, none.stdout + none.stderr
     assert "has no #97 snapshot (state NONE)" in none.stdout
     assert str(rooted) in rows_of(none.stdout), "the table is still printed"
+
+
+def test_a_tree_another_lane_stacked_on_this_lanes_commit_is_not_adopted(estate):
+    """#174 review R1: a tree in `.claude/worktrees` was adopted when ANY of
+    its own commits carried this lane's trailer, so one another lane STACKED
+    on this lane's commit - base by repoA-1, tip and an edit in progress by
+    repoB-2 - was repoA-1's: `--yes` removed it and pushed repoB-2's edit to
+    `rescue/repoA-1/...`. HEAD's own trailer decides: it is repoB-2's tree."""
+    conf = estate.root / "sweep.conf"
+    conf.write_text("foreign_quiet_hours=0\n")
+    env = {"LANE_WORKTREES_CONF": str(conf)}
+    stacked = estate.worktree("stacked", "feat/stacked", where="claude", record=False)
+    estate.commit(stacked, "the base", {"base.txt": "b\n"})
+    estate.commit(stacked, "stacked on it", {"s.txt": "s\n"}, lane="repoB-2")
+    (stacked / "s.txt").write_text("repoB-2's edit in progress\n")
+    before = estate.remote_heads()
+    dry = estate.sweep(LANE, "--dry-run", "--porcelain", env=env)
+    assert dry.returncode == 0, dry.stdout + dry.stderr
+    assert rows_of(dry.stdout)[str(stacked)][:2] == ("foreign", "-"), dry.stdout
+    yes = estate.sweep(LANE, "--yes", "--porcelain", env=env)
+    assert yes.returncode == 0, yes.stdout + yes.stderr
+    assert (stacked / "s.txt").read_text() == "repoB-2's edit in progress\n"
+    assert estate.remote_heads() == before, "repoB-2's work was pushed by repoA-1's sweep"
+    assert estate.notes() == []
+    # ... and it is still the lane's whose commit HEAD is.
+    theirs = estate.sweep("repoB-2", "--dry-run", "--porcelain", env=env)
+    row = rows_of(theirs.stdout)[str(stacked)]
+    assert row[1] == "retire" and "Lane: trailer" in row[2], theirs.stdout + theirs.stderr
 
 
 def test_porcelain_escapes_a_tab_and_a_newline_in_a_path(estate):
@@ -1295,3 +1362,1266 @@ def test_the_real_helper_refuses_a_lane_bound_on_another_host(tmp_path):
     yes = e.sweep(LANE, "--yes", "--live", "none")
     assert yes.returncode == 2 and "raven" in yes.stdout
     assert mine.is_dir()
+
+
+# ============================================= #170: the --yes data-loss paths
+
+def _rebind_elsewhere(e: Estate, tmp_path: Path) -> None:
+    """ANOTHER PLACE binds the lane after this workstation last fetched the
+    register: its STARTED line is on origin and not in this clone's ref."""
+    other = tmp_path / "other-wip"
+    e.git("clone", "-q", tmp_path / "wip.git", other, cwd=tmp_path)
+    log = other / "lanes" / "log" / f"{LANE}.md"
+    log.write_text(log.read_text() +
+                   f"STARTED — lane {LANE}, session {UUID_R}@Raven, 2026-10-05T09:00:00Z, "
+                   f"lane:{LANE} → home {SLUG}; dir {e.checkout}; host raven; container none; "
+                   "os linux\n")
+    e.git("commit", "-q", "-am", "raven binds the lane", cwd=other)
+    e.git("push", "-q", "origin", "main", cwd=other)
+
+
+@pytest.mark.parametrize("case", ["origin-unreachable", "LANES_NO_FETCH-inherited"])
+def test_yes_reads_the_register_now_or_refuses(tmp_path, case):
+    """#170 A1: `log_sync` answers 0 when it cannot fetch, and an inherited
+    LANES_NO_FETCH skips the fetch, so a lane rebound on another host read as
+    bound HERE and its tree was removed. --yes fetches the register itself:
+    a fetch that fails refuses, and the inherited variable is not obeyed."""
+    e, _wip = _real_estate(tmp_path, host="eagle")
+    mine = _real_tree(e, "mine")
+    _rebind_elsewhere(e, tmp_path)
+    env = {}
+    if case == "origin-unreachable":
+        (tmp_path / "wip.git").rename(tmp_path / "wip-offline.git")
+    else:
+        env = {"LANES_NO_FETCH": "1"}
+    proc = e.sweep(LANE, "--yes", "--live", "none", "--porcelain", env=env)
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert mine.is_dir() and (mine / "mine.txt").is_file()
+    refused = [ln for ln in proc.stdout.splitlines() if ln.startswith("refused\t")]
+    assert refused, proc.stdout
+    if case == "origin-unreachable":
+        assert "could not be fetched" in refused[0]
+    else:
+        assert "raven" in refused[0]
+
+
+def test_a_mirror_style_fetch_refspec_prunes_no_local_branch(estate):
+    """#170 item 6: with `remote.origin.fetch = +refs/heads/*:refs/heads/*`,
+    `git fetch --prune origin` deletes every local branch origin lacks - before
+    anything was classified or rescued. The sweep's fetch pins its refspec."""
+    estate.git("config", "--replace-all", "remote.origin.fetch", "+refs/heads/*:refs/heads/*")
+    estate.git("checkout", "-q", "-b", "feat/local-only")
+    local_only = estate.commit(estate.checkout, "local only", {"lo.txt": "lo\n"})
+    # NOTHING CHECKED OUT THAT ORIGIN HAS: git refuses to fetch into a checked
+    # out branch, which would have hidden the prune.
+    estate.git("checkout", "-q", "--detach", "origin/main")
+    estate.git("tag", "local-tag", local_only)
+    tree = estate.worktree("det")
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert estate.git("rev-parse", "-q", "--verify", "refs/heads/feat/local-only",
+                      check=False) == local_only, "a local-only branch was pruned"
+    assert estate.git("rev-parse", "-q", "--verify", "refs/tags/local-tag",
+                      check=False) == local_only
+    assert not tree.exists()
+
+
+def test_a_lane_root_that_cannot_be_listed_refuses_the_dry_run(estate):
+    """#170 G1: a lane worktree root that cannot be listed was read as an
+    absent one, so with an empty inventory the dry run exited 0 and cleared
+    #163's gate over trees nobody could see."""
+    if os.geteuid() == 0:
+        pytest.skip("root lists a mode-000 directory")
+    estate.lane_root.mkdir(parents=True)
+    (estate.lane_root / "hidden").mkdir()
+    estate.lane_root.chmod(0)
+    try:
+        proc = estate.sweep(LANE, "--dry-run", "--porcelain")
+    finally:
+        estate.lane_root.chmod(0o755)
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert f"the lane's worktree root {estate.lane_root} could not be listed" in proc.stdout
+
+
+def _git_shim(estate, refuse: str) -> dict:
+    """A PATH whose `git` fails `git ... worktree list`, as a repository git
+    cannot read would, and runs every other git as itself."""
+    shim = estate.root / "shim"
+    shim.mkdir(exist_ok=True)
+    real_git = shutil.which("git")
+    (shim / "git").write_text(
+        "#!/bin/sh\nw=0\nfor a in \"$@\"; do\n"
+        f"  case \"$a\" in worktree) w=1 ;; {refuse}) [ \"$w\" = 1 ] && "
+        "{ echo 'fatal: the shim refuses' >&2; exit 128; } ;; esac\n"
+        f"done\nexec \"{real_git}\" \"$@\"\n")
+    (shim / "git").chmod(0o755)
+    return {"PATH": f"{shim}{os.pathsep}{estate.env['PATH']}"}
+
+
+def test_registrations_that_cannot_be_read_refuse_the_dry_run(estate):
+    """#170 G5: when both `git worktree list` calls failed, the answer was an
+    empty list - the same as a repository with no worktrees - so discovery
+    could report nothing to retire."""
+    tree = estate.worktree("w", "feat/w")
+    proc = estate.sweep(LANE, "--dry-run", "--porcelain", env=_git_shim(estate, "list"))
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert f"the worktree registrations of {estate.checkout} could not be read" in proc.stdout
+    assert tree.is_dir()
+
+
+def test_a_dependent_anywhere_in_the_estate_makes_a_clone_load_bearing(estate):
+    """#170 A11: the estate walk never entered a plain directory inside a
+    repository, so a clone there that borrows a lane clone's objects was
+    unseen and the clone was deleted from under it."""
+    store = estate.lane_root / "store"
+    estate.git("clone", "-q", GH_URL, store, cwd=estate.root)
+    host = estate.projects / "host"
+    estate.git("init", "-q", "-b", "main", host, cwd=estate.root)
+    dependent = host / "vendor" / "dep"
+    estate.git("clone", "-q", "--shared", store, dependent, cwd=estate.root)
+    conf = estate.root / "sweep.conf"
+    conf.write_text("foreign_quiet_hours=0\n")
+    proc = estate.sweep(LANE, "--include-foreign", "--word", "go", "--yes", "--porcelain",
+                        env={"LANE_WORKTREES_CONF": str(conf)})
+    rows = rows_of(proc.stdout)
+    assert rows[str(store)][0] == "load-bearing", rows
+    assert str(dependent) in rows[str(store)][2]
+    assert store.is_dir()
+    assert estate.git("log", "-1", "--format=%s", cwd=dependent) == "seed"
+
+
+def test_a_partial_dependents_scan_removes_no_clone(estate):
+    """#170 A11: a dependent in a directory the walk could not read is as
+    unseen as one it never looked for; a partial scan deletes no clone."""
+    if os.geteuid() == 0:
+        pytest.skip("root reads a mode-000 directory")
+    store = estate.lane_root / "store"
+    estate.git("clone", "-q", GH_URL, store, cwd=estate.root)
+    sealed = estate.projects / "sealed"
+    (sealed / "inner").mkdir(parents=True)
+    sealed.chmod(0)
+    conf = estate.root / "sweep.conf"
+    conf.write_text("foreign_quiet_hours=0\n")
+    try:
+        proc = estate.sweep(LANE, "--include-foreign", "--word", "go", "--yes", "--porcelain",
+                            env={"LANE_WORKTREES_CONF": str(conf)})
+    finally:
+        sealed.chmod(0o755)
+    rows = rows_of(proc.stdout)
+    assert rows[str(store)][0] == "keep", rows
+    assert "was partial" in rows[str(store)][2] and str(sealed) in rows[str(store)][2]
+    assert store.is_dir()
+
+
+@pytest.mark.parametrize("where", ["nested-in-the-estate", "recorded-in-the-register"])
+def test_another_lanes_claim_is_read_wherever_its_control_root_is(estate, where):
+    """#170 G6: other lanes' claims were read only beside THIS lane's control
+    root. A lane whose checkout is nested keeps its `.lane-state` beside that
+    checkout, so its claim was missed and the tree was not contested."""
+    tree = estate.worktree("shared", "feat/shared")
+    estate.git("push", "-q", "-u", "origin", "feat/shared", cwd=tree)
+    if where == "nested-in-the-estate":
+        group = estate.projects / "group"
+        other = "repoB-3"
+    else:
+        # IN A PLAIN DIRECTORY OF A REPOSITORY, where the shape walk never
+        # goes, so only the register's recorded `dir` finds it - and in this
+        # sweep's estate, the only one whose claims are read (#174 review R3).
+        host = estate.projects / "host"
+        estate.git("init", "-q", "-b", "main", host, cwd=estate.root)
+        group = host / "vendor" / "group"
+        other = "repoC-4"
+        estate.register_line(other, (
+            f"STARTED — lane {other}, session {OTHER}@Eagle, 2026-10-05T00:00:00Z, "
+            f"lane:{other} → home opensoft/repoC; dir {group / 'repoC'}; host eagle; "
+            "container none; os linux"))
+    # THE OTHER LANE'S CHECKOUT, nested one level down in a plain directory.
+    estate.git("init", "-q", "-b", "main", group / "repoC", cwd=estate.root)
+    claims = group / ".lane-state" / other / "trees"
+    claims.mkdir(parents=True)
+    (claims / "c1.yaml").write_text(f"schema: 1\npath: {tree}\n")
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(tree)][0] == "keep", rows[str(tree)]
+    assert f"lane {other}'s inventory names it too" in rows[str(tree)][2]
+    assert estate.sweep(LANE, "--yes").returncode == 0
+    assert tree.is_dir()
+
+
+@pytest.mark.parametrize("where", ["another-estate", "this-estate"])
+def test_an_unreadable_claim_never_refuses_a_lane_with_no_tree(estate, where):
+    """#174 review R3: every lane's control root the register names, in ANY
+    estate, was read, so one pathless sidecar anywhere on the workstation
+    made the sweep exit 2 for a lane with nothing on disk - and lane-end's
+    gate with it. Another estate's claims are not read; in this one, with no
+    tree for a claim to take, an unreadable one is a note. With a tree, this
+    estate's still refuses."""
+    group = (estate.root / "away" if where == "another-estate" else estate.projects) / "group"
+    other = "repoE-6"
+    estate.register_line(other, (
+        f"STARTED — lane {other}, session {OTHER}@Eagle, 2026-10-05T00:00:00Z, "
+        f"lane:{other} → home opensoft/repoE; dir {group / 'repoE'}; host eagle; "
+        "container none; os linux"))
+    claims = group / ".lane-state" / other / "trees"
+    claims.mkdir(parents=True)
+    (claims / "c1.yaml").write_text("schema: 1\n")
+    said = f"lane {other}'s inventory record c1.yaml (it names no path) could not be read"
+    gate = estate.sweep(LANE, "--dry-run", "--porcelain")
+    assert gate.returncode == 0, gate.stdout + gate.stderr
+    assert "refused\t" not in gate.stdout
+    shown = estate.sweep(LANE, "--dry-run")
+    assert shown.returncode == 0 and "REFUSED" not in shown.stdout, shown.stdout + shown.stderr
+    if where == "this-estate":
+        assert f"note: {said}" in shown.stdout, shown.stdout
+    else:
+        assert said not in shown.stdout, "a claim in another estate was read"
+    estate.worktree("w", "feat/w")
+    again = estate.sweep(LANE, "--dry-run", "--porcelain")
+    assert again.returncode == (2 if where == "this-estate" else 3), again.stdout + again.stderr
+    assert (said in again.stdout) == (where == "this-estate")
+
+
+@pytest.mark.parametrize("flag", ["--skip-worktree", "--assume-unchanged"])
+def test_an_edit_git_status_hides_keeps_the_tree(estate, flag):
+    """#170 A2: a file flagged skip-worktree or assume-unchanged reads as
+    clean in `git status` and `git add -A` skips it, so its edit was in no
+    rescue and the tree was removed with it."""
+    tree = estate.worktree("hidden", "feat/hidden")
+    estate.commit(tree, "cfg", {"config.yml": "shared: 1\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/hidden", cwd=tree)
+    estate.git("update-index", flag, "config.yml", cwd=tree)
+    (tree / "config.yml").write_text("shared: 1\nlocal_secret: PRECIOUS\n")
+    assert estate.git("status", "--porcelain", cwd=tree) == ""
+    dry = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert dry[str(tree)][0] == "keep", dry[str(tree)]
+    assert "skip-worktree or assume-unchanged differ" in dry[str(tree)][2]
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert (tree / "config.yml").read_text().endswith("PRECIOUS\n")
+
+
+def test_a_sparse_checkouts_absent_files_are_no_edit(estate):
+    """A skip-worktree file that is NOT in the tree (a sparse checkout's) is
+    no edit: the tree is still removed."""
+    tree = estate.worktree("sparse", "feat/sparse")
+    estate.commit(tree, "two", {"keep/a.txt": "a\n", "drop/b.txt": "b\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/sparse", cwd=tree)
+    estate.git("update-index", "--skip-worktree", "drop/b.txt", cwd=tree)
+    (tree / "drop" / "b.txt").unlink()
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not tree.exists()
+
+
+def test_a_clone_inside_a_venv_keeps_its_tree(estate):
+    """#170 A3: `pip install -e git+...` clones into `<venv>/src/<pkg>`, and
+    the nested-repository walk passed over venvs before it looked for a
+    `.git` - so the dependency's unpushed fix was deleted with the tree."""
+    tree = estate.worktree("venvsrc", "feat/venvsrc")
+    estate.commit(tree, "ignore venv", {".gitignore": ".env\n__pycache__/\n*.pyc\n.venv/\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/venvsrc", cwd=tree)
+    venv = tree / ".venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("home = /usr\n")
+    dep = venv / "src" / "somedep"
+    estate.git("init", "-q", "-b", "main", dep, cwd=estate.root)
+    estate.commit(dep, "my unpushed fix", {"fix.py": "FIX = 1\n"})
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(tree)][0] == "keep", rows[str(tree)]
+    assert f"nested inside it at {dep}" in rows[str(tree)][2]
+    assert estate.sweep(LANE, "--yes").returncode == 0
+    assert (dep / "fix.py").is_file()
+    # ... AND ITS VENV IS NO CACHE TO TAKE (#174, Copilot round 1): the tree
+    # kept for the clone still gave up its `.venv` to `--include-caches`, and
+    # the clone and its unpushed fix went with it.
+    caches = estate.sweep(LANE, "--include-caches", "--yes", "--porcelain")
+    assert caches.returncode == 0, caches.stdout + caches.stderr
+    row = items_of(caches.stdout, "cache")[str(venv)]
+    assert row[0] == "keep" and f"a repository lies inside it ({dep})" in row[3], row
+    assert (dep / "fix.py").is_file()
+    assert estate.git("log", "-1", "--format=%s", cwd=dep) == "my unpushed fix"
+
+
+def test_a_clones_tag_only_commits_keep_it(estate):
+    """#170 item 4: a clone can hold unpublished commits reachable only
+    from a local tag; the clone check read branches and the stash only."""
+    clone = estate.lane_root / "tagged"
+    estate.git("clone", "-q", GH_URL, clone, cwd=estate.root)
+    estate.commit(clone, "released locally", {"r.txt": "r\n"})
+    estate.git("tag", "-a", "-m", "v1", "v1.0", cwd=clone)
+    estate.git("reset", "-q", "--hard", "origin/main", cwd=clone)
+    conf = estate.root / "sweep.conf"
+    conf.write_text("foreign_quiet_hours=0\n")
+    env = {"LANE_WORKTREES_CONF": str(conf)}
+    proc = estate.sweep(LANE, "--include-foreign", "--word", "go", "--yes", "--porcelain", env=env)
+    rows = rows_of(proc.stdout)
+    assert rows[str(clone)][0] == "keep", rows[str(clone)]
+    assert "its tag v1.0 holds commits origin lacks" in rows[str(clone)][2]
+    assert estate.git("cat-file", "-t", "v1.0", cwd=clone) == "tag"
+
+
+def _with_submodule(estate, name: str) -> tuple:
+    sub_origin = estate.remotes / "sub.git"
+    estate.git("init", "-q", "--bare", "-b", "main", sub_origin, cwd=estate.root)
+    seed = estate.root / "sub-seed"
+    estate.git("clone", "-q", sub_origin, seed, cwd=estate.root)
+    estate.commit(seed, "sub", {"s.txt": "s\n"})
+    estate.git("push", "-q", "origin", "main", cwd=seed)
+    tree = estate.worktree(name, f"feat/{name}", record=False)
+    estate.git("submodule", "add", "-q", str(sub_origin), "sub", cwd=tree)
+    estate.commit(tree, "add sub")
+    estate.git("push", "-q", "-u", "origin", f"feat/{name}", cwd=tree)
+    estate.record(tree)
+    return tree, tree / "sub"
+
+
+@pytest.mark.parametrize("what", ["branch", "stash"])
+def test_a_submodules_unpublished_branch_or_stash_keeps_its_tree(estate, what):
+    """#170 item 5: only a submodule's HEAD was checked, while a worktree's
+    submodule keeps its whole repository under `.git/worktrees/<id>/modules/`
+    - its branches and stash went with the tree."""
+    tree, sub = _with_submodule(estate, "withsub")
+    if what == "branch":
+        estate.git("checkout", "-q", "-b", "side", cwd=sub)
+        estate.commit(sub, "side work", {"side.txt": "x\n"})
+        estate.git("checkout", "-q", "--detach", "origin/main", cwd=sub)
+    else:
+        (sub / "s.txt").write_text("stashed\n")
+        estate.git("stash", "-q", cwd=sub)
+    assert estate.git("status", "--porcelain", cwd=tree) == ""
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(tree)][0] == "keep", rows[str(tree)]
+    want = "its branch side holds commits" if what == "branch" else "has a stash"
+    assert f"submodule sub" in rows[str(tree)][2] and want in rows[str(tree)][2]
+    assert estate.sweep(LANE, "--yes").returncode == 0
+    assert tree.is_dir()
+
+
+def test_an_ignored_file_beneath_a_build_named_directory_is_archived(estate):
+    """#170 A6: an ignored file was dropped unarchived when ANY ancestor was
+    named like build output - `docker/build/prod.env` went, `top.env` beside
+    it was archived."""
+    tree = estate.worktree("deploy", "feat/deploy")
+    estate.commit(tree, "compose", {".gitignore": ".env\n*.env\n__pycache__/\n",
+                                    "docker/build/Dockerfile": "FROM x\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/deploy", cwd=tree)
+    (tree / "docker" / "build" / "prod.env").write_text("DB_PASSWORD=PRECIOUS\n")
+    (tree / "top.env").write_text("TOKEN=kept\n")
+    (tree / "build").mkdir()
+    (tree / "build" / "out.bin").write_bytes(b"\0" * 16)
+    (tree / ".gitignore").write_text(".env\n*.env\n__pycache__/\n/build/\n")
+    estate.git("add", ".gitignore", cwd=tree)
+    estate.commit(tree, "ignore build output")
+    estate.git("push", "-q", "origin", "feat/deploy", cwd=tree)
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not tree.exists()
+    (archive,) = estate.archives()
+    with tarfile.open(archive / "deploy-ignored.tar.gz") as tf:
+        names = tf.getnames()
+    assert "docker/build/prod.env" in names and "top.env" in names, names
+    assert not any(n.startswith("build") for n in names), "build output is not archived"
+
+
+@pytest.mark.parametrize("why", ["open-pr", "another-lanes-trailer", "gh-unreadable"])
+def test_unreviewed_commits_never_go_onto_somebody_elses_branch(estate, why):
+    """#170 A7: push+remove pushed the lane's local commit onto a teammate's
+    OPEN pull request's branch. Where an open PR names the branch, its tip
+    carries another lane's trailer, or whether a PR names it cannot be read,
+    the commits go to a rescue branch and origin's branch is left alone."""
+    tree = estate.worktree("review", "feat/teammate")
+    tip = estate.commit(tree, "teammate's work", {"t.txt": "t\n"},
+                        lane="repoB-9" if why != "gh-unreadable" else LANE)
+    estate.git("push", "-q", "-u", "origin", "feat/teammate", cwd=tree)
+    if why == "open-pr":
+        estate.pr(77, "feat/teammate", "OPEN", tip)
+    mine = estate.commit(tree, "the lane's experiment while reviewing", {"t.txt": "x\n"})
+    env = {"LANES_NO_GITHUB": "1"} if why == "gh-unreadable" else {}
+    before = estate.remote_heads()["feat/teammate"]
+    dry = rows_of(estate.sweep(LANE, "--porcelain", env=env).stdout)
+    assert dry[str(tree)][0] == "rescue+remove", dry[str(tree)]
+    want = {"open-pr": "PR #77 is open", "another-lanes-trailer": "carries lane repoB-9's work",
+            "gh-unreadable": "whether an open pull request names"}[why]
+    assert want in dry[str(tree)][2]
+    proc = estate.sweep(LANE, "--yes", "--porcelain", env=env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    heads = estate.remote_heads()
+    assert heads["feat/teammate"] == before, "origin's branch moved"
+    assert [b for b, s in heads.items() if b.startswith(f"rescue/{LANE}/review-") and s == mine]
+    assert not tree.exists()
+
+
+def test_a_landed_line_never_deletes_a_branch_gh_answers_open(estate):
+    """#170 A8: a register LANDED line naming the wrong number (#21 for #20)
+    beat gh's live OPEN for #21, and --yes deleted the open PR's remote
+    branch - which closes the PR."""
+    estate.register_line(LANE, f"LANDED — lane {LANE}, session {ME}@Eagle, "
+                               f"2026-10-05T00:00:00Z, {SLUG}#21 → main abc1234")
+    tree = estate.worktree("openpr", "feat/open")
+    tip = estate.commit(tree, "work under review", {"r.txt": "r\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/open", cwd=tree)
+    estate.pr(21, "feat/open", "OPEN", tip)
+    dry = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert dry[str(tree)][0] == "remove+delete-branch", dry[str(tree)]
+    assert "gh still answers PR #21 OPEN" in dry[str(tree)][2]
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert estate.remote_heads().get("feat/open") == tip, "the open PR's branch was deleted"
+    assert "remote branch kept (gh still answers PR #21 OPEN)" in rows_of(proc.stdout)[str(tree)][2]
+
+
+def _bundle_holds(estate, bundle: Path, sha: str) -> bool:
+    """`sha` is reachable from a head of `bundle` (fetched into the lane's
+    checkout under refs/restored/, where the bundle's prerequisites are)."""
+    estate.git("fetch", "-q", str(bundle), "+refs/*:refs/restored/*")
+    heads = estate.git("for-each-ref", "--format=%(objectname)", "refs/restored/").split()
+    found = bool(heads) and sha in estate.git("rev-list", *heads).split()
+    for ref in estate.git("for-each-ref", "--format=%(refname)", "refs/restored/").split():
+        estate.git("update-ref", "-d", ref)
+    return found
+
+
+def _ledger(archive: Path) -> list:
+    return [ln.split("\t") for ln in (archive / "rescues.tsv").read_text().splitlines()
+            if ln and not ln.startswith("#")]
+
+
+def test_a_pruned_registrations_detached_commit_is_rescued_first(estate):
+    """#170 A4: `prune` dropped the only pointer to a detached commit - the
+    directory is gone and its registration's HEAD names a commit no branch
+    or origin has."""
+    tree = estate.worktree("ext", None)
+    own = estate.commit(tree, "work on a disk that is offline now", {"x.txt": "PRECIOUS\n"})
+    shutil.rmtree(tree)
+    dry = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert dry[str(tree)][0] == "rescue+prune", dry[str(tree)]
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert str(tree) not in estate.git("worktree", "list", "--porcelain")
+    rescued = [b for b, s in estate.remote_heads().items()
+               if b.startswith(f"rescue/{LANE}/ext-") and s == own]
+    assert rescued, estate.remote_heads()
+    (archive,) = estate.archives()
+    assert _bundle_holds(estate, next(archive.glob("ext*.bundle")), own)
+
+
+def test_a_commit_only_the_reflog_names_is_bundled_before_removal(estate):
+    """#170 A5: a commit made in a detached tree and then checked out away
+    from is in no ref - only the tree's HEAD reflog names it - so the
+    removal (which deletes that reflog) lost it. It is bundled first, and
+    the ledger records the bundle as its only copy (#170 item 8)."""
+    tree = estate.worktree("det", None)
+    own = estate.commit(tree, "an experiment", {"exp.txt": "PRECIOUS\n"})
+    estate.git("checkout", "-q", "--detach", "origin/main", cwd=tree)
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not tree.exists()
+    (archive,) = estate.archives()
+    bundles = sorted(archive.glob("det*.bundle"))
+    assert bundles and _bundle_holds(estate, bundles[0], own)
+    assert [r for r in _ledger(archive) if r[0] == "-" and r[1].startswith("bundle:")
+            and r[2] == own], _ledger(archive)
+
+
+def test_the_self_check_refuses_a_removal_that_would_lose_a_commit(estate):
+    """The invariant - nothing deleted that is not first on origin or in a
+    bundle - is asked of git once more right before each removal. With the
+    reflog bundle switched off (the suite's seam), the commit only the
+    reflog names would be lost: the removal is refused, exit 2, a
+    DISPOSITION.md line says so, and nothing after it is acted on."""
+    first = estate.worktree("a-det", None)
+    own = estate.commit(first, "an experiment", {"exp.txt": "PRECIOUS\n"})
+    estate.git("checkout", "-q", "--detach", "origin/main", cwd=first)
+    second = estate.worktree("b-clean", "feat/b")
+    estate.git("push", "-q", "-u", "origin", "feat/b", cwd=second)
+    proc = estate.sweep(LANE, "--yes", "--porcelain",
+                        env={"LANE_WORKTREES_SEAM_NO_LOSS_BUNDLE": "1"})
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    rows = rows_of(proc.stdout)
+    assert "REFUSED by the self-check" in rows[str(first)][2]
+    assert first.is_dir() and second.is_dir(), "nothing is acted on after the refusal"
+    assert own in estate.git("rev-list", "--reflog")
+    (archive,) = estate.archives()
+    assert "REFUSED by the self-check" in (archive / "DISPOSITION.md").read_text()
+
+
+@pytest.mark.parametrize("tracked", [True, False])
+def test_untracked_files_go_to_the_bundle_never_to_origin(estate, tracked):
+    """#170 A9: the WIP rescue committed and PUSHED every untracked,
+    un-ignored file - a `gcp-service-account.json` included. Untracked
+    files now go to the bundle only (the ledger says it is their only
+    copy); tracked changes are still pushed."""
+    tree = estate.worktree("svc", "feat/svc")
+    estate.commit(tree, "w", {"w.txt": "base\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/svc", cwd=tree)
+    (tree / "gcp-service-account.json").write_text('{"private_key": "PRECIOUS"}\n')
+    if tracked:
+        (tree / "w.txt").write_text("changed\n")
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not tree.exists()
+    for branch, sha in estate.remote_heads().items():
+        files = estate.git("ls-tree", "-r", "--name-only", sha, cwd=estate.origin)
+        assert "gcp-service-account.json" not in files.split(), branch
+    rescues = [b for b in estate.remote_heads() if b.startswith(f"rescue/{LANE}/svc-")]
+    if tracked:
+        assert len(rescues) == 1
+        assert estate.git("show", f"{rescues[0]}:w.txt", cwd=estate.origin) == "changed"
+    else:
+        assert rescues == [], "nothing tracked changed and the head is on origin"
+    (archive,) = estate.archives()
+    held = [r for r in _ledger(archive) if r[0] == "-" and r[1].startswith("bundle:")]
+    assert len(held) == 1, _ledger(archive)
+    assert _bundle_holds(estate, archive / held[0][1][len("bundle:"):], held[0][2])
+    assert estate.git("show", f"{held[0][2]}:gcp-service-account.json") == \
+        '{"private_key": "PRECIOUS"}'
+    assert "refs/lane-worktrees/" not in estate.git("for-each-ref", "--format=%(refname)")
+
+
+def test_push_untracked_pushes_them(estate):
+    tree = estate.worktree("svc", "feat/svc")
+    estate.git("push", "-q", "-u", "origin", "feat/svc", cwd=tree)
+    (tree / "notes.md").write_text("meant to be pushed\n")
+    proc = estate.sweep(LANE, "--yes", "--push-untracked", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    (rescue,) = [b for b in estate.remote_heads() if b.startswith(f"rescue/{LANE}/svc-")]
+    assert estate.git("show", f"{rescue}:notes.md", cwd=estate.origin) == "meant to be pushed"
+
+
+@pytest.mark.parametrize("lfs", [True, False])
+def test_a_push_runs_the_hooks_where_git_lfs_is_configured(estate, lfs):
+    """#170 A10: `push --no-verify` skips git-lfs's pre-push upload, so a
+    rescued branch reached origin as pointers only - and then the tree, the
+    one copy of the objects, was removed. With git-lfs configured the
+    hooks run; without it `--no-verify` stays."""
+    marker = estate.root / "pre-push.ran"
+    hook = estate.checkout / ".git" / "hooks" / "pre-push"
+    hook.write_text(f"#!/bin/sh\necho ran >> '{marker}'\nexit 0\n")
+    hook.chmod(0o755)
+    if lfs:
+        for key, value in (("filter.lfs.clean", "cat"), ("filter.lfs.smudge", "cat"),
+                           ("filter.lfs.required", "true")):
+            estate.git("config", key, value)
+    tree = estate.worktree("big", "feat/big")
+    estate.commit(tree, "assets", {"a.bin": "binary\n"})
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "feat/big" in estate.remote_heads()
+    assert marker.exists() == lfs
+
+
+def test_an_archive_whose_bundle_is_the_only_copy_never_expires(estate):
+    """#170 item 8: an origin-less tree removed through `bundle+remove`
+    left no row in rescues.tsv, so `--expire --yes` read the archive as
+    holding no rescue and could delete the only copy."""
+    solo = estate.projects / "solo"
+    estate.git("init", "-q", "-b", "main", solo, cwd=estate.root)
+    estate.commit(solo, "solo", {"s.txt": "s\n"})
+    lone = estate.lane_root / "lone"
+    estate.lane_root.mkdir(parents=True, exist_ok=True)
+    estate.git("worktree", "add", "-q", "-b", "feat/lone", lone, "main", cwd=solo)
+    tip = estate.commit(lone, "lone", {"l.txt": "l\n"})
+    estate.record(lone)
+    yes = estate.sweep(LANE, "--bundle", "--yes", "--porcelain")
+    assert yes.returncode == 0, yes.stdout + yes.stderr
+    (archive,) = estate.archives()
+    assert [r for r in _ledger(archive) if r[:2] == ["-", "bundle:lone.bundle"] and r[2] == tip]
+    conf = estate.root / "sweep.conf"
+    conf.write_text("retention_days=0\n")
+    env = {"LANE_WORKTREES_CONF": str(conf)}
+    dry = estate.sweep("--expire", "--porcelain", env=env)
+    row = [ln.split("\t") for ln in dry.stdout.splitlines() if ln.startswith("archive\t")]
+    assert row and row[0][1] == "keep" and "only copy" in row[0][4], dry.stdout
+    assert estate.sweep("--expire", "--yes", env=env).returncode == 0
+    assert archive.is_dir()
+
+
+def test_scratch_holding_a_repository_is_kept(estate):
+    """#170 item 7: scratch was archived and removed when it had no `.git`
+    of its own, so a repository nested in it - a clone with an unpushed
+    commit, which no table row names - went with the rmtree."""
+    scratch = estate.lane_root / "x-scratch"
+    scratch.mkdir(parents=True)
+    (scratch / "notes.md").write_text("findings\n")
+    inner = scratch / "deps" / "lib"
+    estate.git("clone", "-q", GH_URL, inner, cwd=estate.root)
+    own = estate.commit(inner, "unpushed", {"i.txt": "i\n"})
+    proc = estate.sweep(LANE, "--include-scratch", "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    items = items_of(proc.stdout, "scratch")
+    assert items[str(scratch)][0] == "keep", items
+    assert f"a repository lies under it ({inner})" in items[str(scratch)][3]
+    assert estate.git("rev-parse", "HEAD", cwd=inner) == own
+    assert (scratch / "notes.md").is_file()
+
+
+def test_a_live_path_that_names_no_tree_is_a_usage_error(estate):
+    """#170 B4: a misspelt `--live` path was accepted in silence, so the
+    writer it was meant to protect was not protected."""
+    tree = estate.worktree("w1", "feat/w1")
+    estate.git("push", "-q", "-u", "origin", "feat/w1", cwd=tree)
+    for live in ((str(estate.lane_root / "w1-typo"),), ("none", str(tree))):
+        args = []
+        for value in live:
+            args += ["--live", value]
+        proc = estate.sweep(LANE, "--yes", *args)
+        assert proc.returncode == 64, (live, proc.stdout, proc.stderr)
+        assert tree.is_dir()
+    assert estate.sweep(LANE, "--yes", "--live", str(tree)).returncode == 0
+    assert tree.is_dir(), "the tree --live names is a live writer's"
+
+
+def test_trees_this_session_recorded_want_the_writer_count(estate):
+    """#170 B5: a tree this session recorded skips the transcript check (it
+    is this session's), and --live was demanded only when the holder read
+    as this session - so with the holder read as none, --yes removed the
+    trees this session's own writers could be standing in."""
+    tree = estate.worktree("mine", "feat/mine", record=False)
+    estate.git("push", "-q", "-u", "origin", "feat/mine", cwd=tree)
+    estate.record(tree, writer=ME)
+    assert estate.holder == "none"
+    refused = estate.sweep(LANE, "--yes", "--porcelain")
+    assert refused.returncode == 2, refused.stdout + refused.stderr
+    assert "this session recorded 1 of lane" in refused.stdout
+    assert tree.is_dir()
+    assert estate.sweep(LANE, "--yes", "--live", "none").returncode == 0
+    assert not tree.exists()
+
+
+def test_the_first_register_line_refused_stops_the_sweep(estate):
+    """#170 B6: removals went on after a NOTED line failed, so acts piled
+    up that the register never recorded."""
+    first = estate.worktree("a-one", "feat/one")
+    estate.git("push", "-q", "-u", "origin", "feat/one", cwd=first)
+    second = estate.worktree("b-two", "feat/two")
+    estate.git("push", "-q", "-u", "origin", "feat/two", cwd=second)
+    estate.log_rc = 1
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    rows = rows_of(proc.stdout)
+    assert not first.exists() and second.is_dir()
+    assert "the register refused a line" in rows[str(second)][2]
+    assert len(estate.notes()) == 1
+
+
+def test_a_lane_owned_open_pr_branch_origin_lacks_is_still_counted(estate):
+    """#170 G2: every OPEN PR's branch was left out of the retire count, so
+    a lane-owned branch holding commits origin lacks let `--branches
+    --dry-run --porcelain` exit 0 and clear #163's gate. The delete
+    protection stays; the count does not hide it."""
+    estate.git("checkout", "-q", "-b", "feat/g2", "origin/main")
+    tip = estate.commit(estate.checkout, "unpushed", {"g2.txt": "g\n"})
+    estate.git("checkout", "-q", "main")
+    estate.pr(61, "feat/g2", "OPEN", tip)
+    proc = estate.sweep(LANE, "--branches", "--dry-run", "--porcelain")
+    assert proc.returncode == 3, proc.stdout + proc.stderr
+    items = items_of(proc.stdout, "branch")
+    assert items["feat/g2"][:2] == ("keep", "retire"), items
+    yes = estate.sweep(LANE, "--branches", "--yes")
+    assert yes.returncode == 0, yes.stdout + yes.stderr
+    assert estate.git("rev-parse", "feat/g2") == tip, "an open PR's branch is never touched"
+
+
+def test_a_branch_published_under_its_own_name_is_not_unfinished(estate):
+    """#170 G7: a branch made from origin/main tracks main, so its upstream
+    read 'ahead' and `--branches` exited 3 although origin held every
+    commit under the branch's own name."""
+    estate.git("checkout", "-q", "-b", "feat/g7", "origin/main")
+    estate.commit(estate.checkout, "published", {"g7.txt": "g\n"})
+    estate.git("push", "-q", "origin", "feat/g7")
+    assert estate.git("rev-parse", "--abbrev-ref", "feat/g7@{u}") == "origin/main"
+    estate.git("checkout", "-q", "main")
+    proc = estate.sweep(LANE, "--branches", "--dry-run", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "feat/g7" not in items_of(proc.stdout, "branch")
+
+
+def _age(path: Path, seconds: float) -> None:
+    when = time.time() - seconds
+    for p in sorted(path.rglob("*"), reverse=True) + [path]:
+        os.utime(p, (when, when), follow_symlinks=False)
+
+
+def test_a_tmp_dir_is_listed_and_never_removed_marked_or_old(estate):
+    """#170 item 1, option (b): an hour-old `tmp.*` with nobody in it was
+    removed with no proof a suite made it - a person's `mktemp -d` checkout
+    or saved scratch included. `mktemp -d` records no owner, so neither a
+    suite's mark in it nor aging_days (14) untouched is proof (#174 review
+    R2): every one is listed and left, with its mark where it has one."""
+    base = estate.sandboxes
+    unmarked, ancient, marked, layout = (base / n for n in (
+        "tmp.person01", "tmp.ancient02", "tmp.suite03", "tmp.layout04"))
+    for d in (unmarked, ancient, marked, layout):
+        d.mkdir()
+        (d / "f").write_text("x")
+    (marked / ".lock").write_text("999999\n")
+    (layout / "basetemp").mkdir()
+    (layout / "tmp").mkdir()
+    for d in (unmarked, marked, layout):
+        _age(d, 7200)
+    _age(ancient, 20 * 86400)
+    proc = estate.sweep(LANE, "--include-sandboxes", "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    rows = items_of(proc.stdout, "sandbox")
+    for d in (unmarked, ancient, marked, layout):
+        assert rows[str(d)][0] == "list" and (d / "f").is_file(), rows[str(d)]
+        assert "never removed" in rows[str(d)][3], rows[str(d)]
+    for d in (unmarked, ancient):
+        assert "no mark of a test suite" in rows[str(d)][3], rows[str(d)]
+    assert "a pytest .lock (pid 999999, gone)" in rows[str(marked)][3]
+    assert "run-root layout" in rows[str(layout)][3]
+
+
+def _lane_worktrees_module():
+    """`lane-worktrees` as a module, its bytecode written nowhere."""
+    import importlib.util
+    from importlib.machinery import SourceFileLoader
+    loader = SourceFileLoader("lane_worktrees_module", str(LW))
+    spec = importlib.util.spec_from_loader("lane_worktrees_module", loader)
+    module = importlib.util.module_from_spec(spec)
+    was = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = was
+    return module
+
+
+def test_a_tmp_dir_holding_a_bare_repository_or_notes_is_never_removed(estate):
+    """#174 review R2: with `--include-sandboxes --yes` an unmarked `tmp.*`
+    untouched for aging_days (14) was removed with no archive - one holding
+    a BARE repository with the only copy of a commit (`repository_within`
+    looked for a `.git` alone, which a bare repository has not), and one
+    holding notes.txt. Both are listed and left, and a bare repository is a
+    repository wherever it lies."""
+    vault = estate.sandboxes / "tmp.vault07"
+    notes = estate.sandboxes / "tmp.notes08"
+    work = estate.root / "work-gone"
+    estate.git("init", "-q", "-b", "main", work, cwd=estate.root)
+    own = estate.commit(work, "the only copy", {"w.txt": "PRECIOUS\n"})
+    estate.git("init", "-q", "--bare", vault / "vault.git", cwd=estate.root)
+    estate.git("push", "-q", vault / "vault.git", "main", cwd=work)
+    shutil.rmtree(work)
+    notes.mkdir()
+    (notes / "notes.txt").write_text("PRECIOUS notes\n")
+    for d in (vault, notes):
+        _age(d, 20 * 86400)
+    proc = estate.sweep(LANE, "--include-sandboxes", "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    rows = items_of(proc.stdout, "sandbox")
+    for d in (vault, notes):
+        assert rows[str(d)][0] == "list" and "never removed" in rows[str(d)][3], rows[str(d)]
+    assert f"a repository lies inside it ({vault / 'vault.git'})" in rows[str(vault)][3]
+    assert (notes / "notes.txt").read_text() == "PRECIOUS notes\n"
+    assert estate.git("cat-file", "-t", own, cwd=vault / "vault.git") == "commit"
+    lw = _lane_worktrees_module()
+    assert lw.repository_within(str(vault)) == f"a repository lies inside it ({vault / 'vault.git'})"
+    assert lw.repository_within(str(vault / "vault.git")).startswith("it is a repository")
+    assert lw.repository_within(str(notes)) == ""
+
+
+def test_an_unreadable_process_of_this_account_keeps_the_tree_it_names(estate):
+    """#170 item 2 (the coordinator's default): a same-account process whose
+    `/proc` entries cannot be read (not dumpable) was read as absent, and
+    its tree was removed under it. It is placed by its command line and its
+    parent's directory; a tree it is placed in is kept."""
+    if not os.path.isdir("/proc/self/fd") or os.geteuid() == 0:
+        pytest.skip("needs /proc, and an account that cannot read a non-dumpable process")
+    tree = estate.worktree("held", "feat/held")
+    estate.git("push", "-q", "-u", "origin", "feat/held", cwd=tree)
+    ready = estate.root / "ready"
+    code = ("import ctypes, sys, time; ctypes.CDLL(None).prctl(4, 0, 0, 0, 0); "
+            "open(sys.argv[1], 'w').close(); time.sleep(300)")
+    child = subprocess.Popen([sys.executable, "-c", code, str(ready), str(tree)], cwd=str(tree))
+    try:
+        deadline = time.time() + 20
+        while not ready.exists() and time.time() < deadline:
+            time.sleep(0.05)
+        try:
+            os.readlink(f"/proc/{child.pid}/cwd")
+            pytest.skip("this kernel lets the owner read a non-dumpable process")
+        except PermissionError:
+            pass
+        proc = estate.sweep(LANE, "--yes", "--porcelain")
+    finally:
+        child.kill()
+        child.wait()
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert tree.is_dir(), "the tree an unreadable process stands in was removed"
+    row = rows_of(proc.stdout)[str(tree)]
+    assert row[0] == "keep" and f"process {child.pid}" in row[2] and "could not be read" in row[2]
+
+
+def test_an_inventory_row_with_no_id_refuses_the_dry_run(estate):
+    """#170 G9: a `lane-trees` row with no id was skipped in silence, so a
+    tree it named outside the scanned roots went unseen and the dry run
+    exited 0, clearing #163's gate."""
+    elsewhere = estate.root / "elsewhere" / "tree"
+    estate.inventory.append(US.join(["", str(elsewhere), "feat/x", "0" * 40, "none", "0", "0",
+                                     WRITER, "2026-10-05T00:00:00Z", str(estate.checkout),
+                                     "1", "op-1", "1"]))
+    proc = estate.sweep(LANE, "--dry-run", "--porcelain")
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "inventory record ? is unreadable" in proc.stdout
+
+
+def test_a_dot_git_file_that_is_no_pointer_leaves_the_scan_whole(estate):
+    """uv keeps an EMPTY `.git` file in its cache to stop git looking upward.
+    It is no repository, and no reason to call the dependents scan partial
+    (measured on Eagle: two of them kept every clone and scratch)."""
+    marker = estate.projects / "tool-cache" / "uv" / "sdists-v9"
+    marker.mkdir(parents=True)
+    (marker / ".git").write_text("")
+    store = estate.lane_root / "store"
+    estate.git("clone", "-q", GH_URL, store, cwd=estate.root)
+    conf = estate.root / "sweep.conf"
+    conf.write_text("foreign_quiet_hours=0\n")
+    proc = estate.sweep(LANE, "--include-foreign", "--word", "go", "--yes", "--porcelain",
+                        env={"LANE_WORKTREES_CONF": str(conf)})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not store.exists(), rows_of(proc.stdout)[str(store)]
+
+
+# ===================================================== #174, Copilot round 1
+
+def _foreign_clone(estate, name: str) -> tuple:
+    """A standalone clone under the lane's root, published, and the
+    environment that lets `--include-foreign --word go` act on it at once."""
+    clone = estate.lane_root / name
+    estate.lane_root.mkdir(parents=True, exist_ok=True)
+    estate.git("clone", "-q", GH_URL, clone, cwd=estate.root)
+    conf = estate.root / "sweep.conf"
+    conf.write_text("foreign_quiet_hours=0\n")
+    return clone, {"LANE_WORKTREES_CONF": str(conf)}
+
+
+def test_a_clones_reflogs_that_cannot_be_listed_remove_nothing(estate):
+    """#174 Copilot round 1: the clone's loss plan walked `.git/logs` with
+    `os.walk`, which passes over a directory it cannot list in silence - so
+    a commit only `logs/refs/heads/<b>` named was in no plan, no bundle took
+    it, the self-check asked the same blind question, and the clone was
+    deleted with it. A reflog directory that cannot be listed is unknown."""
+    if os.geteuid() == 0:
+        pytest.skip("root lists a mode-000 directory")
+    clone, env = _foreign_clone(estate, "blind")
+    main = estate.git("rev-parse", "HEAD", cwd=clone)
+    tree = estate.git("rev-parse", "HEAD^{tree}", cwd=clone)
+    own = estate.git("commit-tree", tree, "-p", main, "-m", "an experiment", cwd=clone)
+    estate.git("update-ref", "-m", "experiment", "refs/heads/exp", own, cwd=clone)
+    estate.git("update-ref", "-m", "back", "refs/heads/exp", main, cwd=clone)
+    assert own in estate.git("rev-list", "--reflog", cwd=clone).split()
+    sealed = clone / ".git" / "logs" / "refs" / "heads"
+    sealed.chmod(0)
+    try:
+        proc = estate.sweep(LANE, "--include-foreign", "--word", "go", "--yes", "--porcelain",
+                            env=env)
+    finally:
+        sealed.chmod(0o755)
+    assert clone.is_dir(), "a clone whose reflogs could not be read was removed"
+    assert estate.git("cat-file", "-t", own, cwd=clone) == "commit"
+    row = rows_of(proc.stdout)[str(clone)]
+    assert "could not be listed" in row[2] and "left in place" in row[2], row
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+
+
+def test_a_submodule_commit_only_its_reflog_names_keeps_the_tree(estate):
+    """#174 Copilot round 1: a submodule's experiment, made detached and
+    checked out away from, is in no branch, tag or stash of it - only its
+    reflog names it - so every guard passed, and the tree's removal took
+    the submodule's repository (under the tree's own git directory) and
+    the experiment with it."""
+    tree, sub = _with_submodule(estate, "subexp")
+    estate.git("checkout", "-q", "--detach", cwd=sub)
+    own = estate.commit(sub, "an experiment", {"exp.txt": "PRECIOUS\n"})
+    estate.git("checkout", "-q", "--detach", "origin/main", cwd=sub)
+    assert estate.git("status", "--porcelain", cwd=tree) == ""
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(tree)][0] == "keep", rows[str(tree)]
+    assert "submodule sub: its reflog names 1 commit(s)" in rows[str(tree)][2]
+    assert estate.sweep(LANE, "--yes").returncode == 0
+    assert tree.is_dir()
+    assert estate.git("cat-file", "-t", own, cwd=sub) == "commit"
+
+
+@pytest.mark.parametrize("ancestor", ["node_modules", ".venv"])
+def test_an_ignored_file_beneath_a_cache_or_venv_named_directory_is_archived(estate, ancestor):
+    """#174 Copilot round 1: #170 A6 selects an ignored entry by its own
+    name, so `docker/<ancestor>/prod.env` - an ignored file in a TRACKED
+    directory - was selected; but the archive's member filter dropped any
+    path with a cache- or venv-named part, `top.env` beside it kept the
+    archive non-empty, it verified, and the tree went without prod.env."""
+    tree = estate.worktree("deploy", "feat/deploy")
+    estate.commit(tree, "compose", {".gitignore": ".env\n*.env\n__pycache__/\n",
+                                    f"docker/{ancestor}/README": "vendored\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/deploy", cwd=tree)
+    (tree / "docker" / ancestor / "prod.env").write_text("DB_PASSWORD=PRECIOUS\n")
+    (tree / "top.env").write_text("TOKEN=kept\n")
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not tree.exists()
+    (archive,) = estate.archives()
+    with tarfile.open(archive / "deploy-ignored.tar.gz") as tf:
+        names = tf.getnames()
+        prod = tf.extractfile(f"docker/{ancestor}/prod.env")
+        assert prod is not None and prod.read() == b"DB_PASSWORD=PRECIOUS\n"
+    assert "top.env" in names, names
+
+
+def test_an_old_unmarked_tmp_dir_holding_a_repository_is_listed_never_removed(estate):
+    """#174: an unmarked `tmp.*` untouched for aging_days was removed on
+    age alone - a person's `mktemp -d` checkout with an unpushed commit
+    included. No suite's mark says its repositories are fixtures, so one
+    holding a repository is listed and left."""
+    checkout = estate.sandboxes / "tmp.person05"
+    estate.git("init", "-q", "-b", "main", checkout / "work", cwd=estate.root)
+    own = estate.commit(checkout / "work", "unpushed work", {"w.txt": "PRECIOUS\n"})
+    _age(checkout, 20 * 86400)
+    proc = estate.sweep(LANE, "--include-sandboxes", "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    row = items_of(proc.stdout, "sandbox")[str(checkout)]
+    assert row[0] == "list" and f"a repository lies inside it ({checkout / 'work'})" in row[3], row
+    assert estate.git("rev-parse", "HEAD", cwd=checkout / "work") == own
+
+
+def _merged_branch_with_an_experiment(estate) -> tuple:
+    """`feat/old`, merged by PR #61 and held by no worktree, whose reflog
+    alone names an experiment: committed, reset away from, and the worktree
+    it was made in removed (taking its HEAD reflog)."""
+    tree = estate.worktree("old", "feat/old", record=False)
+    own = estate.commit(tree, "an experiment", {"exp.txt": "PRECIOUS\n"})
+    estate.git("reset", "-q", "--hard", "HEAD~1", cwd=tree)
+    tip = estate.commit(tree, "the work", {"w.txt": "w\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/old", cwd=tree)
+    estate.git("worktree", "remove", tree)
+    estate.pr(61, "feat/old", "MERGED", tip)
+    assert own in estate.git("rev-list", "--reflog").split()
+    return own, tip
+
+
+def test_a_branch_deletes_reflog_only_commit_is_bundled_first(estate):
+    """#174 Copilot round 1: `--branches --yes` deleted a merged branch with
+    `update-ref -d`, which takes its reflog - the last pointer to an
+    experiment committed on it and reset away from - with no loss plan, no
+    bundle and no self-check. It is bundled first now, as a tree's is, and
+    the ledger records the bundle as the only copy."""
+    own, _tip = _merged_branch_with_an_experiment(estate)
+    proc = estate.sweep(LANE, "--branches", "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    item = items_of(proc.stdout, "branch")["feat/old"]
+    assert "local branch deleted" in item[3] and "commits only its reflog named" in item[3], item
+    assert "feat/old" not in estate.git("branch", "--format=%(refname:short)").splitlines()
+    (archive,) = estate.archives()
+    bundles = sorted(archive.glob("branch-feat-old*.bundle"))
+    assert bundles and _bundle_holds(estate, bundles[0], own)
+    assert [r for r in _ledger(archive) if r[0] == "-" and r[2] == own], _ledger(archive)
+
+
+def test_the_self_check_refuses_a_branch_delete_that_would_lose_a_commit(estate):
+    """... and with that bundle switched off (the suite's seam), the
+    self-check is what stands between the delete and the experiment: it
+    refuses, exit 2, DISPOSITION.md says so, and the branch stays."""
+    own, tip = _merged_branch_with_an_experiment(estate)
+    proc = estate.sweep(LANE, "--branches", "--yes", "--porcelain",
+                        env={"LANE_WORKTREES_SEAM_NO_LOSS_BUNDLE": "1"})
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    item = items_of(proc.stdout, "branch")["feat/old"]
+    assert item[3].endswith(f"REFUSED by the self-check: 1 commit(s) its delete would take are "
+                            f"neither on origin nor in a bundle (e.g. {own[:12]})"), item
+    assert estate.git("rev-parse", "refs/heads/feat/old") == tip
+    assert "feat/old" in estate.remote_heads()
+    (archive,) = estate.archives()
+    assert "REFUSED by the self-check" in (archive / "DISPOSITION.md").read_text()
+
+
+def _arrival_shim(estate, target: Path, text: str) -> dict:
+    """A PATH whose `git` writes `target` the SECOND time the sweep asks
+    `ls-files -v` (the hidden-edit guard): once when the table is built,
+    once more at the act - so the file arrives after the table was read and
+    before the rescue is taken, which is the window a writer has."""
+    shim = estate.root / "arrival-shim"
+    shim.mkdir(exist_ok=True)
+    count = estate.root / "arrival-count"
+    real_git = shutil.which("git")
+    (shim / "git").write_text(
+        "#!/bin/sh\n"
+        'case " $* " in\n'
+        '  *" ls-files -v -s -z "*)\n'
+        f"    n=$(cat '{count}' 2>/dev/null || echo 0); n=$((n + 1)); echo \"$n\" > '{count}'\n"
+        f"    if [ \"$n\" = 2 ]; then printf '%s\\n' '{text}' > '{target}'; fi ;;\n"
+        "esac\n"
+        f'exec "{real_git}" "$@"\n')
+    (shim / "git").chmod(0o755)
+    return {"PATH": f"{shim}{os.pathsep}{estate.env['PATH']}"}
+
+
+def test_an_untracked_file_that_arrives_after_the_table_is_never_pushed(estate):
+    """#174 Copilot round 1: whether untracked files were held back was read
+    from the table's status. A tree with only a tracked change when it was
+    read, and an untracked key file by the time of the rescue, had the full
+    snapshot - key included - pushed to origin. What is untracked is read
+    from the snapshots at the act now: the key goes to the bundle alone."""
+    tree = estate.worktree("late", "feat/late")
+    estate.commit(tree, "w", {"w.txt": "base\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/late", cwd=tree)
+    (tree / "w.txt").write_text("changed\n")
+    key = tree / "gcp-service-account.json"
+    env = _arrival_shim(estate, key, '{"private_key": "PRECIOUS"}')
+    proc = estate.sweep(LANE, "--yes", "--porcelain", env=env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not tree.exists()
+    for branch, sha in estate.remote_heads().items():
+        files = estate.git("ls-tree", "-r", "--name-only", sha, cwd=estate.origin)
+        assert "gcp-service-account.json" not in files.split(), branch
+    (rescue,) = [b for b in estate.remote_heads() if b.startswith(f"rescue/{LANE}/late-")]
+    assert estate.git("show", f"{rescue}:w.txt", cwd=estate.origin) == "changed"
+    (archive,) = estate.archives()
+    held = [r for r in _ledger(archive) if r[0] == "-" and r[1].startswith("bundle:")]
+    assert len(held) == 1, _ledger(archive)
+    assert _bundle_holds(estate, archive / held[0][1][len("bundle:"):], held[0][2])
+    assert estate.git("show", f"{held[0][2]}:gcp-service-account.json") == \
+        '{"private_key": "PRECIOUS"}'
+
+
+@pytest.mark.parametrize("when", ["seen-by-the-table", "arrived-after-it"])
+def test_untracked_git_lfs_content_keeps_the_tree(estate, when):
+    """#174 Copilot round 1: an untracked file git-lfs filters was
+    snapshotted as a POINTER for the bundle-only commit (#170 A9); a bundle
+    carries no LFS payload, and the tree went with the only copy of the
+    bytes. Such a tree is kept - in the table, and again at the act, before
+    anything is pushed."""
+    tree = estate.worktree("models", "feat/models")
+    estate.commit(tree, "weights go through git-lfs",
+                  {".gitattributes": "*.bin filter=lfs diff=lfs merge=lfs -text\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/models", cwd=tree)
+    for k, v in (("filter.lfs.clean",
+                  "sh -c 'cat >/dev/null; echo version https://git-lfs.github.com/spec/v1'"),
+                 ("filter.lfs.smudge", "cat"), ("filter.lfs.required", "true")):
+        estate.git("config", k, v)
+    weights = tree / "weights.bin"
+    env = None
+    if when == "seen-by-the-table":
+        weights.write_text("PRECIOUS weights\n")
+        dry = rows_of(estate.sweep(LANE, "--porcelain").stdout)[str(tree)]
+        assert dry[0] == "keep" and "git-lfs content (e.g. weights.bin)" in dry[2], dry
+    else:
+        (tree / "notes.txt").write_text("tracked? no - but a tracked change is below\n")
+        estate.git("add", "notes.txt", cwd=tree)
+        estate.commit(tree, "notes")
+        estate.git("push", "-q", "origin", "feat/models", cwd=tree)
+        (tree / "notes.txt").write_text("changed\n")
+        env = _arrival_shim(estate, weights, "PRECIOUS weights")
+    before = estate.remote_heads()
+    proc = estate.sweep(LANE, "--yes", "--porcelain", env=env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert weights.read_text() == "PRECIOUS weights\n", "the only copy of the bytes went"
+    row = rows_of(proc.stdout)[str(tree)]
+    assert row[0] == "keep" and "git-lfs content" in row[2], row
+    assert estate.remote_heads() == before, "nothing is pushed for a tree that is kept"
+
+
+@pytest.mark.parametrize("where", ["only-in-the-clone", "on-origin-too"])
+def test_a_clones_annotated_tag_neither_halts_the_sweep_nor_is_lost(estate, where):
+    """#174 Copilot round 1: a clone's annotated tag reached the loss plan
+    as its TAG OBJECT, which was reported lost however it was kept - so the
+    self-check refused, and halted the sweep on, every clone with one. A tag
+    object origin holds as it is is kept; one only the clone holds goes to
+    the bundle, its message with it; either way the clone is removed."""
+    clone, env = _foreign_clone(estate, "released")
+    estate.git("tag", "-a", "-m", "release notes nobody else has", "v1.0", cwd=clone)
+    tag = estate.git("rev-parse", "refs/tags/v1.0", cwd=clone)
+    if where == "on-origin-too":
+        estate.git("push", "-q", "origin", "v1.0", cwd=clone)
+    proc = estate.sweep(LANE, "--include-foreign", "--word", "go", "--yes", "--porcelain",
+                        env=env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not clone.exists(), rows_of(proc.stdout)[str(clone)]
+    (archive,) = estate.archives()
+    only = [r for r in _ledger(archive) if r[0] == "-" and r[1].startswith("bundle:")]
+    if where == "on-origin-too":
+        assert only == [], "origin holds that very tag object: no bundle is its only copy"
+    else:
+        assert [r[2] for r in only] == [tag], _ledger(archive)
+        heads = estate.git("bundle", "list-heads", archive / only[0][1][len("bundle:"):])
+        assert tag in heads.split(), heads
+
+
+# ===================================================== #174, Copilot round 2
+
+def test_a_deinitialized_submodules_kept_repository_keeps_the_tree(estate):
+    """#174 Copilot round 2: `git submodule status` shows a deinitialized
+    submodule `-`, and the guards passed over it - while its repository,
+    with a branch no remote holds, stays under the tree's git directory and
+    went with the tree."""
+    tree, sub = _with_submodule(estate, "deinit")
+    estate.git("checkout", "-q", "-b", "local", cwd=sub)
+    own = estate.commit(sub, "local only", {"l.txt": "PRECIOUS\n"})
+    estate.git("checkout", "-q", "--detach", "origin/main", cwd=sub)
+    estate.git("submodule", "deinit", "-q", "-f", "sub", cwd=tree)
+    assert estate.git("submodule", "status", cwd=tree).startswith("-")
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(tree)][0] == "keep", rows[str(tree)]
+    assert "its branch local holds commits every remote of it lacks" in rows[str(tree)][2]
+    assert estate.sweep(LANE, "--yes").returncode == 0
+    module = Path(estate.git("rev-parse", "--absolute-git-dir", cwd=tree)) / "modules" / "sub"
+    assert estate.git("cat-file", "-t", own, cwd=module) == "commit"
+
+
+def test_a_submodules_hidden_edit_keeps_the_tree(estate):
+    """#174 Copilot round 2: #170 A2's hidden-edit guard read the
+    superproject only, so a file flagged skip-worktree in a submodule and
+    edited there read as clean and went with the tree."""
+    tree, sub = _with_submodule(estate, "subhidden")
+    estate.git("update-index", "--skip-worktree", "s.txt", cwd=sub)
+    (sub / "s.txt").write_text("PRECIOUS local edit\n")
+    assert estate.git("status", "--porcelain", cwd=sub) == ""
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(tree)][0] == "keep", rows[str(tree)]
+    assert "submodule sub: 1 file(s) flagged skip-worktree" in rows[str(tree)][2]
+    assert estate.sweep(LANE, "--yes").returncode == 0
+    assert (sub / "s.txt").read_text() == "PRECIOUS local edit\n"
+
+
+def test_a_repository_under_a_cache_named_directory_keeps_the_scratch(estate):
+    """#174 Copilot round 2: the nested-repository walk - the proof that a
+    removal takes no repository - passed over directories named like
+    caches, so a checkout under `__pycache__` was archived without its git
+    history (the archive leaves caches out) and removed."""
+    scratch = estate.lane_root / "y-scratch"
+    work = scratch / "__pycache__" / "work"
+    estate.git("init", "-q", "-b", "main", work, cwd=estate.root)
+    own = estate.commit(work, "unpushed", {"w.txt": "PRECIOUS\n"})
+    proc = estate.sweep(LANE, "--include-scratch", "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    row = items_of(proc.stdout, "scratch")[str(scratch)]
+    assert row[0] == "keep" and f"a repository lies under it ({work})" in row[3], row
+    assert estate.git("rev-parse", "HEAD", cwd=work) == own
+
+
+def test_another_lanes_claim_inside_a_repository_is_read_before_a_clone_goes(estate):
+    """#174 Copilot round 2: the whole-estate walk found `.lane-state` under a
+    plain directory inside a repository - `host/vendor/.lane-state` - and the
+    sweep threw it away; with no log naming that place, another lane's claim
+    on a clone was missed and the clone removed."""
+    clone, env = _foreign_clone(estate, "theirs")
+    host = estate.projects / "host"
+    estate.git("init", "-q", "-b", "main", host, cwd=estate.root)
+    claims = host / "vendor" / ".lane-state" / "repoD-5" / "trees"
+    claims.mkdir(parents=True)
+    (claims / "c1.yaml").write_text(f"schema: 1\npath: {clone}\n")
+    proc = estate.sweep(LANE, "--include-foreign", "--word", "go", "--yes", "--porcelain",
+                        env=env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    row = rows_of(proc.stdout)[str(clone)]
+    assert row[0] == "foreign" and "lane repoD-5's inventory names it" in row[2], row
+    assert clone.is_dir()
+
+
+def test_a_landed_line_never_lets_commits_onto_a_branch_gh_answers_open(estate, tmp_path):
+    """#174 Copilot round 2: the register says #21 LANDED while gh still
+    answers #21 OPEN, and the local tip is AHEAD of the PR head - the
+    verdict was "moved", which dropped gh's OPEN, and push+remove put the
+    lane's unreviewed commit onto the open pull request's branch. It goes to
+    a rescue branch, and origin's branch is left as it is."""
+    tree = estate.worktree("reg", "feat/reg")
+    head = estate.commit(tree, "r", {"r.txt": "r\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/reg", cwd=tree)
+    estate.pr(21, "feat/reg", "OPEN", head)
+    estate.register_line(LANE, f"LANDED — lane {LANE}, session {ME}@Eagle, "
+                               f"2026-10-05T00:00:00Z, {SLUG}#21 → main abc1234")
+    ahead = estate.commit(tree, "unreviewed", {"u.txt": "u\n"})
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(tree)][0] == "rescue+remove", rows[str(tree)]
+    assert "gh still answers PR #21 OPEN" in rows[str(tree)][2]
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    heads = estate.remote_heads()
+    assert heads["feat/reg"] == head, "the open pull request's branch was pushed onto"
+    assert [b for b, s in heads.items() if b.startswith(f"rescue/{LANE}/reg-") and s == ahead]
+
+
+def test_a_gone_worktrees_kept_submodule_repository_is_never_pruned(estate):
+    """#174 Copilot round 2: a registration whose directory is gone keeps
+    its submodules' repositories under `<admin>/modules/`, and the prune -
+    which reads only the superproject's HEAD and reflog - took them, a
+    branch no remote holds with them."""
+    tree, sub = _with_submodule(estate, "gonesub")
+    estate.git("checkout", "-q", "-b", "local", cwd=sub)
+    own = estate.commit(sub, "local only", {"l.txt": "PRECIOUS\n"})
+    estate.git("checkout", "-q", "--detach", "origin/main", cwd=sub)
+    module = Path(estate.git("rev-parse", "--absolute-git-dir", cwd=tree)) / "modules" / "sub"
+    shutil.rmtree(tree)
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(tree)][0] == "keep", rows[str(tree)]
+    assert "its branch local holds commits every remote of it lacks" in rows[str(tree)][2]
+    assert estate.sweep(LANE, "--yes").returncode == 0
+    assert str(tree) in estate.git("worktree", "list", "--porcelain")
+    # Its `core.worktree` is gone, so it is read as a git directory alone -
+    # with a working tree of its own `objects/`, as the sweep reads it.
+    assert estate.git("--work-tree", str(module / "objects"), "cat-file", "-t", own,
+                      cwd=module) == "commit"
+
+
+def test_a_clones_local_lfs_store_keeps_it_when_a_bundle_would_be_the_only_copy(estate):
+    """#174 Copilot round 2: a clean clone with an experiment only its
+    reflog names had that commit bundled - its LFS pointers with it - and was
+    removed with `.git/lfs/objects`, the only copy of the bytes behind them."""
+    clone, env = _foreign_clone(estate, "assets")
+    main = estate.git("rev-parse", "HEAD", cwd=clone)
+    own = estate.git("commit-tree", estate.git("rev-parse", "HEAD^{tree}", cwd=clone),
+                     "-p", main, "-m", "an experiment", cwd=clone)
+    estate.git("update-ref", "-m", "experiment", "refs/heads/exp", own, cwd=clone)
+    estate.git("update-ref", "-m", "back", "refs/heads/exp", main, cwd=clone)
+    oid = "ab" * 32
+    store = clone / ".git" / "lfs" / "objects" / oid[:2] / oid[2:4]
+    store.mkdir(parents=True)
+    (store / oid).write_bytes(b"PRECIOUS weights\n")
+    proc = estate.sweep(LANE, "--include-foreign", "--word", "go", "--yes", "--porcelain",
+                        env=env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    row = rows_of(proc.stdout)[str(clone)]
+    assert row[0] == "keep" and "local git-lfs store" in row[2], row
+    assert (store / oid).read_bytes() == b"PRECIOUS weights\n"
+
+
+@pytest.mark.parametrize("marker", [".lock", ".openrepotools-run"])
+def test_a_suite_mark_that_names_no_pid_is_no_proof(estate, marker):
+    """#174 Copilot round 2: an EMPTY `.lock` (or run.sh marker) counted as
+    a suite's mark though it names no pid, so a two-hour-old `tmp.*` with a
+    checkout in it was removed - past the 14-day rule and the repository
+    guard both."""
+    saved = estate.sandboxes / "tmp.saved06"
+    estate.git("init", "-q", "-b", "main", saved / "work", cwd=estate.root)
+    own = estate.commit(saved / "work", "unpushed", {"w.txt": "PRECIOUS\n"})
+    (saved / marker).write_text("")
+    _age(saved, 7200)
+    proc = estate.sweep(LANE, "--include-sandboxes", "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    row = items_of(proc.stdout, "sandbox")[str(saved)]
+    assert row[0] == "list" and "no mark of a test suite" in row[3], row
+    assert estate.git("rev-parse", "HEAD", cwd=saved / "work") == own
+
+
+@pytest.mark.parametrize("where", ["only-in-the-submodule", "on-its-remote-too"])
+def test_a_submodules_annotated_tag_object_is_never_lost_with_its_tree(estate, where):
+    """#174 Copilot round 2: a submodule's guards ask whether an annotated
+    tag's COMMIT is published, never its tag object, so a local tag on a
+    published commit passed every one - and its message, which nothing else
+    held, went with the tree. At the act each remote of that repository is
+    asked for that very tag object: absent, the tree is kept; present, it
+    goes. The dry run asks no remote, so it reads `remove` either way."""
+    tree, sub = _with_submodule(estate, "subtag")
+    estate.git("tag", "-a", "-m", "release notes nobody else has", "v9", cwd=sub)
+    tag = estate.git("rev-parse", "refs/tags/v9", cwd=sub)
+    if where == "on-its-remote-too":
+        estate.git("push", "-q", "origin", "v9", cwd=sub)
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(tree)][0] == "remove", rows[str(tree)]
+    module = Path(estate.git("rev-parse", "--absolute-git-dir", cwd=sub))
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    row = rows_of(proc.stdout)[str(tree)]
+    if where == "on-its-remote-too":
+        assert not tree.exists(), row
+    else:
+        assert row[0] == "keep" and "its annotated tag v9 is a tag object no remote" in row[2], row
+        assert estate.git("cat-file", "-t", tag, cwd=module) == "tag"
