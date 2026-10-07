@@ -586,7 +586,7 @@ followed by the lock:
 ```sh
 pat='^python3 -m pyt'"est"
 while [ "$(pgrep -f "$pat" | awk 'END { print NR + 0 }')" -gt 0 ]; do sleep 20; done
-flock "${TMPDIR:-/tmp}/openrepotools-pytest.lock" python3 -m pytest tests -q
+PYTHONPYCACHEPREFIX="${XDG_CACHE_HOME:-$HOME/.cache}/openRepoTools/pycache" flock "${TMPDIR:-/tmp}/openrepotools-pytest.lock" python3 -m pytest tests -q -p no:cacheprovider
 ```
 
 `awk` and not `pgrep -fc`: `-c` is not in every `pgrep` this toolset runs
@@ -3796,8 +3796,10 @@ started in the same second gets `<UTC>-2`) and never by a dry run:
 **One register `NOTED` line per tree acted on** (`lanes-edit.sh log NOTED
 lane:<lane>`), written after the act so it says what happened, naming the
 disposition, the rescue and the archive; one more each for scratch, branches,
-and caches with sandboxes. A line the register refuses is printed whole for a
-person to write by hand, and the exit is 1. The line is the pointer that
+and caches with sandboxes, each written as the session that swept
+(`LANES_SESSION`, #170 E7). A line the register refuses is printed whole for a
+person to write by hand - quoted for the shell (#170 E6) and naming that same
+session (#179) - and the exit is 1. The line is the pointer that
 outlives the archive.
 
 **Retention: 90 days** (`sweep.conf`). `sweep --expire` lists archives older than
@@ -3917,11 +3919,17 @@ A tree made any other way — a brief's own `git worktree add`, the harness's
 
 The net under every actor that never runs `lane-end`: **creation outpacing
 closeout as a number that is read every day.** It reads every lane's #97
-inventory and snapshot under `<estate>/.lane-state` (or
-`$LANES_LANE_STATE_ROOT`), the workspace repository's register on
-`origin/<branch>`, and the disk — **never the derived index** (Amendment 14
-clause (b)) — and CHANGES NOTHING: no fetch, no index refresh
-(`GIT_OPTIONAL_LOCKS=0`), no expiry.
+inventory and snapshot in every `.lane-state` it can find (#170 G15, B8):
+`<estate>/.lane-state`; beside every checkout the estate's shape walk finds,
+so a nested checkout's lanes are read where #97 keeps them; under every
+directory a walk of the whole estate finds, caches skipped, a plain directory
+inside a repository included (`xFactory/xFactories/.lane-state`); beside every
+lane's recorded `dir` in the register; and `$LANES_LANE_STATE_ROOT`. It also
+reads the workspace repository's register on `origin/<branch>`, and the disk —
+**never the derived index** (Amendment 14 clause (b)) — and CHANGES NOTHING:
+no fetch, no index refresh (`GIT_OPTIONAL_LOCKS=0`), no expiry. A byte that is
+not UTF-8, in a path or in the workspace's `.gitignore`, is carried as itself,
+never an error (#170 G10-G12).
 
 ```sh
 lane-worktrees sweep --all --dry-run --report [--estate <dir>] [--post <file> | --post <owner/repo>#<n>]
@@ -3930,16 +3938,16 @@ lane-worktrees sweep --all --dry-run --report [--estate <dir>] [--post <file> | 
 | section | what is listed |
 |---|---|
 | FOREIGN repositories | a CLONE inside a worktree container (`.lane-worktrees/<lane>`, `.claude/worktrees`, `worktrees`, `<x>-worktrees`), and a second clone of an origin the estate already has a checkout of: path, size, last commit, owner (the last `Lane:` trailer), and LOAD-BEARING with its dependents where something leans on it |
-| Orphaned worktrees of ENDED lanes | trees an inventory records, and directories under `.lane-worktrees/<lane>`, of a lane whose snapshot is `CLOSED` or whose log's last lane line is `ENDED` or `RETIRED` — with the sweep that retires them |
+| Orphaned worktrees of ENDED lanes | trees an inventory records, and directories under `.lane-worktrees/<lane>`, of a lane whose snapshot is `CLOSED` or whose log's last lane line is `ENDED` or `RETIRED` — with the sweep that retires them. Empty beside a record it could not read — a lane snapshot, an inventory, the register's lines, a directory the walk could not list — it says "none found in what could be read", never "none" (#170 B8); a failure that is no lane record (an ignored-file listing, say) is still a row of the last section but leaves "none" as it is (#179); so does Awaiting disposition |
 | Unmerged branches | local branches of every checkout with no upstream, a gone upstream, a diverged one, or unpushed commits: tip, state, age, owner, and whether a worktree holds it. Never deleted; `main`, `master` and `rescue/*` are not listed |
 | Root main divergence | a checkout whose local `main` is ahead of `origin/main`; where every changed path is under `handoffs/` or `lanes/`, the remedy is Amendment 4's — those live in the workspace repository and are pushed per write |
 | Awaiting disposition | a `rescue/*` branch (local or on origin) and a DIRTY inventory tree whose git directory has been still for `aging_days` (14), with owner and age |
 | Caches and sandboxes | `--include-caches`' and `--include-sandboxes`' rows across every lane, by size |
 | Ignored directories over `ignored_report_mb` | every ignored directory of every repository at or over 50 MB (`du -sk`) |
-| Evidence-shaped paths | untracked or ignored `junit*.xml`, `MANIFEST*`, `*-report.md`, `*REPORT*.md`, `canary-*`, `*-evidence`, `deployment-evidence` inside a repository, and a directory of reports beside the repositories — each a finding to move to the evidence root below |
+| Evidence-shaped paths | untracked or ignored — an ignored FILE as much as an ignored directory (#170 item 9) — `junit*.xml`, `MANIFEST*`, `*-report.md`, `*REPORT*.md`, `canary-*`, `*-evidence`, `deployment-evidence` inside a repository, and a directory of reports beside the repositories — each a finding to move to the evidence root below |
 | Sweep archives past retention | `sweep --expire`'s own dry run: what WOULD expire, and what is past retention but kept because its rescue left origin. Expiring stays an act (`sweep --expire --yes`) |
-| Workspace repository hygiene | the workspace's `.gitignore` lines it lacks (with the one command that adds them), and bytecode already in its history (for a person's word: history is rewritten only on one) |
-| Records the report could not read | a lane snapshot, inventory directory or record, or an inventory tree's `git status`, that could not be read — unknown is never absent, and the sections above may be missing what it holds |
+| Workspace repository hygiene | the workspace's `.gitignore` lines it lacks (with the one command that adds them, its path quoted for the shell, #170 item 10), and bytecode already in its history (for a person's word: history is rewritten only on one) |
+| Records the report could not read | a lane snapshot, inventory directory or record, or an inventory tree's `git status`, that could not be read; a directory the estate walk could not list, the estate root itself (#170 E10), the register's lane logs or its ENDED and RETIRED lines where the `git grep` failed (#170 G3), and a repository whose ignored or untracked files could not be listed (#179) — unknown is never absent, and the sections above may be missing what it holds |
 | `status --all` findings | the estate command's ahead/behind, fork, shape-pin and parked-record lines, reported as what they are and never counted as dirt (`LANE_WORKTREES_STATUS` names the command when it is not beside this one) |
 
 The summary table at its head also carries **the count of rescue branches** and
@@ -3953,8 +3961,14 @@ and before the launch: the first start of a UTC day takes the stamp
 `${XDG_STATE_HOME:-~/.local/state}/openRepoTools/report-<YYYYMMDD>.stamp`
 (an atomic `set -C` create, so two starts at once run one report), removes
 older stamps, and starts the report DETACHED — stdin, stdout and stderr closed,
-in a subshell that exits at once — over the start's own `$PROJECTS_ROOT`,
-writing `…/openRepoTools/reports/<UTC>.md`. Every step either works or is skipped in
+in a subshell that exits at once, under `nohup` and, where there is a `setsid`
+(Linux), in a session of its own, so a pane killed after the stamp was taken
+does not take the report with it (#170 E8) — over the start's own
+`$PROJECTS_ROOT`, writing `…/openRepoTools/reports/<UTC>.md`. The report names
+every path, branch and lane of the estate, so it is private: the state and
+reports directories are 0700 and the report is written under `umask 077`
+(#170 item 11); where they cannot be made 0700 no report starts and no stamp
+is taken, so the next start tries again (#179). Every step either works or is skipped in
 silence: the report never delays a start and never fails one. `--dry-run`
 starts none; `LANE_WORKTREES_REPORT=off` is the switch (both suites set it).
 
@@ -3967,10 +3981,16 @@ The sweep retires what is already there; these keep more from arriving.
   and roots every temporary directory of a run under
   `${XDG_STATE_HOME:-~/.local/state}/openRepoTools/tmp/<UTC>-<pid>/`, which its
   EXIT trap removes however the run ends — after stopping the suite's whole
-  process group, so nothing it started outlives the run root or the lock. With
+  process group (TERM, then KILL at ten seconds, and only then the leader
+  reaped, so a suite that ignores TERM cannot hold the lock for ever: #170 item
+  3), so nothing it started outlives the run root or the lock. With
   a terminal on stdin the suite runs in the FOREGROUND instead, so `--pdb` or a
   `breakpoint()` can read it (a background group would be stopped by SIGTTIN,
-  and the wrapper would wait on it holding the lock). A SIGKILL is the one end no trap sees;
+  and the wrapper would wait on it holding the lock); it is then in the
+  wrapper's own group, whose members are read before the suite starts, and
+  what is there afterwards that was not, and is no sibling of the wrapper, is
+  stopped the same way before the cleanup (#170 G14). `--basetemp` is the
+  wrapper's own, and a caller's is refused, 64 (#170 G8). A SIGKILL is the one end no trap sees;
   the pid in the name is what lets `--include-sandboxes` tell its owner is gone.
 * **One virtual environment per repository, outside the estate:**
   `${XDG_CACHE_HOME:-~/.cache}/openRepoTools/venvs/<repo>/`. `openRepoTools

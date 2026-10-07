@@ -279,7 +279,7 @@ and locked:
 ```sh
 pat='^python3 -m pyt'"est"                       # split so it cannot match itself
 while [ "$(pgrep -f "$pat" | awk 'END { print NR + 0 }')" -gt 0 ]; do sleep 20; done
-flock "${TMPDIR:-/tmp}/openrepotools-pytest.lock" python3 -m pytest tests -q
+PYTHONPYCACHEPREFIX="${XDG_CACHE_HOME:-$HOME/.cache}/openRepoTools/pycache" flock "${TMPDIR:-/tmp}/openrepotools-pytest.lock" python3 -m pytest tests -q -p no:cacheprovider
 ```
 
 `awk` AND NOT `pgrep -fc`, which is what `tests/run.sh` does and for the reason

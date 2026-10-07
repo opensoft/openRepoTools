@@ -130,6 +130,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import socket
 import stat
@@ -324,15 +325,24 @@ def human_size(n: int) -> str:
 
 def rmtree(path: str) -> None:
     """`shutil.rmtree` that also clears git's read-only object files. A path
-    that is already gone is already removed."""
+    that is already gone is already removed.
+
+    A SYMLINK IS NEVER CHMOD-ED OR REMOVED THROUGH (#170 E4): `os.chmod`
+    follows a link, so the retry for an entry that would not go changed the
+    mode of whatever the link pointed at - a clone elsewhere - and a path that
+    IS a link was "removed" by an rmtree that refused it in silence. A link
+    at the top is refused; one inside is retried without a chmod."""
     if not os.path.lexists(path):
         return
+    if os.path.islink(path):
+        raise OSError(f"{path} is a symbolic link; nothing is removed through one")
 
     def clear(func, target, _exc):
-        try:
-            os.chmod(target, stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
-        except OSError:
-            pass
+        if not os.path.islink(target):
+            try:
+                os.chmod(target, stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
+            except OSError:
+                pass
         func(target)
     shutil.rmtree(path, onerror=clear)
 
@@ -634,9 +644,15 @@ class Helper:
             cache[uuid] = {0: "live", 8: "none"}.get(proc.returncode, "unknown")
         return cache[uuid]
 
-    def note_line(self, lane: str, text: str):
+    def note_line(self, lane: str, text: str, session: str = ""):
+        """The NOTED line, written AS THIS SESSION (#170 E7): `LANES_SESSION`
+        is passed, so the line names the session that swept and not
+        whatever the helper would find on its own."""
+        extra = {"LANES_LANE": lane}
+        if session:
+            extra["LANES_SESSION"] = session
         return self.call("log", "NOTED", f"lane:{lane}", register_text(text),
-                         env_extra={"LANES_LANE": lane}, fetch=False)
+                         env_extra=extra, fetch=False)
 
 
 LANE_LINE_RE = re.compile(r"^(?:STARTED|PAUSED|RESUMED|ENDED|RETIRED) — lane [^,]+, "
@@ -727,6 +743,11 @@ class ProcScan:
     def _scan(self) -> None:
         me = os.getpid()
         uid = os.getuid()
+        if os.environ.get(SEAM_NO_PROCSCAN, "") == "1":
+            # THE SUITE'S SEAM (#170 C5): a host with no `/proc` and no `lsof`,
+            # on a host that has both.
+            self.why = "this host has no /proc and no lsof (the suite's seam)"
+            return
         if os.path.isdir("/proc/self/fd"):
             self.available = True
             pending = []             # (pid, comm, ppid, hints, anywhere)
@@ -971,15 +992,18 @@ class MergeEvidence:
                 self._landed.add((m.group(2).lower(), int(m.group(1))))
         return self._landed
 
-    def prs(self, slug: str):
+    def prs(self, slug: str, branch: str):
+        """Every pull request whose head is `branch`, ASKED BY THAT BRANCH
+        (#170 E5): one `--limit 1000` list of the whole repository missed the
+        PR of a branch older than its thousandth, which then read as none."""
         if not slug or not self.gh_ok:
             return None
-        if slug in self._prs:
-            return self._prs[slug]
+        if (slug, branch) in self._prs:
+            return self._prs[(slug, branch)]
         env = dict(os.environ, GH_PROMPT_DISABLED="1", GH_NO_UPDATE_NOTIFIER="1")
-        proc = run(["gh", "pr", "list", "--repo", slug, "--state", "all", "--limit", "1000",
-                    "--json", "number,state,mergedAt,headRefName,headRefOid,baseRefName,"
-                    "isCrossRepository"],
+        proc = run(["gh", "pr", "list", "--repo", slug, "--state", "all", "--head", branch,
+                    "--limit", "200", "--json", "number,state,mergedAt,headRefName,headRefOid,"
+                    "baseRefName,isCrossRepository"],
                    env=env, timeout=120)
         rows = None
         if proc.returncode == 0:
@@ -988,8 +1012,8 @@ class MergeEvidence:
             except ValueError:
                 rows = None
         if rows is None:
-            self.gh_why = f"gh pr list --repo {slug} failed: " + _first_line(proc.stderr)
-        self._prs[slug] = rows
+            self.gh_why = f"gh pr list --repo {slug} --head {branch} failed: " + _first_line(proc.stderr)
+        self._prs[(slug, branch)] = rows
         return rows
 
     @staticmethod
@@ -1004,7 +1028,7 @@ class MergeEvidence:
     def judge(self, repo: str, slug: str, branch: str, tip: str) -> dict:
         """{'state': merged|moved|elsewhere|open|closed|none|unknown, 'pr': n,
         'source': ..., 'why': ...} for `branch` at `tip`."""
-        rows = self.prs(slug)
+        rows = self.prs(slug, branch)
         if rows is None:
             return {"state": "unknown", "pr": 0, "source": "",
                     "why": "no pull request could be read for it (" + (self.gh_why or
@@ -3667,7 +3691,7 @@ class Sweep:
     def _note(self, t, text: str) -> None:
         if self.opts.foreign and self.opts.word and t is not None and t.owner == "foreign":
             text += f"; foreign on the word '{self.opts.word}'"
-        proc = self.helper.note_line(self.lane, text)
+        proc = self.helper.note_line(self.lane, text, self.caller)
         line = "NOTED " + utc_now() if proc.returncode == 0 else \
             f"NOT WRITTEN (lanes-edit.sh log exited {proc.returncode}: {_first_line(proc.stderr)})"
         if t is not None:
@@ -3679,9 +3703,18 @@ class Sweep:
             # register that refused one line will refuse the next.
             self.halt = self.halt or ("the register refused a line (NOT WRITTEN); nothing more "
                                       "is acted on until it is written by hand")
+            # THE COMMAND IS QUOTED FOR THE SHELL (#170 E6): it is printed to be
+            # pasted, and a path with a quote or a `$` in it broke it. It names
+            # the session that swept, as the line it stands for does (#170 E7;
+            # #179, Copilot round 1) - each value quoted, never the assignment.
+            assign = [f"LANES_LANE={shlex.quote(self.lane)}"]
+            if self.caller:
+                assign.append(f"LANES_SESSION={shlex.quote(self.caller)}")
             note(f"the register line for {t.path if t else 'this sweep'} was NOT written "
-                 f"(exit {proc.returncode}); write it by hand: LANES_LANE={self.lane} "
-                 f"lanes-edit.sh log NOTED lane:{self.lane} \"{register_text(text)}\"")
+                 f"(exit {proc.returncode}); write it by hand: "
+                 + " ".join(assign + [shlex.quote(a) for a in (
+                     "lanes-edit.sh", "log", "NOTED", f"lane:{self.lane}",
+                     register_text(text))]))
         self.dispositions.append((t.path if t else "-", text, line))
 
     def _record(self, t: Tree) -> None:
@@ -3758,6 +3791,9 @@ class _SelfCheck(Exception):
 #: The suite's seam: skips the reflog bundle (#170 A5) so the self-check is
 #: what stands between the removal and a commit only a reflog names.
 SEAM_NO_LOSS_BUNDLE = "LANE_WORKTREES_SEAM_NO_LOSS_BUNDLE"
+
+#: The suite's seam: a process scan that cannot be made (#170 C5).
+SEAM_NO_PROCSCAN = "LANE_WORKTREES_SEAM_NO_PROCSCAN"
 
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
@@ -4796,10 +4832,53 @@ class Report:
         self.counts: dict = {}
         self.now = time.time()
         self.unreadable: dict = {}
+        # WHAT BEARS ON THE LANES' RECORDS, apart (#179, Copilot round 1): an
+        # orphan or aging section empty beside an unread snapshot, inventory,
+        # register line or inventory tree may be missing rows; an ignored-file
+        # listing or a canonical checkout's registrations that failed say
+        # nothing of either, and must not turn their "none" into "unknown".
+        self.records_unread: dict = {}
 
-    def add(self, title: str, rows: list, empty: str, note_text: str = "") -> None:
-        self.sections.append((title, rows, empty, note_text))
+    def _unread(self, key: str, why: str, record: bool = True) -> None:
+        """A read that failed: a row of "Records the report could not read",
+        and - where it is one of the lanes' records - one an empty orphan or
+        aging section names."""
+        self.unreadable.setdefault(key, why)
+        if record:
+            self.records_unread.setdefault(key, why)
+
+    def add(self, title: str, rows: list, empty: str, note_text: str = "",
+            partial: bool = False) -> None:
+        """`partial`: the section is read from the lanes' records, so an
+        empty one says "none found" only beside what could not be read."""
+        self.sections.append((title, rows, empty, note_text, partial))
         self.counts[title] = len(rows)
+
+    def _recorded_parents(self) -> list:
+        """Every directory a `.lane-state` stands in beyond the checkouts'
+        parents (#170 B8). Two sources, and what neither could read is a
+        finding:
+
+          * a WALK of the estate, every directory but the caches: a lane whose
+            checkout sits in a plain directory inside a repository
+            (`xFactory/xFactories/<x>` on Eagle) keeps `.lane-state` there,
+            and `estate_repos` never enters such a directory;
+          * the register: each lane's recorded `dir`, whose parent #97 puts
+            the lane's control root in, wherever it is."""
+        out: list = []
+        if self.root:
+            walk = walk_estate(self.root)
+            for d in walk.lane_states:
+                out.append(os.path.dirname(d))
+            for what in walk.unread:
+                self._unread(what, "could not be listed: a lane's records under it are not read")
+        if self.helper.path:
+            dirs, why = register_lane_dirs(self.helper)
+            if why:
+                self._unread("the register's lane logs", why)
+            for d in dirs.values():
+                out.append(os.path.dirname(d.rstrip(os.sep)))
+        return [p for i, p in enumerate(out) if p and p not in out[:i]]
 
     # ------------------------------------------------------------- reading
     def build(self) -> None:
@@ -4808,7 +4887,7 @@ class Report:
         clones = [r for r in repos if os.path.isdir(os.path.join(r, ".git"))]
         canonical = self._canonical(clones)
         self.canonical = canonical
-        parents = _lane_parents(self.root, canonical)
+        parents = _lane_parents(self.root, canonical) + self._recorded_parents()
         self.state_dirs = _lane_state_dirs(parents)
         self.tree_roots = _lane_tree_roots(parents)
         self._foreign(clones, canonical)
@@ -4829,13 +4908,13 @@ class Report:
 
     # A READ THAT FAILED IS A FINDING, never an empty answer (Amendment 7(d)):
     # an inventory the report could not read would otherwise make it clean.
-    def _ls(self, d: str) -> list:
+    def _ls(self, d: str, record: bool = True) -> list:
         try:
             return sorted(os.listdir(d))
         except (FileNotFoundError, NotADirectoryError):
             return []
         except OSError as exc:
-            self.unreadable.setdefault(d, f"could not be listed ({exc.strerror or exc})")
+            self._unread(d, f"could not be listed ({exc.strerror or exc})", record)
             return []
 
     def _record(self, path: str, need_path: bool = False) -> dict:
@@ -4845,8 +4924,8 @@ class Report:
         except FileNotFoundError:
             return {}
         except (OSError, UnicodeDecodeError) as exc:
-            self.unreadable.setdefault(path, "could not be read ("
-                                       + (getattr(exc, "strerror", "") or str(exc)) + ")")
+            self._unread(path, "could not be read ("
+                         + (getattr(exc, "strerror", "") or str(exc)) + ")")
             return {}
         out = {}
         for line in text.splitlines():
@@ -4854,7 +4933,7 @@ class Report:
             if sep:
                 out[key.strip()] = value.strip()
         if need_path and not out.get("path"):
-            self.unreadable.setdefault(path, "an inventory record that names no path")
+            self._unread(path, "an inventory record that names no path")
         return out
 
     def _tree_records(self, tdir: str) -> list:
@@ -4906,7 +4985,9 @@ class Report:
                     "taken as its checkout)" if ambiguous else "")
             if not why:
                 continue
-            last = git_out(c, "log", "-1", "--format=%cs") or "?"
+            # `%cd --date=short`, never `%cs`: `%cs` is git 2.21's, and an older git
+            # prints the placeholder itself where the date belongs (#170 (d)).
+            last = git_out(c, "log", "-1", "--date=short", "--format=%cd") or "?"
             msg = git_out(c, "log", "-1", "--format=%B") or ""
             owner = (re.findall(r"^Lane:\s*(\S+)", msg, re.MULTILINE) or ["-"])[-1]
             lean = leaned_on(c, git_common_dir(c), self.deps)
@@ -4929,6 +5010,12 @@ class Report:
             proc = git(wroot, "grep", "-E", "-e",
                        "^(STARTED|RESUMED|PAUSED|ENDED|RETIRED) — lane ",
                        f"origin/{branch}", "--", "lanes/log")
+            if proc.returncode not in (0, 1):
+                # A GREP THAT FAILED IS NO "NO EVENTS" (#170 G3): exit 1 is no
+                # match; anything else - a ref that is not there, a repository
+                # git cannot read - leaves every log-only ENDED lane unknown.
+                self._unread(f"the register's ENDED and RETIRED lines (origin/{branch})",
+                             f"git grep exited {proc.returncode}: " + _first_line(proc.stderr))
             last: dict = {}
             for line in proc.stdout.splitlines():
                 _ref, _, rest = line.partition(":")
@@ -4957,7 +5044,7 @@ class Report:
                     seen.add(real(full))
                     rows.append([full, lane, closed[lane], f"lane-worktrees sweep {lane} "
                                  "--include-scratch --include-foreign --word \"<yours>\""])
-        self.add("Orphaned worktrees of ENDED lanes", rows, "none")
+        self.add("Orphaned worktrees of ENDED lanes", rows, "none", partial=True)
 
     def _branches(self, canonical: list) -> None:
         rows = []
@@ -4969,7 +5056,7 @@ class Report:
                 continue
             regs = worktree_registrations(c)
             if regs is None:
-                self.unreadable.setdefault(c, "its worktree registrations could not be listed")
+                self._unread(c, "its worktree registrations could not be listed", record=False)
                 regs = []
             held = {r.get("branch", "")[len("refs/heads/"):] for r in regs if r.get("branch")}
             for rec in proc.stdout.split("\0"):
@@ -5045,8 +5132,8 @@ class Report:
                         continue
                     dirt = git_out(path, "status", "--porcelain")
                     if dirt is None:
-                        self.unreadable.setdefault(path, f"lane {lane}'s inventory tree; git "
-                                                         "status could not be read in it")
+                        self._unread(path, f"lane {lane}'s inventory tree; git status could "
+                                           "not be read in it")
                         continue
                     if not dirt:
                         continue
@@ -5056,7 +5143,7 @@ class Report:
                         rows.append([path, f"dirty inventory tree, {age} d", lane,
                                      "awaiting disposition"])
         self.rescue_count = rescue_count
-        self.add(f"Awaiting disposition (older than {aging} days)", rows, "none")
+        self.add(f"Awaiting disposition (older than {aging} days)", rows, "none", partial=True)
 
     def _caches_and_sandboxes(self) -> None:
         rows = []
@@ -5087,20 +5174,32 @@ class Report:
         for r in repos:
             proc = git(r, "ls-files", "--others", "--ignored", "--exclude-standard",
                        "--directory", "-z")
-            ignored = [p.rstrip("/") for p in proc.stdout.split("\0") if p.endswith("/")]
+            if proc.returncode != 0:
+                self._unread(r, "its ignored files could not be listed", record=False)
+            # EVERY IGNORED ENTRY IS EVIDENCE-SHAPED OR NOT BY ITS NAME (#170 item
+            # 9): an ignored `junit-results.xml` is a FILE, and keeping only the
+            # directories (which `du` sizes) dropped it from the evidence match.
+            entries = [p for p in proc.stdout.split("\0") if p] if proc.returncode == 0 else []
+            ignored = [p.rstrip("/") for p in entries if p.endswith("/")]
             sizes = _du([os.path.join(r, p) for p in ignored]) if ignored else {}
             for path, size in sizes.items():
                 if size >= threshold:
                     big.append([path, human_size(size)])
+            # THE UNTRACKED LISTING IS READ LIKE THE IGNORED ONE (#179, Copilot
+            # round 2): one that failed is a finding, and its stdout is never
+            # taken for the repository's untracked files.
             unt = git(r, "ls-files", "--others", "--exclude-standard", "--directory", "-z")
-            for p in (unt.stdout.split("\0") + [i + "/" for i in ignored]):
+            if unt.returncode != 0:
+                self._unread(r, "its untracked files could not be listed", record=False)
+            untracked = unt.stdout.split("\0") if unt.returncode == 0 else []
+            for p in (untracked + entries):
                 name = p.rstrip("/").rsplit("/", 1)[-1]
                 if p and EVIDENCE_NAME_RE.search(name):
                     evidence.append([os.path.join(r, p.rstrip("/")), "untracked or ignored in "
                                      + os.path.basename(r)])
         if self.root:
             repo_set = set(repos)
-            for n in sorted(os.listdir(self.root)):
+            for n in self._ls(self.root, record=False):
                 full = os.path.join(self.root, n)
                 if full in repo_set or not os.path.isdir(full) or n.startswith(".lane-") \
                         or n.endswith("-worktrees"):
@@ -5146,8 +5245,11 @@ class Report:
         rows = []
         wroot = self.helper.workspace_root() if self.helper.path else ""
         if wroot:
+            # SURROGATEESCAPE, as every other reader here (#170 G10): one byte that
+            # is not UTF-8 in the workspace's `.gitignore` aborted the report.
             try:
-                with open(os.path.join(wroot, ".gitignore"), encoding="utf-8") as fh:
+                with open(os.path.join(wroot, ".gitignore"), encoding="utf-8",
+                          errors="surrogateescape") as fh:
                     have = set(fh.read().splitlines())
             except OSError:
                 have = set()
@@ -5155,9 +5257,11 @@ class Report:
                     ".ruff_cache/", "node_modules/", ".venv/", "venv/", "site-packages/"]
             missing = [w for w in want if w not in have]
             if missing:
+                # THE PATH IS QUOTED (#170 item 10): the command is offered to be
+                # pasted, and a workspace path with a space in it split the redirect.
                 rows.append([os.path.join(wroot, ".gitignore"), "lacks " + " ".join(missing),
                              "printf '%s\\n' " + " ".join(f"'{m}'" for m in missing)
-                             + f" >> {wroot}/.gitignore"])
+                             + " >> " + shlex.quote(os.path.join(wroot, ".gitignore"))])
             hist = git(wroot, "log", "--all", "--format=", "--name-only", "--",
                        "*.pyc", "*__pycache__*")
             paths = sorted({p for p in hist.stdout.splitlines() if p})
@@ -5204,14 +5308,21 @@ class Report:
                f"`{PROG} sweep --all --dry-run --report` over `{self.root or '(no estate)'}`. "
                "It changed nothing.", "",
                "| finding | count |", "|---|---|"]
-        for title, rows, _e, _n in self.sections:
+        for title, rows, _e, _n, _p in self.sections:
             out.append(f"| {title} | {len(rows)} |")
         out.append(f"| rescue branches (all ages) | {getattr(self, 'rescue_count', 0)} |")
         out.append(f"| the sweeps directory | {human_size(getattr(self, 'sweeps_size', 0))} |")
-        for title, rows, empty, note_text in self.sections:
+        for title, rows, empty, note_text, partial in self.sections:
             out += ["", f"## {title}", ""]
             if note_text:
                 out += [note_text, ""]
+            if not rows and partial and self.records_unread:
+                # UNKNOWN IS NEVER "NONE" (#170 B8): a lane whose records could
+                # not be read may hold exactly what this section looks for.
+                out.append(f"_none found in what could be read; {len(self.records_unread)} "
+                           "record(s) could not be read (see \"Records the report could not "
+                           "read\")_")
+                continue
             if not rows:
                 out.append(f"_{empty}_")
                 continue
@@ -5233,7 +5344,9 @@ def report_all(opts) -> int:
     m = re.match(r"^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\d+)$", post)
     if m:
         fd, tmp = tempfile.mkstemp(prefix="lane-worktrees-report.", suffix=".md")
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        # SURROGATEESCAPE (#170 G11, G12): a row holding a path that is not
+        # UTF-8 is that path's bytes, never an internal error before `gh` runs.
+        with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape") as fh:
             fh.write(text)
         try:
             proc = run(["gh", "issue", "comment", m.group(2), "--repo", m.group(1),
@@ -5248,7 +5361,7 @@ def report_all(opts) -> int:
         return 0
     try:
         os.makedirs(os.path.dirname(os.path.abspath(post)), exist_ok=True)
-        with open(post, "w", encoding="utf-8") as fh:
+        with open(post, "w", encoding="utf-8", errors="surrogateescape") as fh:
             fh.write(text)
     except OSError as exc:
         note(f"the report could not be written to {post}: {exc}")

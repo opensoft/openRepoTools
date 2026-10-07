@@ -58,6 +58,19 @@ if [ -n "${FAKE_SUITE_READ:-}" ]; then
   printf 'got: %s\n' "$line"
   exit 0
 fi
+if [ -n "${FAKE_SUITE_IGNORE_TERM:-}" ]; then
+  # A LEADER THAT IGNORES TERM (#170 item 3), and children that inherit it.
+  trap '' TERM
+  : > "$FAKE_SUITE_LOG.started"
+  while :; do sleep 1; done
+fi
+if [ -n "${FAKE_SUITE_LEAVE:-}" ]; then
+  # A CHILD LEFT RUNNING when the suite returns (#170 G14), deaf to the hangup
+  # its session leader's exit sends, so only the wrapper can stop it.
+  ( trap '' HUP; exec sleep 300 ) &
+  printf '%s\n' "$!" > "$FAKE_SUITE_LOG.child"
+  exit 0
+fi
 if [ -n "${FAKE_SUITE_SLEEP:-}" ]; then
   # A CHILD OF ITS OWN, as pytest waits on a shell suite or a `git`: the
   # wrapper must stop it too, not only the process it started.
@@ -257,6 +270,121 @@ def test_a_suite_that_reads_the_terminal_is_not_stopped(tmp_path):
         os.close(master)
     assert b"got: hello" in seen, seen
     assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, (status, seen)
+    assert box.runs() == [], "the run root outlived the run"
+
+
+def test_a_leader_that_ignores_term_is_killed_at_the_deadline(tmp_path):
+    """#170 item 3: `stop_group` reaped the leader with an unbounded `wait`
+    BEFORE its ten-second grace loop, so a leader that traps or ignores TERM
+    held the wrapper - and the workstation's lock - for ever, and the KILL
+    was never reached."""
+    box = Box(tmp_path)
+    proc = box.popen(FAKE_SUITE_IGNORE_TERM="1")
+    leader = 0
+    try:
+        box.wait_started()
+        leader = int(box.recorded()["pid"])
+        started = time.time()
+        proc.send_signal(signal.SIGTERM)
+        box.finish(proc, timeout=40)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        if leader:
+            try:
+                os.killpg(leader, signal.SIGKILL)
+            except OSError:
+                pass
+    assert proc.returncode == 143
+    assert time.time() - started < 20, "the wrapper waited past its KILL deadline"
+    assert not _running(leader), "the leader outlived its wrapper"
+    assert box.runs() == [], "the run root outlived the run"
+
+
+@pytest.mark.parametrize("form", [["--basetemp", "ELSEWHERE"], ["--basetemp=ELSEWHERE"]])
+def test_a_callers_basetemp_is_refused(tmp_path, form):
+    """#170 G8: pytest takes the LAST `--basetemp`, and a caller's, forwarded
+    after the wrapper's, won - its temporary files landed outside the run root
+    the EXIT trap removes. It is refused before any lock is taken."""
+    box = Box(tmp_path)
+    elsewhere = str(tmp_path / "elsewhere")
+    proc = box.popen(*[a.replace("ELSEWHERE", elsewhere) for a in form])
+    err = box.finish(proc)
+    assert proc.returncode == 64, err
+    assert "--basetemp is the wrapper's own" in err
+    assert not box.log.exists(), "the suite ran"
+    assert not Path(elsewhere).exists()
+
+
+def _on_a_terminal(box, env: dict, timeout: float = 30) -> tuple:
+    """Run the wrapper with a pseudo-terminal on its stdin; (wait status,
+    seconds it took)."""
+    import pty
+    import select
+    started = time.time()
+    pid, master = pty.fork()
+    if pid == 0:
+        try:
+            os.execve(shutil.which("bash") or "/bin/bash", ["bash", str(WRAPPER)], env)
+        finally:
+            os._exit(127)
+    try:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            ready, _w, _x = select.select([master], [], [], 0.05)
+            if ready:
+                try:
+                    os.read(master, 4096)
+                except OSError:
+                    pass
+            done, status = os.waitpid(pid, os.WNOHANG)
+            if done:
+                return status, time.time() - started
+        try:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+        except OSError:
+            pass
+        raise AssertionError("the wrapper did not finish")
+    finally:
+        os.close(master)
+
+
+NEEDS_A_PTY = pytest.mark.skipif(not hasattr(os, "openpty") or sys.platform.startswith("win"),
+                                 reason="needs a pseudo-terminal")
+
+
+@NEEDS_A_PTY
+def test_what_a_suite_on_the_terminal_leaves_running_is_stopped(tmp_path):
+    """#170 G14: with a terminal on stdin the suite runs in the foreground, in
+    the wrapper's own process group, and no group id was kept - a child it
+    left running was not stopped before the run root went and the lock was
+    released. The group's members are read before the suite starts; what is
+    there afterwards that was not is stopped."""
+    box = Box(tmp_path)
+    child = 0
+    try:
+        status, _took = _on_a_terminal(box, dict(box.env, FAKE_SUITE_LEAVE="1"))
+        child = int(Path(str(box.log) + ".child").read_text().strip())
+        assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, status
+        assert not _running(child), "a process the suite left running outlived its wrapper"
+        assert box.runs() == [], "the run root outlived the run"
+    finally:
+        if child and _running(child):
+            os.kill(child, signal.SIGKILL)
+
+
+@NEEDS_A_PTY
+def test_a_terminal_run_that_leaves_nothing_waits_for_nothing(tmp_path):
+    """#179 Copilot round 2: the stray scan ran in a command substitution, so
+    its own subshell, `ps` and `awk` were members of the group that were not
+    there before - every scan found "strays", and every terminal run waited
+    out the whole ten-second deadline after a suite that left nothing."""
+    box = Box(tmp_path)
+    status, took = _on_a_terminal(box, dict(box.env))
+    assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, status
+    assert took < 8, f"the wrapper took {took:.1f} s after a suite that left nothing running"
     assert box.runs() == [], "the run root outlived the run"
 
 

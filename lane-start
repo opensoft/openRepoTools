@@ -4313,7 +4313,14 @@ lane_daily_report() {
   ldr_state="${XDG_STATE_HOME:-$HOME/.local/state}/openRepoTools"
   ldr_day="$(date -u +%Y%m%d 2>/dev/null || :)"
   [ -n "$ldr_day" ] || return 0
-  mkdir -p -- "$ldr_state/reports" 2>/dev/null || return 0
+  # THE REPORT IS PRIVATE (#170 item 11): it names every path, branch and lane
+  # of the estate. Its directories are 0700, and it is written under umask 077.
+  # A directory that could not be made 0700 - one that already existed wider,
+  # on a file system or under an owner that refuses the chmod - runs NO report
+  # (#179, Copilot round 1): the stamp is not taken, so tomorrow's start tries
+  # again, and a report never lands where every local account could read it.
+  ( umask 077; mkdir -p -- "$ldr_state/reports" ) 2>/dev/null || return 0
+  chmod 700 "$ldr_state" "$ldr_state/reports" 2>/dev/null || return 0
   ( set -C; : > "$ldr_state/report-$ldr_day.stamp" ) 2>/dev/null || return 0
   for ldr_old in "$ldr_state"/report-*.stamp; do
     [ "$ldr_old" = "$ldr_state/report-$ldr_day.stamp" ] || rm -f -- "$ldr_old" 2>/dev/null || :
@@ -4323,7 +4330,15 @@ lane_daily_report() {
   # the report rather than left for it to find again.
   ldr_estate=""
   [ -d "$PROJECTS_ROOT" ] && ldr_estate="$PROJECTS_ROOT"
-  ( "$ldr_bin" sweep --all --dry-run --report --post "$ldr_out" \
+  # A PANE KILLED AFTER THE STAMP WAS TAKEN DOES NOT TAKE THE REPORT WITH IT
+  # (#170 E8): the report ignores the hangup (`nohup`, everywhere), and where
+  # there is a `setsid` (Linux; macOS has none) it is in a session of its own,
+  # which no terminal's hangup reaches at all. Otherwise today's stamp would
+  # name a report that never finished, and none would run until tomorrow.
+  ldr_detach=""
+  command -v setsid >/dev/null 2>&1 && ldr_detach="setsid"
+  ( umask 077
+    $ldr_detach nohup "$ldr_bin" sweep --all --dry-run --report --post "$ldr_out" \
       ${ldr_estate:+--estate "$ldr_estate"} </dev/null >/dev/null 2>&1 & ) 2>/dev/null || :
   step "the estate's daily report is running, detached: $ldr_out"
   return 0

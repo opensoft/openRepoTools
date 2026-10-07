@@ -3080,6 +3080,13 @@ def test_the_suite_wrapper_takes_one_lock_and_names_it_where_agents_read_it():
         "same file or there is no lock")
     assert "tests/run.sh" in agents, (
         "AGENTS.md must name tests/run.sh as the way to run the suite")
+    # THE BY-HAND FORM LEAVES NOTHING EITHER (#170 E9): the one line a person
+    # with no checkout runs relocates bytecode and turns pytest's cache off, as
+    # the wrapper does, or it lands `__pycache__` and `.pytest_cache` beside
+    # the code the wrapper keeps clean.
+    by_hand = [ln for ln in agents.splitlines() if lock in ln and "python3 -m pytest" in ln]
+    assert by_hand and all("-p no:cacheprovider" in ln and "PYTHONPYCACHEPREFIX=" in ln
+                           for ln in by_hand), by_hand
 
     assert "'^python3 -m pyt'" in text, (
         "the pgrep pattern must be anchored and split so it cannot match its "
