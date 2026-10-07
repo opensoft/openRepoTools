@@ -1891,16 +1891,25 @@ bytecode_in_pathspec() {   # <repo> <pathspec>...   0 read (the paths printed) Â
   # away and printed nothing, and the check passed. Each status is kept now.
   # `add --dry-run`'s 1 is the one answer that is not a failure: it means some
   # NAMED path is ignored, which the add would not stage.
+  #
+  # BOTH READS IN THE C LOCALE AND UNQUOTED (#170 E1, E2): the `add '<path>'`
+  # lines are parsed, and a translated git words them otherwise; and `diff
+  # --name-only` C-quotes a path that is not ASCII (`"caf\303\251.pyc"`), whose
+  # closing quote hid the `.pyc` - so a staged non-ASCII bytecode file passed.
+  # `core.quotePath=false` leaves such a path as its bytes; one git still
+  # quotes (a control character, a `"` or a `\`) has its quotes taken off
+  # before it is judged.
   bip_add=""; bip_rc=0
-  bip_add="$(git -C "$bip_repo" add --dry-run --ignore-missing -- "$@" 2>/dev/null)" || bip_rc=$?
+  bip_add="$(LC_ALL=C git -C "$bip_repo" -c core.quotePath=false add --dry-run --ignore-missing -- "$@" 2>/dev/null)" || bip_rc=$?
   [ "$bip_rc" -le 1 ] || return 3
   bip_staged=""
-  bip_staged="$(git -C "$bip_repo" diff --cached --name-only --diff-filter=d -- "$@" 2>/dev/null)" || return 3
+  bip_staged="$(LC_ALL=C git -C "$bip_repo" -c core.quotePath=false diff --cached --name-only --diff-filter=d -- "$@" 2>/dev/null)" || return 3
   {
-    printf '%s\n' "$bip_add" | sed -n "s/^add '\(.*\)'\$/\1/p"
+    printf '%s\n' "$bip_add" | LC_ALL=C sed -n "s/^add '\(.*\)'\$/\1/p"
     printf '%s\n' "$bip_staged"
   } |
-    awk '!seen[$0]++ {
+    LC_ALL=C awk '{ if ($0 ~ /^".*"$/) $0 = substr($0, 2, length($0) - 2) }
+      !seen[$0]++ {
       n = split($0, part, "/"); hit = 0
       for (i = 1; i <= n; i++)
         if (part[i] == "__pycache__" || part[i] == ".pytest_cache" ||
@@ -1928,8 +1937,11 @@ BRT_EOF
   printf '%s path(s) of this commit are bytecode, a cache, a dependency tree or a virtual environment, and none of them is ever a workspace repository'"'"'s (opensoft/openRepoTools#162):\n%s\n' \
     "$brt_n" "$(printf '%s\n' "${1-}" | head -n 10 | sed 's/^/    /')"
   if [ -n "$brt_missing" ]; then
-    printf 'This workspace'"'"'s .gitignore lacks%s; add them and they are never staged again:\n    printf '"'"'%%s\\n'"'"'%s >> %s/.gitignore\n' \
-      "$brt_missing" "$brt_missing" "$LANES_REPO"
+    # THE PATH IS QUOTED FOR THE SHELL (#170 G4): the command is offered to be
+    # pasted, and a workspace path with a space in it split the redirect.
+    brt_target="$(printf '%q' "$LANES_REPO/.gitignore")"
+    printf 'This workspace'"'"'s .gitignore lacks%s; add them and they are never staged again:\n    printf '"'"'%%s\\n'"'"'%s >> %s\n' \
+      "$brt_missing" "$brt_missing" "$brt_target"
   fi
   printf 'Nothing was staged or committed. Unstage or delete those paths, then re-run.'
 }

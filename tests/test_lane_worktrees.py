@@ -37,6 +37,7 @@ import getpass
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import signal
 import subprocess
@@ -72,7 +73,8 @@ spec = json.load(open(os.environ["FAKE_HELPER_SPEC"]))
 args = sys.argv[1:]
 with open(os.environ["FAKE_HELPER_LOG"], "a") as fh:
     fh.write(json.dumps({"argv": args, "lane": os.environ.get("LANES_LANE", ""),
-                         "no_fetch": os.environ.get("LANES_NO_FETCH", "")}) + "\n")
+                         "no_fetch": os.environ.get("LANES_NO_FETCH", ""),
+                         "session": os.environ.get("LANES_SESSION", "")}) + "\n")
 ans = spec.get(args[0] if args else "", {"rc": 2, "err": "unknown subcommand\n"})
 sys.stdout.write(ans.get("out", ""))
 sys.stderr.write(ans.get("err", ""))
@@ -80,10 +82,18 @@ sys.exit(ans.get("rc", 0))
 '''
 
 FAKE_GH = r'''#!/usr/bin/env python3
-import os, sys
+# `gh pr list` as GitHub answers it: `--head` filters by head branch, and
+# `--limit` keeps the newest that many (#170 E5).
+import json, os, sys
 if sys.argv[1:3] == ["pr", "list"]:
     path = os.environ.get("FAKE_GH_PRS", "")
-    sys.stdout.write(open(path).read() if path and os.path.exists(path) else "[]")
+    rows = json.load(open(path)) if path and os.path.exists(path) else []
+    args = sys.argv[3:]
+    if "--head" in args:
+        rows = [r for r in rows if r.get("headRefName") == args[args.index("--head") + 1]]
+    if "--limit" in args:
+        rows = sorted(rows, key=lambda r: -r["number"])[:int(args[args.index("--limit") + 1])]
+    sys.stdout.write(json.dumps(rows))
     sys.exit(0)
 sys.exit(1)
 '''
@@ -302,6 +312,20 @@ class Estate:
     def archives(self) -> list:
         base = self.state / "openRepoTools" / "sweeps" / LANE
         return sorted(base.iterdir()) if base.is_dir() else []
+
+
+def _dead_pid() -> int:
+    """A pid PROVED dead (#170 C6): one this test started, reaped, and that
+    `kill -0` no longer finds. A constant such as 999999 is a live pid on a
+    host whose pid_max is 4194304."""
+    for _ in range(20):
+        child = subprocess.Popen(["true"])
+        child.wait()
+        try:
+            os.kill(child.pid, 0)
+        except ProcessLookupError:
+            return child.pid
+    raise AssertionError("no pid could be proved dead")
 
 
 def rows_of(out: str) -> dict:
@@ -658,6 +682,10 @@ def test_merged_is_the_register_or_gh_never_ancestry(estate, tmp_path):
     assert yes.returncode == 0, yes.stdout + yes.stderr
     assert estate.git("branch", "--list", "feat/ancestor").strip() == "feat/ancestor"
     assert estate.git("branch", "--list", "feat/reg") == ""
+    # ... AND THE REMOTE BRANCH'S FATE (#170 C1): gh still answers #21 OPEN, so
+    # however the register reads, origin's branch stays - deleting it would
+    # close the pull request (#170 A8).
+    assert estate.remote_heads().get("feat/reg") == tip, estate.remote_heads()
 
 
 def test_a_merge_into_another_base_is_no_landing_and_an_open_pr_comes_first(estate):
@@ -997,7 +1025,7 @@ def test_killed_suite_sandboxes_whose_owner_is_gone_are_removed(estate):
         (d / "f").write_text("x")
     # A SUITE'S MARK IN A `tmp.*` IS NO PROOF (#170 item 1, option (b)):
     # pytest's `.lock`, naming a pid that is gone - listed, never removed.
-    (dead / ".lock").write_text("999999\n")
+    (dead / ".lock").write_text(f"{_dead_pid()}\n")
     for d in (dead, held):
         for p in (d / "f", d / ".lock", d):
             if p.exists():
@@ -1007,7 +1035,7 @@ def test_killed_suite_sandboxes_whose_owner_is_gone_are_removed(estate):
     live_run = pyroot / "pytest-8"
     for d in (gone_run, live_run):
         d.mkdir(parents=True)
-    (gone_run / ".lock").write_text("999999\n")
+    (gone_run / ".lock").write_text(f"{_dead_pid()}\n")
     (live_run / ".lock").write_text(f"{os.getpid()}\n")
     sleeper = subprocess.Popen(["sleep", "300"], cwd=str(held))
     try:
@@ -2053,7 +2081,8 @@ def test_a_tmp_dir_is_listed_and_never_removed_marked_or_old(estate):
     for d in (unmarked, ancient, marked, layout):
         d.mkdir()
         (d / "f").write_text("x")
-    (marked / ".lock").write_text("999999\n")
+    dead_pid = _dead_pid()
+    (marked / ".lock").write_text(f"{dead_pid}\n")
     (layout / "basetemp").mkdir()
     (layout / "tmp").mkdir()
     for d in (unmarked, marked, layout):
@@ -2067,7 +2096,7 @@ def test_a_tmp_dir_is_listed_and_never_removed_marked_or_old(estate):
         assert "never removed" in rows[str(d)][3], rows[str(d)]
     for d in (unmarked, ancient):
         assert "no mark of a test suite" in rows[str(d)][3], rows[str(d)]
-    assert "a pytest .lock (pid 999999, gone)" in rows[str(marked)][3]
+    assert f"a pytest .lock (pid {dead_pid}, gone)" in rows[str(marked)][3]
     assert "run-root layout" in rows[str(layout)][3]
 
 
@@ -2625,3 +2654,123 @@ def test_a_submodules_annotated_tag_object_is_never_lost_with_its_tree(estate, w
     else:
         assert row[0] == "keep" and "its annotated tag v9 is a tag object no remote" in row[2], row
         assert estate.git("cat-file", "-t", tag, cwd=module) == "tag"
+
+
+# ================================ #170: test honesty, portability and nits
+
+def test_a_failed_removal_never_chmods_what_a_symlink_points_at(estate):
+    """#170 E4: `rmtree`'s retry chmod-ed the entry that would not go, and
+    `os.chmod` follows a link - so a symlink inside scratch that could not be
+    unlinked had its TARGET, a directory elsewhere, made 0700."""
+    if os.geteuid() == 0:
+        pytest.skip("root unlinks inside a read-only directory")
+    elsewhere = estate.root / "elsewhere"
+    elsewhere.mkdir()
+    elsewhere.chmod(0o755)
+    scratch = estate.lane_root / "x-scratch"
+    ro = scratch / "ro"
+    ro.mkdir(parents=True)
+    (scratch / "notes.md").write_text("findings\n")
+    (ro / "link").symlink_to(elsewhere)
+    ro.chmod(0o555)
+    try:
+        proc = estate.sweep(LANE, "--include-scratch", "--yes", "--porcelain")
+    finally:
+        ro.chmod(0o755)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "FAILED" in items_of(proc.stdout, "scratch")[str(scratch)][3]
+    assert stat_mode(elsewhere) == 0o755, oct(stat_mode(elsewhere))
+
+
+def stat_mode(path: Path) -> int:
+    return os.stat(path).st_mode & 0o777
+
+
+def test_a_branchs_pull_request_is_found_however_many_the_repository_has(estate):
+    """#170 E5: one `gh pr list --limit 1000` of the whole repository missed
+    the PR of a branch older than the newest thousand, and a MERGED branch
+    read as having none. The PR is asked by its branch now."""
+    tree = estate.worktree("old", "feat/old")
+    tip = estate.commit(tree, "o", {"o.txt": "o\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/old", cwd=tree)
+    estate.pr(1, "feat/old", "MERGED", tip)
+    for n in range(2, 1003):
+        estate.pr(n, f"feat/other-{n}", "CLOSED", "0" * 40)
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(tree)][0] == "remove+delete-branch", rows[str(tree)]
+    assert "PR #1 is merged" in rows[str(tree)][2]
+
+
+def test_the_hand_written_register_line_is_quoted_for_the_shell(estate):
+    """#170 E6: the NOT WRITTEN fallback printed the line to paste with the
+    tree's path unescaped, so a path with a quote or a `$` in it broke the
+    command a person was told to run. #179 Copilot round 1: it also dropped
+    `LANES_SESSION`, which the line it stands for passes (#170 E7), so a
+    pasted line named whatever session the helper found on its own."""
+    tree = estate.worktree('say "hi" $HOME', "feat/quoted")
+    estate.git("push", "-q", "-u", "origin", "feat/quoted", cwd=tree)
+    estate.log_rc = 1
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    line = [ln for ln in proc.stderr.splitlines() if "write it by hand: " in ln]
+    assert line, proc.stderr
+    words = shlex.split(line[0].split("write it by hand: ", 1)[1])
+    assert words[:6] == [f"LANES_LANE={LANE}", f"LANES_SESSION={ME}", "lanes-edit.sh", "log",
+                         "NOTED", f"lane:{LANE}"], words
+    assert len(words) == 7 and str(tree) in words[6], words
+
+
+def test_the_register_line_is_written_as_this_session(estate):
+    """#170 E7: `note_line` did not pass `LANES_SESSION`, so the NOTED line
+    named whatever session the helper found on its own."""
+    tree = estate.worktree("w", "feat/w")
+    estate.git("push", "-q", "-u", "origin", "feat/w", cwd=tree)
+    assert estate.sweep(LANE, "--yes").returncode == 0
+    notes = estate.notes()
+    assert notes and all(n["session"] == ME for n in notes), notes
+
+
+def test_the_rescue_is_on_origin_at_the_moment_of_removal(estate):
+    """#170 C4: rescue-before-removal was proved only NEGATIVELY (a refused
+    push leaves the tree). This proves the order itself: a `git` that, at
+    the `worktree remove` of the tree, asks origin what it holds - and the
+    rescue branch is there, with the tree still on disk."""
+    tree = estate.worktree("dirty", "feat/dirty")
+    estate.commit(tree, "base", {"w.txt": "base\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/dirty", cwd=tree)
+    (tree / "w.txt").write_text("precious\n")
+    seen = estate.root / "at-removal"
+    shim = estate.root / "order-shim"
+    shim.mkdir()
+    real_git = shutil.which("git")
+    (shim / "git").write_text(
+        "#!/bin/sh\n"
+        'case " $* " in *" worktree remove --force "*)\n'
+        f"  \"{real_git}\" ls-remote '{estate.origin}' 'refs/heads/rescue/*' > '{seen}'\n"
+        f"  [ -d '{tree}' ] && echo TREE-PRESENT >> '{seen}' ;;\n"
+        "esac\n"
+        f'exec "{real_git}" "$@"\n')
+    (shim / "git").chmod(0o755)
+    proc = estate.sweep(LANE, "--yes", "--porcelain",
+                        env={"PATH": f"{shim}{os.pathsep}{estate.env['PATH']}"})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not tree.exists()
+    at_removal = seen.read_text().splitlines()
+    rescue = [ln.split("\t") for ln in at_removal if "\trefs/heads/rescue/" in ln]
+    assert rescue and rescue[0][1].startswith(f"refs/heads/rescue/{LANE}/dirty-"), at_removal
+    assert estate.git("show", f"{rescue[0][0]}:w.txt", cwd=estate.origin) == "precious"
+    assert at_removal[-1] == "TREE-PRESENT", at_removal
+
+
+def test_a_process_scan_that_cannot_be_made_keeps_every_tree(estate):
+    """#170 C5: a host where no process scan can be made (no `/proc`, no
+    `lsof`) had no case. Liveness is then unknown, never "nobody is there":
+    the table keeps the tree, and `--yes` leaves it."""
+    tree = estate.worktree("w", "feat/w")
+    estate.git("push", "-q", "-u", "origin", "feat/w", cwd=tree)
+    env = {"LANE_WORKTREES_SEAM_NO_PROCSCAN": "1"}
+    row = rows_of(estate.sweep(LANE, "--porcelain", env=env).stdout)[str(tree)]
+    assert row[0] == "keep" and "liveness could not be read" in row[2], row
+    proc = estate.sweep(LANE, "--yes", "--porcelain", env=env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert tree.is_dir()
