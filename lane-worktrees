@@ -4202,7 +4202,11 @@ def find_caches(root: str) -> list:
 
 def no_repository(path: str) -> bool:
     """True only where git answers that there is NO repository at `path` -
-    which has no branches - and never where one could not be read."""
+    which has no branches - and never where one could not be read. A `.git`
+    entry of its own IS a repository, however broken: git answers "not a git
+    repository" for a gitdir it cannot read too (#170 G5)."""
+    if os.path.lexists(os.path.join(path, ".git")):
+        return False
     proc = git(path, "rev-parse", "--git-dir")
     return proc.returncode != 0 and "not a git repository" in (proc.stderr or "").lower()
 

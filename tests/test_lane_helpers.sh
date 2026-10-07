@@ -15802,6 +15802,46 @@ run "$END" repoCG-10
 is    "a lane started outside any repository ends: no repository is no branch, not a read that failed" "$rc" 0
 hasnt "…and its gate names no branch it could not read" "$err" "the branches could not be read"
 
+# A RECORDED DIRECTORY GIT CANNOT READ IS NOT ONE THAT HOLDS NO REPOSITORY (lane
+# 2's and lane 3's reviews of #175 at 49bfa40). git answers "not a git
+# repository" for a `.git` it cannot use as well as for none, so only a
+# directory with NO `.git` entry of its own is an absence; any other is #170
+# G5's failed read, and the gate refuses it.
+if [ "$(id -u)" = 0 ]; then
+  skip "a lane checkout whose .git is mode 000 refuses" "root reads a mode-000 directory"
+else
+  git clone -q "$CG_ORIGIN" "$CG_EST/cg14" >/dev/null 2>&1
+  git -C "$CG_EST/cg14" config user.email "test@example.invalid"
+  git -C "$CG_EST/cg14" config user.name "lane helper tests"
+  git -C "$CG_EST/cg14" checkout -q -b cg14-work
+  git -C "$CG_EST/cg14" commit -q --allow-empty -m "lane fourteen's own work
+
+Lane: repoCG-14"
+  cg_lane repoCG-14 "$CG_EST/cg14"
+  chmod 000 "$CG_EST/cg14/.git"
+  run "$CG_LW" sweep repoCG-14 --branches --include-scratch --include-caches --dry-run --porcelain
+  cg14_rc="$rc"; cg14_out="$out"
+  run "$END" repoCG-14 --dry-run
+  chmod 755 "$CG_EST/cg14/.git"
+  is    "a lane checkout whose .git is mode 000, an unpublished branch of the lane's in it, is a read that failed: the sweep refuses (2)" "$cg14_rc" 2
+  has   "…naming the registrations it could not read" "$cg14_out" "the worktree registrations of $CG_EST/cg14 could not be read"
+  is    "…and lane-end --dry-run refuses on it" "$rc" 2
+  has   "…relaying that reason" "$err" "the worktree registrations of $CG_EST/cg14 could not be read"
+fi
+mkdir -p "$CG_EST/cg15"
+printf 'gitdir: %s\n' "$SANDBOX/cg15-nowhere/.git" > "$CG_EST/cg15/.git"
+printf 'notes\n' > "$CG_EST/cg15/notes.txt"
+cg_lane repoCG-15 "$CG_EST/cg15"
+run "$CG_LW" sweep repoCG-15 --branches --include-scratch --include-caches --dry-run --porcelain
+is    "a lane directory whose .git file points nowhere refuses as well (2)" "$rc" 2
+has   "…for the same reason" "$out" "the worktree registrations of $CG_EST/cg15 could not be read"
+mkdir -p "$CG_EST/cg16"
+printf 'notes\n' > "$CG_EST/cg16/notes.txt"
+cg_lane repoCG-16 "$CG_EST/cg16"
+run "$CG_LW" sweep repoCG-16 --branches --include-scratch --include-caches --dry-run --porcelain
+is    "while a directory with no .git entry at all holds no repository: the sweep answers 0" "$rc" 0
+hasnt "…and says no registration read failed" "$out" "could not be read"
+
 # ----------------------------------- lane-end: the gate refuses, and names it
 
 printf 'SECRET=1\n' > "$CG_W1/.env"
