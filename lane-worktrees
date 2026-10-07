@@ -2169,7 +2169,10 @@ class Sweep:
             t.checkout = rec.get("checkout") if rec.get("checkout") not in ("", "unknown") else ""
             seen[t.real] = t
         checkouts = []
-        if self.facts.dir and os.path.isdir(self.facts.dir):
+        # A RECORDED DIRECTORY THAT IS NO REPOSITORY HAS NO REGISTRATIONS, as it
+        # has no branches (#163, `_branch_checkouts`): an absence, never the
+        # failed `git worktree list` that #170 G5 refuses.
+        if self.facts.dir and os.path.isdir(self.facts.dir) and not no_repository(self.facts.dir):
             checkouts.append(self.facts.dir)
         for t in list(seen.values()):
             if t.checkout and os.path.isdir(t.checkout) and t.checkout not in checkouts:
