@@ -13,6 +13,8 @@ The plan files are read at `ff6f6a7c7b7921ca1e0b0234e898900f98532366` from lane 
 
 2026-10-07, relayed by the coordinator and not read here: Brett Heap opened PR #187 (planning branch `004-migrate-to-triad` at ff6f6a7 → main; lane 1 lands it). He also confirmed the leg names `openRepoTools-spec` / `openRepoTools-code`, both public, as recorded on #186.
 
+Revised 2026-10-07T11:21Z at lane 1's request: appended the section "Gate C follow-up list: outside changes and timing" (dated). No existing row, list or count above was changed.
+
 This document records facts only. "Covered" means installer-design.md at ff6f6a7 names the case; `l.N` cites that file. "(inferred)" marks a statement that was worked out rather than read.
 
 ## Split as read from adoption-plan.yaml at ff6f6a7
@@ -308,3 +310,86 @@ Total: 33 rows not covered. A further 7 are partial: workBenches 3, openRepoShap
 - **Raven** and any other workstation: not reachable from this bench.
 - **`~/.claude-profiles/shared/skills/*` and `shared/commands/*`:** not opened. The receipt shows the same digests as the `~/.claude` copies that were read.
 - **`git status` without `--no-optional-locks`** ran in `/workspace/projects/openRepoTools`, `/workspace/projects/workBenches` and `/workspace/projects/brett-wip`. The first two `.git/index` mtimes (`2026-10-07 04:28:20Z`, `2026-10-06 13:08:26Z`) predate this read. brett-wip's (`11:05:49Z`) postdates other writers' commits, and this read ran only `show`, `grep` and `rev-parse` there after 10:06Z.
+
+## Gate C follow-up list: outside changes and timing (2026-10-07T11:21Z)
+
+Added at lane 1's request. The table has one row per not-covered item, 33 in all.
+
+- **`#`** follows the numbering of "Not covered by installer-design.md" above: W = workBenches, S = openRepoShape, B = brett-wip and register state, A = `~/.agents` and home, I = the installer's own assumptions.
+- **Outside change?** "yes" names the repository or host file to change. "no" means the change is in openRepoTools only. "no change" means nothing has to change.
+- **Timing:**
+  - ADDITIVE BEFORE CUTOVER: the change works against both today's single repository and the assembly.
+  - WAITS FOR REAL LEGS: the change needs the real leg repositories, their commits, the real code pin, or a lane rebinding.
+  - "—" means nothing to time.
+
+All timings are judged from the reads above. Rows that rest on judgement are marked "(inferred)".
+
+| # | consumer / file:line | change needed outside openRepoTools? | timing | one-line reason |
+|---|---|---|---|---|
+| W1 | workBenches `devBenches/base-image/upstream-pin.yaml:56-125` | yes: workBenches, the `openrepotools` source block (`source_repository`, `commit`, rows) | WAITS FOR REAL LEGS | `apply` refuses a commit not on the source's default branch (`update-upstream.py:890-914`) and reads modes from that commit's tree (`:941-956`), so it needs `openRepoTools-code` with the files landed. |
+| W2 | workBenches `update-upstream.py:917-956` | no change, if W1 names `opensoft/openRepoTools-code` (inferred) | — | The updater fetches `<path>` at any repository's root; only the pin's source changes. |
+| W3 | workBenches `devBenches/base-image/Dockerfile:148-156` (comment), `:216-238` | yes: workBenches, comment `:148-152` only. The COPY lines stay while the vendored tree mirrors the code root (inferred). | WAITS FOR REAL LEGS (inferred) | The comment says where openRepoShape is a submodule, which changes only when the dependency unit moves into the code leg. |
+| W4 | workBenches `estate-commands-start:157-186` | no: openRepoTools only. The code implementation that workBenches vendors keeps the one-line `INSTALLABLES`/`SKILLS`/`COMMANDS` arrays. | ADDITIVE BEFORE CUTOVER (inferred) | It is a constraint, and a test of it, that holds for today's file and for the code leg's; nothing in workBenches changes. |
+| W5 | workBenches `scripts/setup-estate-commands.sh:162-434` | no change for the split, if W1 keeps the source id `openrepotools` (read at `:285`) and the flat layout (inferred) | — | Its 15 `TOOLS_FILES` against main's 17 `INSTALLABLES` is a gap that exists on main today, not one the split causes. |
+| W6 | workBenches `README.md:188, 190` | yes: workBenches (optional prose) | ADDITIVE BEFORE CUTOVER (inferred) | `:188` ("installed from `opensoft/openRepoTools`") stays true through the assembly entry point; a clause naming `openRepoTools-code` after the split is true in both states. |
+| W7 | workBenches vendored lane code (`files/openrepotools/lane-handoff:913`, `lanes-edit.sh:11939`, `skills/handoff/SKILL.md:292`) | no: openRepoTools only. The fix lands in openRepoTools and reaches workBenches only through W1's re-vendor. | ADDITIVE BEFORE CUTOVER (inferred) | A worktree search can add `<dir>/worktrees/*/{spec,code}` today; a directory that does not exist is skipped. |
+| W8 | workBenches `devcontainer.test/*`, `.github/workflows/speckit-git-bash.yml:19, 53` | yes: workBenches, only if W1's re-vendor changes the vendored tree (inferred) | WAITS FOR REAL LEGS | These follow the vendored bytes, which change only with W1. |
+| W9 | workBenches prose: `docs/claude-multi-account-profiles.md`, `openspec/**`, `specs/**`, and others | no change (inferred) | — | The cites are pinned to commits (for example `63a74af`) or sit in archived or dated records. |
+| S1 | openRepoShape `templates/workspace-root/AGENTS.md:32, 71-76, 91-95`; `README.md:16, 18, 31, 58`; `handoffs/README.md:24`; `lanes/LANES.md:19, 40`; `lanes/log/README.md:4, 6` | yes: openRepoShape (optional template wording) | ADDITIVE BEFORE CUTOVER (inferred) | The text names the project slug, which survives; a clause naming the spec leg after the split reads true before and after. It reaches WIP repositories only once the openRepoShape pin openRepoTools carries moves (`openRepoTools:2502-2517`). |
+| S2 | openRepoShape `scripts/shape_advisory.py:509` | no change (inferred) | — | `resume` still reads `workspace.yaml`, so the docstring stays true. |
+| S3 | openRepoShape provenance prose (`openRepoShape:19-25, 162`; `README.md:246, 1239`; `docs/handbook.html`; `AGENTS.md:429`; tests) | no change (inferred) | — | The slug survives as the assembly, and the files are still `opensoft/openRepoTools`' at project level. |
+| B1 | brett-wip `lanes/log/openRepoTools-{1,2,3}.md` `dir` records (52 lines) | yes: brett-wip, new STARTED/RESUMED lines written by `lane-start`/`lanes-edit.sh`, only if a lane's directory changes at rebinding. In-place adoption keeps `/workspace/projects/openRepoTools` (inferred). | WAITS FOR REAL LEGS | The recorded `dir` changes only through a lane rebinding (T018); past lines are history. |
+| B2 | brett-wip other path-bearing log lines (10) | no change | — | The log is append-only history. |
+| B3 | brett-wip `lanes/LANES.md:1109, 1303, 2581` | no change (inferred) | — | The rows name brett-wip handoff paths, which do not move. |
+| B4 | brett-wip `lanes/LANES.md:36` (the other 11 README-lanes lines are dated records) | yes: brett-wip, the `LANES.md:36` header prose | ADDITIVE BEFORE CUTOVER (inferred) | A pointer naming the manual by project and by its spec-leg `docs/` location after the split is true in both states. Writes follow the file's HAZARD rule (`:1-8`). |
+| B5 | brett-wip `lanes/repos.tsv:52` (per-WIP override) | no: openRepoTools only (the shipped table, I3). The override need not change: "an override row … adds rows the shipped table does not carry" (`lanes-edit.sh:2440-2442`). | WAITS FOR REAL LEGS | Same reason as I3. |
+| B6 | brett-wip handoffs naming `/workspace/projects/openRepoTools` (145 lines) | no change (inferred) | — | In-place adoption keeps the checkout path, and the lines are dated records. |
+| B7 | brett-wip `.lane-worktrees/openRepoTools-{1,2,3}` lines (112) | no change (inferred) | — | The root is derived from the lane `dir`, which stays; the lines are dated records. |
+| B8 | brett-wip `openRepoTools-worktrees` lines (16), live in the canonical top blocks `session-handoff-2026-09-13-lane-openRepoTools-3.md:6`, `…-2026-09-16-lane-openRepoTools-1.md:8`, `…-2026-10-02-lane-openRepoTools-2.md:45` | yes: brett-wip, those top blocks, rewritten by each lane at its next handoff | WAITS FOR REAL LEGS | Live feature worktrees move to `<root>/worktrees/<NNN>/{spec,code}` only through T016-T017 translation and T018 rebinding. |
+| B9 | brett-wip `~/projects/openRepoTools/lanes-edit.sh` lines (20, all in `handoffs/xFactory/**`) | no change | — | All 20 are dated September records. The live hooks use `~/projects/xFactory/lanes-edit.sh`, which points at the installed copy. |
+| B10 | host `/workspace/projects/.lane-state/openRepoTools-{1,2,3}/trees/*.yaml` | no: openRepoTools only. These are host files written by `lanes-edit.sh`/`lane-worktrees`, not by hand. | WAITS FOR REAL LEGS | Records for leg worktrees can be written only once leg worktrees exist. |
+| B11 | host symlink `/workspace/projects/openRepoTools/handoffs` | no outside change. The host's `.git/info/exclude` (`/handoffs`) survives in-place adoption (inferred). An optional root `.gitignore` line would be an openRepoTools change. | ADDITIVE BEFORE CUTOVER (inferred) | An ignore line for `/handoffs` is valid in both shapes. |
+| A1 | `~/.agents/AGENTS.md:327, 347-348, 367, 391-392, 419, 430, 443-444, 462, 488, 498` | yes: `~/.agents/AGENTS.md`, only the lines whose code has not landed; landed ones are history | WAITS FOR REAL LEGS (inferred) | A landing can name `openRepoTools-code` only once that repository exists and takes PRs. |
+| A2 | `~/.agents/protocols/lane-collision-protocol-amendment-9.md:735, 943`; `-11.md:1511`; `-12.md:315`; `-14.md:185`; `-17.md:175`; `-18.md:222` | yes: `~/.agents/protocols` (ratified texts; any edit is the protocol owner's) | ADDITIVE BEFORE CUTOVER (inferred) | A pointer naming the manual's location in both shapes is true before and after. |
+| A3 | host `/workspace/projects/openRepoTools/.specify/extensions/git/git-config.yml:83` (`worktree_root: ../openRepoTools-worktrees`, ignored) | yes: that host file. The `~/.agents` protocols already describe both layouts (`openspec-speckit-workflow.md:114`). | WAITS FOR REAL LEGS | `setup-openspeckit` writes `worktree_root: worktrees` only for a detected three-leg root (`project-agent-bootstrap.md:117, 163`). |
+| A4 | host: the checkout root's ignored `.specify/`, `.claude/`, `.agents/`, `.codex/` | yes: those host files, through a `setup-openspeckit` re-run | WAITS FOR REAL LEGS | The bootstrap refuses a manifest whose spec leg is missing or empty (`project-agent-bootstrap.md:242-246`). |
+| A5 | installed `~/.claude/skills/handoff/SKILL.md:329` | no: openRepoTools only (`skills/handoff/SKILL.md`). It reaches `~/.claude*` through `--install` and workBenches through W1. | ADDITIVE BEFORE CUTOVER (inferred) | A third glob `"$dir"/worktrees/*/*` works today: an absent directory fails `[ -d "$worktree" ]` (`:330`) and is skipped. |
+| I1 | `openRepoTools:1218-1222` (`venv_note` comment) | no: openRepoTools only | ADDITIVE BEFORE CUTOVER (inferred) | A comment can name the manual in both places (adoption-plan.yaml:328 follow-up). |
+| I2 | c4864ac paths missing from adoption-plan.yaml (`lane-worktrees`, `lanes-index`, `ideation/`) | no: openRepoTools only (regenerate the plan; T003, T012) | ADDITIVE BEFORE CUTOVER | It is a plan-file change with no effect on today's repository, and the regenerated plan is the input to `execute`. |
+| I3 | `repos.tsv:52` (no leg aliases) | no: openRepoTools only (the shipped table) | WAITS FOR REAL LEGS | `repos.tsv:10-12` leaves out spellings not resolved to a repository, and `:23` adds a row "when a new repo first appears in a LANDING line". |
+| I4 | `lane-worktrees:2164-2172, 2712`; `lanes-edit.sh:12146-12214` | no: openRepoTools only | ADDITIVE BEFORE CUTOVER (inferred) | `_roots` can add `<dir>/worktrees` today; an absent directory yields nothing. |
+| I5 | `openRepoTools:291-292, 298-300, 322` (comments naming consumers) | no change (inferred) | — | The workBenches files named there keep those roles after the split. |
+
+**Outside-change rows (12):**
+
+- workBenches 4 (W1, W3, W6, W8)
+- openRepoShape 1 (S1)
+- brett-wip 3 (B1, B4, B8)
+- `~/.agents` 2 (A1, A2)
+- host-local files in the shared checkout 2 (A3, A4)
+
+**Timing, all 33 rows:** ADDITIVE BEFORE CUTOVER 11, WAITS FOR REAL LEGS 11, no change 11. Of the 12 outside-change rows, 4 are additive (W6, S1, B4, A2) and 8 wait (W1, W3, W8, B1, B8, A1, A3, A4).
+
+**Partial rows not included.** None of the 7 partials is judged to need an outside change (inferred):
+
+- workBenches 3 (the `/usr/local/share` vendored tree, the sentinel REPO/REF case, and `setup.sh`): all rest on openRepoTools's code implementation staying the vendored file.
+- openRepoShape 1: its install-line tests change only if the URL changes, and installer-design keeps the URL.
+- `~/.agents` 2: `AGENTS.md:273-278` stays true through the root entry point, and the `amendment-9.md:673, 1000` text is a dated record.
+- installer 1: the stale counts in installer-design.md are an openRepoTools-side fix.
+
+**Erratum, no row changed.** The brett-wip row for `~/projects/openRepoTools/lanes-edit.sh` in the table above also cites `session-handoff-2026-09-13-lane-openRepoTools-3.md:296`. That line names `/workspace/projects/openRepoTools/handoffs/`, not `lanes-edit.sh`. All 20 `lanes-edit.sh` lines are in `handoffs/xFactory/**`. The command used to check this:
+
+```sh
+git -C /workspace/projects/brett-wip show "ab88a10347fb605588643e7ea2e528217dab9a67:handoffs/openRepoTools/session-handoff-2026-09-13-lane-openRepoTools-3.md" | sed -n '296p'
+```
+
+The commands this revision added (read-only):
+
+```sh
+git -C /workspace/projects/openRepoTools show c4864ac:lanes-edit.sh | sed -n '2440,2470p'
+git -C /workspace/projects/openRepoTools show c4864ac:repos.tsv | sed -n '8,14p;23p'
+grep -n 'missing or empty\|worktree_root: worktrees\|exits non-zero when the manifest' /home/brett/.agents/protocols/project-agent-bootstrap.md
+grep -n '\[ -d "\$worktree" \]' /home/brett/.claude/skills/handoff/SKILL.md
+ls /workspace/projects/openRepoTools/.specify/extensions/git/
+grep -n 'worktree_root\|checkout_mode\|base_branch' /workspace/projects/openRepoTools/.specify/extensions/git/git-config.yml
+```
