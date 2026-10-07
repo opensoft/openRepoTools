@@ -15607,6 +15607,16 @@ has  "…a venv under any name included, by its site-packages" "$out" "$B162_REL
 has  "…and the line that covers it is among those offered" "$err" "'site-packages/'"
 run "$E" pathspec-check "$B162_REL/r1/notes.md"
 is   "a pathspec with nothing of the kind passes" "$rc" 0
+# A READ THAT FAILED IS NO "CLEAN" (#170 G13): a malformed magic pathspec makes
+# both git reads exit 128, and the check printed nothing and passed.
+run "$E" pathspec-check ':(bogus)x'
+is   "a pathspec git cannot read is refused, never reported clean" "$rc" 2
+has  "…saying the read failed" "$err" "could not read what that pathspec would stage"
+b162_head="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_LANE=repoA-1 LANES_PATH=':(bogus)x' "$E" commit "attach nothing"
+is   "…and the commit path refuses it before the add" "$rc" 2
+has  "…saying so" "$err" "could not read what this commit would stage"
+is   "…committing nothing" "$(git -C "$WIP" rev-parse HEAD)" "$b162_head"
 b162_head="$(git -C "$WIP" rev-parse HEAD)"
 run env LANES_LANE=repoA-1 LANES_PATH="$B162_REL" "$E" commit "attach r1"
 is   "the commit path refuses the same pathspec" "$rc" 2
@@ -15734,6 +15744,9 @@ has   "…naming what a slice is" "$err" "is not a slice name"
 run "$CG_LW" add repoCG-2 w3 --porcelain
 is    "…and so is a word that is the sweep's" "$rc" 64
 has   "…saying whose word it is" "$err" "belong to sweep, not to add"
+run "$CG_LW" add repoCG-2 w3 --push-untracked
+is    "…--push-untracked, #174's word for the sweep, included" "$rc" 64
+has   "…named as the sweep's" "$err" "--push-untracked belong to sweep, not to add"
 
 if [ "$(id -u)" = 0 ]; then
   skip "a record that fails takes the fresh tree back out" "root writes through a read-only directory, so the record cannot be made to fail here"
@@ -15805,8 +15818,8 @@ has   "…reading each with git status --ignored, so an ignored .env is named an
 has   "…and untracked work" "$err" "1 untracked"
 has   "…naming the lane's scratch" "$err" "$CG_ROOT/repoCG-2/notes-scratch"
 has   "…the exact table that lists them" "$err" "lane-worktrees sweep repoCG-2 --branches --include-scratch --include-caches"
-has   "…the act that retires them, and that it waits for #170" "$err" "--include-caches --yes"
-has   "…naming #170" "$err" "opensoft/openRepoTools#170"
+has   "…the act that retires them" "$err" "--include-caches --yes"
+has   "…and what that act removes, now that --yes is on" "$err" "removes only what is on origin or in a bundle"
 has   "…and the one door past it" "$err" "lane-end repoCG-2 --inventory-only"
 is    "…and writes NOTHING: the row is as it was" "$(cg_row repoCG-2)" "$cg2_row"
 is    "…and the lane's log is as it was" "$(cksum < "$CG_LOGD/repoCG-2.md")" "$cg2_log"
@@ -15816,7 +15829,7 @@ is    "the gate is asked on a dry run too" "$rc" 2
 
 run "$END" repoCG-2 --sweep
 is    "--sweep is refused" "$rc" 2
-has   "…by name, as the act that waits for #170" "$err" "--sweep is not built"
+has   "…by name, as an act that is not built" "$err" "--sweep is not built"
 
 run "$END" repoCG-2 --inventory-only
 is    "--inventory-only ends the lane past the gate" "$rc" 0

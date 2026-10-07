@@ -125,10 +125,10 @@
 #                       door was taken and what the gate found. Where the gate
 #                       passes it changes nothing
 #   --sweep             NOT BUILT, and refused with that said. Retiring the
-#                       trees in the same run as the ending is `lane-worktrees
-#                       sweep --yes`, which is switched off until
-#                       opensoft/openRepoTools#170 lands; the word is held here
-#                       so that nothing else takes it meanwhile
+#                       trees in the same run as the ending is not one act:
+#                       `lane-worktrees sweep <lane> --yes` retires them first,
+#                       on its own; the word is held here so that nothing else
+#                       takes it meanwhile
 #   --home owner/repo   the lane's home repo, for a PRE-CUTOVER lane whose log
 #                       has no STARTED line. Accepted for parity with `claim`
 #                       and `who` and passed through to the helper; lane-end's
@@ -618,11 +618,11 @@ while [ $# -gt 0 ]; do
     --force)       force=1; shift ;;
     # THE CLOSE-OUT GATE'S ONE DOOR, AND THE WORD HELD FOR ITS SECOND (#163).
     # `--sweep` would retire the lane's trees in the same run as its ending,
-    # which is `lane-worktrees sweep --yes` — switched off until #170 lands, so
-    # the word is refused by name rather than read as an unknown option.
+    # which is not built — `lane-worktrees sweep --yes` is that act, on its own
+    # — so the word is refused by name rather than read as an unknown option.
     --inventory-only) inventory_only=1; shift ;;
     --sweep | --sweep=*)
-                   die "--sweep is not built: retiring a lane's trees in the same run as its ending is \`lane-worktrees sweep --yes\`, which is switched off until opensoft/openRepoTools#170 lands. Until then $prog <lane> refuses and names the sweep, and $prog <lane> --inventory-only ends the lane with its trees left where they are, in its inventory. Nothing was written." 2 ;;
+                   die "--sweep is not built: retiring a lane's trees in the same run as its ending is not one act. \`lane-worktrees sweep <lane> --yes\` retires them first, on its own (it removes only what is on origin or in a bundle, never a live writer's tree), and then $prog <lane> ends the lane; or $prog <lane> --inventory-only ends the lane with its trees left where they are, in its inventory. Nothing was written." 2 ;;
     --dry-run)     dry_run=1; shift ;;
     --state-was)   state_was="${2-}"; [ -n "$state_was" ] || die "--state-was needs the exact text to replace" 2; shift 2 ;;
     --state-was=*) state_was="${1#--state-was=}"; [ -n "$state_was" ] || die "--state-was needs the exact text to replace" 2; shift ;;
@@ -1903,7 +1903,8 @@ fi
 # `--inventory-only` IS THE ONE DOOR, and it takes the lane past every answer
 # but leaves every tree where it is and in the lane's #97 inventory; the reason
 # it was let past is written into the row's closing phrase and the ENDED line.
-# `--sweep --yes`, which would retire them in the same run, waits for #170.
+# `--sweep`, which would retire them in the same run, is not built: the act
+# that retires them is `lane-worktrees sweep --yes`, on its own.
 TAB="$(printf '\t')"
 gate_argv=(sweep "$LANE" --branches --include-scratch --include-caches)
 gate_shown="lane-worktrees ${gate_argv[*]}"
@@ -2129,7 +2130,7 @@ else
     if [ "$gate_rc" = 3 ]; then gate_act=1; fi
     if [ "$gate_rc" = 0 ] && [ "$gate_caches" -gt 0 ]; then gate_act=1; fi
     if [ "$gate_act" = 1 ]; then
-      note "the one act that retires them, once opensoft/openRepoTools#170 lands (--yes is switched off until then):"
+      note "the one act that retires them (--yes removes only what is on origin or in a bundle, never a live writer's tree):"
       if [ "$gate_holder" = live ]; then
         note "  $gate_shown --yes --live <each live writer's worktree> | --live none"
       else
