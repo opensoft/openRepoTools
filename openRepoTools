@@ -255,16 +255,21 @@ workdir() {
 # reason — each of these files is one file a person has on PATH. Two installers that
 # fetch the same way is a claim `tests/test_openrepotools_command.py` and
 # openRepoShape's own suite each assert against their own script's text.
+#
+# WHAT IT FETCHES FROM IS THE ONE THING THAT MOVED (#186, T007): the source
+# `payload_resolve_remote` settled — the code an adopted assembly pins, or a
+# single repository at the ONE commit its ref named — or the repository and
+# commit a caller hands it, which is how the code pin itself is read.
 fetch_from_repo() {
-	local path="$1" dest="$2"
+	local path="$1" dest="$2" repo="${3:-${PAYLOAD_REPO:-$REPO}}" rev="${4:-${PAYLOAD_REV:-$REF}}"
 	if command -v gh >/dev/null 2>&1 &&
-		gh api "repos/$REPO/contents/$path?ref=$REF" \
+		gh api "repos/$repo/contents/$path?ref=$rev" \
 			-H 'Accept: application/vnd.github.raw' >"$dest" 2>/dev/null &&
 		[ -s "$dest" ]; then
 		return 0
 	fi
 	if command -v curl >/dev/null 2>&1 &&
-		curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/$path" \
+		curl -fsSL "https://raw.githubusercontent.com/$repo/$rev/$path" \
 			>"$dest" 2>/dev/null && [ -s "$dest" ]; then
 		return 0
 	fi
@@ -272,6 +277,568 @@ fetch_from_repo() {
 	# the whole set instead of stopping mid-way through an install
 	# (openRepoShape #82, F10 of the review on its #83).
 	return 1
+}
+
+# ------------------------------------------------ WHERE THE PAYLOAD COMES FROM
+#
+# opensoft/openRepoTools#186 — T007 of `specs/004-migrate-to-triad/tasks.md`,
+# on `specs/004-migrate-to-triad/installer-design.md`. There are TWO LAYOUTS,
+# and this asks which one it is looking at rather than guessing:
+#
+#   * A SINGLE REPOSITORY — `opensoft/openRepoTools` today — carries every
+#     payload file at its root. NOTHING ABOUT IT CHANGES: a directory beside
+#     this file that holds every payload file (a checkout, workBenches'
+#     vendored tree) is copied with no network at all, byte for byte and line
+#     for line what it always was; one that holds only some of them copies
+#     those and fetches the rest; and a run from stdin fetches them all.
+#   * AN ADOPTED ASSEMBLY — the same slug after the triad split — carries
+#     `contracts/code-pin.yaml`, which names the CODE repository and commit,
+#     and a gitlink at the pinned path that must agree with it. The payload is
+#     that repository's, at that commit, and nothing else's.
+#
+# THE REF IS RESOLVED ONCE, in both layouts. `$OPENREPOTOOLS_REF` becomes a
+# commit on the first round trip, and every request after it names that
+# commit, so a branch that moves while the files come down cannot hand one run
+# two versions. `$OPENREPOTOOLS_REPO` and `$OPENREPOTOOLS_REF` mean what they
+# always meant: what to install from, and at which ref.
+#
+# WHICH LAYOUT IS DECIDED BY A LISTING THAT SUCCEEDED, NEVER BY A FAILURE. The
+# root tree at that commit is listed (`git/trees`), then `contracts/`: a code
+# pin that is there is the adopted layout, and one that a successful listing
+# shows is NOT there, with no adoption manifest (`project.yaml`) beside it, is
+# a single repository. An authentication failure, a rate limit, a transport
+# failure or an answer that does not parse is a REFUSAL naming what answered —
+# never evidence of the older layout, because reading it that way would
+# install whatever the assembly root happened to carry.
+#
+# A PIN THAT IS PRESENT AND WRONG REFUSES. Its grammar is fixed, so it is read
+# here with `read` and `case` rather than a YAML runtime (`pin_parse`), and
+# every field is checked. The payload repository is the pin's own
+# `source_repository`, never a name made by appending `-code` to a fork's: a
+# fork follows the pin it actually carries.
+#
+# WHAT A REMOTE INSTALL DOES NOT CLAIM: the pin's `tree_sha256`. That digest is
+# over the code leg's WHOLE tree and is the composed validator's to recompute
+# (`scripts/validate-pins.py` in the assembly). What is verified here is the
+# identity this run consumes — the commit the ref names, the gitlink at the
+# pinned path, and that the pinned commit is one the pinned repository has.
+#
+# LOCALLY — this file run from the code leg MOUNTED in an assembly checkout,
+# whose `contracts/code-pin.yaml` names this directory — the pin and the
+# gitlink must agree and every payload file must be the pinned commit's bytes;
+# then they are copied, offline. A code checkout under an assembly that is NOT
+# its mounted leg (a paired feature worktree, `<root>/worktrees/<NNN>/code`) is
+# somebody installing that checkout ON PURPOSE: its bytes are copied as they
+# are, and the run names that checkout and its commit and says it is not the
+# pinned code. Neither is ever completed from a network — local siblings and
+# remote bytes do not make one install between them.
+#
+# ALL OF IT HAPPENS BEFORE ANYTHING IS PLACED: `install_commands` asks
+# `payload_select` straight after the targets, before the first byte is
+# collected, and every refusal here places nothing.
+
+PAYLOAD_MODE=""      # "" until chosen: local | siblings | remote
+PAYLOAD_DIR=""       # the directory payload files are copied from, if any
+PAYLOAD_REPO=""      # owner/name every fetch reads, once resolved
+PAYLOAD_REV=""       # the 40-hex commit every fetch reads, once resolved
+SOURCE_SHA=""        # $REF, resolved once
+SOURCE_LAYOUT=""     # single | adopted | feature, once known
+API_SHA=""
+API_WHY=""
+
+#: THE CHARACTERS GITHUB SPELLS A NAME WITH, WRITTEN OUT. A bracket RANGE such
+#: as `[a-z]` follows the locale's collation in bash 3.2 and can admit capitals,
+#: and `case` is how this file matches.
+ORT_ALNUM='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+ORT_TAB="$(printf '\t')"
+ORT_CR="$(printf '\r')"
+#: One listing row per entry: `path<TAB>type<TAB>sha`. `gh` evaluates it itself
+#: (`--jq`); the curl path hands the same filter to `jq`.
+ORT_TREE_JQ='.tree[] | [.path, .type, .sha] | @tsv'
+
+# EVERY FILE `--install` READS, derived from the three lists and from nothing
+# else: the commands at the root, then each skill's and each command file's path.
+payload_names() {
+	local name
+	for name in "${INSTALLABLES[@]}"; do printf '%s\n' "$name"; done
+	for name in "${SKILLS[@]}"; do skill_source_path "$name"; done
+	for name in "${COMMANDS[@]}"; do command_source_path "$name"; done
+}
+
+is_lower_hex() {   # <length> <value>
+	case "$2" in '' | *[!0123456789abcdef]*) return 1 ;; esac
+	[ "${#2}" -eq "$1" ]
+}
+
+is_slug() {   # <owner/name> — a repository as GitHub spells one, and nothing else
+	local owner="${1%%/*}" name="${1#*/}"
+	[ "$owner" != "$1" ] || return 1
+	case "$owner" in '' | -* | *- | *[!${ORT_ALNUM}-]*) return 1 ;; esac
+	case "$name" in '' | . | .. | */* | *[!${ORT_ALNUM}._-]*) return 1 ;; esac
+	return 0
+}
+
+is_segment() {   # <path> — exactly one path segment
+	case "$1" in '' | . | .. | *[!${ORT_ALNUM}._-]*) return 1 ;; esac
+	return 0
+}
+
+# --- the code pin's fixed grammar ---------------------------------------------
+#
+# `contracts/code-pin.yaml` as openRepoShape's adopter writes it: top-level
+# `key: value` lines, comments, blank lines, and one mapping, `digests:`, whose
+# indented `tree_sha256:` is read. A scalar may be double- or single-quoted.
+# A key this reader does not use (a `tag:` label beside the commit, say) is
+# allowed once; a key it does use must appear exactly once; and every value
+# it uses must have the one form the contract gives it. LF only.
+
+PIN_SCALAR=""
+pin_scalar() {   # <text after the colon> — PIN_SCALAR, or 1 for a quote that does not close
+	local v="$1" q rest
+	while :; do case "$v" in ' '* | "$ORT_TAB"*) v="${v#?}" ;; *) break ;; esac; done
+	case "$v" in
+	'"'* | "'"*)
+		q="${v:0:1}"
+		rest="${v#?}"
+		case "$rest" in *"$q"*) ;; *) return 1 ;; esac
+		PIN_SCALAR="${rest%%"$q"*}"
+		rest="${rest#*"$q"}"
+		while :; do case "$rest" in ' '* | "$ORT_TAB"*) rest="${rest#?}" ;; *) break ;; esac; done
+		case "$rest" in '' | '#'*) ;; *) return 1 ;; esac
+		# No escapes in this grammar: a backslash is a value nobody wrote.
+		case "$PIN_SCALAR" in *\\*) return 1 ;; esac
+		;;
+	'#'*) PIN_SCALAR="" ;;
+	*)
+		PIN_SCALAR="${v%% #*}"
+		while :; do
+			case "$PIN_SCALAR" in *' ' | *"$ORT_TAB") PIN_SCALAR="${PIN_SCALAR%?}" ;; *) break ;; esac
+		done
+		;;
+	esac
+	return 0
+}
+
+pin_bad() {   # <field> <value> <what it must be> — PIN_WHY, and 1
+	if [ -z "$2" ]; then
+		PIN_WHY="\`$1\` is missing"
+	else
+		PIN_WHY="\`$1\` is '$2', $3"
+	fi
+	return 1
+}
+
+pin_parse() {   # <file> — the PIN_* fields and 0, or PIN_WHY and 1
+	local line body key n=0 seen=" " block="" tree_seen=0
+	PIN_SCHEMA="" PIN_KIND="" PIN_LEG_ROLE="" PIN_SOURCE_REPOSITORY=""
+	PIN_SUBMODULE_PATH="" PIN_COMMIT="" PIN_REVISION_KIND=""
+	PIN_DIGEST_ALGORITHM="" PIN_DIGEST_DEFINITION="" PIN_TREE_SHA256=""
+	PIN_VERIFY="" PIN_RUNBOOK="" PIN_WHY=""
+	[ -s "$1" ] || { PIN_WHY="it is empty"; return 1; }
+	while IFS= read -r line || [ -n "$line" ]; do
+		n=$((n + 1))
+		case "$line" in
+		*"$ORT_CR"*) PIN_WHY="line $n ends in a carriage return, and the grammar is LF-only"; return 1 ;;
+		'' | '#'*) continue ;;
+		' '* | "$ORT_TAB"*)
+			body="$line"
+			while :; do case "$body" in ' '* | "$ORT_TAB"*) body="${body#?}" ;; *) break ;; esac; done
+			case "$body" in '' | '#'*) continue ;; esac
+			# AN INDENTED LINE BELONGS TO THE KEY ABOVE IT, and the only one
+			# this reads into is `digests:`.
+			[ "$block" = digests ] || continue
+			key="${body%%:*}"
+			[ "$key" != "$body" ] || { PIN_WHY="line $n is not \`key: value\`"; return 1; }
+			pin_scalar "${body#*:}" || { PIN_WHY="line $n has a quoted value that does not close cleanly"; return 1; }
+			if [ "$key" = tree_sha256 ]; then
+				[ "$tree_seen" -eq 0 ] || { PIN_WHY="\`digests.tree_sha256\` appears twice"; return 1; }
+				tree_seen=1
+				PIN_TREE_SHA256="$PIN_SCALAR"
+			fi
+			continue ;;
+		esac
+		block=""
+		key="${line%%:*}"
+		[ "$key" != "$line" ] || { PIN_WHY="line $n is not \`key: value\`"; return 1; }
+		case "$key" in
+		'' | *[!abcdefghijklmnopqrstuvwxyz0123456789_]*)
+			PIN_WHY="line $n's key '$key' is not a key this grammar has"; return 1 ;;
+		esac
+		case "$seen" in *" $key "*) PIN_WHY="\`$key\` appears twice"; return 1 ;; esac
+		seen="$seen$key "
+		pin_scalar "${line#*:}" || { PIN_WHY="line $n has a quoted value that does not close cleanly"; return 1; }
+		case "$key" in
+		schema_version) PIN_SCHEMA="$PIN_SCALAR" ;;
+		kind) PIN_KIND="$PIN_SCALAR" ;;
+		leg_role) PIN_LEG_ROLE="$PIN_SCALAR" ;;
+		source_repository) PIN_SOURCE_REPOSITORY="$PIN_SCALAR" ;;
+		submodule_path) PIN_SUBMODULE_PATH="$PIN_SCALAR" ;;
+		commit) PIN_COMMIT="$PIN_SCALAR" ;;
+		revision_kind) PIN_REVISION_KIND="$PIN_SCALAR" ;;
+		digest_algorithm) PIN_DIGEST_ALGORITHM="$PIN_SCALAR" ;;
+		digest_definition) PIN_DIGEST_DEFINITION="$PIN_SCALAR" ;;
+		verify_pin) PIN_VERIFY="$PIN_SCALAR" ;;
+		resync_runbook) PIN_RUNBOOK="$PIN_SCALAR" ;;
+		digests)
+			[ -z "$PIN_SCALAR" ] || { PIN_WHY="\`digests\` is '$PIN_SCALAR', not a mapping"; return 1; }
+			block=digests ;;
+		esac
+	done <"$1"
+	[ "$PIN_SCHEMA" = 1 ] || { pin_bad schema_version "$PIN_SCHEMA" "not 1"; return 1; }
+	[ "$PIN_KIND" = pinned_contract_manifest ] ||
+		{ pin_bad kind "$PIN_KIND" "not pinned_contract_manifest"; return 1; }
+	[ "$PIN_LEG_ROLE" = code ] || { pin_bad leg_role "$PIN_LEG_ROLE" "not code"; return 1; }
+	is_slug "$PIN_SOURCE_REPOSITORY" ||
+		{ pin_bad source_repository "$PIN_SOURCE_REPOSITORY" "not an owner/name repository"; return 1; }
+	is_segment "$PIN_SUBMODULE_PATH" ||
+		{ pin_bad submodule_path "$PIN_SUBMODULE_PATH" "not one path segment"; return 1; }
+	is_lower_hex 40 "$PIN_COMMIT" ||
+		{ pin_bad commit "$PIN_COMMIT" "not 40 lowercase hex — a branch, a tag or an abbreviated commit is a moving reference"; return 1; }
+	[ "$PIN_REVISION_KIND" = commit ] || { pin_bad revision_kind "$PIN_REVISION_KIND" "not commit"; return 1; }
+	[ "$PIN_DIGEST_ALGORITHM" = sha256 ] ||
+		{ pin_bad digest_algorithm "$PIN_DIGEST_ALGORITHM" "not sha256"; return 1; }
+	[ "$PIN_DIGEST_DEFINITION" = sorted-ls-tree-r-v1 ] ||
+		{ pin_bad digest_definition "$PIN_DIGEST_DEFINITION" "not sorted-ls-tree-r-v1"; return 1; }
+	is_lower_hex 64 "$PIN_TREE_SHA256" ||
+		{ pin_bad digests.tree_sha256 "$PIN_TREE_SHA256" "not 64 lowercase hex"; return 1; }
+	[ -n "$PIN_VERIFY" ] || { pin_bad verify_pin "" ""; return 1; }
+	[ -n "$PIN_RUNBOOK" ] || { pin_bad resync_runbook "" ""; return 1; }
+	return 0
+}
+
+# --- one round trip, `gh` first and the API by `curl` second ------------------
+#
+# The same order as `fetch_from_repo`, for the same reason, and for the same
+# identities. Each sets API_WHY to what BOTH answered when neither did, which
+# is what a refusal prints.
+
+api_said() {   # <tool> <its stderr> — its first line, as one clause
+	local first=""
+	IFS= read -r first <"$2" 2>/dev/null || :
+	case "$first" in
+	'') printf '%s failed and said nothing\n' "$1" ;;
+	"$1:"*) printf '%s\n' "$first" ;;
+	*) printf '%s: %s\n' "$1" "$first" ;;
+	esac
+}
+
+#: A COMMIT, BY REF: API_SHA and 0, or API_WHY and 1. An answer that is not 40
+#: lowercase hex is no answer — `gh` prints a failed request's JSON on stdout.
+api_sha() {   # <owner/name> <ref, URL-escaped>
+	local out="$WORKDIR/api-sha" why="" sha=""
+	API_SHA="" API_WHY=""
+	if command -v gh >/dev/null 2>&1; then
+		if gh api "repos/$1/commits/$2" -H 'Accept: application/vnd.github.sha' \
+			>"$out" 2>"$out.err"; then
+			IFS= read -r sha <"$out" || :
+			if is_lower_hex 40 "$sha"; then API_SHA="$sha"; return 0; fi
+			why="gh: an answer that is not a commit"
+		else
+			why="$(api_said gh "$out.err")"
+		fi
+	else
+		why="gh: not installed"
+	fi
+	if command -v curl >/dev/null 2>&1; then
+		if curl -fsSL -H 'Accept: application/vnd.github.sha' \
+			"https://api.github.com/repos/$1/commits/$2" >"$out" 2>"$out.err"; then
+			sha=""
+			IFS= read -r sha <"$out" || :
+			if is_lower_hex 40 "$sha"; then API_SHA="$sha"; return 0; fi
+			why="$why; curl: an answer that is not a commit"
+		else
+			why="$why; $(api_said curl "$out.err")"
+		fi
+	else
+		why="$why; curl: not installed"
+	fi
+	API_WHY="$why"
+	return 1
+}
+
+tree_listing_ok() {   # <file> — one or more `path<TAB>blob|tree|commit<TAB>40-hex` rows
+	[ -s "$1" ] || return 1
+	awk -F'\t' 'NF != 3 || ($2 != "blob" && $2 != "tree" && $2 != "commit") ||
+		length($3) != 40 || $3 ~ /[^0123456789abcdef]/ { bad = 1 }
+		END { exit bad ? 1 : 0 }' "$1"
+}
+
+#: A TREE'S ENTRIES, ONE LEVEL: the listing in <dest> and 0, or API_WHY and 1.
+api_tree() {   # <owner/name> <commit or tree sha> <dest>
+	local out="$3" why=""
+	API_WHY=""
+	if command -v gh >/dev/null 2>&1; then
+		if gh api "repos/$1/git/trees/$2" --jq "$ORT_TREE_JQ" >"$out" 2>"$out.err"; then
+			tree_listing_ok "$out" && return 0
+			why="gh: an answer that is not a tree listing"
+		else
+			why="$(api_said gh "$out.err")"
+		fi
+	else
+		why="gh: not installed"
+	fi
+	if ! command -v curl >/dev/null 2>&1; then
+		why="$why; curl: not installed"
+	elif ! command -v jq >/dev/null 2>&1; then
+		why="$why; curl: not asked, because reading api.github.com's JSON needs \`jq\` and there is none"
+	elif ! curl -fsSL "https://api.github.com/repos/$1/git/trees/$2" >"$out.json" 2>"$out.err"; then
+		why="$why; $(api_said curl "$out.err")"
+	elif jq -r "$ORT_TREE_JQ" "$out.json" >"$out" 2>/dev/null && tree_listing_ok "$out"; then
+		return 0
+	else
+		why="$why; curl: an answer that is not a tree listing"
+	fi
+	API_WHY="$why"
+	return 1
+}
+
+tree_entry() {   # <listing> <name> — "<type> <sha>" of that entry, or 1
+	awk -F'\t' -v name="$2" '$1 == name { print $2 " " $3; found = 1; exit }
+		END { exit found ? 0 : 1 }' "$1"
+}
+
+url_ref() {   # <ref> — with the two characters a URL path reads otherwise escaped
+	local r="$1" out=""
+	while [ -n "$r" ]; do
+		case "$r" in
+		'%'*) out="$out%25" ;;
+		'#'*) out="$out%23" ;;
+		*) out="$out${r:0:1}" ;;
+		esac
+		r="${r#?}"
+	done
+	printf '%s' "$out"
+}
+
+# --- the remote source, resolved once ---------------------------------------
+
+payload_resolve_remote() {
+	[ -z "$SOURCE_SHA" ] || return 0
+	local listing contracts pin entry link
+	workdir
+	listing="$WORKDIR/source-root.tsv"
+	contracts="$WORKDIR/source-contracts.tsv"
+	pin="$WORKDIR/code-pin.yaml"
+	is_slug "$REPO" || die "\$OPENREPOTOOLS_REPO is '$REPO', which is not an owner/name repository, so
+    there is nothing to fetch from, and nothing was fetched, placed or written."
+	api_sha "$REPO" "$(url_ref "$REF")" || die "could not resolve $REPO at $REF to a commit, so nothing was fetched,
+    placed or written. What answered:
+        $API_WHY
+    Both were asked:
+        gh api repos/$REPO/commits/$REF -H 'Accept: application/vnd.github.sha'
+        curl -fsSL -H 'Accept: application/vnd.github.sha' https://api.github.com/repos/$REPO/commits/$REF
+    A failed answer is a refusal, never a reading of the repository's layout."
+	SOURCE_SHA="$API_SHA"
+	api_tree "$REPO" "$SOURCE_SHA" "$listing" || die "could not list $REPO at $SOURCE_SHA ($REF), so whether it is a single
+    repository or an adopted assembly is not known, and nothing was fetched,
+    placed or written. What answered:
+        $API_WHY
+    A failed listing is a refusal, never evidence that the code pin is absent."
+	entry=""
+	if entry="$(tree_entry "$listing" contracts)" && [ "${entry%% *}" = tree ]; then
+		api_tree "$REPO" "${entry#* }" "$contracts" || die "could not list contracts/ in $REPO at $SOURCE_SHA ($REF), so whether it
+    carries a code pin is not known, and nothing was fetched, placed or written.
+    What answered:
+        $API_WHY"
+		entry="$(tree_entry "$contracts" code-pin.yaml)" || entry=""
+	else
+		entry=""
+	fi
+	if [ -z "$entry" ]; then
+		# NO CODE PIN, SHOWN BY A LISTING THAT SUCCEEDED. With no adoption
+		# manifest either, this is the single repository it always was.
+		if tree_entry "$listing" project.yaml >/dev/null; then
+			die "$REPO at $SOURCE_SHA ($REF) carries an adoption manifest, project.yaml, and
+    no contracts/code-pin.yaml: a partly adopted layout, which says neither where
+    its code is nor that it is a single repository. Nothing was fetched, placed or
+    written. Its contracts/code-pin.yaml is the file that names the code leg."
+		fi
+		SOURCE_LAYOUT=single PAYLOAD_REPO="$REPO" PAYLOAD_REV="$SOURCE_SHA"
+		return 0
+	fi
+	[ "${entry%% *}" = blob ] || die "contracts/code-pin.yaml in $REPO at $SOURCE_SHA is a ${entry%% *}, not a
+    file, and nothing was fetched, placed or written."
+	fetch_from_repo contracts/code-pin.yaml "$pin" "$REPO" "$SOURCE_SHA" ||
+		die "could not fetch contracts/code-pin.yaml from $REPO at $SOURCE_SHA ($REF), which
+    the listing shows is there, so nothing was fetched, placed or written. Both
+    were asked:
+        gh api repos/$REPO/contents/contracts/code-pin.yaml?ref=$SOURCE_SHA
+        curl -fsSL https://raw.githubusercontent.com/$REPO/$SOURCE_SHA/contracts/code-pin.yaml"
+	pin_parse "$pin" || die "contracts/code-pin.yaml in $REPO at $SOURCE_SHA ($REF) is not a code pin
+    this installer can follow: $PIN_WHY. A pin that is present and wrong is
+    refused rather than read around, and nothing was fetched, placed or written."
+	link="$(tree_entry "$listing" "$PIN_SUBMODULE_PATH")" || link=""
+	[ "${link%% *}" = commit ] || die "$REPO at $SOURCE_SHA ($REF) records no gitlink at $PIN_SUBMODULE_PATH, where
+    contracts/code-pin.yaml mounts the code leg, so nothing was fetched, placed or
+    written."
+	[ "${link#* }" = "$PIN_COMMIT" ] || die "$REPO at $SOURCE_SHA ($REF) records ${link#* } at $PIN_SUBMODULE_PATH
+    and its contracts/code-pin.yaml says $PIN_COMMIT. The gitlink and the pin move
+    in ONE commit (the lockstep rule), so this assembly does not say which code it
+    means, and nothing was fetched, placed or written."
+	if ! api_sha "$PIN_SOURCE_REPOSITORY" "$PIN_COMMIT" || [ "$API_SHA" != "$PIN_COMMIT" ]; then
+		die "contracts/code-pin.yaml in $REPO at $SOURCE_SHA ($REF) pins $PIN_SOURCE_REPOSITORY
+    at $PIN_COMMIT, and that is not a commit $PIN_SOURCE_REPOSITORY answers for, so
+    nothing was fetched, placed or written. What answered:
+        ${API_WHY:-$PIN_SOURCE_REPOSITORY answered $API_SHA}"
+	fi
+	SOURCE_LAYOUT=adopted PAYLOAD_REPO="$PIN_SOURCE_REPOSITORY" PAYLOAD_REV="$PIN_COMMIT"
+}
+
+payload_where() {   # the source collected from, for a refusal to name
+	case "$SOURCE_LAYOUT" in
+	single) printf '%s at %s (%s)' "$PAYLOAD_REPO" "$REF" "$PAYLOAD_REV" ;;
+	adopted) printf '%s at %s (the code %s at %s pins)' "$PAYLOAD_REPO" "$PAYLOAD_REV" "$REPO" "$REF" ;;
+	*) printf '%s at %s' "$REPO" "$REF" ;;
+	esac
+}
+
+# --- the local source ---------------------------------------------------------
+
+#: THE NEAREST DIRECTORY ABOVE <dir> HOLDING `contracts/code-pin.yaml`: the
+#: assembly this checkout sits in, if it sits in one. Logical paths, so what is
+#: printed is what the person typed; the one comparison that must see through
+#: links (`payload_local_adopted`) asks `pwd -P` itself.
+assembly_above() {   # <dir>
+	local d
+	d="$(cd -- "$1/.." 2>/dev/null && pwd)" || return 1
+	while :; do
+		if [ -f "$d/contracts/code-pin.yaml" ]; then
+			printf '%s\n' "$d"
+			return 0
+		fi
+		case "$d" in / | '') return 1 ;; esac
+		d="$(dirname -- "$d")"
+	done
+}
+
+#: THE COMMIT A SUPERPROJECT RECORDS AT <path>: the index first and HEAD
+#: second, the order openRepoShape's `recorded_gitlink` asks them in — the index
+#: is what the next commit records, so a gitlink staged and not yet committed is
+#: the one that counts.
+recorded_gitlink() {   # <superproject> <path>
+	local oid
+	oid="$(git -C "$1" ls-files -s -- "$2" 2>/dev/null |
+		awk -v p="$2" '$1 == "160000" && $3 == "0" && $4 == p { print $2; exit }')" || oid=""
+	if [ -z "$oid" ]; then
+		oid="$(git -C "$1" ls-tree HEAD -- "$2" 2>/dev/null |
+			awk -v p="$2" '$1 == "160000" && $2 == "commit" && $4 == p { print $3; exit }')" || oid=""
+	fi
+	is_lower_hex 40 "$oid" || return 1
+	printf '%s\n' "$oid"
+}
+
+payload_local_adopted() {   # <assembly root> <the directory this file runs from>
+	local root="$1" here="$2" pin="$1/contracts/code-pin.yaml" me mount link name blob
+	local bad="" missing=""
+	pin_parse "$pin" || die "$pin is not a code pin this installer can follow: $PIN_WHY.
+    It is the pin of the assembly this checkout sits in, and a pin that is present
+    and wrong is refused rather than read around. NOTHING was installed and nothing
+    already installed was replaced."
+	me="$(cd -- "$here" && pwd -P)"
+	mount="$(cd -- "$root/$PIN_SUBMODULE_PATH" 2>/dev/null && pwd -P)" || mount=""
+	if [ "$mount" != "$me" ]; then
+		payload_local_feature "$root" "$here"
+		return 0
+	fi
+	link="$(recorded_gitlink "$root" "$PIN_SUBMODULE_PATH")" ||
+		die "$root records no gitlink at $PIN_SUBMODULE_PATH, where its contracts/code-pin.yaml
+    mounts this checkout, so which code it pins cannot be checked. NOTHING was
+    installed and nothing already installed was replaced."
+	[ "$link" = "$PIN_COMMIT" ] || die "$root records $link at $PIN_SUBMODULE_PATH and its
+    contracts/code-pin.yaml says $PIN_COMMIT. The gitlink and the pin move in ONE
+    commit (the lockstep rule), so this assembly does not say which code it means.
+    NOTHING was installed and nothing already installed was replaced. Make them
+    agree — \`make validate\` at $root names the drift — then re-run."
+	git -C "$here" cat-file -e "$PIN_COMMIT^{commit}" 2>/dev/null ||
+		die "the pinned commit $PIN_COMMIT is not in $here's object store, so its
+    payload cannot be checked against it. NOTHING was installed and nothing already
+    installed was replaced. Fetch it — git -C \"$here\" fetch origin — or run
+    \`make bootstrap\` at $root, then re-run."
+	for name in $(payload_names); do
+		if [ -L "$here/$name" ]; then bad="${bad:+$bad }$name"; continue; fi
+		if [ ! -f "$here/$name" ]; then missing="${missing:+$missing }$name"; continue; fi
+		blob="$(git -C "$here" rev-parse --verify --quiet "$PIN_COMMIT:$name" 2>/dev/null)" ||
+			{ bad="${bad:+$bad }$name"; continue; }
+		[ "$(git -C "$here" hash-object --no-filters -- "$name" 2>/dev/null)" = "$blob" ] ||
+			bad="${bad:+$bad }$name"
+	done
+	[ -z "$missing" ] || die "the code mounted at $root/$PIN_SUBMODULE_PATH is missing $missing,
+    so it is not the payload $root pins ($PIN_SOURCE_REPOSITORY at $PIN_COMMIT), and
+    an incomplete local set is never completed from a network. NOTHING was
+    installed and nothing already installed was replaced. Restore them —
+        git -C \"$here\" checkout $PIN_COMMIT -- $missing
+    — or run \`make bootstrap\` at $root, then re-run."
+	[ -z "$bad" ] || die "in the code mounted at $root/$PIN_SUBMODULE_PATH, $bad
+    differ from $PIN_COMMIT, the commit $root pins, so these are not the pinned
+    bytes. NOTHING was installed and nothing already installed was replaced. To
+    install the pinned code, restore them:
+        git -C \"$here\" checkout $PIN_COMMIT -- $bad
+    To install a code feature on purpose, run the openRepoTools of its own worktree
+    (<root>/worktrees/<NNN>/code), which installs that checkout's bytes and says so."
+	PAYLOAD_MODE=local PAYLOAD_DIR="$here" SOURCE_LAYOUT=adopted
+	say "openRepoTools: source: the code mounted at $root/$PIN_SUBMODULE_PATH, $PIN_SOURCE_REPOSITORY at $PIN_COMMIT as $root pins it; every payload file was checked against that commit and nothing fetched"
+}
+
+payload_local_feature() {   # <assembly root> <checkout>
+	local root="$1" here="$2" name missing="" top="" head="" dirty=""
+	for name in $(payload_names); do
+		[ -f "$here/$name" ] || missing="${missing:+$missing }$name"
+	done
+	[ -z "$missing" ] || die "$here is a code checkout under the assembly $root and not
+    the code it mounts, so \`--install\` from it installs THIS checkout's bytes or
+    none — and it is missing $missing. NOTHING was installed and nothing already
+    installed was replaced. Restore them in $here, or install the code $root pins
+    with $root/openRepoTools --install."
+	top="$(git -C "$here" rev-parse --show-toplevel 2>/dev/null)" || top=""
+	if [ -n "$top" ] && [ "$(cd -- "$top" && pwd -P)" = "$(cd -- "$here" && pwd -P)" ]; then
+		head="$(git -C "$here" rev-parse --verify --quiet HEAD 2>/dev/null)" || head=""
+		# shellcheck disable=SC2046
+		[ -z "$(git -C "$here" status --porcelain -- $(payload_names) 2>/dev/null)" ] ||
+			dirty=" with uncommitted changes to its payload"
+	fi
+	PAYLOAD_MODE=local PAYLOAD_DIR="$here" SOURCE_LAYOUT=feature
+	say "openRepoTools: source: the code checkout $here at ${head:-a commit this installer could not read (it is not a git checkout of its own)}$dirty, installed because its own openRepoTools was run — NOT the code $root pins, $PIN_SOURCE_REPOSITORY at $PIN_COMMIT"
+}
+
+# --- the one decision `--install` makes ---------------------------------------
+
+payload_select() {
+	[ -z "$PAYLOAD_MODE" ] || return 0
+	local selfdir="" root name missing=""
+	if [ -f "$SELF" ]; then
+		selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
+		if root="$(assembly_above "$selfdir")"; then
+			payload_local_adopted "$root" "$selfdir"
+			return 0
+		fi
+		for name in $(payload_names); do
+			[ -f "$selfdir/$name" ] || missing="${missing:+$missing }$name"
+		done
+		# EVERY PAYLOAD FILE IS BESIDE THIS ONE: copied, and nothing is asked
+		# of any network — the run is today's to the line (workBenches runs it
+		# with a sentinel repository precisely so that only this can succeed).
+		if [ -z "$missing" ]; then
+			PAYLOAD_MODE=local PAYLOAD_DIR="$selfdir"
+			return 0
+		fi
+		payload_resolve_remote
+		# A SINGLE REPOSITORY KEEPS ITS SIBLING RULE: what is beside this file
+		# is copied and only what is missing is fetched, at the one commit.
+		if [ "$SOURCE_LAYOUT" = single ]; then
+			PAYLOAD_MODE=siblings PAYLOAD_DIR="$selfdir"
+			return 0
+		fi
+		# AN ADOPTED SOURCE IS NEVER TOPPED UP: the files beside an installed
+		# copy are whatever an earlier run left, and pinned skills beside them
+		# would be two versions in one install.
+		PAYLOAD_MODE=remote
+		say "openRepoTools: source: $REPO at $REF ($SOURCE_SHA) pins $PAYLOAD_REPO at $PAYLOAD_REV; the files beside $selfdir are not used, because an incomplete local set is never topped up with pinned files"
+		return 0
+	fi
+	payload_resolve_remote
+	PAYLOAD_MODE=remote
+	[ "$SOURCE_LAYOUT" = single ] ||
+		say "openRepoTools: source: $REPO at $REF ($SOURCE_SHA) pins $PAYLOAD_REPO at $PAYLOAD_REV"
 }
 
 # THE SEVENTEEN FILES `--install` PLACES. One list, so the installer, the fetch
@@ -960,33 +1527,36 @@ retire_commands() {
 # artifact counts `2f44da0` corrected and as `lane-start`'s "no fifth rung". The
 # code below already derives every count it prints from `${#INSTALLABLES[@]}`.
 collect_commands() {
-	local name selfdir="" missing=""
+	local name missing=""
 	# Run from a file, install THOSE bytes: `--install` then needs no network
 	# and no `gh` at all — and `park`, `resume` and `status` sit BESIDE this
 	# file, in the checkout and in the repository alike, so the siblings that
 	# are there are copied and only a missing one is fetched. Run from stdin
 	# (`curl … | bash -s -- --install`) there is no file to copy from at all,
-	# so each one is fetched at this same ref.
-	if [ -f "$SELF" ]; then
-		selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
-	fi
+	# so each one is fetched at this same ref. WHICH of those it is, and from
+	# where, is `payload_select`'s one decision (#186), made before this runs.
+	payload_select
 	workdir
 	STAGED="$WORKDIR/staged"
 	mkdir -p "$STAGED"
 	for name in "${INSTALLABLES[@]}"; do
-		if [ -n "$selfdir" ] && [ -f "$selfdir/$name" ]; then
-			cp -- "$selfdir/$name" "$STAGED/$name"
+		if [ -n "$PAYLOAD_DIR" ] && [ -f "$PAYLOAD_DIR/$name" ]; then
+			cp -- "$PAYLOAD_DIR/$name" "$STAGED/$name"
 			continue
 		fi
-		fetch_from_repo "$name" "$STAGED/$name" ||
-			missing="${missing:+$missing }$name"
+		# A LOCAL SOURCE IS NEVER COMPLETED FROM A NETWORK: it was whole when
+		# it was chosen, and a file gone since is missing, not fetched.
+		if [ "$PAYLOAD_MODE" != local ]; then
+			fetch_from_repo "$name" "$STAGED/$name" && continue
+		fi
+		missing="${missing:+$missing }$name"
 	done
-	[ -z "$missing" ] || die "could not fetch $missing from $REPO at $REF, so NOTHING was installed
+	[ -z "$missing" ] || die "could not fetch $missing from $(payload_where), so NOTHING was installed
     and nothing already installed was replaced. \`--install\` places all
     ${#INSTALLABLES[@]} files or none: a new openRepoTools beside a missing park is
     a half-install that reads like a whole one. Both ways were tried:
-    gh api repos/$REPO/contents/<file>?ref=$REF
-    curl -fsSL https://raw.githubusercontent.com/$REPO/$REF/<file>"
+    gh api repos/${PAYLOAD_REPO:-$REPO}/contents/<file>?ref=${PAYLOAD_REV:-$REF}
+    curl -fsSL https://raw.githubusercontent.com/${PAYLOAD_REPO:-$REPO}/${PAYLOAD_REV:-$REF}/<file>"
 }
 
 # WHAT MODE A PLACED ARTIFACT IS AT, asked without `stat`. GNU spells that
@@ -1121,8 +1691,12 @@ install_commands() {
 	# cannot be written THROUGH is a refusal that costs nothing at all here,
 	# and a network round-trip if it waits (A9 Addendum 4, R-A9-12).
 	plan_install_targets
+	# THE SOURCE NEXT, AND ONCE (#186): which bytes, from where, at which
+	# commit — every refusal in it costs nothing, because nothing is collected
+	# or placed until it has answered.
+	payload_select
 	collect_commands
-	collect_skills || die "could not fetch one of the ${#SKILLS[@]} skills (${SKILLS[*]}) or the ${#COMMANDS[@]} command file (${COMMANDS[*]}) from $REPO at $REF, so
+	collect_skills || die "could not fetch one of the ${#SKILLS[@]} skills (${SKILLS[*]}) or the ${#COMMANDS[@]} command file (${COMMANDS[*]}) from $(payload_where), so
     NOTHING was installed and nothing already installed was replaced."
 	plan_hook_merge
 	plan_skill_targets
@@ -1368,15 +1942,16 @@ BLOCK
 # already have — a new `/restart` beside a `handoff` that could not be fetched
 # is a half-install that reads like a whole one.
 collect_skills() {
-	local selfdir="" name src
-	[ -f "$SELF" ] && selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
+	local name src
+	payload_select
 	workdir
 	for name in "${SKILLS[@]}"; do
 		src="$(skill_source_path "$name")"
-		if [ -n "$selfdir" ] && [ -f "$selfdir/$src" ]; then
-			cp -- "$selfdir/$src" "$WORKDIR/skill-$name.md"
+		if [ -n "$PAYLOAD_DIR" ] && [ -f "$PAYLOAD_DIR/$src" ]; then
+			cp -- "$PAYLOAD_DIR/$src" "$WORKDIR/skill-$name.md"
 			continue
 		fi
+		[ "$PAYLOAD_MODE" != local ] || return 1
 		fetch_from_repo "$src" "$WORKDIR/skill-$name.md" || return 1
 	done
 	# THE COMMAND FILES IN THE SAME BREATH, under the same all-or-nothing rule
@@ -1386,10 +1961,11 @@ collect_skills() {
 	# nothing on screen says which.
 	for name in "${COMMANDS[@]}"; do
 		src="$(command_source_path "$name")"
-		if [ -n "$selfdir" ] && [ -f "$selfdir/$src" ]; then
-			cp -- "$selfdir/$src" "$WORKDIR/command-$name.md"
+		if [ -n "$PAYLOAD_DIR" ] && [ -f "$PAYLOAD_DIR/$src" ]; then
+			cp -- "$PAYLOAD_DIR/$src" "$WORKDIR/command-$name.md"
 			continue
 		fi
+		[ "$PAYLOAD_MODE" != local ] || return 1
 		fetch_from_repo "$src" "$WORKDIR/command-$name.md" || return 1
 	done
 	return 0
@@ -2508,6 +3084,13 @@ wip_shape_ref() {
 		[ -n "$pin" ] && { printf '%s\n' "$pin"; return 0; }
 	fi
 	workdir
+	# NO PIN BESIDE THIS FILE — the installed copy, a vendored tree: the pin is
+	# the one the CODE carries, read from wherever the payload comes from (#186)
+	# — the single repository at the commit its ref names, or the code leg an
+	# adopted assembly pins, never the assembly's own `contracts/`. A source
+	# that cannot be resolved is a refusal, as it is for `--install`; `main`
+	# stays the answer only for a pin that source does not carry.
+	payload_resolve_remote
 	if fetch_from_repo "contracts/openreposhape-pin.yaml" "$WORKDIR/pin.yaml"; then
 		pin="$(sed -n -e 's/^commit:[[:space:]]*//p' "$WORKDIR/pin.yaml" | head -n 1)"
 		pin="${pin%\"}"; pin="${pin#\"}"
@@ -2967,7 +3550,7 @@ $(printf '%s\n' "$ahead_log" | sed -e 's/^/    /')
 	# place and that are already there are left exactly as they are, and the
 	# missing ones are added — which is what makes a re-run after a
 	# half-finished first run safe.
-	ref="$(wip_shape_ref)"
+	ref="$(wip_shape_ref)" || exit "$?"
 	workdir
 	for rel in "${WIP_TEMPLATE_FILES[@]}"; do
 		dest="$WORKDIR/tpl-$(printf '%s' "$rel" | tr '/' '_')"

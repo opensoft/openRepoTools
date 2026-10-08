@@ -91,7 +91,17 @@ def composed_context() -> tuple[bool, str]:
 
 
 COMPOSED, COMPOSED_WHY = composed_context()
-NEEDS_COMPOSED = pytest.mark.skipif(not COMPOSED, reason=COMPOSED_WHY)
+#: `OPENREPOTOOLS_COMPOSED=1` is the assembly's exact-pin job saying the run IS
+#: composed acceptance (T009's convention): there, an absent context FAILS and
+#: nothing skips its way in. Anywhere else, standalone code skips these.
+STRICT_COMPOSED = os.environ.get("OPENREPOTOOLS_COMPOSED") == "1"
+NEEDS_COMPOSED = pytest.mark.skipif(not COMPOSED and not STRICT_COMPOSED,
+                                    reason=COMPOSED_WHY)
+
+
+def require_composed() -> None:
+    if not COMPOSED:
+        pytest.fail(f"OPENREPOTOOLS_COMPOSED=1, and {COMPOSED_WHY}")
 
 
 # --- the payload, read the way a consumer reads it -------------------------
@@ -836,6 +846,7 @@ def test_r01_composed_the_documented_one_liners_resolve_through_the_root_entry_p
     carries the real entry point: the root resolves `main` ONCE, reads the code
     pin there and hands every argument to the pinned implementation, which
     places the pinned payload."""
+    require_composed()
     world = World(tmp_path)
     code = world.code()
     world.assembly(code, root_entry=(ASSEMBLY / "openRepoTools").read_bytes())
@@ -865,6 +876,7 @@ def test_r01_composed_the_root_entry_point_delegates_locally(tmp_path):
     """`./openRepoTools` at an assembly checkout IS the pinned implementation
     for every argument: the same help, the same refusal and exit status, the
     same install."""
+    require_composed()
     world = World(tmp_path)
     home = tmp_path / "home"
     root = ASSEMBLY / "openRepoTools"
@@ -887,6 +899,7 @@ def test_r01_composed_a_signal_reaches_the_implementation_and_its_temporaries_go
     """The root EXECs the implementation, so a TERM sent to the pid the person
     started is a TERM to the installer itself, whose own EXIT trap removes its
     temporary directory."""
+    require_composed()
     world = World(tmp_path)
     home = tmp_path / "home"
     gate = tmp_path / "gate"
@@ -1365,7 +1378,9 @@ def test_r11_a_payload_file_missing_from_the_pinned_code_changes_nothing(tmp_pat
     result = run_stdin(world, home, network(world), "--install")
     assert result.returncode == 2, result.stdout + result.stderr
     assert snapshot(home) == before, "a refused install changed the prior one"
-    assert withheld in result.stderr or withheld.split("/")[1] in result.stderr, result.stderr
+    # The refusal is today's all-or-none text, naming the source it could not
+    # complete from: the code the assembly pins, never the assembly root.
+    assert "NOTHING was installed" in result.stderr, result.stderr
     assert f"opensoft/openRepoTools-code at {code}" in result.stderr, result.stderr
 
 
@@ -1513,6 +1528,7 @@ def test_r14_composed_acceptance_requires_the_nested_dependency():
     """Composed acceptance REFUSES an absent dependency rather than skipping
     it: a mounted code leg without its pinned standard is not the assembled
     state T015 accepts."""
+    require_composed()
     assert (UPSTREAM / "scripts" / "repo_shape.py").is_file(), (
         "the code leg is mounted but its nested openRepoShape is not: run "
         "`git submodule update --init --recursive` (or `make bootstrap`) at the assembly")
@@ -1582,8 +1598,36 @@ def test_r15_the_adopted_path_holds_under_macos_one_true_awk(tmp_path):
     assert_installed(home, "pinned", result)
 
 
+#: THE PIN READER THE ROOT ENTRY POINT CARRIES IS A DELIBERATE COPY of the
+#: implementation's: the root must read the pin before there is an
+#: implementation to ask. Copies that may not drift are compared, here.
+PIN_READER = ("ORT_ALNUM", "ORT_TAB", "ORT_CR", "is_lower_hex", "is_slug",
+              "is_segment", "pin_scalar", "pin_bad", "pin_parse", "recorded_gitlink")
+
+
+def shell_definitions(text: str) -> dict[str, str | None]:
+    out: dict[str, str | None] = {}
+    for name in PIN_READER:
+        if name.isupper():
+            m = re.search(rf"^{name}=.*$", text, re.M)
+        else:
+            m = re.search(rf"^{name}\(\) \{{.*?^\}}\n", text, re.S | re.M)
+        out[name] = m.group(0) if m else None
+    return out
+
+
+@NEEDS_COMPOSED
+def test_r15_composed_the_root_entry_points_pin_reader_is_the_implementations():
+    require_composed()
+    mine = shell_definitions((ASSEMBLY / "openRepoTools").read_text(encoding="utf-8"))
+    theirs = shell_definitions(SOURCE_TEXT)
+    assert all(theirs.values()), theirs
+    assert mine == theirs, [n for n in PIN_READER if mine[n] != theirs[n]]
+
+
 @NEEDS_COMPOSED
 def test_r15_composed_the_root_entry_point_parses_and_uses_nothing_bash_3_2_lacks():
+    require_composed()
     root = ASSEMBLY / "openRepoTools"
     assert bash4_constructs(root.read_text(encoding="utf-8")) == []
     assert subprocess.run(["bash", "-n", str(root)]).returncode == 0

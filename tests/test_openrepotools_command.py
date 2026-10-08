@@ -2191,6 +2191,11 @@ def test_the_duplicated_fetch_logic_says_so_out_loud():
 
 # --- the fetch path, offline, through a fake `gh` ---------------------------
 
+#: The commit the fake resolves every ref to, and a blob id for its listing.
+FAKE_COMMIT = "c0ffee" + "0" * 34
+FAKE_BLOB = "b10b" + "0" * 36
+
+
 def fake_github(tmp_path, served_names) -> dict:
     """A fake `gh` serving exactly `served_names`, and a `curl` that refuses.
 
@@ -2214,6 +2219,15 @@ def fake_github(tmp_path, served_names) -> dict:
     routes = "".join(
         f"*/contents/{name}\\?*) exec cat '{served / name}' ;;\n"
         for name in served_names)
+    # THE TWO CALLS A REAL GITHUB ANSWERS BEFORE ANY OF THOSE (#186, T007):
+    # the ref, resolved once to a commit, and that commit's root listed — no
+    # `project.yaml` and no `contracts/code-pin.yaml`, which is what a single
+    # repository's listing shows. Every assertion below is unchanged; the
+    # server just answers what the installer now asks first.
+    routes += (
+        f"*/commits/*) printf '%s' '{FAKE_COMMIT}'; exit 0 ;;\n"
+        f"*/git/trees/{FAKE_COMMIT}*) printf 'openRepoTools\\tblob\\t%s\\n' "
+        f"'{FAKE_BLOB}'; exit 0 ;;\n")
     (fake / "gh").write_text(
         "#!/bin/sh\n"
         'case "$*" in\n'
