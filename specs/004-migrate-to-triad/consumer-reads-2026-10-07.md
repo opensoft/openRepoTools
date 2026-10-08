@@ -1,5 +1,7 @@
 # Consumer-side reads for T006/T007/T008: what outside openRepoTools depends on its layout or its installer
 
+Paths under the home directory are written portably (`~/`) because the repository's hygiene test refuses host-absolute paths in committed files; the originals are in lane 2's transcript.
+
 Read at 2026-10-07T10:04:44Z–11:07:10Z by lane openRepoTools-2's writer, under #186, from ff6f6a7. An API-side error cut the run, and it resumed at 11:03:49Z, when every head was checked again.
 
 HEADs read:
@@ -143,19 +145,19 @@ grep -rn '^path: /workspace/projects/openRepoTools/' /workspace/projects/.lane-s
 `~/.agents` and the home directory:
 
 ```sh
-ls -la /home/brett/.agents /home/brett/.agents/protocols /home/brett/.agents/templates
-cat -n /home/brett/.agents/workspace.yaml
-grep -rn -i -c 'openRepoTools' /home/brett/.agents/AGENTS.md /home/brett/.agents/protocols/*
-grep -rn -e 'projects/openRepoTools' -e 'openRepoTools-worktrees' -e 'lane-worktrees/openRepoTools' -e 'raw.githubusercontent.com/opensoft/openRepoTools' -e 'repos/opensoft/openRepoTools' -e 'openRepoTools/installed.tsv' -e 'share/openRepoTools' -e 'openRepoTools/docs' -e 'docs/README-lanes' -e 'openRepoTools --install' -e 'openRepoTools/[A-Za-z]' /home/brett/.agents/{AGENTS.md,protocols,workspace.yaml,templates}   # 59 lines
-grep -rln -i 'openRepoTools' /home/brett/.agents/skills /home/brett/.agents/templates /home/brett/.agents/.skill-lock.json   # none
-cat /home/brett/.agents/protocols/project-agent-bootstrap.md
-cat /home/brett/.agents/protocols/openspec-speckit-workflow.md
-awk -F'\t' '{print NR, $1, $2, substr($3,1,12), $4}' /home/brett/.local/share/openRepoTools/installed.tsv   # 29 rows
-sha256sum /home/brett/.local/bin/openRepoTools
-grep -n 'lanes-edit\|lane-start\|xFactory\|openRepoTools\|\.local/bin' /home/brett/.claude/settings.json
-grep -n -i 'openRepoTools' /home/brett/.claude/CLAUDE.md                          # none
-grep -n -i 'projects/openRepoTools\|lane-worktrees\|raw.githubusercontent\|opensoft/openRepoTools\|docs/README-lanes' /home/brett/.claude/skills/{handoff,restart,lane-swap}/SKILL.md /home/brett/.claude/commands/*.md
-sed -n '318,336p' /home/brett/.claude/skills/handoff/SKILL.md
+ls -la ~/.agents ~/.agents/protocols ~/.agents/templates
+cat -n ~/.agents/workspace.yaml
+grep -rn -i -c 'openRepoTools' ~/.agents/AGENTS.md ~/.agents/protocols/*
+grep -rn -e 'projects/openRepoTools' -e 'openRepoTools-worktrees' -e 'lane-worktrees/openRepoTools' -e 'raw.githubusercontent.com/opensoft/openRepoTools' -e 'repos/opensoft/openRepoTools' -e 'openRepoTools/installed.tsv' -e 'share/openRepoTools' -e 'openRepoTools/docs' -e 'docs/README-lanes' -e 'openRepoTools --install' -e 'openRepoTools/[A-Za-z]' ~/.agents/{AGENTS.md,protocols,workspace.yaml,templates}   # 59 lines
+grep -rln -i 'openRepoTools' ~/.agents/skills ~/.agents/templates ~/.agents/.skill-lock.json   # none
+cat ~/.agents/protocols/project-agent-bootstrap.md
+cat ~/.agents/protocols/openspec-speckit-workflow.md
+awk -F'\t' '{print NR, $1, $2, substr($3,1,12), $4}' ~/.local/share/openRepoTools/installed.tsv   # 29 rows
+sha256sum ~/.local/bin/openRepoTools
+grep -n 'lanes-edit\|lane-start\|xFactory\|openRepoTools\|\.local/bin' ~/.claude/settings.json
+grep -n -i 'openRepoTools' ~/.claude/CLAUDE.md                          # none
+grep -n -i 'projects/openRepoTools\|lane-worktrees\|raw.githubusercontent\|opensoft/openRepoTools\|docs/README-lanes' ~/.claude/skills/{handoff,restart,lane-swap}/SKILL.md ~/.claude/commands/*.md
+sed -n '318,336p' ~/.claude/skills/handoff/SKILL.md
 ```
 
 ## workBenches (`7fd01e3`)
@@ -199,7 +201,7 @@ openRepoShape pins nothing of openRepoTools.
 |---|---|---|---|
 | `lanes/log/openRepoTools-1.md:2`, `openRepoTools-2.md:2`, `openRepoTools-3.md:59` … (52 lines: 11 + 11 + 30) | STARTED, RESUMED and PAUSED records carry `home opensoft/openRepoTools; estate openRepoTools; dir /workspace/projects/openRepoTools`. That is the directory a lane is relaunched in. | In-place adoption keeps the slug as the assembly. The checkout keeps holding only 6 root files plus `spec/` and `code/` (inferred). The executables a lane runs from the checkout root move to `code/`. | not covered (rebinding is plan.md:223-224, T018) |
 | `lanes/log/openRepoTools-1.md:19`, `openRepoTools-3.md:291`, `:405`; `openXfactory-3.md:60`, `openXfactory-5.md:390`, `openxfactory-1.md:169` (+ `:253, 324, 411`) — 10 lines | Notes that name `.lane-worktrees/openRepoTools-1` and `-3`, `openRepoTools-cleanup-archives/…`, or `/workspace/projects/openRepoTools` as a working directory. | These are records of past acts. The paths stay valid while the assembly sits at the same path (inferred). | not covered |
-| `lanes/LANES.md:1109` (`openRepoTools-3`), `:1303` (`openRepoTools-1`), `:2581` (`openRepoTools-2`) | The rows carry a handoff path `handoffs/openRepoTools/…` and no directory column (header `:76`). Only `:1109` names a checkout: `--dir /home/brett/projects/openRepoTools`. `/home/brett/projects` → `/workspace/projects`. | The handoff paths are in brett-wip and unaffected. The estate name `openRepoTools` stays. | not covered |
+| `lanes/LANES.md:1109` (`openRepoTools-3`), `:1303` (`openRepoTools-1`), `:2581` (`openRepoTools-2`) | The rows carry a handoff path `handoffs/openRepoTools/…` and no directory column (header `:76`). Only `:1109` names a checkout: `--dir ~/projects/openRepoTools`. `~/projects` → `/workspace/projects`. | The handoff paths are in brett-wip and unaffected. The estate name `openRepoTools` stays. | not covered |
 | `lanes/LANES.md:36` (and `:1305`); 12 `docs/README-lanes` lines in 9 files (first: `handoffs/openRepoTools/brief-lane-openRepoTools-1-2026-09-16.md:9`, `session-handoff-2026-09-16-lane-openRepoTools-1.md:33`, `lanes/log/openRepoTools-1.md:22`) | "the manual lives at `docs/README-lanes.md` in `opensoft/openRepoTools`". | `docs/` moves to `openRepoTools-spec`. | not covered |
 | `lanes/repos.tsv:52` | The per-WIP alias override, read by `lanes-edit.sh` as `LANES_REPOS_TSV` (`lanes-edit.sh:2448`). It is byte-identical to the shipped table (sha256 `e4f9160a07ea…`). The only openRepoTools row is `openRepoTools` → `opensoft/openRepoTools`. | There are no `openRepoTools-spec` or `openRepoTools-code` rows, while the IRRS legs have them (`:29-30`, `:34-35`). The table header says an alias not in the table is refused, with a hint to spell owner/repo (shipped `repos.tsv:8`). | not covered |
 | handoffs naming the checkout root `/workspace/projects/openRepoTools`: 145 lines (first: `handoffs/openRepoTools/migration-handoff-2026-10-06.md:15, 16, 32`) | Reads, cwd records and commands run in the monorepo checkout. | After cutover, the checkout at that path is the assembly. Code and docs are under `code/` and `spec/` (inferred). | not covered |
@@ -224,7 +226,7 @@ openRepoShape pins nothing of openRepoTools.
 | `~/.agents/workspace.yaml:4-5` | `repository: opensoft/brett-wip`, `path: ~/projects/brett-wip`. No openRepoTools path. It is read by `openRepoTools:2211` and by `park`/`resume`. | Nothing in the file. | n/a |
 | `~/.agents/AGENTS.md:384`; `lane-collision-protocol.md:681`; `-14.md:93` | `${XDG_CONFIG_HOME:-$HOME/.config}/openRepoTools/lanes-index.conf`, a per-workstation configuration path. | Nothing layout-dependent (inferred). | n/a |
 | `~/.local/share/openRepoTools/installed.tsv` rows 1-29 (all stamped `2026-10-07T04:26:26Z`) | Rows 1-17 are `~/.local/bin/<INSTALLABLES>`. Rows 18-23 are the skills at `~/.claude-profiles/shared/skills/` and `~/.claude/skills/`. Rows 24-29 are the command files at both command dirs. The digests of `openRepoTools`, `lanes-edit.sh` and `lane-worktrees` equal the blobs at c4864ac. These rows consume the install, not the layout. | Names, destinations and receipt semantics are expected to stay the same. | covered: l.59, l.85-86 |
-| `~/.claude/settings.json:25, 37` | Hook commands `~/projects/xFactory/lanes-edit.sh guard` and `… session-start \|\| true`. That path is a symlink to `/home/brett/.local/bin/lanes-edit.sh`. These consume the install. | Nothing, if destinations hold. | covered: l.59, l.86 |
+| `~/.claude/settings.json:25, 37` | Hook commands `~/projects/xFactory/lanes-edit.sh guard` and `… session-start \|\| true`. That path is a symlink to `~/.local/bin/lanes-edit.sh`. These consume the install. | Nothing, if destinations hold. | covered: l.59, l.86 |
 | installed `~/.claude/skills/handoff/SKILL.md:329` (receipt rows 18-19; the `~/.claude-profiles/shared` copy has the same digest and was not opened) | The writer-poll loop sweeps `"$dir"/.claude/worktrees/*` and `"$(dirname "$dir")"/.lane-worktrees/"$lane"/*`. | Triad feature worktrees under `<root>/worktrees/<NNN>/{spec,code}` are outside both globs (inferred). | not covered |
 | `~/.claude/CLAUDE.md`; `~/.agents/skills/**`, `templates/**`; `openspec-speckit-workflow.md` and `project-agent-bootstrap.md` by name | None of them name openRepoTools. | — | n/a |
 
@@ -388,8 +390,8 @@ The commands this revision added (read-only):
 ```sh
 git -C /workspace/projects/openRepoTools show c4864ac:lanes-edit.sh | sed -n '2440,2470p'
 git -C /workspace/projects/openRepoTools show c4864ac:repos.tsv | sed -n '8,14p;23p'
-grep -n 'missing or empty\|worktree_root: worktrees\|exits non-zero when the manifest' /home/brett/.agents/protocols/project-agent-bootstrap.md
-grep -n '\[ -d "\$worktree" \]' /home/brett/.claude/skills/handoff/SKILL.md
+grep -n 'missing or empty\|worktree_root: worktrees\|exits non-zero when the manifest' ~/.agents/protocols/project-agent-bootstrap.md
+grep -n '\[ -d "\$worktree" \]' ~/.claude/skills/handoff/SKILL.md
 ls /workspace/projects/openRepoTools/.specify/extensions/git/
 grep -n 'worktree_root\|checkout_mode\|base_branch' /workspace/projects/openRepoTools/.specify/extensions/git/git-config.yml
 ```
