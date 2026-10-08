@@ -1,0 +1,55 @@
+From 1c7e74f9902815c764c214d353694af4cbb75598 Mon Sep 17 00:00:00 2001
+From: openRepoShape bump-leg <bump-leg@openreposhape.invalid>
+Date: Thu, 8 Oct 2026 21:42:37 +0000
+Subject: [PATCH 2/3] Bump spec leg to 39c18877e042 in openRepoTools
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+593250d600ca -> 39c18877e042, tree 3a4a84beb20b343390f5bae64cb166df4d0cfd693baff6309fc13c8060d1c866.
+
+No workflow reference names this leg, so the gitlink and the pin file are the whole of it.
+
+The gitlink at spec, `commit:` and `digests.tree_sha256` in contracts/spec-pin.yaml, and every workflow reference to opensoft/openRepoTools-spec move in ONE commit because `scripts/validate-pins.py` refuses when they disagree — a gitlink advanced alone is red on the next pull request, and on somebody else's change.
+
+Written by openRepoShape's `scripts/bump-leg.py`; the digest is recomputed from the leg's own objects, not adjusted.
+
+Lane: openRepoTools-1
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ contracts/spec-pin.yaml | 4 ++--
+ spec                    | 2 +-
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/contracts/spec-pin.yaml b/contracts/spec-pin.yaml
+index 65f8736..af1d2f7 100644
+--- a/contracts/spec-pin.yaml
++++ b/contracts/spec-pin.yaml
+@@ -21,7 +21,7 @@ leg_role: spec
+ source_repository: opensoft/openRepoTools-spec
+ submodule_path: spec
+ 
+-commit: "593250d600ca291f610671d993c2a6fc36cd690e"
++commit: "39c18877e042e13156849b861d07bc3c92e64db4"
+ revision_kind: commit
+ 
+ digest_algorithm: sha256
+@@ -36,7 +36,7 @@ digest_algorithm: sha256
+ # <oid>`, so a leg's own pin moving is drift too.
+ digest_definition: sorted-ls-tree-r-v1
+ digests:
+-  tree_sha256: "92da0a8a72f8a9ed3c8827b63e2c39b1734bc1e5418612e2fa41e40b2f148b45"
++  tree_sha256: "3a4a84beb20b343390f5bae64cb166df4d0cfd693baff6309fc13c8060d1c866"
+ 
+ verify_pin: scripts/validate-pins.py
+ resync_runbook: "README.md#the-lockstep-invariant"
+diff --git a/spec b/spec
+index 593250d..39c1887 160000
+--- a/spec
++++ b/spec
+@@ -1 +1 @@
+-Subproject commit 593250d600ca291f610671d993c2a6fc36cd690e
++Subproject commit 39c18877e042e13156849b861d07bc3c92e64db4
+-- 
+2.43.0
+

@@ -1,0 +1,415 @@
+From c0a8e1ea7164994fb8ba9fb76b93590ae7bff218 Mon Sep 17 00:00:00 2001
+From: Brett Heap <1513478+brettheap@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 21:42:28 +0000
+Subject: [PATCH 1/3] The assembly root's front door resolves the split's
+ collisions: AGENTS.md opens with the shape's pointer and a map of the three
+ repositories, README.md gains them and the lockstep invariant, and every path
+ that crossed into a leg names that leg.
+
+Rehearsal patch for opensoft/openRepoTools#186, task T006 of
+specs/004-migrate-to-triad/tasks.md, against run C's rehearsed split
+69b8924. Nothing under shape/ and no file with a row in
+contracts/shape-pin.yaml is touched.
+
+- AGENTS.md: line 1 is the exact pointer openRepoShape 7f84ca4's
+  SHAPE_POINTER_LINE and its adopt follow-up require. The shape's rendered
+  block from shape/AGENTS.md follows (the three repositories). Then comes a
+  map of seven entries plus one rehearsal note: spec, code, this root, where
+  the tests run, where the lane tooling's code and manual are, paired feature
+  worktrees, and how a path reads. The note: a local rehearsal mounts legs
+  over the file transport, which git 2.43 refuses without
+  `-c protocol.file.allow=always`; the real https legs need nothing. The
+  original AGENTS.md follows unchanged except for 16 path repairs
+  (docs/ -> spec/docs/, openspec/ -> spec/openspec/, upstream/, contracts/,
+  tests/ and .github/ -> code/...).
+- README.md: a "Three repositories" section (the table, the recursive clone
+  and `make bootstrap`), and "The lockstep invariant", which
+  contracts/{spec,code}-pin.yaml's `resync_runbook:
+  README.md#the-lockstep-invariant` names and which only shape/README.md
+  carried. The install section now says the one-liner is unchanged and that
+  the installer is code/openRepoTools. 12 path repairs, and the pin-bump
+  block re-rooted with `cd code`.
+- .gitignore: the shape's `.venv/` and `.DS_Store` merged in, and
+  `/worktrees/`, the line the three-leg bootstrap requires.
+- .gitattributes: the same `* text=auto eol=lf` rule, re-explained for this
+  root's pinned copies. The installer reason moved with its files to
+  code/.gitattributes.
+- CLAUDE.md is unchanged: "Read AGENTS.md." is byte-identical to the
+  shape's own rendered shape/CLAUDE.md.
+
+Lane: openRepoTools-1
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .gitattributes | 43 +++++++++++-----------------
+ .gitignore     |  6 ++++
+ AGENTS.md      | 78 +++++++++++++++++++++++++++++++++++++++-----------
+ README.md      | 59 +++++++++++++++++++++++++++++++-------
+ 4 files changed, 133 insertions(+), 53 deletions(-)
+
+diff --git a/.gitattributes b/.gitattributes
+index 3560973..6dc2212 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -1,32 +1,21 @@
+-# THIS REPOSITORY'S OWN INSTALLER COMPARES ITS BYTES, so the bytes have to be
+-# the same bytes on every platform.
++# THE BYTES A CLONE SEES ARE THE BYTES THIS ROOT'S CHECKS DESCRIBE.
+ #
+-# `openRepoTools --install` decides between `installed at`, `updated at` and
+-# `already installed … (unchanged)` with `cmp -s`, and
+-# `tests/test_openrepotools_command.py` compares an installed copy to this
+-# checkout's file BYTE FOR BYTE. Git for Windows' installer default is
+-# `core.autocrlf=true`; a checkout of THIS repository made under it turns every
+-# `\n` in `openRepoTools`, `park`, `resume` and `status` into `\r\n`, and every one
+-# of those comparisons is about line endings rather than about content — a
+-# second `--install` reporting three files `updated at` on a machine where
+-# nothing changed, and a colleague whose only sin was cloning on a stock
+-# Windows laptop watching the suite fail on lines nobody touched. CI never sees
+-# it: the Linux and macOS jobs check out LF by default and the Windows job pins
+-# `core.autocrlf=false`.
++# `contracts/shape-pin.yaml` records a sha256 of every shape file copied here,
++# and `scripts/validate-pins.py` recomputes each one from the bytes on disk.
++# Git for Windows' installer default is `core.autocrlf=true`; a clone made under
++# it writes CRLF into the worktree, and `make validate` then goes red on every
++# pinned file for a colleague who did nothing but clone this repository
++# (openRepoShape #51, ruled by Brett Heap on 2026-09-05; the shape's own
++# statement of the rule is `shape/.gitattributes`, pinned and left in place).
+ #
+-# The same rule for a second reason. `tests/test_park_resume_commands.py`
+-# asserts that `park`, `resume` and `status` carry the shared estate resolver
+-# BYTE FOR BYTE — that is what makes the deliberate duplication safe — and a CRLF
+-# checkout would either break the claim or hide a real drift behind it.
++# Before the split into three repositories this file carried the same rule for
++# a second reason: `openRepoTools --install` and its tests compare installed
++# copies with the checkout BYTE FOR BYTE. Those files are the code leg's now,
++# and a superproject's attributes never reach into a submodule's worktree, so
++# that statement moved with them, word for word, to `code/.gitattributes`; the
++# documents in `spec/` carry their own copy of the rule too.
+ #
+-# NO PATH IS LISTED BY NAME. Every file this repository ships is text — bash,
+-# Python, YAML, Markdown, a workflow — so there is nothing for git's binary
+-# heuristic to misjudge, and `text=auto` leaves that detection where it
+-# belongs: with git. The pinned `upstream/openRepoShape` is a gitlink and
+-# carries its own copy of this rule.
+-#
+-# openRepoShape #63 wrote this rule for the standard's own root, and its #51
+-# (2026-09-05) wrote it for every scaffolded project; this is the same rule
+-# retold for the repository that ships the two commands.
++# NO PATH IS LISTED BY NAME. Every file here is text, so `text=auto` leaves
++# binary detection with git.
+ 
+ * text=auto eol=lf
+diff --git a/.gitignore b/.gitignore
+index a160f49..2d04abf 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,3 +1,9 @@
+ __pycache__/
+ *.py[cod]
+ .pytest_cache/
++# Merged from the shape's copy, `shape/.gitignore` (pinned, left in place).
++.venv/
++.DS_Store
++# Paired feature worktrees, `worktrees/<NNN-feature>/{spec,code}/`: linked
++# worktrees of the two legs, machine plumbing, never committed to this root.
++/worktrees/
+diff --git a/AGENTS.md b/AGENTS.md
+index 443880a..d2dd7fb 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -1,3 +1,49 @@
++Read AGENTS-shape.md first — the rules of this repository's shape.
++
++This is the assembly root of **openRepoTools** (`openrepotools`): the repository an
++engineer clones. It holds `project.yaml`, the pins and the gate, and it mounts
++the two legs.
++
++| role | repository | path |
++|---|---|---|
++| assembly | `opensoft/openRepoTools` | `.` |
++| spec | `opensoft/openRepoTools-spec` | `spec/` |
++| code | `opensoft/openRepoTools-code` | `code/` |
++
++Everything below this line is openRepoTools's own. The shape wrote the block above
++once and does not pin this file, so how this project is built, tested, reviewed
++and released belongs here and nothing upstream will overwrite it.
++
++Where things are now that this project is three repositories. The text
++after this list is what this repository said before the split, with each path
++re-pointed at the leg that now holds it.
++
++- **`spec/`** (`opensoft/openRepoTools-spec`) holds what the project has
++  decided: `openspec/` (full proposals, their specs and archives), `specs/`
++  (the Speckit feature directories), `docs/` (the manuals) and `ideation/`.
++- **`code/`** (`opensoft/openRepoTools-code`) holds what ships: every command
++  `openRepoTools --install` places, `repos.tsv`, `commands/`, `skills/`,
++  `tests/`, its CI, and the pinned standard at `code/upstream/openRepoShape`
++  with `code/contracts/openreposhape-pin.yaml`.
++- **This root** holds the front door (this file, `CLAUDE.md`, `README.md`,
++  `LICENSE`), `project.yaml`, the leg pins and the shape's gate
++  (`make validate`), and no product code.
++- **The tests run in the code leg**: `code/tests/run.sh` from here, or
++  `tests/run.sh` inside `code/`, and the wrapper finds its own root either way.
++- **The lane tooling's code is in `code/` and its manual is in `spec/`**:
++  `spec/docs/README-lanes.md`, which is `docs/README-lanes.md` in
++  `opensoft/openRepoTools-spec` when that leg is cloned on its own.
++- **Feature work** happens in paired worktrees under
++  `worktrees/<NNN-feature>/{spec,code}/`, which this root ignores and never
++  commits: full proposals and Speckit files in the `spec` one, a genuine
++  bounded amendment only in the `code` one's `features/<NNN-feature>/openspec/`.
++- **A path that begins `spec/` or `code/`** in this file or `README.md` is
++  relative to this root.
++- **A local rehearsal** whose `.gitmodules` names bare repositories on disk
++  mounts the legs over git's file transport, which current git refuses by
++  default: there, `git -c protocol.file.allow=always submodule update --init
++  --recursive`. The real legs are https and need no flag.
++
+ # Working in openRepoTools
+ 
+ Three estate commands, `park`, `resume` and `status`; the lane tooling
+@@ -19,7 +65,7 @@ person is driving the two INSTALLED commands.
+ 
+ The lane tooling answers to a different document — the lane collision protocol
+ at `$AGENT_PROTOCOL_ROOT/protocols/lane-collision-protocol.md` and its
+-amendments — and `docs/README-lanes.md` is its manual. **The code is here; the
++amendments — and `spec/docs/README-lanes.md` is its manual. **The code is here; the
+ data is not.**
+ 
+ **A LANE HAS ONE BINDING** (Amendment 18, in force 2026-09-14): the `host`,
+@@ -41,7 +87,7 @@ handoffs through `$AGENT_PROTOCOL_ROOT/workspace.yaml`'s `repository:` and
+ unreadable workspace with **2**: only 2 blocks a prompt; 1 would let it through.
+ Profile-only guard calls carrying exact `CLAUDE_NO_LANE=1` return 0 before input
+ or identity probes, even with unreadable configuration; other values enforce.
+-Brett Heap directed this exception in `openspec/changes/skip-no-lane-guard/`;
++Brett Heap directed this exception in `spec/openspec/changes/skip-no-lane-guard/`;
+ Shared hooks stay installed. Exit 1 means *registry not found* in lane tooling,
+ and *findings were printed* in estate status; identify the command before interpreting it.
+ 
+@@ -197,13 +243,13 @@ sequence, and relay their per-repository lines rather than summarising them.
+    reads them all WITHOUT asking, because a read — fetched or not — moves
+    nothing of yours; `status --all` from anywhere says the same thing.
+ 
+-## The pinned standard at `upstream/openRepoShape`
++## The pinned standard at `code/upstream/openRepoShape`
+ 
+ The suite builds real estates out of eight of openRepoShape's own files, and it
+-reads them out of a submodule pinned by `contracts/openreposhape-pin.yaml`.
++reads them out of a submodule pinned by `code/contracts/openreposhape-pin.yaml`.
+ Three rules, and none of them is negotiable:
+ 
+-1. **Never edit anything under `upstream/openRepoShape` in place.** It is
++1. **Never edit anything under `code/upstream/openRepoShape` in place.** It is
+    somebody else's repository, checked out detached at a commit. A change the
+    standard needs is a pull request THERE, then a pin bump here.
+ 2. **Never pin a commit that is not on that repository's `main`.**
+@@ -211,17 +257,17 @@ Three rules, and none of them is negotiable:
+    pull request lands and the next person's fetch of it 404s. Check with
+    `gh api repos/opensoft/openRepoShape/compare/main...<sha>` — `identical` or
+    `behind`.
+-3. **The digest is RECOMPUTED, never adjusted.** `contracts/openreposhape-pin.yaml`
++3. **The digest is RECOMPUTED, never adjusted.** `code/contracts/openreposhape-pin.yaml`
+    carries the bump command. A `tree_sha256` edited to make
+-   `tests/test_upstream_pin.py` pass records this checkout as the upstream,
++   `code/tests/test_upstream_pin.py` pass records this checkout as the upstream,
+    which is the one thing the row exists to prevent. The pin file and the
+    gitlink move in ONE commit.
+ 
+ ## Testing your changes to this repository
+ 
+ ```sh
+-git submodule update --init upstream/openRepoShape
+-tests/run.sh                      # the suite, serialized — pass any pytest argument
++git -C code submodule update --init upstream/openRepoShape
++code/tests/run.sh                 # the suite, serialized — pass any pytest argument
+ ```
+ 
+ Brett Heap's RULING of 2026-09-16 ("do all three", on the coordinator's three
+@@ -230,7 +276,7 @@ Linux's 17-22, pull requests drawing 6-12 Copilot review rounds, and this
+ suite queuing up to 1h20 behind the workstation lock described below):
+ 
+ 1. **`TESTS-MACOS` LEAVES THE PER-PUSH GATE.** On `pull_request`
+-   (`.github/workflows/tests.yml`) this workflow runs `tests`,
++   (`code/.github/workflows/tests.yml`) this workflow runs `tests`,
+    `tests-no-submodule` and `tests-windows` only; `tests-macos` itself runs
+    there only once the coordinator has put the `ready` label on the PR — the
+    landing gate, applied once, right before the squash — and otherwise on
+@@ -244,10 +290,10 @@ suite queuing up to 1h20 behind the workstation lock described below):
+    and two are taken; a finding after that is filed as an issue and the PR
+    lands regardless.
+ 3. **CI IS THE SUITE OF RECORD.** A writer runs the shell-suite section they
+-   touched locally — `bash tests/test_lane_helpers.sh` in full is fine when
+-   the box is quiet — and the full local `tests/run.sh` behind the
++   touched locally — `bash code/tests/test_lane_helpers.sh` in full is fine when
++   the box is quiet — and the full local `code/tests/run.sh` behind the
+    workstation lock is no longer required before a push: CI's `tests` job is
+-   the footer of record. `tests/run.sh` stays exactly as it is above: how to
++   the footer of record. `code/tests/run.sh` stays exactly as it is above: how to
+    run the whole suite locally, serialized, whenever a person wants that
+    answer anyway, and `python3 -m pytest tests -q` by hand — unserialized
+    against every other lane on the same workstation — is still the thing it
+@@ -282,14 +328,14 @@ while [ "$(pgrep -f "$pat" | awk 'END { print NR + 0 }')" -gt 0 ]; do sleep 20;
+ PYTHONPYCACHEPREFIX="${XDG_CACHE_HOME:-$HOME/.cache}/openRepoTools/pycache" flock "${TMPDIR:-/tmp}/openrepotools-pytest.lock" python3 -m pytest tests -q -p no:cacheprovider
+ ```
+ 
+-`awk` AND NOT `pgrep -fc`, which is what `tests/run.sh` does and for the reason
++`awk` AND NOT `pgrep -fc`, which is what `code/tests/run.sh` does and for the reason
+ it gives: `-c` is not in every `pgrep` this repository runs under, and the
+ count — never `pgrep`'s exit status — is what decides. The wrapper is the
+ canonical implementation of this guard; the lines above are it in one place for
+ a person with no checkout in front of them.
+ 
+-`tests/test_lane_helpers.sh` is 122 KB of bash that arrived with the move;
+-`tests/test_lane_helpers_suite.py` is what makes `pytest` run it, so it is one
++`code/tests/test_lane_helpers.sh` is 122 KB of bash that arrived with the move;
++`code/tests/test_lane_helpers_suite.py` is what makes `pytest` run it, so it is one
+ slow test rather than no test at all. Everything shipped here is parsed under
+ macOS **bash 3.2** in CI, where `${x,,}`, `mapfile`, `declare -A` and
+ `local -n` are syntax errors — write `tr '[:upper:]' '[:lower:]'` and a loop.
+diff --git a/README.md b/README.md
+index 18c8f7e..2de8914 100644
+--- a/README.md
++++ b/README.md
+@@ -101,6 +101,39 @@ parked. No config, or no record, is a note.
+ That is all five layers: the local layer, `--fetch`, the fork, the pin and
+ the record.
+ 
++## Three repositories
++
++This repository is the ASSEMBLY ROOT of a three-repository project — the shape
++[openRepoShape](https://github.com/opensoft/openRepoShape) calls the Triad. It
++holds this front door, `project.yaml`, the pins and the gate, and mounts the
++other two as submodules; it holds no product code of its own.
++
++| role | repository | path | holds |
++|---|---|---|---|
++| assembly | `opensoft/openRepoTools` | `.` | the front door, the manifest, the pins, the gate |
++| spec | `opensoft/openRepoTools-spec` | `spec/` | `openspec/`, `specs/`, `docs/` (the manuals), `ideation/` |
++| code | `opensoft/openRepoTools-code` | `code/` | every command below, `repos.tsv`, `skills/`, `commands/`, `tests/`, CI, the pinned standard |
++
++```sh
++git clone --recurse-submodules https://github.com/opensoft/openRepoTools.git
++cd openRepoTools
++make bootstrap          # each leg on main AT its pinned commit, then the validators
++```
++
++Nothing a person types changes: the commands keep their names and the install
++one-liner below is the same line. A path in this file that begins `spec/` or
++`code/` is relative to this root. `AGENTS-shape.md` is the shape's rules for an
++agent working here, and electing the shape confers nothing.
++
++### The lockstep invariant
++
++For each leg, three things name the same commit and move in ONE commit here:
++the gitlink at the leg's path, `commit:` in `contracts/<role>-pin.yaml`, and
++every `.github/workflows/*.yml` `@<sha>` that names the leg. A change to a leg
++lands in that leg first, by pull request; this root then advances its pin with
++openRepoShape's `scripts/bump-leg.py`, and `make pins` refuses when the three
++disagree.
++
+ ## The lane tooling
+ 
+ `lane-start`, `lane-end`, `lanes-edit.sh` and `link-estates` are here too, with
+@@ -154,7 +187,7 @@ and 5 put it and where it stays. What moved here is the CODE. A `<user>-wip` is
+ a private repository whose own rules file says "No secrets and no code", nobody
+ would look inside somebody else's for a command, and until this move the four
+ helpers existed in exactly one place in the world: one person's private
+-repository. `docs/README-lanes.md` is the manual; `docs/README-claude-current.md` is the one for the Claude Code `lane-start` launches and the RESTART NEEDED line.
++repository. `spec/docs/README-lanes.md` is the manual; `spec/docs/README-claude-current.md` is the one for the Claude Code `lane-start` launches and the RESTART NEEDED line.
+ 
+ Every one of them finds that data through `$AGENT_PROTOCOL_ROOT/workspace.yaml`
+ — `repository:` and `path:`, the same pointer file `resume` and `status`
+@@ -180,7 +213,7 @@ different hat).
+ 
+ Then it clones the repository, seeds it from openRepoShape's
+ `templates/workspace-root/` at the commit pinned in
+-`contracts/openreposhape-pin.yaml`, and pushes one commit to `main` — **which is
++`code/contracts/openreposhape-pin.yaml`, and pushes one commit to `main` — **which is
+ also the check that matters**: a new repository is inside the organisation's
+ PR-only ruleset until an administrator excludes it, and until it is, every
+ register write will be refused by that gate. Better to meet it here than at
+@@ -237,6 +270,11 @@ gh api repos/opensoft/openRepoTools/contents/openRepoTools \
+     -H 'Accept: application/vnd.github.raw' | bash -s -- --install
+ ```
+ 
++Both lines are unchanged by the split into three repositories: the
++`openRepoTools` they fetch is this root's entry point, and the installer it
++hands over to is `code/openRepoTools` in `opensoft/openRepoTools-code`, at the
++commit this root pins.
++
+ It places SEVENTEEN files into `~/.local/bin` — `openRepoTools`, `park`, `resume`,
+ `status`, `lane`, `lanes`, `lane-handoff`, `lane-rename`, `lanes-edit.sh`,
+ `lane-start`, `lane-end`, `link-estates`, the alias table `repos.tsv`,
+@@ -260,7 +298,7 @@ that would not take it, and a create needs a directory's search bit as well as
+ its write bit. A refusal creates none of those directories either. `cp` follows
+ a symlink, and an install through one leaves the command uninstalled and writes
+ these bytes into whatever it points at. Then a `17 of 17 placed in <dir>` line,
+-and the `export PATH=…` line if that directory is not on your `PATH`. Last, it names this repository's virtual environment, `${XDG_CACHE_HOME:-~/.cache}/openRepoTools/venvs/openRepoTools/` (one per repository, outside the estate; #162), says whether it is there, and prints the two commands that make it: it never makes one, and `tests/run.sh` runs from it once it has `pytest`.
++and the `export PATH=…` line if that directory is not on your `PATH`. Last, it names this repository's virtual environment, `${XDG_CACHE_HOME:-~/.cache}/openRepoTools/venvs/openRepoTools/` (one per repository, outside the estate; #162), says whether it is there, and prints the two commands that make it: it never makes one, and `code/tests/run.sh` runs from it once it has `pytest`.
+ 
+ It also places **fourteen things that are not files in that directory**: THREE
+ SKILLS, `/handoff`, `/lane-swap` and `/restart`, each at
+@@ -300,7 +338,7 @@ arm keys on the VERB and not on the word anywhere in a path. It
+ never writes a profile's own `settings.json`: the launcher owns that one.
+ 
+ Thirty-one artifacts, and the count is the invariant. It was sixteen until A11
+-Addendum 4 ruling 9 gave `--install` a command-file list and `commands/swap.md`
++Addendum 4 ruling 9 gave `--install` a command-file list and `code/commands/swap.md`
+ in it, at the same pair of paths a skill takes — because `opensoft/workBenches#74`
+ deletes the launcher's copy and `/swap` would otherwise be installed by nobody;
+ eighteen until Amendment 12 adoption act 3 added the name guard's entry; and
+@@ -414,19 +452,19 @@ the way in is WSL2, exactly as it is for openRepoShape's `setup.sh`.
+ 
+ **Tools depend on the shape; the shape depends on nothing.** This repository
+ pins the openRepoShape commit its tests were verified against, as a submodule
+-at `upstream/openRepoShape` recorded in `contracts/openreposhape-pin.yaml`.
++at `code/upstream/openRepoShape` recorded in `code/contracts/openreposhape-pin.yaml`.
+ openRepoShape pins this repository NOWHERE, and knows of it only through one
+ pointer line its own `--install` prints — text, not a fetch. The reverse would
+ make the standard unbuildable without its tools.
+ 
+-MOUNTED, NOT COPIED. `tests/test_park_resume_commands.py` builds real estates
++MOUNTED, NOT COPIED. `code/tests/test_park_resume_commands.py` builds real estates
+ out of EIGHT of the standard's own files — the two root Makefiles, their two
+ `.gitignore`s, the two `bootstrap.py`s, `siblings.py` and
+ `scripts/repo_shape.py` — and a submodule hands those tests the standard's real
+ bytes at the pinned commit rather than copies here that could have been edited
+ into agreeing with a broken expectation.
+ 
+-`tests/test_upstream_pin.py` is what says the pin file and the gitlink still
++`code/tests/test_upstream_pin.py` is what says the pin file and the gitlink still
+ agree. Four of its checks need no submodule at all — the gitlink is read out of
+ `git ls-tree HEAD` and nothing imports from the checkout — so the lockstep
+ check bites in a clone that never materialized it.
+@@ -434,6 +472,7 @@ check bites in a clone that never materialized it.
+ ### Bumping the pin
+ 
+ ```sh
++cd code                       # the pin and the gitlink are the code leg's
+ git -C upstream/openRepoShape fetch origin
+ git -C upstream/openRepoShape checkout <40 hex on openRepoShape's main>
+ python3 -c "import sys; sys.path.insert(0, 'upstream/openRepoShape/scripts'); from repo_shape import tree_digest; print(tree_digest('upstream/openRepoShape', 'HEAD'))"
+@@ -446,7 +485,7 @@ git commit
+ **The edit comes before the `git add`, and the block is in that order for a
+ reason.** Staging first and editing after stages the moved gitlink with the OLD
+ pin file — and that is invisible where you are standing, because
+-`tests/test_upstream_pin.py` reads the pin out of the WORKING TREE and the
++`code/tests/test_upstream_pin.py` reads the pin out of the WORKING TREE and the
+ gitlink out of `git ls-tree HEAD`: green in your checkout, red in CI, which is
+ the wrong way round. The pin and the gitlink are one fact in two places. The
+ digest is recomputed with the PINNED CHECKOUT'S OWN `scripts/repo_shape.py`
+@@ -461,10 +500,10 @@ orphaned and the next person's fetch of it 404s.
+ 
+ ```sh
+ git clone --recurse-submodules https://github.com/opensoft/openRepoTools.git
+-cd openRepoTools && python3 -m pytest tests -q
++cd openRepoTools/code && python3 -m pytest tests -q
+ ```
+ 
+-From a clone that already exists, `git submodule update --init
++From a clone that already exists, `git -C code submodule update --init
+ upstream/openRepoShape` first. **Without the submodule the suite SKIPS rather
+ than fails**, naming that command: a fork's first `pytest` going red on a
+ missing submodule is a fork nobody finishes. The estate tests need `bash`,
+-- 
+2.43.0
+

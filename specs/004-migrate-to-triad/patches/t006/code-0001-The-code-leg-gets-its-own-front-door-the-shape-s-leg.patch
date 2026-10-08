@@ -1,0 +1,417 @@
+From 6169e8e9616425ce93a49447af5df426f4325312 Mon Sep 17 00:00:00 2001
+From: Brett Heap <1513478+brettheap@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 21:41:17 +0000
+Subject: [PATCH] The code leg gets its own front door: the shape's leg
+ AGENTS.md, CLAUDE.md and README.md, and the LF rule, ignore list and licence
+ it lost when the root kept them.
+
+Rehearsal patch for opensoft/openRepoTools#186, task T006 of
+specs/004-migrate-to-triad/tasks.md, against run C's code leg 73b04d6. The
+split left this leg with no AGENTS.md, CLAUDE.md, README.md, LICENSE,
+.gitattributes or .gitignore, because all six stayed in the assembly root,
+and a superproject's attributes and ignore rules never reach into a
+submodule's worktree.
+
+- AGENTS.md, CLAUDE.md and README.md are openRepoShape 7f84ca4's
+  templates/code-root/ files, rendered by its own copy_tree with this
+  project's names, so the leg-clone detector in scripts/shape_advisory.py
+  recognises them. Each AGENTS.md and README.md then adds one short section:
+  where the suite runs, the pinned standard, where the manuals and the
+  specifications now live, and where a feature's code and a bounded
+  amendment are written.
+- .gitattributes is the monorepo's own file, byte for byte (blob 3560973).
+  Its reason, the installer's byte-for-byte comparisons, is this leg's.
+  `git add --renormalize .` changes nothing here.
+- .gitignore is the shape's templates/code-root/.gitignore, a superset of
+  the three lines the monorepo ignored.
+- LICENSE is the root's Apache-2.0 text, byte for byte (blob 261eeb9).
+
+No executable, test or workflow is touched.
+
+Lane: openRepoTools-1
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .gitattributes |  32 ++++++++
+ .gitignore     |  12 +++
+ AGENTS.md      |  40 ++++++++++
+ CLAUDE.md      |   1 +
+ LICENSE        | 201 +++++++++++++++++++++++++++++++++++++++++++++++++
+ README.md      |  45 +++++++++++
+ 6 files changed, 331 insertions(+)
+ create mode 100644 .gitattributes
+ create mode 100644 .gitignore
+ create mode 100644 AGENTS.md
+ create mode 100644 CLAUDE.md
+ create mode 100644 LICENSE
+ create mode 100644 README.md
+
+diff --git a/.gitattributes b/.gitattributes
+new file mode 100644
+index 0000000..3560973
+--- /dev/null
++++ b/.gitattributes
+@@ -0,0 +1,32 @@
++# THIS REPOSITORY'S OWN INSTALLER COMPARES ITS BYTES, so the bytes have to be
++# the same bytes on every platform.
++#
++# `openRepoTools --install` decides between `installed at`, `updated at` and
++# `already installed … (unchanged)` with `cmp -s`, and
++# `tests/test_openrepotools_command.py` compares an installed copy to this
++# checkout's file BYTE FOR BYTE. Git for Windows' installer default is
++# `core.autocrlf=true`; a checkout of THIS repository made under it turns every
++# `\n` in `openRepoTools`, `park`, `resume` and `status` into `\r\n`, and every one
++# of those comparisons is about line endings rather than about content — a
++# second `--install` reporting three files `updated at` on a machine where
++# nothing changed, and a colleague whose only sin was cloning on a stock
++# Windows laptop watching the suite fail on lines nobody touched. CI never sees
++# it: the Linux and macOS jobs check out LF by default and the Windows job pins
++# `core.autocrlf=false`.
++#
++# The same rule for a second reason. `tests/test_park_resume_commands.py`
++# asserts that `park`, `resume` and `status` carry the shared estate resolver
++# BYTE FOR BYTE — that is what makes the deliberate duplication safe — and a CRLF
++# checkout would either break the claim or hide a real drift behind it.
++#
++# NO PATH IS LISTED BY NAME. Every file this repository ships is text — bash,
++# Python, YAML, Markdown, a workflow — so there is nothing for git's binary
++# heuristic to misjudge, and `text=auto` leaves that detection where it
++# belongs: with git. The pinned `upstream/openRepoShape` is a gitlink and
++# carries its own copy of this rule.
++#
++# openRepoShape #63 wrote this rule for the standard's own root, and its #51
++# (2026-09-05) wrote it for every scaffolded project; this is the same rule
++# retold for the repository that ships the two commands.
++
++* text=auto eol=lf
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..2fb4cee
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,12 @@
++__pycache__/
++*.py[cod]
++.pytest_cache/
++.mypy_cache/
++.ruff_cache/
++*.egg-info/
++.venv/
++venv/
++.DS_Store
++*.swp
++.idea/
++.vscode/
+diff --git a/AGENTS.md b/AGENTS.md
+new file mode 100644
+index 0000000..810eac1
+--- /dev/null
++++ b/AGENTS.md
+@@ -0,0 +1,40 @@
++This is the **code leg** of openRepoTools (`openrepotools`): the implementation
++and its tests.
++
++**The project's rules are not here.** They are in the assembly root
++`opensoft/openRepoTools`, in `AGENTS-shape.md` — read that before touching anything
++that spans the legs. This leg is mounted there at `code/`, and the other leg,
++`opensoft/openRepoTools-spec`, beside it at `../spec/`, once the root is cloned with
++`--recurse-submodules`.
++
++Working here is ordinary — an ordinary repository on an ordinary branch. What
++advancing this leg does NOT do is advance the project: that is ONE commit in
++`opensoft/openRepoTools` moving the gitlink, `contracts/code-pin.yaml` and every
++workflow `@<sha>` for this leg together.
++
++Being the code leg confers no authority over the implementation. The split is
++navigation.
++
++## What is particular to openRepoTools' code leg
++
++The project's own instructions — driving `park`, `resume` and `status`, the
++lane tooling's protocol, the pinned standard's three rules, how to test and the
++CI policy — are the assembly root's `AGENTS.md`, and they govern here. This
++section adds only what standing in this leg changes.
++
++- **The suite runs here**: `git submodule update --init upstream/openRepoShape`,
++  then `tests/run.sh`, which serializes every lane on a workstation behind
++  `${TMPDIR:-/tmp}/openrepotools-pytest.lock` and passes any pytest argument on.
++- **The pinned standard is here**: `upstream/openRepoShape`, recorded in
++  `contracts/openreposhape-pin.yaml`. Never edit it in place, never pin a commit
++  that is not on openRepoShape's `main`, and recompute the digest rather than
++  adjust it — the root `AGENTS.md` gives the three rules in full.
++- **The manuals and the specifications are not here.** They are the spec
++  leg's `docs/` (`README-lanes.md`, `README-claude-current.md`), `openspec/` and
++  `specs/`: `../spec/` when this leg is mounted in the assembly root, and
++  `opensoft/openRepoTools-spec` when it is cloned on its own.
++- **A feature's code is written in its code worktree**,
++  `worktrees/<NNN-feature>/code/` under the assembly root, on the feature's
++  branch. A genuine bounded amendment to an approved spec baseline is recorded
++  in that worktree's `features/<NNN-feature>/openspec/`; a full proposal never
++  is, and goes to the spec leg.
+diff --git a/CLAUDE.md b/CLAUDE.md
+new file mode 100644
+index 0000000..5d30268
+--- /dev/null
++++ b/CLAUDE.md
+@@ -0,0 +1 @@
++Read AGENTS.md.
+diff --git a/LICENSE b/LICENSE
+new file mode 100644
+index 0000000..261eeb9
+--- /dev/null
++++ b/LICENSE
+@@ -0,0 +1,201 @@
++                                 Apache License
++                           Version 2.0, January 2004
++                        http://www.apache.org/licenses/
++
++   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
++
++   1. Definitions.
++
++      "License" shall mean the terms and conditions for use, reproduction,
++      and distribution as defined by Sections 1 through 9 of this document.
++
++      "Licensor" shall mean the copyright owner or entity authorized by
++      the copyright owner that is granting the License.
++
++      "Legal Entity" shall mean the union of the acting entity and all
++      other entities that control, are controlled by, or are under common
++      control with that entity. For the purposes of this definition,
++      "control" means (i) the power, direct or indirect, to cause the
++      direction or management of such entity, whether by contract or
++      otherwise, or (ii) ownership of fifty percent (50%) or more of the
++      outstanding shares, or (iii) beneficial ownership of such entity.
++
++      "You" (or "Your") shall mean an individual or Legal Entity
++      exercising permissions granted by this License.
++
++      "Source" form shall mean the preferred form for making modifications,
++      including but not limited to software source code, documentation
++      source, and configuration files.
++
++      "Object" form shall mean any form resulting from mechanical
++      transformation or translation of a Source form, including but
++      not limited to compiled object code, generated documentation,
++      and conversions to other media types.
++
++      "Work" shall mean the work of authorship, whether in Source or
++      Object form, made available under the License, as indicated by a
++      copyright notice that is included in or attached to the work
++      (an example is provided in the Appendix below).
++
++      "Derivative Works" shall mean any work, whether in Source or Object
++      form, that is based on (or derived from) the Work and for which the
++      editorial revisions, annotations, elaborations, or other modifications
++      represent, as a whole, an original work of authorship. For the purposes
++      of this License, Derivative Works shall not include works that remain
++      separable from, or merely link (or bind by name) to the interfaces of,
++      the Work and Derivative Works thereof.
++
++      "Contribution" shall mean any work of authorship, including
++      the original version of the Work and any modifications or additions
++      to that Work or Derivative Works thereof, that is intentionally
++      submitted to Licensor for inclusion in the Work by the copyright owner
++      or by an individual or Legal Entity authorized to submit on behalf of
++      the copyright owner. For the purposes of this definition, "submitted"
++      means any form of electronic, verbal, or written communication sent
++      to the Licensor or its representatives, including but not limited to
++      communication on electronic mailing lists, source code control systems,
++      and issue tracking systems that are managed by, or on behalf of, the
++      Licensor for the purpose of discussing and improving the Work, but
++      excluding communication that is conspicuously marked or otherwise
++      designated in writing by the copyright owner as "Not a Contribution."
++
++      "Contributor" shall mean Licensor and any individual or Legal Entity
++      on behalf of whom a Contribution has been received by Licensor and
++      subsequently incorporated within the Work.
++
++   2. Grant of Copyright License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      copyright license to reproduce, prepare Derivative Works of,
++      publicly display, publicly perform, sublicense, and distribute the
++      Work and such Derivative Works in Source or Object form.
++
++   3. Grant of Patent License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      (except as stated in this section) patent license to make, have made,
++      use, offer to sell, sell, import, and otherwise transfer the Work,
++      where such license applies only to those patent claims licensable
++      by such Contributor that are necessarily infringed by their
++      Contribution(s) alone or by combination of their Contribution(s)
++      with the Work to which such Contribution(s) was submitted. If You
++      institute patent litigation against any entity (including a
++      cross-claim or counterclaim in a lawsuit) alleging that the Work
++      or a Contribution incorporated within the Work constitutes direct
++      or contributory patent infringement, then any patent licenses
++      granted to You under this License for that Work shall terminate
++      as of the date such litigation is filed.
++
++   4. Redistribution. You may reproduce and distribute copies of the
++      Work or Derivative Works thereof in any medium, with or without
++      modifications, and in Source or Object form, provided that You
++      meet the following conditions:
++
++      (a) You must give any other recipients of the Work or
++          Derivative Works a copy of this License; and
++
++      (b) You must cause any modified files to carry prominent notices
++          stating that You changed the files; and
++
++      (c) You must retain, in the Source form of any Derivative Works
++          that You distribute, all copyright, patent, trademark, and
++          attribution notices from the Source form of the Work,
++          excluding those notices that do not pertain to any part of
++          the Derivative Works; and
++
++      (d) If the Work includes a "NOTICE" text file as part of its
++          distribution, then any Derivative Works that You distribute must
++          include a readable copy of the attribution notices contained
++          within such NOTICE file, excluding those notices that do not
++          pertain to any part of the Derivative Works, in at least one
++          of the following places: within a NOTICE text file distributed
++          as part of the Derivative Works; within the Source form or
++          documentation, if provided along with the Derivative Works; or,
++          within a display generated by the Derivative Works, if and
++          wherever such third-party notices normally appear. The contents
++          of the NOTICE file are for informational purposes only and
++          do not modify the License. You may add Your own attribution
++          notices within Derivative Works that You distribute, alongside
++          or as an addendum to the NOTICE text from the Work, provided
++          that such additional attribution notices cannot be construed
++          as modifying the License.
++
++      You may add Your own copyright statement to Your modifications and
++      may provide additional or different license terms and conditions
++      for use, reproduction, or distribution of Your modifications, or
++      for any such Derivative Works as a whole, provided Your use,
++      reproduction, and distribution of the Work otherwise complies with
++      the conditions stated in this License.
++
++   5. Submission of Contributions. Unless You explicitly state otherwise,
++      any Contribution intentionally submitted for inclusion in the Work
++      by You to the Licensor shall be under the terms and conditions of
++      this License, without any additional terms or conditions.
++      Notwithstanding the above, nothing herein shall supersede or modify
++      the terms of any separate license agreement you may have executed
++      with Licensor regarding such Contributions.
++
++   6. Trademarks. This License does not grant permission to use the trade
++      names, trademarks, service marks, or product names of the Licensor,
++      except as required for reasonable and customary use in describing the
++      origin of the Work and reproducing the content of the NOTICE file.
++
++   7. Disclaimer of Warranty. Unless required by applicable law or
++      agreed to in writing, Licensor provides the Work (and each
++      Contributor provides its Contributions) on an "AS IS" BASIS,
++      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
++      implied, including, without limitation, any warranties or conditions
++      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
++      PARTICULAR PURPOSE. You are solely responsible for determining the
++      appropriateness of using or redistributing the Work and assume any
++      risks associated with Your exercise of permissions under this License.
++
++   8. Limitation of Liability. In no event and under no legal theory,
++      whether in tort (including negligence), contract, or otherwise,
++      unless required by applicable law (such as deliberate and grossly
++      negligent acts) or agreed to in writing, shall any Contributor be
++      liable to You for damages, including any direct, indirect, special,
++      incidental, or consequential damages of any character arising as a
++      result of this License or out of the use or inability to use the
++      Work (including but not limited to damages for loss of goodwill,
++      work stoppage, computer failure or malfunction, or any and all
++      other commercial damages or losses), even if such Contributor
++      has been advised of the possibility of such damages.
++
++   9. Accepting Warranty or Additional Liability. While redistributing
++      the Work or Derivative Works thereof, You may choose to offer,
++      and charge a fee for, acceptance of support, warranty, indemnity,
++      or other liability obligations and/or rights consistent with this
++      License. However, in accepting such obligations, You may act only
++      on Your own behalf and on Your sole responsibility, not on behalf
++      of any other Contributor, and only if You agree to indemnify,
++      defend, and hold each Contributor harmless for any liability
++      incurred by, or claims asserted against, such Contributor by reason
++      of your accepting any such warranty or additional liability.
++
++   END OF TERMS AND CONDITIONS
++
++   APPENDIX: How to apply the Apache License to your work.
++
++      To apply the Apache License to your work, attach the following
++      boilerplate notice, with the fields enclosed by brackets "[]"
++      replaced with your own identifying information. (Don't include
++      the brackets!)  The text should be enclosed in the appropriate
++      comment syntax for the file format. We also recommend that a
++      file or class name and description of purpose be included on the
++      same "printed page" as the copyright notice for easier
++      identification within third-party archives.
++
++   Copyright [yyyy] [name of copyright owner]
++
++   Licensed under the Apache License, Version 2.0 (the "License");
++   you may not use this file except in compliance with the License.
++   You may obtain a copy of the License at
++
++       http://www.apache.org/licenses/LICENSE-2.0
++
++   Unless required by applicable law or agreed to in writing, software
++   distributed under the License is distributed on an "AS IS" BASIS,
++   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++   See the License for the specific language governing permissions and
++   limitations under the License.
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..1084a22
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,45 @@
++# openRepoTools-code
++
++The **code leg** of the `openrepotools` project: the implementation and its
++tests. The requirements it implements live in
++[`opensoft/openRepoTools-spec`](https://github.com/opensoft/openRepoTools-spec).
++
++**Clone the assembly root, not this repository.** This leg is mounted as a
++submodule at `code/` inside
++[`opensoft/openRepoTools`](https://github.com/opensoft/openRepoTools), which
++is what pins the commit of this repository that the project currently is:
++
++```sh
++git clone --recurse-submodules https://github.com/opensoft/openRepoTools.git
++cd openRepoTools
++make bootstrap
++```
++
++Working here directly is fine — it is an ordinary repository with an ordinary
++branch. What advancing this leg does NOT do is advance the project: that is a
++commit in the assembly root moving the gitlink, `contracts/code-pin.yaml` and
++any workflow `@<sha>` reference together.
++
++Being the code leg confers no authority over the implementation. The split is
++navigation; authority travels in grants, and a project that keeps spec and
++code in one repository is reviewed identically.
++
++Topic: `xf-project-openrepotools`.
++
++## What is in it
++
++Every command `openRepoTools --install` places is a file at this leg's root —
++`openRepoTools` itself, `park`, `resume`, `status` and the lane tooling — with
++the alias table `repos.tsv`, the `skills/` and `commands/` it installs, the
++suite under `tests/` (`tests/run.sh` runs it), the CI under
++`.github/workflows/`, and the pinned standard at `upstream/openRepoShape`
++(`contracts/openreposhape-pin.yaml`). Installing is unchanged: the one-liner in
++the assembly root's `README.md` fetches the root's `openRepoTools`, which hands
++over to the installer here at the commit the root pins.
++
++The manuals — `docs/README-lanes.md` for the lane tooling and
++`docs/README-claude-current.md` for `claude-current` and
++`claude-restart-check` — and every specification are in
++[`opensoft/openRepoTools-spec`](https://github.com/opensoft/openRepoTools-spec).
++
++Licence: Apache-2.0. See [LICENSE](LICENSE).
+-- 
+2.43.0
+
