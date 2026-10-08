@@ -1,0 +1,2483 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""lanes-index - the DERIVED INDEX of the lane register (lane-collision-protocol
+Amendment 14, ratified by Brett Heap 2026-10-05, verbatim "ratify 48").
+
+    lanes-index sync      [--source <s>]              write behind what LANDED
+    lanes-index reconcile [--source <s>] [--dry-run]  read the source whole
+    lanes-index status                                 per source: store, lag, errors
+    lanes-index export    --out <dir> [--source <s> | --worktrees]
+                                                       the read flags' reader
+
+THE REGISTER'S TRUTH STAYS WHERE IT IS (clause (a)). The workspace repository's
+`lanes/LANES.md`, `lanes/log/*.md`, `lanes/aliases.tsv` and `lanes/archive/`
+are the record, written only by `lanes-edit.sh`. This file keeps a COPY of what
+they say, in tables a question across lanes can be asked of, and makes nothing
+else true: where the index and the source disagree, the source is right and the
+index is behind.
+
+NOTHING THAT ACTS READS IT (clause (b)). No claim, release, log line, guard,
+hook, launch, row writer, sweep or migration reads this store or waits on it.
+`lanes-edit.sh` starts `lanes-index sync` DETACHED after a push has landed and
+its mutex is released - stdin closed, never waited, its status never read - and
+two read-only words consult it behind a flag typed for that invocation:
+`lanes ... --index` and `lanes-edit.sh history ... --index`, through `export`.
+
+WRITE-BEHIND, BY THE INDEXER ALONE, NEVER BACK (clause (d)). `sync` reads the
+register as `origin/<branch>` of the workspace checkout stands - what the push
+left, never the working tree - and upserts each record keyed by (source, record
+id) and versioned by a digest of its content: an upsert bearing the stored
+digest changes nothing, so a replay or a crash is harmless. The source's
+indexed commit is compared and swapped IN THE SAME TRANSACTION as the rows it
+covers, and a sync from a commit that does not descend from it writes nothing.
+Nothing in any source is ever written from here.
+
+THE INVENTORY IS A SECOND SOURCE (opensoft/openRepoTools#161, the "later word"
+clause (e) left open): `inventory:<Workstation>`, THIS workstation's #97
+worktree inventory, copied into the `worktrees` table. It is read through
+`lanes-edit.sh worktrees --all` - the sidecars, the lifecycle snapshot,
+`managed-projection`'s owner and the listing's liveness, in the helper that
+wrote them - and never through a parser of this file's own or a walk of the
+disk. Its rows are keyed by (source, `<lane>:<path>`) and versioned by the same
+digest; a tree the inventory no longer names leaves in the same sync. Its
+provenance moves only forward PER LANE: a sync that reads a lane's lifecycle
+generation below the one its rows were written at writes nothing for that lane
+(`reconcile` takes the lane as it now stands, and says so), and the source's own
+row carries a fingerprint of the whole table as its compare-and-swap token and a
+sync generation that only counts up. `lanes-edit.sh` nudges `sync --source
+inventory` after every inventory write. Nothing that acts reads this table
+either: `lane-reconcile`, `lane-start`, `lane-end` and the sweep read the
+sidecars and the disk.
+
+THE STORE (clause (c)): QA Postgres where this workstation's configuration
+names a `url=`, reached through `psql` and only then; otherwise one SQLite file
+on local disk. The configuration is
+`${XDG_CONFIG_HOME:-$HOME/.config}/openRepoTools/lanes-index.conf`, or the file
+`$LANES_INDEX_CONFIG` names: `store=`, `url=`, `passfile=`, `sqlite=`, and for
+the SELECT-only role `reader_url=`/`reader_passfile=`, and `schema=`. It is
+refused when it is group- or world-readable, inside a git work tree or under
+`~/.agents/`, and when a URL carries a password: the secret lives only in the
+0600 libpq password file `passfile=` names. The reads (`status`, `export`)
+connect to Postgres only as `reader_url=` and are refused without it - never
+with the writer's credential.
+
+Exit codes: 0 done · 1 a read or a write failed (nothing half-written) · 2 a
+refusal (the configuration, a `--source` that is not this workstation's, an
+inventory on a workstation with no name) · 3
+`export` only: the index cannot answer (missing, unreachable, wiped, unknown
+schema - the reason is in `<out>/why`) · 64 usage.
+"""
+
+from __future__ import annotations
+
+import datetime as _dt
+import hashlib
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+PROG = "lanes-index"
+VERSION = "1"
+
+#: THE SCHEMA THIS READER AND WRITER KNOW. A store carrying another number is
+#: never written by this file and never read by `export`: an older indexer
+#: overwriting a newer schema's rows, or a reader guessing at them, is a second
+#: way for the index to be wrong.
+SCHEMA_VERSION = 1
+
+US = "\x1f"
+LANES_DIR = "lanes/"
+REGISTER_PATH = "lanes/LANES.md"
+ALIASES_PATH = "lanes/aliases.tsv"
+ARCHIVE_PATH = "lanes/archive/LANES-retired.md"
+LOG_PREFIX = "lanes/log/"
+
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+UUID_FULL_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+UTC_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2})?Z")
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+SCHEMA_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
+OPEN_VERBS = ("CLAIMED", "TAKEOVER", "OPENED", "LANDING", "WITHDRAWN")
+INVENTORY_PREFIX = "inventory:"
+
+
+class Refusal(Exception):
+    """A refusal: exit 2, nothing read and nothing written."""
+
+
+class StoreUnusable(Exception):
+    """The store cannot answer: missing, unreachable, wiped or another schema.
+
+    `kind` is the first word of the `read: sources (index <why>)` line."""
+
+    def __init__(self, kind: str, detail: str):
+        super().__init__(f"{kind}: {detail}")
+        self.kind = kind
+        self.detail = detail
+
+
+class CasLost(Exception):
+    """The source's provenance moved under this sync: nothing was written."""
+
+
+class SourceMoved(Exception):
+    """`origin/<branch>` moved while this sync read it: nothing was written,
+    and the caller reads the new tip whole."""
+
+
+def utc_now() -> str:
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def say(text: str = "") -> None:
+    sys.stdout.write(text + "\n")
+
+
+def note(text: str) -> None:
+    sys.stderr.write(f"{PROG}: {text}\n")
+
+
+# =========================================================== configuration
+
+def _home() -> str:
+    return os.environ.get("HOME") or os.path.expanduser("~")
+
+
+def config_path() -> tuple[str, bool]:
+    """The configuration's path, and whether a person NAMED it.
+
+    A named file that is not there is a refusal; the default path that is not
+    there is the ordinary case, and means SQLite at its default path."""
+    named = os.environ.get("LANES_INDEX_CONFIG", "")
+    if named:
+        return named, True
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(_home(), ".config")
+    return os.path.join(base, "openRepoTools", "lanes-index.conf"), False
+
+
+def state_dir() -> str:
+    base = os.environ.get("XDG_STATE_HOME") or os.path.join(_home(), ".local", "state")
+    return os.path.join(base, "openRepoTools")
+
+
+def git_work_tree_of(path: str) -> str:
+    """The work tree `path` sits inside, or "" where it is in none.
+
+    Asked of the nearest directory that EXISTS, because a store or a
+    configuration not created yet is still a file that would land inside it."""
+    probe = os.path.abspath(path)
+    while probe and not os.path.isdir(probe):
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            return ""
+        probe = parent
+    try:
+        proc = subprocess.run(["git", "-C", probe, "rev-parse", "--show-toplevel"],
+                              capture_output=True, text=True, check=False,
+                              stdin=subprocess.DEVNULL)
+    except OSError:
+        return ""
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
+
+
+def _agents_root() -> str:
+    return os.environ.get("AGENT_PROTOCOL_ROOT") or os.path.join(_home(), ".agents")
+
+
+def _under(path: str, root: str) -> bool:
+    try:
+        path_r = os.path.realpath(path)
+        root_r = os.path.realpath(root)
+    except OSError:
+        return False
+    return path_r == root_r or path_r.startswith(root_r.rstrip(os.sep) + os.sep)
+
+
+def _url_has_password(url: str) -> bool:
+    """A password in a libpq URL or keyword string, however it is spelled.
+
+    `postgresql://user:secret@host/db`, `?password=secret`, and the keyword
+    form `password=secret` are each a credential in a file that is not the
+    password file - and a URL is what ends up in an argv, a log or a process
+    listing."""
+    low = url.strip()
+    m = re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://([^/?#]*)", low)
+    if m:
+        userinfo = m.group(1).rpartition("@")
+        if userinfo[1] and ":" in userinfo[0]:
+            return True
+        query = low.split("?", 1)[1] if "?" in low else ""
+        for part in re.split(r"[&;]", query):
+            if part.split("=", 1)[0].strip().lower() == "password":
+                return True
+        return False
+    return bool(re.search(r"(^|\s)password\s*=", low, re.IGNORECASE))
+
+
+def _check_private_file(path: str, what: str) -> None:
+    try:
+        st = os.stat(path)
+    except OSError as exc:
+        raise Refusal(f"{what} {path} cannot be read: {exc.strerror or exc}")
+    if not stat.S_ISREG(st.st_mode):
+        raise Refusal(f"{what} {path} is not a regular file")
+    if st.st_mode & 0o077:
+        raise Refusal(
+            f"{what} {path} is mode {oct(st.st_mode & 0o777)[2:]}, so another account "
+            f"on this workstation can read it (Amendment 14(c): mode 0600). "
+            f"Fix it: chmod 600 {path}")
+
+
+def load_config() -> dict:
+    """The per-workstation configuration, refused on any of clause (c)'s grounds."""
+    path, named = config_path()
+    cfg = {"path": path, "present": False, "store": "", "url": "", "passfile": "",
+           "reader_url": "", "reader_passfile": "", "sqlite": "", "schema": "lanes_index"}
+    if not os.path.lexists(path):
+        if named:
+            raise Refusal(f"LANES_INDEX_CONFIG names {path}, which does not exist")
+    else:
+        cfg["present"] = True
+        _check_private_file(path, "the configuration")
+        # RESOLVED FIRST (Copilot round 1 on #164): a 0600 symlink outside every
+        # repository that points at a committed file inside one is that file,
+        # and its directory is the one the question is about.
+        tree = git_work_tree_of(os.path.dirname(os.path.realpath(path)))
+        if tree:
+            raise Refusal(
+                f"the configuration {path} is inside the git work tree {tree}: "
+                f"connection settings are per workstation and never committed "
+                f"(Amendment 14(c)). Move it to "
+                f"${{XDG_CONFIG_HOME:-$HOME/.config}}/openRepoTools/lanes-index.conf")
+        if _under(path, _agents_root()):
+            raise Refusal(
+                f"the configuration {path} is under {_agents_root()}, which on a "
+                f"workstation built from the workspace repository IS that repository "
+                f"(Amendment 14(c)). Move it to "
+                f"${{XDG_CONFIG_HOME:-$HOME/.config}}/openRepoTools/lanes-index.conf")
+        try:
+            with open(path, encoding="utf-8") as handle:
+                lines = handle.read().splitlines()
+        except (OSError, UnicodeDecodeError) as exc:
+            raise Refusal(f"the configuration {path} cannot be read: {exc}")
+        known = ("store", "url", "passfile", "reader_url", "reader_passfile", "sqlite", "schema")
+        for number, raw in enumerate(lines, 1):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                raise Refusal(f"{path}:{number} is not `key=value`: {line!r}")
+            key, value = (part.strip() for part in line.split("=", 1))
+            if key not in known:
+                raise Refusal(f"{path}:{number} names `{key}=`, which this indexer does not "
+                              f"know (it reads {', '.join(k + '=' for k in known)})")
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            if value.startswith("~/"):
+                value = os.path.join(_home(), value[2:])
+            cfg[key] = value
+    for key in ("url", "reader_url"):
+        if cfg[key] and _url_has_password(cfg[key]):
+            raise Refusal(
+                f"`{key}=` in {path} carries a password. The secret lives only in the "
+                f"0600 libpq password file `passfile=` names (Amendment 14(c)), never in "
+                f"a URL a command line or a log can show")
+    store = cfg["store"] or ("postgres" if cfg["url"] else "sqlite")
+    if store not in ("sqlite", "postgres"):
+        raise Refusal(f"`store={cfg['store']}` in {path}: the store is `sqlite` or `postgres`")
+    if store == "postgres" and not cfg["url"]:
+        raise Refusal(f"`store=postgres` in {path} names no `url=`")
+    cfg["store"] = store
+    if not SCHEMA_NAME_RE.match(cfg["schema"]):
+        raise Refusal(f"`schema={cfg['schema']}` in {path} is not a plain lower-case SQL identifier")
+    for key in ("passfile", "reader_passfile"):
+        if cfg[key]:
+            _check_private_file(cfg[key], f"the libpq password file (`{key}=`)")
+    if store == "sqlite":
+        sqlite_path = cfg["sqlite"] or os.path.join(state_dir(), "lanes-index.sqlite")
+        sqlite_path = os.path.abspath(sqlite_path)
+        tree = git_work_tree_of(os.path.dirname(os.path.realpath(sqlite_path)))
+        if tree:
+            raise Refusal(
+                f"the SQLite store {sqlite_path} would be inside the git work tree {tree}; "
+                f"the index lives on local disk and never inside a work tree "
+                f"(Amendment 14(c)). Name another path with `sqlite=`")
+        cfg["sqlite"] = sqlite_path
+    return cfg
+
+
+# =============================================================== the source
+
+def lanes_edit_path() -> str:
+    """`$LANES_EDIT`, else the `lanes-edit.sh` beside this file, else PATH -
+    the order `lanes` already finds its reader in."""
+    named = os.environ.get("LANES_EDIT", "")
+    if named:
+        return named
+    here = os.path.join(os.path.dirname(os.path.realpath(__file__)), "lanes-edit.sh")
+    if os.access(here, os.X_OK):
+        return here
+    return shutil.which("lanes-edit.sh") or ""
+
+
+def helper_env() -> dict:
+    """The environment `lanes-edit.sh` is run in from here: the caller's own,
+    with the fetch, GitHub and the index switched off. This process reads what
+    landed and reaches no network, and a helper run from inside the indexer
+    must never start an indexer."""
+    env = dict(os.environ)
+    env["LANES_NO_FETCH"] = "1"
+    env["LANES_NO_GITHUB"] = "1"
+    env["LANES_INDEX"] = "off"
+    return env
+
+
+def workspace_root() -> str:
+    helper = lanes_edit_path()
+    if not helper:
+        raise StoreUnusable("unread", "no lanes-edit.sh beside this file or on PATH, so the "
+                            "workspace repository cannot be found (Amendment 9(a))")
+    proc = subprocess.run([helper, "workspace-root"], capture_output=True, text=True,
+                          check=False, env=helper_env(), stdin=subprocess.DEVNULL)
+    root = proc.stdout.strip()
+    if proc.returncode != 0 or not root:
+        why = (proc.stderr.strip().splitlines() or ["no answer"])[0]
+        raise StoreUnusable("unread", f"`lanes-edit.sh workspace-root` exited "
+                            f"{proc.returncode}: {why}")
+    return root
+
+
+def _norm_repo(text: str) -> str:
+    u = text.strip()
+    if u.endswith(".git"):
+        u = u[:-4]
+    for prefix in ("https://github.com/", "ssh://git@github.com/", "git@github.com:",
+                   "http://github.com/"):
+        if u.startswith(prefix):
+            return u[len(prefix):]
+    return u
+
+
+def source_of(root: str) -> str:
+    """`register:<owner/repo>` - the `repository:` this workstation's
+    `workspace.yaml` names, which is how every lane helper names the workspace
+    (Amendment 9(a)); its checkout's `origin` where that file does not answer."""
+    yaml = os.path.join(_agents_root(), "workspace.yaml")
+    repo = ""
+    try:
+        with open(yaml, encoding="utf-8") as handle:
+            for raw in handle:
+                m = re.match(r"^repository:[ \t]*(.*)$", raw.rstrip("\n"))
+                if m:
+                    repo = re.sub(r"[ \t]*#.*$", "", m.group(1)).strip().strip("\"'")
+                    break
+    except OSError:
+        repo = ""
+    if not repo:
+        proc = git(root, "remote", "get-url", "origin", check=False)
+        repo = proc.stdout.strip()
+    repo = _norm_repo(repo) or os.path.basename(root)
+    return f"register:{repo}"
+
+
+def branch() -> str:
+    return os.environ.get("LANES_BRANCH") or "main"
+
+
+def git(root: str, *args: str, check: bool = True, data: bytes | None = None,
+        text: bool = True) -> subprocess.CompletedProcess:
+    proc = subprocess.run(["git", "-C", root, *args], capture_output=True,
+                          check=False, input=data, text=text if data is None else False,
+                          stdin=None if data is not None else subprocess.DEVNULL)
+    if check and proc.returncode != 0:
+        err = proc.stderr if isinstance(proc.stderr, str) else proc.stderr.decode("utf-8", "replace")
+        raise StoreUnusable("unread", f"git {' '.join(args)} failed in {root}: "
+                            f"{(err.strip().splitlines() or ['no message'])[-1]}")
+    return proc
+
+
+def tip_of(root: str) -> str:
+    proc = git(root, "rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch()}^{{commit}}",
+               check=False)
+    sha = proc.stdout.strip()
+    if proc.returncode != 0 or not SHA_RE.match(sha):
+        raise StoreUnusable("unread", f"{root} has no origin/{branch()}: nothing has landed "
+                            f"there for the index to follow")
+    return sha
+
+
+def has_commit(root: str, sha: str) -> bool:
+    return git(root, "cat-file", "-e", f"{sha}^{{commit}}", check=False).returncode == 0
+
+
+def is_ancestor(root: str, old: str, new: str) -> bool:
+    return git(root, "merge-base", "--is-ancestor", old, new, check=False).returncode == 0
+
+
+def commits_between(root: str, old: str, new: str) -> int | None:
+    if not has_commit(root, old):
+        return None
+    proc = git(root, "rev-list", "--count", f"{old}..{new}", check=False)
+    try:
+        return int(proc.stdout.strip())
+    except ValueError:
+        return None
+
+
+def _decode(blob: bytes) -> str:
+    return blob.decode("utf-8", "replace")
+
+
+def read_snapshot(root: str, sha: str) -> dict:
+    """Every file the index derives from, AS OF ONE COMMIT.
+
+    The log list is `git ls-tree <sha> -- lanes/log/` in ITS order, which is the
+    order `lanes-edit.sh`'s own published read walks them in - and that order is
+    kept, because a reader built on the index has to produce the same stream."""
+    snap = {"sha": sha, "register": None, "aliases": None, "archive": None, "logs": [],
+            "blobs": {}}
+    wanted = []
+    proc = git(root, "ls-tree", "-z", sha, "--", REGISTER_PATH, ALIASES_PATH, ARCHIVE_PATH)
+    for entry in proc.stdout.split("\0"):
+        if not entry:
+            continue
+        meta, _, path = entry.partition("\t")
+        _mode, kind, obj = meta.split()
+        if kind != "blob":
+            continue
+        wanted.append((path, obj))
+    logs = []
+    proc = git(root, "ls-tree", "-z", sha, "--", LOG_PREFIX)
+    for entry in proc.stdout.split("\0"):
+        if not entry:
+            continue
+        meta, _, path = entry.partition("\t")
+        _mode, kind, obj = meta.split()
+        if kind != "blob":
+            continue
+        if path.rsplit("/", 1)[-1] == "README.md":
+            continue
+        logs.append((path, obj))
+        wanted.append((path, obj))
+    contents = cat_blobs(root, [obj for _path, obj in wanted])
+    for path, obj in wanted:
+        text = _decode(contents.get(obj, b""))
+        snap["blobs"][path] = obj
+        if path == REGISTER_PATH:
+            snap["register"] = text
+        elif path == ALIASES_PATH:
+            snap["aliases"] = text
+        elif path == ARCHIVE_PATH:
+            snap["archive"] = text
+    for order, (path, obj) in enumerate(logs):
+        snap["logs"].append((path, _decode(contents.get(obj, b"")), obj, order))
+    if snap["register"] is None:
+        raise StoreUnusable("unread", f"{sha[:12]} carries no {REGISTER_PATH}")
+    return snap
+
+
+def cat_blobs(root: str, objs: list[str]) -> dict:
+    """The bytes of every blob named, in ONE `git cat-file --batch`."""
+    out: dict = {}
+    unique = list(dict.fromkeys(objs))
+    if not unique:
+        return out
+    proc = git(root, "cat-file", "--batch", data=("\n".join(unique) + "\n").encode(), text=False)
+    buf = proc.stdout
+    pos = 0
+    for obj in unique:
+        nl = buf.index(b"\n", pos)
+        header = buf[pos:nl].decode("ascii", "replace").split()
+        pos = nl + 1
+        if len(header) < 3 or header[1] == "missing":
+            continue
+        size = int(header[2])
+        out[obj] = buf[pos:pos + size]
+        pos += size + 1
+    return out
+
+
+# ============================================================== the parsers
+#
+# THE LOG GRAMMAR IS `lanes-edit.sh`'s `LOG_AWK`, PORTED LINE FOR LINE. A
+# parser of this file's own that disagreed with that one would make `history
+# --index` print a different diary from `history`, which is the one thing the
+# read flag promises it does not. Every test, every trim and every reason for
+# an unreadable line below is that awk's; `tests/test_lanes_index.py` holds the
+# two to one output over the same logs.
+
+def _trim(text: str) -> str:
+    return text.strip(" \t")
+
+
+def file_lane(path: str) -> str:
+    base = path.rsplit("/", 1)[-1]
+    return re.sub(r"\.[Mm][Dd]$", "", base)
+
+
+def parse_log_line(line: str):
+    """None for a line the grammar skips (a comment or a blank), a dict with
+    `bad` for one it cannot read, else the parsed fields."""
+    if re.match(r"^[ \t]*#", line) or re.match(r"^[ \t]*$", line):
+        return None
+    i = line.find(" — ")
+    if i < 0:
+        return {"bad": 'no " — " after the verb'}
+    verb = _trim(line[:i])
+    rest = line[i + 3:]
+    if " " in verb:
+        return {"bad": f'the verb is one token: "{verb}"'}
+    if not rest.startswith("lane "):
+        return {"bad": 'no "lane <name>" field'}
+    rest = rest[5:]
+    q = rest.find(",")
+    if q < 0:
+        return {"bad": 'no "," after the lane'}
+    written_lane = _trim(rest[:q])
+    rest = _trim(rest[q + 1:])
+    if not rest.startswith("session "):
+        return {"bad": 'no "session <uuid>@<ws>" field'}
+    rest = rest[8:]
+    q = rest.find(",")
+    if q < 0:
+        return {"bad": 'no "," after the session'}
+    sess = _trim(rest[:q])
+    rest = _trim(rest[q + 1:])
+    a = sess.find("@")
+    uuid = sess[:a] if a >= 0 else sess
+    ws = sess[a + 1:] if a >= 0 else ""
+    m = UTC_RE.match(rest)
+    if not m:
+        return {"bad": "no YYYY-MM-DDTHH:MM[:SS]Z"}
+    utc = m.group(0)
+    rest = rest[m.end():]
+    if not rest.startswith(","):
+        return {"bad": 'no "," and object after the UTC'}
+    rest = _trim(rest[1:])
+    sp = rest.find(" ")
+    if sp < 0:
+        obj, rest = rest, ""
+    else:
+        obj, rest = rest[:sp], rest[sp + 1:]
+    ref = payload = txt = ""
+    if rest != "":
+        if rest.startswith("— "):
+            txt = _trim(rest[2:])
+        else:
+            j = rest.find(" — ")
+            if j >= 0:
+                txt = _trim(rest[j + 3:])
+                rest = _trim(rest[:j])
+            if rest.startswith("→ "):
+                ref, payload = "→", _trim(rest[2:])
+            elif rest.startswith("← "):
+                ref, payload = "←", _trim(rest[2:])
+            else:
+                payload = _trim(rest)
+    return {"verb": verb, "written_lane": written_lane, "uuid": uuid, "ws": ws, "utc": utc,
+            "object": obj, "ref": ref, "payload": payload, "text": txt}
+
+
+def payload_fields(payload: str) -> dict:
+    """`payload_subfield`'s split: `; `-separated sub-fields, the first token
+    the name, a quoted value taken whole, and the FIRST of a repeated name wins
+    exactly as that reader's `exit` makes it."""
+    fields: dict = {}
+    if not payload:
+        return fields
+    for piece in payload.split("; "):
+        name, _, value = piece.partition(" ")
+        if not name or name in fields:
+            continue
+        value = _trim(value)
+        if value.startswith('"'):
+            q = value.find('"', 1)
+            if q > 0:
+                value = value[1:q]
+        fields[name] = value
+    return fields
+
+
+def parse_log(path: str, text: str) -> tuple[list, list]:
+    """The log's records - one per line the grammar does not skip, unreadable
+    ones INCLUDED - and the warnings `LOG_AWK` prints for it."""
+    lane = file_lane(path)
+    records, warnings = [], []
+    for ordinal, line in enumerate(text.split("\n"), 1):
+        parsed = parse_log_line(line)
+        if parsed is None:
+            continue
+        rec = {"lane": lane, "file": path, "ordinal": ordinal, "raw": line}
+        if "bad" in parsed:
+            rec.update(unreadable=1, unreadable_why=parsed["bad"])
+            warnings.append(f"unreadable: {path}:{ordinal} ({parsed['bad']})")
+        else:
+            obj = parsed["object"]
+            if lane and obj.startswith("lane:"):
+                obj = "lane:" + lane
+            rec.update(unreadable=0, unreadable_why=None, verb=parsed["verb"],
+                       written_lane=parsed["written_lane"], session=parsed["uuid"],
+                       workstation=parsed["ws"], utc=parsed["utc"], object=obj,
+                       ref=parsed["ref"], payload=parsed["payload"],
+                       free_text=parsed["text"])
+        records.append(rec)
+    if warnings:
+        warnings.append(f"{len(warnings)} unreadable line(s) above — an append-only log is "
+                        f"never rewritten, so a line no parser reads is a hold no tool will "
+                        f"mention again")
+    return records, warnings
+
+
+def row_name(line: str) -> str | None:
+    """`ROW_AWK`'s rule: a line opening with `|` whose first backticked token
+    is the lane. None where the line is not a row by that rule."""
+    if not line.startswith("|"):
+        return None
+    p1 = line.find("`")
+    if p1 < 0:
+        return None
+    rest = line[p1 + 1:]
+    p2 = rest.find("`")
+    if p2 < 0:
+        return None
+    return rest[:p2]
+
+
+def cell_state(row: str) -> str:
+    """`LANES_REGISTER_INDEX_AWK`'s `cell_state`: six ` | ` from the left or it
+    is not knowable which text is the state cell, and then the last piece."""
+    row = row.rstrip(" \t")
+    if not row.startswith("|") or not row.endswith("|"):
+        return ""
+    rest = row[:-1]
+    for _ in range(6):
+        i = rest.find(" | ")
+        if i < 0:
+            return ""
+        rest = rest[i + 3:]
+    if " | " in rest:
+        return ""
+    return rest
+
+
+REGISTER_KIND_RE = re.compile(r"^(HOLD RELEASED|HOLD|LANDING|LANDED)[ \t]+(—|-)[ \t]")
+
+
+def parse_register_line(line: str) -> dict | None:
+    """Rule 6's `LANDING`/`LANDED` and Amendment 10's `HOLD`/`HOLD RELEASED`.
+
+    The kind is the line's own first word(s); every other field is read the way
+    `RULE6_AWK` reads it, best effort, because a `HOLD` is free text by
+    Amendment 10(e) and the raw line is kept beside whatever was found."""
+    m = REGISTER_KIND_RE.match(line)
+    if not m:
+        return None
+    fields = {"kind": m.group(1), "lane": None, "repo": None, "pr": None, "tip": None,
+              "utc": None, "session": None}
+    lm = re.search(r"lane ([A-Za-z0-9._-]+)", line)
+    if lm:
+        fields["lane"] = lm.group(1)
+    pm = re.search(r"PR #([0-9]+)", line) or re.search(r"#([0-9]+)", line)
+    if pm:
+        fields["pr"] = pm.group(1)
+    rm = re.search(r"into ([A-Za-z0-9/._-]+) main", line) or \
+        re.search(r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+) main\b", line)
+    if rm:
+        fields["repo"] = rm.group(1)
+    um = UTC_RE.search(line)
+    if um:
+        fields["utc"] = um.group(0)
+    sm = re.search(r"session ([^,@ ]+)@", line)
+    if sm:
+        fields["session"] = sm.group(1)
+    tm = re.search(r"→ ([0-9a-f]{7,40})\b", line) or re.search(r" main ([0-9a-f]{7,40})\b", line)
+    if tm:
+        fields["tip"] = tm.group(1)
+    return fields
+
+
+# ======================================================== the records built
+
+TABLE_COLUMNS = {
+    "source_files": ["kind", "lane", "ls_order", "blob_sha", "line_count", "unreadable_count"],
+    "lanes": ["lane", "aliases", "home", "workstation", "started_utc", "handoff_path",
+              "state_phrase", "objects_cell", "session_ids", "last_session", "archived",
+              "owner", "row_file", "row_ordinal", "row_text"],
+    "log_lines": ["lane", "file", "ordinal", "verb", "session", "workstation", "utc", "object",
+                  "ref", "payload", "payload_fields", "free_text", "written_lane", "unreadable",
+                  "unreadable_why", "raw"],
+    "register_lines": ["kind", "lane", "repo", "pr", "tip", "utc", "session", "ordinal", "raw"],
+    "lane_aliases": ["old_name", "new_name", "utc", "ordinal", "raw"],
+    "transcript_pointers": ["lane", "kind", "transcript_id", "agent", "position", "workstation",
+                            "estate", "profile_family", "resolved_store", "project_key",
+                            "parent_uuid", "size_bytes", "sha256", "sealed_utc"],
+    # THE LEDGER HALF'S OWN TABLES, created EMPTY: T058 of the 001 feature
+    # writes them under `ledger:<Workstation>` (Amendment 14(g) act 4), and this
+    # indexer writes nothing into them.
+    "swap_states": ["lane", "parent_uuid", "generation", "state", "observed_utc"],
+    "job_summaries": ["lane", "job_id", "result_summary", "observed_utc"],
+    # opensoft/openRepoTools#161: each lane's #97 worktree inventory under
+    # `inventory:<Workstation>`, keyed by (source, lane, path) - the record id
+    # `<lane>:<path>`. Amendment 14(e) left inventories to "a later word's"; #161
+    # is that word's issue. Created by schema 1 with these columns before a row
+    # was written into it, so no store needed a new version for it. Written by
+    # `run_inventory` and by nothing that reads the register.
+    "worktrees": ["workstation", "lane", "owner", "path", "branch", "base", "lifecycle",
+                  "generation", "operation", "writer_live", "last_seen_utc", "last_commit",
+                  "dirty_count", "unpushed_count", "pr_number", "pr_state"],
+}
+
+INTEGER_COLUMNS = {"ls_order", "line_count", "unreadable_count", "archived", "row_ordinal",
+                   "ordinal", "unreadable", "position", "size_bytes", "generation",
+                   "writer_live", "dirty_count", "unpushed_count", "pr_number"}
+
+#: The tables `sync` and `reconcile` write for the REGISTER. The ledger's two
+#: are T058's, and `worktrees` is the inventory source's alone.
+REGISTER_TABLES = ("source_files", "lanes", "log_lines", "register_lines", "lane_aliases",
+                   "transcript_pointers")
+
+
+def digest_of(table: str, record: dict) -> str:
+    content = [table] + [record.get(col) for col in TABLE_COLUMNS[table]]
+    blob = json.dumps(content, ensure_ascii=False, separators=(",", ":"), sort_keys=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def build_records(snap: dict) -> dict:
+    """Every record of the register half at one commit, WITHOUT the owner
+    column: the owner is `managed-projection`'s answer, asked separately."""
+    out = {table: {} for table in REGISTER_TABLES}
+
+    def put(table: str, record_id: str, record: dict) -> None:
+        out[table][record_id] = record
+
+    # ---- the files themselves
+    for path, kind in ((REGISTER_PATH, "register"), (ALIASES_PATH, "aliases"),
+                       (ARCHIVE_PATH, "archive")):
+        text = snap.get(kind)
+        if text is None:
+            continue
+        put("source_files", path, {"kind": kind, "lane": None, "ls_order": None,
+                                   "blob_sha": snap["blobs"].get(path),
+                                   "line_count": len(text.split("\n")),
+                                   "unreadable_count": None})
+
+    # ---- the logs, every line, the unreadable ones kept (7(b))
+    facts: dict = {}
+    first_log_of: dict = {}
+    for path, text, obj, order in snap["logs"]:
+        records, _warnings = parse_log(path, text)
+        lane = file_lane(path)
+        first_log_of.setdefault(lane.lower(), lane)
+        unreadable = 0
+        for rec in records:
+            rec_id = f"{rec['lane']}:{rec['ordinal']}"
+            # TWO FILES WHOSE NAMES DIFFER ONLY BY CASE are two logs for one
+            # lane - Amendment 15(d)'s hand merge - and each keeps its lines
+            # under its own spelling, so neither file's lines replace the other's.
+            if rec_id in out["log_lines"]:
+                rec_id = f"{rec['file']}:{rec['ordinal']}"
+            if rec["unreadable"]:
+                unreadable += 1
+                row = {col: None for col in TABLE_COLUMNS["log_lines"]}
+                row.update(lane=rec["lane"], file=rec["file"], ordinal=rec["ordinal"],
+                           unreadable=1, unreadable_why=rec["unreadable_why"], raw=rec["raw"])
+            else:
+                row = {col: rec.get(col) for col in TABLE_COLUMNS["log_lines"]}
+                row["payload_fields"] = json.dumps(payload_fields(rec["payload"]),
+                                                   ensure_ascii=False, sort_keys=False)
+            put("log_lines", rec_id, row)
+            if rec["unreadable"]:
+                continue
+            f = facts.setdefault(lane.lower(), {"home": None, "sid": None, "paused": []})
+            fork = rec["payload"].startswith("fork ")
+            if rec["verb"] in ("STARTED", "RESUMED") and not fork:
+                hm = re.search(r"home [^ ;]+", rec["payload"])
+                if hm:
+                    value = hm.group(0)[5:]
+                    if value != "unknown":
+                        f["home"] = value
+            if rec["verb"] in ("PAUSED", "RESUMED") and UUID_FULL_RE.match(rec["session"] or ""):
+                f["sid"] = rec["session"].lower()
+            if rec["verb"] == "PAUSED":
+                pf = payload_fields(rec["payload"])
+                if "transcript" in pf:
+                    f["paused"].append((rec["file"], rec["ordinal"], pf.get("transcript"),
+                                        pf.get("agent")))
+        put("source_files", path, {"kind": "log", "lane": lane, "ls_order": order,
+                                   "blob_sha": obj, "line_count": len(text.split("\n")),
+                                   "unreadable_count": unreadable})
+
+    # ---- the register: its rows and its Rule 6 / Amendment 10 lines
+    rows = []
+    for ordinal, line in enumerate(snap["register"].split("\n"), 1):
+        name = row_name(line)
+        if name is not None:
+            if name != "":
+                rows.append((REGISTER_PATH, ordinal, name, line, 0))
+            continue
+        fields = parse_register_line(line)
+        if fields is not None:
+            fields["ordinal"] = ordinal
+            fields["raw"] = line
+            put("register_lines", str(ordinal), fields)
+    if snap.get("archive") is not None:
+        for ordinal, line in enumerate(snap["archive"].split("\n"), 1):
+            name = row_name(line)
+            if name:
+                rows.append((ARCHIVE_PATH, ordinal, name, line, 1))
+
+    # ---- Amendment 16(e)'s alias table, every line kept
+    alias_map: dict = {}
+    if snap.get("aliases") is not None:
+        for ordinal, line in enumerate(snap["aliases"].split("\n"), 1):
+            if line.strip() == "":
+                continue
+            parts = line.split("\t")
+            old = _trim(parts[0]) if parts else ""
+            new = _trim(parts[1]) if len(parts) > 1 else ""
+            when = _trim(parts[2]) if len(parts) > 2 else ""
+            comment = bool(re.match(r"^[ \t]*#", line))
+            put("lane_aliases", str(ordinal), {
+                "old_name": None if comment else (old or None),
+                "new_name": None if comment else (new or None),
+                "utc": None if comment else (when or None), "ordinal": ordinal, "raw": line})
+            if not comment and old and new:
+                alias_map[old.lower()] = (old, new, ordinal)
+
+    def resolve(name: str) -> str:
+        seen = set()
+        cur = name
+        while cur.lower() in alias_map and cur.lower() not in seen:
+            seen.add(cur.lower())
+            cur = alias_map[cur.lower()][1]
+        return cur
+
+    aliases_of: dict = {}
+    for _key, (old, _new, ordinal) in sorted(alias_map.items(), key=lambda kv: kv[1][2]):
+        aliases_of.setdefault(resolve(old).lower(), []).append(old)
+
+    # ---- one record per lane: every row, then every log with no row
+    used_lower: set = set()
+    for row_file, ordinal, name, line, archived in rows:
+        rec_id = name
+        if rec_id in out["lanes"]:
+            rec_id = f"{name}~{'archive' if archived else 'register'}:{ordinal}"
+        parts = line.split("|")
+        session_cell = parts[2] if len(parts) > 2 else ""
+        ids = UUID_RE.findall(session_cell.lower())
+        f = facts.get(name.lower(), {})
+        state = cell_state(line)
+        put("lanes", rec_id, {
+            "lane": name,
+            "aliases": json.dumps(aliases_of.get(name.lower(), []), ensure_ascii=False),
+            "home": f.get("home"),
+            "workstation": _trim(parts[3]) if len(parts) > 3 else None,
+            "started_utc": _trim(parts[4]) if len(parts) > 4 else None,
+            "objects_cell": _trim(parts[5]) if len(parts) > 5 else None,
+            "handoff_path": _trim(parts[6]) if len(parts) > 6 else None,
+            "state_phrase": _trim(state) if state else None,
+            "session_ids": json.dumps(ids),
+            "last_session": ids[-1] if ids else f.get("sid"),
+            "archived": archived, "owner": None,
+            "row_file": row_file, "row_ordinal": ordinal, "row_text": line})
+        used_lower.add(name.lower())
+        cell_ids = ids
+        for position, tid in enumerate(cell_ids, 1):
+            put("transcript_pointers", f"{rec_id}:cell:{position}", {
+                "lane": name, "kind": "session-cell", "transcript_id": tid, "agent": None,
+                "position": position})
+    for path, _text, _obj, _order in snap["logs"]:
+        lane = file_lane(path)
+        key = lane.lower()
+        if key in used_lower:
+            continue
+        used_lower.add(key)
+        f = facts.get(key, {})
+        put("lanes", lane, {
+            "lane": lane,
+            "aliases": json.dumps(aliases_of.get(key, []), ensure_ascii=False),
+            "home": f.get("home"), "workstation": None, "started_utc": None,
+            "objects_cell": None, "handoff_path": None, "state_phrase": None,
+            "session_ids": json.dumps([]), "last_session": f.get("sid"),
+            "archived": 0, "owner": None, "row_file": None, "row_ordinal": None,
+            "row_text": None})
+    for key, f in facts.items():
+        lane = first_log_of.get(key, key)
+        for path, ordinal, tid, agent in f["paused"]:
+            # KEYED AS `log_lines` IS (Copilot round 1 on #164): two logs whose
+            # names differ only by case are two files, and a PAUSED at the same
+            # line of each is two pointers, never one written over the other.
+            rec_id = f"{lane}:log:{ordinal}"
+            if rec_id in out["transcript_pointers"]:
+                rec_id = f"{path}:log:{ordinal}"
+            put("transcript_pointers", rec_id, {
+                "lane": lane, "kind": "paused", "transcript_id": tid, "agent": agent,
+                "position": ordinal})
+    for table in ("transcript_pointers",):
+        for record in out[table].values():
+            for col in TABLE_COLUMNS[table]:
+                record.setdefault(col, None)
+    return out
+
+
+# ================================================== the owner column's reader
+
+def managed_projection(lane: str) -> str:
+    """`legacy`, `managed <owner>` or `unknown`, AND NOTHING ELSE DECIDES IT.
+
+    #97's own reader answers: `lanes-edit.sh managed-projection <lane>` exits 0
+    with the owner, 8 for a legacy lane, anything else for UNKNOWN. This file
+    carries no parser of the marker, so a malformed one can never be read here
+    as `legacy` (Amendment 14(e)); a reader that could not be run at all is
+    UNKNOWN for the same reason."""
+    helper = lanes_edit_path()
+    if not helper:
+        return "unknown"
+    try:
+        proc = subprocess.run([helper, "managed-projection", lane], capture_output=True,
+                              text=True, check=False, env=helper_env(),
+                              stdin=subprocess.DEVNULL, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown"
+    if proc.returncode == 0 and proc.stdout.strip():
+        return f"managed {proc.stdout.strip().splitlines()[0]}"
+    if proc.returncode == 8:
+        return "legacy"
+    return "unknown"
+
+
+def fill_owners(records: dict, stored_lanes: dict | None) -> int:
+    """Ask `managed-projection` for every lane whose row text is new or changed
+    (all of them where `stored_lanes` is None, which is `reconcile`), and carry
+    the stored answer over for a row that has not moved. An `unknown` is never
+    carried: it may be a read that failed, and asking again is how it clears.
+    Returns how many lanes were asked."""
+    ask = []
+    for rec_id, rec in records["lanes"].items():
+        old = (stored_lanes or {}).get(rec_id)
+        if stored_lanes is not None and old is not None and old.get("row_text") == rec["row_text"] \
+                and old.get("lane") == rec["lane"] and old.get("owner") \
+                and old.get("owner") != "unknown":
+            rec["owner"] = old["owner"]
+        else:
+            ask.append(rec_id)
+    if ask:
+        workers = max(1, min(8, len(ask)))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            answers = list(pool.map(lambda rid: managed_projection(records["lanes"][rid]["lane"]),
+                                    ask))
+        for rec_id, owner in zip(ask, answers):
+            records["lanes"][rec_id]["owner"] = owner
+    return len(ask)
+
+
+# =============================================================== the stores
+
+def ddl(dialect: str, schema: str) -> list[str]:
+    q = (lambda name: f'"{schema}".{name}') if dialect == "postgres" else (lambda name: name)
+    big = "BIGINT" if dialect == "postgres" else "INTEGER"
+    stmts = [
+        f"CREATE TABLE IF NOT EXISTS {q('schema_version')} "
+        f"(version INTEGER NOT NULL, applied_utc TEXT NOT NULL)",
+        f"CREATE TABLE IF NOT EXISTS {q('provenance')} (source TEXT NOT NULL PRIMARY KEY, "
+        f"commit_sha TEXT, generation {big}, indexed_utc TEXT NOT NULL, "
+        f"schema_version INTEGER NOT NULL)",
+    ]
+    for table, cols in TABLE_COLUMNS.items():
+        defs = ["source TEXT NOT NULL", "record_id TEXT NOT NULL"]
+        for col in cols:
+            defs.append(f"{col} {big if col in INTEGER_COLUMNS else 'TEXT'}")
+        defs += ["digest TEXT NOT NULL", "provenance TEXT", "indexed_utc TEXT NOT NULL",
+                 "schema_version INTEGER NOT NULL", "PRIMARY KEY (source, record_id)"]
+        stmts.append(f"CREATE TABLE IF NOT EXISTS {q(table)} ({', '.join(defs)})")
+    # HOLDS ARE COMPUTED, NEVER STORED (14(e)), and computed AS `holders_of`
+    # COMPUTES THEM (Copilot round 2 on #164), which is `who`'s answer:
+    #   * a lane's state on an object is its own LAST line on it - the lane
+    #     compared case-insensitively (Amendment 15), so two logs one case
+    #     apart are one lane - and "last" is the FILE-ORDERED position
+    #     (file, then line; PER_LANE_AWK's `file "\034" %09d line`), never
+    #     the UTC (R14);
+    #   * it holds while that verb is open, UNLESS another lane's own last line
+    #     on the object is a TAKEOVER (`superseded_by`, R18, #30).
+    # The file comparison is BYTE order, as awk's string comparison is: SQLite's
+    # default BINARY collation, and Postgres's "C".
+    coll = ' COLLATE "C"' if dialect == "postgres" else ""
+    ll = q("log_lines")
+    view = (
+        f"WITH ev AS (SELECT source, lane, lower(lane) AS lk, object, verb, utc, session, "
+        f"file, ordinal FROM {ll} WHERE unreadable = 0 AND object IS NOT NULL "
+        f"AND object NOT LIKE 'lane:%'), "
+        f"last AS (SELECT e.* FROM ev e WHERE NOT EXISTS (SELECT 1 FROM ev m "
+        f"WHERE m.source = e.source AND m.object = e.object AND m.lk = e.lk "
+        f"AND (m.file{coll} > e.file{coll} OR (m.file = e.file AND m.ordinal > e.ordinal)))) "
+        f"SELECT h.source, h.lane, h.object, h.verb, h.utc, h.session, h.file, h.ordinal "
+        f"FROM last h WHERE h.verb IN ({', '.join(repr(v) for v in OPEN_VERBS)}) "
+        f"AND NOT EXISTS (SELECT 1 FROM last t WHERE t.source = h.source "
+        f"AND t.object = h.object AND t.lk <> h.lk AND t.verb = 'TAKEOVER')")
+    stmts.append(f"CREATE INDEX IF NOT EXISTS log_lines_by_object ON {ll} (source, object)")
+    if dialect == "postgres":
+        stmts.append(f"CREATE OR REPLACE VIEW {q('holds')} AS {view}")
+    else:
+        stmts.append(f"CREATE VIEW IF NOT EXISTS holds AS {view}")
+    stmts.append(
+        f"INSERT INTO {q('schema_version')} (version, applied_utc) SELECT {SCHEMA_VERSION}, "
+        f"'{utc_now()}' WHERE NOT EXISTS (SELECT 1 FROM {q('schema_version')})")
+    return stmts
+
+
+class SqliteStore:
+    dialect = "sqlite"
+
+    def __init__(self, cfg: dict):
+        self.path = cfg["sqlite"]
+        self.label = "sqlite"
+        self.where = self.path
+        self.conn = None
+
+    def open_read(self):
+        import sqlite3
+        if not os.path.exists(self.path):
+            raise StoreUnusable("missing", f"{self.path} does not exist")
+        try:
+            self.conn = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, timeout=10)
+            self.conn.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchall()
+        except sqlite3.Error as exc:
+            raise StoreUnusable("unreachable", f"{self.path}: {exc}")
+        self._check_schema(writing=False)
+
+    def open_write(self):
+        import sqlite3
+        os.makedirs(os.path.dirname(self.path), mode=0o700, exist_ok=True)
+        try:
+            self.conn = sqlite3.connect(self.path, timeout=30, isolation_level=None)
+            # EVERY WRITE-OPEN, NOT ONLY THE FIRST (Copilot round 2 on #164): a
+            # store whose mode drifted to 0644 is made private again before
+            # another row goes into it, or nothing more is written.
+            try:
+                os.chmod(self.path, 0o600)
+            except OSError as exc:
+                raise StoreUnusable("unreachable", f"{self.path} cannot be made 0600 "
+                                    f"({exc.strerror or exc}); nothing written")
+            have = {r[0] for r in self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table','view')")}
+            if "schema_version" in have:
+                self._check_schema(writing=True)
+            self.conn.execute("BEGIN IMMEDIATE")
+            for stmt in ddl("sqlite", ""):
+                self.conn.execute(stmt)
+            self.conn.execute("COMMIT")
+        except sqlite3.Error as exc:
+            raise StoreUnusable("unreachable", f"{self.path}: {exc}")
+        self._check_schema(writing=True)
+
+    def _check_schema(self, writing: bool):
+        import sqlite3
+        try:
+            rows = self.conn.execute("SELECT version FROM schema_version").fetchall()
+        except sqlite3.Error:
+            if writing:
+                return
+            raise StoreUnusable("wiped", f"{self.path} carries no schema_version table")
+        versions = {r[0] for r in rows}
+        if not versions:
+            if writing:
+                return
+            raise StoreUnusable("wiped", f"{self.path} carries no schema_version row")
+        if versions != {SCHEMA_VERSION}:
+            raise StoreUnusable("unknown-schema",
+                                f"schema {sorted(versions)} in {self.path}; this "
+                                f"{PROG} knows {SCHEMA_VERSION}")
+
+    def provenance(self, source: str) -> dict | None:
+        import sqlite3
+        try:
+            row = self.conn.execute(
+                "SELECT commit_sha, generation, indexed_utc, schema_version FROM provenance "
+                "WHERE source = ?", (source,)).fetchone()
+        except sqlite3.Error as exc:
+            raise StoreUnusable("wiped", f"{self.path}: {exc}")
+        if row is None:
+            return None
+        return {"commit_sha": row[0], "generation": row[1], "indexed_utc": row[2],
+                "schema_version": row[3]}
+
+    def all_provenance(self) -> list:
+        import sqlite3
+        try:
+            return [{"source": r[0], "commit_sha": r[1], "generation": r[2], "indexed_utc": r[3],
+                     "schema_version": r[4]} for r in self.conn.execute(
+                         "SELECT source, commit_sha, generation, indexed_utc, schema_version "
+                         "FROM provenance ORDER BY source")]
+        except sqlite3.Error as exc:
+            raise StoreUnusable("wiped", f"{self.path}: {exc}")
+
+    def rows(self, table: str, source: str, columns: list[str]) -> list:
+        cols = ", ".join(["record_id"] + columns)
+        return [dict(zip(["record_id"] + columns, r)) for r in self.conn.execute(
+            f"SELECT {cols} FROM {table} WHERE source = ?", (source,))]
+
+    def apply(self, source: str, old: dict | None, new_sha: str, upserts: dict,
+              deletes: dict, generation: int | None = None) -> None:
+        """The rows and the provenance, ONE transaction, the compare-and-swap
+        first. `new_sha` is the register's commit, or the inventory's
+        fingerprint of its whole table (#161), and `generation` the inventory's
+        sync count; a record carrying `_provenance` is stamped with that rather
+        than with `new_sha` - the generation its tree's own record was filed
+        under."""
+        import sqlite3
+        now = utc_now()
+        try:
+            self.conn.execute("BEGIN IMMEDIATE")
+            cur = self.conn.execute("SELECT commit_sha FROM provenance WHERE source = ?",
+                                    (source,)).fetchone()
+            want = old["commit_sha"] if old else None
+            if (cur[0] if cur else None) != want or (cur is None) != (old is None):
+                self.conn.execute("ROLLBACK")
+                raise CasLost(f"the provenance of {source} moved under this sync "
+                              f"(it read {str(want)[:12]}, the store now holds "
+                              f"{str(cur[0] if cur else None)[:12]}); nothing was written")
+            if cur is None:
+                self.conn.execute(
+                    "INSERT INTO provenance (source, commit_sha, generation, indexed_utc, "
+                    "schema_version) VALUES (?, ?, ?, ?, ?)",
+                    (source, new_sha, generation, now, SCHEMA_VERSION))
+            else:
+                self.conn.execute(
+                    "UPDATE provenance SET commit_sha = ?, generation = ?, indexed_utc = ?, "
+                    "schema_version = ? WHERE source = ?",
+                    (new_sha, generation, now, SCHEMA_VERSION, source))
+            for table, ids in deletes.items():
+                for rec_id in ids:
+                    self.conn.execute(f"DELETE FROM {table} WHERE source = ? AND record_id = ?",
+                                      (source, rec_id))
+            for table, recs in upserts.items():
+                cols = TABLE_COLUMNS[table]
+                allc = ["source", "record_id"] + cols + ["digest", "provenance", "indexed_utc",
+                                                         "schema_version"]
+                sets = ", ".join(f"{c} = excluded.{c}" for c in allc[2:])
+                sql = (f"INSERT INTO {table} ({', '.join(allc)}) VALUES "
+                       f"({', '.join('?' for _ in allc)}) ON CONFLICT (source, record_id) "
+                       f"DO UPDATE SET {sets}")
+                self.conn.executemany(sql, [
+                    [source, rec_id] + [rec.get(c) for c in cols] +
+                    [rec["digest"], rec.get("_provenance", new_sha), now, SCHEMA_VERSION]
+                    for rec_id, rec in recs.items()])
+            self.conn.execute("COMMIT")
+        except sqlite3.Error as exc:
+            try:
+                self.conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            raise StoreUnusable("unreachable", f"{self.path}: {exc}")
+
+
+def _pg_quote(value) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, int):
+        return str(value)
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _pg_unescape(field: str):
+    """One field of `COPY ... TO STDOUT` in TEXT format: `\\N` is NULL and a
+    backslash escapes the rest, exactly as the server wrote it."""
+    if field == "\\N":
+        return None
+    if "\\" not in field:
+        return field
+    out, i, n = [], 0, len(field)
+    simple = {"b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v", "\\": "\\"}
+    while i < n:
+        ch = field[i]
+        if ch != "\\" or i + 1 >= n:
+            out.append(ch)
+            i += 1
+            continue
+        nxt = field[i + 1]
+        if nxt in simple:
+            out.append(simple[nxt])
+            i += 2
+        elif nxt in "01234567":
+            j = i + 1
+            while j < n and j < i + 4 and field[j] in "01234567":
+                j += 1
+            out.append(chr(int(field[i + 1:j], 8)))
+            i = j
+        elif nxt == "x":
+            j = i + 2
+            while j < n and j < i + 4 and field[j] in "0123456789abcdefABCDEF":
+                j += 1
+            out.append(chr(int(field[i + 2:j], 16)) if j > i + 2 else "x")
+            i = j
+        else:
+            out.append(nxt)
+            i += 2
+    return "".join(out)
+
+
+class PostgresStore:
+    """QA Postgres, reached ONLY through `psql` and ONLY where `url=` is
+    configured. Nothing here imports a driver: `psql` is libpq's own client,
+    and the password it needs is in the 0600 file `PGPASSFILE` names - never
+    in this process's arguments and never in an environment it hands on."""
+
+    dialect = "postgres"
+
+    def __init__(self, cfg: dict, role: str):
+        self.schema = cfg["schema"]
+        if role == "reader":
+            # NEVER THE WRITER'S CREDENTIAL FOR A READ (Copilot round 1 on #164).
+            # The writer is the indexer's and no session's (14(c)), and `export`
+            # is run by a session typing `--index`: with no `reader_url=` the
+            # read is refused, and the read flags answer from the sources.
+            if not cfg.get("reader_url"):
+                raise Refusal(
+                    "the configuration names a Postgres `url=` and no `reader_url=`: the "
+                    "reads (`status`, `--index`) connect only as the SELECT-only reader, "
+                    "never with the writer's credential (Amendment 14(c))")
+            self.url, self.passfile = cfg["reader_url"], cfg.get("reader_passfile") or cfg["passfile"]
+        else:
+            self.url, self.passfile = cfg["url"], cfg["passfile"]
+        self.label = "postgres"
+        self.where = re.sub(r"^[A-Za-z][A-Za-z0-9+.-]*://", "", self.url).split("?", 1)[0]
+        self.psql = shutil.which("psql") or ""
+
+    def _env(self) -> dict:
+        # THE CONFIGURED PASSWORD FILE OR NONE AT ALL (14(c); Copilot on #164):
+        # an inherited `PGPASSWORD` or `PGPASSFILE` is dropped, and with no
+        # `passfile=` libpq is handed an EMPTY 0600 file of this command's own -
+        # never left to find `~/.pgpass` or a file some other environment named.
+        env = {k: v for k, v in os.environ.items() if k not in ("PGPASSWORD", "PGPASSFILE")}
+        env["PGPASSFILE"] = self.passfile or _no_password_file()
+        env.setdefault("PGCONNECT_TIMEOUT", "5")
+        env["PGAPPNAME"] = PROG
+        return env
+
+    def _run(self, script: str) -> str:
+        if not self.psql:
+            raise StoreUnusable("unreachable", "`url=` is configured and there is no `psql` on PATH")
+        try:
+            proc = subprocess.run(
+                [self.psql, "--no-psqlrc", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", self.url],
+                input=script, capture_output=True, text=True, check=False, env=self._env(),
+                timeout=300)
+        except subprocess.TimeoutExpired:
+            raise StoreUnusable("unreachable", "psql did not answer within 300 s")
+        except OSError as exc:
+            raise StoreUnusable("unreachable", f"psql could not be run: {exc}")
+        if proc.returncode != 0:
+            err = (proc.stderr.strip().splitlines() or [f"psql exited {proc.returncode}"])
+            if "lanes-index: provenance moved" in proc.stderr:
+                raise CasLost(err[-1])
+            if proc.returncode == 2:
+                raise StoreUnusable("unreachable", err[0])
+            raise StoreUnusable("unreachable", err[-1])
+        return proc.stdout
+
+    def _query_many(self, queries: list[str]) -> list[list[list]]:
+        """Several SELECTs in ONE connection, each answered as TEXT-format COPY
+        rows; a marker line no COPY row can be (one field, a control
+        character) separates them."""
+        marker = "\x1eLANES-INDEX-NEXT"
+        parts = [f"SET search_path TO \"{self.schema}\";"]
+        for query in queries:
+            parts.append(f"COPY ({query}) TO STDOUT;")
+            parts.append("\\echo '\\036LANES-INDEX-NEXT'")
+        out = self._run("\n".join(parts) + "\n")
+        results, current = [], []
+        for line in out.split("\n"):
+            if line == marker:
+                results.append(current)
+                current = []
+                continue
+            if line == "":
+                continue
+            current.append([_pg_unescape(f) for f in line.split("\t")])
+        return results
+
+    def open_read(self):
+        try:
+            res = self._query_many([
+                f"SELECT version FROM \"{self.schema}\".schema_version"])
+        except StoreUnusable as exc:
+            if "does not exist" in exc.detail:
+                raise StoreUnusable("wiped", exc.detail)
+            raise
+        versions = {int(r[0]) for r in res[0]} if res else set()
+        if not versions:
+            raise StoreUnusable("wiped", f"schema {self.schema} carries no schema_version row")
+        if versions != {SCHEMA_VERSION}:
+            raise StoreUnusable("unknown-schema", f"schema {sorted(versions)} in {self.schema}; "
+                                f"this {PROG} knows {SCHEMA_VERSION}")
+
+    def open_write(self):
+        # THE VERSION FIRST (Copilot round 2 on #164): the DDL includes a
+        # `CREATE OR REPLACE VIEW`, so running it against another schema's
+        # store would rewrite that store before `open_read` called it
+        # `unknown-schema`. Only an ABSENT schema (`wiped`) is bootstrapped.
+        try:
+            self.open_read()
+            return
+        except StoreUnusable as exc:
+            if exc.kind != "wiped":
+                raise
+        script = ["SET standard_conforming_strings = on;", "BEGIN;"]
+        script += [s + ";" for s in ddl("postgres", self.schema)]
+        script.append("COMMIT;")
+        self._run("\n".join(script) + "\n")
+        self.open_read()
+
+    def provenance(self, source: str) -> dict | None:
+        res = self._query_many([
+            f"SELECT commit_sha, generation, indexed_utc, schema_version FROM provenance "
+            f"WHERE source = {_pg_quote(source)}"])
+        if not res or not res[0]:
+            return None
+        r = res[0][0]
+        return {"commit_sha": r[0], "generation": r[1], "indexed_utc": r[2],
+                "schema_version": r[3]}
+
+    def all_provenance(self) -> list:
+        res = self._query_many([
+            "SELECT source, commit_sha, generation, indexed_utc, schema_version "
+            "FROM provenance ORDER BY source"])
+        return [{"source": r[0], "commit_sha": r[1], "generation": r[2], "indexed_utc": r[3],
+                 "schema_version": r[4]} for r in (res[0] if res else [])]
+
+    def rows(self, table: str, source: str, columns: list[str]) -> list:
+        res = self._query_many([
+            f"SELECT {', '.join(['record_id'] + columns)} FROM {table} "
+            f"WHERE source = {_pg_quote(source)}"])
+        out = []
+        for r in (res[0] if res else []):
+            rec = dict(zip(["record_id"] + columns, r))
+            for col in columns:
+                if col in INTEGER_COLUMNS and rec[col] is not None:
+                    rec[col] = int(rec[col])
+            out.append(rec)
+        return out
+
+    def apply(self, source: str, old: dict | None, new_sha: str, upserts: dict,
+              deletes: dict, generation: int | None = None) -> None:
+        now = utc_now()
+        want = old["commit_sha"] if old else None
+        lines = ["SET standard_conforming_strings = on;", "BEGIN;",
+                 f"SET LOCAL search_path TO \"{self.schema}\";",
+                 # THE COMPARE-AND-SWAP, FIRST AND IN THE SAME TRANSACTION AS THE
+                 # ROWS: the UPDATE takes the provenance row's lock, so a second
+                 # writer reading the same old commit blocks here and then finds
+                 # it moved, and its whole transaction goes (Amendment 14(d)).
+                 "DO $lanes_index_cas$ DECLARE n integer; BEGIN",
+                 f"  INSERT INTO provenance (source, commit_sha, generation, indexed_utc, "
+                 f"schema_version) VALUES ({_pg_quote(source)}, NULL, NULL, {_pg_quote(now)}, "
+                 f"{SCHEMA_VERSION}) ON CONFLICT (source) DO NOTHING;",
+                 f"  UPDATE provenance SET commit_sha = {_pg_quote(new_sha)}, generation = "
+                 f"{_pg_quote(generation)}, indexed_utc = "
+                 f"{_pg_quote(now)}, schema_version = {SCHEMA_VERSION} WHERE source = "
+                 f"{_pg_quote(source)} AND commit_sha IS NOT DISTINCT FROM {_pg_quote(want)};",
+                 "  GET DIAGNOSTICS n = ROW_COUNT;",
+                 "  IF n <> 1 THEN RAISE EXCEPTION 'lanes-index: provenance moved under this "
+                 "sync; nothing was written'; END IF;",
+                 "END $lanes_index_cas$;"]
+        for table, ids in deletes.items():
+            for rec_id in ids:
+                lines.append(f"DELETE FROM {table} WHERE source = {_pg_quote(source)} AND "
+                             f"record_id = {_pg_quote(rec_id)};")
+        for table, recs in upserts.items():
+            cols = TABLE_COLUMNS[table]
+            allc = ["source", "record_id"] + cols + ["digest", "provenance", "indexed_utc",
+                                                     "schema_version"]
+            sets = ", ".join(f"{c} = EXCLUDED.{c}" for c in allc[2:])
+            for rec_id, rec in recs.items():
+                values = [source, rec_id] + [rec.get(c) for c in cols] + \
+                    [rec["digest"], rec.get("_provenance", new_sha), now, SCHEMA_VERSION]
+                lines.append(f"INSERT INTO {table} ({', '.join(allc)}) VALUES "
+                             f"({', '.join(_pg_quote(v) for v in values)}) ON CONFLICT "
+                             f"(source, record_id) DO UPDATE SET {sets};")
+        lines.append("COMMIT;")
+        self._run("\n".join(lines) + "\n")
+
+
+def _no_password_file() -> str:
+    """An empty 0600 file for libpq to read where no `passfile=` is configured
+    (a passwordless role: peer, trust or certificate authentication)."""
+    path = os.path.join(state_dir(), "lanes-index.nopass")
+    try:
+        os.makedirs(state_dir(), mode=0o700, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.close(fd)
+        os.chmod(path, 0o600)
+    except OSError as exc:
+        raise StoreUnusable("unreachable", f"{path} could not be made as the empty password "
+                            f"file ({exc.strerror or exc}); nothing was sent to Postgres")
+    return path
+
+
+def open_store(cfg: dict, role: str):
+    return SqliteStore(cfg) if cfg["store"] == "sqlite" else PostgresStore(cfg, role)
+
+
+# ============================================================ local status
+
+def _status_path() -> str:
+    return os.path.join(state_dir(), "lanes-index.status.json")
+
+
+def read_status() -> dict:
+    try:
+        with open(_status_path(), encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def write_status(source: str, **fields) -> None:
+    """This workstation's own record of its last attempt, which the store
+    cannot hold for an attempt that could not reach it."""
+    try:
+        os.makedirs(state_dir(), mode=0o700, exist_ok=True)
+        data = read_status()
+        entry = data.get(source, {})
+        entry.update(fields)
+        data[source] = entry
+        tmp = _status_path() + f".{os.getpid()}"
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=1, sort_keys=True)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, _status_path())
+    except OSError:
+        pass
+
+
+class SyncLock:
+    """ONE SYNC AT A TIME PER WORKSTATION (14(d)). A second sync that finds the
+    lock held leaves a RERUN mark and returns at once - the holder syncs again
+    before it lets go - so a burst of writes is one or two syncs, never a
+    queue of them, and no nudge ever waits."""
+
+    def __init__(self):
+        self.path = os.path.join(state_dir(), "lanes-index.lock")
+        self.rerun = os.path.join(state_dir(), "lanes-index.rerun")
+        self.handle = None
+
+    def acquire(self, wait_seconds: float) -> bool:
+        try:
+            import fcntl
+        except ImportError:
+            return True
+        os.makedirs(state_dir(), mode=0o700, exist_ok=True)
+        self.handle = open(self.path, "a+")
+        try:
+            os.chmod(self.path, 0o600)
+        except OSError:
+            pass
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            try:
+                fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return True
+            except OSError:
+                if time.monotonic() >= deadline:
+                    self.handle.close()
+                    self.handle = None
+                    return False
+                time.sleep(0.2)
+
+    # ONE MARK PER SOURCE (opensoft/openRepoTools#161). The holder syncs again
+    # for every mark it finds, and a mark says WHICH source asked: a register
+    # sync holding the lock when an inventory write's nudge arrives syncs the
+    # inventory before it lets go, rather than the register a second time. The
+    # register's mark keeps the name it has always had.
+    KINDS = ("register", "inventory")
+
+    def rerun_path(self, kind: str = "register") -> str:
+        return self.rerun if kind == "register" else f"{self.rerun}-{kind}"
+
+    def mark_rerun(self, kind: str = "register") -> None:
+        try:
+            with open(self.rerun_path(kind), "w", encoding="utf-8") as handle:
+                handle.write(utc_now() + "\n")
+        except OSError:
+            pass
+
+    def take_rerun(self, kind: str = "register") -> bool:
+        try:
+            os.unlink(self.rerun_path(kind))
+            return True
+        except OSError:
+            return False
+
+    def take_reruns(self) -> list:
+        return [kind for kind in self.KINDS if self.take_rerun(kind)]
+
+    def has_rerun(self) -> bool:
+        return any(os.path.exists(self.rerun_path(kind)) for kind in self.KINDS)
+
+    def release(self) -> None:
+        if self.handle is not None:
+            self.handle.close()
+            self.handle = None
+
+
+# ================================================================ the acts
+
+def resolve_source(requested: str | None, root: str) -> str:
+    source = source_of(root)
+    if requested and requested != source:
+        if is_inventory(requested):
+            raise Refusal(f"{requested} is this workstation's worktree inventory, which "
+                          f"`sync`/`reconcile --source inventory` write and `export "
+                          f"--worktrees` reads; this is the register's path")
+        if requested.startswith("ledger:"):
+            raise Refusal(f"{requested} is the managed ledger's half, which T058 of the 001 "
+                          f"feature writes (Amendment 14(g) act 4); this indexer writes the "
+                          f"register half only")
+        raise Refusal(f"this workstation's register is {source}, not {requested}")
+    return source
+
+
+def diff_records(store, source: str, records: dict, verify_content: bool) -> tuple:
+    """The upserts and deletes that take the stored source to `records`.
+
+    `sync` compares DIGESTS: an upsert bearing the stored digest changes
+    nothing. `reconcile` recomputes each stored row's digest from its CONTENT,
+    so a row somebody changed by hand - which still carries its old digest - is
+    found and put right."""
+    upserts, deletes, kept = {}, {}, {}
+    for table in REGISTER_TABLES:
+        cols = TABLE_COLUMNS[table]
+        stored = {r["record_id"]: r for r in store.rows(table, source,
+                                                         cols + ["digest"])}
+        for rec in records[table].values():
+            rec["digest"] = digest_of(table, rec)
+        for rec_id, rec in records[table].items():
+            old = stored.get(rec_id)
+            if old is not None:
+                have = digest_of(table, old) if verify_content else old["digest"]
+                if have == rec["digest"] and (not verify_content or old["digest"] == rec["digest"]):
+                    kept[table] = kept.get(table, 0) + 1
+                    continue
+            upserts.setdefault(table, {})[rec_id] = rec
+        gone = [rec_id for rec_id in stored if rec_id not in records[table]]
+        if gone:
+            deletes[table] = gone
+    return upserts, deletes, kept
+
+
+def has_unknown_owner(store, source: str) -> bool:
+    return any(r["owner"] == "unknown" for r in store.rows("lanes", source, ["owner"]))
+
+
+def stored_lanes_of(store, source: str) -> dict:
+    return {r["record_id"]: r for r in store.rows("lanes", source,
+                                                   ["lane", "owner", "row_text"])}
+
+
+def run_index(mode: str, requested: str | None, dry_run: bool) -> int:
+    cfg = load_config()
+    root = workspace_root()
+    source = resolve_source(requested, root)
+    tip = tip_of(root)
+    store = open_store(cfg, "writer")
+    if dry_run:
+        try:
+            store.open_read()
+        except StoreUnusable as exc:
+            if exc.kind not in ("missing", "wiped"):
+                raise
+            store = None
+    else:
+        store.open_write()
+    old = store.provenance(source) if store is not None else None
+    label = f"{source} at register@{tip[:12]} ({cfg['store']})"
+    if old and old.get("commit_sha"):
+        prev = old["commit_sha"]
+        if not has_commit(root, prev):
+            say(f"{PROG} {mode}: the index holds register@{prev[:12]}, which this checkout has "
+                f"not fetched - another workstation is ahead of it; nothing written")
+            write_status(source, last_attempt_utc=utc_now(), last_result="behind (unknown commit)")
+            return 0
+        # NOT WHILE AN OWNER IS `unknown` (Codex on #164): an `unknown` may be a
+        # read that failed, and asking again is how it clears - so a sync at
+        # the same commit goes the long way round, asks only those, and writes
+        # nothing where nothing has changed.
+        if prev == tip and mode == "sync" and not has_unknown_owner(store, source):
+            say(f"{PROG} sync: {label} - the index is at the tip; nothing to write")
+            write_status(source, last_attempt_utc=utc_now(), last_sync_utc=utc_now(),
+                         last_result="current", last_error="")
+            return 0
+        if not is_ancestor(root, prev, tip):
+            behind = is_ancestor(root, tip, prev)
+            why = ("this checkout is BEHIND the index" if behind else
+                   "the two have diverged - a register history rewritten under the index is "
+                   "rebuilt by wiping the index and reconciling")
+            say(f"{PROG} {mode}: register@{tip[:12]} does not descend from the indexed "
+                f"register@{prev[:12]}: {why}. The provenance only moves forward "
+                f"(Amendment 14(d)); nothing written")
+            write_status(source, last_attempt_utc=utc_now(),
+                         last_result="not a descendant; nothing written")
+            return 0 if behind else 1
+    snap = read_snapshot(root, tip)
+    records = build_records(snap)
+    if store is None:
+        fill_owners(records, None)
+        upserts = {t: dict(r) for t, r in records.items() if r}
+        for table, recs in upserts.items():
+            for rec in recs.values():
+                rec["digest"] = digest_of(table, rec)
+        deletes, kept = {}, {}
+    else:
+        stored = None if mode == "reconcile" else stored_lanes_of(store, source)
+        fill_owners(records, stored)
+        upserts, deletes, kept = diff_records(store, source, records,
+                                              verify_content=(mode == "reconcile"))
+    # THE OWNERS ARE ASKED OF `origin/<branch>` AS IT STANDS, and the rows were
+    # read at ONE commit (Copilot round 1 on #164): `managed-projection` reads
+    # the ref, not a sha. So the ref is asked again once every owner is in, and
+    # a ref that moved meanwhile writes NOTHING - not rows of one commit beside
+    # owners of another - and the caller starts over at the new tip.
+    if not dry_run and tip_of(root) != tip:
+        raise SourceMoved(f"origin/{branch()} moved from {tip[:12]} while the owners were "
+                          f"read; nothing was written from that read")
+    n_up = sum(len(v) for v in upserts.values())
+    n_del = sum(len(v) for v in deletes.values())
+    if mode == "reconcile":
+        say(f"{PROG} reconcile: {label}{' - DRY RUN' if dry_run else ''}")
+        for table in REGISTER_TABLES:
+            say(f"  {table:<20} {kept.get(table, 0):>6} kept  {len(upserts.get(table, {})):>6} "
+                f"upserted  {len(deletes.get(table, [])):>6} removed")
+    if dry_run:
+        say(f"  total: {n_up} to upsert, {n_del} to remove - nothing written (--dry-run)")
+        return 0
+    if old and old.get("commit_sha") == tip and not upserts and not deletes:
+        if mode == "sync":
+            say(f"{PROG} sync: {label} - the index is at the tip; nothing to write")
+        else:
+            say("  total: nothing differs; nothing written")
+        write_status(source, last_attempt_utc=utc_now(), last_sync_utc=utc_now(),
+                     last_result="current", last_error="")
+        return 0
+    store.apply(source, old, tip, upserts, deletes)
+    write_status(source, last_attempt_utc=utc_now(), last_sync_utc=utc_now(),
+                 last_result=f"{n_up} upserted, {n_del} removed at {tip[:12]}", last_error="")
+    if mode == "sync":
+        say(f"{PROG} sync: {label} - {n_up} upserted, {n_del} removed")
+    else:
+        say(f"  total: {n_up} upserted, {n_del} removed")
+    return 0
+
+
+# ======================================== the inventory (opensoft/openRepoTools#161)
+#
+# THIS WORKSTATION'S #97 WORKTREE INVENTORY, AS A SECOND SOURCE. Amendment 14(e)
+# left "#97's lifecycle snapshots and worktree inventories, local to one
+# workstation by design" to a later word; #161 is it. The source is
+# `inventory:<Workstation>` - one per workstation, because the sidecars are on
+# that workstation's disk and nowhere else - and its rows are what
+# `lanes-edit.sh worktrees --all` prints, which is the inventory read through
+# the helper that writes it. Nothing here parses a sidecar, a snapshot or an
+# ownership marker, and nothing here lists a directory.
+
+def _helper_run(args: list, timeout: float, what: str) -> subprocess.CompletedProcess:
+    helper = lanes_edit_path()
+    if not helper:
+        raise StoreUnusable("unread", f"no lanes-edit.sh beside this file or on PATH, so {what} "
+                            f"cannot be read")
+    try:
+        return subprocess.run([helper, *args], capture_output=True, encoding="utf-8",
+                              errors="replace", check=False, env=helper_env(),
+                              stdin=subprocess.DEVNULL, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise StoreUnusable("unread", f"`lanes-edit.sh {' '.join(args)}` did not answer within "
+                            f"{int(timeout)} s")
+    except OSError as exc:
+        raise StoreUnusable("unread", f"`lanes-edit.sh {' '.join(args)}` could not be run: {exc}")
+
+
+def this_workstation() -> tuple[str, str]:
+    """`lanes-edit.sh workstation`'s first two columns: the name every row of
+    this workstation is filed under, and where it came from."""
+    proc = _helper_run(["workstation"], 60, "this workstation's name")
+    first = (proc.stdout.splitlines() or [""])[0].split("\t")
+    if proc.returncode != 0 or not first[0]:
+        why = (proc.stderr.strip().splitlines() or ["no answer"])[-1]
+        raise StoreUnusable("unread", f"`lanes-edit.sh workstation` exited {proc.returncode}: {why}")
+    return first[0], (first[1] if len(first) > 1 else "")
+
+
+def inventory_source(requested: str | None) -> str:
+    """`inventory:<this workstation>`. `--source inventory` is the short name for
+    it; another workstation's is refused, as another register is - its sidecars
+    are on its own disk. AND A CONTAINER WITH NO NAME FILES NOTHING (Amendment
+    11, `R-A11-14`): a source named for a container's own id is a source no
+    restart of any workstation will ever find again."""
+    name, how = this_workstation()
+    if how == "container-unset":
+        raise Refusal("this container has no LANES_WORKSTATION, so its inventory would be "
+                      f"filed under the container's own id `{name}` - a source no restart of "
+                      "any workstation finds again (Amendment 11, R-A11-14). Export "
+                      "LANES_WORKSTATION, as the launcher does")
+    source = f"{INVENTORY_PREFIX}{name}"
+    if requested and requested not in ("inventory", source):
+        raise Refusal(f"this workstation's inventory is {source}, not {requested}: an "
+                      f"inventory is synced by the workstation whose disk holds it")
+    return source
+
+
+def _int_or_none(value: str):
+    return int(value) if value.isdigit() else None
+
+
+def tree_record(fields: list) -> dict:
+    """One `TREE` line of `lanes-edit.sh worktrees`, as the `worktrees` row it
+    is. An empty field is NULL: a count the inventory recorded as `unknown`, a
+    base or a last commit that could not be read, a lane with no snapshot."""
+    text = [f if f != "" else None for f in fields]
+    return {"workstation": text[1], "lane": fields[2], "owner": text[3], "path": fields[4],
+            "branch": text[5], "base": text[6], "lifecycle": text[7],
+            "generation": _int_or_none(fields[8]), "operation": text[9],
+            "writer_live": _int_or_none(fields[10]), "last_seen_utc": text[11],
+            "last_commit": text[12], "dirty_count": _int_or_none(fields[13]),
+            "unpushed_count": _int_or_none(fields[14]), "pr_number": None, "pr_state": None,
+            "_provenance": text[15]}
+
+
+def tree_line(row: dict, provenance) -> str:
+    """The `TREE` line a stored row came from - the inverse of `tree_record`, so
+    that `lanes --index --worktrees` and `lanes --worktrees` print the same
+    bytes wherever the index is current."""
+    def text(value) -> str:
+        return "" if value is None else str(value)
+    return US.join(["TREE"] + [text(row.get(c)) for c in (
+        "workstation", "lane", "owner", "path", "branch", "base", "lifecycle", "generation",
+        "operation", "writer_live", "last_seen_utc", "last_commit", "dirty_count",
+        "unpushed_count")] + [text(provenance)])
+
+
+def inventory_digest(record: dict) -> str:
+    """The register's digest, and the row's provenance with it: two
+    observations of one tree filed under two generations are two versions."""
+    content = ["worktrees"] + [record.get(col) for col in TABLE_COLUMNS["worktrees"]] + \
+        [record.get("_provenance")]
+    blob = json.dumps(content, ensure_ascii=False, separators=(",", ":"), sort_keys=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def lane_generation(lane: str) -> tuple:
+    """`(generation, None)` of a lane's lifecycle snapshot, asked of `lanes-edit.sh
+    lane-state` - 0 where the lane has no snapshot or no control root here - or
+    `(None, why)` where the snapshot is there and could not be read."""
+    proc = _helper_run(["lane-state", lane], 120, f"lane {lane}'s lifecycle snapshot")
+    if proc.returncode in (1, 8):
+        return 0, None
+    if proc.returncode != 0:
+        return None, f"its lifecycle snapshot could not be read (lane-state exited {proc.returncode})"
+    fields = dict(line.split("\t", 1) for line in proc.stdout.splitlines() if "\t" in line)
+    if fields.get("state") == "UNKNOWN-SCHEMA":
+        return None, f"its lifecycle snapshot records schema {fields.get('schema')}"
+    gen = fields.get("generation", "")
+    return (int(gen) if gen.isdigit() else 0), None
+
+
+def collect_inventory() -> tuple[dict, dict]:
+    """Every tree the inventory names, keyed `<lane>:<path>`, and every lane
+    whose inventory is there and could not be read - whose rows are KEPT, never
+    taken for a lane with no trees (Amendment 7(d))."""
+    proc = _helper_run(["worktrees", "--all"], 600, "the worktree inventory")
+    if proc.returncode == 8:
+        return {}, {}
+    if proc.returncode != 0:
+        why = (proc.stderr.strip().splitlines() or ["no answer"])[-1]
+        raise StoreUnusable("unread", f"`lanes-edit.sh worktrees --all` exited "
+                            f"{proc.returncode}: {why}")
+    trees, unread = {}, {}
+    for line in proc.stdout.split("\n"):
+        if not line:
+            continue
+        fields = line.split(US)
+        if fields[0] == "UNREAD" and len(fields) >= 4:
+            unread[fields[2]] = fields[3]
+            continue
+        if fields[0] != "TREE" or len(fields) != 16:
+            raise StoreUnusable("unread", f"`lanes-edit.sh worktrees` printed a line this "
+                                f"indexer does not read ({len(fields)} fields): {line[:120]!r} - "
+                                f"is the helper on PATH another version?")
+        record = tree_record(fields)
+        trees[f"{record['lane']}:{record['path']}"] = record
+    return trees, unread
+
+
+def _github_repo(path: str) -> str:
+    if not os.path.isdir(path):
+        return ""
+    proc = subprocess.run(["git", "-C", path, "remote", "get-url", "origin"], capture_output=True,
+                          encoding="utf-8", errors="replace", check=False,
+                          stdin=subprocess.DEVNULL)
+    url = proc.stdout.strip()
+    if proc.returncode != 0 or "github.com" not in url:
+        return ""
+    repo = _norm_repo(url)
+    return repo if re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", repo) else ""
+
+
+def pr_of(path: str, branch_name: str):
+    """`(number, state)` of the newest pull request whose head is this branch,
+    asked of `gh` - BEST EFFORT, and `(None, None)` wherever it does not answer.
+    The one network read of this source, and only of it."""
+    repo = _github_repo(path)
+    if not repo:
+        return None, None
+    env = dict(os.environ)
+    env["GH_PROMPT_DISABLED"] = "1"
+    try:
+        proc = subprocess.run(["gh", "pr", "list", "--repo", repo, "--head", branch_name,
+                               "--state", "all", "--json", "number,state", "--limit", "1"],
+                              capture_output=True, encoding="utf-8", errors="replace",
+                              check=False, env=env, stdin=subprocess.DEVNULL, timeout=20)
+        found = json.loads(proc.stdout) if proc.returncode == 0 else []
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None, None
+    if not isinstance(found, list) or not found or not isinstance(found[0], dict):
+        return None, None
+    number = found[0].get("number")
+    state = found[0].get("state")
+    return (number if isinstance(number, int) else None,
+            state if isinstance(state, str) and state else None)
+
+
+def fill_prs(trees: dict, stored: dict, mode: str, held: dict | None = None) -> int:
+    """`pr_number`/`pr_state` for every tree on a branch. A `sync` carries a
+    stored answer over for a tree whose branch and last commit have not moved
+    where that answer is final (MERGED, CLOSED) or `gh` is not to be asked;
+    `reconcile` asks again. Returns how many were asked."""
+    use_gh = os.environ.get("LANES_NO_GITHUB", "") != "1" and bool(shutil.which("gh"))
+    ask = []
+    for rec_id, rec in trees.items():
+        name = rec.get("branch") or ""
+        if not name or " " in name or name in ("unknown", "HEAD") or rec["lane"] in (held or {}):
+            continue
+        old = stored.get(rec_id)
+        if mode == "sync" and old is not None and old.get("branch") == rec["branch"] \
+                and old.get("last_commit") == rec["last_commit"] \
+                and (old.get("pr_state") in ("MERGED", "CLOSED") or not use_gh):
+            rec["pr_number"], rec["pr_state"] = old.get("pr_number"), old.get("pr_state")
+            continue
+        if use_gh:
+            ask.append(rec_id)
+    if ask:
+        with ThreadPoolExecutor(max_workers=max(1, min(8, len(ask)))) as pool:
+            answers = list(pool.map(lambda rid: pr_of(trees[rid]["path"], trees[rid]["branch"]),
+                                    ask))
+        for rec_id, (number, state) in zip(ask, answers):
+            trees[rec_id]["pr_number"], trees[rec_id]["pr_state"] = number, state
+    return len(ask)
+
+
+def run_inventory(mode: str, requested: str | None, dry_run: bool) -> int:
+    cfg = load_config()
+    source = inventory_source(requested)
+    store = open_store(cfg, "writer")
+    if dry_run:
+        try:
+            store.open_read()
+        except StoreUnusable as exc:
+            if exc.kind not in ("missing", "wiped"):
+                raise
+            store = None
+    else:
+        store.open_write()
+    old = store.provenance(source) if store is not None else None
+    trees, unread = collect_inventory()
+    label = f"{source} ({cfg['store']})"
+    cols = TABLE_COLUMNS["worktrees"]
+    stored = {} if store is None else {
+        r["record_id"]: r for r in store.rows("worktrees", source, cols + ["digest", "provenance"])}
+
+    # THE PROVENANCE MOVES ONLY FORWARD, PER LANE (14(d)). A lane's lifecycle
+    # generation is monotonic by `set-lane-state`'s own fence, so a read BELOW
+    # the generation a lane's rows were written at is a snapshot that was moved
+    # aside or replaced - and a `sync` writes nothing for that lane rather than
+    # roll its rows back. `reconcile` is the act that takes the source as it now
+    # stands, and it says so. A lane whose inventory could not be read keeps its
+    # rows in either: a read that failed is never an answer.
+    held: dict = {}
+    for lane, why in unread.items():
+        held[lane] = f"its inventory is there and could not be read ({why})"
+    read_gen: dict = {}
+    for rec in trees.values():
+        read_gen[rec["lane"]] = max(read_gen.get(rec["lane"], 0), rec["generation"] or 0)
+    stored_gen: dict = {}
+    for row in stored.values():
+        stored_gen[row["lane"]] = max(stored_gen.get(row["lane"], 0), row["generation"] or 0)
+    # A LANE WHOSE ROWS WOULD ALL LEAVE IS FENCED TOO (Copilot round 2 on #171).
+    # It names no tree now, so it carries no generation in the read; its
+    # snapshot is asked for - only for these lanes, which are few - so that one
+    # moved aside and begun again without trees is held for `reconcile` like
+    # any other lane that went back, rather than emptied by a `sync`.
+    for lane in sorted(set(stored_gen) - set(read_gen) - set(held)):
+        if not stored_gen[lane]:
+            continue
+        gen, why = lane_generation(lane)
+        if why:
+            held[lane] = why
+        else:
+            read_gen[lane] = gen
+    taken: list = []
+    for lane, gen in sorted(read_gen.items()):
+        if lane in held or gen >= stored_gen.get(lane, 0):
+            continue
+        if mode == "sync":
+            held[lane] = (f"its lifecycle generation reads {gen} and its rows were written at "
+                          f"{stored_gen[lane]}; the provenance only moves forward, so nothing "
+                          f"is written for it - `{PROG} reconcile --source inventory` takes "
+                          f"the lane as it now stands")
+        else:
+            taken.append(f"  lane {lane}: its lifecycle generation went back from "
+                         f"{stored_gen[lane]} to {gen} (a snapshot moved aside or replaced); "
+                         f"reconcile takes it as it now stands")
+
+    fill_prs(trees, stored, mode, held)
+    upserts, deletes, kept = {}, [], 0
+    for rec_id, rec in trees.items():
+        rec["digest"] = inventory_digest(rec)
+        if rec["lane"] in held:
+            continue
+        row = stored.get(rec_id)
+        if row is not None:
+            if mode == "reconcile":
+                as_written = {c: row.get(c) for c in cols}
+                as_written["_provenance"] = row.get("provenance")
+                same = inventory_digest(as_written) == rec["digest"] == row.get("digest")
+            else:
+                same = row.get("digest") == rec["digest"]
+            if same:
+                kept += 1
+                continue
+        upserts[rec_id] = rec
+    for rec_id, row in stored.items():
+        if row["lane"] not in held and rec_id not in trees:
+            deletes.append(rec_id)
+    after = {rid: rec["digest"] for rid, rec in trees.items() if rec["lane"] not in held}
+    after.update({rid: row["digest"] for rid, row in stored.items() if row["lane"] in held})
+    fingerprint = hashlib.sha256("\n".join(
+        f"{rid}\t{digest}" for rid, digest in sorted(after.items())).encode("utf-8")).hexdigest()
+
+    n_up, n_del = len(upserts), len(deletes)
+    if mode == "reconcile":
+        say(f"{PROG} reconcile: {label}{' - DRY RUN' if dry_run else ''}")
+        say(f"  {'worktrees':<20} {kept:>6} kept  {n_up:>6} upserted  {n_del:>6} removed")
+        for line in taken:
+            say(line)
+    for lane, why in sorted(held.items()):
+        say(f"  lane {lane}: its rows are kept as they are - {why}")
+    if dry_run:
+        say(f"  total: {n_up} to upsert, {n_del} to remove - nothing written (--dry-run)")
+        return 0
+    # NOTHING TO WRITE ONLY WHERE THE SOURCE'S OWN ROW AGREES TOO (Copilot
+    # round 1 on #171): a fingerprint changed by hand, with every row right, is
+    # put right here rather than left disagreeing with the table it names.
+    if old is not None and not upserts and not deletes and old.get("commit_sha") == fingerprint:
+        if mode == "sync":
+            say(f"{PROG} sync: {label} - the index is current; nothing to write")
+        else:
+            say("  total: nothing differs; nothing written")
+        write_status(source, last_attempt_utc=utc_now(), last_sync_utc=utc_now(),
+                     last_result="current", last_error="")
+        return 0
+    try:
+        generation = int((old or {}).get("generation") or 0) + 1
+    except (TypeError, ValueError):
+        generation = 1
+    store.apply(source, old, fingerprint, {"worktrees": upserts} if upserts else {},
+                {"worktrees": deletes} if deletes else {}, generation=generation)
+    write_status(source, last_attempt_utc=utc_now(), last_sync_utc=utc_now(),
+                 last_result=f"{n_up} upserted, {n_del} removed at sync {generation}",
+                 last_error="")
+    if mode == "sync":
+        say(f"{PROG} sync: {label} - {n_up} upserted, {n_del} removed")
+    else:
+        say(f"  total: {n_up} upserted, {n_del} removed")
+    return 0
+
+
+def is_inventory(requested: str | None) -> bool:
+    return bool(requested) and (requested == "inventory" or requested.startswith(INVENTORY_PREFIX))
+
+
+def _sync_once(kind: str, requested: str | None) -> int:
+    if kind == "inventory":
+        # A REFUSAL HERE IS ANSWERED HERE: a register sync that took the
+        # inventory's mark must not lose the marks behind it to an exception.
+        try:
+            return _guarded(lambda: run_inventory("sync", requested, False), requested, kind)
+        except Refusal as exc:
+            note(f"REFUSED: {exc}")
+            return 2
+    return _guarded(lambda: run_index("sync", requested, False), requested, kind)
+
+
+def cmd_sync(requested: str | None) -> int:
+    if os.environ.get("LANES_INDEX", "") == "off":
+        say(f"{PROG} sync: LANES_INDEX=off - nothing indexed")
+        return 0
+    kind = "inventory" if is_inventory(requested) else "register"
+    asked = {kind: requested}
+    lock = SyncLock()
+    # THE HANDSHAKE, BOTH HALVES (Codex on #164). A sync that finds the lock
+    # held leaves its mark and then tries ONCE MORE: if that fails, somebody
+    # holds the lock NOW, after the mark was written, and the holder looks for
+    # marks after it lets go. The holder, for its part, looks again AFTER it
+    # releases - a mark written between its last look and its release is
+    # found there, and it takes the lock back for it. No mark is left with
+    # nobody due to read it. AND THE MARK NAMES ITS SOURCE (#161): the holder
+    # syncs every source a mark names, its own included, before it lets go.
+    if not lock.acquire(0):
+        lock.mark_rerun(kind)
+        if not lock.acquire(0):
+            say(f"{PROG} sync: another sync holds {lock.path}; it will sync again before "
+                f"it is done")
+            return 0
+    rc = 0
+    try:
+        rounds = 0
+        due = [kind]
+        while True:
+            for marked in lock.take_reruns():
+                if marked not in due:
+                    due.append(marked)
+            if not due:
+                lock.release()
+                if not lock.has_rerun() or not lock.acquire(0):
+                    return rc
+                continue
+            current = due[0]
+            rounds += 1
+            result = _sync_once(current, asked.get(current))
+            if result == MOVED and rounds < 5:
+                continue
+            due.pop(0)
+            if result == MOVED:
+                say(f"{PROG} sync: origin/{branch()} kept moving through {rounds} reads; "
+                    f"nothing written - the next write's nudge syncs it")
+                result = 0
+            # A FAILED SOURCE DOES NOT DROP THE OTHERS (Copilot round 1 on #171):
+            # their marks were taken off the disk with this one's, so the loop
+            # drains them all and the exit is the first failure.
+            if result != 0 and rc == 0:
+                rc = result
+            if rounds >= 8:
+                # THE CAP HANDS BACK WHAT IT DID NOT RUN (Copilot round 2 on
+                # #171): a source whose mark this loop took off the disk and
+                # never synced is marked again, for the next sync, exactly as a
+                # mark this loop never took is left for it.
+                for pending in due:
+                    lock.mark_rerun(pending)
+                return rc
+    finally:
+        lock.release()
+
+
+def cmd_reconcile(requested: str | None, dry_run: bool) -> int:
+    if os.environ.get("LANES_INDEX", "") == "off" and not dry_run:
+        say(f"{PROG} reconcile: LANES_INDEX=off - nothing indexed")
+        return 0
+    kind = "inventory" if is_inventory(requested) else "register"
+    lock = SyncLock()
+    if not dry_run and not lock.acquire(60):
+        note(f"another sync has held {lock.path} for 60 s; nothing written")
+        return 1
+    try:
+        if kind == "inventory":
+            return _guarded(lambda: run_inventory("reconcile", requested, dry_run), requested,
+                            kind)
+        for _attempt in range(3):
+            rc = _guarded(lambda: run_index("reconcile", requested, dry_run), requested)
+            if rc != MOVED:
+                return rc
+        note(f"origin/{branch()} kept moving through three reads; nothing written")
+        return 1
+    finally:
+        lock.release()
+
+
+#: `_guarded`'s answer for a read the source moved under: not an exit code
+#: anybody sees, a signal to the two drivers above to read again.
+MOVED = -1
+
+
+def _guarded(act, requested, kind: str = "register") -> int:
+    try:
+        return act()
+    except SourceMoved as exc:
+        note(str(exc))
+        return MOVED
+    except CasLost as exc:
+        note(str(exc))
+        _record_error(requested, str(exc), kind)
+        return 1
+    except StoreUnusable as exc:
+        note(f"{exc.kind}: {exc.detail} - nothing written")
+        _record_error(requested, f"{exc.kind}: {exc.detail}", kind)
+        return 1
+
+
+def _record_error(requested, message: str, kind: str = "register") -> None:
+    if kind == "inventory":
+        try:
+            source = inventory_source(requested)
+        except (StoreUnusable, Refusal):
+            source = requested if requested and requested != "inventory" else "inventory:?"
+        write_status(source, last_attempt_utc=utc_now(), last_error=f"{utc_now()} {message}")
+        return
+    try:
+        source = requested or source_of(workspace_root())
+    except StoreUnusable:
+        source = requested or "register:?"
+    write_status(source, last_attempt_utc=utc_now(), last_error=f"{utc_now()} {message}")
+
+
+def cmd_status() -> int:
+    cfg = load_config()
+    store = open_store(cfg, "reader")
+    say(f"store: {cfg['store']} {store.where} (configuration: "
+        f"{cfg['path'] if cfg['present'] else 'none - the defaults'})")
+    rc = 0
+    root = ""
+    source = ""
+    tip = ""
+    try:
+        root = workspace_root()
+        source = source_of(root)
+        tip = tip_of(root)
+    except StoreUnusable as exc:
+        say(f"workspace: {exc.detail}")
+        rc = 1
+    provs: list = []
+    try:
+        store.open_read()
+        provs = store.all_provenance()
+        say(f"schema: {SCHEMA_VERSION}")
+    except StoreUnusable as exc:
+        say(f"index: {exc.kind} - {exc.detail}")
+        rc = 1
+    local = read_status()
+    sources = [p["source"] for p in provs]
+    if source and source not in sources:
+        sources.append(source)
+    # THIS WORKSTATION'S INVENTORY TOO (#161), indexed or not - its name is the
+    # helper's, and a helper that cannot say it costs the line, not the status.
+    inv_source = ""
+    try:
+        inv_source = inventory_source(None)
+    except (StoreUnusable, Refusal):
+        inv_source = ""
+    if inv_source and inv_source not in sources:
+        sources.append(inv_source)
+    for name in sorted(set(sources) | set(local)):
+        prov = next((p for p in provs if p["source"] == name), None)
+        say(f"source {name}")
+        if name.startswith(INVENTORY_PREFIX):
+            if prov is None:
+                say("  provenance:  none - this inventory is not indexed (a wiped or "
+                    "never-synced index; `lanes-index reconcile --source inventory` builds it)")
+            else:
+                fp = prov.get("commit_sha") or ""
+                say(f"  provenance:  inventory@{fp[:12]} (sync {prov.get('generation')}, indexed "
+                    f"{prov['indexed_utc']}, schema {prov['schema_version']})")
+                try:
+                    count = len(store.rows("worktrees", name, ["lane"]))
+                    say(f"  rows:        {count} worktree(s)")
+                except StoreUnusable as exc:
+                    say(f"  rows:        unread - {exc.kind}: {exc.detail}")
+                    rc = 1
+        elif prov is None:
+            say("  provenance:  none - this source is not indexed (a wiped or never-synced "
+                "index; `lanes-index reconcile` builds it)")
+        elif prov.get("commit_sha"):
+            say(f"  provenance:  register@{prov['commit_sha'][:12]} (indexed "
+                f"{prov['indexed_utc']}, schema {prov['schema_version']})")
+        else:
+            say(f"  provenance:  generation {prov.get('generation')} (indexed "
+                f"{prov['indexed_utc']}, schema {prov['schema_version']})")
+        if name == source and tip:
+            say(f"  tip:         register@{tip[:12]} (origin/{branch()} in {root})")
+            if prov is not None and prov.get("commit_sha"):
+                lag = commits_between(root, prov["commit_sha"], tip)
+                say(f"  lag:         {'unknown (the indexed commit is not in this checkout)' if lag is None else f'{lag} commit(s)'}")
+        entry = local.get(name, {})
+        say(f"  last sync:   {entry.get('last_sync_utc') or 'never, from this workstation'}"
+            f"{' (' + entry['last_result'] + ')' if entry.get('last_result') else ''}")
+        say(f"  last error:  {entry.get('last_error') or 'none'}")
+    return rc
+
+
+def cmd_export(out_dir: str, requested: str | None, worktrees: bool = False) -> int:
+    """The read flags' reader, and nothing else's: the index's image of this
+    workstation's register in the shapes `lanes-edit.sh` reads from origin -
+    or, with `worktrees` (#161), every inventory source's rows as the `TREE`
+    lines `lanes-edit.sh worktrees` prints.
+
+    It writes FILES into `out_dir` and prints nothing a caller parses. On
+    success `meta`; on any reason the index cannot answer, `why` - one line,
+    which `lanes-edit.sh` prints as `read: sources (index <why>)`."""
+    if not os.path.isdir(out_dir):
+        note(f"--out {out_dir} is not a directory")
+        return 64
+
+    def unusable(kind: str, detail: str) -> int:
+        with open(os.path.join(out_dir, "why"), "w", encoding="utf-8") as handle:
+            handle.write(f"{kind}: {detail}\n")
+        return 3
+
+    try:
+        cfg = load_config()
+    except Refusal as exc:
+        unusable("refused", str(exc))
+        return 2
+    if worktrees:
+        return _export_worktrees(out_dir, cfg, unusable)
+    try:
+        root = workspace_root()
+        source = resolve_source(requested, root)
+        store = open_store(cfg, "reader")
+        store.open_read()
+        prov = store.provenance(source)
+        if prov is None or not prov.get("commit_sha"):
+            return unusable("wiped", f"no provenance for {source} in the {cfg['store']} store")
+        files = {r["record_id"]: r for r in store.rows("source_files", source,
+                                                        TABLE_COLUMNS["source_files"])}
+        lanes = store.rows("lanes", source, ["row_file", "row_ordinal", "row_text"])
+        reg_lines = store.rows("register_lines", source, ["ordinal", "raw"])
+        aliases = store.rows("lane_aliases", source, ["ordinal", "raw"])
+        log_rows = store.rows("log_lines", source, [c for c in TABLE_COLUMNS["log_lines"]
+                                                     if c not in ("payload_fields", "raw")])
+    except Refusal as exc:
+        unusable("refused", str(exc))
+        return 2
+    except StoreUnusable as exc:
+        return unusable(exc.kind, exc.detail)
+
+    def write(name: str, lines: list[str]) -> None:
+        with open(os.path.join(out_dir, name), "w", encoding="utf-8", newline="") as handle:
+            for line in lines:
+                handle.write(line + "\n")
+
+    register = [(r["row_ordinal"], r["row_text"]) for r in lanes if r["row_file"] == REGISTER_PATH]
+    register += [(r["ordinal"], r["raw"]) for r in reg_lines]
+    write("register", [text for _o, text in sorted(register, key=lambda x: x[0])])
+    if ARCHIVE_PATH in files:
+        write("archive", [r["row_text"] for r in sorted(
+            (r for r in lanes if r["row_file"] == ARCHIVE_PATH), key=lambda r: r["row_ordinal"])])
+    if ALIASES_PATH in files:
+        write("aliases", [r["raw"] for r in sorted(aliases, key=lambda r: r["ordinal"])])
+    logs = sorted((f for f in files.values() if f["kind"] == "log"), key=lambda f: f["ls_order"])
+    write("logs", [f["record_id"] for f in logs])
+    by_file: dict = {}
+    for row in log_rows:
+        by_file.setdefault(row["file"], []).append(row)
+    events, warn = [], []
+    for f in logs:
+        bad = 0
+        for row in sorted(by_file.get(f["record_id"], []), key=lambda r: r["ordinal"]):
+            if row["unreadable"]:
+                bad += 1
+                warn.append(f"unreadable: {row['file']}:{row['ordinal']} ({row['unreadable_why']})")
+                continue
+            events.append(US.join([row["utc"] or "", row["lane"] or "", row["verb"] or "",
+                                   row["session"] or "", row["workstation"] or "",
+                                   row["object"] or "", row["ref"] or "", row["payload"] or "",
+                                   row["free_text"] or "", row["file"] or "",
+                                   str(row["ordinal"])]))
+        if bad:
+            warn.append(f"{bad} unreadable line(s) above — an append-only log is never "
+                        f"rewritten, so a line no parser reads is a hold no tool will mention "
+                        f"again")
+    write("events", events)
+    write("warn", warn)
+    write("meta", [f"store={cfg['store']}", f"source={source}",
+                   f"sha={prov['commit_sha']}", f"indexed_utc={prov['indexed_utc']}"])
+    return 0
+
+
+def _export_worktrees(out_dir: str, cfg: dict, unusable) -> int:
+    """EVERY `inventory:<Workstation>` THE STORE HOLDS - this workstation's and
+    any other syncing into the same Postgres, which is what the table is for:
+    the next account, on either workstation, sees every open worktree in one
+    read. `meta` names each source with the time it was synced."""
+    try:
+        store = open_store(cfg, "reader")
+        store.open_read()
+        provs = [p for p in store.all_provenance()
+                 if str(p["source"]).startswith(INVENTORY_PREFIX)]
+        if not provs:
+            return unusable("wiped", f"no {INVENTORY_PREFIX}<Workstation> source in the "
+                            f"{cfg['store']} store")
+        lines = []
+        for prov in provs:
+            for row in store.rows("worktrees", prov["source"],
+                                  TABLE_COLUMNS["worktrees"] + ["provenance"]):
+                lines.append(tree_line(row, row.get("provenance")))
+    except Refusal as exc:
+        unusable("refused", str(exc))
+        return 2
+    except StoreUnusable as exc:
+        return unusable(exc.kind, exc.detail)
+    # THE BYTE ORDER `LC_ALL=C sort` GIVES the source read, so this
+    # workstation's rows are the source read's own stream wherever the index is
+    # current; a shared store adds other workstations' rows among them.
+    lines.sort(key=lambda line: line.encode("utf-8"))
+    with open(os.path.join(out_dir, "worktrees"), "w", encoding="utf-8", newline="") as handle:
+        for line in lines:
+            handle.write(line + "\n")
+    with open(os.path.join(out_dir, "meta"), "w", encoding="utf-8", newline="") as handle:
+        handle.write(f"store={cfg['store']}\n")
+        for prov in sorted(provs, key=lambda p: str(p["source"])):
+            handle.write(f"inventory\t{prov['source']}\t{prov['indexed_utc']}\t"
+                         f"{prov.get('generation')}\n")
+    return 0
+
+
+USAGE = f"""\
+{PROG} sync      [--source <s>]              index what LANDED, behind the source
+{PROG} reconcile [--source <s>] [--dry-run]  read the source whole; put the index right
+{PROG} status                                 per source: store, provenance, lag, errors
+{PROG} export    --out <dir> [--source <s> | --worktrees]
+                                             the `--index` read flags' reader
+
+The DERIVED INDEX of the lane register (lane-collision-protocol Amendment 14).
+It is written behind the sources by this command alone, read only by tooling
+that decides nothing, and never a gate: no lane act reads it or waits on it.
+
+  sync        Reads `origin/<branch>` of the workspace repository as the push
+              left it - never the working tree - and upserts each record that
+              differs, keyed by (source, record id) and versioned by a digest,
+              with the source's provenance compared and swapped in the SAME
+              transaction. A sync from a commit that does not descend from the
+              indexed one writes nothing. `lanes-edit.sh` starts it DETACHED
+              after every write that landed; `LANES_INDEX=off` stops that.
+  reconcile   Reads the source whole, compares every stored row by its
+              CONTENT, upserts what differs and removes what is gone: on a
+              wiped index, the rebuild. `--dry-run` prints the counts only.
+  status      The store, each source's provenance against its tip, the lag in
+              commits, and this workstation's last sync and last error.
+  export      Writes the index's image of the register into <dir> for
+              `lanes --index` and `lanes-edit.sh history --index` - or, with
+              `--worktrees`, every inventory source's rows for `lanes --index
+              --worktrees`. Not for people.
+
+  --source <s>  `register:<owner/repo>`, which must be this workstation's own
+                and is the default; `inventory` (or `inventory:<Workstation>`,
+                this one's) is THIS workstation's #97 worktree inventory, read
+                through `lanes-edit.sh worktrees --all` into the `worktrees`
+                table (opensoft/openRepoTools#161) - every inventory write
+                nudges `sync --source inventory`. The managed ledger's
+                `ledger:<Workstation>` is T058's to write.
+
+THE STORE: SQLite at ${{XDG_STATE_HOME:-~/.local/state}}/openRepoTools/lanes-index.sqlite,
+or QA Postgres through `psql` where the configuration names a `url=`.
+THE CONFIGURATION: ${{XDG_CONFIG_HOME:-~/.config}}/openRepoTools/lanes-index.conf, or the
+file $LANES_INDEX_CONFIG names - mode 0600, outside every git work tree and
+outside ~/.agents/, with no password in any URL:
+
+  store=sqlite|postgres     default: postgres where url= is set, else sqlite
+  sqlite=<path>             the SQLite file
+  url=<libpq URL>           the WRITER role (sync, reconcile)
+  passfile=<path>           the 0600 libpq password file for it
+  reader_url=<libpq URL>    the SELECT-only READER role (status, export) -
+                            required beside url=; a read never uses the writer
+  reader_passfile=<path>    its password file, where it is not the same one
+  schema=<name>             the Postgres schema (default lanes_index)
+
+Exit: 0 done · 1 a read or write failed, nothing half-written · 2 refused ·
+3 export: the index cannot answer (the reason is in <dir>/why) · 64 usage."""
+
+
+def main(argv: list[str]) -> int:
+    if not argv:
+        sys.stderr.write(USAGE + "\n")
+        return 64
+    if argv[0] in ("-h", "--help", "help"):
+        say(USAGE)
+        return 0
+    if argv[0] == "--version":
+        say(f"{PROG} {VERSION} (schema {SCHEMA_VERSION})")
+        return 0
+    verb, args = argv[0], argv[1:]
+    source = None
+    dry_run = False
+    worktrees = False
+    out_dir = None
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ("-h", "--help"):
+            say(USAGE)
+            return 0
+        if arg == "--source" or arg.startswith("--source="):
+            value = arg.split("=", 1)[1] if "=" in arg else (args[i + 1] if i + 1 < len(args) else "")
+            if not value:
+                note("--source needs a value: register:<owner/repo>")
+                return 64
+            source = value
+            i += 1 if "=" in arg else 2
+            continue
+        if (arg == "--out" or arg.startswith("--out=")) and verb == "export":
+            value = arg.split("=", 1)[1] if "=" in arg else (args[i + 1] if i + 1 < len(args) else "")
+            if not value:
+                note("--out needs a directory")
+                return 64
+            out_dir = value
+            i += 1 if "=" in arg else 2
+            continue
+        if arg == "--dry-run" and verb == "reconcile":
+            dry_run = True
+            i += 1
+            continue
+        if arg == "--worktrees" and verb == "export":
+            worktrees = True
+            i += 1
+            continue
+        note(f"unknown argument '{arg}' for {verb} - see {PROG} --help")
+        return 64
+    try:
+        if verb == "sync":
+            return cmd_sync(source)
+        if verb == "reconcile":
+            return cmd_reconcile(source, dry_run)
+        if verb == "status":
+            if source:
+                note("status takes no --source; it prints every source the store holds")
+                return 64
+            return cmd_status()
+        if verb == "export":
+            if not out_dir:
+                note("export needs --out <dir>")
+                return 64
+            if worktrees and source:
+                note("export --worktrees reads every inventory source the store holds; it "
+                     "takes no --source")
+                return 64
+            return cmd_export(out_dir, source, worktrees)
+    except Refusal as exc:
+        note(f"REFUSED: {exc}")
+        return 2
+    except StoreUnusable as exc:
+        note(f"{exc.kind}: {exc.detail}")
+        return 1
+    note(f"unknown subcommand '{verb}' (sync|reconcile|status|export) - see {PROG} --help")
+    return 64
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
