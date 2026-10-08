@@ -48,6 +48,14 @@ TESTS_DIR="$(cd -- "$(dirname -- "$SELF")" && pwd)"
 # `repos.tsv` BESIDE it, because in `opensoft/brett-wip` they were. They are at
 # the root of `opensoft/openRepoTools` now and this suite is in `tests/`.
 SRC_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
+# THE LANE MANUAL IS THE SPEC LEG'S (opensoft/openRepoTools#186, T009). Two
+# sections below quote `docs/README-lanes.md` back against the code, and in the
+# triad that file is in the spec leg, not beside the code. The pytest runner
+# (`tests/test_lane_helpers_suite.py`) names it from the run's roots; SET AND
+# EMPTY means the run has no spec root - a standalone code leg - and those
+# quotes are SKIPPED, naming it. Unset, it is this checkout's own copy, as it
+# always was, and a composed run never reaches here without one.
+LANE_MANUAL="${OPENREPOTOOLS_LANE_MANUAL-$SRC_DIR/docs/README-lanes.md}"
 
 for f in lane-start lane-end lanes-edit.sh link-estates lane lanes lane-rename lane-worktrees; do
   [ -x "$SRC_DIR/$f" ] || { echo "missing or not executable: $SRC_DIR/$f" >&2; exit 1; }
@@ -3733,9 +3741,10 @@ unset FAKE_TMUX_WINDOW_NAME
 # and not one example block carrying the `as of … (no fetch)` line Amendment
 # 8(e) requires on EVERY block — and nothing noticed, because no assertion in
 # this suite had ever read the document. A quoted line nobody reads is the same
-# defect as an untested sentence (RV-B2), one file over. Read from `$SRC_DIR`,
-# the checkout's own copy, which is the one a person opens.
-ss_doc="$(cat "$SRC_DIR/docs/README-lanes.md" 2>/dev/null || :)"
+# defect as an untested sentence (RV-B2), one file over. Read from
+# `$LANE_MANUAL`, the run's own copy, which is the one a person opens.
+if [ -n "$LANE_MANUAL" ]; then
+ss_doc="$(cat "$LANE_MANUAL" 2>/dev/null || :)"
 has  "the README states the subcommand's THIRD safety property, not just two" "$ss_doc" "It never writes, it never touches the network, and it always exits 0"
 has  "…and carries the line every block ends with" "$ss_doc" "as of 4m ago (no fetch)"
 has  "…quoting the superseded-transcript branch as the hook really prints it" "$ss_doc" "WARNING: this is a superseded transcript of lane repoSS-1; the live one is <U>; you resumed <V> — exit this session and run: lane-start repoSS 1"
@@ -3743,6 +3752,9 @@ has  "…its \`unknown\`-stamp sub-branch, which sends the reader to the RECORDI
 has  "…the in-no-row branch, its command filled in too" "$ss_doc" "this session <V> is in no row — the harness minted a new transcript — run: lane-start --no-launch repoSS 1"
 has  "…and the third bound-branch line, the one Rule 3's stamp is owed on" "$ss_doc" "stamp the handoff RESUMED (Rule 3) and follow its top block"
 hasnt "…never the drifted spelling, which no branch of the hook has ever printed" "$ss_doc" "whose current session is <U>; you resumed <V> — run: lane-start <repo> <n>"
+else
+  skip "the manual quotes the session-start hook (seven assertions)" "no spec root in this run: docs/README-lanes.md is the spec leg's (#186, T009)"
+fi
 
 # ------------------------------------------------- Rule 1's sibling reads
 #
@@ -6223,9 +6235,10 @@ has   "…in ITS arm's own words" "$err" "--estate needs a name"
 # went on calling `lanes` "every lane on this workstation, newest write first"
 # — the pre-settlement default, wrong twice over, because the scope is the
 # ESTATE now and inside a checkout it is one repository. Nothing was red for it:
-# no assertion had ever read that sentence. Read from `$SRC_DIR`, the checkout's
+# no assertion had ever read that sentence. Read from `$LANE_MANUAL`, the run's
 # own copy, which is the one a person opens.
-ln_doc="$(cat "$SRC_DIR/docs/README-lanes.md" 2>/dev/null || :)"
+if [ -n "$LANE_MANUAL" ]; then
+ln_doc="$(cat "$LANE_MANUAL" 2>/dev/null || :)"
 has   "the manual quotes the settlement that narrowed the bare word" "$ln_doc" \
       "Narrow inside a checkout (Recommended)"
 has   "…and the one that made \`lane-start <repo>\` list and suggest" "$ln_doc" \
@@ -6240,6 +6253,9 @@ has   "…and the way back to every lane, which is the word the stale sentence l
       "\`lanes --all\`, and a bare \`lanes\` outside every checkout, are clause (j)'s"
 hasnt "…never the pre-settlement default it documented while building the narrowing" "$ln_doc" \
       "every lane on this workstation"
+else
+  skip "the manual says what a bare lanes lists (seven assertions)" "no spec root in this run: docs/README-lanes.md is the spec leg's (#186, T009)"
+fi
 
 run "$LANES_CMD" --all </dev/null
 is   "lanes exits 0 with rows" "$rc" 0

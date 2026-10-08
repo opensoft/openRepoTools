@@ -7,6 +7,13 @@ about the bash files this repository ships (`SHIPPED_BASH` and `LANE_BASH`
 below) and the documents beside them, so they run in a clone made without
 `--recurse-submodules` and they run on Windows, which is what the Windows job
 is for.
+
+EACH FILE IS READ FROM THE ROOT THAT OWNS IT (opensoft/openRepoTools#186,
+T009). A command, a test or a pin is the CODE root's (`REPO`); `README.md`,
+`AGENTS.md` and `CLAUDE.md` are the ASSEMBLY root's and `docs/` the SPEC
+leg's, read through `doc()` below. On today's layout the three are one tree,
+so nothing here changes; in a standalone code leg a document test skips naming
+the root it needs, and in the composed run it fails rather than skip.
 """
 
 from __future__ import annotations
@@ -19,7 +26,34 @@ from pathlib import Path
 
 import pytest
 
-from conftest import REPO, WINDOWS_SKIP
+from conftest import REPO, ROOTS, WINDOWS_SKIP
+
+
+def doc(rel: str) -> Path:
+    """`rel` from the root that owns it: `ROOTS.path_for`, which skips a
+    standalone code leg's test (fails a composed one) where that root is
+    absent. A command passed here is simply the code root's file."""
+    return ROOTS.path_for(rel)
+
+
+def code_first(*names: str) -> list:
+    """`names`, the code root's own files first: where a test reads a command
+    AND the documents about it, a standalone code leg still asserts the
+    command's half before the first document's root ends the test."""
+    return sorted(names, key=lambda name: ROOTS.owner_of(name) != "code")
+
+
+def tracked_files():
+    """(label, path) for every file `git ls-files` tracks in every repository
+    this run can read — the code root alone on today's layout, and in the
+    composed run the assembly and the spec leg too, so a claim about every
+    COMMITTED file still covers every file the single repository had."""
+    for role, root in ROOTS.tracked_roots():
+        listed = subprocess.run(["git", "ls-files"], cwd=str(root),
+                                capture_output=True, text=True,
+                                check=True).stdout.splitlines()
+        for rel in listed:
+            yield (rel if role == "code" else f"{role} root: {rel}"), root / rel
 
 #: EVERY BASH FILE THIS REPOSITORY SHIPS, and nothing else is one. Each is a
 #: file a person has on their PATH — the installer, the two estate verbs, the
@@ -846,7 +880,7 @@ def test_the_readme_prints_the_install_line_the_pointer_prints():
     """openRepoShape's `--install` prints one `curl` line pointing here, and a
     reader who follows it must land on the same bytes this README documents.
     Two spellings of one install line is one of them being wrong."""
-    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    readme = doc("README.md").read_text(encoding="utf-8")
     assert RAW_INSTALL_LINE in readme, (
         "README.md does not carry the install line openRepoShape's --install "
         f"points at, byte for byte:\n    {RAW_INSTALL_LINE}")
@@ -857,7 +891,7 @@ def test_the_readme_also_carries_the_gh_api_form():
     raw.githubusercontent.com still has a working `gh` — the same reason the
     installer tries the API first. The shim's own pointer has room for one
     line; the READMEs are where the twin lives."""
-    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    readme = doc("README.md").read_text(encoding="utf-8")
     assert "gh api repos/opensoft/openRepoTools/contents/openRepoTools" in readme
     assert "-H 'Accept: application/vnd.github.raw'" in readme
     assert "bash -s -- --install" in readme
@@ -884,7 +918,7 @@ def test_the_readme_carries_the_two_line_onboarding_chain():
     login from `gh api user`, and `~/.local/bin` on `PATH`, which needs a
     restarted terminal before anything `--install` placed can be typed.
     """
-    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    readme = doc("README.md").read_text(encoding="utf-8")
     assert "gh repo clone opensoft/workBenches && cd workBenches && ./setup.sh" \
         in readme, (
         "README.md does not carry Amendment 9(e)'s first line, byte for byte")
@@ -908,14 +942,14 @@ def test_no_document_offers_a_windows_powershell_twin():
     two-liner and no PowerShell twin to point at, so on Windows the way in is
     WSL2 — which both documents say, once each."""
     for name in ("README.md", "AGENTS.md"):
-        text = (REPO / name).read_text(encoding="utf-8")
+        text = doc(name).read_text(encoding="utf-8")
         assert "Invoke-WebRequest" not in text, (
             f"{name} offers a Windows download line for a bash-only toolset")
         assert "WSL2" in text, f"{name} must say what a Windows reader does"
 
 
 def test_claude_md_points_at_agents_md():
-    assert "AGENTS.md" in (REPO / "CLAUDE.md").read_text()
+    assert "AGENTS.md" in doc("CLAUDE.md").read_text()
 
 
 def test_the_documents_say_what_bare_park_does_now():
@@ -938,8 +972,8 @@ def test_the_documents_say_what_bare_park_does_now():
     estate the bare form does not need or, worse, treats a bare `park` in the
     wrong folder as a one-keystroke sweep of the workstation.
     """
-    for name in ("README.md", "AGENTS.md", "park"):
-        text = (REPO / name).read_text(encoding="utf-8")
+    for name in code_first("README.md", "AGENTS.md", "park"):
+        text = doc(name).read_text(encoding="utf-8")
         assert "--all" in text, f"{name} does not name the sweep's flag"
         assert re.search(r"(?<![\w-])-a(?![\w-])", text), (
             f"{name} does not name the short form, -a")
@@ -951,10 +985,10 @@ def test_the_documents_say_what_bare_park_does_now():
             f"{name} does not say the order, which is the whole of what a "
             f"person watching a sweep sees")
     assert "keeps that old refusal for its own bare form" in \
-        (REPO / "README.md").read_text(encoding="utf-8"), (
+        doc("README.md").read_text(encoding="utf-8"), (
         "README.md does not say resume's own bare form still refuses")
     assert "`resume`'s OWN bare form still refuses" in \
-        (REPO / "AGENTS.md").read_text(encoding="utf-8"), (
+        doc("AGENTS.md").read_text(encoding="utf-8"), (
         "AGENTS.md does not say resume's own bare form still refuses")
     park = (REPO / "park").read_text(encoding="utf-8")
     assert "PARKED EVERY ESTATE unasked" in park, (
@@ -984,8 +1018,8 @@ def test_the_documents_say_what_status_is_and_is_not():
     "four" precisely so that a document which grows the install and forgets
     to say so is a red test.
     """
-    for name in ("README.md", "AGENTS.md", "status"):
-        text = (REPO / name).read_text(encoding="utf-8")
+    for name in code_first("README.md", "AGENTS.md", "status"):
+        text = doc(name).read_text(encoding="utf-8")
         assert "fetches nothing" in text, (
             f"{name} does not say status fetches nothing without the flag")
         assert "--fetch" in text, f"{name} does not name the flag"
@@ -1007,9 +1041,9 @@ def test_the_documents_say_what_status_is_and_is_not():
         assert "local layer" in text.lower(), (
             f"{name} does not say this is the local layer, with more to come")
     for name in ("README.md", "AGENTS.md"):
-        text = (REPO / name).read_text(encoding="utf-8")
+        text = doc(name).read_text(encoding="utf-8")
         assert "`status`" in text, f"{name} never names the fourth command"
-    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    readme = doc("README.md").read_text(encoding="utf-8")
     assert "THIRTEEN files" in readme, (
         "README.md does not count the thirteen files")
     assert "13 of 13 placed" in readme, (
@@ -1034,8 +1068,8 @@ def test_the_documents_say_the_sweep_skips_a_root_without_the_overlay():
     or, worse, treats four never-installed roots as four things to fix before
     the park can be trusted.
     """
-    for name in ("README.md", "AGENTS.md", "park"):
-        text = (REPO / name).read_text(encoding="utf-8")
+    for name in code_first("README.md", "AGENTS.md", "park"):
+        text = doc(name).read_text(encoding="utf-8")
         assert "SKIPPED" in text, (
             f"{name} does not say the sweep SKIPS a root without the overlay")
         assert "Speckit git overlay" in text, (
@@ -1045,7 +1079,7 @@ def test_the_documents_say_the_sweep_skips_a_root_without_the_overlay():
             f"{name} does not name the installer, which is the whole of what "
             f"the person reading a skipped line has to do next")
     for name in ("README.md", "AGENTS.md"):
-        assert "skipped (no overlay)" in (REPO / name).read_text(
+        assert "skipped (no overlay)" in doc(name).read_text(
             encoding="utf-8"), (
             f"{name} does not show the summary clause a person actually sees")
 
@@ -1180,7 +1214,7 @@ def test_the_directory_precedence_states_every_rung_it_implements():
         f"clause (c)'s own block does not list: {sorted(listed)}")
     assert listed == set(range(1, declared + 1)), (
         f"the block says {declared} rungs and lists {sorted(listed)}")
-    manual = (REPO / "docs/README-lanes.md").read_text(encoding="utf-8")
+    manual = doc("docs/README-lanes.md").read_text(encoding="utf-8")
     stated = re.search(r"The lane's directory, in (\w+) rungs", manual)
     assert stated, "the manual has no directory-precedence heading to count"
     assert RUNG_WORDS[stated.group(1).lower()] == declared, (
@@ -1213,12 +1247,12 @@ def test_the_documents_say_what_a_bare_lanes_lists():
     """
     surfaces = ("README.md", "docs/README-lanes.md", "lanes", "lane",
                 "openRepoTools")
-    for name in surfaces:
-        text = (REPO / name).read_text(encoding="utf-8")
+    for name in code_first(*surfaces):
+        text = doc(name).read_text(encoding="utf-8")
         assert "every lane on this workstation" not in text, (
             f"{name} still calls `lanes` the listing of every lane on this "
             f"workstation, which is the pre-settlement default")
-    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    readme = doc("README.md").read_text(encoding="utf-8")
     assert "Narrow inside a checkout" in readme, (
         "README.md does not quote the settlement that narrowed the bare word")
     assert "lanes --all" in readme, (
@@ -1230,7 +1264,7 @@ def test_the_documents_say_what_a_bare_lanes_lists():
     assert "lanes [--all] [--fetch]" in usage, (
         "`openRepoTools --help` does not offer --all, so a person narrowed "
         "into a checkout cannot find the way back to every lane")
-    manual = (REPO / "docs/README-lanes.md").read_text(encoding="utf-8")
+    manual = doc("docs/README-lanes.md").read_text(encoding="utf-8")
     assert "Narrow inside a checkout (Recommended)" in manual, (
         "the manual does not quote the settlement verbatim")
     assert "Yes, list and suggest (Recommended)" in manual, (
@@ -1243,7 +1277,7 @@ def test_agents_md_names_the_pin_rules():
     the reason they are in AGENTS.md rather than only in the pin's header: an
     assistant is told to read this file, and a procedure that lives outside it
     is a procedure performed from memory."""
-    text = (REPO / "AGENTS.md").read_text(encoding="utf-8")
+    text = doc("AGENTS.md").read_text(encoding="utf-8")
     assert "Never edit anything under `upstream/openRepoShape` in place" in text
     assert "Never pin a commit that is not on that repository's `main`" in text
     assert "RECOMPUTED, never adjusted" in text
@@ -1732,7 +1766,7 @@ def test_agents_md_is_short_enough_to_be_read():
     rule) + #83's thirteen (the ONE BINDING rule): the count of what merged,
     rather than either side's number — the rule the 224 entry states.
     """
-    lines = (REPO / "AGENTS.md").read_text().splitlines()
+    lines = doc("AGENTS.md").read_text().splitlines()
     assert len(lines) <= 316, f"AGENTS.md is {len(lines)} lines; the cap is 316"
 
 
@@ -2229,7 +2263,7 @@ def test_readme_is_short_enough_to_be_read():
     the same rule exists; this is its history half, and a reader of one should
     not meet the other as a surprise. Every dated entry above stays.
     """
-    lines = (REPO / "README.md").read_text().splitlines()
+    lines = doc("README.md").read_text().splitlines()
     assert len(lines) <= 486, f"README.md is {len(lines)} lines; the cap is 486"
 
 
@@ -2387,7 +2421,7 @@ def test_the_exit_3_documentation_agrees_with_the_die_message_it_describes():
     start = src.index("# EXIT CODES — every subcommand, one table")
     end = src.index("# --no-sweep", start)
     table = src[start:end]
-    manual = (REPO / "docs/README-lanes.md").read_text(encoding="utf-8")
+    manual = doc("docs/README-lanes.md").read_text(encoding="utf-8")
     def flatten(text):
         # A row that wraps onto a comment-continuation line puts a literal
         # `#` back-to-back with the next word once newlines alone are
@@ -2450,13 +2484,9 @@ def test_adoption_act_zero_is_cited_by_the_sha_that_landed():
     thing that did not land. What is checked here is the citation form
     `opensoft/brett-wip#5 @<sha>`, which asserts "this is act 0".
     """
-    tracked = subprocess.run(["git", "ls-files"], cwd=str(REPO),
-                             capture_output=True, text=True,
-                             check=True).stdout.splitlines()
     offenders = {}
     cited = 0
-    for rel in tracked:
-        path = REPO / rel
+    for rel, path in tracked_files():
         if not path.is_file():
             continue
         try:
@@ -2621,7 +2651,7 @@ def test_the_manual_offers_the_fork_act_and_not_a_kill():
     refuses because they are not forks - and their `kill` lines are untouched
     here for the same reason the test above leaves them alone.
     """
-    text = (REPO / "docs/README-lanes.md").read_text(encoding="utf-8")
+    text = doc("docs/README-lanes.md").read_text(encoding="utf-8")
     offenders = [" ".join(para.split())[:200]
                  for para in re.split(r"\n\s*\n", text)
                  if re.search(r"\bfork\b", para, re.I)
@@ -2646,13 +2676,14 @@ def test_no_committed_file_names_a_host_absolute_path():
     `upstream/openRepoShape` is listed as a path and is not a file, so it is
     skipped too: what the standard's own tree carries is the standard's own
     suite to police.
+
+    EVERY REPOSITORY THIS RUN CAN READ (#186, T009): the composed run scans the
+    assembly and the spec leg beside the code leg, which is every file the one
+    repository carried before the split. Their gitlinks are paths and not files,
+    like the one above.
     """
-    tracked = subprocess.run(["git", "ls-files"], cwd=str(REPO),
-                             capture_output=True, text=True,
-                             check=True).stdout.splitlines()
     offenders = {}
-    for rel in tracked:
-        path = REPO / rel
+    for rel, path in tracked_files():
         if not path.is_file():
             continue
         try:
@@ -2677,6 +2708,12 @@ def test_the_root_carries_the_line_ending_rule():
     to LF in the object store on check-in and checks it out as LF on every
     platform, whatever `core.autocrlf` says — so nobody has to be told a git
     setting before cloning, and nobody who was never told is punished for it.
+
+    THE CODE ROOT'S, IN EVERY LAYOUT (#186, T009). The adoption mapping places
+    `.gitattributes` at the assembly, but git reads a submodule's attributes
+    from the submodule's own tree: the assembly's copy protects no byte of the
+    code leg. So this reads the file beside the bash files, and a code leg that
+    has none is red here until it carries its own.
     """
     text = (REPO / ".gitattributes").read_text(encoding="utf-8")
     assert "* text=auto eol=lf" in text
@@ -3071,7 +3108,7 @@ def test_the_suite_wrapper_takes_one_lock_and_names_it_where_agents_read_it():
     wrapper = REPO / "tests" / "run.sh"
     assert wrapper.is_file(), "tests/run.sh is the way this suite is run"
     text = wrapper.read_text(encoding="utf-8")
-    agents = (REPO / "AGENTS.md").read_text(encoding="utf-8")
+    agents = doc("AGENTS.md").read_text(encoding="utf-8")
 
     lock = '${TMPDIR:-/tmp}/openrepotools-pytest.lock'
     assert lock in text, f"the wrapper must take {lock}"
