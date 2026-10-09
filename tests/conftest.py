@@ -88,6 +88,13 @@ ASSEMBLY_MARKERS = ("contracts/code-pin.yaml", "project.yaml")
 #: `templates/workspace-root/README.md` is `test_wip_init_command.py`'s. A
 #: composed run needs both, because either one missing is a skip.
 DEPENDENCY_PATH = "upstream/openRepoShape"
+
+#: THE PAIRED LAYOUT. A feature is worked in `<assembly>/worktrees/<feature>/`,
+#: a worktree of each leg named like that leg's mount (`code/`, `spec/`) and
+#: never committed in the assembly (T006's root guidance and the code leg's own
+#: AGENTS.md). A code root there belongs to that assembly as surely as the
+#: mounted one does, so it is found there too (#193 item 5).
+PAIRED_WORKTREES = "worktrees"
 DEPENDENCY_PROBE = "scripts/repo_shape.py"
 DEPENDENCY_PROBES = (DEPENDENCY_PROBE, "templates/workspace-root/README.md")
 
@@ -161,17 +168,38 @@ def _mount(assembly: Path, role: str) -> str:
                    "submodule_path") or role
 
 
+def _paired_with(assembly: Path, code: Path, recorded: str) -> bool:
+    """Whether `code` is a paired feature worktree of `assembly`'s code leg:
+    `<assembly>/worktrees/<feature>/<the code mount's own name>`, a repository
+    of its own, whose object store holds the commit the assembly pins. That
+    last check is what keeps a checkout that merely sits there from being
+    taken for the leg."""
+    mount = _mount(assembly, "code")
+    if not (_same(code.parent.parent, assembly / PAIRED_WORKTREES)
+            and code.name == Path(mount).name):
+        return False
+    top = _git_out(code, "rev-parse", "--show-toplevel")
+    return bool(top and _same(Path(top), code)) and _git_out(
+        code, "cat-file", "-e", f"{recorded}^{{commit}}") is not None
+
+
 def discover_assembly(code: Path) -> Optional[Path]:
     """The nearest directory above `code` that carries the assembly's pins and
-    manifest AND records `code` as the gitlink its code pin names — or None,
-    which is today's layout and a standalone code clone alike."""
-    for candidate in code.resolve().parents:
+    manifest, is its repository's top level, records a gitlink where its code
+    pin names, AND holds `code` in one of the two designed places: mounted at
+    that gitlink, or as a paired feature worktree
+    (`<assembly>/worktrees/<feature>/code`). Anything else is None, which is
+    today's layout and a standalone code clone alike."""
+    code = code.resolve()
+    for candidate in code.parents:
         if not _carries(candidate, ASSEMBLY_MARKERS):
             continue
         mount = _mount(candidate, "code")
         top = _git_out(candidate, "rev-parse", "--show-toplevel")
-        if (top and _same(Path(top), candidate) and _same(candidate / mount, code)
-                and _gitlink(candidate, mount)):
+        recorded = _gitlink(candidate, mount)
+        if not (top and _same(Path(top), candidate) and recorded):
+            return None
+        if _same(candidate / mount, code) or _paired_with(candidate, code, recorded):
             return candidate
         return None
     return None
@@ -397,7 +425,10 @@ def resolve_roots(environ: Mapping[str, str], suite_root: Path) -> Roots:
     else:
         assembly = discover_assembly(code)
         if assembly is not None:
-            how["assembly"] = "found above the code root, which it mounts"
+            how["assembly"] = (
+                "found above the code root, which it mounts"
+                if _same(assembly / _mount(assembly, "code"), code) else
+                "found above the code root, a paired feature worktree of its code leg")
 
     spec: Optional[Path] = None
     named = environ.get(ENV_SPEC_ROOT, "")
@@ -410,9 +441,16 @@ def resolve_roots(environ: Mapping[str, str], suite_root: Path) -> Roots:
             problems.append(f"{ENV_SPEC_ROOT}={named} is not a spec root: it "
                             f"carries none of {', '.join(SPEC_TREES)}")
     elif assembly is not None:
-        candidate = assembly / _mount(assembly, "spec")
-        if _carries_a_spec_tree(candidate):
-            spec, how["spec"] = candidate, "the assembly's spec leg"
+        # A paired feature's own spec worktree, beside its code worktree, is
+        # that feature's spec root; the assembly's mounted spec leg otherwise.
+        paired = code.parent / Path(_mount(assembly, "spec")).name
+        if (_same(code.parent.parent, assembly / PAIRED_WORKTREES)
+                and _carries_a_spec_tree(paired)):
+            spec, how["spec"] = paired, "the paired spec worktree beside the code root"
+        else:
+            candidate = assembly / _mount(assembly, "spec")
+            if _carries_a_spec_tree(candidate):
+                spec, how["spec"] = candidate, "the assembly's spec leg"
 
     return Roots(code, assembly, spec, composed, how, problems, rejected)
 

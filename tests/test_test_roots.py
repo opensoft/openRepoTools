@@ -615,6 +615,72 @@ def test_a_directory_that_does_not_mount_the_code_root_is_not_its_assembly(tmp_p
     assert conftest.resolve_roots({}, code).assembly is None
 
 
+def paired_triad(tmp_path: Path, *, spec_worktree: bool = True):
+    """An assembly with both legs mounted, and a feature's paired worktrees
+    `worktrees/001-feature/{code,spec}` made from those legs, as T006's root
+    guidance and the code leg's AGENTS.md lay them out."""
+    code = code_leg(tmp_path / "asm" / "code", repository=True)
+    spec = spec_leg(tmp_path / "asm" / "spec", repository=True)
+    root = assembly(tmp_path / "asm", code=code, spec=spec, repository=True)
+    feature = root / "worktrees" / "001-feature"
+    run_git(code, "worktree", "add", "-q", "-b", "001-feature",
+            str(feature / "code"))
+    if spec_worktree:
+        run_git(spec, "worktree", "add", "-q", "-b", "001-feature",
+                str(feature / "spec"))
+    return root, feature
+
+
+def test_a_paired_feature_worktree_finds_its_assembly_and_its_own_spec(tmp_path):
+    """The paired layout: a feature's code worktree at
+    `<assembly>/worktrees/<feature>/code` reads the assembly's README and its
+    own spec worktree's manual. Discovery returned None there, so every
+    document test would skip in a feature worktree after Gate C (lane
+    openRepoTools-3's review of #190, #193 item 5)."""
+    root, feature = paired_triad(tmp_path)
+    roots = conftest.resolve_roots({}, feature / "code")
+    assert roots.refusal() is None, roots.refusal()
+    assert roots.assembly == root.resolve(), roots.describe()
+    assert roots.spec == (feature / "spec").resolve(), roots.describe()
+    assert roots.path_for("README.md") == root.resolve() / "README.md"
+    assert roots.path_for("docs/README-lanes.md") == (
+        feature / "spec" / "docs" / "README-lanes.md").resolve()
+    assert "paired feature worktree" in roots.how["assembly"], roots.how
+    # Without a spec worktree of its own, the feature reads the mounted one.
+    root2, feature2 = paired_triad(tmp_path / "two", spec_worktree=False)
+    roots2 = conftest.resolve_roots({}, feature2 / "code")
+    assert roots2.spec == (root2 / "spec").resolve(), roots2.describe()
+
+
+def test_only_the_two_designed_places_are_an_assemblys_code(tmp_path):
+    """Discovery stays bounded to the mount and the paired worktree: a
+    repository that is not the code leg's, at the paired path, is not found,
+    and neither is the code leg's own worktree anywhere but `worktrees/`."""
+    root, feature = paired_triad(tmp_path)
+    # A repository of its own with a history of its own: built from the same
+    # files, but never holding the commit the assembly pins (a fixture leg
+    # committed in the same second with the same tree would BE that commit).
+    stranger = code_leg(root / "worktrees" / "002-stranger" / "code")
+    (stranger / "STRANGER").write_text("not the code leg\n", encoding="utf-8")
+    run_git(stranger, "init", "-q")
+    run_git(stranger, "add", "-A")
+    run_git(stranger, "commit", "-q", "-m", "a history of its own")
+    assert conftest.resolve_roots({}, stranger).assembly is None, (
+        "a checkout that does not hold the pinned commit was taken for the leg")
+    elsewhere = root / "elsewhere" / "001-feature" / "code"
+    run_git(root / "code", "worktree", "add", "-q", "-b", "elsewhere",
+            str(elsewhere))
+    assert conftest.resolve_roots({}, elsewhere).assembly is None, (
+        "a worktree outside worktrees/ was taken for a paired one")
+    # Found is not accepted: a feature's commits are not the pinned leg, and
+    # a composed run there is refused for that, naming it.
+    run_git(feature / "code", "commit", "-q", "--allow-empty", "-m", "feature work")
+    composed = conftest.resolve_roots({"OPENREPOTOOLS_COMPOSED": "1"},
+                                      feature / "code").refusal()
+    assert composed and "composed acceptance is for the pinned code leg" in composed, (
+        composed)
+
+
 def test_the_variables_name_the_roots(tmp_path):
     code = code_leg(tmp_path / "code")
     root = assembly(tmp_path / "elsewhere" / "asm")
