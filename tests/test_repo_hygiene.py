@@ -1765,9 +1765,19 @@ def test_agents_md_is_short_enough_to_be_read():
     265, so the merged file is 265 + 27 + #93's eleven (the one-line `awk -v`
     rule) + #83's thirteen (the ONE BINDING rule): the count of what merged,
     rather than either side's number — the rule the 224 entry states.
+
+    316 HERE AND 340 AT AN ASSEMBLY ROOT, on 2026-10-08 (opensoft/openRepoTools
+    #186, T009). In the triad this test reads the ASSEMBLY's AGENTS.md, and
+    the root guidance of T006 (`specs/004-migrate-to-triad/
+    root-guidance-2026-10-08.md`, patch `assembly-0001`) adds twenty-four lines
+    to it: the shape's first-line pointer and the triad map the bootstrap
+    protocol requires a root to carry. The assembly's cap is this count plus
+    those lines and nothing else; today's single repository keeps 316, so no
+    line of prose is bought on `main` by a file that is not here yet.
     """
     lines = doc("AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 316, f"AGENTS.md is {len(lines)} lines; the cap is 316"
+    cap = 316 if ROOTS.assembly is None else 340
+    assert len(lines) <= cap, f"AGENTS.md is {len(lines)} lines; the cap is {cap}"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -2262,9 +2272,17 @@ def test_readme_is_short_enough_to_be_read():
     them is the person's. The paragraph already says why the worktree half of
     the same rule exists; this is its history half, and a reader of one should
     not meet the other as a surprise. Every dated entry above stays.
+
+    486 HERE AND 510 AT AN ASSEMBLY ROOT, on 2026-10-08 (opensoft/openRepoTools
+    #186, T009), for the reason the AGENTS.md entry of that day gives. The
+    twenty-four lines `assembly-0001` adds to the assembly's README are the
+    lockstep-invariant section the leg pins' `resync_runbook:` names
+    (`README.md#the-lockstep-invariant`) and the three-repository front door.
+    Today's single repository keeps 486.
     """
     lines = doc("README.md").read_text().splitlines()
-    assert len(lines) <= 486, f"README.md is {len(lines)} lines; the cap is 486"
+    cap = 486 if ROOTS.assembly is None else 510
+    assert len(lines) <= cap, f"README.md is {len(lines)} lines; the cap is {cap}"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

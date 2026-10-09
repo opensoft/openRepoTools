@@ -3744,6 +3744,10 @@ unset FAKE_TMUX_WINDOW_NAME
 # defect as an untested sentence (RV-B2), one file over. Read from
 # `$LANE_MANUAL`, the run's own copy, which is the one a person opens.
 if [ -n "$LANE_MANUAL" ]; then
+# A MANUAL THAT IS NOT THERE IS A FAILURE NAMING IT, never an empty string the
+# assertions below then misread as a manual that says nothing (#186, T009).
+if [ -r "$LANE_MANUAL" ]; then ok "the lane manual is where the run's roots put it"
+else bad "the lane manual is where the run's roots put it" "no readable file at $LANE_MANUAL"; fi
 ss_doc="$(cat "$LANE_MANUAL" 2>/dev/null || :)"
 has  "the README states the subcommand's THIRD safety property, not just two" "$ss_doc" "It never writes, it never touches the network, and it always exits 0"
 has  "…and carries the line every block ends with" "$ss_doc" "as of 4m ago (no fetch)"
@@ -6238,6 +6242,8 @@ has   "…in ITS arm's own words" "$err" "--estate needs a name"
 # no assertion had ever read that sentence. Read from `$LANE_MANUAL`, the run's
 # own copy, which is the one a person opens.
 if [ -n "$LANE_MANUAL" ]; then
+if [ -r "$LANE_MANUAL" ]; then ok "…and still there for the bare-lanes quotes"
+else bad "…and still there for the bare-lanes quotes" "no readable file at $LANE_MANUAL"; fi
 ln_doc="$(cat "$LANE_MANUAL" 2>/dev/null || :)"
 has   "the manual quotes the settlement that narrowed the bare word" "$ln_doc" \
       "Narrow inside a checkout (Recommended)"

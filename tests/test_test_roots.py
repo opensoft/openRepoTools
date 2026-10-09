@@ -326,6 +326,59 @@ def test_the_hygiene_suite_reads_the_lane_manual_from_the_spec_root(tmp_path):
     assert green.outcome(MANUAL_TEST)[0] == "passed", green.output[-3000:]
 
 
+AGENTS_CAP_TEST = "test_agents_md_is_short_enough_to_be_read"
+README_CAP_TEST = "test_readme_is_short_enough_to_be_read"
+
+
+def test_the_length_caps_are_the_assembly_roots_where_one_is_named(tmp_path):
+    """At an assembly root the two caps are 340 and 510 — this repository's 316
+    and 486 plus the twenty-four lines each that T006's root guidance adds
+    there — and they are asked of the ASSEMBLY's files: one line over FAILS,
+    the cap itself passes. Red at `origin/main`, which counted this checkout's
+    own README and AGENTS.md whatever was named."""
+    def lines(n: int) -> str:
+        return "".join(f"line {i}\n" for i in range(n))
+    at_cap = assembly(tmp_path / "at", readme=lines(510))
+    (at_cap / "AGENTS.md").write_text(lines(340), encoding="utf-8")
+    over = assembly(tmp_path / "over", readme=lines(511))
+    (over / "AGENTS.md").write_text(lines(341), encoding="utf-8")
+    select = f"{AGENTS_CAP_TEST} or {README_CAP_TEST}"
+    green = nested(tmp_path, {"OPENREPOTOOLS_ASSEMBLY_ROOT": str(at_cap)},
+                   select, "test_repo_hygiene.py")
+    for name in (AGENTS_CAP_TEST, README_CAP_TEST):
+        assert green.outcome(name)[0] == "passed", green.output[-3000:]
+    red = nested(tmp_path, {"OPENREPOTOOLS_ASSEMBLY_ROOT": str(over)},
+                 select, "test_repo_hygiene.py")
+    for name, said in ((AGENTS_CAP_TEST, "AGENTS.md is 341 lines; the cap is 340"),
+                       (README_CAP_TEST, "README.md is 511 lines; the cap is 510")):
+        outcome, message = red.outcome(name)
+        assert outcome == "failure" and said in message, (
+            f"{name} {outcome} on an assembly file one line over its cap:\n"
+            f"{message}\n{red.output[-2000:]}")
+
+
+def test_the_lane_suite_fails_a_missing_manual_by_name():
+    """`tests/test_lane_helpers.sh` reads the lane manual where the run's roots
+    put it, and a manual that is not there FAILS naming the path, before the
+    `cat … || :` that would otherwise hand the assertions an empty string
+    (T006's record of 2026-10-08, §10). Held on the text, as this module's
+    neighbours hold the shell suite's other properties: the suite itself is
+    forty minutes of bash, and its own run proves the readable branch."""
+    lines = (REPO / "tests" / "test_lane_helpers.sh").read_text(
+        encoding="utf-8").splitlines()
+    reads = [i for i, line in enumerate(lines)
+             if "README-lanes.md" not in line and 'cat "$LANE_MANUAL"' in line]
+    assert len(reads) == 2, f"expected the two manual reads, found {len(reads)}"
+    assert not any('cat "$SRC_DIR/docs/README-lanes.md"' in l for l in lines), (
+        "a manual read still bypasses the run's roots")
+    for i in reads:
+        guard = "\n".join(lines[max(0, i - 3):i])
+        assert '[ -r "$LANE_MANUAL" ]' in guard and "bad " in guard and \
+            "no readable file at $LANE_MANUAL" in guard, (
+            f"line {i + 1} reads the manual with no failure for a missing one "
+            f"in the three lines above it:\n{guard}")
+
+
 def test_a_standalone_code_leg_skips_what_only_the_assembly_carries(tmp_path):
     """A code leg cloned on its own has no README: standalone, the README test
     SKIPS naming the assembly root, which is the courtesy the missing submodule
