@@ -1,10 +1,15 @@
 # Explicit test roots and the triad's CI — October 8, 2026
 
+**Updated:** October 9, 2026, for `e3a76b5`, `dbc6837`, both reviews and the
+follow-ups.
 **Tasks:** T009 and T010 of [tasks.md](tasks.md), under
 [#186](https://github.com/opensoft/openRepoTools/issues/186). No task is
 checked complete by this record; Gate B stays open.
 **Code change:** [PR #190](https://github.com/opensoft/openRepoTools/pull/190)
-(`feat/test-roots-for-the-triad`, on `main` `c4864ac`).
+(`feat/test-roots-for-the-triad`, head `dbc6837`: `c139e88`, `e3a76b5` and
+`dbc6837` on `main` `c4864ac`; `ready` applied 2026-10-09T02:11Z).
+**Follow-ups (not in #190):** branch `feat/test-roots-followups`, `6e63083`
+and `2064390` on `dbc6837` (section 9).
 **CI patches:** [patches/t010-code-leg-tests-workflow.patch](patches/t010-code-leg-tests-workflow.patch)
 and [patches/t010-assembly-exact-pin-job.patch](patches/t010-assembly-exact-pin-job.patch).
 **Rehearsed arrangement:** run C of 2026-10-08 (private prep
@@ -79,11 +84,34 @@ it answers for all three roles, and every reader reads exactly the file it
 read before. The layout is decided by those trees and never by the documents,
 so a README deleted from today's tree is still a failure, not a skip.
 
-`.gitattributes` stays the **code root's** in every layout, against the
-placement table, because git never applies a superproject's attributes inside
-a submodule. Measured in the composed candidate: `README.md` at the assembly
-has `text: auto`, `eol: lf`; `park` and `tests/run.sh` in `code/` have
-`text: unspecified`, `eol: unspecified` (`proof-check-attr.log`).
+**Decision: `.gitattributes` stays the code root's** in every layout,
+against the placement table, because git never applies a superproject's
+attributes inside a submodule. Measured in the composed candidate
+(`proof-check-attr-both.log`):
+- `README.md` and `AGENTS.md` at the assembly have `text: auto`, `eol: lf`.
+- `park` and `tests/run.sh` in `code/` have `text: unspecified`,
+  `eol: unspecified`.
+
+Reading the assembly's copy would pass while the leg's bash files went
+unprotected.
+
+This agrees with T006: its leg patch `code-0001` gives the code leg its own
+`.gitattributes`, and the assembly keeps its copy for its own files.
+
+It disagrees with the placement table in `plan.md` § Target placement on
+`main`, which puts `.gitattributes` at the assembly only. Amending that table
+is a follow-up for the plan's owner (section 9). A leg split exactly as the
+table says is red on `test_the_root_carries_the_line_ending_rule`: see P1, P3
+and P4 below, and the independent review's C5 and C6.
+
+**Length caps** (`dbc6837`, T006):
+- On today's layout, `AGENTS.md` stays at 316 and `README.md` at 486.
+- When an assembly root is named, the caps are 340 and 510. The difference is
+  the 24 lines each that T006's `assembly-0001` adds.
+
+The dated entries cite `root-guidance-2026-10-08.md`, which is on #192's
+branch: #192 should land with or before #190, or that citation points
+nowhere until it does.
 
 ## 3. The composed-versus-standalone contract
 
@@ -95,29 +123,78 @@ has `text: auto`, `eol: lf`; `park` and `tests/run.sh` in `code/` have
   session (`pytest.UsageError`, exit 4, `ERROR: …`) when the assembly or spec
   root is absent, the dependency lacks `scripts/repo_shape.py` or
   `templates/workspace-root/README.md`, or the code or spec leg is not at the
-  commit the assembly records or has changes to tracked files — naming each.
+  commit the assembly records, has changes to tracked files, or answers no
+  `git status` (`e3a76b5`, Copilot round 1). The refusal names each problem.
   `NEEDS_UPSTREAM` becomes a fixture that fails, and a document test that
   reaches an absent root fails. A variable naming the wrong kind of tree, or a
   mode other than `0`/`1`, is refused in either mode.
 
+The conftest does not check the pin files' own `commit:` and `tree_sha256`.
+That is the job of the standard's `scripts/validate-pins.py`, which the
+assembly job runs in the step before the suite. Copilot's round-2 finding on
+#190 is exactly this gap.
+
+I reproduced it in a copy of the composed candidate (`proof-stale-pin.log`).
+I moved `contracts/code-pin.yaml`'s `commit:` to `73b04d6` and left the
+gitlink and HEAD at `8ebf4ec`. On that tree:
+- `conftest.ROOTS.refusal()` is `None`.
+- `validate-pins.py` exits 1 with `pin-gitlink-mismatch` and
+  `pin-digest-mismatch`.
+
+In CI, the job stops before the suite runs. A composed run made by hand
+without the validator would accept that leg. The follow-up is in section 9.
+
 ## 4. Red at the base, green on the branch
 
-* **Red.** `tests/test_test_roots.py` (SHA256 `be4edff7…6cff`), copied
-  unchanged into a clone of `origin/main` `c4864ac`, `tests/run.sh -k roots`:
-  **18 failed**, every test of the module (3 passes are other modules' tests
-  whose names contain `roots`). The seven behavioural tests failed on what they
-  assert — the nested suite read this checkout's README, manual, gitlink and
-  dependency whatever the variables named, a composed triad with its spec leg
-  moved off its pin ran instead of exiting 4, and `tests/run.sh` passed a
-  relative root through relative — and the eleven resolver tests failed
-  because `conftest.resolve_roots` and `ROOTS` do not exist there. Log
-  `eb7d2bc4…525c`.
-* **Green, today's layout.** `tests/run.sh -k 'repo_hygiene or upstream_pin or roots or composed'`
-  on `c139e88`: **188 passed, 0 skipped**. Log `b0289afa…cf4`.
-* **CI on #190** (head `c139e88`): `tests` 1315 passed in 34m52s,
-  `tests-no-submodule`, `tests-windows` (173 passed, 1142 skipped),
-  `parse-macos`, `guard-launch-mode` and SonarCloud green; `tests-macos`
-  waits for `ready`.
+* **Red, round 1.** I copied `tests/test_test_roots.py` as of `c139e88`
+  (SHA256 `be4edff7…6cff`) unchanged into a clone of `origin/main` `c4864ac`
+  and ran `tests/run.sh -k roots`. Result: **18 failed**, every test of the
+  module. The 3 passes are tests in other modules whose names contain
+  `roots`.
+  - The seven behavioural tests failed on what they assert. The nested suite
+    read this checkout's README, manual, gitlink and dependency, whatever the
+    variables named. A composed triad with its spec leg moved off its pin ran
+    instead of exiting 4. `tests/run.sh` passed a relative root through
+    unchanged.
+  - The eleven resolver tests failed because `conftest.resolve_roots` and
+    `ROOTS` do not exist at the base.
+
+  Log `eb7d2bc4…525c`.
+* **Red, round 2.** I copied `dbc6837`'s module (SHA256 `aeb4b742…ea0c`) the
+  same way and ran `-k 'length_caps or missing_manual or status_cannot_be_read'`.
+  Result: **3 failed**, the three tests added since round 1:
+  - a leg whose `git status` cannot be read;
+  - the assembly-root caps ("passed on an assembly file one line over its
+    cap");
+  - the lane suite's missing-manual failure.
+
+  Log `bb87a06e…ad16`. The independent review copied the same module whole
+  into `c4864ac` and got **21 failed**: all 21 of the module's test cases.
+* **Green, today's layout**, with `tests/run.sh -k 'repo_hygiene or upstream_pin or roots or composed'`:
+
+  | Tree | Result | Log |
+  | --- | --- | --- |
+  | `c139e88` | **188 passed** | `b0289afa…cf4` |
+  | the working tree that became `e3a76b5` | **189 passed** | `d6f84d7f…65e3` (its header names the HEAD at its start, `c139e88`) |
+  | `dbc6837`, and its merge onto `main` `63810dd` | **191 passed, 0 skipped** | the independent review's run |
+
+  My local run on `dbc6837` itself was queued for the lock at the
+  account-swap checkpoint and was stopped there. CI is the record.
+* **CI on #190, head `dbc6837`** (run 37869489919, merge `5ad6205` onto
+  `63810dd`):
+
+  | Job | `dbc6837` | `main` `63810dd` |
+  | --- | --- | --- |
+  | `tests` | 1318 passed | 1296 passed |
+  | `tests-no-submodule` | 1105 passed, 213 skipped | 1084 passed, 212 skipped |
+  | `tests-windows` | 176 passed, 1142 skipped | — |
+  | `guard-launch-mode` | 165 passed | — |
+  | `parse-macos`, SonarCloud | green | — |
+
+  The added `tests-no-submodule` skip is the composed positive control, and
+  it skips with today's reason. `tests-macos` runs under `ready` (run
+  37873415160). Earlier heads: `c139e88` had `tests` at 1315 passed, and
+  `e3a76b5` was green.
 
 ## 5. The two CI patches (T010)
 
@@ -162,6 +239,10 @@ private copy of the code leg's bare remote, and pinned with the standard's own
 `6ccdaf8`, `contracts/code-pin.yaml` digest recomputed as `577cdcf1…d850`);
 the composed workflow is commit `386be81` on top.
 
+These proofs ran on `c139e88`'s content (`8ebf4ec`). They were not repeated
+for `e3a76b5` or `dbc6837`. The independent review's fake triad exercised
+`dbc6837` both composed and standalone (its C1–C6).
+
 | Check (in the candidate, as the job runs it) | Exit | Log SHA256 |
 | --- | ---: | --- |
 | `python3 scripts/validate-manifest.py` | 0 | `0caaed6c…83a4` |
@@ -185,9 +266,10 @@ The failures, recorded rather than deleted:
   clause (c)'s two facts for a person, in its TAIL". Both expect the lane's
   directory in a register row that is cut at 240 characters, and under
   `tests/run.sh` that directory sits beneath the run root
-  (`~/.local/state/openRepoTools/tmp/<UTC>-<pid>/tmp/tmp.*/home/projects/…`),
+  (`~/.local/state/openRepoTools/tmp/<UTC>-<pid>/tmp/tmp.*/`, then the
+  fixture home's `projects/…`),
   long enough to fall past the cut. CI runs the same suite with a short
-  `TMPDIR` and passed it (1315 passed on #190). These sections are untouched
+  `TMPDIR` and passed it (1315 passed at `c139e88`, 1318 at `dbc6837`). These sections are untouched
   by PR #190; the length interaction belongs with the run-root work of
   #162/#184 (inferred from the expected and actual rows, not bisected).
 
@@ -227,6 +309,62 @@ pytest, so every local run had `/usr/bin` first on `PATH`. CI is the record.
   composed job if the legs are ever private (`project.yaml` says public).
 * Re-measure against the frozen source chosen at Gate C; the run C commits
   here are rehearsal identities, not the cutover's.
+* The follow-ups of section 9. Items 1, 4 and 5 should land before the real
+  split.
+
+## 9. Reviews and dated follow-ups
+
+* **Copilot round 1** (on `c139e88`) raised two findings. Both are fixed in
+  `e3a76b5`, and both threads are resolved:
+  - a `git status` that fails is a refusal;
+  - the fixture code legs keep `.gitattributes`.
+* **Independent adversarial review** (lane 1's reviewer, read-only): **LAND**
+  on `dbc6837`
+  ([review](https://github.com/opensoft/openRepoTools/pull/190#pullrequestreview-5464938427)).
+  Its own fake triad agreed with this record:
+  - a split leg gives 17 = 16 named skips plus `.gitattributes`;
+  - every subprocess of a composed run stayed inside its fixture;
+  - the caps reproduced against T006's `assembly-0001`.
+* **Copilot round 2** (on `dbc6837`) raised two findings:
+  - (High) the pin `commit:` gap of section 3;
+  - (Medium, "previously missed") `_carries` accepts a directory where a
+    marker file belongs.
+
+  I answered on the thread. Nothing was pushed, because the macOS gate runs
+  on `dbc6837`.
+
+These follow-ups are dated 2026-10-09 and recorded on #186. None of them is
+in #190.
+
+1. **Review finding 11.** Three code-only assertions came after the first
+   document read (`test_repo_hygiene.py:994`, `:1052` and `:1264` at
+   `dbc6837`), so a standalone code leg skipped them along with the
+   documents.
+   - `feat/test-roots-followups` `6e63083` asserts every mixed test's
+     command half first.
+   - `2064390` proves it with a nested run against a fixture leg whose
+     commands lost those lines.
+2. **Review finding 13.** The lane suite's missing-manual failure is checked
+   only by its text. Its `bad` branch did run locally
+   (`proof-manual-block.log`): the block, extracted unchanged with stub
+   helpers, printed `FAIL the lane manual is where the run's roots put it`
+   for `/nonexistent/README-lanes.md` and skipped on an empty value. A
+   behaviour test that runs the block itself is still to do.
+3. **Review finding 14.** The four variables are not in `AGENTS.md`.
+   `6e63083` adds seven lines to "Testing your changes" and moves the cap
+   from 316 to 323 (340 to 347 at an assembly root), in a dated entry.
+4. **Copilot round 2.**
+   - The conftest should refuse a pin whose `commit:` differs from the
+     gitlink, before it compares HEAD, with its own red-at-base test.
+   - Root markers should be regular files.
+5. **Placement table.** The plan's owner amends `plan.md`'s placement table
+   to say the code leg keeps its own `.gitattributes` (section 2).
+6. **Review nits.**
+   - `Roots.owner_of` gives `LICENSE` and `.gitignore` to the code root.
+     This is latent.
+   - `tests/run.sh`'s `abs_root` turns a quoted `~/x` into `$PWD/~/x`.
+   - The `GIT_ENV` comment in `tests/test_test_roots.py` says "file
+     transport allowed".
 
 ## Log SHA256s
 
@@ -239,6 +377,12 @@ The logs stay in the private prep area (`work-20261008/ort-test-roots/logs/`).
 | M3 `m3-code-nosub.log` | `59027b3ceed4f52e1e6b2d0be926b0b7f3a2c7abfda2846b4fc9656b35208238` |
 | red at base `red-at-base.log` | `eb7d2bc460f5b4d474a71ccfb2a19ecca0798e4fc778685e620311d37384525c` |
 | green on branch `green-branch.log` | `b0289afab41217eb3c1e8ece140233b8a458492b37042727c668066a0f5a8cf4` |
+| red at base, round 2 `red-at-base-r2.log` | `bb87a06e0e09785aae078c0cea5a89be40bef0dc2c90328b3a2e6025a489ad16` |
+| green, 189 `green-branch-r1.log` | `d6f84d7f05d13c1d42d702c7c5c7f846c39b876392e1ee9d94ab6658b25665e3` |
+| green, 191 on the follow-ups tree `6e63083` `green-branch-r3.log` | `78deeb7e2a36a1f10322a15b5bad6def7d2cc5242e503211bd468bc46ce8fb01` |
+| `proof-check-attr-both.log` | `fb0561553b4d3b38554507f48267985eb128b0ff9f39d3665171b90ce9bdc6c3` |
+| `proof-stale-pin.log` | `6b2223d39d58372f73b42f77f7a0d314c431807783f8cc68f4b8e1d8835da68c` |
+| `proof-manual-block.log` | `b8b8217c07ecc82bf95295200f5b2c1a1202667ef7ca66a64feec7206c8f21d9` |
 | P1 `p1-composed.log` | `f611c1981520c4d479556d4b5ec9094845166a69772779dee7539113f473fe34` |
 | P2 `p2-composed-refuses-without-spec.log` | `38889cab1e4a3c842bfddc9687e30b21df9c183b238df0676088dd1e8e981059` |
 | P3 `p3-leg-standalone.log` | `0f5e8c2163fbe1457bb692eba3bdbc4b67e03020cf7ec1ba0ee0fc7e38806144` |
