@@ -657,6 +657,57 @@ def test_t018_a_report_with_no_assembly_has_no_legs_section(tmp_path):
     assert "Assembly legs" not in proc.stdout
 
 
+# ================================================================ (d) add
+
+def _inventory(b: Bench, lane: str) -> dict:
+    """{path: checkout} of the lane's #97 inventory."""
+    proc = b.tool("lanes-edit.sh", "lane-trees", lane)
+    assert proc.returncode in (0, 8), proc.stderr
+    rows = {}
+    for line in proc.stdout.splitlines():
+        cols = line.split(US)
+        if len(cols) > 9:
+            rows[cols[1]] = cols[9]
+    return rows
+
+
+@NEEDS_TEMPLATE
+def test_t018_add_records_the_leg_it_made_a_tree_from(triad):
+    b, t = triad
+    a = t["assembly"]
+    dry = b.tool("lane-worktrees", "add", "triad-1", "c1", "--checkout", t["code"], "--dry-run")
+    assert dry.returncode == 0, dry.stderr
+    assert f"--checkout {t['code']} - the code leg of {a}/project.yaml (opensoft/triad-code)" \
+        in dry.stderr
+    made = b.tool("lane-worktrees", "add", "triad-1", "c1", "--checkout", t["code"])
+    assert made.returncode == 0, made.stderr
+    tree = Path(made.stdout.strip())
+    assert f"in {t['code']} - the code leg of {a}/project.yaml" in made.stderr
+    assert _inventory(b, "triad-1")[str(tree)] == str(t["code"])
+    # FROM A WORKTREE OF THE LEG'S REPOSITORY, the leg is what is recorded
+    paired = a / "worktrees" / "010-v" / "code"
+    b.git("worktree", "add", "-q", "-b", "010-v", paired, "origin/main", cwd=t["code"])
+    made = b.tool("lane-worktrees", "add", "triad-1", "c2", "--checkout", paired)
+    assert made.returncode == 0, made.stderr
+    assert f"with {t['code']} as its checkout" in made.stderr
+    assert _inventory(b, "triad-1")[made.stdout.strip()] == str(t["code"])
+    # the sweep then reads it through its leg
+    row = porcelain_rows(b.sweep("triad-1", "--dry-run", "--porcelain").stdout,
+                         "tree")[made.stdout.strip()]
+    assert row["retire"] == "retire", row
+
+
+@NEEDS_TEMPLATE
+def test_t018_add_from_the_assembly_itself_says_its_legs_are_empty(triad):
+    b, t = triad
+    a = t["assembly"]
+    made = b.tool("lane-worktrees", "add", "triad-1", "root-work")
+    assert made.returncode == 0, made.stderr
+    assert "is an ASSEMBLY, and this tree is of the assembly itself" in made.stderr
+    assert f"--checkout {a}/code" in made.stderr
+    assert _inventory(b, "triad-1")[made.stdout.strip()] == str(a)
+
+
 # ===================================================================== capture
 
 def capture(tools: Path, golden: Path) -> None:

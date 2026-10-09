@@ -3974,6 +3974,25 @@ A tree made any other way — a brief's own `git worktree add`, the harness's
 `isolation: worktree` — is still legal git and is FOREIGN to every sweep until
 `lanes-edit.sh set-lane-tree <lane> <path>` records it.
 
+**In a triad (T018), a tree of a leg is made from the leg** — the guidance of
+docs/triad-lane-tooling-analysis.md §4.4, proposal 1:
+
+```sh
+lane-worktrees add <lane> <slice> --checkout <assembly>/code
+```
+
+Where the lane's checkout is an assembly (its `project.yaml` declares a leg other
+than itself, read by `lanes-edit.sh project-legs`), a tree made from any checkout of
+a leg's repository — the leg itself, or a worktree of it, a paired
+`<assembly>/worktrees/<feature>/code` included — is recorded with **the leg** as its
+checkout (`<assembly>/<path>`), which every reader of the inventory enumerates; the
+note names the leg, and says so where the checkout given was a worktree of it. Made
+from the assembly itself (no `--checkout`), the tree is a worktree of the assembly,
+whose legs a worktree does not check out: `add` makes it as before and says that its
+legs are empty there, naming the `--checkout <assembly>/<leg>` that makes a leg's
+tree. A lane whose checkout has no `project.yaml` is asked nothing, and its `add` is
+what it always was. A manifest that cannot be read refuses, exit **2**, nothing made.
+
 ### The estate report — `sweep --all --dry-run --report`
 
 The net under every actor that never runs `lane-end`: **creation outpacing

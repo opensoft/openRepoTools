@@ -118,8 +118,11 @@ root whose trees are the lane's by that same trailer rule. The estate report
 counts each leg of every canonical assembly as a checkout of its own - its
 branches, root `main` and rescue branches, each row naming its assembly - and
 adds a section of the legs holding uncommitted or unpublished work, only where
-an assembly's leg is checked out. A checkout with no `project.yaml` is asked nothing, and its
-table and its report are what they always were.
+an assembly's leg is checked out. `add` records a tree made from any checkout
+of a leg's repository - the leg itself or a worktree of it - with the LEG as
+its checkout, and says, of a tree made from the assembly itself, that its legs
+are empty there. A checkout with no `project.yaml` is asked nothing, and its
+table, its report and its `add` are what they always were.
 
 Exit codes:
   0  dry run: nothing to retire  ·  --yes: every act completed
@@ -5805,6 +5808,18 @@ def report_all(opts) -> int:
 SLICE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
+def git_common_dir_of(path: str) -> str:
+    """The physical path of `path`'s repository's common git directory, or ''.
+    A leg and every worktree of its repository share one, under the
+    assembly's `.git/modules/`."""
+    common = git_out(path, "rev-parse", "--git-common-dir")
+    if not common:
+        return ""
+    if not os.path.isabs(common):
+        common = os.path.join(path, common)
+    return real(common)
+
+
 def add_tree(ns) -> int:
     """`add <lane> <slice>` - the one act that MAKES a lane's worktree, and it
     records the tree in the lane's #97 inventory in the same act
@@ -5876,6 +5891,32 @@ def add_tree(ns) -> int:
     if top is None or real(top) != real(checkout):
         return refuse(f"{checkout} is not the root of a git checkout"
                       + (f" ({top} is)" if top else ""))
+    # T018 (opensoft/openRepoTools#186): THE LEG A TREE IS MADE FROM IS WHAT IS
+    # RECORDED. Where the lane's checkout is an ASSEMBLY, a tree made from one
+    # of its legs - the leg itself, or any worktree of that leg's repository -
+    # is recorded with the LEG as its checkout, which every reader of the
+    # inventory enumerates. A checkout with no `project.yaml` is asked nothing,
+    # and the record is the checkout given, as always.
+    record_co, leg_line, assembly_hint = checkout, "", ""
+    legs, why = project_legs(helper, lane_dir)
+    if why:
+        return refuse(f"the legs of the lane's assembly {lane_dir} could not be read, so which "
+                      f"checkout a tree of it belongs to is unknown (Amendment 7(d)): {why}")
+    if legs:
+        made_from = git_common_dir_of(checkout)
+        for repository, decl, lpath in legs:
+            if made_from and os.path.isdir(lpath) and git_common_dir_of(lpath) == made_from \
+                    and real(git_out(lpath, "rev-parse", "--show-toplevel") or "") == real(lpath):
+                record_co = lpath
+                leg_line = (f" - the {decl} leg of {os.path.join(lane_dir, 'project.yaml')}"
+                            + (f" ({repository})" if repository else ""))
+                break
+        if not leg_line and real(checkout) == real(lane_dir):
+            assembly_hint = (f"lane {lane}'s checkout {lane_dir} is an ASSEMBLY, and this tree is "
+                             "of the assembly itself: a worktree does not check its legs out ("
+                             + ", ".join(f"{d}/" for _r, d, _p in legs) + " are empty in it). A "
+                             "tree of a leg is made from the leg: --checkout "
+                             + os.path.join(lane_dir, legs[-1][1]))
     # THE RECORD MUST HAVE SOMEWHERE TO GO BEFORE THE TREE IS MADE: a tree
     # this act could not record is the very thing it exists to stop.
     tproc = helper.call("lane-trees", lane)
@@ -5909,7 +5950,9 @@ def add_tree(ns) -> int:
             ["worktree", "add", "--no-track", "-b", branch, path, start_oid])
     if ns.dry_run:
         note(f"DRY RUN, nothing was made: git -C {checkout} {' '.join(argv)}; then "
-             f"lanes-edit.sh set-lane-tree {lane} {path} --checkout {checkout}")
+             f"lanes-edit.sh set-lane-tree {lane} {path} --checkout {record_co}{leg_line}")
+        if assembly_hint:
+            note(assembly_hint)
         say(path)
         return 0
     try:
@@ -5954,7 +5997,7 @@ def add_tree(ns) -> int:
             return 2
         note(f"{what}, and this is left of what this act made: {'; '.join(left)}. Record a "
              f"tree that is wanted with: lanes-edit.sh set-lane-tree {lane} {path} "
-             f"--checkout {checkout}")
+             f"--checkout {record_co}")
         return 1
 
     made = git(checkout, *argv)
@@ -5965,13 +6008,16 @@ def add_tree(ns) -> int:
         return take_back(f"git worktree add failed: {_first_line(made.stderr)}")
     head = git_out(path, "rev-parse", "HEAD") or ""
     caller = os.environ.get("LANES_SESSION") or os.environ.get("CLAUDE_CODE_SESSION_ID") or ""
-    record = ["set-lane-tree", lane, path, "--checkout", checkout]
+    record = ["set-lane-tree", lane, path, "--checkout", record_co]
     if UUID_RE.match(caller):
         record += ["--writer", caller]
     rproc = helper.call(*record)
     if rproc.returncode == 0:
-        note(f"made {path} on branch {branch} at {short(head)} in {checkout}; recorded in lane "
-             f"{lane}'s inventory as {rproc.stdout.strip() or '?'}")
+        note(f"made {path} on branch {branch} at {short(head)} in {checkout}{leg_line}; recorded "
+             f"in lane {lane}'s inventory as {rproc.stdout.strip() or '?'}"
+             + (f" with {record_co} as its checkout" if record_co != checkout else ""))
+        if assembly_hint:
+            note(assembly_hint)
         _ACTIVE.pop("add", None)
         say(path)
         return 0

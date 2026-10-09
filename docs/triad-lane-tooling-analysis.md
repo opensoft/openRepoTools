@@ -211,7 +211,13 @@ estate's existing triads, and the brief rules out behaviour changes. **Proposals
 
 **On the coordinator's brief for slice (d2)** (worktree visibility for triad legs,
 plan task T018), proposals 1–3 above are implemented as **shape-gated** changes,
-one commit each with its tests (`tests/test_triad_lane_tooling.py`). The gate is
+one commit each with its tests (`tests/test_triad_lane_tooling.py`): (a) the sweep and
+`lane-end`'s gate (proposal 2); (b) `lane-handoff`'s poll of the paired root, each
+tree recorded under its leg, and `lane-reconcile`'s leg registrations (proposal 2's
+other two readers — a second writer's, on `feat/triad-lane-tooling-handoff`, which
+this branch merges with its own tests); (c) the daily report (proposal 3); and (d)
+`lane-worktrees add` recording the leg it made a tree from, with proposal 1's
+guidance in `docs/README-lanes.md` and the usage text. The gate is
 the standard's own rule: the lane's checkout (or the checkout a tool polls) is an
 **assembly** when its own `project.yaml` declares a leg other than itself. One
 reader answers it for every tool, `lanes-edit.sh project-legs <checkout>`, whose
