@@ -9,7 +9,8 @@ checked complete by this record; Gate B stays open.
 (`feat/test-roots-for-the-triad`, head `dbc6837`: `c139e88`, `e3a76b5` and
 `dbc6837` on `main` `c4864ac`; `ready` applied 2026-10-09T02:11Z).
 **Follow-ups (not in #190):** branch `feat/test-roots-followups`, `6e63083`
-and `2064390` on `dbc6837` (section 9).
+and `2064390` on `dbc6837`; branch `feat/test-roots-manual-guard`, `b50f197`
+on `dbc6837` (sections 6 and 9).
 **CI patches:** [patches/t010-code-leg-tests-workflow.patch](patches/t010-code-leg-tests-workflow.patch)
 and [patches/t010-assembly-exact-pin-job.patch](patches/t010-assembly-exact-pin-job.patch).
 **Rehearsed arrangement:** run C of 2026-10-08 (private prep
@@ -272,6 +273,22 @@ The failures, recorded rather than deleted:
   `TMPDIR` and passed it (1315 passed at `c139e88`, 1318 at `dbc6837`). These sections are untouched
   by PR #190; the length interaction belongs with the run-root work of
   #162/#184 (inferred from the expected and actual rows, not bisected).
+* **The lane suite ABORTED in P3**, after those two FAILs, at
+  `test_lane_helpers.sh: line 6595: ln_doc: unbound variable`. This is a
+  defect in PR #190's own guard. `ln_doc` is bound only inside the
+  `if [ -n "$LANE_MANUAL" ]` section, the `--retire` section uses it 350
+  lines later outside any guard, and the suite runs under `set -u`.
+  - This record first attributed P3's lane-suite failure to the stamp
+    assertions alone. Lane openRepoTools-3's review of #190 found the abort,
+    and it is in P3's own log.
+  - At `dbc6837` the lines are 6601–6602.
+  - The fix is `feat/test-roots-manual-guard` @ `b50f197`, one commit on
+    `dbc6837`. It guards the two lines with the same named skip, and adds a
+    text test that every use of the manual's text sits inside such a guard.
+  - With the section run alone under `set -u` and an empty manual
+    (`proof-retire-block.log`): `dbc6837` aborts, exit 1; `b50f197` gives 4
+    passed and 1 skipped, exit 0.
+  - Today's layout always takes the guard.
 
 Every skip in P3 and P4 names its root. P3's 17 are `README.md` ten times
 (nine hygiene tests and the installer's check), `AGENTS.md` three times,
@@ -309,8 +326,8 @@ pytest, so every local run had `/usr/bin` first on `PATH`. CI is the record.
   composed job if the legs are ever private (`project.yaml` says public).
 * Re-measure against the frozen source chosen at Gate C; the run C commits
   here are rehearsal identities, not the cutover's.
-* The follow-ups of section 9. Items 1, 4 and 5 should land before the real
-  split.
+* The follow-ups of section 9. Items 1, 4, 5 and 6 should land before the
+  real split.
 
 ## 9. Reviews and dated follow-ups
 
@@ -325,6 +342,14 @@ pytest, so every local run had `/usr/bin` first on `PATH`. CI is the record.
   - a split leg gives 17 = 16 named skips plus `.gitattributes`;
   - every subprocess of a composed run stayed inside its fixture;
   - the caps reproduced against T006's `assembly-0001`.
+* **Lane openRepoTools-3, reviewer of record:** **LAND** on `dbc6837`
+  (review 5464931249). It names three things to fix before the squash:
+  - (1) the `ln_doc` abort of section 6, with the fix ready;
+  - (2) the paired layout `<assembly>/worktrees/<feature>/code` finds no
+    assembly (measured on run C), so in a feature worktree every document
+    test would skip;
+  - (3) `OPENREPOTOOLS_CODE_ROOT` and `OPENREPOTOOLS_ASSEMBLY_ROOT` redirect
+    the suite silently, because the report header is hidden by `-q`.
 * **Copilot round 2** (on `dbc6837`) raised two findings:
   - (High) the pin `commit:` gap of section 3;
   - (Medium, "previously missed") `_carries` accepts a directory where a
@@ -359,7 +384,12 @@ in #190.
    - Root markers should be regular files.
 5. **Placement table.** The plan's owner amends `plan.md`'s placement table
    to say the code leg keeps its own `.gitattributes` (section 2).
-6. **Review nits.**
+6. **Lane 3's review.**
+   - (1) `feat/test-roots-manual-guard` `b50f197`, unless the coordinator
+     takes it into #190 before the squash.
+   - (2) Assembly discovery for the paired worktree layout, before Gate C.
+   - (3) Say which roots a run used where `-q` cannot hide it.
+7. **Review nits.**
    - `Roots.owner_of` gives `LICENSE` and `.gitignore` to the code root.
      This is latent.
    - `tests/run.sh`'s `abs_root` turns a quoted `~/x` into `$PWD/~/x`.
@@ -382,6 +412,7 @@ The logs stay in the private prep area (`work-20261008/ort-test-roots/logs/`).
 | green, 191 on the follow-ups tree `6e63083` `green-branch-r3.log` | `78deeb7e2a36a1f10322a15b5bad6def7d2cc5242e503211bd468bc46ce8fb01` |
 | `proof-check-attr-both.log` | `fb0561553b4d3b38554507f48267985eb128b0ff9f39d3665171b90ce9bdc6c3` |
 | `proof-stale-pin.log` | `6b2223d39d58372f73b42f77f7a0d314c431807783f8cc68f4b8e1d8835da68c` |
+| `proof-retire-block.log` | `c593520e6659febe5a7952df174feb4c03a8939a593369d010e3f9d2aa4e0393` |
 | `proof-manual-block.log` | `b8b8217c07ecc82bf95295200f5b2c1a1202667ef7ca66a64feec7206c8f21d9` |
 | P1 `p1-composed.log` | `f611c1981520c4d479556d4b5ec9094845166a69772779dee7539113f473fe34` |
 | P2 `p2-composed-refuses-without-spec.log` | `38889cab1e4a3c842bfddc9687e30b21df9c183b238df0676088dd1e8e981059` |
