@@ -21,9 +21,9 @@ THE TWO LAYOUTS:
   `opensoft/openRepoTools`). It installs EXACTLY as before: a complete checkout
   offline, byte for byte; a remote install fetching every payload file at the
   ref it was given, by `gh` and then the raw URL, with no other host and no
-  `jq`. The only new requests are the two that tell the layouts apart —
-  `contracts/code-pin.yaml` and `project.yaml`, each answered 404 — asked by
-  those same two transports.
+  `jq`. The only new request is the one that tells the layouts apart —
+  `contracts/code-pin.yaml`, answered 404 — asked by those same two
+  transports.
 * ADOPTED — an ASSEMBLY root whose `contracts/code-pin.yaml` pins the CODE
   leg by repository and commit, with the gitlink at the pinned path agreeing.
   The payload comes from the code repository at the pinned commit and from
@@ -879,11 +879,28 @@ def test_r01_a_single_repository_by_curl_never_needs_api_github_com(tmp_path, ap
     assert len(world.payload_requests()) == len(PAYLOAD)
 
 
+def test_r01_a_single_repository_without_jq_fetches_then_names_jq_as_it_always_did(tmp_path):
+    """No `gh` and no `jq`: today's layout fetches every payload file by the raw
+    URL and THEN refuses naming `jq` for the hook merge, placing nothing — the
+    order and the words it always had (#191's review, F1)."""
+    world = World(tmp_path)
+    world.single(tag="single")
+    fakes = network(world, gh=False).split(os.pathsep)[0]
+    (world.root / "farm-without-jq").mkdir()
+    farm = path_farm(world.root / "farm-without-jq", ("gh", "curl", "jq"))
+    home = tmp_path / "home"
+    result = run_stdin(world, home, f"{fakes}{os.pathsep}{farm}", "--install")
+    assert_nothing_placed(home, result)
+    assert result.stderr.startswith("\nREFUSED: `--install` needs `jq` to merge its TWO hook entries"), result.stderr
+    single_layout_requests_only(world)
+    assert len(world.payload_requests()) == len(PAYLOAD)
+
+
 @NEEDS_JQ
 def test_r01_a_single_repository_by_gh_asks_for_files_and_nothing_else(tmp_path):
     """With `gh`: every request is `contents/<file>?ref=<the ref given>` — no
-    `commits/`, no `git/trees/` — and the only files asked for that are not
-    payload are, at most, the two that tell the layouts apart."""
+    `commits/`, no `git/trees/` — and the only file asked for that is not
+    payload is, at most, the one that tells the layouts apart."""
     world = World(tmp_path)
     world.single(tag="single")
     home = tmp_path / "home"
@@ -893,8 +910,7 @@ def test_r01_a_single_repository_by_gh_asks_for_files_and_nothing_else(tmp_path)
     single_layout_requests_only(world)
     others = {r["target"] for r in world.requests()} - {
         r["target"] for r in world.payload_requests()}
-    assert others <= {"repos/opensoft/openRepoTools/contents/contracts/code-pin.yaml?ref=main",
-                      "repos/opensoft/openRepoTools/contents/project.yaml?ref=main"}, others
+    assert others <= {"repos/opensoft/openRepoTools/contents/contracts/code-pin.yaml?ref=main"}, others
     assert len(world.payload_requests()) == len(PAYLOAD)
 
 
@@ -1008,6 +1024,38 @@ def test_r02_a_complete_single_repository_tree_installs_offline_byte_for_byte(tm
     assert_installed(home, None, result)
     assert world.requests() == []
     assert "source:" not in result.stdout
+
+
+@NEEDS_JQ
+@pytest.mark.parametrize("pin", ["valid", "crlf"])
+def test_r02_a_complete_tree_inside_another_projects_assembly_installs_as_before(tmp_path, pin):
+    """workBenches vendors a complete tree deep inside whatever holds it. A
+    `contracts/code-pin.yaml` above that tree which does not mount it as a code
+    leg — in the two layouts the design names, `<root>/<submodule_path>` and
+    `<root>/worktrees/<NNN>/<submodule_path>` — is another project's: it is not
+    read, and the sentinel run is today's to the line (#191's review, note 7)."""
+    world = World(tmp_path)
+    triad = tmp_path / "someTriad"
+    (triad / "contracts").mkdir(parents=True)
+    text = PIN_TEXT.format(source="opensoft/someTriad-code", path="code", commit="a" * 40,
+                           digest="b" * 64)
+    (triad / "contracts" / "code-pin.yaml").write_bytes(
+        (text if pin == "valid" else text.replace("\n", "\r\n")).encode())
+    tree = local_tree(triad / "code" / "devBenches" / "base-image" / "files" / "openrepotools",
+                      None)
+    sentinel = {"OPENREPOTOOLS_REPO": "pinned-by-workBenches-no-fetch",
+                "OPENREPOTOOLS_REF": "pinned-by-workBenches-no-fetch"}
+    home = tmp_path / "home"
+    result = run_file(tree / "openRepoTools", home, network(world), "--install", **sentinel)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert_installed(home, None, result)
+    assert world.requests() == []
+    plain_home = tmp_path / "plain-home"
+    plain = run_file(local_tree(tmp_path / "plain", None) / "openRepoTools", plain_home,
+                     network(world), "--install", **sentinel)
+    assert plain.returncode == 0, plain.stderr
+    assert (result.stdout.replace(str(home), "<home>")
+            == plain.stdout.replace(str(plain_home), "<home>")), result.stdout
 
 
 @NEEDS_JQ
@@ -1259,15 +1307,23 @@ def test_r08_a_single_repository_without_a_code_pin_is_permitted(tmp_path):
 
 
 @NEEDS_JQ
-def test_r08_an_adoption_manifest_without_a_code_pin_is_refused(tmp_path):
+def test_r08_an_assembly_root_without_its_code_pin_refuses_as_a_single_repository_would(
+        tmp_path):
+    """GitHub's 404 for `contracts/code-pin.yaml` IS the single-repository
+    answer, and nothing more is asked: a second question on that path (the
+    manifest, `project.yaml`) would be a second request on today's layout. An
+    adopter writes the pin and the manifest in ONE commit and `make validate`
+    refuses one without the other, so a published assembly without its pin is
+    a broken one — and since an assembly root carries no payload, it refuses
+    exactly as a single repository missing those files always did."""
     world = World(tmp_path)
-    world.assembly(world.code(), with_pin=False,
-                   extra={p: variant(p, "decoy") for p in PAYLOAD})
+    world.assembly(world.code(), with_pin=False)
     home = tmp_path / "home"
     result = run_stdin(world, home, network(world), "--install")
     assert_nothing_placed(home, result)
-    assert "project.yaml" in result.stderr and "contracts/code-pin.yaml" in result.stderr, result.stderr
-    assert world.payload_requests() == []
+    missing = [n for n in INSTALLABLES if n != "openRepoTools"]
+    assert result.stderr == "\nREFUSED: " + single_refusal(missing), result.stderr
+    single_layout_requests_only(world)
 
 
 def malformed(pin: str, how: str) -> str:
@@ -1375,8 +1431,12 @@ FAULTS = {
 
 
 @NEEDS_JQ
-@pytest.mark.parametrize("fault", list(FAULTS))
-@pytest.mark.parametrize("step", list(STEPS))
+@pytest.mark.parametrize("step,fault", [
+    # GitHub's own 404 for the pin is not a failure: it is the answer that
+    # there is no pin, which is a single repository (row 8). Every other
+    # answer at every step is a failure.
+    (step, fault) for step in STEPS for fault in FAULTS
+    if (step, fault) != ("pin", "missing-404")])
 def test_r09_an_api_failure_is_a_refusal_never_a_fallback_to_a_single_repository(
         tmp_path, step, fault):
     """Every round trip the resolution makes, failing every way a network
@@ -1393,11 +1453,7 @@ def test_r09_an_api_failure_is_a_refusal_never_a_fallback_to_a_single_repository
     assert_nothing_placed(home, result)
     assert world.payload_requests() == [], world.payload_requests()
     tried = {r["tool"] for r in world.requests()}
-    if (step, fault) == ("pin", "missing-404"):
-        # GitHub's own 404 for the pin is an ANSWER — the path is absent — and
-        # the adoption manifest beside it makes that a partly adopted layout.
-        assert "project.yaml" in result.stderr, result.stderr
-    elif (step, fault) != ("pin", "garbage"):
+    if (step, fault) != ("pin", "garbage"):
         # A pin `gh` DID deliver is refused for what it says, not re-fetched.
         assert tried == {"gh", "curl"}, f"both transports are tried: {tried}"
 
@@ -1469,18 +1525,19 @@ def test_r11_a_payload_file_missing_from_the_pinned_code_changes_nothing(tmp_pat
     assert f"opensoft/openRepoTools-code at {code}" in result.stderr, result.stderr
 
 
-#: `--install`'s refusals for a single repository missing a file, in the words
+#: `--install`'s refusals for a single repository missing files, in the words
 #: `openRepoTools` at `c4864ac` printed them, from `$REPO` at `$REF` as given.
-def single_refusal(withheld: str) -> str:
-    if withheld in INSTALLABLES:
-        return (f"could not fetch {withheld} from opensoft/openRepoTools at main, so NOTHING was installed\n"
+def single_refusal(withheld: str | list[str], ref: str = "main") -> str:
+    names = withheld if isinstance(withheld, list) else [withheld]
+    if names[0] in INSTALLABLES:
+        return (f"could not fetch {' '.join(names)} from opensoft/openRepoTools at {ref}, so NOTHING was installed\n"
                 "    and nothing already installed was replaced. `--install` places all\n"
                 f"    {len(INSTALLABLES)} files or none: a new openRepoTools beside a missing park is\n"
                 "    a half-install that reads like a whole one. Both ways were tried:\n"
-                "    gh api repos/opensoft/openRepoTools/contents/<file>?ref=main\n"
-                "    curl -fsSL https://raw.githubusercontent.com/opensoft/openRepoTools/main/<file>\n")
+                f"    gh api repos/opensoft/openRepoTools/contents/<file>?ref={ref}\n"
+                f"    curl -fsSL https://raw.githubusercontent.com/opensoft/openRepoTools/{ref}/<file>\n")
     return (f"could not fetch one of the {len(SKILLS)} skills ({' '.join(SKILLS)}) or the "
-            f"{len(COMMANDS)} command file ({' '.join(COMMANDS)}) from opensoft/openRepoTools at main, so\n"
+            f"{len(COMMANDS)} command file ({' '.join(COMMANDS)}) from opensoft/openRepoTools at {ref}, so\n"
             "    NOTHING was installed and nothing already installed was replaced.\n")
 
 
@@ -1496,6 +1553,24 @@ def test_r11_a_single_repository_missing_a_file_refuses_in_the_words_it_always_d
     result = run_stdin(world, home, network(world), "--install")
     assert_nothing_placed(home, result)
     assert result.stderr == "\nREFUSED: " + single_refusal(withheld), result.stderr
+
+
+@NEEDS_JQ
+@pytest.mark.parametrize("transport", ["gh", "curl"])
+def test_r11_a_single_repository_at_a_ref_it_lacks_refuses_in_the_words_it_always_did(
+        tmp_path, transport):
+    """A ref the repository does not have: every file 404s, and the refusal
+    names every one of them at that ref, as it always did — not a commit
+    lookup that failed first (#191's review, F1)."""
+    world = World(tmp_path)
+    world.single(tag="single")
+    home = tmp_path / "home"
+    result = run_stdin(world, home, network(world, gh=transport == "gh"), "--install",
+                       OPENREPOTOOLS_REF="no-such-ref")
+    assert_nothing_placed(home, result)
+    assert result.stderr == "\nREFUSED: " + single_refusal(list(INSTALLABLES), "no-such-ref"), \
+        result.stderr
+    single_layout_requests_only(world, "no-such-ref")
 
 
 @NEEDS_JQ
@@ -1580,7 +1655,8 @@ def shape_repository(world: World) -> tuple[str, str]:
     return pinned, main
 
 
-def run_installed_wip(world: World, tmp_path: Path) -> tuple[subprocess.CompletedProcess, Path]:
+def run_installed_wip(world: World, tmp_path: Path,
+                      **extra: str) -> tuple[subprocess.CompletedProcess, Path]:
     home = tmp_path / "home"
     bin_dir = home / "bin"
     bin_dir.mkdir(parents=True)
@@ -1591,7 +1667,7 @@ def run_installed_wip(world: World, tmp_path: Path) -> tuple[subprocess.Complete
          "--team", "platform", "--org", "opensoft"],
         input="", capture_output=True, text=True, check=False, cwd=str(home),
         env=env_for(home, network(world), PROJECTS_DIR=str(home / "projects"),
-                    OPENREPOTOOLS_BIN_DIR=str(bin_dir)))
+                    OPENREPOTOOLS_BIN_DIR=str(bin_dir), **extra))
     return result, home / "projects" / "brettheap-wip"
 
 
@@ -1629,6 +1705,40 @@ def test_r13_an_installed_wip_init_whose_source_does_not_answer_seeds_from_main_
     assert result.returncode == 0, result.stdout + result.stderr
     assert "template files from opensoft/openRepoShape @ main" in result.stdout, result.stdout
     assert (checkout / "README.md").is_file()
+
+
+@NEEDS_TEMPLATES
+@NEEDS_JQ
+def test_r13_an_installed_wip_init_at_a_ref_the_source_lacks_seeds_from_main_as_before(
+        tmp_path):
+    """#191's review, F2: `OPENREPOTOOLS_REF` naming a ref the repository does
+    not have leaves the standard's `main`, as it always did — not a refusal at
+    step 7 after steps 5 and 6 made and cloned the repository."""
+    world = World(tmp_path)
+    shape_repository(world)
+    world.single(tag="single")
+    result, checkout = run_installed_wip(world, tmp_path, OPENREPOTOOLS_REF="no-such-ref")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "template files from opensoft/openRepoShape @ main" in result.stdout, result.stdout
+    assert (checkout / "README.md").is_file()
+
+
+@NEEDS_TEMPLATES
+@NEEDS_JQ
+def test_r13_an_installed_wip_init_never_needs_a_single_repositorys_commit_lookup(tmp_path):
+    """#191's review, F2: a 502 on `commits/<ref>` — an endpoint a single
+    repository's `wip init` never asked — changes nothing: the dependency pin
+    is read at the ref as given and the template comes from it."""
+    world = World(tmp_path)
+    pinned, _ = shape_repository(world)
+    world.single(tag="single", shape=pinned)
+    world.faults = [{"tool": "any", "match": r"repos/opensoft/openRepoTools/commits/",
+                     "kind": "status", "status": 502}]
+    world.write_conf()
+    result, checkout = run_installed_wip(world, tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"template files from opensoft/openRepoShape @ {pinned}" in result.stdout, result.stdout
+    assert "DECOY FROM MAIN" not in (checkout / "README.md").read_text(encoding="utf-8")
 
 
 @NEEDS_TEMPLATES

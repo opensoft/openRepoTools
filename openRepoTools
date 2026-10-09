@@ -299,9 +299,10 @@ fetch_from_repo() {
 #
 # A SINGLE REPOSITORY IS READ EXACTLY AS IT ALWAYS WAS: `$OPENREPOTOOLS_REF`
 # as given, file by file, by `gh api …/contents` and then the raw URL — no
-# other host, no `jq`, no fallback that was not there before. The one thing it
-# is asked that it was not asked before is the two questions below, by those
-# same two transports. Only an ADOPTED ASSEMBLY resolves the ref:
+# other host, no `jq`, no fallback that was not there before. The one request
+# it makes that it did not make before is the question below, by those same
+# two transports, and it prints nothing. Only an ADOPTED ASSEMBLY resolves the
+# ref:
 # `$OPENREPOTOOLS_REF` becomes a commit on the first API round trip and every
 # request after it names that commit, so a branch that moves while the files
 # come down cannot hand one run two versions. That guarantee needs
@@ -311,16 +312,18 @@ fetch_from_repo() {
 # `$OPENREPOTOOLS_REF` mean what they always meant: what to install from, and
 # at which ref.
 #
-# WHICH LAYOUT IS DECIDED BY AN ANSWER, NEVER BY A FAILURE. Two files are asked
+# WHICH LAYOUT IS DECIDED BY AN ANSWER, NEVER BY A FAILURE. One file is asked
 # for by name at `$REF`, through `fetch_from_repo`'s own two transports
-# (`probe_path`): `contracts/code-pin.yaml`, and — only where GitHub answered
-# that it is not there — `project.yaml`, the adoption manifest. A pin that is
-# there is the adopted layout. GitHub's 404 for both is a single repository. A
-# manifest with no pin is a partly adopted layout, and refuses. An
+# (`probe_path`): `contracts/code-pin.yaml`. A pin that is there is the adopted
+# layout. GitHub's 404 for it is a single repository, read as above. An
 # authentication failure, a rate limit, a transport failure or any other status
-# is a REFUSAL naming what answered — never evidence of the older layout,
-# because reading it that way would install whatever the assembly root happened
-# to carry.
+# from both transports is a REFUSAL naming what answered — never evidence of
+# the older layout, because reading it that way would install whatever the
+# assembly root happened to carry. NOTHING ELSE IS ASKED on that 404: a second
+# question (the adoption manifest, `project.yaml`) would be a second request on
+# today's layout for a state the adopter never publishes — it writes the pin
+# and the manifest in one commit — and that `make validate` refuses in the
+# assembly itself (#191's review).
 #
 # A PIN THAT IS PRESENT AND WRONG REFUSES. Its grammar is fixed, so it is read
 # here with `read` and `case` rather than a YAML runtime (`pin_parse`), and
@@ -335,14 +338,18 @@ fetch_from_repo() {
 # pinned path, and that the pinned commit is one the pinned repository has.
 #
 # LOCALLY — this file run from the code leg MOUNTED in an assembly checkout,
-# whose `contracts/code-pin.yaml` names this directory — the pin and the
+# `<root>/<submodule_path>`, whose `contracts/code-pin.yaml` names this
+# directory — the pin and the
 # gitlink must agree and every payload file must be the pinned commit's bytes;
 # then they are copied, offline. A code checkout under an assembly that is NOT
 # its mounted leg (a paired feature worktree, `<root>/worktrees/<NNN>/code`) is
 # somebody installing that checkout ON PURPOSE: its bytes are copied as they
 # are, and the run names that checkout and its commit and says it is not the
 # pinned code. Neither is ever completed from a network — local siblings and
-# remote bytes do not make one install between them.
+# remote bytes do not make one install between them. THOSE TWO LAYOUTS AND NO
+# OTHER: a `contracts/code-pin.yaml` anywhere else above this file — another
+# project's assembly that happens to hold a vendored tree deep inside it — is
+# not this tree's, is not read, and changes nothing (`assembly_above`).
 #
 # ALL OF IT HAPPENS BEFORE ANYTHING IS PLACED: `install_commands` asks
 # `payload_select` straight after the targets, before the first byte is
@@ -362,7 +369,7 @@ SOURCE_SHA=""        # $REF, resolved once
 SOURCE_LAYOUT=""     # single | adopted | feature, once known
 API_SHA=""
 API_WHY=""
-PROBE_LAYOUT=""      # single | adopted | partial | unknown, once the two files are asked for
+PROBE_LAYOUT=""      # single | adopted | unknown, once contracts/code-pin.yaml is asked for
 PROBE_WHY=""
 RESOLVE_FOR=install  # whose refusal a failed resolution is: install, or wip (`wip init` step 7)
 
@@ -670,8 +677,8 @@ probe_path() {   # <path> <dest>
 	return 1
 }
 
-#: WHICH LAYOUT `$REPO` HAS AT `$REF`: PROBE_LAYOUT single, adopted, partial or
-#: unknown, with PROBE_WHY for unknown. It asks and refuses nothing; what each
+#: WHICH LAYOUT `$REPO` HAS AT `$REF`: PROBE_LAYOUT single, adopted or unknown,
+#: with PROBE_WHY for unknown. One request, and it refuses nothing; what each
 #: answer means is its callers' (`payload_resolve_remote`, `wip_shape_ref`).
 payload_probe() {
 	[ -z "$PROBE_LAYOUT" ] || return 0
@@ -679,16 +686,9 @@ payload_probe() {
 	workdir
 	probe_path contracts/code-pin.yaml "$WORKDIR/probe-code-pin" || rc=$?
 	case "$rc" in
-	0) PROBE_LAYOUT=adopted; return 0 ;;
-	3) : ;;
-	*) PROBE_LAYOUT=unknown PROBE_WHY="contracts/code-pin.yaml: $PROBE_WHY"; return 0 ;;
-	esac
-	rc=0
-	probe_path project.yaml "$WORKDIR/probe-project" || rc=$?
-	case "$rc" in
-	0) PROBE_LAYOUT=partial ;;
+	0) PROBE_LAYOUT=adopted ;;
 	3) PROBE_LAYOUT=single ;;
-	*) PROBE_LAYOUT=unknown PROBE_WHY="project.yaml: $PROBE_WHY" ;;
+	*) PROBE_LAYOUT=unknown ;;
 	esac
 }
 
@@ -720,19 +720,14 @@ payload_resolve_remote() {
 		# file, by the transports that always fetched it.
 		PAYLOAD_REPO="$REPO" PAYLOAD_REV="" SOURCE_LAYOUT=single
 		return 0 ;;
-	partial)
-		resolve_refuse "$REPO at $REF carries an adoption manifest, project.yaml, and no
-    contracts/code-pin.yaml: a partly adopted layout, which says neither where
-    its code is nor that it is a single repository. Its contracts/code-pin.yaml
-    is the file that names the code leg." ;;
 	unknown)
-		resolve_refuse "could not fetch the files that say whether $REPO at $REF is a single
-    repository or an adopted assembly, and a failed answer is a refusal, never a
-    reading of the layout. What answered:
+		resolve_refuse "could not fetch contracts/code-pin.yaml from $REPO at $REF, the file that
+    says whether it is a single repository or an adopted assembly, and a failed
+    answer is a refusal, never a reading of the layout. What answered:
         $PROBE_WHY
     Both ways were tried:
-        gh api repos/$REPO/contents/<file>?ref=$REF
-        curl -sSL https://raw.githubusercontent.com/$REPO/$REF/<file>" ;;
+        gh api repos/$REPO/contents/contracts/code-pin.yaml?ref=$REF
+        curl -sSL https://raw.githubusercontent.com/$REPO/$REF/contracts/code-pin.yaml" ;;
 	esac
 	# AN ADOPTED ASSEMBLY: everything again, at ONE commit.
 	listing="$WORKDIR/source-root.tsv"
@@ -803,21 +798,55 @@ payload_where() {   # the source collected from, for a refusal to name
 
 # --- the local source ---------------------------------------------------------
 
-#: THE NEAREST DIRECTORY ABOVE <dir> HOLDING `contracts/code-pin.yaml`: the
-#: assembly this checkout sits in, if it sits in one. Logical paths, so what is
-#: printed is what the person typed; the one comparison that must see through
-#: links (`payload_local_adopted`) asks `pwd -P` itself.
+#: DOES <pin> MOUNT ITS CODE LEG AT <name>? Its `submodule_path:` line, read
+#: leniently — the strict read is `pin_parse`'s, once the pin is known to be
+#: this checkout's — so that another project's pin, however it is written, is
+#: only ever compared with this directory's name.
+pin_mounts() {   # <pin> <name>
+	local line value
+	while IFS= read -r line || [ -n "$line" ]; do
+		case "$line" in
+		submodule_path:*)
+			value="${line#submodule_path:}"
+			value="${value%"$ORT_CR"}"
+			value="${value#"${value%%[! $ORT_TAB]*}"}"
+			value="${value%"${value##*[! $ORT_TAB]}"}"
+			value="${value#[\"\']}"
+			value="${value%[\"\']}"
+			[ -n "$value" ] && [ "$value" = "$2" ]
+			return
+			;;
+		esac
+	done <"$1"
+	return 1
+}
+
+#: THE ASSEMBLY <dir> IS A CODE LEG OF, in one of the two layouts the design
+#: names and no other: `<root>/<submodule_path>`, the mounted leg, or
+#: `<root>/worktrees/<NNN>/<submodule_path>`, a paired feature worktree — each
+#: with `<root>/contracts/code-pin.yaml` naming that `<submodule_path>`. A pin
+#: anywhere else above <dir> is another project's (#191's review: workBenches
+#: vendors a complete tree deep inside whatever holds it). Logical paths, so
+#: what is printed is what the person typed; the one comparison that must see
+#: through links (`payload_local_adopted`) asks `pwd -P` itself.
 assembly_above() {   # <dir>
-	local d
-	d="$(cd -- "$1/.." 2>/dev/null && pwd)" || return 1
-	while :; do
-		if [ -f "$d/contracts/code-pin.yaml" ]; then
-			printf '%s\n' "$d"
-			return 0
-		fi
-		case "$d" in / | '') return 1 ;; esac
-		d="$(dirname -- "$d")"
-	done
+	local name parent up
+	name="${1##*/}"
+	parent="$(dirname -- "$1")"
+	if [ -f "$parent/contracts/code-pin.yaml" ] &&
+		pin_mounts "$parent/contracts/code-pin.yaml" "$name"; then
+		printf '%s\n' "$parent"
+		return 0
+	fi
+	up="$(dirname -- "$parent")"
+	[ "${up##*/}" = worktrees ] || return 1
+	up="$(dirname -- "$up")"
+	if [ -f "$up/contracts/code-pin.yaml" ] &&
+		pin_mounts "$up/contracts/code-pin.yaml" "$name"; then
+		printf '%s\n' "$up"
+		return 0
+	fi
+	return 1
 }
 
 #: THE COMMIT A SUPERPROJECT RECORDS AT <path>: the index first and HEAD
