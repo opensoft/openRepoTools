@@ -207,6 +207,39 @@ estate's existing triads, and the brief rules out behaviour changes. **Proposals
    `<superproject>/.git/modules/<path>` as canonical when the superproject is canonical.
    This changes today's report for IRRS and the other existing triads, so it needs a ruling.
 
+#### 2026-10-09: what this branch now implements of §4.4 (T018), and what moves for every shape
+
+**On the coordinator's brief for slice (d2)** (worktree visibility for triad legs,
+plan task T018), proposals 1–3 above are implemented as **shape-gated** changes,
+one commit each with its tests (`tests/test_triad_lane_tooling.py`). The gate is
+the standard's own rule: the lane's checkout (or the checkout a tool polls) is an
+**assembly** when its own `project.yaml` declares a leg other than itself. One
+reader answers it for every tool, `lanes-edit.sh project-legs <checkout>`, whose
+seven deciding awk lines are `lane-start`'s rung-5 lines verbatim (a test holds
+them equal). A checkout with no `project.yaml` is asked nothing, so on a single
+repository every output, exit code, register line and inventory row is the one
+`c45a452`'s tools produce: the test stores that "before" as a golden file
+generated once from `c45a452`'s own tools (`tests/fixtures/t018/`), because CI
+checks out at depth 1, and compares every touched command's output on a single
+repository — one with a submodule that is no leg, and one with a `project.yaml`
+naming no leg but itself — against it.
+
+**Outputs that change regardless of shape (for lane 1's ruling).** Two kinds of
+text move on every checkout, single repository included, because they are usage
+text and not behaviour; the coordinator directed both kept and listed here:
+
+1. `lanes-edit.sh`'s refusal of an unknown subcommand (exit 2) now lists
+   `project-legs` among the subcommands it answers to, and its usage header (what
+   `lanes-edit.sh` with no argument prints) gains the `project-legs` line.
+   `tests/test_repo_hygiene.py` requires the refusal to list every arm.
+2. The `--help` text of the touched commands gains the triad guidance:
+   `lane-worktrees --help` (a "A TRIAD" paragraph), `lane-end --help` (four lines
+   in THE CLOSE-OUT GATE), and the commands later commits touch, each named in
+   that commit's message.
+
+No exit code, register line, inventory row, sweep row, gate verdict or report
+line moves for a checkout with no `project.yaml`.
+
 ### 4.5 `lanes-edit.sh`
 
 | Line | What it does | Under the triad |

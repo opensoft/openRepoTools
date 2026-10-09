@@ -3834,6 +3834,7 @@ lane    <lane> <state> <holder> <holder uuid> <binding> <verdict>
 refused <why>                                   (only when refused)
 tree    <disposition> <retire|-> <path> <branch> <head> <why>
 <kind>  <disposition> <retire|-> <path> <detail> <bytes> <why>     (branch, scratch, cache, sandbox, link)
+leg     <disposition> <retire|-> <path> <branch> <head> <why>    (an assembly's checkouts only, T018)
 summary <to retire> <trees> <live> <foreign>
 ```
 
@@ -3862,6 +3863,64 @@ line could not be written, which stops the rest; each failure is in
 the table and in `DISPOSITION.md`, which is written even when an error no read
 caught stops the run), and **2** when the self-check refused a removal; usage
 is 64, a `--live` path that names no tree included.
+
+### A triad: its legs, their worktrees and the paired trees (T018)
+
+**Plan task T018 of the triad migration (opensoft/openRepoTools#186).** A lane's
+checkout is an **assembly** when its own `project.yaml` declares a leg other than
+itself — the standard's rule, as openRepoShape's `templates/assembly-root/project.yaml`
+writes it: a top-level `legs:` list of `- role:` / `repository:` / `path:`, the
+assembly's own leg at `path: "."`. One reader answers it for every lane tool:
+
+```sh
+lanes-edit.sh project-legs <checkout>   # <repository> TAB <path as declared> TAB <where it is checked out>
+```
+
+It is `lane-start`'s rung-5 reading of `legs:`, line for line (a test holds the two
+equal), and reads `repository:` and `path:` only — the manifest confers nothing,
+and `role:` is never read. 0 with legs; 8 with none (no `project.yaml`, or one naming
+no leg but the checkout itself); 1 where the manifest is there and cannot be read,
+which is never "no legs"; 64 usage. It touches no workspace.
+
+**Why the sweep needed it.** A leg is a submodule: its `.git` is a file,
+`git -C <assembly> worktree list` names none of its worktrees, and a feature's
+trees in the standard's three-leg layout, `<assembly>/worktrees/<feature>/{spec,code}`,
+are worktrees of the LEGS' repositories. So a code tree was invisible to the sweep,
+to `lane-end`'s gate, to the handoff's poll and to the daily report unless it had
+been recorded with the code leg as its checkout — and a lane with unpushed work in
+one passed `lane-end`.
+
+**Where the lane's checkout is an assembly**, `lane-worktrees sweep` also:
+
+* reads every leg, and every dependency nested in one (an initialized submodule of
+  the leg's own, as `code/upstream/openRepoShape` will be), as a **`leg` row** —
+  `clean`, `dirty`, `unpushed`, `dirty+unpushed`, `absent` (not checked out here)
+  or `unreadable`. A leg is the assembly's, shared by every lane the assembly
+  homes, as the assembly's own checkout is: **no `--yes` acts on one**. It is
+  COUNTED (exit 3, and `lane-end`'s gate) only where its HEAD's own `Lane:` trailer
+  is this lane's and it holds edits or commits origin lacks — the rule the sweep
+  already applies to `.claude/worktrees` — or where it could not be read; one
+  that holds another lane's work, or nobody's, is listed and counted for nobody;
+* lists the worktrees git registers in **every leg** — a FOREIGN row names the leg
+  it is registered in — so a tree recorded with the leg as its checkout is the
+  lane's as any recorded tree is;
+* takes **`<assembly>/worktrees`** as a root: a tree there is the lane's by its
+  HEAD's own `Lane:` trailer and by nothing else, because the paired root, like
+  `.claude/worktrees`, is per feature and not per lane; a standalone clone there is
+  FOREIGN; a directory there that cannot be listed refuses, exit **2**;
+* with `--branches`, reads every leg's branches too, each row naming its leg; with
+  `--fetch` (and under `--yes`), asks each leg's origin.
+
+A manifest, or a leg's own submodule list, that cannot be read refuses, exit
+**2**. **A checkout with no `project.yaml` is asked nothing** — no helper call, no
+read, no row — so a single repository's sweep, gate, handoff, report and `add` are
+byte for byte what they were; `tests/test_triad_lane_tooling.py` holds every one of
+them to the output `c45a452`'s tools printed.
+
+**`lane-end`'s gate** counts a `leg` row marked `retire` as a "leg checkout" it
+names, with the remedy a person's (commit and push from inside it; no `--yes` is
+offered when legs are all it counted), and lists a leg that holds work and is not
+this lane's below the table as NOT counted — whether the gate passes or not.
 
 ### Two protocol lines this act assumes (proposed for the amendment that ratifies it)
 

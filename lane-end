@@ -208,6 +208,10 @@
 #       <lane>/`, that the table does not name as a tree, scratch or a cache is
 #       RESIDUE - ignored leftovers the sweep's rows never reach - and refuses
 #       even where the sweep answered 0, as a cache row does.
+#   Where the lane's checkout is an ASSEMBLY (T018, opensoft/openRepoTools#186)
+#   the sweep also prints a `leg` row per leg checkout: one it counts is named
+#   as a leg checkout whose remedy is a person's — no sweep acts on a leg — and
+#   one that holds work and is not this lane's is listed and NOT counted.
 #   `--inventory-only` is the one way past it, and `--sweep` is not built.
 #
 # THE HANDOFF FRAGMENT

@@ -107,6 +107,16 @@ stdout; `--dry-run` makes nothing. A tree made any other way is FOREIGN until
 recorded, 2 refused (nothing made), 1 made and neither recorded nor taken back
 out (the commands are printed), 64 usage.
 
+A TRIAD (opensoft/openRepoTools#186, T018). Where the lane's checkout is an
+ASSEMBLY - its `project.yaml` declares a leg other than itself, read by
+`lanes-edit.sh project-legs` - the sweep also reads each leg and each
+dependency nested in one as a `leg` row (never acted on; counted only where
+its HEAD's own `Lane:` trailer is this lane's and it holds work, or where it
+could not be read), lists the worktrees git registers in every leg, and takes
+`<assembly>/worktrees` - the paired `worktrees/<feature>/{spec,code}` - as a
+root whose trees are the lane's by that same trailer rule. A checkout with no
+`project.yaml` is asked nothing, and its table is what it always was.
+
 Exit codes:
   0  dry run: nothing to retire  ·  --yes: every act completed
   3  dry run: something to retire (the `lane-end` gate's answer, #163)
