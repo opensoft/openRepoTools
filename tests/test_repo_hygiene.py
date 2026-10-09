@@ -851,15 +851,43 @@ def assigned_values(code: str, name: str) -> list[tuple[str, str]]:
     return found
 
 
+#: The variable a pin reader binds each parsed value to, and the function
+#: that alone may set it (#191's `pin_scalar`).
+PIN_SCALAR_VALUES = ("$PIN_SCALAR", "${PIN_SCALAR}")
+
+
+def scalar_set_only_by_the_pin_reader(code: str) -> bool:
+    """Every non-empty `PIN_SCALAR=` in `code` sits inside `pin_scalar() {`
+    … `}`, so `$PIN_SCALAR` is a value parsed out of a pin and nothing else."""
+    inside = False
+    for line in code.splitlines():
+        stripped = line.strip()
+        if re.match(r"pin_scalar\(\)", stripped):
+            inside = True
+            continue
+        if inside and stripped == "}":
+            inside = False
+            continue
+        if not inside and any(value for value, _ in assigned_values(line, "PIN_SCALAR")):
+            return False
+    return True
+
+
 def installer_source_violations(code: str) -> list[str]:
     """What `test_the_installer_reaches_only_this_repository` refuses in
     `code` (comment lines already dropped): each fetching line whose
     REPOSITORY is not `$REPO`, the pinned standard, or a payload variable
-    that only ever holds `$REPO` or a pin's `source_repository:`."""
+    that only ever holds `$REPO` or a pin's `source_repository:` value."""
     def pin_named(var: str) -> bool:
+        # Set only in a `source_repository)` arm, and only to the value the
+        # pin reader parsed: an arm that assigned anything else would make
+        # the payload repository come from elsewhere (Copilot on #195).
         values = assigned_values(code, var)
         return bool(values) and all(
-            value == "" or "source_repository)" in line for value, line in values)
+            value == "" or ("source_repository)" in line
+                            and value in PIN_SCALAR_VALUES
+                            and scalar_set_only_by_the_pin_reader(code))
+            for value, line in values)
 
     def honest(var: str) -> bool:
         values = assigned_values(code, var)
@@ -935,6 +963,28 @@ def test_the_installer_reaches_only_this_repository():
                  'gh api "repos/${PAYLOAD_REPO:-$REPO}/contents/park"\n',
                  True, id="a-payload-variable-set-from-elsewhere"),
     pytest.param('PIN_SOURCE_REPOSITORY=""\n'
+                 'case "$key" in\n'
+                 '  source_repository) PIN_SOURCE_REPOSITORY="$FROM_THE_ENVIRONMENT" ;;\n'
+                 'esac\n'
+                 'PAYLOAD_REPO="$PIN_SOURCE_REPOSITORY"\n'
+                 'gh api "repos/${PAYLOAD_REPO:-$REPO}/contents/park"\n',
+                 True, id="a-pin-arm-that-assigns-something-else"),
+    pytest.param('pin_scalar() {\n'
+                 '\tPIN_SCALAR="${v%% #*}"\n'
+                 '}\n'
+                 'PIN_SCALAR="$FROM_THE_ENVIRONMENT"\n'
+                 'case "$key" in\n'
+                 '  source_repository) PIN_SOURCE_REPOSITORY="$PIN_SCALAR" ;;\n'
+                 'esac\n'
+                 'PAYLOAD_REPO="$PIN_SOURCE_REPOSITORY"\n'
+                 'gh api "repos/${PAYLOAD_REPO:-$REPO}/contents/park"\n',
+                 True, id="a-scalar-set-outside-the-pin-reader"),
+    pytest.param('PIN_SCALAR=""\n'
+                 'pin_scalar() {\n'
+                 '\tPIN_SCALAR="${rest%%"$q"*}"\n'
+                 '\tPIN_SCALAR="${v%% #*}"\n'
+                 '}\n'
+                 'PIN_SOURCE_REPOSITORY=""\n'
                  'case "$key" in\n'
                  '  source_repository) PIN_SOURCE_REPOSITORY="$PIN_SCALAR" ;;\n'
                  'esac\n'
