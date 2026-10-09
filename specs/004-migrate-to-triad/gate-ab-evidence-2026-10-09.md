@@ -3,13 +3,14 @@
 **Task:** T011 of [tasks.md](tasks.md), under [#186](https://github.com/opensoft/openRepoTools/issues/186).
 No task is checked complete by this record, and it approves nothing.
 **Writer:** lane openRepoTools-1, 2026-10-09T00:36Z–01:1xZ.
-**Refreshed:** lane openRepoTools-2, 2026-10-09T18:51Z–20:4xZ, on branch
+**Refreshed:** lane openRepoTools-2, 2026-10-09T18:51Z–20:3xZ (commit `c1283b5`), on branch
 `004-migrate-to-triad-rollback-refresh` (from `fa44d75`). It answers lane 3's review of
 `fa44d75` (#186 comment 6082139424, whose findings are cited here as F1–F22) and folds in
 lane 2's verification of the receipt (#186 comment 6082370012). Each refreshed passage
 starts with "Refreshed" or "Corrected"; the 01:1xZ text it qualifies stays as written
 unless a finding showed it wrong. Origin was read at 2026-10-09T20:29:34Z–20:30:29Z, with
-main at `f87fd5a`, and again before the push (section 8).
+main at `f87fd5a`, and again before the push (section 8). Lane 3's review of `c1283b5`
+(#186 comment 6089982753, N1–N9) is answered by two later commits on this branch.
 **Evidence branch:** `004-migrate-to-triad-rollback` (from main `837928a`).
 **Private receipt ID:** `rollback-20261009-ILvoVC` (brett-wip `migration/openRepoTools/`),
 holding every script, log, snapshot and digest named below. Machine paths stay there. It
@@ -60,11 +61,14 @@ The 97 of #189 (`preservation-2026-10-07.md:89`; receipt `prep-20261007T100559Z`
 - This run did not repeat 18 of them: the status-and-lists comparison for the 16 trees
   other than `main` (October 7 made it for all 17, `preservation-2026-10-07.md:95–98`;
   this run made it for `main` only, below), the bundle's `HEAD` against the main
-  checkout's, and the bundle's 16 per-worktree `HEAD` refs.
+  checkout's (`verify.log:12`), and one check that the bundle carries the 16 per-worktree
+  `HEAD` refs (`verify.log:13`: one check, not 16).
 - It added 11: the manifest, the mirror clone, `set-url`, `bundle verify`, the capture
   against the shared checkout today, the second `fsck`, and five steps of the worktree
   procedure on `main`.
-- 97 − 18 + 11 = 90.
+- `main`'s status-and-lists comparison moved from the tree checks to the single ones
+  (`logs/10-restore.log:160`). So the single checks are 12 − 2 + 1 + 11 = 22, the tree
+  checks are 85 − 17 = 68, and the total is 97 − 18 + 11 = 90.
 
 - The manifest (414 entries) passes `sha256sum -c`. Refreshed (F4): it lists the two
   bundles restored here, source `60db3acd…` and dependency `aa5a6eca…`, which are the
@@ -152,7 +156,10 @@ Corrected (lane 2's verification, #186 comment 6082370012): the receipt's copy o
 block (`11-dirty.sh:42–66`) is not verbatim. Against the backup's `capture.sh:68–92` it
 drops the info-exclude copy (`:75–77`) and the `skipped-secret-like.tsv` append (`:82`).
 Lane 2 ran the backup's own block, verbatim, on the same stand-in: 0 of 3 again, with the
-same 3 staged blobs in no bundle.
+same 3 staged blobs in no bundle. Corrected: the public comment states that result and
+marks as inferred only its conclusion, that the omissions change nothing. The run's own
+log is host-local, in lane 2's private prep area, and is not published, so no public
+citation for the run itself exists.
 
 **Finding for Gate A.** The October 7 capture takes three things from a tree: its index
 *listing*, its ignored workflow configuration, and its HEAD. It takes none of its working
@@ -362,7 +369,8 @@ neither is in any rollback path; this run left its metadata unchanged.
 
 **The rollback path in the plan's own words:** revert or pin-bump PRs, plus the preserved
 installer, through (c2). It needs:
-- no force push: every captured ref has only ever moved forward;
+- no force push: every captured ref has only ever moved forward, or was deleted with its
+  commit still on GitHub (refreshed: section 1; re-checked 2026-10-09T22:05:16Z);
 - no destructive reset;
 - no pointer rewrite.
 
@@ -514,7 +522,7 @@ in `root-guidance-2026-10-08.md` are on main since #192 (`1abee1d`).
 | Gate A capture tooling v2 | brett-wip `99eed35` | lane 1 | to be fixed and re-verified before any real capture (#186 comments 6087261307, 6088714587) |
 | Run C's `follow_ups`: 29 entries (`adoption-plan.yaml:392–421`) | the next five rows | | |
 | … 13 entries: a shipped command or test names `docs/`, `openspec/` or `specs/` (`:393–405`) | lane 3's `feat/triad-lane-tooling` `30f9dc0`, no PR; #190 (landed) for the suite's roots | `root-guidance-2026-10-08.md:188–194` routes the files it names: `lane-start`, `lanes-edit.sh`, `test_lane_helpers.sh` and the OpenSpec keys in `lanes-edit.sh` and `lane-handoff` to lane 3; `openRepoTools` to T007; `test_repo_hygiene.py`, `test_lane_start_claude_current.py` and `tests/run.sh` to T009/T010; `claude-current` to its text owner | that routing names neither `test_install_skill_and_hook.py` (`:398`) nor `test_park_resume_commands.py` (`:405`): no owner is recorded for those two. Corrected: the plan's unnamed ninth `docs/` file is `tests/test_repo_hygiene.py` (`git grep -l 'docs/'` at `837928a`, outside `docs/`, `specs/`, `openspec/` and the root front doors, gives exactly nine files), which `root-guidance-2026-10-08.md:191` routes to T009/T010 |
-| … 5 `shape/` collisions (`:406–410`) | T006's `assembly-0001` (`root-guidance-2026-10-08.md:70–76`) | lane 1 (T006) | merged in the patch; deleting the unpinned `shape/AGENTS.md`, `shape/CLAUDE.md` and `shape/README.md` is deferred to T014's reviewer (`:76`, `:394`) |
+| … 5 `shape/` collisions (`:406–410`) | T006's `assembly-0001` (`root-guidance-2026-10-08.md:69–76`) | lane 1 (T006) | resolved in the patch; deleting the unpinned `shape/AGENTS.md`, `shape/CLAUDE.md` and `shape/README.md` is deferred to T014's reviewer (`:76`, `:394`) |
 | … open the split as a pull request (`:411`) | — | T013 (tasks.md:96–98) | deferred |
 | … the entry point (`:413`) and the test roots (`:414`) | the T007 rows above; #190 and the T010 row above | lane 1 | as above |
 | … 8 more plan-level items (`:412`, `:415–421`) | `:412` was rehearsed in runs B and C; `:415`, the workflow bootstrap, in T006 | by tasks.md: `:412` and `:415` T013; `:416` T016–T018; `:417` T012; `:418` and `:420` T014; `:419` T016; `:421` T015 | deferred |
@@ -560,7 +568,8 @@ resolved mapping and a passing compatibility test matrix" (plan.md). Against tha
      (section 1);
    - `RESTORE.md`'s copy-back leaves `installed.tsv` stale. Rollback should be (c2): a
      reinstall from the preserved source, or the copy-back followed by restoring the
-     receipt.
+     receipt. Refreshed: the latter for the 29 files and the receipt only; it restores no
+     `settings.json` and no hook entry (section 2).
 
    `RESTORE.md`'s `git bundle verify` line also needs a repository to run in.
 
@@ -669,7 +678,7 @@ Two hygiene tests read every tracked file: the host-absolute-path test and the a
 test. Their own regexes, taken from `tests/test_repo_hygiene.py`, find nothing in this
 file. CI is the suite of record.
 
-Refreshed (2026-10-09T20:4xZ): on this refreshed file, `git diff --check` exits 0. The same two
+Refreshed (2026-10-09T20:3xZ): on this refreshed file, `git diff --check` exits 0. The same two
 regexes, read from `tests/test_repo_hygiene.py` at `fa44d75` (`HOST_ABSOLUTE_PATH` and
 `ACT0_CITATION`), find nothing, and neither does a stricter scan for any host-absolute path
 prefix. No pytest ran: another lane's openRepoTools suite was live on the workstation. CI
