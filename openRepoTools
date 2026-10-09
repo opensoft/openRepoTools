@@ -256,20 +256,21 @@ workdir() {
 # fetch the same way is a claim `tests/test_openrepotools_command.py` and
 # openRepoShape's own suite each assert against their own script's text.
 #
-# WHAT IT FETCHES FROM IS THE ONE THING THAT MOVED (#186, T007): the source
-# `payload_resolve_remote` settled — the code an adopted assembly pins, or a
-# single repository at the ONE commit its ref named — or the repository and
-# commit a caller hands it, which is how the code pin itself is read.
+# WHAT IT FETCHES FROM IS THE ONE THING THAT MOVED (#186, T007): the CURRENT
+# SOURCE, `$PAYLOAD_REPO` at `$PAYLOAD_REV`, which is `$REPO` itself until
+# `payload_resolve_remote` has read and checked `$REPO`'s own code pin, and the
+# repository that pin names after that. Before any resolution it is `$REPO` at
+# `$REF`, exactly as it always was.
 fetch_from_repo() {
-	local path="$1" dest="$2" repo="${3:-${PAYLOAD_REPO:-$REPO}}" rev="${4:-${PAYLOAD_REV:-$REF}}"
+	local path="$1" dest="$2"
 	if command -v gh >/dev/null 2>&1 &&
-		gh api "repos/$repo/contents/$path?ref=$rev" \
+		gh api "repos/${PAYLOAD_REPO:-$REPO}/contents/$path?ref=${PAYLOAD_REV:-$REF}" \
 			-H 'Accept: application/vnd.github.raw' >"$dest" 2>/dev/null &&
 		[ -s "$dest" ]; then
 		return 0
 	fi
 	if command -v curl >/dev/null 2>&1 &&
-		curl -fsSL "https://raw.githubusercontent.com/$repo/$rev/$path" \
+		curl -fsSL "https://raw.githubusercontent.com/${PAYLOAD_REPO:-$REPO}/${PAYLOAD_REV:-$REF}/$path" \
 			>"$dest" 2>/dev/null && [ -s "$dest" ]; then
 		return 0
 	fi
@@ -336,6 +337,12 @@ fetch_from_repo() {
 # ALL OF IT HAPPENS BEFORE ANYTHING IS PLACED: `install_commands` asks
 # `payload_select` straight after the targets, before the first byte is
 # collected, and every refusal here places nothing.
+#
+# ONE CURRENT SOURCE, AND IT IS `$REPO`'S. Every request this file makes reads
+# `${PAYLOAD_REPO:-$REPO}`: `$REPO` while its ref, its tree and its pin are
+# read, and — only once that pin has passed every check below — the repository
+# `$REPO`'s own pin names. No other repository is ever reached for the payload,
+# and `tests/test_repo_hygiene.py` holds every fetching line to naming `$REPO`.
 
 PAYLOAD_MODE=""      # "" until chosen: local | siblings | remote
 PAYLOAD_DIR=""       # the directory payload files are copied from, if any
@@ -522,13 +529,14 @@ api_said() {   # <tool> <its stderr> — its first line, as one clause
 	esac
 }
 
-#: A COMMIT, BY REF: API_SHA and 0, or API_WHY and 1. An answer that is not 40
-#: lowercase hex is no answer — `gh` prints a failed request's JSON on stdout.
-api_sha() {   # <owner/name> <ref, URL-escaped>
+#: A COMMIT OF THE CURRENT SOURCE, BY REF: API_SHA and 0, or API_WHY and 1. An
+#: answer that is not 40 lowercase hex is no answer — `gh` prints a failed
+#: request's JSON on stdout.
+api_sha() {   # <ref, URL-escaped>
 	local out="$WORKDIR/api-sha" why="" sha=""
 	API_SHA="" API_WHY=""
 	if command -v gh >/dev/null 2>&1; then
-		if gh api "repos/$1/commits/$2" -H 'Accept: application/vnd.github.sha' \
+		if gh api "repos/${PAYLOAD_REPO:-$REPO}/commits/$1" -H 'Accept: application/vnd.github.sha' \
 			>"$out" 2>"$out.err"; then
 			IFS= read -r sha <"$out" || :
 			if is_lower_hex 40 "$sha"; then API_SHA="$sha"; return 0; fi
@@ -541,7 +549,7 @@ api_sha() {   # <owner/name> <ref, URL-escaped>
 	fi
 	if command -v curl >/dev/null 2>&1; then
 		if curl -fsSL -H 'Accept: application/vnd.github.sha' \
-			"https://api.github.com/repos/$1/commits/$2" >"$out" 2>"$out.err"; then
+			"https://api.github.com/repos/${PAYLOAD_REPO:-$REPO}/commits/$1" >"$out" 2>"$out.err"; then
 			sha=""
 			IFS= read -r sha <"$out" || :
 			if is_lower_hex 40 "$sha"; then API_SHA="$sha"; return 0; fi
@@ -563,12 +571,13 @@ tree_listing_ok() {   # <file> — one or more `path<TAB>blob|tree|commit<TAB>40
 		END { exit bad ? 1 : 0 }' "$1"
 }
 
-#: A TREE'S ENTRIES, ONE LEVEL: the listing in <dest> and 0, or API_WHY and 1.
-api_tree() {   # <owner/name> <commit or tree sha> <dest>
-	local out="$3" why=""
+#: A TREE OF THE CURRENT SOURCE, ONE LEVEL: the listing in <dest> and 0, or
+#: API_WHY and 1.
+api_tree() {   # <commit or tree sha> <dest>
+	local out="$2" why=""
 	API_WHY=""
 	if command -v gh >/dev/null 2>&1; then
-		if gh api "repos/$1/git/trees/$2" --jq "$ORT_TREE_JQ" >"$out" 2>"$out.err"; then
+		if gh api "repos/${PAYLOAD_REPO:-$REPO}/git/trees/$1" --jq "$ORT_TREE_JQ" >"$out" 2>"$out.err"; then
 			tree_listing_ok "$out" && return 0
 			why="gh: an answer that is not a tree listing"
 		else
@@ -581,7 +590,7 @@ api_tree() {   # <owner/name> <commit or tree sha> <dest>
 		why="$why; curl: not installed"
 	elif ! command -v jq >/dev/null 2>&1; then
 		why="$why; curl: not asked, because reading api.github.com's JSON needs \`jq\` and there is none"
-	elif ! curl -fsSL "https://api.github.com/repos/$1/git/trees/$2" >"$out.json" 2>"$out.err"; then
+	elif ! curl -fsSL "https://api.github.com/repos/${PAYLOAD_REPO:-$REPO}/git/trees/$1" >"$out.json" 2>"$out.err"; then
 		why="$why; $(api_said curl "$out.err")"
 	elif jq -r "$ORT_TREE_JQ" "$out.json" >"$out" 2>/dev/null && tree_listing_ok "$out"; then
 		return 0
@@ -621,22 +630,24 @@ payload_resolve_remote() {
 	pin="$WORKDIR/code-pin.yaml"
 	is_slug "$REPO" || die "\$OPENREPOTOOLS_REPO is '$REPO', which is not an owner/name repository, so
     there is nothing to fetch from, and nothing was fetched, placed or written."
-	api_sha "$REPO" "$(url_ref "$REF")" || die "could not resolve $REPO at $REF to a commit, so nothing was fetched,
+	# THE CURRENT SOURCE IS $REPO until its own pin says otherwise.
+	PAYLOAD_REPO="$REPO" PAYLOAD_REV=""
+	api_sha "$(url_ref "$REF")" || die "could not resolve $REPO at $REF to a commit, so nothing was fetched,
     placed or written. What answered:
         $API_WHY
     Both were asked:
         gh api repos/$REPO/commits/$REF -H 'Accept: application/vnd.github.sha'
         curl -fsSL -H 'Accept: application/vnd.github.sha' https://api.github.com/repos/$REPO/commits/$REF
     A failed answer is a refusal, never a reading of the repository's layout."
-	SOURCE_SHA="$API_SHA"
-	api_tree "$REPO" "$SOURCE_SHA" "$listing" || die "could not list $REPO at $SOURCE_SHA ($REF), so whether it is a single
+	SOURCE_SHA="$API_SHA" PAYLOAD_REV="$API_SHA"
+	api_tree "$SOURCE_SHA" "$listing" || die "could not list $REPO at $SOURCE_SHA ($REF), so whether it is a single
     repository or an adopted assembly is not known, and nothing was fetched,
     placed or written. What answered:
         $API_WHY
     A failed listing is a refusal, never evidence that the code pin is absent."
 	entry=""
 	if entry="$(tree_entry "$listing" contracts)" && [ "${entry%% *}" = tree ]; then
-		api_tree "$REPO" "${entry#* }" "$contracts" || die "could not list contracts/ in $REPO at $SOURCE_SHA ($REF), so whether it
+		api_tree "${entry#* }" "$contracts" || die "could not list contracts/ in $REPO at $SOURCE_SHA ($REF), so whether it
     carries a code pin is not known, and nothing was fetched, placed or written.
     What answered:
         $API_WHY"
@@ -653,12 +664,12 @@ payload_resolve_remote() {
     its code is nor that it is a single repository. Nothing was fetched, placed or
     written. Its contracts/code-pin.yaml is the file that names the code leg."
 		fi
-		SOURCE_LAYOUT=single PAYLOAD_REPO="$REPO" PAYLOAD_REV="$SOURCE_SHA"
+		SOURCE_LAYOUT=single
 		return 0
 	fi
 	[ "${entry%% *}" = blob ] || die "contracts/code-pin.yaml in $REPO at $SOURCE_SHA is a ${entry%% *}, not a
     file, and nothing was fetched, placed or written."
-	fetch_from_repo contracts/code-pin.yaml "$pin" "$REPO" "$SOURCE_SHA" ||
+	fetch_from_repo contracts/code-pin.yaml "$pin" ||
 		die "could not fetch contracts/code-pin.yaml from $REPO at $SOURCE_SHA ($REF), which
     the listing shows is there, so nothing was fetched, placed or written. Both
     were asked:
@@ -675,13 +686,15 @@ payload_resolve_remote() {
     and its contracts/code-pin.yaml says $PIN_COMMIT. The gitlink and the pin move
     in ONE commit (the lockstep rule), so this assembly does not say which code it
     means, and nothing was fetched, placed or written."
-	if ! api_sha "$PIN_SOURCE_REPOSITORY" "$PIN_COMMIT" || [ "$API_SHA" != "$PIN_COMMIT" ]; then
+	# THE PIN HAS PASSED: the source is now the repository it names.
+	PAYLOAD_REPO="$PIN_SOURCE_REPOSITORY" PAYLOAD_REV="$PIN_COMMIT"
+	if ! api_sha "$PIN_COMMIT" || [ "$API_SHA" != "$PIN_COMMIT" ]; then
 		die "contracts/code-pin.yaml in $REPO at $SOURCE_SHA ($REF) pins $PIN_SOURCE_REPOSITORY
     at $PIN_COMMIT, and that is not a commit $PIN_SOURCE_REPOSITORY answers for, so
     nothing was fetched, placed or written. What answered:
         ${API_WHY:-$PIN_SOURCE_REPOSITORY answered $API_SHA}"
 	fi
-	SOURCE_LAYOUT=adopted PAYLOAD_REPO="$PIN_SOURCE_REPOSITORY" PAYLOAD_REV="$PIN_COMMIT"
+	SOURCE_LAYOUT=adopted
 }
 
 payload_where() {   # the source collected from, for a refusal to name
