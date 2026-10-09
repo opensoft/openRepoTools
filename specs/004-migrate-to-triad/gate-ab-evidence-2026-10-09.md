@@ -4,7 +4,8 @@
 No task is checked complete by this record, and it approves nothing.
 **Writer:** lane openRepoTools-1, 2026-10-09T00:36Z–01:1xZ.
 **Evidence branch:** `004-migrate-to-triad-rollback` (from main `837928a`).
-**Private receipt ID:** `rollback-20261009-ILvoVC` (brett-wip `migration/openRepoTools/`), holding every
+**Private receipt ID:** `rollback-20261009-ILvoVC` (brett-wip `migration/openRepoTools/`, commit
+`56f1e7c4`, 424 files under one `SHA256SUMS`), holding every
 script, log, snapshot and digest named below. Machine paths stay there.
 
 T011 asks for three things. First, a rehearsal of restoring the local candidate and the
@@ -273,7 +274,7 @@ Verification marked "T011" was done by this run: checksums and the git identitie
 | brett-wip `f0ea2df7` | receipt `prep-20261007T100559Z` | Gate A's private record | **T011:** its manifest copy is the backup's (`2a46dff9…`), and the backup passes it |
 | brett-wip `c311a78b` | receipt `adopter-fix-20261007-iM20tv` | runs A and B | **T011:** `sha256sum -c` 58 OK; the six published log digests are in it |
 | brett-wip `3de0d37c` | receipt `adopter-fix-20261008-1HztL0` | run C | **T011:** `sha256sum -c` 44 OK |
-| brett-wip (this run) | receipt `rollback-20261009-ILvoVC` | T011 | its own `SHA256SUMS` |
+| brett-wip `56f1e7c4` | receipt `rollback-20261009-ILvoVC` | T011 | its own `SHA256SUMS` (423 entries) |
 | host-local | backup `prep-20261007T100559Z`; rehearsal `work-20261008/rehearsal` | the preserved artifacts | **T011**, read-only, before and after |
 
 No private receipt exists for T006 or T009/T010. Their logs are host-local only, in the
@@ -381,6 +382,15 @@ The logs and snapshots are in the private receipt.
 | `mutations.tsv` (section 3) | `76fc8521b1738fde5471f99e1641c6d901ebf72a65bb677d612700caf7ed77b1` |
 | `refs-vs-live-now.tsv` (section 1) | `d3b5de9d85fe9ae8fe8a7a965d9015cb177c1e67d77beb30639cd51a02644249` |
 | `restore-trees.tsv` (section 1, 17 trees) | `ace098036ebcec7fe47dd56a0bb7f38b97b9b10bc4753c9dd2d652349a57db98` |
+
+**This document's own check.** `tests/run.sh -k repo_hygiene` did not run:
+- the wrapper waited 5 minutes (00:57–01:02Z) on 7 other repositories' pytest processes;
+- its exact pytest line under `flock` on the workstation lock then queued 10 minutes behind
+  the T007/T008 writer's full suite and was stopped before pytest started.
+
+Two hygiene tests read every tracked file: the host-absolute-path test and the act-0 citation
+test. Their own regexes, taken from `tests/test_repo_hygiene.py`, find nothing in this
+file. CI is the suite of record.
 
 This record authorizes no conversion, repository creation, merge, default-branch move or
 lane rebinding.
