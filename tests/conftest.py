@@ -67,6 +67,10 @@ ENV_COMPOSED = "OPENREPOTOOLS_COMPOSED"
 #: submodule's attributes from the submodule's own tree, so the line-ending
 #: rule protects the bash files only where the bash files are. Reading it from
 #: the assembly would pass while the code leg's checkout went unprotected.
+#: `LICENSE` and `.gitignore` are the code root's for the same kind of reason:
+#: the placement table puts them at the assembly, but T006's `code-0001` gives
+#: the code leg its own copy of each, and the leg's copy is the one that governs
+#: the leg's files (#193 item 7). No test reads either today.
 GUIDANCE_DOCUMENTS = ("README.md", "AGENTS.md", "CLAUDE.md")
 SPEC_TREES = ("docs", "openspec", "specs", "ideation")
 

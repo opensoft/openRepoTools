@@ -55,8 +55,10 @@ WRAPPER = REPO / "tests" / "run.sh"
 #: `.gitattributes`, which the table also sends to the assembly and which the
 #: code leg must carry too — git never applies the assembly's inside a
 #: submodule (conftest's `GUIDANCE_DOCUMENTS` note) — so a fixture leg keeps
-#: it, as the leg is meant to be (Copilot on #190).
-ASSEMBLY_FILES = ("README.md", "AGENTS.md", "CLAUDE.md", "LICENSE", ".gitignore")
+#: it, as the leg is meant to be (Copilot on #190). `LICENSE` and `.gitignore`
+#: likewise: T006's `code-0001` gives the code leg its own copy of each, so a
+#: fixture leg keeps them too (#193 item 7).
+ASSEMBLY_FILES = ("README.md", "AGENTS.md", "CLAUDE.md")
 SPEC_TREES = ("docs", "openspec", "specs", "ideation")
 
 INSTALL_LINE = (
@@ -801,6 +803,16 @@ def test_the_wrapper_passes_a_relative_root_through_as_an_absolute_one(tmp_path)
     assert seen["OPENREPOTOOLS_SPEC_ROOT"] == f"{caller.resolve()}/asm/spec", seen
     assert seen["OPENREPOTOOLS_CODE_ROOT"] == str(tmp_path / "elsewhere"), seen
     assert seen["OPENREPOTOOLS_COMPOSED"] == "1", seen
+    # A QUOTED `~` is the home directory, as conftest's `expanduser` reads it,
+    # never a directory named `~` under the caller (#193 item 7).
+    env.update(OPENREPOTOOLS_SPEC_ROOT="~/spec", OPENREPOTOOLS_ASSEMBLY_ROOT="~")
+    proc = subprocess.run([shutil.which("bash") or "bash", str(WRAPPER), "-k", "x"],
+                          cwd=str(caller), env=env, capture_output=True, text=True,
+                          stdin=subprocess.DEVNULL, timeout=120, check=False)
+    assert proc.returncode == 0, proc.stderr
+    seen = dict(line.split("=", 1) for line in log.read_text().splitlines())
+    assert seen["OPENREPOTOOLS_SPEC_ROOT"] == f"{tmp_path / 'home'}/spec", seen
+    assert seen["OPENREPOTOOLS_ASSEMBLY_ROOT"] == str(tmp_path / "home"), seen
 
 
 # --- the resolver, asked directly -------------------------------------------
@@ -833,6 +845,10 @@ def test_a_mounted_code_leg_finds_its_assembly_and_spec_leg(tmp_path):
         "the line-ending rule is the code root's: git does not read a "
         "superproject's attributes into a submodule")
     assert roots.path_for("tests/run.sh") == code.resolve() / "tests/run.sh"
+    for own in ("LICENSE", ".gitignore"):
+        assert roots.path_for(own) == code.resolve() / own, (
+            f"{own} is the code root's: the code leg carries its own (T006's "
+            f"code-0001), and it is the copy that governs the leg's files")
     assert [role for role, _ in roots.tracked_roots()] == ["code", "assembly", "spec"]
 
 
