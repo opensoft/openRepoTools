@@ -11,8 +11,8 @@ No task is checked complete by this record, and it approves nothing.
 It holds every script, log, patch and install snapshot named below. Machine paths stay
 there.
 
-**State: in progress.** The candidate is built and its install is compared. The three
-suite runs are queued behind the workstation lock; section 5 is filled in when they end.
+**State: checkpoint (02:42Z).** The candidate is built and its install is compared. No
+suite run has finished yet; section 5 says where each one stands.
 
 ## 1. Inputs
 
@@ -161,7 +161,27 @@ section 2, repeated at this candidate's own commits, as its section 2 asked.
 
 ## 5. The suite: composed, standalone, and standalone without the dependency
 
-Queued at 01:53:52Z. The results go here when the runs end.
+### State at checkpoint (2026-10-09T02:42Z)
+
+**No suite run has finished. All three must be run, the composed one again from the
+start.**
+
+- **Composed.** `OPENREPOTOOLS_COMPOSED=1`, with the assembly and spec roots named. It
+  took the workstation lock at 02:10:40Z, after `tests/run.sh` had waited 5 minutes on
+  the census. By 02:42:37Z it had reached about 20%: the lane helpers' shell suite was
+  running, and one non-pass result was printed near 15%. The coordinator then called a
+  checkpoint for an account swap. This writer stopped its own run (one process group,
+  TERM, nothing left), released the lock with it, and removed the run's own run root.
+  The partial log is kept in the receipt. It is not a result.
+- **Standalone and no-submodule.** Not started.
+
+For comparison when they run, the CI numbers already read:
+
+| Where | `tests` | `tests-no-submodule` |
+| --- | --- | --- |
+| main `63810dd` (run 37866269342) | 1296 passed | 1084 passed, 212 skipped |
+| PR #190 `dbc6837` (run 37869489919) | 1318 passed | 1105 passed, 213 skipped |
+| PR #191 `2411f40` (run 37869321635) | 1379 passed, 7 skipped | 1165 passed, 221 skipped |
 
 ## 6. What this proves for Gate B, and what it does not
 
