@@ -472,6 +472,31 @@ names at assembly `main`, or the paired feature branch of the same name. `tests-
 (:127-149) keeps proving that a fork's first run skips rather than fails. The assembly's own
 `validate.yml` from the shape checks manifest and pins.
 
+**2026-10-09: the sketch above, as written, cannot pass #190's composed mode** (found by the
+review of #190, read here at `dbc6837`). It checks out the PR's code at `code/` and the
+assembly at its `main`, and names that assembly in `OPENREPOTOOLS_ASSEMBLY_ROOT` with
+`OPENREPOTOOLS_COMPOSED=1`. #190's composed contract refuses any code root the assembly does
+not pin: `Roots.absent()` (tests/conftest.py:283) runs `_leg_at_its_pin("code", …)` (:259),
+which compares the code root's HEAD with the gitlink the assembly records at its code mount
+and refuses a mismatch ("composed acceptance is for the pinned code leg and no other"), and
+`pytest_configure` (:404-412) raises that refusal as a `pytest.UsageError`, **exit 4**, before
+the first test. On a code PR the PR's commit is never the commit assembly `main` pins, so the
+job would exit 4 on every code PR. Without `OPENREPOTOOLS_ASSEMBLY_ROOT`, `discover_assembly`
+(tests/conftest.py:159-172) finds an assembly only above the code root that MOUNTS it at its
+gitlink, which a sibling `code/` checkout is not. A composed job therefore has to do one of
+three things:
+
+1. check out an assembly whose code gitlink already points at the PR's own commit (a paired
+   assembly branch that pins it);
+2. build a throwaway assembly for the run that pins the PR's commit (the assembly at `main`,
+   its `code` gitlink and `contracts/code-pin.yaml` moved to the PR's commit, the code leg
+   checked out as its submodule), and run composed from that; or
+3. run #190's **standalone** mode on code PRs (no `OPENREPOTOOLS_COMPOSED`), leaving composed
+   acceptance to the assembly's own pin-bump PRs.
+
+Which one is lane 1's decision under §7 item 7; the sketch above is item 2's starting point,
+not a job that can run as it stands.
+
 ### 4.15 The register, logs, inventory and handoffs in `brett-wip` (read only)
 
 `grep -rcE '/workspace/projects/openRepoTools|~/projects/openRepoTools|\$HOME/projects/openRepoTools'`
@@ -560,6 +585,12 @@ kept only in this lane's scratch directory.
    for AGENTS.md (316) and README.md (486); the root guidance's `code/` prefixes (§4.12).
 7. **T010 context:** which spec and assembly commits a code CI run pairs with, and whether the
    code leg's CI carries the two extra checkouts or the assembly's CI runs the composed suite.
+   **2026-10-09:** the §4.14 sketch exits 4 under #190's composed mode as it stands (#190 at
+   `dbc6837`: `_leg_at_its_pin`, tests/conftest.py:259, refuses a code root the assembly does
+   not pin, raised by `pytest_configure`, :404-412; `discover_assembly`, :159-172, finds only
+   an assembly that mounts the code root). The composed job must check out an assembly whose
+   code gitlink points at the PR's own commit, or a throwaway assembly built for the run that
+   pins it, or use #190's standalone mode (§4.14, 2026-10-09 note).
 8. **Measure in T008:** what `gh api …/contents/<path>` and `raw.githubusercontent.com` answer
    for a path under a gitlink. §4.10 derives a 404 and does not claim it.
 9. **Standalone skip, or standalone fail (#190):** there are two readings of FR-008. #190
