@@ -641,30 +641,32 @@ url_ref() {   # <ref> — with the two characters a URL path reads otherwise esc
 
 # --- the two questions every remote run asks first ----------------------------
 
-#: IS <path> IN `$REPO` AT `$REF`? Asked exactly the way `fetch_from_repo` asks
-#: for a payload file — `gh api …/contents` first, the raw URL second — so the
-#: answer needs no host and no tool today's install did not already need.
-#: 0: it is there, its bytes in <dest>. 3: it is not, which is GitHub's own 404
-#: (`gh` names the status in what it prints; the raw URL's is read with `-w`).
-#: 1: no answer either way, and PROBE_WHY says what each transport said.
+#: IS <path> IN THE CURRENT SOURCE? Asked exactly the way `fetch_from_repo`
+#: asks for a payload file — `gh api …/contents` first, the raw URL second — and
+#: of the same source, which is `$REPO` at `$REF` until an adopted assembly's
+#: own commit is known, so the question today's layout is asked needs no host
+#: and no tool its install did not already need. 0: it is there, its bytes in
+#: <dest>. 3: it is not, which is GitHub's own 404 (`gh` names the status in
+#: what it prints; the raw URL's is read with `-w`). 1: no answer either way.
+#: PROBE_WHY says what each transport said, for 3 and for 1.
 probe_path() {   # <path> <dest>
 	local path="$1" dest="$2" status="" why=""
 	PROBE_WHY=""
 	if command -v gh >/dev/null 2>&1; then
-		if gh api "repos/$REPO/contents/$path?ref=$REF" \
+		if gh api "repos/${PAYLOAD_REPO:-$REPO}/contents/$path?ref=${PAYLOAD_REV:-$REF}" \
 			-H 'Accept: application/vnd.github.raw' >"$dest" 2>"$dest.err"; then
 			return 0
 		fi
 		why="$(api_said gh "$dest.err")"
-		case "$why" in *'HTTP 404'*) return 3 ;; esac
+		case "$why" in *'HTTP 404'*) PROBE_WHY="$why"; return 3 ;; esac
 	else
 		why="gh: not installed"
 	fi
 	if command -v curl >/dev/null 2>&1; then
-		if status="$(curl -sSL -o "$dest" -w '%{http_code}' "https://raw.githubusercontent.com/$REPO/$REF/$path" 2>"$dest.err")"; then
+		if status="$(curl -sSL -o "$dest" -w '%{http_code}' "https://raw.githubusercontent.com/${PAYLOAD_REPO:-$REPO}/${PAYLOAD_REV:-$REF}/$path" 2>"$dest.err")"; then
 			case "$status" in
 			200) return 0 ;;
-			404) return 3 ;;
+			404) PROBE_WHY="$why; curl: HTTP 404"; return 3 ;;
 			esac
 			why="$why; curl: HTTP ${status:-with no status}"
 		else
@@ -762,11 +764,15 @@ payload_resolve_remote() {
     Re-run once it has settled."
 	[ "${entry%% *}" = blob ] || resolve_refuse "contracts/code-pin.yaml in $REPO at $SOURCE_SHA is a ${entry%% *}, not a
     file."
-	fetch_from_repo contracts/code-pin.yaml "$pin" ||
+	# ASKED BY `probe_path`, not `fetch_from_repo`, so that a refusal can say
+	# what answered and not only what was asked (#191's review, lane 2's (d)).
+	probe_path contracts/code-pin.yaml "$pin" ||
 		resolve_refuse "could not fetch contracts/code-pin.yaml from $REPO at $SOURCE_SHA ($REF), which
-    the listing shows is there. Both were asked:
+    the listing shows is there. What answered:
+        $PROBE_WHY
+    Both were asked:
         gh api repos/$REPO/contents/contracts/code-pin.yaml?ref=$SOURCE_SHA
-        curl -fsSL https://raw.githubusercontent.com/$REPO/$SOURCE_SHA/contracts/code-pin.yaml"
+        curl -sSL https://raw.githubusercontent.com/$REPO/$SOURCE_SHA/contracts/code-pin.yaml"
 	pin_parse "$pin" || resolve_refuse "contracts/code-pin.yaml in $REPO at $SOURCE_SHA ($REF) is not a code pin
     this installer can follow: $PIN_WHY. A pin that is present and wrong is
     refused rather than read around."

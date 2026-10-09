@@ -1458,6 +1458,26 @@ def test_r09_an_api_failure_is_a_refusal_never_a_fallback_to_a_single_repository
         assert tried == {"gh", "curl"}, f"both transports are tried: {tried}"
 
 
+@NEEDS_JQ
+def test_r09_a_pin_the_listing_shows_but_that_will_not_come_back_is_refused_saying_what_answered(
+        tmp_path):
+    """The adopted path's pin fetch at the resolved commit: when it fails, the
+    refusal says what each transport ANSWERED, not only what was asked (#191's
+    review, lane 2's (d))."""
+    world = World(tmp_path)
+    code = world.code()
+    sha = world.assembly(code, extra={p: variant(p, "decoy") for p in PAYLOAD})
+    world.faults = [{"tool": "any", "kind": "status", "status": 503,
+                     "match": rf"code-pin\.yaml\?ref={sha}|/{sha}/contracts/code-pin\.yaml"}]
+    world.write_conf()
+    home = tmp_path / "home"
+    result = run_stdin(world, home, network(world), "--install")
+    assert_nothing_placed(home, result)
+    assert world.payload_requests() == []
+    assert "What answered:" in result.stderr, result.stderr
+    assert "gh: Error (HTTP 503)" in result.stderr and "curl: HTTP 503" in result.stderr, result.stderr
+
+
 # =========================================================================
 # ROW 10 — changed local gitlink / changed payload / incomplete local payload
 # =========================================================================
@@ -1803,8 +1823,10 @@ def test_r14_the_documented_upstream_skip_is_unchanged():
     """Without the submodule the command tests SKIP, naming the one command
     that fixes it (AGENTS.md, "Testing your changes"); conftest says so."""
     import conftest
+    # Read from conftest's text: in a composed run `NEEDS_UPSTREAM` is a
+    # fixture that FAILS instead (#190), and the standalone skip is still there.
     assert "git submodule update --init upstream/openRepoShape" in \
-        conftest.NEEDS_UPSTREAM.kwargs["reason"]
+        Path(conftest.__file__).read_text(encoding="utf-8")
 
 
 @NEEDS_COMPOSED
