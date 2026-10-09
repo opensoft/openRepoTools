@@ -1,0 +1,148 @@
+=== repoD: lane-reconcile before ===
+exit 0
+--- stdout
+ROOT<HOME>/projects/.lane-state/repoD-1
+STATERUNNINGgeneration 1operation op-seedowner <HEX>-1111-4180-8180-<HEX>updated <UTC>
+HOLDERnone
+BINDINGhereeagle/none
+TREE<TREE-ID>unmanaged<HOME>/projects/repoD/worktrees/001-d/specgit registers it in <HOME>/projects/repoD and no sidecar of this lane names it; it is left exactly as it is
+TREE<TREE-ID>unpushed<HOME>/projects/.lane-worktrees/repoD-1/depbranch dep head <HEX> upstream origin/main 0 dirty 1 unpushed; observed 0/1 at <UTC>
+TREES1 inventoried1 dirty or unpushed0 require recovery1 unmanaged or stale
+VERDICTungraceful-stopthe lane is recorded RUNNING and no verified holder is live: the session stopped before any handoff began, so nothing was polled, refreshed or recorded — inspect every tree below before relaunching a writer
+--- stderr
+
+=== repoD: lane-handoff ===
+exit 0
+--- stdout
+
+WRITER <HOME>/projects/.lane-worktrees/repoD-1/dep — branch dep, last commit <HEX> lane work in the dependency
+  git status --short: 0 dirty
+  git log @{u}..: 1 unpushed
+    <HEX> lane work in the dependency
+
+READY — restart with: pclaude --lane repoD-1 <profile>
+  record: PAUSED lane:repoD-1 → swap; dir <HOME>/projects/repoD; workstation Eagle; agent claude; transcript none; kind unknown
+  agent claude, transcript none (lane-start --agent claude resumes it)
+  lifecycle: SWAPPED (generation 2, operation <OPERATION>) — lanes-edit.sh lane-reconcile repoD-1
+  inventory: 1 worktree(s) recorded — lanes-edit.sh lane-trees repoD-1
+--- stderr
+lane-handoff: lane=repoD-1 workstation=Eagle
+lanes-edit: LANES_NO_FETCH=1 — not fetching; reading origin/main as the ref already stands here
+lane-handoff: lane=repoD-1 workstation=Eagle
+lane-handoff: lifecycle: RUNNING -> SWAPPING (generation 2, operation <OPERATION>)
+lane-handoff: writers polled: 1 under <HOME>/projects/repoD
+lane-handoff: handoff refreshed: <HOME>/projects/wip/handoffs/repoD-1.md (+14 lines at the head)
+lane-handoff: handoff commit: handoff(repoD-1@Eagle): PAUSED
+lane-handoff: handoff pushed to origin/main
+lanes-edit: 1 line appended to <HOME>/projects/wip/lanes/log/repoD-1.md
+lanes-edit: committed: LOG(repoD-1@Eagle): PAUSED lane:repoD-1
+lanes-edit: pushed origin/main (attempt 1)
+lane-handoff: object log: PAUSED lane:repoD-1 → swap; dir <HOME>/projects/repoD; workstation Eagle; agent claude; transcript none; kind unknown
+lane-handoff: lifecycle: SWAPPING -> SWAPPED (generation 2, operation <OPERATION>)
+
+=== repoD: lane-handoff: top block ===
+Lane: repoD-1 (profile unknown, session <HEX>-1111-4180-8180-<HEX>) — single-use resume prompt: stamp RESUMED-by before acting (lane-collision-protocol rule 3)
+
+## RESUME PROMPT — PAUSED <UTC> (t018 handoff), agent claude, transcript none, kind unknown — the count decides: this handoff cannot know whether the process survived
+
+**FIRST ACTS, in order.** (1) You are lane `repoD-1`, checkout `<HOME>/projects/repoD`. Stamp this block RESUMED before anything else (Rule 3, single use) — `lane-start --no-launch <repo> <n>` in this window writes it. (2) Read AGENTS.md, then this block. (3) COUNT THE LIVE WRITERS before relaunching anything — the WRITERS section below is a list to COUNT, not a list to relaunch (Amendment 17 Addendum 1 (i)). ONE WORKTREE, ONE WRITER (k): a worktree is one writer's for as long as that writer is live, a relaunch onto a live writer's worktree is the writers' form of Amendment 18(h)'s second binding, and where you find one made you retire the newer before either commits. THIS HANDOFF CANNOT KNOW WHICH KIND FOLLOWED IT: a plain handoff may be followed by a `/clear` in this process or by a relaunch, so nothing below assumes either — the count is the answer. Older sections below are history.
+
+**STATE at <UTC>.** Handed off by `lane-handoff` on Eagle: t018 handoff. Agent `claude`, transcript `none`. Kind `unknown`: the act that follows this record was not this command's to know (`kind unknown`, Addendum 1 (h)) — the restart line below is one of the two, and a `/clear` typed here is the other.
+
+**WRITERS at <UTC>** (1 found under `<HOME>/projects/repoD`) — FIRST count the live writers: `ListAgents` in Claude, the agent's equivalent elsewhere. A writer still live OWNS its worktree: do not relaunch it; one message telling it that its in-flight call died and who the coordinator now is, is enough. Relaunch only a writer that is NOT live, from where it stands — `git status` and `git log @{u}..` in its worktree, then its brief. WHERE THE COUNT AND THIS LIST DISAGREE, THE COUNT WINS: this list is what the paused session expected, the count is what is true.
+
+- `<HOME>/projects/.lane-worktrees/repoD-1/dep` — branch `dep`, last commit `<HEX> lane work in the dependency`, 0 dirty, 1 unpushed; brief: (fill in: the brief this writer was given)
+
+=== repoD: lane-handoff: inventory ===
+exit 0
+--- stdout
+<TREE-ID><HOME>/projects/.lane-worktrees/repoD-1/depdep<HEX>origin/main01<HEX>-1111-4180-8180-<HEX><UTC><HOME>/projects/repoD2<OPERATION>1
+--- stderr
+
+=== repoD: lane-reconcile after ===
+exit 0
+--- stdout
+ROOT<HOME>/projects/.lane-state/repoD-1
+STATESWAPPEDgeneration 2operation <OPERATION>owner <HEX>-1111-4180-8180-<HEX>updated <UTC>
+HOLDERnone
+BINDINGfreenone
+TREE<TREE-ID>unmanaged<HOME>/projects/repoD/worktrees/001-d/specgit registers it in <HOME>/projects/repoD and no sidecar of this lane names it; it is left exactly as it is
+TREE<TREE-ID>unpushed<HOME>/projects/.lane-worktrees/repoD-1/depbranch dep head <HEX> upstream origin/main 0 dirty 1 unpushed; observed 0/1 at <UTC>
+TREES1 inventoried1 dirty or unpushed0 require recovery1 unmanaged or stale
+VERDICTresumablethe swap completed and no holder is live: the lane may be resumed once the trees below are read
+--- stderr
+
+=== repoQ: lane-reconcile before ===
+exit 0
+--- stdout
+ROOT<HOME>/projects/.lane-state/repoQ-1
+STATERUNNINGgeneration 1operation op-seedowner <HEX>-1111-4180-8180-<HEX>updated <UTC>
+HOLDERnone
+BINDINGhereeagle/none
+TREE<TREE-ID>unmanaged<HOME>/projects/repoQ/worktrees/001-d/specgit registers it in <HOME>/projects/repoQ and no sidecar of this lane names it; it is left exactly as it is
+TREE<TREE-ID>unpushed<HOME>/projects/.lane-worktrees/repoQ-1/depbranch dep head <HEX> upstream origin/main 0 dirty 1 unpushed; observed 0/1 at <UTC>
+TREES1 inventoried1 dirty or unpushed0 require recovery1 unmanaged or stale
+VERDICTungraceful-stopthe lane is recorded RUNNING and no verified holder is live: the session stopped before any handoff began, so nothing was polled, refreshed or recorded — inspect every tree below before relaunching a writer
+--- stderr
+
+=== repoQ: lane-handoff ===
+exit 0
+--- stdout
+
+WRITER <HOME>/projects/.lane-worktrees/repoQ-1/dep — branch dep, last commit <HEX> lane work in the dependency
+  git status --short: 0 dirty
+  git log @{u}..: 1 unpushed
+    <HEX> lane work in the dependency
+
+READY — restart with: pclaude --lane repoQ-1 <profile>
+  record: PAUSED lane:repoQ-1 → swap; dir <HOME>/projects/repoQ; workstation Eagle; agent claude; transcript none; kind unknown
+  agent claude, transcript none (lane-start --agent claude resumes it)
+  lifecycle: SWAPPED (generation 2, operation <OPERATION>) — lanes-edit.sh lane-reconcile repoQ-1
+  inventory: 1 worktree(s) recorded — lanes-edit.sh lane-trees repoQ-1
+--- stderr
+lane-handoff: lane=repoQ-1 workstation=Eagle
+lanes-edit: LANES_NO_FETCH=1 — not fetching; reading origin/main as the ref already stands here
+lane-handoff: lane=repoQ-1 workstation=Eagle
+lane-handoff: lifecycle: RUNNING -> SWAPPING (generation 2, operation <OPERATION>)
+lane-handoff: writers polled: 1 under <HOME>/projects/repoQ
+lane-handoff: handoff refreshed: <HOME>/projects/wip/handoffs/repoQ-1.md (+14 lines at the head)
+lane-handoff: handoff commit: handoff(repoQ-1@Eagle): PAUSED
+lane-handoff: handoff pushed to origin/main
+lanes-edit: 1 line appended to <HOME>/projects/wip/lanes/log/repoQ-1.md
+lanes-edit: committed: LOG(repoQ-1@Eagle): PAUSED lane:repoQ-1
+lanes-edit: pushed origin/main (attempt 1)
+lane-handoff: object log: PAUSED lane:repoQ-1 → swap; dir <HOME>/projects/repoQ; workstation Eagle; agent claude; transcript none; kind unknown
+lane-handoff: lifecycle: SWAPPING -> SWAPPED (generation 2, operation <OPERATION>)
+
+=== repoQ: lane-handoff: top block ===
+Lane: repoQ-1 (profile unknown, session <HEX>-1111-4180-8180-<HEX>) — single-use resume prompt: stamp RESUMED-by before acting (lane-collision-protocol rule 3)
+
+## RESUME PROMPT — PAUSED <UTC> (t018 handoff), agent claude, transcript none, kind unknown — the count decides: this handoff cannot know whether the process survived
+
+**FIRST ACTS, in order.** (1) You are lane `repoQ-1`, checkout `<HOME>/projects/repoQ`. Stamp this block RESUMED before anything else (Rule 3, single use) — `lane-start --no-launch <repo> <n>` in this window writes it. (2) Read AGENTS.md, then this block. (3) COUNT THE LIVE WRITERS before relaunching anything — the WRITERS section below is a list to COUNT, not a list to relaunch (Amendment 17 Addendum 1 (i)). ONE WORKTREE, ONE WRITER (k): a worktree is one writer's for as long as that writer is live, a relaunch onto a live writer's worktree is the writers' form of Amendment 18(h)'s second binding, and where you find one made you retire the newer before either commits. THIS HANDOFF CANNOT KNOW WHICH KIND FOLLOWED IT: a plain handoff may be followed by a `/clear` in this process or by a relaunch, so nothing below assumes either — the count is the answer. Older sections below are history.
+
+**STATE at <UTC>.** Handed off by `lane-handoff` on Eagle: t018 handoff. Agent `claude`, transcript `none`. Kind `unknown`: the act that follows this record was not this command's to know (`kind unknown`, Addendum 1 (h)) — the restart line below is one of the two, and a `/clear` typed here is the other.
+
+**WRITERS at <UTC>** (1 found under `<HOME>/projects/repoQ`) — FIRST count the live writers: `ListAgents` in Claude, the agent's equivalent elsewhere. A writer still live OWNS its worktree: do not relaunch it; one message telling it that its in-flight call died and who the coordinator now is, is enough. Relaunch only a writer that is NOT live, from where it stands — `git status` and `git log @{u}..` in its worktree, then its brief. WHERE THE COUNT AND THIS LIST DISAGREE, THE COUNT WINS: this list is what the paused session expected, the count is what is true.
+
+- `<HOME>/projects/.lane-worktrees/repoQ-1/dep` — branch `dep`, last commit `<HEX> lane work in the dependency`, 0 dirty, 1 unpushed; brief: (fill in: the brief this writer was given)
+
+=== repoQ: lane-handoff: inventory ===
+exit 0
+--- stdout
+<TREE-ID><HOME>/projects/.lane-worktrees/repoQ-1/depdep<HEX>origin/main01<HEX>-1111-4180-8180-<HEX><UTC><HOME>/projects/repoQ2<OPERATION>1
+--- stderr
+
+=== repoQ: lane-reconcile after ===
+exit 0
+--- stdout
+ROOT<HOME>/projects/.lane-state/repoQ-1
+STATESWAPPEDgeneration 2operation <OPERATION>owner <HEX>-1111-4180-8180-<HEX>updated <UTC>
+HOLDERnone
+BINDINGfreenone
+TREE<TREE-ID>unmanaged<HOME>/projects/repoQ/worktrees/001-d/specgit registers it in <HOME>/projects/repoQ and no sidecar of this lane names it; it is left exactly as it is
+TREE<TREE-ID>unpushed<HOME>/projects/.lane-worktrees/repoQ-1/depbranch dep head <HEX> upstream origin/main 0 dirty 1 unpushed; observed 0/1 at <UTC>
+TREES1 inventoried1 dirty or unpushed0 require recovery1 unmanaged or stale
+VERDICTresumablethe swap completed and no holder is live: the lane may be resumed once the trees below are read
+--- stderr
+
