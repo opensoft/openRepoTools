@@ -1,0 +1,128 @@
+From 386be81959ea32836be0777c1af8547cac044e2d Mon Sep 17 00:00:00 2001
+From: openRepoTools CI <ci@openrepotools.invalid>
+Date: Thu, 8 Oct 2026 21:52:59 +0000
+Subject: [PATCH] Add the assembly's exact-pin integration job as its own
+ workflow, which runs the code leg's suite composed and refuses any absent
+ context.
+
+validate.yml is a pinned shape copy, so the job lives in composed.yml.
+T010 of specs/004-migrate-to-triad/tasks.md (#186).
+
+Lane: openRepoTools-1
+---
+ .github/workflows/composed.yml | 103 +++++++++++++++++++++++++++++++++
+ 1 file changed, 103 insertions(+)
+ create mode 100644 .github/workflows/composed.yml
+
+diff --git a/.github/workflows/composed.yml b/.github/workflows/composed.yml
+new file mode 100644
+index 0000000..ef28e08
+--- /dev/null
++++ b/.github/workflows/composed.yml
+@@ -0,0 +1,103 @@
++name: composed
++
++# THE EXACT-PIN INTEGRATION GATE (opensoft/openRepoTools#186, T010 of
++# `specs/004-migrate-to-triad/tasks.md`; FR-008). `validate` beside this file
++# says the three records of each leg agree — gitlink, pin, digest. This says
++# the code those records name PASSES ITS OWN SUITE, composed with the spec leg
++# and the dependency it was pinned beside: the whole arrangement at the exact
++# commits this root records, and nothing allowed to skip its way to green.
++#
++# WHY A SIBLING AND NOT A JOB IN `validate.yml`: that file is a COPY of
++# openRepoShape's, digest-pinned in `contracts/shape-pin.yaml`. An edit to it
++# is drift `scripts/validate-pins.py` and `status` both report. This file is
++# this project's own, and it references no leg by `<org>/<leg>@<sha>`, so the
++# lockstep rule has nothing in it to move.
++#
++# LINUX ONLY, on purpose. The platform matrix — macOS's bash 3.2 parse and its
++# `ready`-label suite, Windows and the no-submodule skip path — is the code
++# leg's own `tests` workflow, and it stays there. What only this root can run
++# is the COMPOSED suite: `OPENREPOTOOLS_COMPOSED=1` turns every absent root
++# into a refusal and every check that would have skipped for want of one into
++# a failure, so a green run here is a claim about all three legs at once.
++#
++# IT REFUSES ABSENT CONTEXT TWICE OVER. The step below fails on any missing
++# leg, pin or dependency file before a test runs; and the suite's own
++# `tests/conftest.py` refuses a composed session (pytest's exit 4) when the
++# assembly or spec root is absent, the dependency is not initialized, or the
++# code or spec leg is not at the commit this root records for it. A leg this
++# job cannot fetch — a private leg with no credential — fails the checkout,
++# which is the same refusal: composed acceptance with a leg missing is the one
++# thing this job must never report. The legs are fetched over https, as
++# `.gitmodules` names them; nothing here allows a `file://` transport.
++
++on:
++  pull_request:
++  push:
++    branches: [main]
++  workflow_dispatch:
++
++jobs:
++  exact-pins:
++    runs-on: ubuntu-latest
++    steps:
++      # PINNED BY COMMIT, the same two actions the code leg pins. RECURSIVE:
++      # the legs, and the dependency nested in the code leg.
++      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
++        with:
++          submodules: recursive
++          fetch-depth: 1
++          persist-credentials: false
++      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
++        with:
++          python-version: '3.x'
++
++      - name: every context the composed run claims is here
++        run: |
++          set -euo pipefail
++          missing=0
++          for need in project.yaml contracts/code-pin.yaml contracts/spec-pin.yaml \
++                      code/openRepoTools code/tests/run.sh code/tests/conftest.py \
++                      code/contracts/openreposhape-pin.yaml \
++                      code/upstream/openRepoShape/scripts/repo_shape.py \
++                      code/upstream/openRepoShape/templates/workspace-root/README.md; do
++            if [ ! -f "$need" ]; then
++              echo "::error::the composed run needs $need, and this checkout has none"
++              missing=1
++            fi
++          done
++          if [ ! -d spec/openspec ] && [ ! -d spec/specs ] && [ ! -d spec/docs ]; then
++            echo "::error::the spec leg is not checked out at spec/"
++            missing=1
++          fi
++          git submodule status --recursive
++          exit "$missing"
++
++      # The same two the `validate` workflow runs, here as the gate's FIRST
++      # half: a suite that passes at a gitlink the pin does not name passes
++      # at the wrong commit.
++      - name: the manifest and the lockstep pins
++        run: |
++          python3 scripts/validate-manifest.py
++          python3 scripts/validate-pins.py
++
++      - name: install the test runner
++        run: python3 -m pip install --disable-pip-version-check pytest==8.3.4
++
++      - name: git identity for the fixture commits (env, not global config)
++        run: |
++          {
++            echo "GIT_AUTHOR_NAME=openRepoTools CI"
++            echo "GIT_AUTHOR_EMAIL=ci@openrepotools.invalid"
++            echo "GIT_COMMITTER_NAME=openRepoTools CI"
++            echo "GIT_COMMITTER_EMAIL=ci@openrepotools.invalid"
++          } >> "$GITHUB_ENV"
++
++      # THE CODE LEG'S OWN ENTRY POINT, serialized as it is everywhere: the
++      # roots are named, not inferred, and `-rs` prints any skip that remains
++      # (a platform one; none for want of a root can reach this far).
++      - name: the code leg's suite, composed, at the exact pins
++        env:
++          OPENREPOTOOLS_COMPOSED: '1'
++          OPENREPOTOOLS_ASSEMBLY_ROOT: ${{ github.workspace }}
++          OPENREPOTOOLS_SPEC_ROOT: ${{ github.workspace }}/spec
++        run: bash code/tests/run.sh -rs
+-- 
+2.43.0
+
