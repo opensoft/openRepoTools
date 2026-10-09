@@ -1778,14 +1778,19 @@ def test_agents_md_is_short_enough_to_be_read():
     line of prose is bought on `main` by a file that is not here yet.
 
     316 -> 323 HERE AND 340 -> 347 AT AN ASSEMBLY ROOT, on 2026-10-09, for the
-    same work (#186, T009; the #190 review). Seven lines in "Testing your
-    changes" — a blank and six — say what an agent running the suite now has to
-    know and would get wrong unaided: the suite reads each file from the root
-    that owns it, the three variables that name those roots
+    same work (#186, T009; the #190 review). Seven lines at the foot of
+    "Testing your changes" — a blank and six — say what an agent running the
+    suite now has to know and would get wrong unaided: the suite reads each
+    file from the root that owns it, the three variables that name those roots
     (`OPENREPOTOOLS_CODE_ROOT`, `OPENREPOTOOLS_ASSEMBLY_ROOT`,
     `OPENREPOTOOLS_SPEC_ROOT`), and that a root a standalone checkout lacks
     SKIPS by name while `OPENREPOTOOLS_COMPOSED=1` REFUSES instead. The
-    assembly's AGENTS.md carries the same seven, so its cap moves with them.
+    assembly's AGENTS.md is this file with T006's `assembly-0001` applied, so
+    it carries the same seven and its cap moves with them. They sit below the
+    last line that patch rewrites, so it still applies here and gives 347
+    lines; placed under the test block, which the patch rewrites, they made it
+    fail at `AGENTS.md:224` (lane openRepoTools-3's candidate review; #193
+    item 2).
     """
     lines = doc("AGENTS.md").read_text().splitlines()
     cap = 323 if ROOTS.assembly is None else 347
