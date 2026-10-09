@@ -1326,6 +1326,32 @@ def test_r08_an_assembly_root_without_its_code_pin_refuses_as_a_single_repositor
     single_layout_requests_only(world)
 
 
+@NEEDS_COMPOSED
+@NEEDS_JQ
+@pytest.mark.parametrize("transport", ["gh", "curl"])
+def test_r08_composed_the_root_entry_point_refuses_a_pin_its_gitlink_disagrees_with(
+        tmp_path, transport):
+    """The assembly's root entry point checks the lockstep rule ITSELF, before
+    it fetches or runs any implementation: the gitlink at the pin's
+    `submodule_path`, in the commit it resolved, must be the pinned commit.
+    A stale or rolled-back pin is refused there, naming both commits, and the
+    code repository is never asked for anything (lane 3's review of the T007
+    patch, T3)."""
+    require_composed()
+    world = World(tmp_path)
+    old = world.code(tag="old")
+    new = world.code(tag="new")
+    world.assembly(new, gitlink=old, root_entry=(ASSEMBLY / "openRepoTools").read_bytes())
+    home = tmp_path / "home"
+    result = run_stdin(world, home, network(world, gh=transport == "gh"), "--install",
+                       script=ASSEMBLY / "openRepoTools")
+    assert_nothing_placed(home, result)
+    assert old in result.stderr and new in result.stderr, result.stderr
+    assert "nothing ran" in result.stderr, result.stderr
+    assert not [r for r in world.requests() if "openRepoTools-code" in r["target"]], \
+        world.requests()
+
+
 def malformed(pin: str, how: str) -> str:
     sha = re.search(r'commit: "([0-9a-f]{40})"', pin).group(1)
     return {
