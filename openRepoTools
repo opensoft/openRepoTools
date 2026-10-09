@@ -259,8 +259,8 @@ workdir() {
 # WHAT IT FETCHES FROM IS THE ONE THING THAT MOVED (#186, T007): the CURRENT
 # SOURCE, `$PAYLOAD_REPO` at `$PAYLOAD_REV`, which is `$REPO` itself until
 # `payload_resolve_remote` has read and checked `$REPO`'s own code pin, and the
-# repository that pin names after that. Before any resolution it is `$REPO` at
-# `$REF`, exactly as it always was.
+# repository that pin names after that. For a single repository it never
+# moves: `$REPO` at `$REF`, exactly as it always was.
 fetch_from_repo() {
 	local path="$1" dest="$2"
 	if command -v gh >/dev/null 2>&1 &&
@@ -297,20 +297,30 @@ fetch_from_repo() {
 #     and a gitlink at the pinned path that must agree with it. The payload is
 #     that repository's, at that commit, and nothing else's.
 #
-# THE REF IS RESOLVED ONCE, in both layouts. `$OPENREPOTOOLS_REF` becomes a
-# commit on the first round trip, and every request after it names that
-# commit, so a branch that moves while the files come down cannot hand one run
-# two versions. `$OPENREPOTOOLS_REPO` and `$OPENREPOTOOLS_REF` mean what they
-# always meant: what to install from, and at which ref.
+# A SINGLE REPOSITORY IS READ EXACTLY AS IT ALWAYS WAS: `$OPENREPOTOOLS_REF`
+# as given, file by file, by `gh api …/contents` and then the raw URL — no
+# other host, no `jq`, no fallback that was not there before. The one thing it
+# is asked that it was not asked before is the two questions below, by those
+# same two transports. Only an ADOPTED ASSEMBLY resolves the ref:
+# `$OPENREPOTOOLS_REF` becomes a commit on the first API round trip and every
+# request after it names that commit, so a branch that moves while the files
+# come down cannot hand one run two versions. That guarantee needs
+# api.github.com (and `jq` on the `curl` path), which a single repository's
+# install never needed and still does not: today's layout keeps today's
+# network needs, byte for byte (#191's review). `$OPENREPOTOOLS_REPO` and
+# `$OPENREPOTOOLS_REF` mean what they always meant: what to install from, and
+# at which ref.
 #
-# WHICH LAYOUT IS DECIDED BY A LISTING THAT SUCCEEDED, NEVER BY A FAILURE. The
-# root tree at that commit is listed (`git/trees`), then `contracts/`: a code
-# pin that is there is the adopted layout, and one that a successful listing
-# shows is NOT there, with no adoption manifest (`project.yaml`) beside it, is
-# a single repository. An authentication failure, a rate limit, a transport
-# failure or an answer that does not parse is a REFUSAL naming what answered —
-# never evidence of the older layout, because reading it that way would
-# install whatever the assembly root happened to carry.
+# WHICH LAYOUT IS DECIDED BY AN ANSWER, NEVER BY A FAILURE. Two files are asked
+# for by name at `$REF`, through `fetch_from_repo`'s own two transports
+# (`probe_path`): `contracts/code-pin.yaml`, and — only where GitHub answered
+# that it is not there — `project.yaml`, the adoption manifest. A pin that is
+# there is the adopted layout. GitHub's 404 for both is a single repository. A
+# manifest with no pin is a partly adopted layout, and refuses. An
+# authentication failure, a rate limit, a transport failure or any other status
+# is a REFUSAL naming what answered — never evidence of the older layout,
+# because reading it that way would install whatever the assembly root happened
+# to carry.
 #
 # A PIN THAT IS PRESENT AND WRONG REFUSES. Its grammar is fixed, so it is read
 # here with `read` and `case` rather than a YAML runtime (`pin_parse`), and
@@ -352,6 +362,9 @@ SOURCE_SHA=""        # $REF, resolved once
 SOURCE_LAYOUT=""     # single | adopted | feature, once known
 API_SHA=""
 API_WHY=""
+PROBE_LAYOUT=""      # single | adopted | partial | unknown, once the two files are asked for
+PROBE_WHY=""
+RESOLVE_FOR=install  # whose refusal a failed resolution is: install, or wip (`wip init` step 7)
 
 #: THE CHARACTERS GITHUB SPELLS A NAME WITH, WRITTEN OUT. A bracket RANGE such
 #: as `[a-z]` follows the locale's collation in bash 3.2 and can admit capitals,
@@ -619,79 +632,162 @@ url_ref() {   # <ref> — with the two characters a URL path reads otherwise esc
 	printf '%s' "$out"
 }
 
+# --- the two questions every remote run asks first ----------------------------
+
+#: IS <path> IN `$REPO` AT `$REF`? Asked exactly the way `fetch_from_repo` asks
+#: for a payload file — `gh api …/contents` first, the raw URL second — so the
+#: answer needs no host and no tool today's install did not already need.
+#: 0: it is there, its bytes in <dest>. 3: it is not, which is GitHub's own 404
+#: (`gh` names the status in what it prints; the raw URL's is read with `-w`).
+#: 1: no answer either way, and PROBE_WHY says what each transport said.
+probe_path() {   # <path> <dest>
+	local path="$1" dest="$2" status="" why=""
+	PROBE_WHY=""
+	if command -v gh >/dev/null 2>&1; then
+		if gh api "repos/$REPO/contents/$path?ref=$REF" \
+			-H 'Accept: application/vnd.github.raw' >"$dest" 2>"$dest.err"; then
+			return 0
+		fi
+		why="$(api_said gh "$dest.err")"
+		case "$why" in *'HTTP 404'*) return 3 ;; esac
+	else
+		why="gh: not installed"
+	fi
+	if command -v curl >/dev/null 2>&1; then
+		if status="$(curl -sSL -o "$dest" -w '%{http_code}' "https://raw.githubusercontent.com/$REPO/$REF/$path" 2>"$dest.err")"; then
+			case "$status" in
+			200) return 0 ;;
+			404) return 3 ;;
+			esac
+			why="$why; curl: HTTP ${status:-with no status}"
+		else
+			why="$why; $(api_said curl "$dest.err")"
+		fi
+	else
+		why="$why; curl: not installed"
+	fi
+	PROBE_WHY="$why"
+	return 1
+}
+
+#: WHICH LAYOUT `$REPO` HAS AT `$REF`: PROBE_LAYOUT single, adopted, partial or
+#: unknown, with PROBE_WHY for unknown. It asks and refuses nothing; what each
+#: answer means is its callers' (`payload_resolve_remote`, `wip_shape_ref`).
+payload_probe() {
+	[ -z "$PROBE_LAYOUT" ] || return 0
+	local rc=0
+	workdir
+	probe_path contracts/code-pin.yaml "$WORKDIR/probe-code-pin" || rc=$?
+	case "$rc" in
+	0) PROBE_LAYOUT=adopted; return 0 ;;
+	3) : ;;
+	*) PROBE_LAYOUT=unknown PROBE_WHY="contracts/code-pin.yaml: $PROBE_WHY"; return 0 ;;
+	esac
+	rc=0
+	probe_path project.yaml "$WORKDIR/probe-project" || rc=$?
+	case "$rc" in
+	0) PROBE_LAYOUT=partial ;;
+	3) PROBE_LAYOUT=single ;;
+	*) PROBE_LAYOUT=unknown PROBE_WHY="project.yaml: $PROBE_WHY" ;;
+	esac
+}
+
+#: A RESOLUTION THAT FAILED, refused in the words of the run it failed: an
+#: `--install`, which has placed nothing yet, or `wip init`'s step 7, which
+#: comes after its repository was made and cloned, so "nothing was written"
+#: would not be true there.
+resolve_refuse() {   # <what happened>
+	case "$RESOLVE_FOR" in
+	wip) die "$1
+    Step 7 seeded nothing: no template file was written into the checkout and
+    nothing was staged. What the steps before it made is kept as it is, and a
+    re-run picks up from here." ;;
+	*) die "$1
+    NOTHING was installed and nothing already installed was replaced." ;;
+	esac
+}
+
 # --- the remote source, resolved once ---------------------------------------
 
 payload_resolve_remote() {
-	[ -z "$SOURCE_SHA" ] || return 0
+	[ -z "$SOURCE_LAYOUT" ] || return 0
 	local listing contracts pin entry link
 	workdir
+	payload_probe
+	case "$PROBE_LAYOUT" in
+	single)
+		# TODAY'S LAYOUT, READ AS TODAY: `$REPO` at `$REF` as given, file by
+		# file, by the transports that always fetched it.
+		PAYLOAD_REPO="$REPO" PAYLOAD_REV="" SOURCE_LAYOUT=single
+		return 0 ;;
+	partial)
+		resolve_refuse "$REPO at $REF carries an adoption manifest, project.yaml, and no
+    contracts/code-pin.yaml: a partly adopted layout, which says neither where
+    its code is nor that it is a single repository. Its contracts/code-pin.yaml
+    is the file that names the code leg." ;;
+	unknown)
+		resolve_refuse "could not fetch the files that say whether $REPO at $REF is a single
+    repository or an adopted assembly, and a failed answer is a refusal, never a
+    reading of the layout. What answered:
+        $PROBE_WHY
+    Both ways were tried:
+        gh api repos/$REPO/contents/<file>?ref=$REF
+        curl -sSL https://raw.githubusercontent.com/$REPO/$REF/<file>" ;;
+	esac
+	# AN ADOPTED ASSEMBLY: everything again, at ONE commit.
 	listing="$WORKDIR/source-root.tsv"
 	contracts="$WORKDIR/source-contracts.tsv"
 	pin="$WORKDIR/code-pin.yaml"
-	is_slug "$REPO" || die "\$OPENREPOTOOLS_REPO is '$REPO', which is not an owner/name repository, so
-    there is nothing to fetch from, and nothing was fetched, placed or written."
+	is_slug "$REPO" || resolve_refuse "\$OPENREPOTOOLS_REPO is '$REPO', which is not an owner/name repository,
+    so the code its contracts/code-pin.yaml names cannot be asked for."
 	# THE CURRENT SOURCE IS $REPO until its own pin says otherwise.
 	PAYLOAD_REPO="$REPO" PAYLOAD_REV=""
-	api_sha "$(url_ref "$REF")" || die "could not resolve $REPO at $REF to a commit, so nothing was fetched,
-    placed or written. What answered:
+	api_sha "$(url_ref "$REF")" || resolve_refuse "could not resolve $REPO at $REF to a commit. What answered:
         $API_WHY
     Both were asked:
         gh api repos/$REPO/commits/$REF -H 'Accept: application/vnd.github.sha'
         curl -fsSL -H 'Accept: application/vnd.github.sha' https://api.github.com/repos/$REPO/commits/$REF
-    A failed answer is a refusal, never a reading of the repository's layout."
+    An adopted assembly is installed from ONE commit, and a failed answer is a
+    refusal, never a reading of the repository's layout."
 	SOURCE_SHA="$API_SHA" PAYLOAD_REV="$API_SHA"
-	api_tree "$SOURCE_SHA" "$listing" || die "could not list $REPO at $SOURCE_SHA ($REF), so whether it is a single
-    repository or an adopted assembly is not known, and nothing was fetched,
-    placed or written. What answered:
-        $API_WHY
-    A failed listing is a refusal, never evidence that the code pin is absent."
+	api_tree "$SOURCE_SHA" "$listing" || resolve_refuse "could not list $REPO at $SOURCE_SHA ($REF), so the gitlink its code pin
+    must agree with cannot be read. What answered:
+        $API_WHY"
 	entry=""
 	if entry="$(tree_entry "$listing" contracts)" && [ "${entry%% *}" = tree ]; then
-		api_tree "${entry#* }" "$contracts" || die "could not list contracts/ in $REPO at $SOURCE_SHA ($REF), so whether it
-    carries a code pin is not known, and nothing was fetched, placed or written.
-    What answered:
+		api_tree "${entry#* }" "$contracts" || resolve_refuse "could not list contracts/ in $REPO at $SOURCE_SHA ($REF). What answered:
         $API_WHY"
 		entry="$(tree_entry "$contracts" code-pin.yaml)" || entry=""
 	else
 		entry=""
 	fi
-	if [ -z "$entry" ]; then
-		# NO CODE PIN, SHOWN BY A LISTING THAT SUCCEEDED. With no adoption
-		# manifest either, this is the single repository it always was.
-		if tree_entry "$listing" project.yaml >/dev/null; then
-			die "$REPO at $SOURCE_SHA ($REF) carries an adoption manifest, project.yaml, and
-    no contracts/code-pin.yaml: a partly adopted layout, which says neither where
-    its code is nor that it is a single repository. Nothing was fetched, placed or
-    written. Its contracts/code-pin.yaml is the file that names the code leg."
-		fi
-		SOURCE_LAYOUT=single
-		return 0
-	fi
-	[ "${entry%% *}" = blob ] || die "contracts/code-pin.yaml in $REPO at $SOURCE_SHA is a ${entry%% *}, not a
-    file, and nothing was fetched, placed or written."
+	[ -n "$entry" ] || resolve_refuse "$REPO carried contracts/code-pin.yaml at $REF when it was first asked,
+    and $SOURCE_SHA, the commit $REF named a moment later, does not: the ref moved
+    between the two reads, so this run would not be installing one answer.
+    Re-run once it has settled."
+	[ "${entry%% *}" = blob ] || resolve_refuse "contracts/code-pin.yaml in $REPO at $SOURCE_SHA is a ${entry%% *}, not a
+    file."
 	fetch_from_repo contracts/code-pin.yaml "$pin" ||
-		die "could not fetch contracts/code-pin.yaml from $REPO at $SOURCE_SHA ($REF), which
-    the listing shows is there, so nothing was fetched, placed or written. Both
-    were asked:
+		resolve_refuse "could not fetch contracts/code-pin.yaml from $REPO at $SOURCE_SHA ($REF), which
+    the listing shows is there. Both were asked:
         gh api repos/$REPO/contents/contracts/code-pin.yaml?ref=$SOURCE_SHA
         curl -fsSL https://raw.githubusercontent.com/$REPO/$SOURCE_SHA/contracts/code-pin.yaml"
-	pin_parse "$pin" || die "contracts/code-pin.yaml in $REPO at $SOURCE_SHA ($REF) is not a code pin
+	pin_parse "$pin" || resolve_refuse "contracts/code-pin.yaml in $REPO at $SOURCE_SHA ($REF) is not a code pin
     this installer can follow: $PIN_WHY. A pin that is present and wrong is
-    refused rather than read around, and nothing was fetched, placed or written."
+    refused rather than read around."
 	link="$(tree_entry "$listing" "$PIN_SUBMODULE_PATH")" || link=""
-	[ "${link%% *}" = commit ] || die "$REPO at $SOURCE_SHA ($REF) records no gitlink at $PIN_SUBMODULE_PATH, where
-    contracts/code-pin.yaml mounts the code leg, so nothing was fetched, placed or
-    written."
-	[ "${link#* }" = "$PIN_COMMIT" ] || die "$REPO at $SOURCE_SHA ($REF) records ${link#* } at $PIN_SUBMODULE_PATH
+	[ "${link%% *}" = commit ] || resolve_refuse "$REPO at $SOURCE_SHA ($REF) records no gitlink at $PIN_SUBMODULE_PATH, where
+    contracts/code-pin.yaml mounts the code leg."
+	[ "${link#* }" = "$PIN_COMMIT" ] || resolve_refuse "$REPO at $SOURCE_SHA ($REF) records ${link#* } at $PIN_SUBMODULE_PATH
     and its contracts/code-pin.yaml says $PIN_COMMIT. The gitlink and the pin move
     in ONE commit (the lockstep rule), so this assembly does not say which code it
-    means, and nothing was fetched, placed or written."
+    means."
 	# THE PIN HAS PASSED: the source is now the repository it names.
 	PAYLOAD_REPO="$PIN_SOURCE_REPOSITORY" PAYLOAD_REV="$PIN_COMMIT"
 	if ! api_sha "$PIN_COMMIT" || [ "$API_SHA" != "$PIN_COMMIT" ]; then
-		die "contracts/code-pin.yaml in $REPO at $SOURCE_SHA ($REF) pins $PIN_SOURCE_REPOSITORY
-    at $PIN_COMMIT, and that is not a commit $PIN_SOURCE_REPOSITORY answers for, so
-    nothing was fetched, placed or written. What answered:
+		resolve_refuse "contracts/code-pin.yaml in $REPO at $SOURCE_SHA ($REF) pins $PIN_SOURCE_REPOSITORY
+    at $PIN_COMMIT, and that is not a commit $PIN_SOURCE_REPOSITORY answers for.
+    What answered:
         ${API_WHY:-$PIN_SOURCE_REPOSITORY answered $API_SHA}"
 	fi
 	SOURCE_LAYOUT=adopted
@@ -699,7 +795,7 @@ payload_resolve_remote() {
 
 payload_where() {   # the source collected from, for a refusal to name
 	case "$SOURCE_LAYOUT" in
-	single) printf '%s at %s (%s)' "$PAYLOAD_REPO" "$REF" "$PAYLOAD_REV" ;;
+	single) printf '%s at %s' "$REPO" "$REF" ;;
 	adopted) printf '%s at %s (the code %s at %s pins)' "$PAYLOAD_REPO" "$PAYLOAD_REV" "$REPO" "$REF" ;;
 	*) printf '%s at %s' "$REPO" "$REF" ;;
 	esac
@@ -838,7 +934,7 @@ payload_select() {
 		fi
 		payload_resolve_remote
 		# A SINGLE REPOSITORY KEEPS ITS SIBLING RULE: what is beside this file
-		# is copied and only what is missing is fetched, at the one commit.
+		# is copied and only what is missing is fetched, at `$REF`, as it was.
 		if [ "$SOURCE_LAYOUT" = single ]; then
 			PAYLOAD_MODE=siblings PAYLOAD_DIR="$selfdir"
 			return 0
@@ -3100,12 +3196,19 @@ wip_shape_ref() {
 	fi
 	workdir
 	# NO PIN BESIDE THIS FILE — the installed copy, a vendored tree: the pin is
-	# the one the CODE carries, read from wherever the payload comes from (#186)
-	# — the single repository at the commit its ref names, or the code leg an
-	# adopted assembly pins, never the assembly's own `contracts/`. A source
-	# that cannot be resolved is a refusal, as it is for `--install`; `main`
-	# stays the answer only for a pin that source does not carry.
-	payload_resolve_remote
+	# the one the CODE carries (#186). A single repository's is read exactly as
+	# it always was, at `$REF`; an adopted assembly's is the code leg's, at the
+	# commit the assembly pins, never the assembly's own `contracts/`. A source
+	# that does not answer leaves `main`, as it always did, and so does a pin
+	# the source does not carry. An adopted assembly whose code cannot be
+	# resolved refuses, in step 7's words (`resolve_refuse`).
+	RESOLVE_FOR=wip
+	payload_probe
+	case "$PROBE_LAYOUT" in
+	unknown) printf 'main\n'; return 0 ;;
+	single) : ;;
+	*) payload_resolve_remote ;;
+	esac
 	if fetch_from_repo "contracts/openreposhape-pin.yaml" "$WORKDIR/pin.yaml"; then
 		pin="$(sed -n -e 's/^commit:[[:space:]]*//p' "$WORKDIR/pin.yaml" | head -n 1)"
 		pin="${pin%\"}"; pin="${pin#\"}"
