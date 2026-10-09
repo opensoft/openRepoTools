@@ -7,11 +7,21 @@ update --remote` moves the gitlink and no line of YAML, and a hand-edited
 `commit:` moves the YAML and no byte of the tree. Either way the next reader is
 told the tests were verified against a commit they were not.
 
-FOUR OF THE FIVE CHECKS HERE NEED NO SUBMODULE, on purpose. The gitlink is read
-out of `git ls-tree HEAD` in three lines of subprocess and nothing in this file
-imports anything from `upstream/openRepoShape` — so a clone made without
-`--recurse-submodules` still gets the lockstep check. Only the digest needs the
-real bytes, and it is the one thing here that carries `NEEDS_UPSTREAM`.
+THE CHECKS OF THE PIN ITSELF NEED NO SUBMODULE, on purpose. The gitlink is read
+out of `git ls-tree HEAD` in three lines of subprocess and nothing in those
+checks imports anything from `upstream/openRepoShape` — so a clone made without
+`--recurse-submodules` still gets the lockstep check. Only the three that read
+the checkout's real bytes — the digest, its HEAD and the eight files — carry
+`NEEDS_UPSTREAM`.
+
+THE CODE ROOT'S GIT IDENTITY, AND THE DEPENDENCY NESTED IN IT
+(opensoft/openRepoTools#186, T009). In the triad the pin file, `.gitmodules`
+and the gitlink all move with the CODE leg, which is its own repository
+mounted under the assembly — so every read here is of `CODE_ROOT`, `git
+ls-tree HEAD` runs IN it (never in an assembly, whose HEAD records the code
+leg and not the standard), and `DEPENDENCY_ROOT` is the checkout nested
+there. On today's layout `CODE_ROOT` is this repository and nothing moved; a
+composed run that lacks the dependency fails rather than skips (conftest).
 """
 
 from __future__ import annotations
@@ -23,9 +33,9 @@ from pathlib import Path
 
 import pytest
 
-from conftest import NEEDS_UPSTREAM, REPO, UPSTREAM
+from conftest import CODE_ROOT, DEPENDENCY_ROOT, NEEDS_UPSTREAM
 
-PIN = REPO / "contracts" / "openreposhape-pin.yaml"
+PIN = CODE_ROOT / "contracts" / "openreposhape-pin.yaml"
 SUBMODULE_PATH = "upstream/openRepoShape"
 SOURCE_REPOSITORY = "opensoft/openRepoShape"
 SOURCE_URL = "https://github.com/opensoft/openRepoShape.git"
@@ -71,6 +81,24 @@ def test_the_pin_records_a_full_lowercase_commit():
         f"commit: {commit!r} is not 40 lowercase hex")
 
 
+def test_the_code_root_is_a_repository_of_its_own():
+    """THE GITLINK IS READ FROM THE CODE REPOSITORY'S OWN HEAD, so the code
+    root must BE that repository's top level: a directory inside some other
+    checkout would answer `git ls-tree HEAD` with that checkout's tree. In the
+    triad the code leg is a submodule and its own top level; today it is this
+    repository's."""
+    proc = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                          cwd=str(CODE_ROOT), capture_output=True, text=True,
+                          check=False)
+    assert proc.returncode == 0, (
+        f"the code root {CODE_ROOT} is not inside a git repository, so it has "
+        f"no gitlink to agree with {PIN.name}:\n{proc.stderr}")
+    assert Path(proc.stdout.strip()).resolve() == CODE_ROOT.resolve(), (
+        f"the code root {CODE_ROOT} is not the top level of its repository "
+        f"({proc.stdout.strip()}); the gitlink read below would be that "
+        f"repository's, not the code leg's")
+
+
 def test_the_gitlink_and_the_pin_name_the_same_commit():
     """THE LOCKSTEP CHECK, and the reason this file exists.
 
@@ -81,7 +109,7 @@ def test_the_gitlink_and_the_pin_name_the_same_commit():
     it bites on a hand-edited `commit:` the same way.
     """
     proc = subprocess.run(["git", "ls-tree", "HEAD", "--", SUBMODULE_PATH],
-                          cwd=str(REPO), capture_output=True, text=True,
+                          cwd=str(CODE_ROOT), capture_output=True, text=True,
                           check=True)
     row = proc.stdout.strip()
     assert row, (f"git records no gitlink at {SUBMODULE_PATH}; the pin file "
@@ -99,7 +127,7 @@ def test_gitmodules_names_the_same_path_and_repository():
     """The third record of the same fact, and the one a `git submodule update`
     reads. A pin whose `submodule_path:` named a path `.gitmodules` does not
     would be a pin nothing materializes."""
-    text = (REPO / ".gitmodules").read_text(encoding="utf-8")
+    text = (CODE_ROOT / ".gitmodules").read_text(encoding="utf-8")
     assert f'[submodule "{SUBMODULE_PATH}"]' in text
     assert f"path = {SUBMODULE_PATH}" in text
     assert f"url = {SOURCE_URL}" in text
@@ -134,7 +162,7 @@ def test_the_tree_digest_is_the_pinned_commits_own_number():
     a bump of the pin that changed the definition would fail HERE, naming the
     disagreement, instead of producing a number nothing could reproduce.
     """
-    sys.path.insert(0, str(UPSTREAM / "scripts"))
+    sys.path.insert(0, str(DEPENDENCY_ROOT / "scripts"))
     try:
         from repo_shape import TREE_DIGEST_DEFINITION, tree_digest
     finally:
@@ -144,7 +172,7 @@ def test_the_tree_digest_is_the_pinned_commits_own_number():
         f"the pin says `digest_definition: {values['digest_definition']}` and "
         f"the pinned openRepoShape's own repo_shape.py says "
         f"{TREE_DIGEST_DEFINITION!r}")
-    computed = tree_digest(UPSTREAM, "HEAD")
+    computed = tree_digest(DEPENDENCY_ROOT, "HEAD")
     assert computed == values["tree_sha256"], (
         f"the pinned checkout's tree digests to {computed} and {PIN.name} "
         f"records {values['tree_sha256']}. RECOMPUTE the row from the commit "
@@ -156,7 +184,7 @@ def test_the_checked_out_submodule_is_at_the_recorded_commit():
     """The fourth record: what is on disk right now. `git ls-tree` above says
     what a fresh clone gets; this says what THIS working tree has, which is
     what the rest of the suite actually reads its template bytes out of."""
-    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(UPSTREAM),
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(DEPENDENCY_ROOT),
                           capture_output=True, text=True, check=True)
     assert head.stdout.strip() == pin_scalars()["commit"], (
         "the checked-out submodule is not at the pinned commit; "
@@ -189,5 +217,5 @@ def test_the_pinned_commit_carries_what_this_suite_reads(rel):
     `park`, the pre-carve witness, leaves this list in THIS commit: the one
     that bumps the pin past openRepoShape#94, which deleted it from the tree.
     """
-    assert (UPSTREAM / rel).is_file(), (
+    assert (DEPENDENCY_ROOT / rel).is_file(), (
         f"the pinned openRepoShape has no {rel}")

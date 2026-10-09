@@ -39,7 +39,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import REPO, WINDOWS_SKIP
+from conftest import REPO, ROOTS, WINDOWS_SKIP
 
 COMMAND = REPO / "openRepoTools"
 
@@ -1395,7 +1395,10 @@ def test_the_help_and_the_readme_say_the_mode_the_receipt_is_born_at():
     paragraph and neither carries a 0644 there.
     """
     help_text = run_cmd("--help").stdout
-    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    # The README is the ASSEMBLY root's in the triad (#186, T009): read from
+    # the root that owns it - a skip in a standalone code leg, and in the
+    # composed run a failure, never a skip, if that root is absent.
+    readme = ROOTS.path_for("README.md").read_text(encoding="utf-8")
     for where, text, start in (("--help", help_text, "It then writes a RECEIPT"),
                                ("README.md", readme, "**And it writes down what it placed.**")):
         assert start in text, f"{where} no longer has the receipt paragraph"
