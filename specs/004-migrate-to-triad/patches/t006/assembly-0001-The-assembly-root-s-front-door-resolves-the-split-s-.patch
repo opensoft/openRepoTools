@@ -1,34 +1,29 @@
-From c0a8e1ea7164994fb8ba9fb76b93590ae7bff218 Mon Sep 17 00:00:00 2001
+From 33618121e18b4b0d720324a3b747033adde80f07 Mon Sep 17 00:00:00 2001
 From: Brett Heap <1513478+brettheap@users.noreply.github.com>
-Date: Thu, 8 Oct 2026 21:42:28 +0000
+Date: Fri, 9 Oct 2026 00:29:16 +0000
 Subject: [PATCH 1/3] The assembly root's front door resolves the split's
- collisions: AGENTS.md opens with the shape's pointer and a map of the three
- repositories, README.md gains them and the lockstep invariant, and every path
- that crossed into a leg names that leg.
+ collisions: AGENTS.md opens with the shape's pointer and a short map of the
+ three repositories, README.md gains them and the lockstep invariant, and
+ every path that crossed into a leg names that leg.
 
 Rehearsal patch for opensoft/openRepoTools#186, task T006 of
 specs/004-migrate-to-triad/tasks.md, against run C's rehearsed split
 69b8924. Nothing under shape/ and no file with a row in
 contracts/shape-pin.yaml is touched.
 
-- AGENTS.md: line 1 is the exact pointer openRepoShape 7f84ca4's
-  SHAPE_POINTER_LINE and its adopt follow-up require. The shape's rendered
-  block from shape/AGENTS.md follows (the three repositories). Then comes a
-  map of seven entries plus one rehearsal note: spec, code, this root, where
-  the tests run, where the lane tooling's code and manual are, paired feature
-  worktrees, and how a path reads. The note: a local rehearsal mounts legs
-  over the file transport, which git 2.43 refuses without
-  `-c protocol.file.allow=always`; the real https legs need nothing. The
-  original AGENTS.md follows unchanged except for 16 path repairs
-  (docs/ -> spec/docs/, openspec/ -> spec/openspec/, upstream/, contracts/,
-  tests/ and .github/ -> code/...).
-- README.md: a "Three repositories" section (the table, the recursive clone
-  and `make bootstrap`), and "The lockstep invariant", which
-  contracts/{spec,code}-pin.yaml's `resync_runbook:
+- AGENTS.md: line 1 is the exact pointer that openRepoShape 7f84ca4's
+  SHAPE_POINTER_LINE and its adopt follow-up require. A seven-entry map
+  follows: spec, code, this root, the tests, the lane tooling's code and
+  manual, paired feature worktrees, and the local-rehearsal file-transport
+  flag. The original AGENTS.md comes after it, unchanged except for 16 path
+  repairs (docs/ -> spec/docs/, openspec/ -> spec/openspec/, and upstream/,
+  contracts/, tests/ and .github/ -> code/...). 316 -> 340 lines.
+- README.md: a "Three repositories" section and "The lockstep invariant",
+  which contracts/{spec,code}-pin.yaml's `resync_runbook:
   README.md#the-lockstep-invariant` names and which only shape/README.md
   carried. The install section now says the one-liner is unchanged and that
   the installer is code/openRepoTools. 12 path repairs, and the pin-bump
-  block re-rooted with `cd code`.
+  block re-rooted with `cd code`. 486 -> 510 lines.
 - .gitignore: the shape's `.venv/` and `.DS_Store` merged in, and
   `/worktrees/`, the line the three-leg bootstrap requires.
 - .gitattributes: the same `* text=auto eol=lf` rule, re-explained for this
@@ -37,14 +32,18 @@ contracts/shape-pin.yaml is touched.
 - CLAUDE.md is unchanged: "Read AGENTS.md." is byte-identical to the
   shape's own rendered shape/CLAUDE.md.
 
+The two length caps in code/tests/test_repo_hygiene.py, 316 and 486, are
+today's counts. Once T009 points those tests at the assembly root, each cap
+is raised in a dated entry naming the rule its lines bought.
+
 Lane: openRepoTools-1
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- .gitattributes | 43 +++++++++++-----------------
- .gitignore     |  6 ++++
- AGENTS.md      | 78 +++++++++++++++++++++++++++++++++++++++-----------
- README.md      | 59 +++++++++++++++++++++++++++++++-------
- 4 files changed, 133 insertions(+), 53 deletions(-)
+ .gitattributes | 43 +++++++++++++++-----------------------
+ .gitignore     |  6 ++++++
+ AGENTS.md      | 56 +++++++++++++++++++++++++++++++++++---------------
+ README.md      | 44 ++++++++++++++++++++++++++++++---------
+ 4 files changed, 96 insertions(+), 53 deletions(-)
 
 diff --git a/.gitattributes b/.gitattributes
 index 3560973..6dc2212 100644
@@ -114,60 +113,38 @@ index a160f49..2d04abf 100644
 +# worktrees of the two legs, machine plumbing, never committed to this root.
 +/worktrees/
 diff --git a/AGENTS.md b/AGENTS.md
-index 443880a..d2dd7fb 100644
+index 443880a..f2509a2 100644
 --- a/AGENTS.md
 +++ b/AGENTS.md
-@@ -1,3 +1,49 @@
+@@ -1,3 +1,27 @@
 +Read AGENTS-shape.md first — the rules of this repository's shape.
 +
-+This is the assembly root of **openRepoTools** (`openrepotools`): the repository an
-+engineer clones. It holds `project.yaml`, the pins and the gate, and it mounts
-+the two legs.
++This is the assembly root of a three-repository project. The text after
++this list is what this repository said before the split, each path re-pointed
++at the leg that now holds it; a path beginning `spec/` or `code/` is relative
++to this root.
 +
-+| role | repository | path |
-+|---|---|---|
-+| assembly | `opensoft/openRepoTools` | `.` |
-+| spec | `opensoft/openRepoTools-spec` | `spec/` |
-+| code | `opensoft/openRepoTools-code` | `code/` |
-+
-+Everything below this line is openRepoTools's own. The shape wrote the block above
-+once and does not pin this file, so how this project is built, tested, reviewed
-+and released belongs here and nothing upstream will overwrite it.
-+
-+Where things are now that this project is three repositories. The text
-+after this list is what this repository said before the split, with each path
-+re-pointed at the leg that now holds it.
-+
-+- **`spec/`** (`opensoft/openRepoTools-spec`) holds what the project has
-+  decided: `openspec/` (full proposals, their specs and archives), `specs/`
-+  (the Speckit feature directories), `docs/` (the manuals) and `ideation/`.
-+- **`code/`** (`opensoft/openRepoTools-code`) holds what ships: every command
++- **`spec/`**, `opensoft/openRepoTools-spec`: `openspec/`, `specs/`, `docs/`
++  (the manuals) and `ideation/`; `openspec` runs there.
++- **`code/`**, `opensoft/openRepoTools-code`: every command
 +  `openRepoTools --install` places, `repos.tsv`, `commands/`, `skills/`,
-+  `tests/`, its CI, and the pinned standard at `code/upstream/openRepoShape`
-+  with `code/contracts/openreposhape-pin.yaml`.
-+- **This root** holds the front door (this file, `CLAUDE.md`, `README.md`,
-+  `LICENSE`), `project.yaml`, the leg pins and the shape's gate
-+  (`make validate`), and no product code.
-+- **The tests run in the code leg**: `code/tests/run.sh` from here, or
-+  `tests/run.sh` inside `code/`, and the wrapper finds its own root either way.
-+- **The lane tooling's code is in `code/` and its manual is in `spec/`**:
-+  `spec/docs/README-lanes.md`, which is `docs/README-lanes.md` in
-+  `opensoft/openRepoTools-spec` when that leg is cloned on its own.
-+- **Feature work** happens in paired worktrees under
-+  `worktrees/<NNN-feature>/{spec,code}/`, which this root ignores and never
-+  commits: full proposals and Speckit files in the `spec` one, a genuine
-+  bounded amendment only in the `code` one's `features/<NNN-feature>/openspec/`.
-+- **A path that begins `spec/` or `code/`** in this file or `README.md` is
-+  relative to this root.
++  `tests/`, its CI, and the pinned standard at `code/upstream/openRepoShape`.
++- **This root**: the front door, `project.yaml`, the leg pins and the gate
++  (`make validate`); no product code.
++- **Tests**: `code/tests/run.sh` from here, or `tests/run.sh` inside `code/`.
++- **The lane tooling**: its code is in `code/`; its manual is
++  `spec/docs/README-lanes.md` (`docs/README-lanes.md` in the spec leg).
++- **Feature work**: paired worktrees `worktrees/<NNN-feature>/{spec,code}/`,
++  never committed here; full proposals and Speckit files in `spec`, a genuine
++  bounded amendment only in `code`'s `features/<NNN-feature>/openspec/`.
 +- **A local rehearsal** whose `.gitmodules` names bare repositories on disk
-+  mounts the legs over git's file transport, which current git refuses by
-+  default: there, `git -c protocol.file.allow=always submodule update --init
-+  --recursive`. The real legs are https and need no flag.
++  needs `git -c protocol.file.allow=always submodule update --init
++  --recursive`; the real legs are https and need no flag.
 +
  # Working in openRepoTools
  
  Three estate commands, `park`, `resume` and `status`; the lane tooling
-@@ -19,7 +65,7 @@ person is driving the two INSTALLED commands.
+@@ -19,7 +43,7 @@ person is driving the two INSTALLED commands.
  
  The lane tooling answers to a different document — the lane collision protocol
  at `$AGENT_PROTOCOL_ROOT/protocols/lane-collision-protocol.md` and its
@@ -176,7 +153,7 @@ index 443880a..d2dd7fb 100644
  data is not.**
  
  **A LANE HAS ONE BINDING** (Amendment 18, in force 2026-09-14): the `host`,
-@@ -41,7 +87,7 @@ handoffs through `$AGENT_PROTOCOL_ROOT/workspace.yaml`'s `repository:` and
+@@ -41,7 +65,7 @@ handoffs through `$AGENT_PROTOCOL_ROOT/workspace.yaml`'s `repository:` and
  unreadable workspace with **2**: only 2 blocks a prompt; 1 would let it through.
  Profile-only guard calls carrying exact `CLAUDE_NO_LANE=1` return 0 before input
  or identity probes, even with unreadable configuration; other values enforce.
@@ -185,7 +162,7 @@ index 443880a..d2dd7fb 100644
  Shared hooks stay installed. Exit 1 means *registry not found* in lane tooling,
  and *findings were printed* in estate status; identify the command before interpreting it.
  
-@@ -197,13 +243,13 @@ sequence, and relay their per-repository lines rather than summarising them.
+@@ -197,13 +221,13 @@ sequence, and relay their per-repository lines rather than summarising them.
     reads them all WITHOUT asking, because a read — fetched or not — moves
     nothing of yours; `status --all` from anywhere says the same thing.
  
@@ -202,7 +179,7 @@ index 443880a..d2dd7fb 100644
     somebody else's repository, checked out detached at a commit. A change the
     standard needs is a pull request THERE, then a pin bump here.
  2. **Never pin a commit that is not on that repository's `main`.**
-@@ -211,17 +257,17 @@ Three rules, and none of them is negotiable:
+@@ -211,17 +235,17 @@ Three rules, and none of them is negotiable:
     pull request lands and the next person's fetch of it 404s. Check with
     `gh api repos/opensoft/openRepoShape/compare/main...<sha>` — `identical` or
     `behind`.
@@ -224,7 +201,7 @@ index 443880a..d2dd7fb 100644
  ```
  
  Brett Heap's RULING of 2026-09-16 ("do all three", on the coordinator's three
-@@ -230,7 +276,7 @@ Linux's 17-22, pull requests drawing 6-12 Copilot review rounds, and this
+@@ -230,7 +254,7 @@ Linux's 17-22, pull requests drawing 6-12 Copilot review rounds, and this
  suite queuing up to 1h20 behind the workstation lock described below):
  
  1. **`TESTS-MACOS` LEAVES THE PER-PUSH GATE.** On `pull_request`
@@ -233,7 +210,7 @@ index 443880a..d2dd7fb 100644
     `tests-no-submodule` and `tests-windows` only; `tests-macos` itself runs
     there only once the coordinator has put the `ready` label on the PR — the
     landing gate, applied once, right before the squash — and otherwise on
-@@ -244,10 +290,10 @@ suite queuing up to 1h20 behind the workstation lock described below):
+@@ -244,10 +268,10 @@ suite queuing up to 1h20 behind the workstation lock described below):
     and two are taken; a finding after that is filed as an issue and the PR
     lands regardless.
  3. **CI IS THE SUITE OF RECORD.** A writer runs the shell-suite section they
@@ -247,7 +224,7 @@ index 443880a..d2dd7fb 100644
     run the whole suite locally, serialized, whenever a person wants that
     answer anyway, and `python3 -m pytest tests -q` by hand — unserialized
     against every other lane on the same workstation — is still the thing it
-@@ -282,14 +328,14 @@ while [ "$(pgrep -f "$pat" | awk 'END { print NR + 0 }')" -gt 0 ]; do sleep 20;
+@@ -282,14 +306,14 @@ while [ "$(pgrep -f "$pat" | awk 'END { print NR + 0 }')" -gt 0 ]; do sleep 20;
  PYTHONPYCACHEPREFIX="${XDG_CACHE_HOME:-$HOME/.cache}/openRepoTools/pycache" flock "${TMPDIR:-/tmp}/openrepotools-pytest.lock" python3 -m pytest tests -q -p no:cacheprovider
  ```
  
@@ -266,50 +243,36 @@ index 443880a..d2dd7fb 100644
  macOS **bash 3.2** in CI, where `${x,,}`, `mapfile`, `declare -A` and
  `local -n` are syntax errors — write `tr '[:upper:]' '[:lower:]'` and a loop.
 diff --git a/README.md b/README.md
-index 18c8f7e..2de8914 100644
+index 18c8f7e..8a65e41 100644
 --- a/README.md
 +++ b/README.md
-@@ -101,6 +101,39 @@ parked. No config, or no record, is a note.
+@@ -101,6 +101,25 @@ parked. No config, or no record, is a note.
  That is all five layers: the local layer, `--fetch`, the fork, the pin and
  the record.
  
 +## Three repositories
 +
-+This repository is the ASSEMBLY ROOT of a three-repository project — the shape
-+[openRepoShape](https://github.com/opensoft/openRepoShape) calls the Triad. It
-+holds this front door, `project.yaml`, the pins and the gate, and mounts the
-+other two as submodules; it holds no product code of its own.
-+
-+| role | repository | path | holds |
-+|---|---|---|---|
-+| assembly | `opensoft/openRepoTools` | `.` | the front door, the manifest, the pins, the gate |
-+| spec | `opensoft/openRepoTools-spec` | `spec/` | `openspec/`, `specs/`, `docs/` (the manuals), `ideation/` |
-+| code | `opensoft/openRepoTools-code` | `code/` | every command below, `repos.tsv`, `skills/`, `commands/`, `tests/`, CI, the pinned standard |
-+
-+```sh
-+git clone --recurse-submodules https://github.com/opensoft/openRepoTools.git
-+cd openRepoTools
-+make bootstrap          # each leg on main AT its pinned commit, then the validators
-+```
-+
-+Nothing a person types changes: the commands keep their names and the install
-+one-liner below is the same line. A path in this file that begins `spec/` or
-+`code/` is relative to this root. `AGENTS-shape.md` is the shape's rules for an
-+agent working here, and electing the shape confers nothing.
++This is the ASSEMBLY ROOT of a three-repository project, the shape
++[openRepoShape](https://github.com/opensoft/openRepoShape) calls the Triad: it
++holds this front door, `project.yaml`, the pins and the gate, and mounts
++`opensoft/openRepoTools-spec` at `spec/` (`openspec/`, `specs/`, the manuals in
++`docs/`, `ideation/`) and `opensoft/openRepoTools-code` at `code/` (every
++command below, `repos.tsv`, `skills/`, `commands/`, `tests/`, CI and the pinned
++standard). Clone it with `git clone --recurse-submodules` and run
++`make bootstrap`. Nothing a person types changes, and a path in this file that
++begins `spec/` or `code/` is relative to this root.
 +
 +### The lockstep invariant
 +
-+For each leg, three things name the same commit and move in ONE commit here:
-+the gitlink at the leg's path, `commit:` in `contracts/<role>-pin.yaml`, and
-+every `.github/workflows/*.yml` `@<sha>` that names the leg. A change to a leg
-+lands in that leg first, by pull request; this root then advances its pin with
-+openRepoShape's `scripts/bump-leg.py`, and `make pins` refuses when the three
-+disagree.
++A leg's gitlink, `commit:` in `contracts/<role>-pin.yaml` and every workflow
++`@<sha>` naming that leg move in ONE commit here, after the leg's own pull
++request lands: openRepoShape's `scripts/bump-leg.py` writes it, and
++`make pins` refuses when the three disagree.
 +
  ## The lane tooling
  
  `lane-start`, `lane-end`, `lanes-edit.sh` and `link-estates` are here too, with
-@@ -154,7 +187,7 @@ and 5 put it and where it stays. What moved here is the CODE. A `<user>-wip` is
+@@ -154,7 +173,7 @@ and 5 put it and where it stays. What moved here is the CODE. A `<user>-wip` is
  a private repository whose own rules file says "No secrets and no code", nobody
  would look inside somebody else's for a command, and until this move the four
  helpers existed in exactly one place in the world: one person's private
@@ -318,7 +281,7 @@ index 18c8f7e..2de8914 100644
  
  Every one of them finds that data through `$AGENT_PROTOCOL_ROOT/workspace.yaml`
  — `repository:` and `path:`, the same pointer file `resume` and `status`
-@@ -180,7 +213,7 @@ different hat).
+@@ -180,7 +199,7 @@ different hat).
  
  Then it clones the repository, seeds it from openRepoShape's
  `templates/workspace-root/` at the commit pinned in
@@ -327,19 +290,18 @@ index 18c8f7e..2de8914 100644
  also the check that matters**: a new repository is inside the organisation's
  PR-only ruleset until an administrator excludes it, and until it is, every
  register write will be refused by that gate. Better to meet it here than at
-@@ -237,6 +270,11 @@ gh api repos/opensoft/openRepoTools/contents/openRepoTools \
+@@ -237,6 +256,10 @@ gh api repos/opensoft/openRepoTools/contents/openRepoTools \
      -H 'Accept: application/vnd.github.raw' | bash -s -- --install
  ```
  
-+Both lines are unchanged by the split into three repositories: the
-+`openRepoTools` they fetch is this root's entry point, and the installer it
-+hands over to is `code/openRepoTools` in `opensoft/openRepoTools-code`, at the
-+commit this root pins.
++Both lines are unchanged by the split: the `openRepoTools` they fetch is this
++root's entry point, which hands over to the installer `code/openRepoTools` at
++the commit this root pins.
 +
  It places SEVENTEEN files into `~/.local/bin` — `openRepoTools`, `park`, `resume`,
  `status`, `lane`, `lanes`, `lane-handoff`, `lane-rename`, `lanes-edit.sh`,
  `lane-start`, `lane-end`, `link-estates`, the alias table `repos.tsv`,
-@@ -260,7 +298,7 @@ that would not take it, and a create needs a directory's search bit as well as
+@@ -260,7 +283,7 @@ that would not take it, and a create needs a directory's search bit as well as
  its write bit. A refusal creates none of those directories either. `cp` follows
  a symlink, and an install through one leaves the command uninstalled and writes
  these bytes into whatever it points at. Then a `17 of 17 placed in <dir>` line,
@@ -348,7 +310,7 @@ index 18c8f7e..2de8914 100644
  
  It also places **fourteen things that are not files in that directory**: THREE
  SKILLS, `/handoff`, `/lane-swap` and `/restart`, each at
-@@ -300,7 +338,7 @@ arm keys on the VERB and not on the word anywhere in a path. It
+@@ -300,7 +323,7 @@ arm keys on the VERB and not on the word anywhere in a path. It
  never writes a profile's own `settings.json`: the launcher owns that one.
  
  Thirty-one artifacts, and the count is the invariant. It was sixteen until A11
@@ -357,7 +319,7 @@ index 18c8f7e..2de8914 100644
  in it, at the same pair of paths a skill takes — because `opensoft/workBenches#74`
  deletes the launcher's copy and `/swap` would otherwise be installed by nobody;
  eighteen until Amendment 12 adoption act 3 added the name guard's entry; and
-@@ -414,19 +452,19 @@ the way in is WSL2, exactly as it is for openRepoShape's `setup.sh`.
+@@ -414,19 +437,19 @@ the way in is WSL2, exactly as it is for openRepoShape's `setup.sh`.
  
  **Tools depend on the shape; the shape depends on nothing.** This repository
  pins the openRepoShape commit its tests were verified against, as a submodule
@@ -380,7 +342,7 @@ index 18c8f7e..2de8914 100644
  agree. Four of its checks need no submodule at all — the gitlink is read out of
  `git ls-tree HEAD` and nothing imports from the checkout — so the lockstep
  check bites in a clone that never materialized it.
-@@ -434,6 +472,7 @@ check bites in a clone that never materialized it.
+@@ -434,6 +457,7 @@ check bites in a clone that never materialized it.
  ### Bumping the pin
  
  ```sh
@@ -388,7 +350,7 @@ index 18c8f7e..2de8914 100644
  git -C upstream/openRepoShape fetch origin
  git -C upstream/openRepoShape checkout <40 hex on openRepoShape's main>
  python3 -c "import sys; sys.path.insert(0, 'upstream/openRepoShape/scripts'); from repo_shape import tree_digest; print(tree_digest('upstream/openRepoShape', 'HEAD'))"
-@@ -446,7 +485,7 @@ git commit
+@@ -446,7 +470,7 @@ git commit
  **The edit comes before the `git add`, and the block is in that order for a
  reason.** Staging first and editing after stages the moved gitlink with the OLD
  pin file — and that is invisible where you are standing, because
@@ -397,7 +359,7 @@ index 18c8f7e..2de8914 100644
  gitlink out of `git ls-tree HEAD`: green in your checkout, red in CI, which is
  the wrong way round. The pin and the gitlink are one fact in two places. The
  digest is recomputed with the PINNED CHECKOUT'S OWN `scripts/repo_shape.py`
-@@ -461,10 +500,10 @@ orphaned and the next person's fetch of it 404s.
+@@ -461,10 +485,10 @@ orphaned and the next person's fetch of it 404s.
  
  ```sh
  git clone --recurse-submodules https://github.com/opensoft/openRepoTools.git
