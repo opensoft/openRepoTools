@@ -143,7 +143,12 @@ def _scalar(path: Path, key: str) -> Optional[str]:
 
 
 def _carries(root: Path, names) -> bool:
-    return all((root / name).exists() for name in names)
+    """Every marker is a REGULAR FILE under `root`. Each marker is one (a
+    command, a pin, a manifest), so a directory spelled like one is not it:
+    with `exists()`, a tree holding a directory named `openRepoTools` or
+    `project.yaml` passed for a root and failed later in unrelated tests
+    (Copilot on #190, #193 item 4)."""
+    return all((root / name).is_file() for name in names)
 
 
 def _carries_a_spec_tree(root: Path) -> bool:
@@ -273,6 +278,21 @@ class Roots:
         if recorded is None:
             return [f"the assembly root {self.assembly} records no gitlink at "
                     f"{mount!r}, which contracts/{role}-pin.yaml names"]
+        # THE PIN AND THE GITLINK ARE ONE INVARIANT (the lockstep rule
+        # `scripts/validate-pins.py` holds). A pin naming another commit than
+        # the gitlink is drift even where the gitlink and the leg's HEAD agree,
+        # so it is refused here too and not only by the validator the assembly
+        # job runs first (Copilot on #190, #193 item 4). The tree digest stays
+        # the validator's: it needs the leg's object store, not this check.
+        pinned = (_scalar(self.assembly / "contracts" / f"{role}-pin.yaml",
+                          "commit") or "").lower()
+        if pinned != recorded:
+            return [f"contracts/{role}-pin.yaml pins {pinned or 'no commit'}, "
+                    f"and the assembly root {self.assembly} records {recorded} "
+                    f"at {mount!r}: the pin and the gitlink are one invariant "
+                    f"(scripts/validate-pins.py calls this pin-gitlink-mismatch), "
+                    f"and composed acceptance refuses a pin that names another "
+                    f"commit"]
         head = _git_out(root, "rev-parse", "HEAD")
         if head != recorded:
             return [f"the {role} root {root} is at {head or 'no commit'}, and the "

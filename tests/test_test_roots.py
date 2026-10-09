@@ -726,6 +726,49 @@ def test_composed_refuses_a_leg_whose_status_cannot_be_read(tmp_path):
     assert refusal and "answered no `git status`" in refusal, refusal
 
 
+def test_composed_refuses_a_pin_that_names_another_commit_than_the_gitlink(tmp_path):
+    """The leg pin's `commit:` and the gitlink are one invariant. A pin moved
+    off the gitlink, with the gitlink and the leg's HEAD still agreeing, was
+    accepted (`refusal()` was None) while `scripts/validate-pins.py` exits 1 on
+    the same tree (Copilot round 2 on #190, #193 item 4). Refused now, naming
+    the pin, the gitlink and the mount."""
+    code = code_leg(tmp_path / "asm" / "code", repository=True)
+    spec = spec_leg(tmp_path / "asm" / "spec", repository=True)
+    root = assembly(tmp_path / "asm", code=code, spec=spec, repository=True)
+    for probe in ("scripts/repo_shape.py", "templates/workspace-root/README.md"):
+        target = code / "upstream" / "openRepoShape" / probe
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# a probe\n", encoding="utf-8")
+    composed = {"OPENREPOTOOLS_COMPOSED": "1"}
+    assert conftest.resolve_roots(composed, code).refusal() is None, (
+        conftest.resolve_roots(composed, code).refusal())
+    pin = root / "contracts" / "code-pin.yaml"
+    head = run_git(code, "rev-parse", "HEAD")
+    pin.write_text(pin.read_text(encoding="utf-8").replace(head, "1" * 40),
+                   encoding="utf-8")
+    refusal = conftest.resolve_roots(composed, code).refusal()
+    assert refusal and "contracts/code-pin.yaml pins " + "1" * 40 in refusal, refusal
+    assert f"records {head}" in refusal and "one invariant" in refusal, refusal
+
+
+@pytest.mark.parametrize("variable, markers", [
+    ("OPENREPOTOOLS_CODE_ROOT", ("openRepoTools", "contracts/openreposhape-pin.yaml")),
+    ("OPENREPOTOOLS_ASSEMBLY_ROOT", ("contracts/code-pin.yaml", "project.yaml")),
+])
+def test_a_directory_spelled_like_a_marker_is_not_one(tmp_path, variable, markers):
+    """A root's markers are files. A tree whose `openRepoTools` or
+    `project.yaml` is a DIRECTORY is not that root, and naming it is refused
+    like any other wrong tree; with `exists()` it passed (#193 item 4)."""
+    code = code_leg(tmp_path / "repo", single=True)
+    fake = tmp_path / "fake"
+    for marker in markers:
+        (fake / marker).mkdir(parents=True)
+    refusal = conftest.resolve_roots({variable: str(fake)}, code).refusal()
+    assert refusal and variable in refusal and "is not a" in refusal, (
+        f"{variable} naming a tree of marker-named directories was accepted: "
+        f"{refusal}")
+
+
 def test_this_runs_roots_are_the_ones_it_is_running_with():
     """This session's own roots: coherent, and — composed — complete. The
     composed half is the same check `pytest_configure` refused on, held as a
