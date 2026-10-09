@@ -59,18 +59,22 @@ Each key that is read must appear once. The file must be LF-only, quotes must cl
 
 ## T007: the assembly entry point
 
-- Commit `8ed83b709a616a900601bf67d57c78f6d1525880` sits on `69b8924` in the writer's clone, on branch `t007-assembly-entry-point-v2`.
-  - Tree: `79db0a40c0148a4649af49d3fd91aecaf33b7ceb`.
-  - `openRepoTools`: blob `4c2525d9b01efd5d593073c9f1b3e1cfbdb90756`, mode 100755, sha256 `3b0d59f5cc2701edc9cdf088efeb34d476a4fefc456f7b1b5413f364ee32c5da`.
-  - The patch file's sha256 is `361c037d09ee55996a4cac6f52c2374fdb801bfa2abf781c409b40e9aa0a277d`.
-  - `git am` of the patch on a fresh clone of run C's split reproduces tree `79db0a4` exactly.
-  - It supersedes `a02a45c` (branch `t007-assembly-entry-point`, tree `a9fa46e`). The two differ only in `recorded_gitlink`, which now reads the gitlink with `read` instead of `awk` (see the runs below).
+- Commit `6acc147f751e5a2ca57b4814395769b7b75b339e` sits on `69b8924` in the writer's clone, on branch `t007-assembly-entry-point-v3`.
+  - Tree: `87782af2ff3075284682f02fa41763d5df7112ff`.
+  - `openRepoTools`: blob `ff432c6dc189ce272e778a89e375076094737b48`, mode 100755, sha256 `8248224d3bb425f69a944a41cdfe0a68f0b449d13978f67c76b6bc5a0a73a773`.
+  - The patch file's sha256 is `67d8e7ce8b0f7008d2151a44c0eabaf74cda7cd2697c6e09ee7da0c341c671b5`.
+  - `git am` of the patch on a fresh clone of run C's split reproduces tree `87782af` exactly.
+  - History:
+    - v1, `a02a45c` (tree `a9fa46e`): the first version.
+    - v2, `8ed83b7` (tree `79db0a4`): `recorded_gitlink` reads the gitlink with `read` instead of `awk` (see the runs below).
+    - v3, this commit: on the remote path, the gitlink is now checked against the pin BEFORE any implementation is fetched or run. This answers lane 3's review of the v2 patch (#191 review 5471121210, T3), which found a stale or rolled-back pin running whichever installer it selected, with a misleading refusal.
 - **In a checkout,** it requires the pin (strict grammar), the gitlink (index first, then HEAD) and `code/openRepoTools`'s raw bytes (`hash-object --no-filters`) to name one commit. Then it `exec`s `code/openRepoTools` with every argument. That is the same process, so the exit status, signals and the implementation's own temporary-file cleanup are the implementation's. There are no temporaries of its own.
 - **Anywhere else** (stdin, or a copy of the file on its own), it does four things:
   - it resolves `OPENREPOTOOLS_REF` once, `gh` first and `curl` second;
   - it reads `contracts/code-pin.yaml` at that commit;
+  - it reads the gitlink at the pin's `submodule_path` in that commit (one level of the tree, by `gh api --jq`, or by `curl` and `jq`). It refuses, naming both commits and with "nothing ran", unless the gitlink is the pinned commit;
   - it fetches `openRepoTools` from the pin's `source_repository` at the pinned commit (the file must begin `#!`);
-  - it runs it from stdin, as the one-liners always ran it, with `OPENREPOTOOLS_REF` set to the resolved commit, so the implementation reads the same pin and re-checks the gitlink itself.
+  - it runs it from stdin, as the one-liners always ran it, with `OPENREPOTOOLS_REF` set to the resolved commit, so the implementation reads the same pin and checks it again.
 - **It has no installer mechanics.** It does no placement, receipt, merge or retirement.
 - **It assumes nothing the legs may not carry.** That covers `.gitattributes`, README, AGENTS and LICENSE (T006 §10.2).
 - **It is bash 3.2-clean.** Arguments are forwarded as `${1+"$@"}`, because a bare `"$@"` under `set -u` is unbound in 3.2.
@@ -81,7 +85,8 @@ Each key that is read must appear once. The file must be LF-only, quotes must cl
 - Openrepotools' PR #191 was applied to code `73b04d6` in a clone. It was pushed only to the writer's own bare copy of the code remote, never to run C.
 - The standard's `scripts/bump-leg.py` (tool `7f84ca4`, with `--local-remote-dir` pointing at that copy) made the lockstep commits. Its validators printed `pins ok` and `manifest ok` and recomputed both digests:
   - on `t007-assembly-entry-point`, `9321107` moved the code pin to `ecb4ef3` (PR at `e406e0e`), and `58e3ac5` moved it to `d12345b` (PR at `ecd7aa4`);
-  - on `t007-assembly-entry-point-v2`, `7bbd60b` moved it to `ea17f30` (PR at `2411f40`).
+  - on `t007-assembly-entry-point-v2`, `7bbd60b` moved it to `ea17f30` (PR at `2411f40`), then `e5a901e` and `316aed6` to the round-1 heads;
+  - on `t007-assembly-entry-point-v3`, `4c6a0b7` moved it to `fa460f2`. That commit is the whole code leg as the PR head `6568f08` has it, merged with main `f87fd5a`. It includes #190's test roots, and every one of the leg's paths is the PR head's blob.
 - Each bump printed bump-leg's `NEXT … push -u origin …` line. It was deliberately not followed.
 - The clone's push URL is disabled.
 
@@ -89,7 +94,7 @@ Each key that is read must appear once. The file must be LF-only, quotes must cl
 
 | Command line | What it resolves |
 | --- | --- |
-| `curl -fsSL https://raw.githubusercontent.com/opensoft/openRepoTools/main/openRepoTools \| bash -s -- --install` (README:228; openRepoShape's `--install` pointer, openRepoShape:280 at `7f84ca4`, byte for byte) | 1. The root entry point at `main`.<br>2. `main` resolved once to assembly commit *A*.<br>3. `contracts/code-pin.yaml` at *A*.<br>4. `openRepoTools` from `source_repository` at `commit`.<br>5. That implementation, with `OPENREPOTOOLS_REF=A`, resolves *A* (a commit, which cannot move), lists *A*'s tree, re-reads and re-checks the pin, checks the gitlink, confirms the commit exists in `source_repository`, fetches the 23 payload files from there, and places 29 files and 2 hook entries. |
+| `curl -fsSL https://raw.githubusercontent.com/opensoft/openRepoTools/main/openRepoTools \| bash -s -- --install` (README:228; openRepoShape's `--install` pointer, openRepoShape:280 at `7f84ca4`, byte for byte) | 1. The root entry point at `main`.<br>2. `main` resolved once to assembly commit *A*.<br>3. `contracts/code-pin.yaml` at *A*.<br>4. The gitlink at `submodule_path` in *A* must be `commit`, or nothing runs.<br>5. `openRepoTools` from `source_repository` at `commit`.<br>6. That implementation, with `OPENREPOTOOLS_REF=A`, resolves *A* (a commit, which cannot move), lists *A*'s tree, re-reads and re-checks the pin, checks the gitlink, confirms the commit exists in `source_repository`, fetches the 23 payload files from there, and places 29 files and 2 hook entries. |
 | `gh api repos/opensoft/openRepoTools/contents/openRepoTools -H 'Accept: application/vnd.github.raw' \| bash -s -- --install` (README:236–237) | The same, through `gh`. |
 | `./openRepoTools --install` in an assembly checkout | Checks that pin, gitlink and implementation bytes agree, then `exec`s `code/openRepoTools`. The implementation checks every payload file against the pinned commit and copies offline. |
 | `openRepoTools --install`, installed in `~/.local/bin` | The implementation alone. Its default `REPO` is the assembly, which it resolves itself. It never needs the root file or a checkout again. |
@@ -179,7 +184,9 @@ workBenches-side: the sentinel REPO/REF partial row is covered (`test_r02_…byt
 
 - **T009:** `test_the_installer_reaches_only_this_repository` holds because every fetching line names `$REPO`. Its docstring should say that the one other repository reached is the one `$REPO`'s own validated pin names. The composed hygiene results above are T006 §10.6's front-door findings.
 - **T010:** a composed run whose code leg is checked out at a commit other than its pin will see `--install` from the mounted leg refuse (changed payload). Run install tests from the pinned state or from a standalone copy.
-- **T014:** `venv_note`'s `docs/README-lanes.md` comment.
+- **T014:**
+  - `venv_note`'s `docs/README-lanes.md` comment.
+  - The README's one-liners need a sentence on network needs after the cutover, next to the one-liner (lane 3's T4 on the v2 patch). Today's single repository needs raw.githubusercontent.com only, or `gh`. After the cutover, the curl one-liner needs api.github.com and `jq`. By reading v3 and the PR head, that is 6 api.github.com requests per install: the root makes 2 (`commits`, `git/trees`), and the implementation makes 4 (`commits`, two `git/trees`, the pinned commit). Lane 3 measured 5 on v2, which had no root tree read. So a gh-less machine that is rate-limited (60 an hour per address, unauthenticated) cannot install.
 - **T015:** validate at the real assembled head, with a code pin that carries this change, against the real GitHub. That includes the one-liners and `bump-leg.py`'s lockstep, and the 3.2 parse of the root entry point (`parse-macos` covers the implementation only).
 
 ## What this does not do

@@ -1,35 +1,43 @@
-From 8ed83b709a616a900601bf67d57c78f6d1525880 Mon Sep 17 00:00:00 2001
+From 6acc147f751e5a2ca57b4814395769b7b75b339e Mon Sep 17 00:00:00 2001
 From: Brett Heap <1513478+brettheap@users.noreply.github.com>
-Date: Fri, 9 Oct 2026 01:02:51 +0000
+Date: Fri, 9 Oct 2026 20:33:03 +0000
 Subject: [PATCH] Add the assembly's openRepoTools front door, which runs the
  implementation the code pin names and nothing else.
 
 T007 of specs/004-migrate-to-triad/tasks.md (opensoft/openRepoTools#186). The
 documented one-liners fetch openRepoTools from this repository's root, and
 after the split the installer is the code leg's. This file keeps that line
-working and adds no installer mechanics: in a checkout it requires the pin,
-the gitlink and the implementation's bytes to name one commit and then execs
-code/openRepoTools with every argument (same process, so exit status and
-signals are the implementation's); anywhere else it resolves the ref once,
-reads contracts/code-pin.yaml at that commit, fetches openRepoTools from the
-pinned repository at the pinned commit, and runs it from stdin with
-OPENREPOTOOLS_REF set to that commit, so the implementation reads the same pin.
+working and adds no installer mechanics.
+
+In a checkout it requires the pin, the gitlink and the implementation's
+bytes to name one commit, and then execs code/openRepoTools with every
+argument. That is the same process, so the exit status and signals are the
+implementation's.
+
+Anywhere else it resolves the ref once and reads contracts/code-pin.yaml at
+that commit. It checks that the gitlink at the pin's submodule_path in that
+commit is the pinned commit, so the lockstep rule is enforced here and not
+left to whichever code a stale pin selects. Only then does it fetch
+openRepoTools from the pinned repository at the pinned commit, and run it
+from stdin with OPENREPOTOOLS_REF set to that commit, so the implementation
+reads the same pin.
+
 The pin reader is a deliberate copy of the implementation's, guarded by the
 code leg's tests/test_install_payload_source.py.
 
 Lane: openRepoTools-1
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- openRepoTools | 351 ++++++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 351 insertions(+)
+ openRepoTools | 398 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 398 insertions(+)
  create mode 100755 openRepoTools
 
 diff --git a/openRepoTools b/openRepoTools
 new file mode 100755
-index 0000000..4c2525d
+index 0000000..ff432c6
 --- /dev/null
 +++ b/openRepoTools
-@@ -0,0 +1,351 @@
+@@ -0,0 +1,398 @@
 +#!/usr/bin/env bash
 +# SPDX-License-Identifier: Apache-2.0
 +#
@@ -58,11 +66,16 @@ index 0000000..4c2525d
 +#     of the payload against the same pin before it copies a byte.
 +#   * ANYWHERE ELSE (stdin, or a copy of this file on its own): `$OPENREPOTOOLS_REF`
 +#     is resolved ONCE to a commit of `$OPENREPOTOOLS_REPO`, the code pin is
-+#     read AT that commit, the implementation is fetched from the pinned
-+#     repository AT the pinned commit, and it is run from stdin — the way the
-+#     one-liners always ran it — with `$OPENREPOTOOLS_REF` set to that commit,
-+#     so the implementation reads the same pin and no branch that moves in
-+#     between can give it another. It verifies the gitlink itself.
++#     read AT that commit, and the gitlink at its `submodule_path` in that
++#     commit must name the pinned commit too — the lockstep rule, checked HERE,
++#     before any implementation is fetched or run, so a stale or rolled-back pin
++#     is named as what it is rather than left to whichever code it selects.
++#     Then the implementation is fetched from the pinned repository AT the
++#     pinned commit and run from stdin — the way the one-liners always ran it —
++#     with `$OPENREPOTOOLS_REF` set to that commit, so the implementation reads
++#     the same pin and no branch that moves in between can give it another.
++#     Reading the gitlink is one level of the assembly's tree: `gh api --jq`,
++#     or `curl` with `jq` (an adopted assembly's one-liner needs api.github.com).
 +#
 +# NOTHING HERE ASSUMES A FILE THE LEGS MAY NOT CARRY: no `.gitattributes`, no
 +# README, no AGENTS.md. Bytes are compared raw (`hash-object --no-filters`).
@@ -314,6 +327,39 @@ index 0000000..4c2525d
 +	return 1
 +}
 +
++#: THE GITLINK `$REPO` RECORDS AT <path> IN <commit>, from one level of its tree:
++#: `gh --jq` first, `curl` + `jq` second. 0 with GITLINK — empty when the tree
++#: holds no gitlink there, which is an answer — or 1 with WHY when neither
++#: transport answered. <path> is a pin's `submodule_path`, which `pin_parse`
++#: has already held to one segment of letters, digits, `.`, `_` and `-`.
++gitlink_at() {   # <commit> <path>
++	local filter=".tree[] | select(.type == \"commit\" and .path == \"$2\") | .sha"
++	GITLINK="" WHY=""
++	if command -v gh >/dev/null 2>&1; then
++		if gh api "repos/$REPO/git/trees/$1" --jq "$filter" >"$TMP/link" 2>"$TMP/err"; then
++			IFS= read -r GITLINK <"$TMP/link" || :
++			return 0
++		fi
++		WHY="$(said gh "$TMP/err")"
++	else
++		WHY="gh: not installed"
++	fi
++	if ! command -v curl >/dev/null 2>&1; then
++		WHY="$WHY; curl: not installed"
++	elif ! command -v jq >/dev/null 2>&1; then
++		WHY="$WHY; curl: not asked, because reading api.github.com's JSON needs \`jq\` and there is none"
++	elif ! curl -fsSL "https://api.github.com/repos/$REPO/git/trees/$1" >"$TMP/tree.json" 2>"$TMP/err"; then
++		WHY="$WHY; $(said curl "$TMP/err")"
++	elif jq -er '.tree | arrays | length >= 0' "$TMP/tree.json" >/dev/null 2>&1 &&
++		jq -r "$filter" "$TMP/tree.json" >"$TMP/link" 2>/dev/null; then
++		IFS= read -r GITLINK <"$TMP/link" || :
++		return 0
++	else
++		WHY="$WHY; curl: an answer that is not a tree listing"
++	fi
++	return 1
++}
++
 +delegate_remote() {   # <args…>
 +	local sha="" ref="" impl
 +	is_slug "$REPO" || die "\$OPENREPOTOOLS_REPO is '$REPO', which is not an owner/name repository; nothing ran."
@@ -357,6 +403,15 @@ index 0000000..4c2525d
 +	pin_parse "$TMP/pin" || die "$PIN_FILE in $REPO at $sha ($REF) is not a code pin this can
 +    follow: $PIN_WHY. A pin that is present and wrong is refused rather than read
 +    around; nothing ran."
++	# THE LOCKSTEP RULE, BEFORE ANYTHING IS FETCHED TO RUN: the gitlink at the
++	# pinned path in this same commit names the pinned commit, or nothing runs.
++	gitlink_at "$sha" "$PIN_SUBMODULE_PATH" || die "could not list $REPO at $sha ($REF), so the gitlink its $PIN_FILE
++    must agree with cannot be read, and nothing ran. What answered:
++        $WHY"
++	[ "$GITLINK" = "$PIN_COMMIT" ] || die "$REPO at $sha ($REF) records ${GITLINK:-no gitlink} at $PIN_SUBMODULE_PATH and
++    its $PIN_FILE says $PIN_COMMIT. The gitlink and the pin move in ONE commit
++    (the lockstep rule), so this assembly does not say which code it means, and
++    nothing ran."
 +	fetch_at "$PIN_SOURCE_REPOSITORY" "$PIN_COMMIT" openRepoTools "$TMP/impl" ||
 +		die "could not fetch openRepoTools from $PIN_SOURCE_REPOSITORY at $PIN_COMMIT, the
 +    implementation $REPO at $sha ($REF) pins, so nothing ran. What answered:
