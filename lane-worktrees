@@ -1352,6 +1352,7 @@ class Tree:
         self.reg: dict = {}                # its registration, where git has one
         self.held_back = ""                # the bundle-only commit of its untracked files
         self.lost_bundle = ""              # the bundle of commits only its reflog named
+        self.leg = None                    # T018: the assembly's leg that registers it
 
     @property
     def slice(self) -> str:
@@ -1924,6 +1925,230 @@ def ignored_paths(path: str):
     return out
 
 
+# ================================================== an assembly's legs (T018)
+#
+# opensoft/openRepoTools#186, plan task T018 - A TRIAD'S CHECKOUTS. A checkout
+# is an ASSEMBLY when its own `project.yaml` declares a leg other than itself:
+# the standard's own rule, read by `lanes-edit.sh project-legs` - the one
+# reader every lane tool asks, whose grammar is `lane-start`'s rung 5 line for
+# line - and never here a second time. Its legs (`spec/`, `code/`) are
+# submodules: their `.git` is a FILE, `git -C <assembly> worktree list` names
+# none of their worktrees, and a feature's paired trees under
+# `<assembly>/worktrees/<feature>/{spec,code}` are worktrees of the LEGS'
+# repositories, so before this every reader below was blind to them.
+#
+# A CHECKOUT WITH NO `project.yaml` IS ASKED NOTHING: no helper call, no read,
+# no row - which is every single-repository checkout, whose sweep, report and
+# `add` are therefore byte for byte what they were.
+
+
+class Leg:
+    """One checkout an assembly mounts: a leg its `project.yaml` declares, or
+    a dependency NESTED in one - an initialized submodule of the leg's own
+    (`code/upstream/openRepoShape`). It is the ASSEMBLY'S, shared by every
+    lane the assembly homes, as the assembly's own checkout is, so a sweep
+    NEVER acts on one: it is read - for the worktrees git registers in it, for
+    its branches, and for its own dirty and unpushed state - and counted for
+    this lane only where its HEAD's own `Lane:` trailer is this lane's."""
+
+    def __init__(self, path: str, decl: str, repository: str, assembly: str,
+                 nested_in: str = ""):
+        self.path = path
+        self.real = real(path)
+        self.decl = decl                   # its path as declared, under the assembly
+        self.repository = repository       # as the manifest names it ('' when nested)
+        self.assembly = assembly
+        self.nested_in = nested_in         # the leg it is a dependency of
+        self.exists = os.path.isdir(path)
+        self.checkout = False              # a checkout of its own is there
+        self.read_error = ""
+        self.branch = ""
+        self.detached = False
+        self.head = ""
+        self.dirty = 0
+        self.upstream = ""
+        self.ahead = None
+        self.on_origin = None
+        self.origin_url = ""
+        self.claimed = False               # its HEAD's own Lane: trailer is this lane's
+        self.disposition = ""
+        self.reason = ""
+        self.retire = False
+
+    def what(self) -> str:
+        if self.nested_in:
+            return f"a dependency nested in the {self.nested_in} leg ({self.decl})"
+        return (f"the {self.decl} leg of {os.path.join(self.assembly, 'project.yaml')}"
+                + (f" ({self.repository})" if self.repository else ""))
+
+    def label(self) -> str:
+        if not self.exists or not self.checkout:
+            return "(not checked out)" if not self.read_error else "(unreadable)"
+        if self.detached:
+            return f"(detached) {short(self.head)}"
+        if not self.head:
+            return f"{self.branch} (unborn)"
+        return f"{self.branch} {short(self.head)}"
+
+
+def project_legs(helper, checkout: str) -> tuple:
+    """([(repository, path as declared, where it is checked out)], why-not):
+    the legs `<checkout>/project.yaml` declares, through `lanes-edit.sh
+    project-legs`. A checkout with no `project.yaml` is asked nothing; a
+    manifest that could not be read is never "no legs" (Amendment 7(d))."""
+    if not checkout or not os.path.lexists(os.path.join(checkout, "project.yaml")):
+        return [], ""
+    proc = helper.call("project-legs", checkout)
+    if proc.returncode == 8:
+        return [], ""
+    if proc.returncode != 0:
+        return [], (f"`lanes-edit.sh project-legs {checkout}` exited {proc.returncode}: "
+                    + _first_line(proc.stderr))
+    rows = []
+    for line in proc.stdout.splitlines():
+        cols = line.split("\t")
+        if len(cols) >= 3 and cols[1] and cols[2]:
+            rows.append((cols[0], cols[1], cols[2]))
+    return rows, ""
+
+
+def probe_leg(leg: Leg) -> None:
+    """Is a checkout of its own there? An uninitialized leg is an empty
+    directory of the assembly's, and git answers the ASSEMBLY there - which is
+    no checkout of the leg's. A `.git` of its own that git cannot read is a
+    read that failed, never an absent leg."""
+    if not leg.exists:
+        return
+    proc = git(leg.path, "rev-parse", "--show-toplevel")
+    if proc.returncode == 0 and real(proc.stdout.strip()) == leg.real:
+        leg.checkout = True
+    elif os.path.lexists(os.path.join(leg.path, ".git")):
+        leg.read_error = ("it has a .git of its own and git could not read it: "
+                          + (_first_line(proc.stderr) if proc.returncode != 0 else
+                             f"git answers {proc.stdout.strip()} there"))
+
+
+def assembly_checkouts(helper, assembly: str) -> tuple:
+    """([Leg], declared, why-not) - every leg `<assembly>/project.yaml`
+    declares, and every dependency nested in one (the initialized submodules
+    `git submodule status --recursive` names in each leg), in that order;
+    `declared` is whether the manifest declares any leg at all, which is what
+    makes `<assembly>/worktrees` the paired root."""
+    rows, why = project_legs(helper, assembly)
+    if why:
+        return [], False, why
+    out = []
+    for repository, decl, path in rows:
+        leg = Leg(path, decl, repository, assembly)
+        probe_leg(leg)
+        out.append(leg)
+        if not leg.checkout:
+            continue
+        sub = git(path, "submodule", "status", "--recursive")
+        if sub.returncode != 0:
+            return out, True, (f"the dependencies nested in the {decl} leg ({path}) could not be "
+                               "listed (git submodule status failed): " + _first_line(sub.stderr))
+        for line in sub.stdout.splitlines():
+            if not line.strip() or line.startswith("-"):
+                continue           # declared and not initialized: nothing to read
+            parts = line[1:].split(" ", 1)
+            if len(parts) < 2:
+                continue
+            rel = parts[1]
+            if rel.endswith(")") and " (" in rel:
+                rel = rel[:rel.rindex(" (")]
+            nested = Leg(os.path.normpath(os.path.join(path, rel)), f"{decl}/{rel}", "",
+                         assembly, nested_in=decl)
+            probe_leg(nested)
+            out.append(nested)
+    return out, bool(rows), ""
+
+
+def read_leg(leg: Leg, lane: str) -> None:
+    """What git says about one leg checkout NOW. A read that failed is said,
+    never converted into a clean-looking value (R22, Amendment 7(d))."""
+    if not leg.checkout or leg.read_error:
+        return
+    branch = git(leg.path, "symbolic-ref", "-q", "--short", "HEAD")
+    if branch.returncode == 0:
+        leg.branch = branch.stdout.strip()
+    elif branch.returncode == 1:
+        leg.detached = True
+    else:
+        leg.read_error = "HEAD could not be read: " + _first_line(branch.stderr)
+        return
+    head = git(leg.path, "rev-parse", "--verify", "-q", "HEAD")
+    if head.returncode == 0:
+        leg.head = head.stdout.strip()
+    elif not leg.branch:
+        leg.read_error = "HEAD names no commit"
+        return
+    status = git(leg.path, "status", "--porcelain=v1", "--ignore-submodules=none",
+                 "--untracked-files=normal")
+    if status.returncode != 0:
+        leg.read_error = "git status failed: " + _first_line(status.stderr)
+        return
+    leg.dirty = sum(1 for ln in status.stdout.splitlines() if ln.strip())
+    leg.origin_url = git_out(leg.path, "config", "--get", "remote.origin.url") or ""
+    if leg.head:
+        contains = git(leg.path, "for-each-ref", "--count=1", "--contains", leg.head,
+                       "--format=%(refname)", "refs/remotes/origin/")
+        if contains.returncode != 0:
+            leg.read_error = ("whether origin holds its HEAD could not be read: "
+                              + _first_line(contains.stderr))
+            return
+        leg.on_origin = bool(contains.stdout.strip())
+    if leg.branch:
+        up = git(leg.path, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+        leg.upstream = up.stdout.strip() if up.returncode == 0 else ""
+        if leg.upstream and leg.head:
+            n = git_out(leg.path, "rev-list", "--count", "@{u}..HEAD")
+            leg.ahead = int(n) if n and n.isdigit() else None
+    leg.claimed = bool(leg.head) and lane.lower() in own_trailers(leg.path) \
+        and head_lane_trailer(leg.path).lower() == lane.lower()
+
+
+def decide_leg(leg: Leg) -> None:
+    """A leg's row. It is COUNTED - the sweep's exit 3, `lane-end`'s gate -
+    where its HEAD's own `Lane:` trailer is this lane's and it holds work
+    origin lacks or edits no commit carries, or where it could not be read;
+    otherwise it is listed and counted for nobody, as the assembly's own
+    checkout is. No `--yes` acts on one."""
+    what = leg.what()
+    if leg.read_error:
+        leg.disposition, leg.retire = "unreadable", True
+        leg.reason = (f"{what}: git could not be read through it ({leg.read_error}); a read that "
+                      "failed is never a clean leg (Amendment 7(d)) - read it by hand: "
+                      f"git -C {leg.path} status")
+        return
+    if not leg.exists or not leg.checkout:
+        leg.disposition, leg.retire = "absent", False
+        leg.reason = f"{what}: not checked out here, so it holds nothing to read"
+        return
+    parts = []
+    if leg.dirty:
+        parts.append(f"{leg.dirty} dirty or untracked path(s)")
+    if leg.head and leg.on_origin is False:
+        parts.append("its HEAD carries commit(s) no origin ref holds"
+                     + (f" ({leg.ahead} ahead of {leg.upstream})" if leg.upstream and leg.ahead
+                        else "")
+                     + ("" if leg.origin_url else "; it has no origin remote"))
+    if not parts:
+        leg.disposition, leg.retire = "clean", False
+        leg.reason = (f"{what}: clean, and its HEAD is on origin" if leg.head else
+                      f"{what}: clean, on an unborn branch with nothing committed")
+        return
+    leg.disposition = ("dirty+unpushed" if len(parts) == 2 else
+                       "dirty" if leg.dirty else "unpushed")
+    leg.retire = leg.claimed
+    leg.reason = what + ": " + "; ".join(parts) + (
+        "; its HEAD's own Lane: trailer is this lane's, so it is COUNTED - commit and push from "
+        "inside it: a sweep never acts on a leg checkout, which is the assembly's"
+        if leg.claimed else
+        "; listed and NOT counted - a leg checkout is the assembly's, shared by every lane it "
+        "homes, and its HEAD's own Lane: trailer is not this lane's")
+
+
 # ============================================================ the sweep
 
 class Options:
@@ -1993,6 +2218,8 @@ class Sweep:
         self.halt = ""                     # why no further act is taken
         self.refused_check = ""            # the self-check's refusal: exit 2
         self.usage = ""                    # a usage error found once the trees are known: 64
+        self.legs: list = []               # T018: the assembly's leg checkouts, where it is one
+        self.paired_root = ""              # T018: <assembly>/worktrees, where it is one
 
     # ------------------------------------------------------------- reading
     def gather(self) -> None:
@@ -2051,6 +2278,7 @@ class Sweep:
                                       self.procs.unknown[:6])
                 + (" ..." if len(self.procs.unknown) > 6 else "") + "): a tree their command "
                 "line or parent's directory places them in is of unknown liveness and kept")
+        self._assembly()
         self._discover()
         self.usage = self._live_usage()
         if self.usage:
@@ -2066,6 +2294,8 @@ class Sweep:
             self._fetch_all()
         for tree in self.trees:
             read_tree(tree)
+        for leg in self.legs:
+            read_leg(leg, self.lane)
         self._dependents()
         # EVERY CONTROL ROOT THE WHOLE-ESTATE WALK FOUND IS A PLACE ANOTHER LANE'S
         # CLAIM MAY BE (#174, Copilot round 2): `host/vendor/.lane-state`, with
@@ -2081,6 +2311,26 @@ class Sweep:
                 if tree.branch and not tree.unborn and tree.branch not in PROTECTED_BRANCHES:
                     tree.merge = self.evidence.judge(tree.path, slug_of(tree.origin_url),
                                                      tree.branch, tree.head)
+
+    def _assembly(self) -> None:
+        """T018: WHERE THE LANE'S CHECKOUT IS AN ASSEMBLY, its legs and the
+        dependencies nested in them are read, and `<assembly>/worktrees` - the
+        paired `worktrees/<feature>/{spec,code}` the standard's three-leg root
+        keeps its feature trees in - is a root of the table. A checkout with no
+        `project.yaml` is asked nothing. A manifest, or a leg's own submodule
+        list, that could not be read refuses: which checkouts the assembly
+        holds would be unknown, never none (Amendment 7(d))."""
+        d = self.facts.dir
+        if not d or not os.path.isdir(d):
+            return
+        legs, declared, why = assembly_checkouts(self.helper, d)
+        self.legs = legs
+        if declared:
+            self.paired_root = os.path.join(d, "worktrees")
+        if why:
+            self.refusal = self.refusal or (
+                f"the legs of the assembly {d} could not be read, so which checkouts and "
+                f"worktrees it holds is unknown (Amendment 7(d)): {why}")
 
     def _dependents(self) -> None:
         """What leans on the trees. WHERE A REMOVAL WOULD DELETE A DIRECTORY -
@@ -2146,11 +2396,19 @@ class Sweep:
             # A CLONE IS NEVER ADOPTED: a lane creates worktrees, never clones,
             # so a standalone clone under its root stays FOREIGN - a finding for
             # a person's word, as #162's first protocol line has it.
-            if t.owner != "foreign" or t.foreign_kind in ("other-lane", "clone"):
+            if t.owner != "foreign" or t.foreign_kind in ("other-lane", "clone", "paired-clone"):
                 continue
             if lane_root and under(t.path, lane_root) and t.real != real(lane_root):
                 t.owner = "lane-root"
             elif claude_root and t.exists and under(t.path, claude_root) \
+                    and self.lane.lower() in own_trailers(t.path) \
+                    and head_lane_trailer(t.path).lower() == self.lane.lower():
+                t.owner = "trailer"
+            # T018: THE PAIRED ROOT IS PER FEATURE, NOT PER LANE, exactly as
+            # `.claude/worktrees` is per checkout - so a tree there is this
+            # lane's by its HEAD's own trailer, the same rule, and by nothing else.
+            elif self.paired_root and t.exists and under(t.path, self.paired_root) \
+                    and t.real != real(self.paired_root) \
                     and self.lane.lower() in own_trailers(t.path) \
                     and head_lane_trailer(t.path).lower() == self.lane.lower():
                 t.owner = "trailer"
@@ -2175,6 +2433,10 @@ class Sweep:
     def _discover(self) -> None:
         seen: dict = {}
         lane_dir = real(self.facts.dir) if self.facts.dir else ""
+        # T018: A LEG CHECKOUT IS NO TREE OF THE TABLE, as the lane's own
+        # checkout is none: it is the assembly's, and its own row says what it
+        # holds. A record naming one is that row's, never a tree to remove.
+        leg_by_real = {g.real: g for g in self.legs if g.checkout}
         for rec in self.facts.inventory:
             path = rec.get("path") or ""
             if not path or rec.get("schema") not in ("1",):
@@ -2187,6 +2449,8 @@ class Sweep:
                     "(Amendment 7(d)); read it: lanes-edit.sh lane-trees " + self.lane)
                 continue
             if lane_dir and real(path) == lane_dir:
+                continue
+            if leg_by_real and real(path) in leg_by_real:
                 continue
             t = Tree(path, "inventory")
             t.sidecar = rec
@@ -2201,6 +2465,13 @@ class Sweep:
         for t in list(seen.values()):
             if t.checkout and os.path.isdir(t.checkout) and t.checkout not in checkouts:
                 checkouts.append(t.checkout)
+        # T018: EVERY LEG'S REGISTRATIONS TOO, LAST, so a tree registered in a
+        # leg's repository is the leg's: `git -C <assembly> worktree list`
+        # names none of them, and a code tree recorded under any other checkout
+        # was the only one a sweep ever saw.
+        for g in self.legs:
+            if g.checkout and g.real not in [real(c) for c in checkouts]:
+                checkouts.append(g.path)
         regs_by_real: dict = {}
         for co in checkouts:
             regs = worktree_registrations(co)
@@ -2216,8 +2487,10 @@ class Sweep:
         for rp, (co, reg) in regs_by_real.items():
             t = seen.get(rp)
             if t is None:
-                t = Tree(reg["path"], "foreign", "registered")
+                t = Tree(reg["path"], "foreign",
+                         "leg" if real(co) in leg_by_real else "registered")
                 seen[t.real] = t
+            t.leg = leg_by_real.get(real(co))
             t.registered = True
             t.checkout = t.checkout or co
             t.locked = bool(reg.get("locked"))
@@ -2245,7 +2518,46 @@ class Sweep:
                     continue
                 kind = "clone" if os.path.isdir(os.path.join(full, ".git")) else "lane-root"
                 seen[real(full)] = Tree(full, "foreign", kind)
+        if self.paired_root:
+            self._paired(seen)
         self.trees = sorted(seen.values(), key=lambda t: (t.owner != "inventory", t.path))
+
+    def _paired(self, seen: dict) -> None:
+        """T018: THE ASSEMBLY'S PAIRED FEATURE TREES, `<assembly>/worktrees/
+        <feature>/<each declared leg path>` (and `<feature>` itself), that no
+        registration above named - a registration lost, or a clone where a
+        worktree belongs. A directory that cannot be listed refuses, as a lane
+        root does (#170 G1): an unread root is never an empty one."""
+        root = self.paired_root
+        try:
+            names = sorted(os.listdir(root))
+        except (FileNotFoundError, NotADirectoryError):
+            return
+        except OSError as exc:
+            self.refusal = self.refusal or (
+                f"the assembly's worktree root {root} could not be listed "
+                f"({exc.strerror or exc}), so which feature trees stand in it is unknown")
+            return
+        decls = [g.decl for g in self.legs if not g.nested_in]
+        for name in names:
+            fdir = os.path.join(root, name)
+            if not os.path.isdir(fdir) or os.path.islink(fdir):
+                continue
+            try:
+                os.listdir(fdir)
+            except OSError as exc:
+                self.refusal = self.refusal or (
+                    f"the assembly's feature directory {fdir} could not be listed "
+                    f"({exc.strerror or exc}), so which trees stand in it is unknown")
+                continue
+            for full in [fdir] + [os.path.join(fdir, d) for d in decls]:
+                if not os.path.isdir(full) or os.path.islink(full) or real(full) in seen:
+                    continue
+                if not os.path.lexists(os.path.join(full, ".git")):
+                    continue
+                kind = ("paired-clone" if os.path.isdir(os.path.join(full, ".git"))
+                        else "paired")
+                seen[real(full)] = Tree(full, "foreign", kind)
 
     def _other_lanes(self, extra: list = ()) -> None:
         """A FOREIGN tree another lane's inventory names is THAT lane's.
@@ -2365,6 +2677,11 @@ class Sweep:
             if t.owner == "inventory" and t.checkout and os.path.isdir(t.checkout) \
                     and real(t.checkout) not in [real(c) for c in checkouts]:
                 checkouts.append(t.checkout)
+        # T018: AND EVERY LEG'S, where the lane's checkout is an assembly: after
+        # the split a lane's branches are made in its code leg, not in the root.
+        for g in self.legs:
+            if g.checkout and g.real not in [real(c) for c in checkouts]:
+                checkouts.append(g.path)
         return checkouts
 
     def _fetch_all(self) -> None:
@@ -2372,6 +2689,7 @@ class Sweep:
         probes = [t.path if t.exists else t.checkout for t in self.trees]
         if self.opts.branches:
             probes += self._branch_checkouts()
+        probes += [g.path for g in self.legs if g.checkout]      # T018
         for probe in probes:
             if not probe or not os.path.isdir(probe):
                 continue
@@ -2496,6 +2814,8 @@ class Sweep:
 
     # ---------------------------------------------------------- deciding
     def decide(self) -> None:
+        for leg in self.legs:
+            decide_leg(leg)
         for tree in self.trees:
             self._decide(tree)
             if tree.owner in ("lane-root", "trailer") and tree.disposition != "foreign":
@@ -2525,6 +2845,8 @@ class Sweep:
                      "clone": "a standalone CLONE under this lane's root (a lane creates "
                               "worktrees, never clones)",
                      "other-lane": f"lane {t.other_lane}'s inventory names it"}.get(t.foreign_kind, "")
+            if t.foreign_kind in ("leg", "paired", "paired-clone"):
+                where = self._leg_where(t)
             put("foreign", f"not in lane {self.lane}'s inventory (#97); {where}", False)
             if t.lean:
                 t.reason += "; LOAD-BEARING: " + _lean_text(t.lean)
@@ -2688,9 +3010,28 @@ class Sweep:
                             if t.remote_tip else f"origin has no {t.remote_branch}")
             + ": pushed as is, then removed")
 
+    def _leg_where(self, t: Tree) -> str:
+        """T018: where a tree of an assembly's legs stands, for its FOREIGN row."""
+        paired = bool(self.paired_root) and under(t.path, self.paired_root)
+        if t.foreign_kind == "paired-clone":
+            return ("a standalone CLONE in the assembly's paired feature worktrees "
+                    f"({self.paired_root}); a feature's trees are worktrees of its legs")
+        if paired:
+            return (f"in the assembly's paired feature worktrees ({self.paired_root})"
+                    + (f", registered in {t.leg.what()}" if t.leg else "")
+                    + "; its HEAD carries no Lane: trailer of this lane's as its own")
+        return (f"registered in {t.leg.what() if t.leg else 'a leg of the assembly'}, outside "
+                "every root a lane's trees are claimed in")
+
     def _branches(self) -> None:
+        leg_by_real = {g.real: g for g in self.legs if g.checkout}
         for co in self._branch_checkouts():
             items = branch_items(co, self.lane, self.evidence)
+            leg = leg_by_real.get(real(co))
+            if leg is not None:
+                # T018: WHICH CHECKOUT, since a branch name says nothing of it.
+                for it in items:
+                    it.detail = f"in {leg.what()}" + (f" · {it.detail}" if it.detail else "")
             if self.opts.fetch:
                 common = git_out(co, "rev-parse", "--git-common-dir") or ""
                 if common and not os.path.isabs(common):
@@ -2851,7 +3192,8 @@ class Sweep:
     # ------------------------------------------------------------ output
     def retire_count(self) -> int:
         return (sum(1 for t in self.trees if t.retire)
-                + sum(1 for i in self.items if i.retire))
+                + sum(1 for i in self.items if i.retire)
+                + sum(1 for g in self.legs if g.retire))
 
     def render(self) -> None:
         f = self.facts
@@ -2883,6 +3225,14 @@ class Sweep:
             res = f" -> {t.result}" if t.result else ""
             say(f"  {t.disposition:<22} {t.path}")
             say(f"  {'':<22}   {t.label()} · {t.reason}{res}")
+        if self.legs:
+            # T018: THE ASSEMBLY'S OWN CHECKOUTS, read and never acted on.
+            say("")
+            say(f"LEGS (the assembly's own checkouts, from {os.path.join(f.dir, 'project.yaml')}; "
+                "read, and never acted on)")
+            for g in self.legs:
+                say(f"  {g.disposition:<22} {g.path}")
+                say(f"  {'':<22}   {g.label()} · {g.reason}")
         kinds = (("branch", "BRANCHES (--branches)"), ("scratch", "SCRATCH (--include-scratch)"),
                  ("cache", "CACHES (--include-caches)"), ("sandbox", "SANDBOXES (--include-sandboxes)"),
                  ("link", "BROKEN LINKS (--links)"))
@@ -2902,6 +3252,8 @@ class Sweep:
         live = sum(1 for t in self.trees if t.disposition == "live")
         say(f"SUMMARY: {len(self.trees)} tree(s): {self.retire_count()} to retire · "
             f"{live} live · {foreign} foreign"
+            + (f" · {len(self.legs)} leg checkout(s), "
+               f"{sum(1 for g in self.legs if g.retire)} counted" if self.legs else "")
             + (f" · archive {tilde(self.archive)}" if self.archive else ""))
 
     def porcelain(self) -> None:
@@ -2914,6 +3266,9 @@ class Sweep:
             prow("tree", t.disposition, "retire" if t.retire else "-", t.path,
                  t.branch or ("(detached)" if t.detached else "-"), t.head or "-",
                  t.reason + (f" -> {t.result}" if t.result else ""))
+        for g in self.legs:      # T018
+            prow("leg", g.disposition, "retire" if g.retire else "-", g.path,
+                 g.branch or ("(detached)" if g.detached else "-"), g.head or "-", g.reason)
         for i in self.items:
             prow(i.kind, i.disposition, "retire" if i.retire else "-", i.path,
                  i.detail or "-", str(i.size), i.reason + (f" -> {i.result}" if i.result else ""))

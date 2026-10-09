@@ -1971,6 +1971,7 @@ fi
 
 gate_holder=""; gate_refused=""; gate_lines=""; gate_named=""
 gate_trees=0; gate_branches=0; gate_scratch=0; gate_caches=0; gate_residue=0; gate_foreign=0
+gate_legs=0; gate_leg_lines=""   # T018: an assembly's leg checkouts, counted and listed
 gate_person=0     # counted rows `--yes` leaves too: a person's to settle
 gate_lf='
 '
@@ -2012,6 +2013,25 @@ while IFS="$TAB" read -r g_kind g_a g_b g_c g_d g_e g_f; do
       gate_named="${gate_named}$(gate_real "$g_path")${gate_lf}"
       gate_caches=$((gate_caches + 1))
       gate_lines="${gate_lines}  cache    ${g_a}  ${g_path}  (${g_e:-0} bytes)${gate_lf}" ;;
+    # T018 (opensoft/openRepoTools#186): A LEG CHECKOUT OF AN ASSEMBLY — only
+    # where the lane's checkout is one; a single repository prints no such row.
+    # The sweep counts it (`retire`) where its HEAD's own Lane: trailer is this
+    # lane's and it holds work origin lacks or edits no commit carries, or
+    # where it could not be read; one that holds work and is not this lane's
+    # is listed below the table and counted for nobody, as the assembly's own
+    # checkout is. No sweep acts on one, so its remedy is a person's.
+    leg)
+      g_path="$(printf '%b' "${g_c:-}")"
+      g_head="${g_e:-?}"
+      if [ "${g_b:-}" = retire ]; then
+        gate_legs=$((gate_legs + 1))
+        gate_lines="${gate_lines}  leg      ${g_a}  ${g_path}  [${g_d:-?} ${g_head:0:12}]${gate_lf}             ${g_f:-}${gate_lf}"
+      else
+        case "${g_a:-}" in
+          clean | absent) : ;;
+          *) gate_leg_lines="${gate_leg_lines}  leg      ${g_a}  ${g_path}  [${g_d:-?} ${g_head:0:12}]${gate_lf}             ${g_f:-}${gate_lf}" ;;
+        esac
+      fi ;;
   esac
 done <<GATE
 $gate_out
@@ -2073,6 +2093,7 @@ gate_part "$gate_branches" "branch(es)"
 gate_part "$gate_scratch" "scratch dir(s)"
 gate_part "$gate_caches" "cache(s)"
 gate_part "$gate_residue" "residue path(s)"
+gate_part "$gate_legs" "leg checkout(s)"
 
 # THE VERDICT. 0 passes only with nothing named and nothing unread beside it;
 # 3 and 2 never pass; anything else is the gate nobody read.
@@ -2096,6 +2117,10 @@ fi
 
 if [ "$gate_pass" = 1 ]; then
   step "close-out gate: nothing of lane $LANE's is left on disk ($gate_shown --dry-run answered 0)"
+  if [ -n "$gate_leg_lines" ]; then
+    note "the assembly's leg checkout(s) below hold work that is not this lane's by its HEAD's own Lane: trailer; they are listed and NOT counted, as the assembly's own checkout is not:"
+    printf '%s' "$gate_leg_lines" >&2
+  fi
   if [ "$inventory_only" = 1 ]; then
     note "--inventory-only changed nothing: the close-out gate passed, so the lane ends as any other does"
   fi
@@ -2114,6 +2139,10 @@ else
       *)     note "lane $LANE is NOT ended: the close-out gate could not be read — \`$gate_shown --dry-run --porcelain\` exited $gate_rc, and a read that failed is never an answer (Amendment 7(d))." ;;
     esac
     if [ -n "$gate_lines" ]; then printf '%s' "$gate_lines" >&2; fi
+    if [ -n "$gate_leg_lines" ]; then
+      note "and the assembly's leg checkout(s) below hold work that is not this lane's by its HEAD's own Lane: trailer; they are listed and NOT counted:"
+      printf '%s' "$gate_leg_lines" >&2
+    fi
     if [ "$gate_foreign" -gt 0 ]; then
       note "($gate_foreign FOREIGN tree(s) beside these are not this lane's, and were not counted.)"
     fi
@@ -2129,6 +2158,9 @@ else
     gate_act=0
     if [ "$gate_rc" = 3 ]; then gate_act=1; fi
     if [ "$gate_rc" = 0 ] && [ "$gate_caches" -gt 0 ]; then gate_act=1; fi
+    # T018: A LEG IS NO SWEEP'S TO RETIRE, so where legs are all that is
+    # counted the act offered is the person's, not `--yes`.
+    if [ "$gate_legs" -gt 0 ] && [ $((gate_trees + gate_branches + gate_scratch + gate_caches)) = 0 ]; then gate_act=0; fi
     if [ "$gate_act" = 1 ]; then
       note "the one act that retires them (--yes removes only what is on origin or in a bundle, never a live writer's tree):"
       if [ "$gate_holder" = live ]; then
@@ -2142,6 +2174,9 @@ else
     fi
     if [ "$gate_residue" -gt 0 ]; then
       note "residue is no sweep's to retire: move it to \${XDG_STATE_HOME:-~/.local/state}/openRepoTools/lanes/$LANE/scratch/ or remove it by hand"
+    fi
+    if [ "$gate_legs" -gt 0 ]; then
+      note "a leg checkout is the assembly's and no sweep acts on one: commit and push its work from inside it (git -C <leg> status, git -C <leg> push), then end the lane again"
     fi
     note "or end the lane and leave them where they are, in its inventory, with the reason written down:"
     note "  $prog $LANE$rflag$fflag --inventory-only"

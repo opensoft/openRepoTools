@@ -360,6 +360,7 @@
 #                                 [--dirty <n>] [--unpushed <n>] [--writer <uuid>] \
 #                                 [--generation <n>] [--operation <id>]
 #   lanes-edit.sh lane-tree-now   <worktree path>
+#   lanes-edit.sh project-legs    <checkout>     # an assembly's legs, by path (T018)
 #   lanes-edit.sh lane-reconcile  <lane>
 #   lanes-edit.sh worktrees       [<lane> | --all] [--index] [--fetch]
 #   lanes-edit.sh pathspec-check  <path>...          # opensoft/openRepoTools#162
@@ -5064,6 +5065,70 @@ project_legs_file() {
       gsub(/^'"'"'|'"'"'$/, "", v)
       if (v != "") print v
     }' "$1"
+}
+
+# ------------------------------------------- an assembly's legs, by path
+#
+# opensoft/openRepoTools#186, plan task T018 — WHERE A TRIAD'S LEGS ARE CHECKED
+# OUT, for the lane tooling that has to look inside one: `lane-worktrees`' sweep,
+# its daily report and its `add`, `lane-handoff`'s writer poll, and
+# `lane-reconcile` below. A checkout IS AN ASSEMBLY when its own `project.yaml`
+# declares a leg other than itself — the standard's own rule (openRepoShape's
+# `templates/assembly-root/project.yaml`: a top-level `legs:` list of `- role:` /
+# `repository:` / `path:`, the assembly's own leg at `path: "."`). A checkout
+# with no such file, or one naming no leg but itself, is every single
+# repository, and every reader asks it nothing more than it did before.
+#
+# THE READING IS `lane-start`'s RUNG 5, LINE FOR LINE, and never a second
+# grammar: rung 5 resolves ONE leg's path for the home it is given, and this
+# prints every leg the block declares, as `<repository><TAB><path>`. The seven
+# lines that decide what a leg is are byte-identical to that reader's, and
+# `tests/test_triad_lane_tooling.py` holds them so. As there, ONLY `repository:`
+# and `path:` are read, and only as navigation: the manifest CONFERS NOTHING,
+# and `role:` is never read.
+project_leg_paths_file() {   # <manifest>
+  [ -f "$1" ] || return 1
+  awk '
+      /^[A-Za-z_][A-Za-z0-9_]*:/ { inlegs = ($0 ~ /^legs:/); repo = ""; path = ""; next }
+      !inlegs { next }
+      /^[ \t]*-[ \t]/ { repo = ""; path = "" }
+      /^[ \t]+repository:[ \t]*/ { v = $0; sub(/^[ \t]+repository:[ \t]*/, "", v)
+        sub(/[ \t]+$/, "", v); gsub(/^"|"$/, "", v); gsub(/^'"'"'|'"'"'$/, "", v); repo = v }
+      /^[ \t]+path:[ \t]*/ { v = $0; sub(/^[ \t]+path:[ \t]*/, "", v)
+        sub(/[ \t]+$/, "", v); gsub(/^"|"$/, "", v); gsub(/^'"'"'|'"'"'$/, "", v); path = v }
+      repo != "" && path != "" { print repo "\t" path; repo = ""; path = "" }' "$1"
+}
+
+# THE LEGS OF ONE CHECKOUT, one a line: `<repository><TAB><path as
+# declared><TAB><where it is checked out>`, the last being the declared path
+# resolved against the checkout as rung 5 resolves it. The assembly's own `.`
+# is left out: it IS the checkout. 0 with legs; 8 with none — no
+# `project.yaml`, or one naming no leg but the checkout itself; 1 where the
+# manifest is there and could not be read, which is never "no legs" (R22,
+# Amendment 7(d)).
+assembly_legs() {   # <checkout>
+  al_dir="${1-}"; al_dir="${al_dir%/}"; al_rows=""; al_out=""; al_tab="$(printf '\t')"
+  [ -n "$al_dir" ] || return 8
+  al_m="$al_dir/project.yaml"
+  [ -e "$al_m" ] || [ -L "$al_m" ] || return 8
+  { [ -f "$al_m" ] && [ -r "$al_m" ]; } || return 1
+  al_rows="$(project_leg_paths_file "$al_m")" || return 1
+  while IFS="$al_tab" read -r al_repo al_path; do
+    al_path="${al_path%/}"
+    case "$al_path" in
+      ''|.|./.) continue ;;
+      /*) al_abs="$al_path" ;;
+      ./*) al_abs="$al_dir/${al_path#./}" ;;
+      *) al_abs="$al_dir/$al_path" ;;
+    esac
+    al_out="$al_out$al_repo$al_tab$al_path$al_tab$al_abs
+"
+  done <<AL_ROWS
+$al_rows
+AL_ROWS
+  [ -n "$al_out" ] || return 8
+  printf '%s' "$al_out"
+  return 0
 }
 
 # Manifests are looked for where the estate keeps them: one level under
@@ -13342,7 +13407,10 @@ case "$cmd" in
   # RETIREMENT refusal (exit 2) naming the two acts that replace it. A
   # compatibility refusal that only fires where the register is already
   # reachable is not one.
-  session-start|guard|lane-groups|next-free|append-row-status) : ;;
+  # AND `project-legs` (T018) READS ONE `project.yaml` and nothing of the
+  # workspace, so `lane-worktrees`' daily report can ask it on a
+  # workstation where no register is configured.
+  session-start|guard|lane-groups|next-free|append-row-status|project-legs) : ;;
   *)
     if [ -z "$LANES_REPO" ] || [ -z "$LANES_DIR" ]; then
       die "$(lanes_workspace_why)" 1
@@ -16952,6 +17020,30 @@ EOF
     esac
     ;;
 
+  # opensoft/openRepoTools#186, plan task T018 — THE LEGS A CHECKOUT'S
+  # `project.yaml` DECLARES, by path: `assembly_legs` above, which is the one
+  # reader every lane tool asks (`lane-worktrees`' sweep, report and `add`, and
+  # `lane-handoff`'s writer poll), so no two of them can read a triad two ways.
+  # It reads one file and touches no workspace, so it answers on a workstation
+  # with no register configured too (the dispatcher exempts it).
+  #
+  #   0  <repository><TAB><path as declared><TAB><where it is checked out>, a leg a line
+  #   8  no legs: no project.yaml there, or one naming no leg but the checkout itself
+  #   1  a project.yaml is there and could not be read — which is never "no legs"
+  #  64  a usage error of this subcommand's own
+  project-legs)
+    pla="${1-}"; [ -n "$pla" ] || die "usage: project-legs <checkout>" 64
+    [ "$#" -le 1 ] || die "project-legs takes one directory: project-legs <checkout>" 64
+    case "$pla" in /*) : ;; *) die "project-legs takes an ABSOLUTE path: a relative one means whatever the calling process's directory happens to be, and that is never the checkout being asked about" 64 ;; esac
+    pla_out=""; pla_rc=0
+    pla_out="$(assembly_legs "$pla")" || pla_rc=$?
+    case "$pla_rc" in
+      0) printf '%s\n' "$pla_out" ;;
+      8) exit 8 ;;
+      *) die "${pla%/}/project.yaml is there and could not be read, so which legs that checkout declares is NOT known — which is not the same as none (R22, Amendment 7(d))" 1 ;;
+    esac
+    ;;
+
   lane-reconcile)
     lane="${1-}"; [ -n "$lane" ] || die "usage: lane-reconcile <lane>" 64
     [ "$#" -le 1 ] || die "lane-reconcile takes one lane: lane-reconcile <lane>" 64
@@ -17041,6 +17133,6 @@ EOF
     ;;
 
   *)
-    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|retire-rows|archive-rows|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|binding|request-handoff|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|duplicate-holder|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|register-row-local|retired-identity|canon-lane|resolve-home|managed-projection|lane-state|set-lane-state|lane-trees|set-lane-tree|lane-tree-now|lane-reconcile|lane-holders|legacy-restart-check|publish-handoff|restart-intent|set-restart-intent|worktrees|pathspec-check)" 2
+    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|retire-rows|archive-rows|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|binding|request-handoff|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|duplicate-holder|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|register-row-local|retired-identity|canon-lane|resolve-home|managed-projection|lane-state|set-lane-state|lane-trees|set-lane-tree|lane-tree-now|project-legs|lane-reconcile|lane-holders|legacy-restart-check|publish-handoff|restart-intent|set-restart-intent|worktrees|pathspec-check)" 2
     ;;
 esac
