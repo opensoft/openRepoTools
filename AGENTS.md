@@ -224,6 +224,13 @@ git submodule update --init upstream/openRepoShape
 tests/run.sh                      # the suite, serialized — pass any pytest argument
 ```
 
+**FOUR ROOTS, NOT ONE TREE** (#186, T009): the suite reads each file from the
+tree that owns it — the code leg, the assembly root (`README.md`, `AGENTS.md`,
+`CLAUDE.md`) and the spec leg (`docs/`), with `upstream/openRepoShape` nested in
+the code leg — found from the layout or named by `OPENREPOTOOLS_CODE_ROOT`,
+`OPENREPOTOOLS_ASSEMBLY_ROOT` and `OPENREPOTOOLS_SPEC_ROOT`. Standalone, a root
+a checkout lacks is SKIPPED by name; `OPENREPOTOOLS_COMPOSED=1` REFUSES instead.
+
 Brett Heap's RULING of 2026-09-16 ("do all three", on the coordinator's three
 proposals — measured: `tests-macos` running 49-54 minutes per push against
 Linux's 17-22, pull requests drawing 6-12 Copilot review rounds, and this

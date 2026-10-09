@@ -331,7 +331,7 @@ README_CAP_TEST = "test_readme_is_short_enough_to_be_read"
 
 
 def test_the_length_caps_are_the_assembly_roots_where_one_is_named(tmp_path):
-    """At an assembly root the two caps are 340 and 510 — this repository's 316
+    """At an assembly root the two caps are 347 and 510 — this repository's 323
     and 486 plus the twenty-four lines each that T006's root guidance adds
     there — and they are asked of the ASSEMBLY's files: one line over FAILS,
     the cap itself passes. Red at `origin/main`, which counted this checkout's
@@ -339,9 +339,9 @@ def test_the_length_caps_are_the_assembly_roots_where_one_is_named(tmp_path):
     def lines(n: int) -> str:
         return "".join(f"line {i}\n" for i in range(n))
     at_cap = assembly(tmp_path / "at", readme=lines(510))
-    (at_cap / "AGENTS.md").write_text(lines(340), encoding="utf-8")
+    (at_cap / "AGENTS.md").write_text(lines(347), encoding="utf-8")
     over = assembly(tmp_path / "over", readme=lines(511))
-    (over / "AGENTS.md").write_text(lines(341), encoding="utf-8")
+    (over / "AGENTS.md").write_text(lines(348), encoding="utf-8")
     select = f"{AGENTS_CAP_TEST} or {README_CAP_TEST}"
     green = nested(tmp_path, {"OPENREPOTOOLS_ASSEMBLY_ROOT": str(at_cap)},
                    select, "test_repo_hygiene.py")
@@ -349,7 +349,7 @@ def test_the_length_caps_are_the_assembly_roots_where_one_is_named(tmp_path):
         assert green.outcome(name)[0] == "passed", green.output[-3000:]
     red = nested(tmp_path, {"OPENREPOTOOLS_ASSEMBLY_ROOT": str(over)},
                  select, "test_repo_hygiene.py")
-    for name, said in ((AGENTS_CAP_TEST, "AGENTS.md is 341 lines; the cap is 340"),
+    for name, said in ((AGENTS_CAP_TEST, "AGENTS.md is 348 lines; the cap is 347"),
                        (README_CAP_TEST, "README.md is 511 lines; the cap is 510")):
         outcome, message = red.outcome(name)
         assert outcome == "failure" and said in message, (
