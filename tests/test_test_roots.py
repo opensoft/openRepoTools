@@ -49,10 +49,13 @@ DEPENDENCY = REPO / "upstream" / "openRepoShape"
 WRAPPER = REPO / "tests" / "run.sh"
 
 #: What a code leg does NOT carry after the split, by the adoption mapping's
-#: placement table: the six root files went to the assembly and the four
-#: trees to the spec leg. A fixture code leg is the code root less these.
-ASSEMBLY_FILES = ("README.md", "AGENTS.md", "CLAUDE.md", "LICENSE",
-                  ".gitattributes", ".gitignore")
+#: placement table: the root files went to the assembly and the four trees to
+#: the spec leg. A fixture code leg is the code root less these. EXCEPT
+#: `.gitattributes`, which the table also sends to the assembly and which the
+#: code leg must carry too — git never applies the assembly's inside a
+#: submodule (conftest's `GUIDANCE_DOCUMENTS` note) — so a fixture leg keeps
+#: it, as the leg is meant to be (Copilot on #190).
+ASSEMBLY_FILES = ("README.md", "AGENTS.md", "CLAUDE.md", "LICENSE", ".gitignore")
 SPEC_TREES = ("docs", "openspec", "specs", "ideation")
 
 INSTALL_LINE = (
@@ -557,6 +560,24 @@ def test_composed_refuses_a_code_leg_off_its_pin_or_with_changes(tmp_path):
     run_git(code, "commit", "-q", "-a", "-m", "the code leg moves off its pin")
     refusal = conftest.resolve_roots(composed, code).refusal()
     assert refusal and "composed acceptance is for the pinned code leg" in refusal, refusal
+
+
+def test_composed_refuses_a_leg_whose_status_cannot_be_read(tmp_path):
+    """A `git status` that fails is not a clean one (Copilot on #190): a code
+    leg at its pin whose index is unreadable is refused, naming it, rather
+    than accepted because no changes were printed."""
+    code = code_leg(tmp_path / "asm" / "code", repository=True)
+    spec = spec_leg(tmp_path / "asm" / "spec", repository=True)
+    assembly(tmp_path / "asm", code=code, spec=spec, repository=True)
+    for probe in ("scripts/repo_shape.py", "templates/workspace-root/README.md"):
+        target = code / "upstream" / "openRepoShape" / probe
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# a probe\n", encoding="utf-8")
+    composed = {"OPENREPOTOOLS_COMPOSED": "1"}
+    assert conftest.resolve_roots(composed, code).refusal() is None
+    (code / ".git" / "index").write_bytes(b"not an index")
+    refusal = conftest.resolve_roots(composed, code).refusal()
+    assert refusal and "answered no `git status`" in refusal, refusal
 
 
 def test_this_runs_roots_are_the_ones_it_is_running_with():

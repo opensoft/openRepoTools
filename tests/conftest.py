@@ -269,6 +269,11 @@ class Roots:
                     f"assembly root records {recorded} at {mount!r}: composed "
                     f"acceptance is for the pinned {role} leg and no other"]
         dirty = _git_out(root, "status", "--porcelain", "--untracked-files=no")
+        if dirty is None:
+            return [f"the {role} root {root} answered no `git status` (a corrupt "
+                    f"index, a lock, no repository): whether its tracked files "
+                    f"are the pinned bytes cannot be read, and composed "
+                    f"acceptance refuses what it cannot read"]
         if dirty:
             return [f"the {role} root {root} has changes to tracked files "
                     f"({dirty.splitlines()[0].strip()} …): composed acceptance is "
