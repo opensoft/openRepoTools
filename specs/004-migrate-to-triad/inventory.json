@@ -1,8 +1,8 @@
 {
-  "observed_at": "2026-10-04T21:24:50.021151+00:00",
+  "observed_at": "2026-10-07T10:09:03.632310+00:00",
   "source_repository": "opensoft/openRepoTools",
-  "source_main": "daed20957f2dd2f22cca24053bb5bc8636ff6b3f",
-  "github_main": "daed20957f2dd2f22cca24053bb5bc8636ff6b3f",
+  "source_main": "c4864ac5e59db49d01f638a80ed38daf1d788182",
+  "github_main": "c4864ac5e59db49d01f638a80ed38daf1d788182",
   "github_main_matches_local": true,
   "standard_commit": "39d5c986fcfac1a160474bfe91c5f1c37fccc72c",
   "cleanup_summary": {
@@ -70,165 +70,755 @@
   "worktrees": [
     {
       "identity": "main",
-      "head": "daed20957f2dd2f22cca24053bb5bc8636ff6b3f",
+      "worktree_name": "main",
+      "owner": "shared main checkout (cwd of lanes openRepoTools-1/2/3)",
+      "head": "c4864ac5e59db49d01f638a80ed38daf1d788182",
       "layout": "root",
+      "linked": false,
       "readable_here": true,
+      "upstream": "origin/main",
+      "upstream_configured": "origin/main",
+      "upstream_state": null,
+      "ahead_of_upstream": 0,
+      "behind_upstream": 0,
+      "ahead_of_origin_main": 0,
+      "behind_origin_main": 0,
       "dirty_entries": 0,
       "untracked_entries": 0,
+      "ignored_entries": 5,
+      "ignored_files": 75,
+      "workflow_config_files_preserved": 71,
+      "submodule_initialized": true,
       "locked": false,
-      "prunable": false
+      "prunable": false,
+      "classification": "retained-work",
+      "disposition_proposal": "Source baseline c4864ac (= GitHub main, PR #175's squash). The migration source; freeze it at Gate C."
+    },
+    {
+      "identity": "feat/lane-worktrees-residue-tests",
+      "worktree_name": "ort-179-tests",
+      "owner": "lane openRepoTools-1",
+      "head": "6c79121ea0288ac495ea5d0cd856083059c631bb",
+      "layout": "lane-worktrees",
+      "linked": true,
+      "readable_here": true,
+      "upstream": null,
+      "upstream_configured": "origin/feat/lane-worktrees-residue-tests",
+      "upstream_state": "[gone]",
+      "ahead_of_upstream": null,
+      "behind_upstream": null,
+      "ahead_of_origin_main": 98,
+      "behind_origin_main": 2,
+      "dirty_entries": 0,
+      "untracked_entries": 0,
+      "ignored_entries": 0,
+      "ignored_files": 0,
+      "workflow_config_files_preserved": 0,
+      "submodule_initialized": false,
+      "locked": false,
+      "prunable": false,
+      "classification": "landed-and-preserved",
+      "disposition_proposal": "Tip 6c79121 is PR #179's merged head (squash 2fb854f); origin branch gone; tip also on GitHub as refs/pull/179/head. No replay."
+    },
+    {
+      "identity": "fix/install-marker-on-every-file-and-one-install-lock",
+      "worktree_name": "ort-install-followups",
+      "owner": "lane openRepoTools-1",
+      "head": "2080f3d83520bd1ea5632e754026f8ba3df4eb1f",
+      "layout": "lane-worktrees",
+      "linked": true,
+      "readable_here": true,
+      "upstream": "origin/main",
+      "upstream_configured": "origin/main",
+      "upstream_state": "[behind 4]",
+      "ahead_of_upstream": 0,
+      "behind_upstream": 4,
+      "ahead_of_origin_main": 0,
+      "behind_origin_main": 4,
+      "dirty_entries": 0,
+      "untracked_entries": 0,
+      "ignored_entries": 0,
+      "ignored_files": 0,
+      "workflow_config_files_preserved": 0,
+      "submodule_initialized": false,
+      "locked": false,
+      "prunable": false,
+      "classification": "empty-shell",
+      "disposition_proposal": "Tip 2080f3d is main's PR #168 squash; no commits of its own; never pushed. Nothing to continue."
+    },
+    {
+      "identity": "chore/openreposhape-pin-7f84ca4",
+      "worktree_name": "ort-shape-pin",
+      "owner": "lane openRepoTools-1",
+      "head": "e43b2432976a22eb3bf8c419c96209399251d375",
+      "layout": "lane-worktrees",
+      "linked": true,
+      "readable_here": true,
+      "upstream": null,
+      "upstream_configured": null,
+      "upstream_state": null,
+      "ahead_of_upstream": null,
+      "behind_upstream": null,
+      "ahead_of_origin_main": 1,
+      "behind_origin_main": 0,
+      "dirty_entries": 0,
+      "untracked_entries": 0,
+      "ignored_entries": 0,
+      "ignored_files": 0,
+      "workflow_config_files_preserved": 0,
+      "submodule_initialized": true,
+      "locked": false,
+      "prunable": false,
+      "classification": "retained-work",
+      "disposition_proposal": "Active writer (T005): one commit e43b243 moving gitlink and pin 39d5c98 -> 7f84ca4 (tree_sha256 3be52767...), unpushed at capture, tests running. Continues through its own PR; this bundle holds the only copy outside the tree at capture."
+    },
+    {
+      "identity": "004-migrate-to-triad-exec",
+      "worktree_name": "ort-triad-exec",
+      "owner": "lane openRepoTools-1",
+      "head": "ff6f6a7c7b7921ca1e0b0234e898900f98532366",
+      "layout": "lane-worktrees",
+      "linked": true,
+      "readable_here": true,
+      "upstream": null,
+      "upstream_configured": null,
+      "upstream_state": null,
+      "ahead_of_upstream": null,
+      "behind_upstream": null,
+      "ahead_of_origin_main": 6,
+      "behind_origin_main": 13,
+      "dirty_entries": 0,
+      "untracked_entries": 0,
+      "ignored_entries": 0,
+      "ignored_files": 0,
+      "workflow_config_files_preserved": 0,
+      "submodule_initialized": false,
+      "locked": false,
+      "prunable": false,
+      "classification": "retained-work",
+      "disposition_proposal": "This Gate A evidence tree (T001/T002), branched from ff6f6a7 at 09:58Z; its commits follow the capture."
+    },
+    {
+      "identity": "004-migrate-to-triad-rehearsal",
+      "worktree_name": "ort-triad-rehearsal",
+      "owner": "lane openRepoTools-1",
+      "head": "ff6f6a7c7b7921ca1e0b0234e898900f98532366",
+      "layout": "lane-worktrees",
+      "linked": true,
+      "readable_here": true,
+      "upstream": null,
+      "upstream_configured": null,
+      "upstream_state": null,
+      "ahead_of_upstream": null,
+      "behind_upstream": null,
+      "ahead_of_origin_main": 6,
+      "behind_origin_main": 13,
+      "dirty_entries": 0,
+      "untracked_entries": 0,
+      "ignored_entries": 0,
+      "ignored_files": 0,
+      "workflow_config_files_preserved": 0,
+      "submodule_initialized": false,
+      "locked": false,
+      "prunable": false,
+      "classification": "retained-work",
+      "disposition_proposal": "Active writer (Gate B rehearsal), branched from ff6f6a7 at 10:01Z; no commits at capture."
+    },
+    {
+      "identity": "fix/wip-init-step7-guarded-writes-and-step8-refusal-words",
+      "worktree_name": "ort-wip-init-followups",
+      "owner": "lane openRepoTools-1",
+      "head": "2080f3d83520bd1ea5632e754026f8ba3df4eb1f",
+      "layout": "lane-worktrees",
+      "linked": true,
+      "readable_here": true,
+      "upstream": "origin/main",
+      "upstream_configured": "origin/main",
+      "upstream_state": "[behind 4]",
+      "ahead_of_upstream": 0,
+      "behind_upstream": 4,
+      "ahead_of_origin_main": 0,
+      "behind_origin_main": 4,
+      "dirty_entries": 0,
+      "untracked_entries": 0,
+      "ignored_entries": 0,
+      "ignored_files": 0,
+      "workflow_config_files_preserved": 0,
+      "submodule_initialized": false,
+      "locked": false,
+      "prunable": false,
+      "classification": "empty-shell",
+      "disposition_proposal": "Tip 2080f3d is main's PR #168 squash; no commits of its own; never pushed. Nothing to continue."
+    },
+    {
+      "identity": "004-migrate-to-triad-reads",
+      "worktree_name": "triad-reads",
+      "owner": "lane openRepoTools-2",
+      "head": "ff6f6a7c7b7921ca1e0b0234e898900f98532366",
+      "layout": "lane-worktrees",
+      "linked": true,
+      "readable_here": true,
+      "upstream": null,
+      "upstream_configured": null,
+      "upstream_state": null,
+      "ahead_of_upstream": null,
+      "behind_upstream": null,
+      "ahead_of_origin_main": 6,
+      "behind_origin_main": 13,
+      "dirty_entries": 0,
+      "untracked_entries": 0,
+      "ignored_entries": 0,
+      "ignored_files": 0,
+      "workflow_config_files_preserved": 0,
+      "submodule_initialized": false,
+      "locked": false,
+      "prunable": false,
+      "classification": "retained-work",
+      "disposition_proposal": "Active writer of lane openRepoTools-2, branched from ff6f6a7 at 10:03Z; no commits at capture."
+    },
+    {
+      "identity": "feat/triad-lane-tooling",
+      "worktree_name": "triad-lane-tooling",
+      "owner": "lane openRepoTools-3",
+      "head": "c4864ac5e59db49d01f638a80ed38daf1d788182",
+      "layout": "lane-worktrees",
+      "linked": true,
+      "readable_here": true,
+      "upstream": null,
+      "upstream_configured": null,
+      "upstream_state": null,
+      "ahead_of_upstream": null,
+      "behind_upstream": null,
+      "ahead_of_origin_main": 0,
+      "behind_origin_main": 0,
+      "dirty_entries": 0,
+      "untracked_entries": 0,
+      "ignored_entries": 0,
+      "ignored_files": 0,
+      "workflow_config_files_preserved": 0,
+      "submodule_initialized": false,
+      "locked": false,
+      "prunable": false,
+      "classification": "retained-work",
+      "disposition_proposal": "Active writer of lane openRepoTools-3, branched from c4864ac at 10:03Z; no commits at capture."
     },
     {
       "identity": "001-separate-swap-ctx-handoff",
+      "worktree_name": "001-separate-swap-ctx-handoff",
+      "owner": "Brett Heap",
       "head": "3c26041a4444a10bc240cb64a168ece4d9edf6c5",
       "layout": "legacy-sibling",
+      "linked": true,
       "readable_here": true,
+      "upstream": "origin/001-separate-swap-ctx-handoff",
+      "upstream_configured": "origin/001-separate-swap-ctx-handoff",
+      "upstream_state": null,
+      "ahead_of_upstream": 0,
+      "behind_upstream": 0,
+      "ahead_of_origin_main": 27,
+      "behind_origin_main": 23,
       "dirty_entries": 0,
       "untracked_entries": 0,
+      "ignored_entries": 4,
+      "ignored_files": 70,
+      "workflow_config_files_preserved": 70,
+      "submodule_initialized": true,
       "locked": false,
-      "prunable": false
+      "prunable": false,
+      "classification": "retained-work",
+      "disposition_proposal": "Feature 001 at 3c26041 (= origin), clean; 27 ahead / 23 behind main. Continue into paired 001 worktrees (T016)."
     },
     {
       "identity": "004-migrate-to-triad",
-      "head": "48934f8d4c662be6ed07ad1b7df96dec22028ab2",
+      "worktree_name": "004-migrate-to-triad",
+      "owner": "Brett Heap",
+      "head": "ff6f6a7c7b7921ca1e0b0234e898900f98532366",
       "layout": "legacy-sibling",
+      "linked": true,
       "readable_here": true,
+      "upstream": "origin/004-migrate-to-triad",
+      "upstream_configured": "origin/004-migrate-to-triad",
+      "upstream_state": null,
+      "ahead_of_upstream": 0,
+      "behind_upstream": 0,
+      "ahead_of_origin_main": 6,
+      "behind_origin_main": 13,
       "dirty_entries": 0,
-      "untracked_entries": 3,
+      "untracked_entries": 0,
+      "ignored_entries": 0,
+      "ignored_files": 0,
+      "workflow_config_files_preserved": 0,
+      "submodule_initialized": false,
       "locked": false,
-      "prunable": false
+      "prunable": false,
+      "classification": "retained-work",
+      "disposition_proposal": "The migration plan at ff6f6a7 (= origin); PR #187 opened 10:03:43Z. Full proposal stays in spec (T017)."
     },
     {
       "identity": "feat/supervised-context-restart",
-      "head": "0e4b311dfa33abca55282a4974cb96c7d1c584ed",
+      "worktree_name": "005-supervised-legacy-ctx",
+      "owner": "Brett Heap",
+      "head": "f13d32975d7457d662249385d23ee28a7f713c4c",
       "layout": "legacy-sibling",
+      "linked": true,
       "readable_here": true,
+      "upstream": "origin/feat/supervised-context-restart",
+      "upstream_configured": "origin/feat/supervised-context-restart",
+      "upstream_state": null,
+      "ahead_of_upstream": 0,
+      "behind_upstream": 0,
+      "ahead_of_origin_main": 30,
+      "behind_origin_main": 8,
       "dirty_entries": 0,
       "untracked_entries": 0,
+      "ignored_entries": 3,
+      "ignored_files": 24,
+      "workflow_config_files_preserved": 0,
+      "submodule_initialized": false,
       "locked": false,
-      "prunable": false
+      "prunable": false,
+      "classification": "landed-and-preserved",
+      "disposition_proposal": "Tip f13d329 is PR #121's merged head (squash 00971b9); origin branch present; clean. Any paired 005 continuation is the owner's decision."
     },
     {
       "identity": "feat/claude-current",
+      "worktree_name": "feat-claude-current",
+      "owner": "Brett Heap",
       "head": "11037f01a45a72fa3fc9a8a2b0e24a64cbf1ed12",
-      "layout": "legacy-sibling",
+      "layout": "legacy-nested",
+      "linked": true,
       "readable_here": true,
+      "upstream": "origin/feat/claude-current",
+      "upstream_configured": "origin/feat/claude-current",
+      "upstream_state": null,
+      "ahead_of_upstream": 0,
+      "behind_upstream": 0,
+      "ahead_of_origin_main": 19,
+      "behind_origin_main": 11,
       "dirty_entries": 0,
       "untracked_entries": 0,
+      "ignored_entries": 2,
+      "ignored_files": 18,
+      "workflow_config_files_preserved": 0,
+      "submodule_initialized": false,
       "locked": false,
-      "prunable": false
+      "prunable": false,
+      "classification": "landed-and-preserved",
+      "disposition_proposal": "Tip 11037f0 is PR #134's merged head (squash daed209); retained checkout is preservation history; no replay."
     },
     {
-      "identity": "feat/crash-consistent-lane-worktree-recovery",
-      "head": "07fb3adb8b4ac1476c641685096f00f0d20593c6",
-      "layout": "legacy-nested",
+      "identity": "feat/amendment-22-sql-primary",
+      "worktree_name": "a22-primary",
+      "owner": "lane openRepoTools-3",
+      "head": "2080f3d83520bd1ea5632e754026f8ba3df4eb1f",
+      "layout": "harness-nested",
+      "linked": true,
       "readable_here": true,
+      "upstream": null,
+      "upstream_configured": null,
+      "upstream_state": null,
+      "ahead_of_upstream": null,
+      "behind_upstream": null,
+      "ahead_of_origin_main": 0,
+      "behind_origin_main": 4,
       "dirty_entries": 0,
       "untracked_entries": 0,
+      "ignored_entries": 0,
+      "ignored_files": 0,
+      "workflow_config_files_preserved": 0,
+      "submodule_initialized": true,
       "locked": false,
-      "prunable": false
+      "prunable": false,
+      "classification": "empty-shell",
+      "disposition_proposal": "Tip 2080f3d is main's PR #168 squash; no commits of its own; never pushed."
+    },
+    {
+      "identity": "feat/lane-end-closeout-rest",
+      "worktree_name": "closeout-2",
+      "owner": "lane openRepoTools-3",
+      "head": "ed3655184d90e1ac21848aa4c3e294327b9561b6",
+      "layout": "harness-nested",
+      "linked": true,
+      "readable_here": true,
+      "upstream": null,
+      "upstream_configured": "origin/feat/lane-end-closeout",
+      "upstream_state": "[gone]",
+      "ahead_of_upstream": null,
+      "behind_upstream": null,
+      "ahead_of_origin_main": 38,
+      "behind_origin_main": 7,
+      "dirty_entries": 0,
+      "untracked_entries": 0,
+      "ignored_entries": 0,
+      "ignored_files": 0,
+      "workflow_config_files_preserved": 0,
+      "submodule_initialized": true,
+      "locked": false,
+      "prunable": false,
+      "classification": "landed-and-preserved",
+      "disposition_proposal": "Tip ed36551 is an ancestor of PR #175's merged head 5c05ab6 (squash c4864ac); configured upstream gone; on GitHub as part of refs/pull/175/head."
+    },
+    {
+      "identity": "feat/shell-suite-wall-time",
+      "worktree_name": "suite-speed",
+      "owner": "lane openRepoTools-3",
+      "head": "d2f80512902bf85b5993134a3cef6913d131565a",
+      "layout": "harness-nested",
+      "linked": true,
+      "readable_here": true,
+      "upstream": null,
+      "upstream_configured": null,
+      "upstream_state": null,
+      "ahead_of_upstream": null,
+      "behind_upstream": null,
+      "ahead_of_origin_main": 36,
+      "behind_origin_main": 4,
+      "dirty_entries": 0,
+      "untracked_entries": 0,
+      "ignored_entries": 0,
+      "ignored_files": 0,
+      "workflow_config_files_preserved": 0,
+      "submodule_initialized": true,
+      "locked": false,
+      "prunable": false,
+      "classification": "landed-and-preserved",
+      "disposition_proposal": "Tip d2f8051 is PR #169's merged head (squash 500687c); never pushed under this branch name; on GitHub as refs/pull/169/head."
+    },
+    {
+      "identity": "feat/lane-worktrees-residue",
+      "worktree_name": "sweep-170",
+      "owner": "lane openRepoTools-1",
+      "head": "4ea84c8c8206347cef3cc5a626e79aee9e12b8c3",
+      "layout": "harness-nested",
+      "linked": true,
+      "readable_here": true,
+      "upstream": null,
+      "upstream_configured": "origin/feat/lane-worktrees-residue",
+      "upstream_state": "[gone]",
+      "ahead_of_upstream": null,
+      "behind_upstream": null,
+      "ahead_of_origin_main": 81,
+      "behind_origin_main": 3,
+      "dirty_entries": 0,
+      "untracked_entries": 0,
+      "ignored_entries": 1,
+      "ignored_files": 1,
+      "workflow_config_files_preserved": 0,
+      "submodule_initialized": true,
+      "locked": false,
+      "prunable": false,
+      "classification": "landed-and-preserved",
+      "disposition_proposal": "Tip 4ea84c8 is PR #174's merged head (squash 5eb3d5f); origin branch gone; on GitHub as refs/pull/174/head."
     }
   ],
   "local_branches": [
     {
       "identity": "001-separate-swap-ctx-handoff",
-      "head": "3c26041a4444a10bc240cb64a168ece4d9edf6c5"
+      "head": "3c26041a4444a10bc240cb64a168ece4d9edf6c5",
+      "upstream_configured": "origin/001-separate-swap-ctx-handoff",
+      "upstream_state": null,
+      "worktree": "001-separate-swap-ctx-handoff"
     },
     {
       "identity": "004-migrate-to-triad",
-      "head": "48934f8d4c662be6ed07ad1b7df96dec22028ab2"
+      "head": "ff6f6a7c7b7921ca1e0b0234e898900f98532366",
+      "upstream_configured": "origin/004-migrate-to-triad",
+      "upstream_state": null,
+      "worktree": "004-migrate-to-triad"
+    },
+    {
+      "identity": "004-migrate-to-triad-exec",
+      "head": "ff6f6a7c7b7921ca1e0b0234e898900f98532366",
+      "upstream_configured": null,
+      "upstream_state": null,
+      "worktree": "ort-triad-exec"
+    },
+    {
+      "identity": "004-migrate-to-triad-reads",
+      "head": "ff6f6a7c7b7921ca1e0b0234e898900f98532366",
+      "upstream_configured": null,
+      "upstream_state": null,
+      "worktree": "triad-reads"
+    },
+    {
+      "identity": "004-migrate-to-triad-rehearsal",
+      "head": "ff6f6a7c7b7921ca1e0b0234e898900f98532366",
+      "upstream_configured": null,
+      "upstream_state": null,
+      "worktree": "ort-triad-rehearsal"
+    },
+    {
+      "identity": "chore/openreposhape-pin-7f84ca4",
+      "head": "e43b2432976a22eb3bf8c419c96209399251d375",
+      "upstream_configured": null,
+      "upstream_state": null,
+      "worktree": "ort-shape-pin"
+    },
+    {
+      "identity": "feat/amendment-22-sql-primary",
+      "head": "2080f3d83520bd1ea5632e754026f8ba3df4eb1f",
+      "upstream_configured": null,
+      "upstream_state": null,
+      "worktree": "a22-primary"
     },
     {
       "identity": "feat/claude-current",
-      "head": "11037f01a45a72fa3fc9a8a2b0e24a64cbf1ed12"
+      "head": "11037f01a45a72fa3fc9a8a2b0e24a64cbf1ed12",
+      "upstream_configured": "origin/feat/claude-current",
+      "upstream_state": null,
+      "worktree": "feat-claude-current"
     },
     {
-      "identity": "feat/crash-consistent-lane-worktree-recovery",
-      "head": "07fb3adb8b4ac1476c641685096f00f0d20593c6"
+      "identity": "feat/lane-end-closeout-rest",
+      "head": "ed3655184d90e1ac21848aa4c3e294327b9561b6",
+      "upstream_configured": "origin/feat/lane-end-closeout",
+      "upstream_state": "[gone]",
+      "worktree": "closeout-2"
+    },
+    {
+      "identity": "feat/lane-worktrees-residue",
+      "head": "4ea84c8c8206347cef3cc5a626e79aee9e12b8c3",
+      "upstream_configured": "origin/feat/lane-worktrees-residue",
+      "upstream_state": "[gone]",
+      "worktree": "sweep-170"
+    },
+    {
+      "identity": "feat/lane-worktrees-residue-tests",
+      "head": "6c79121ea0288ac495ea5d0cd856083059c631bb",
+      "upstream_configured": "origin/feat/lane-worktrees-residue-tests",
+      "upstream_state": "[gone]",
+      "worktree": "ort-179-tests"
+    },
+    {
+      "identity": "feat/shell-suite-wall-time",
+      "head": "d2f80512902bf85b5993134a3cef6913d131565a",
+      "upstream_configured": null,
+      "upstream_state": null,
+      "worktree": "suite-speed"
     },
     {
       "identity": "feat/supervised-context-restart",
-      "head": "0e4b311dfa33abca55282a4974cb96c7d1c584ed"
+      "head": "f13d32975d7457d662249385d23ee28a7f713c4c",
+      "upstream_configured": "origin/feat/supervised-context-restart",
+      "upstream_state": null,
+      "worktree": "005-supervised-legacy-ctx"
+    },
+    {
+      "identity": "feat/triad-lane-tooling",
+      "head": "c4864ac5e59db49d01f638a80ed38daf1d788182",
+      "upstream_configured": null,
+      "upstream_state": null,
+      "worktree": "triad-lane-tooling"
+    },
+    {
+      "identity": "fix/install-marker-on-every-file-and-one-install-lock",
+      "head": "2080f3d83520bd1ea5632e754026f8ba3df4eb1f",
+      "upstream_configured": "origin/main",
+      "upstream_state": "[behind 4]",
+      "worktree": "ort-install-followups"
+    },
+    {
+      "identity": "fix/wip-init-step7-guarded-writes-and-step8-refusal-words",
+      "head": "2080f3d83520bd1ea5632e754026f8ba3df4eb1f",
+      "upstream_configured": "origin/main",
+      "upstream_state": "[behind 4]",
+      "worktree": "ort-wip-init-followups"
     },
     {
       "identity": "main",
-      "head": "daed20957f2dd2f22cca24053bb5bc8636ff6b3f"
+      "head": "c4864ac5e59db49d01f638a80ed38daf1d788182",
+      "upstream_configured": "origin/main",
+      "upstream_state": null,
+      "worktree": "main"
+    },
+    {
+      "identity": "review/20261004-review/branch-004-migrate-to-triad-efc637",
+      "head": "5455805d623b6d3e2943606745c4ac812dc40be5",
+      "upstream_configured": null,
+      "upstream_state": null,
+      "worktree": null,
+      "classification": "retained-work",
+      "disposition_proposal": "October 4 review snapshot of 004; ancestor of ff6f6a7; also on origin."
+    },
+    {
+      "identity": "review/20261004-review/branch-feat-crash-consistent-lane-worktree-recovery-897cfc",
+      "head": "07fb3adb8b4ac1476c641685096f00f0d20593c6",
+      "upstream_configured": null,
+      "upstream_state": null,
+      "worktree": null,
+      "classification": "landed-and-preserved",
+      "disposition_proposal": "Ancestor of PR #97's merged head 8c5958f (squash b1015f4); also on origin."
     }
   ],
   "remote_only_branches": [
     {
       "identity": "chore/preserve-local-planning-20261003",
       "head": "135c18b258d02136ed834e5a446e552db385d50c",
-      "currency": "local remote-tracking observation; not fetched during refresh"
+      "on_origin": true,
+      "classification": "remote-only-ref",
+      "disposition_proposal": "Preservation history of the October 3 local planning drafts; no checkout.",
+      "currency": "origin heads read with git ls-remote at the refresh; matches the local remote-tracking ref"
     },
     {
       "identity": "takeover/ort-a9-dirty-snapshot-20260913",
       "head": "607aee7551a5a7db7e57e294aba193fbc8a8a266",
-      "currency": "local remote-tracking observation; not fetched during refresh"
+      "on_origin": true,
+      "classification": "remote-only-ref",
+      "disposition_proposal": "Preservation snapshot of September 13; no checkout.",
+      "currency": "origin heads read with git ls-remote at the refresh; matches the local remote-tracking ref"
+    },
+    {
+      "identity": "fix/install-by-rename-167",
+      "head": "1905b7984c1f9877569c20971ffcf9ebd08b3e1c",
+      "on_origin": true,
+      "classification": "remote-only-ref",
+      "disposition_proposal": "PR #172's merged head (squash 3660224); no local branch.",
+      "currency": "origin heads read with git ls-remote at the refresh; matches the local remote-tracking ref"
+    }
+  ],
+  "local_only_refs": [
+    {
+      "ref": "refs/lanes/a9-move",
+      "head": "2108ce3ab6f767d993522f96c5e3af58659577b3",
+      "on_origin": false,
+      "classification": "landed-and-preserved",
+      "note": "Ancestor of main; not on origin."
+    },
+    {
+      "ref": "refs/remotes/pr/24",
+      "head": "e3d57ddf4f4e77761cd250faf21664a637c3f298",
+      "on_origin": false,
+      "classification": "landed-and-preserved",
+      "note": "Stale remote-tracking ref (no 'pr' remote configured); ancestor of main (PR #24 merged d4b5710)."
+    },
+    {
+      "ref": "refs/remotes/pr/26",
+      "head": "dae38be3b28cde7086862738bd8ad56fce406efe",
+      "on_origin": false,
+      "classification": "landed-and-preserved",
+      "note": "Stale remote-tracking ref (no 'pr' remote configured); ancestor of PR #26's merged head (squash 63a74af)."
     }
   ],
   "open_prs": [
     {
-      "number": 121,
-      "title": "Keep supervised manual ctx as legacy compatibility and refuse managed lanes",
-      "headRefName": "feat/supervised-context-restart",
-      "headRefOid": "6c5b74176e9dbf7f9aad5a4ff8ec18ef0cbbb136",
+      "number": 187,
+      "title": "Triad migration planning (feature 004-migrate-to-triad): proposal, plan, tasks, adoption mapping and the October rehearsal receipts",
+      "headRefName": "004-migrate-to-triad",
+      "headRefOid": "ff6f6a7c7b7921ca1e0b0234e898900f98532366",
       "isDraft": false,
-      "url": "https://github.com/opensoft/openRepoTools/pull/121",
+      "url": "https://github.com/opensoft/openRepoTools/pull/187",
       "state": "open",
       "merged": false,
-      "updated_at": "2026-10-04T21:24:31Z"
-    },
-    {
-      "number": 97,
-      "title": "Crash-consistent lane worktree recovery: a lane now says WHERE its session stopped \u2014 RUNNING \u2192 SWAPPING \u2192 SWAPPED with a generation/operation fence, a machine-readable worktree inventory taken at every handoff, and a resume reconciliation that reports and resets nothing",
-      "headRefName": "feat/crash-consistent-lane-worktree-recovery",
-      "headRefOid": "eada5fff495452cf5da47e52d9550fa4b40a4c96",
-      "isDraft": false,
-      "url": "https://github.com/opensoft/openRepoTools/pull/97",
-      "state": "open",
-      "merged": false,
-      "updated_at": "2026-10-04T21:05:20Z"
+      "created_at": "2026-10-07T10:03:43Z"
     }
   ],
   "merged_since_previous_snapshot": [
     {
-      "number": 61,
+      "number": 97,
       "state": "MERGED",
-      "merged_at": "2026-10-03T17:55:42Z",
-      "merge_commit": "14641fd67cee2985c215fc820219c9906935bdf3",
-      "disposition": "Included in current source main; no separate feature replay."
+      "merged_at": "2026-10-04T23:36:21Z",
+      "merge_commit": "b1015f4672f9c107d939803c39846f8dbd3d78f3",
+      "head_ref": "feat/crash-consistent-lane-worktree-recovery",
+      "head_oid": "8c5958fcb366b0f749e878f13f10877afce85637",
+      "disposition": "Merged; recovery branch and checkout gone; included in source main."
     },
     {
-      "number": 146,
+      "number": 164,
       "state": "MERGED",
-      "merged_at": "2026-10-03T22:07:15Z",
-      "merge_commit": "82ecebee13edaa915b68550170faffdf761754d5",
-      "disposition": "Included in current source main; no separate feature replay."
+      "merged_at": "2026-10-05T19:36:07Z",
+      "merge_commit": "fea9a2904ce0224ca6a77dff02319bd9656a8fee",
+      "head_ref": "feat/amendment-14-derived-index",
+      "head_oid": "20e23a4c680d17f60f61f53dac16770b01c5225d",
+      "disposition": "Merged; included in source main."
     },
     {
-      "number": 134,
+      "number": 121,
       "state": "MERGED",
-      "merged_at": "2026-10-04T16:52:38Z",
-      "merge_commit": "daed20957f2dd2f22cca24053bb5bc8636ff6b3f",
-      "disposition": "Included in refreshed source main; retained checkout is preservation only, no separate replay."
+      "merged_at": "2026-10-06T09:38:31Z",
+      "merge_commit": "00971b929f586179828481e7cb34db181f386937",
+      "head_ref": "feat/supervised-context-restart",
+      "head_oid": "f13d32975d7457d662249385d23ee28a7f713c4c",
+      "disposition": "Merged; the 005 checkout at the merged head is preservation history."
+    },
+    {
+      "number": 171,
+      "state": "MERGED",
+      "merged_at": "2026-10-06T15:02:17Z",
+      "merge_commit": "f5444c5e1f3c6c9ed43aeafcc000b0e78b10497a",
+      "head_ref": "feat/amendment-14-worktrees-index",
+      "head_oid": "9b2ec40d465d6ec0a911cb2cbcd836bdff92bb9c",
+      "disposition": "Merged; included in source main."
+    },
+    {
+      "number": 172,
+      "state": "MERGED",
+      "merged_at": "2026-10-06T17:35:06Z",
+      "merge_commit": "3660224cf32e5217f227cf7a740efec462da5151",
+      "head_ref": "fix/install-by-rename-167",
+      "head_oid": "1905b7984c1f9877569c20971ffcf9ebd08b3e1c",
+      "disposition": "Merged; head survives as remote-only fix/install-by-rename-167."
+    },
+    {
+      "number": 168,
+      "state": "MERGED",
+      "merged_at": "2026-10-06T18:45:29Z",
+      "merge_commit": "2080f3d83520bd1ea5632e754026f8ba3df4eb1f",
+      "head_ref": "feat/lane-worktrees-sweep",
+      "head_oid": "df0d6916f59ac2d3c6f6672b9441a1c73b0a0446",
+      "disposition": "Merged; included in source main."
+    },
+    {
+      "number": 169,
+      "state": "MERGED",
+      "merged_at": "2026-10-06T20:43:26Z",
+      "merge_commit": "500687c4b746d038ba14367ae8fca120ab0fbf97",
+      "head_ref": "feat/lane-worktrees-report",
+      "head_oid": "d2f80512902bf85b5993134a3cef6913d131565a",
+      "disposition": "Merged; head kept in lane 3's suite-speed tree."
+    },
+    {
+      "number": 174,
+      "state": "MERGED",
+      "merged_at": "2026-10-07T01:19:18Z",
+      "merge_commit": "5eb3d5f816f8ef81bda44ee8875bf62c56d95d6a",
+      "head_ref": "feat/lane-worktrees-residue",
+      "head_oid": "4ea84c8c8206347cef3cc5a626e79aee9e12b8c3",
+      "disposition": "Merged; head kept in lane 1's sweep-170 tree."
+    },
+    {
+      "number": 179,
+      "state": "MERGED",
+      "merged_at": "2026-10-07T02:08:55Z",
+      "merge_commit": "2fb854f12855079874f970eaee2cbee87bd97200",
+      "head_ref": "feat/lane-worktrees-residue-tests",
+      "head_oid": "6c79121ea0288ac495ea5d0cd856083059c631bb",
+      "disposition": "Merged; head kept in lane 1's ort-179-tests tree."
+    },
+    {
+      "number": 175,
+      "state": "MERGED",
+      "merged_at": "2026-10-07T04:26:10Z",
+      "merge_commit": "c4864ac5e59db49d01f638a80ed38daf1d788182",
+      "head_ref": "feat/lane-end-closeout",
+      "head_oid": "5c05ab6272749df5a11ad68835aa3b737b6a4cdf",
+      "disposition": "Merged as the source commit c4864ac; lane 3's closeout-2 tip is an ancestor of its head."
     }
   ],
   "estate_status": {
-    "command": "status --fetch openRepoTools",
+    "command": "status openRepoTools",
+    "fetch": false,
+    "observed_at": "2026-10-07T10:09:08Z",
     "result": "refused-not-an-estate",
-    "note": "No project.yaml/family.yaml estate root yet; no fetch performed by this refusal. Local refs and read-only GitHub main/PR APIs were checked instead. Do not run resume to silence it."
+    "exit": 2,
+    "note": "Read-only and without --fetch: \"REFUSED: no estate named 'openRepoTools' under your projects directory.\" No project.yaml/family.yaml estate root yet. resume was not run to silence it; local refs, git ls-remote and read-only GitHub PR queries were used instead."
   },
   "limitations": [
-    "Snapshot only; refresh before baseline freeze and cutover.",
-    "Physical paths, credentials, transcript bodies and WIP data are omitted.",
-    "Feature 001 is committed and clean at observation; preserve its current full branch delta, restored rollover/workspace packets and October 4 launcher contracts. Clean status is not a backup/restore receipt.",
-    "Removed worktrees are cleanup history, not instructions to recreate them; verify retained backup/branch receipts before final cutover.",
-    "Remote-only preservation refs are local observations, not active worktrees or proof of fresh remote currency.",
-    "Raw preservation backups belong host-locally or in the designated private WIP repository; public records hold identities/digests only.",
-    "Inventory captures this planning branch before the refresh commit; its final HEAD is recorded by git.",
-    "#97/#121 have active writers; capture local and remote heads independently and recapture at cutover. Prior dirty snapshots remain historical evidence.",
-    "Real conversion waits for both PR landings, upstream adopter resolution, refreshed Gates A/B and explicit Gate C approval."
+    "Snapshot of a moving estate, not a writer freeze: five worktrees appeared 09:57Z-10:03Z for this migration's writers, PR #187 opened 10:03:43Z (before capture) and PR #188 10:10:43Z (after). Refresh again at the owner-coordinated freeze.",
+    "Worktree and branch counts are as of the stamp in refreshed.observed_at; capture stability is proven only for 10:05:59Z-10:06:08Z.",
+    "Physical paths, credentials, transcript bodies, WIP data and backup contents are omitted; worktree_name and layout identify trees, and owner attributes them by path.",
+    "Classifications and disposition_proposal are proposals; owner decisions for Brett Heap's and lanes 2/3's objects remain pending (private receipt dispositions.tsv). Landed-and-preserved trees need no replay; empty shells hold no commits of their own.",
+    "Installed files were captured for the host paths in installed.tsv only; py-bench and other profiles/workstations are not in this capture.",
+    "Real conversion waits for refreshed Gates A/B and explicit Gate C approval; gate_a_complete and gate_b_complete stay false."
   ],
   "previous_refresh_snapshot": {
     "observed_at": "2026-10-04T16:37:26.292668+00:00",
@@ -319,19 +909,32 @@
     ]
   },
   "latest_refresh": {
-    "previous_observed_at": "2026-10-04T17:40:54.465251+00:00",
+    "previous_observed_at": "2026-10-04T21:24:50.021151+00:00",
     "previous_worktrees": 6,
-    "current_worktrees": 6,
-    "current_local_branches": 6,
-    "added_worktrees": [],
-    "removed_worktrees": [],
-    "source_main_changed": false,
+    "current_worktrees": 17,
+    "current_local_branches": 19,
+    "added_worktrees": [
+      "004-migrate-to-triad-exec",
+      "004-migrate-to-triad-reads",
+      "004-migrate-to-triad-rehearsal",
+      "chore/openreposhape-pin-7f84ca4",
+      "feat/amendment-22-sql-primary",
+      "feat/lane-end-closeout-rest",
+      "feat/lane-worktrees-residue",
+      "feat/lane-worktrees-residue-tests",
+      "feat/shell-suite-wall-time",
+      "feat/triad-lane-tooling",
+      "fix/install-marker-on-every-file-and-one-install-lock",
+      "fix/wip-init-step7-guarded-writes-and-step8-refusal-words"
+    ],
+    "removed_worktrees": [
+      "feat/crash-consistent-lane-worktree-recovery"
+    ],
+    "source_main_changed": true,
     "protocol": "Triad Feature Amendments adopted manually October 4; automated delivery remains unqualified.",
-    "concurrent_work": "Owners continue #97/#121; local heads and remote PR heads can differ. Capture is provisional, not a writer freeze.",
-    "real_conversion_waits_for_prs": [
-      97,
-      121
-    ]
+    "concurrent_work": "Migration writers active at capture: lane 1 pin bump (e43b243, unpushed at capture, later PR #188), lane 1 Gate B tree, lane 2 triad-reads, lane 3 triad-lane-tooling; Brett Heap's 004 branch has PR #187. All trees clean at capture.",
+    "real_conversion_waits_for_prs": [],
+    "note": "#97 and #121 both merged (2026-10-04T23:36:21Z, 2026-10-06T09:38:31Z); real conversion now waits on Gates A/B and Gate C, not on PR landings."
   },
   "protocol_review": {
     "adopted_on": "2026-10-04",
@@ -513,5 +1116,534 @@
     "gate_b_complete": false,
     "local_adoption_exit": 2,
     "reproduction": "specs/004-migrate-to-triad/adopter-blocker.md"
+  },
+  "superseded_snapshot_2026_10_04": {
+    "observed_at": "2026-10-04T21:24:50.021151+00:00",
+    "source_main": "daed20957f2dd2f22cca24053bb5bc8636ff6b3f",
+    "github_main": "daed20957f2dd2f22cca24053bb5bc8636ff6b3f",
+    "github_main_matches_local": true,
+    "worktrees": [
+      {
+        "identity": "main",
+        "head": "daed20957f2dd2f22cca24053bb5bc8636ff6b3f",
+        "layout": "root",
+        "readable_here": true,
+        "dirty_entries": 0,
+        "untracked_entries": 0,
+        "locked": false,
+        "prunable": false
+      },
+      {
+        "identity": "001-separate-swap-ctx-handoff",
+        "head": "3c26041a4444a10bc240cb64a168ece4d9edf6c5",
+        "layout": "legacy-sibling",
+        "readable_here": true,
+        "dirty_entries": 0,
+        "untracked_entries": 0,
+        "locked": false,
+        "prunable": false
+      },
+      {
+        "identity": "004-migrate-to-triad",
+        "head": "48934f8d4c662be6ed07ad1b7df96dec22028ab2",
+        "layout": "legacy-sibling",
+        "readable_here": true,
+        "dirty_entries": 0,
+        "untracked_entries": 3,
+        "locked": false,
+        "prunable": false
+      },
+      {
+        "identity": "feat/supervised-context-restart",
+        "head": "0e4b311dfa33abca55282a4974cb96c7d1c584ed",
+        "layout": "legacy-sibling",
+        "readable_here": true,
+        "dirty_entries": 0,
+        "untracked_entries": 0,
+        "locked": false,
+        "prunable": false
+      },
+      {
+        "identity": "feat/claude-current",
+        "head": "11037f01a45a72fa3fc9a8a2b0e24a64cbf1ed12",
+        "layout": "legacy-sibling",
+        "readable_here": true,
+        "dirty_entries": 0,
+        "untracked_entries": 0,
+        "locked": false,
+        "prunable": false
+      },
+      {
+        "identity": "feat/crash-consistent-lane-worktree-recovery",
+        "head": "07fb3adb8b4ac1476c641685096f00f0d20593c6",
+        "layout": "legacy-nested",
+        "readable_here": true,
+        "dirty_entries": 0,
+        "untracked_entries": 0,
+        "locked": false,
+        "prunable": false
+      }
+    ],
+    "local_branches": [
+      {
+        "identity": "001-separate-swap-ctx-handoff",
+        "head": "3c26041a4444a10bc240cb64a168ece4d9edf6c5"
+      },
+      {
+        "identity": "004-migrate-to-triad",
+        "head": "48934f8d4c662be6ed07ad1b7df96dec22028ab2"
+      },
+      {
+        "identity": "feat/claude-current",
+        "head": "11037f01a45a72fa3fc9a8a2b0e24a64cbf1ed12"
+      },
+      {
+        "identity": "feat/crash-consistent-lane-worktree-recovery",
+        "head": "07fb3adb8b4ac1476c641685096f00f0d20593c6"
+      },
+      {
+        "identity": "feat/supervised-context-restart",
+        "head": "0e4b311dfa33abca55282a4974cb96c7d1c584ed"
+      },
+      {
+        "identity": "main",
+        "head": "daed20957f2dd2f22cca24053bb5bc8636ff6b3f"
+      }
+    ],
+    "remote_only_branches": [
+      {
+        "identity": "chore/preserve-local-planning-20261003",
+        "head": "135c18b258d02136ed834e5a446e552db385d50c",
+        "currency": "local remote-tracking observation; not fetched during refresh"
+      },
+      {
+        "identity": "takeover/ort-a9-dirty-snapshot-20260913",
+        "head": "607aee7551a5a7db7e57e294aba193fbc8a8a266",
+        "currency": "local remote-tracking observation; not fetched during refresh"
+      }
+    ],
+    "open_prs": [
+      {
+        "number": 121,
+        "title": "Keep supervised manual ctx as legacy compatibility and refuse managed lanes",
+        "headRefName": "feat/supervised-context-restart",
+        "headRefOid": "6c5b74176e9dbf7f9aad5a4ff8ec18ef0cbbb136",
+        "isDraft": false,
+        "url": "https://github.com/opensoft/openRepoTools/pull/121",
+        "state": "open",
+        "merged": false,
+        "updated_at": "2026-10-04T21:24:31Z"
+      },
+      {
+        "number": 97,
+        "title": "Crash-consistent lane worktree recovery: a lane now says WHERE its session stopped \u2014 RUNNING \u2192 SWAPPING \u2192 SWAPPED with a generation/operation fence, a machine-readable worktree inventory taken at every handoff, and a resume reconciliation that reports and resets nothing",
+        "headRefName": "feat/crash-consistent-lane-worktree-recovery",
+        "headRefOid": "eada5fff495452cf5da47e52d9550fa4b40a4c96",
+        "isDraft": false,
+        "url": "https://github.com/opensoft/openRepoTools/pull/97",
+        "state": "open",
+        "merged": false,
+        "updated_at": "2026-10-04T21:05:20Z"
+      }
+    ],
+    "merged_since_previous_snapshot": [
+      {
+        "number": 61,
+        "state": "MERGED",
+        "merged_at": "2026-10-03T17:55:42Z",
+        "merge_commit": "14641fd67cee2985c215fc820219c9906935bdf3",
+        "disposition": "Included in current source main; no separate feature replay."
+      },
+      {
+        "number": 146,
+        "state": "MERGED",
+        "merged_at": "2026-10-03T22:07:15Z",
+        "merge_commit": "82ecebee13edaa915b68550170faffdf761754d5",
+        "disposition": "Included in current source main; no separate feature replay."
+      },
+      {
+        "number": 134,
+        "state": "MERGED",
+        "merged_at": "2026-10-04T16:52:38Z",
+        "merge_commit": "daed20957f2dd2f22cca24053bb5bc8636ff6b3f",
+        "disposition": "Included in refreshed source main; retained checkout is preservation only, no separate replay."
+      }
+    ],
+    "estate_status": {
+      "command": "status --fetch openRepoTools",
+      "result": "refused-not-an-estate",
+      "note": "No project.yaml/family.yaml estate root yet; no fetch performed by this refusal. Local refs and read-only GitHub main/PR APIs were checked instead. Do not run resume to silence it."
+    },
+    "limitations": [
+      "Snapshot only; refresh before baseline freeze and cutover.",
+      "Physical paths, credentials, transcript bodies and WIP data are omitted.",
+      "Feature 001 is committed and clean at observation; preserve its current full branch delta, restored rollover/workspace packets and October 4 launcher contracts. Clean status is not a backup/restore receipt.",
+      "Removed worktrees are cleanup history, not instructions to recreate them; verify retained backup/branch receipts before final cutover.",
+      "Remote-only preservation refs are local observations, not active worktrees or proof of fresh remote currency.",
+      "Raw preservation backups belong host-locally or in the designated private WIP repository; public records hold identities/digests only.",
+      "Inventory captures this planning branch before the refresh commit; its final HEAD is recorded by git.",
+      "#97/#121 have active writers; capture local and remote heads independently and recapture at cutover. Prior dirty snapshots remain historical evidence.",
+      "Real conversion waits for both PR landings, upstream adopter resolution, refreshed Gates A/B and explicit Gate C approval."
+    ]
+  },
+  "refreshed": {
+    "observed_at": "2026-10-07T10:09:03.632310+00:00",
+    "capture_window": "2026-10-07T10:05:59Z/2026-10-07T10:06:08Z",
+    "source_commit": "c4864ac5e59db49d01f638a80ed38daf1d788182",
+    "inventory_branch": "004-migrate-to-triad-exec",
+    "inventory_base": "ff6f6a7c7b7921ca1e0b0234e898900f98532366",
+    "tasks": [
+      "T001",
+      "T002"
+    ],
+    "tracking_issue": "opensoft/openRepoTools#186",
+    "worktree_entries_at_stamp": 17,
+    "worktree_count_note": "As of the stamp: main plus 16 linked. The brief expected 12; five were created 09:57Z-10:03Z by this migration's writers (ort-shape-pin, ort-triad-exec, ort-triad-rehearsal under lane 1; triad-reads under lane 2; triad-lane-tooling under lane 3). The count was 17 again at 11:05Z with the same trees.",
+    "owners_by_path": {
+      "Brett Heap": 4,
+      "lane openRepoTools-1": 7,
+      "lane openRepoTools-2": 1,
+      "lane openRepoTools-3": 4,
+      "shared main checkout": 1
+    },
+    "classification_counts": {
+      "retained-work": 8,
+      "landed-and-preserved": 6,
+      "empty-shell": 3
+    },
+    "local_branches_at_stamp": 19,
+    "refs_at_stamp": 33,
+    "origin_heads": 10,
+    "origin_tags": 0,
+    "open_prs_at_stamp": [
+      187
+    ],
+    "merged_since_2026_10_03": [
+      {
+        "number": 119,
+        "state": "MERGED",
+        "merged_at": "2026-10-03T00:53:08Z",
+        "merge_commit": "92bd21fd7dfd91a370f143dc8b89f351ad637461",
+        "head_ref": "chore/macos-landing-gate-and-cycle-rules",
+        "head_oid": "a0671ece71dbd78808fb3504e0a5a8b8b215d4c5"
+      },
+      {
+        "number": 103,
+        "state": "MERGED",
+        "merged_at": "2026-10-03T02:08:44Z",
+        "merge_commit": "a44a4edf3643648f7c573a5dc7f5832df60cbc61",
+        "head_ref": "feat/install-receipt",
+        "head_oid": "bade19ba459d2a0d60cc69ea626f007989dff56d"
+      },
+      {
+        "number": 83,
+        "state": "MERGED",
+        "merged_at": "2026-10-03T02:46:00Z",
+        "merge_commit": "6faed35f418c628f87b33a3e6a5ae4fa1cdd9dfc",
+        "head_ref": "feat/amendment-18-one-binding",
+        "head_oid": "400d559f403fae02aad61b1d95bcd692de2cf633"
+      },
+      {
+        "number": 139,
+        "state": "MERGED",
+        "merged_at": "2026-10-03T03:16:12Z",
+        "merge_commit": "795016ee074ea442030766f0fa17443368b1d757",
+        "head_ref": "fix/wip-init-refuses-unreviewed-history-ahead-of-main",
+        "head_oid": "c587c4feded45ace3613a86eff17a807ee37a294"
+      },
+      {
+        "number": 93,
+        "state": "MERGED",
+        "merged_at": "2026-10-03T06:30:34Z",
+        "merge_commit": "c1bac0dfc99a62583cb62eafc93a192911b2ff22",
+        "head_ref": "feat/amendment-19-closed-lanes-leave-the-listing",
+        "head_oid": "8fc5e1a7f89d82d479e654dce3d969ad304e4e6b"
+      },
+      {
+        "number": 61,
+        "state": "MERGED",
+        "merged_at": "2026-10-03T17:55:42Z",
+        "merge_commit": "14641fd67cee2985c215fc820219c9906935bdf3",
+        "head_ref": "fix/claim-takeover-and-retire-fork",
+        "head_oid": "3de40b1865d31d3bb96a52e3822c1386c9e52634"
+      },
+      {
+        "number": 146,
+        "state": "MERGED",
+        "merged_at": "2026-10-03T22:07:15Z",
+        "merge_commit": "82ecebee13edaa915b68550170faffdf761754d5",
+        "head_ref": "fix/107-pty-driver-bound-and-lane-per-call-cost",
+        "head_oid": "da0e5bb257b3b2b60a57ca544b7c75528c97f2a5"
+      },
+      {
+        "number": 134,
+        "state": "MERGED",
+        "merged_at": "2026-10-04T16:52:38Z",
+        "merge_commit": "daed20957f2dd2f22cca24053bb5bc8636ff6b3f",
+        "head_ref": "feat/claude-current",
+        "head_oid": "11037f01a45a72fa3fc9a8a2b0e24a64cbf1ed12"
+      },
+      {
+        "number": 97,
+        "state": "MERGED",
+        "merged_at": "2026-10-04T23:36:21Z",
+        "merge_commit": "b1015f4672f9c107d939803c39846f8dbd3d78f3",
+        "head_ref": "feat/crash-consistent-lane-worktree-recovery",
+        "head_oid": "8c5958fcb366b0f749e878f13f10877afce85637",
+        "disposition": "Merged; recovery branch and checkout gone; included in source main."
+      },
+      {
+        "number": 164,
+        "state": "MERGED",
+        "merged_at": "2026-10-05T19:36:07Z",
+        "merge_commit": "fea9a2904ce0224ca6a77dff02319bd9656a8fee",
+        "head_ref": "feat/amendment-14-derived-index",
+        "head_oid": "20e23a4c680d17f60f61f53dac16770b01c5225d",
+        "disposition": "Merged; included in source main."
+      },
+      {
+        "number": 121,
+        "state": "MERGED",
+        "merged_at": "2026-10-06T09:38:31Z",
+        "merge_commit": "00971b929f586179828481e7cb34db181f386937",
+        "head_ref": "feat/supervised-context-restart",
+        "head_oid": "f13d32975d7457d662249385d23ee28a7f713c4c",
+        "disposition": "Merged; the 005 checkout at the merged head is preservation history."
+      },
+      {
+        "number": 171,
+        "state": "MERGED",
+        "merged_at": "2026-10-06T15:02:17Z",
+        "merge_commit": "f5444c5e1f3c6c9ed43aeafcc000b0e78b10497a",
+        "head_ref": "feat/amendment-14-worktrees-index",
+        "head_oid": "9b2ec40d465d6ec0a911cb2cbcd836bdff92bb9c",
+        "disposition": "Merged; included in source main."
+      },
+      {
+        "number": 172,
+        "state": "MERGED",
+        "merged_at": "2026-10-06T17:35:06Z",
+        "merge_commit": "3660224cf32e5217f227cf7a740efec462da5151",
+        "head_ref": "fix/install-by-rename-167",
+        "head_oid": "1905b7984c1f9877569c20971ffcf9ebd08b3e1c",
+        "disposition": "Merged; head survives as remote-only fix/install-by-rename-167."
+      },
+      {
+        "number": 168,
+        "state": "MERGED",
+        "merged_at": "2026-10-06T18:45:29Z",
+        "merge_commit": "2080f3d83520bd1ea5632e754026f8ba3df4eb1f",
+        "head_ref": "feat/lane-worktrees-sweep",
+        "head_oid": "df0d6916f59ac2d3c6f6672b9441a1c73b0a0446",
+        "disposition": "Merged; included in source main."
+      },
+      {
+        "number": 169,
+        "state": "MERGED",
+        "merged_at": "2026-10-06T20:43:26Z",
+        "merge_commit": "500687c4b746d038ba14367ae8fca120ab0fbf97",
+        "head_ref": "feat/lane-worktrees-report",
+        "head_oid": "d2f80512902bf85b5993134a3cef6913d131565a",
+        "disposition": "Merged; head kept in lane 3's suite-speed tree."
+      },
+      {
+        "number": 174,
+        "state": "MERGED",
+        "merged_at": "2026-10-07T01:19:18Z",
+        "merge_commit": "5eb3d5f816f8ef81bda44ee8875bf62c56d95d6a",
+        "head_ref": "feat/lane-worktrees-residue",
+        "head_oid": "4ea84c8c8206347cef3cc5a626e79aee9e12b8c3",
+        "disposition": "Merged; head kept in lane 1's sweep-170 tree."
+      },
+      {
+        "number": 179,
+        "state": "MERGED",
+        "merged_at": "2026-10-07T02:08:55Z",
+        "merge_commit": "2fb854f12855079874f970eaee2cbee87bd97200",
+        "head_ref": "feat/lane-worktrees-residue-tests",
+        "head_oid": "6c79121ea0288ac495ea5d0cd856083059c631bb",
+        "disposition": "Merged; head kept in lane 1's ort-179-tests tree."
+      },
+      {
+        "number": 175,
+        "state": "MERGED",
+        "merged_at": "2026-10-07T04:26:10Z",
+        "merge_commit": "c4864ac5e59db49d01f638a80ed38daf1d788182",
+        "head_ref": "feat/lane-end-closeout",
+        "head_oid": "5c05ab6272749df5a11ad68835aa3b737b6a4cdf",
+        "disposition": "Merged as the source commit c4864ac; lane 3's closeout-2 tip is an ancestor of its head."
+      }
+    ],
+    "register_facts_from_coordinator": {
+      "as_of": "2026-10-07T09:5xZ",
+      "open_prs": 0,
+      "lanes": "openRepoTools-1/2/3 idle, no writers except this migration's",
+      "installed_main_on_Eagle": "c4864ac5e59db49d01f638a80ed38daf1d788182"
+    },
+    "submodule": {
+      "path": "upstream/openRepoShape",
+      "gitlink_at_source": "39d5c986fcfac1a160474bfe91c5f1c37fccc72c",
+      "main_checkout_initialized": true,
+      "pinned_tree_sha256": "a44c0165beb9d3b6ddfce46925bf04b8d19934d5327b5a304b5f3f11af699b02",
+      "pinned_digest_matches_contract": true,
+      "target_commit": "7f84ca42ca86a8902928345109d2bf6bad87bd91",
+      "target_tree_sha256": "3be52767e727d924dd05f9e78b18eb70f1682fe48614fab519f85331eeff5fa8",
+      "target_on_openreposhape_main": true,
+      "pin_bump_in_flight": "chore/openreposhape-pin-7f84ca4 at e43b2432976a22eb3bf8c419c96209399251d375 records the same target_tree_sha256; unpushed at capture, PR #188 after it."
+    },
+    "installed": {
+      "receipt_rows": 29,
+      "install_stamp": "2026-10-07T04:26:26Z",
+      "present": 29,
+      "missing": 0,
+      "sha256_matches_receipt": 29
+    },
+    "amendment_path_observations": [
+      {
+        "identity": "main",
+        "head": "c4864ac5e59db49d01f638a80ed38daf1d788182",
+        "bounded_amendment_paths": [],
+        "working_bounded_amendment_paths": []
+      },
+      {
+        "identity": "feat/lane-worktrees-residue-tests",
+        "head": "6c79121ea0288ac495ea5d0cd856083059c631bb",
+        "bounded_amendment_paths": [],
+        "working_bounded_amendment_paths": []
+      },
+      {
+        "identity": "fix/install-marker-on-every-file-and-one-install-lock",
+        "head": "2080f3d83520bd1ea5632e754026f8ba3df4eb1f",
+        "bounded_amendment_paths": [],
+        "working_bounded_amendment_paths": []
+      },
+      {
+        "identity": "chore/openreposhape-pin-7f84ca4",
+        "head": "e43b2432976a22eb3bf8c419c96209399251d375",
+        "bounded_amendment_paths": [],
+        "working_bounded_amendment_paths": []
+      },
+      {
+        "identity": "004-migrate-to-triad-exec",
+        "head": "ff6f6a7c7b7921ca1e0b0234e898900f98532366",
+        "bounded_amendment_paths": [],
+        "working_bounded_amendment_paths": []
+      },
+      {
+        "identity": "004-migrate-to-triad-rehearsal",
+        "head": "ff6f6a7c7b7921ca1e0b0234e898900f98532366",
+        "bounded_amendment_paths": [],
+        "working_bounded_amendment_paths": []
+      },
+      {
+        "identity": "fix/wip-init-step7-guarded-writes-and-step8-refusal-words",
+        "head": "2080f3d83520bd1ea5632e754026f8ba3df4eb1f",
+        "bounded_amendment_paths": [],
+        "working_bounded_amendment_paths": []
+      },
+      {
+        "identity": "004-migrate-to-triad-reads",
+        "head": "ff6f6a7c7b7921ca1e0b0234e898900f98532366",
+        "bounded_amendment_paths": [],
+        "working_bounded_amendment_paths": []
+      },
+      {
+        "identity": "feat/triad-lane-tooling",
+        "head": "c4864ac5e59db49d01f638a80ed38daf1d788182",
+        "bounded_amendment_paths": [],
+        "working_bounded_amendment_paths": []
+      },
+      {
+        "identity": "001-separate-swap-ctx-handoff",
+        "head": "3c26041a4444a10bc240cb64a168ece4d9edf6c5",
+        "bounded_amendment_paths": [],
+        "working_bounded_amendment_paths": []
+      },
+      {
+        "identity": "004-migrate-to-triad",
+        "head": "ff6f6a7c7b7921ca1e0b0234e898900f98532366",
+        "bounded_amendment_paths": [],
+        "working_bounded_amendment_paths": []
+      },
+      {
+        "identity": "feat/supervised-context-restart",
+        "head": "f13d32975d7457d662249385d23ee28a7f713c4c",
+        "bounded_amendment_paths": [],
+        "working_bounded_amendment_paths": []
+      },
+      {
+        "identity": "feat/claude-current",
+        "head": "11037f01a45a72fa3fc9a8a2b0e24a64cbf1ed12",
+        "bounded_amendment_paths": [],
+        "working_bounded_amendment_paths": []
+      },
+      {
+        "identity": "feat/amendment-22-sql-primary",
+        "head": "2080f3d83520bd1ea5632e754026f8ba3df4eb1f",
+        "bounded_amendment_paths": [],
+        "working_bounded_amendment_paths": []
+      },
+      {
+        "identity": "feat/lane-end-closeout-rest",
+        "head": "ed3655184d90e1ac21848aa4c3e294327b9561b6",
+        "bounded_amendment_paths": [],
+        "working_bounded_amendment_paths": []
+      },
+      {
+        "identity": "feat/shell-suite-wall-time",
+        "head": "d2f80512902bf85b5993134a3cef6913d131565a",
+        "bounded_amendment_paths": [],
+        "working_bounded_amendment_paths": []
+      },
+      {
+        "identity": "feat/lane-worktrees-residue",
+        "head": "4ea84c8c8206347cef3cc5a626e79aee9e12b8c3",
+        "bounded_amendment_paths": [],
+        "working_bounded_amendment_paths": []
+      }
+    ],
+    "preservation": {
+      "record": "specs/004-migrate-to-triad/preservation-2026-10-07.md",
+      "backup_id": "prep-20261007T100559Z",
+      "backup_root_pattern": "<private-prep>/prep-<UTC stamp>/ (host-local on Eagle, beside prep-20261004T211123Z)",
+      "refs_bundled": 33,
+      "bundle_heads": 50,
+      "source_bundle_sha256": "60db3acd0753b3efde1ee6ae48d2c463e10fee57dbadcf8af543f12332c39c03",
+      "dependency_bundle_sha256": "aa5a6eca83897516331466c2904ec786be3cf423cac3d6647aad5760bfb8d7cb",
+      "manifest_files": 414,
+      "manifest_sha256": "2a46dff9c00b0eba300bd0ad49a5cf42578f741b1e4a3cca2568d9c2784e88ed",
+      "reachable_objects": 2902,
+      "reachable_object_ids_sha256": "338cb7bdd397076eeced1de0852eeb1510b4f97e02fb3f62de434531c7be327d",
+      "capture_stable": true,
+      "captured_worktrees": 17,
+      "all_worktrees_clean": true,
+      "workflow_config_files_preserved": 141,
+      "secret_like_paths_skipped": 0,
+      "all_ref_restore_verified": true,
+      "dependency_commits_restore_verified": true,
+      "worktree_snapshot_restores_verified": 17,
+      "restore_checks": {
+        "pass": 97,
+        "fail": 0
+      },
+      "private_receipt": "brett-wip migration/openRepoTools/prep-20261007T100559Z/",
+      "private_receipt_commit": "f0ea2df7d5c6d95c26413b68843451e953a50018"
+    },
+    "previous_private_backup": {
+      "backup_id": "prep-20261004T211123Z",
+      "present": true,
+      "top_level_entries": 25,
+      "size": "198M",
+      "git_filter_repo_wheel": "git_filter_repo-2.47.0-py3-none-any.whl",
+      "git_filter_repo_version_output": "a40bce548d2c",
+      "note": "Recorded read-only: listing, sizes and one --version print with bytecode writes disabled; no bundle opened; nothing modified."
+    },
+    "gate_a_complete": false,
+    "gate_b_complete": false,
+    "gate_a_open_items": [
+      "Owner dispositions for every retained object (proposals in the private receipt).",
+      "A final capture at the owner-coordinated freeze, after the migration's own writers stop.",
+      "Installed-file receipts for py-bench and any other profile or workstation."
+    ]
   }
 }

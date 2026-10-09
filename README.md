@@ -154,7 +154,7 @@ and 5 put it and where it stays. What moved here is the CODE. A `<user>-wip` is
 a private repository whose own rules file says "No secrets and no code", nobody
 would look inside somebody else's for a command, and until this move the four
 helpers existed in exactly one place in the world: one person's private
-repository. `docs/README-lanes.md` is the manual.
+repository. `docs/README-lanes.md` is the manual; `docs/README-claude-current.md` is the one for the Claude Code `lane-start` launches and the RESTART NEEDED line.
 
 Every one of them finds that data through `$AGENT_PROTOCOL_ROOT/workspace.yaml`
 — `repository:` and `path:`, the same pointer file `resume` and `status`
@@ -237,14 +237,14 @@ gh api repos/opensoft/openRepoTools/contents/openRepoTools \
     -H 'Accept: application/vnd.github.raw' | bash -s -- --install
 ```
 
-It places THIRTEEN files into `~/.local/bin` — `openRepoTools`, `park`, `resume`,
+It places SEVENTEEN files into `~/.local/bin` — `openRepoTools`, `park`, `resume`,
 `status`, `lane`, `lanes`, `lane-handoff`, `lane-rename`, `lanes-edit.sh`,
-`lane-start`, `lane-end`, `link-estates` and the alias table `repos.tsv` — 755,
-idempotently: a
+`lane-start`, `lane-end`, `link-estates`, the alias table `repos.tsv`,
+`claude-current`, `claude-restart-check`, `lanes-index` and `lane-worktrees` — 755, idempotently: a
 second run prints `already installed … (unchanged)` per file, one whose bytes have
 drifted prints `updated at`, and one whose bytes were right and whose MODE was not
 prints `(mode restored to 755)`: the mode is stamped on every artifact on every
-run, whether or not the bytes moved. ALL THIRTEEN ARE IN HAND BEFORE ANY IS
+run, whether or not the bytes moved. ALL SEVENTEEN ARE IN HAND BEFORE ANY IS
 PLACED, so a fetch that failed replaces nothing and names the file it could not
 get. A mode stamp that FAILS is a refusal naming the file it could not mode
 (exit 2), never the shell's own 1: every `chmod` this command performs goes
@@ -259,8 +259,8 @@ THAT EXISTS, so a bin directory that is not there yet is refused for the parent
 that would not take it, and a create needs a directory's search bit as well as
 its write bit. A refusal creates none of those directories either. `cp` follows
 a symlink, and an install through one leaves the command uninstalled and writes
-these bytes into whatever it points at. Then a `13 of 13 placed in <dir>` line,
-and the `export PATH=…` line if that directory is not on your `PATH`.
+these bytes into whatever it points at. Then a `17 of 17 placed in <dir>` line,
+and the `export PATH=…` line if that directory is not on your `PATH`. Last, it names this repository's virtual environment, `${XDG_CACHE_HOME:-~/.cache}/openRepoTools/venvs/openRepoTools/` (one per repository, outside the estate; #162), says whether it is there, and prints the two commands that make it: it never makes one, and `tests/run.sh` runs from it once it has `pytest`.
 
 It also places **fourteen things that are not files in that directory**: THREE
 SKILLS, `/handoff`, `/lane-swap` and `/restart`, each at
@@ -288,7 +288,7 @@ changes no byte of them. An entry that runs
 string — a second writer of one of these hooks — a
 file it cannot parse, or a `hooks` that is not an object → it **refuses, prints
 the exact block, and places nothing at all**, because both merges are computed
-with the thirteen files in hand before either is placed. An installer that
+with the seventeen files in hand before either is placed. An installer that
 repairs a file it does not understand is how you lose a setting you meant.
 A SECOND WRITER REFUSES WHETHER OR NOT OUR OWN ENTRY IS BESIDE IT: the read asks
 for a rival BEFORE it asks whether ours is already there, so a file carrying
@@ -299,7 +299,7 @@ own `UserPromptSubmit` hooks are left exactly where they are, which is why that
 arm keys on the VERB and not on the word anywhere in a path. It
 never writes a profile's own `settings.json`: the launcher owns that one.
 
-Twenty-seven artifacts, and the count is the invariant. It was sixteen until A11
+Thirty-one artifacts, and the count is the invariant. It was sixteen until A11
 Addendum 4 ruling 9 gave `--install` a command-file list and `commands/swap.md`
 in it, at the same pair of paths a skill takes — because `opensoft/workBenches#74`
 deletes the launcher's copy and `/swap` would otherwise be installed by nobody;
@@ -313,7 +313,7 @@ respawned with a new session whose first prompt is that handoff's top block.
 Twenty-six until **Amendment 16** (ratified the same day) put `lane-rename` on
 `PATH`: a lane is renamed by one word, in one commit — the row, the object log,
 the handoff and `lanes/aliases.tsv` — and its old name resolves for ever
-afterwards, in every reader that takes a lane name.
+afterwards, in every reader that takes a lane name. Twenty-seven, with THIRTEEN files and a `13 of 13 placed` line, until opensoft/workBenches#119 put `claude-current` and `claude-restart-check` on `PATH` (Brett Heap, 2026-09-29, verbatim *"this work is really for openRepoTools repo"*): the Claude Code a launch starts, and the RESTART NEEDED line the status line prints. Twenty-nine, with FIFTEEN files and a `15 of 15 placed` line, until opensoft/openRepoTools#160 put `lanes-index` on `PATH` (lane-collision-protocol Amendment 14, Brett Heap, 2026-10-05, verbatim *"ratify 48"*): the derived index of the lane register, which nothing that acts reads. Thirty, with SIXTEEN files and a `16 of 16 placed` line, until opensoft/openRepoTools#162 put `lane-worktrees` on `PATH` (Brett Heap, 2026-10-05, verbatim *"build 162"*): the sweep that retires a lane's abandoned worktrees, rescue first.
 
 **And it writes down what it placed.** A RECEIPT (#57) — one row of
 `<name> <destination> <sha256> <UTC>` per regular file placed, in
@@ -335,7 +335,7 @@ where `raw.githubusercontent.com` is blocked.
 |---|---|---|
 | `$OPENREPOTOOLS_REPO` | `opensoft/openRepoTools` | the `owner/name` to fetch from — a fork or a mirror, named once |
 | `$OPENREPOTOOLS_REF` | `main` | the ref to fetch it at |
-| `$OPENREPOTOOLS_BIN_DIR` | `~/.local/bin` | where `--install` puts the thirteen |
+| `$OPENREPOTOOLS_BIN_DIR` | `~/.local/bin` | where `--install` puts the seventeen, and where `lane-start` looks for `claude-current` |
 | `$OPENREPOTOOLS_DATA_DIR` | `${XDG_DATA_HOME:-~/.local/share}/openRepoTools` | where `--install` writes the receipt of what it placed |
 | `$AGENT_PROTOCOL_ROOT` | `~/.agents` | where `workspace.yaml` lives — the one pointer to your data |
 | `$CLAUDE_PROFILES_HOME` | `~/.claude-profiles` | the profiles root `--install` places the shared skills under |

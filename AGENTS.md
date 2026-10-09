@@ -3,7 +3,7 @@
 Three estate commands, `park`, `resume` and `status`; the lane tooling
 `lanes-edit.sh`, `lane-start`, `lane-end` and `link-estates`, which came here
 with their history under lane-collision-protocol Amendment 9; and the
-`openRepoTools` that places all thirteen files and creates the workspace they read.
+`openRepoTools` that places all seventeen files and creates the workspace they read.
 **The verbs add no mechanics.**
 They find the estate and run its own `make park` / `make resume`, which run
 the Speckit git extension's scripts — one implementation, ruled 2026-09-09
@@ -257,9 +257,9 @@ The run itself is minutes of bash and hundreds of `git` processes, and
 several lanes build in sibling worktrees of one checkout: the wrapper waits
 for any live run, takes `${TMPDIR:-/tmp}/openrepotools-pytest.lock` (`flock`
 where there is one, a `mkdir` lock on macOS, which has none), waits again
-inside it, then runs `python3 -m pytest tests -q "$@"`. Every lane on one
-workstation must name the SAME lock file or there is no lock, which is the
-whole reason the path is written here as well as in the file.
+inside it, then runs `python3 -m pytest tests -q "$@"` (no cache or temp left in
+the checkout: #162). Every lane on one workstation must name the SAME lock file
+or there is no lock, which is the whole reason the path is written here too.
 
 Two measured defects on 2026-09-14 (opensoft/openRepoTools#51), both of them
 inside a guard that had been copied into four briefs:
@@ -279,7 +279,7 @@ and locked:
 ```sh
 pat='^python3 -m pyt'"est"                       # split so it cannot match itself
 while [ "$(pgrep -f "$pat" | awk 'END { print NR + 0 }')" -gt 0 ]; do sleep 20; done
-flock "${TMPDIR:-/tmp}/openrepotools-pytest.lock" python3 -m pytest tests -q
+PYTHONPYCACHEPREFIX="${XDG_CACHE_HOME:-$HOME/.cache}/openRepoTools/pycache" flock "${TMPDIR:-/tmp}/openrepotools-pytest.lock" python3 -m pytest tests -q -p no:cacheprovider
 ```
 
 `awk` AND NOT `pgrep -fc`, which is what `tests/run.sh` does and for the reason

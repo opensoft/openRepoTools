@@ -2696,15 +2696,25 @@ def test_every_shipped_bash_file_is_tracked_with_lf():
 
 
 def test_the_python_files_compile():
-    """The suite is the only Python here, and a file that does not parse is a
-    file that fails as a collection ERROR rather than as a test — which reads
-    as the suite being broken instead of as one file being wrong.
+    """The suite is the Python here, bar two shipped commands named below, and a
+    file that does not parse is a file that fails as a collection ERROR rather
+    than as a test — which reads as the suite being broken instead of as one
+    file being wrong.
 
     `compile()` rather than `py_compile`: nothing is written anywhere, so this
     runs in a read-only checkout and leaves no `__pycache__` behind.
+
+    opensoft/openRepoTools#160: `lanes-index` is a shipped command that is
+    Python, and it has no `.py` suffix for the glob below to find, so its
+    text is compiled the same way — a syntax error there is a command that
+    fails on every workstation's first sync. opensoft/openRepoTools#162 put
+    `lane-worktrees` beside it, for the same reason.
     """
     for path in sorted((REPO / "tests").glob("*.py")):
         compile(path.read_text(encoding="utf-8"), str(path), "exec")
+    for name in ("lanes-index", "lane-worktrees"):
+        command = REPO / name
+        compile(command.read_text(encoding="utf-8"), str(command), "exec")
 
 
 # --- the macOS job RUNS this bash, it does not only parse it (R-A9-11) ------
@@ -3070,6 +3080,13 @@ def test_the_suite_wrapper_takes_one_lock_and_names_it_where_agents_read_it():
         "same file or there is no lock")
     assert "tests/run.sh" in agents, (
         "AGENTS.md must name tests/run.sh as the way to run the suite")
+    # THE BY-HAND FORM LEAVES NOTHING EITHER (#170 E9): the one line a person
+    # with no checkout runs relocates bytecode and turns pytest's cache off, as
+    # the wrapper does, or it lands `__pycache__` and `.pytest_cache` beside
+    # the code the wrapper keeps clean.
+    by_hand = [ln for ln in agents.splitlines() if lock in ln and "python3 -m pytest" in ln]
+    assert by_hand and all("-p no:cacheprovider" in ln and "PYTHONPYCACHEPREFIX=" in ln
+                           for ln in by_hand), by_hand
 
     assert "'^python3 -m pyt'" in text, (
         "the pgrep pattern must be anchored and split so it cannot match its "
