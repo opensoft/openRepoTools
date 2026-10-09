@@ -729,12 +729,14 @@ assembly_above() {   # <dir>
 #: is what the next commit records, so a gitlink staged and not yet committed is
 #: the one that counts.
 recorded_gitlink() {   # <superproject> <path>
-	local oid
-	oid="$(git -C "$1" ls-files -s -- "$2" 2>/dev/null |
-		awk -v p="$2" '$1 == "160000" && $3 == "0" && $4 == p { print $2; exit }')" || oid=""
-	if [ -z "$oid" ]; then
-		oid="$(git -C "$1" ls-tree HEAD -- "$2" 2>/dev/null |
-			awk -v p="$2" '$1 == "160000" && $2 == "commit" && $4 == p { print $3; exit }')" || oid=""
+	# `read`, not `awk`: the offline path needs nothing a minimal PATH lacks.
+	local listed mode oid stage kind path
+	listed="$(git -C "$1" ls-files -s -- "$2" 2>/dev/null)" || listed=""
+	read -r mode oid stage path <<<"$listed" || :
+	if [ "$mode" != 160000 ] || [ "$stage" != 0 ] || [ "$path" != "$2" ]; then
+		listed="$(git -C "$1" ls-tree HEAD -- "$2" 2>/dev/null)" || listed=""
+		read -r mode kind oid path <<<"$listed" || :
+		[ "$mode" = 160000 ] && [ "$kind" = commit ] && [ "$path" = "$2" ] || return 1
 	fi
 	is_lower_hex 40 "$oid" || return 1
 	printf '%s\n' "$oid"
