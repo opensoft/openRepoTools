@@ -648,6 +648,35 @@ def test_a_variable_that_names_the_wrong_thing_is_refused_in_either_mode(
     assert refusal and said in refusal and variable in refusal, refusal
 
 
+@pytest.mark.parametrize("variable, role", [
+    ("OPENREPOTOOLS_SPEC_ROOT", "SPEC"),
+    ("OPENREPOTOOLS_ASSEMBLY_ROOT", "ASSEMBLY"),
+])
+def test_composed_names_the_value_a_rejected_root_was_named_by(
+        tmp_path, variable, role):
+    """A root that was NAMED and refused is absent because of that value,
+    and the composed refusal says so: never that its variable "is unset", or
+    that there is "no" such variable, when the run set it (#193 item 15, lane
+    openRepoTools-2's reading of the composed-run logs). The refusal itself was
+    right before; only its words were wrong."""
+    code = code_leg(tmp_path / "asm" / "code", repository=True)
+    spec = spec_leg(tmp_path / "asm" / "spec", repository=True)
+    assembly(tmp_path / "asm", code=code, spec=spec, repository=True)
+    wrong = tmp_path / "not-a-root"
+    wrong.mkdir()
+    refusal = conftest.resolve_roots(
+        {"OPENREPOTOOLS_COMPOSED": "1", variable: str(wrong)}, code).refusal()
+    assert refusal, "a named root that is not one must be refused"
+    absent = [part for part in refusal.split("; ")
+              if part.startswith(f"the {role} root is absent")]
+    assert absent, refusal
+    assert f"{variable} names {wrong}" in absent[0], absent[0]
+    for misnomer in (f"{variable} is unset", f"no {variable}"):
+        assert misnomer not in refusal, (
+            f"the refusal says {misnomer!r} although the run named "
+            f"{variable}={wrong}:\n{refusal}")
+
+
 def test_composed_names_every_absent_context(tmp_path):
     leg = code_leg(tmp_path / "code", repository=True, dependency="empty")
     refusal = conftest.resolve_roots({"OPENREPOTOOLS_COMPOSED": "1"}, leg).refusal()

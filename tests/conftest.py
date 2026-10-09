@@ -177,7 +177,8 @@ class Roots:
 
     def __init__(self, code: Path, assembly: Optional[Path],
                  spec: Optional[Path], composed: bool,
-                 how: Dict[str, str], problems: List[str]) -> None:
+                 how: Dict[str, str], problems: List[str],
+                 rejected: Optional[Dict[str, str]] = None) -> None:
         self.code = code
         self.assembly = assembly
         self.spec = spec
@@ -185,6 +186,10 @@ class Roots:
         self.composed = composed
         self.how = how
         self.problems = problems
+        #: A root a variable NAMED and this run refused, by role, with the
+        #: value as it was given: an absent root that was named is absent for
+        #: that reason, never because its variable "is unset" (#193 item 15).
+        self.rejected = dict(rejected or {})
         #: `single` — today's one tree; `leg` — a code leg, standalone or
         #: mounted. Decided by the code root alone; the assembly and spec
         #: roots are found, or named, independently of it.
@@ -222,6 +227,11 @@ class Roots:
         return root / rel
 
     def why_absent(self, role: str) -> str:
+        if role in self.rejected:
+            variable = ENV_ASSEMBLY_ROOT if role == "assembly" else ENV_SPEC_ROOT
+            kind = "an assembly root" if role == "assembly" else "a spec root"
+            return (f"{variable} names {self.rejected[role]}, which is not "
+                    f"{kind}, and a named root is never replaced by a found one")
         if role == "assembly":
             return (f"no {ENV_ASSEMBLY_ROOT}, and no directory above {self.code} "
                     f"carries {' and '.join(ASSEMBLY_MARKERS)} mounting it")
@@ -336,6 +346,7 @@ def resolve_roots(environ: Mapping[str, str], suite_root: Path) -> Roots:
     a fixture layout as well as about itself."""
     problems: List[str] = []
     how: Dict[str, str] = {}
+    rejected: Dict[str, str] = {}
 
     composed_value = environ.get(ENV_COMPOSED, "")
     if composed_value not in ("", "0", "1"):
@@ -360,6 +371,7 @@ def resolve_roots(environ: Mapping[str, str], suite_root: Path) -> Roots:
         if candidate.is_dir() and _carries(candidate, ASSEMBLY_MARKERS):
             assembly, how["assembly"] = candidate, ENV_ASSEMBLY_ROOT
         else:
+            rejected["assembly"] = named
             problems.append(f"{ENV_ASSEMBLY_ROOT}={named} is not an assembly "
                             f"root: it carries no {' and '.join(ASSEMBLY_MARKERS)}")
     else:
@@ -374,6 +386,7 @@ def resolve_roots(environ: Mapping[str, str], suite_root: Path) -> Roots:
         if _carries_a_spec_tree(candidate):
             spec, how["spec"] = candidate, ENV_SPEC_ROOT
         else:
+            rejected["spec"] = named
             problems.append(f"{ENV_SPEC_ROOT}={named} is not a spec root: it "
                             f"carries none of {', '.join(SPEC_TREES)}")
     elif assembly is not None:
@@ -381,7 +394,7 @@ def resolve_roots(environ: Mapping[str, str], suite_root: Path) -> Roots:
         if _carries_a_spec_tree(candidate):
             spec, how["spec"] = candidate, "the assembly's spec leg"
 
-    return Roots(code, assembly, spec, composed, how, problems)
+    return Roots(code, assembly, spec, composed, how, problems, rejected)
 
 
 #: THIS RUN'S ROOTS. Module-level names below are its fields, so the modules
