@@ -21,10 +21,37 @@ kept host-local outside every repository so it survives a bench restart.
 Clone paths, local remote URLs, exact command lines and complete logs stay in
 the private receipt.
 
+**Dated 2026-10-09, after #192 landed (#193 items 8 and 13):**
+
+- **Where the records are.** #192 brought this file and run C's plan to
+  main. The 2026-10-07 record has been on main since #189 (`63810dd`), not
+  on a branch as the paragraph above says.
+- **What run C superseded.** No record: runs A and B stand as recorded. Its
+  plan did replace run B's as the
+  [mapping](../../openspec/changes/migrate-to-triad/adoption-plan.yaml), in
+  merge `1a26463`. On main that link opens run C's plan from both records.
+  So "On this branch" in the mapping section below holds for main, and the
+  2026-10-07 record's "On this branch, the mapping is the regenerated run B
+  plan" held only on its own branch. Run B's plan stays in history at
+  `63810dd` (blob `f1067e3`). Neither plan is the cutover plan.
+- **Runs A and B are gone from the bench.** The bench restart of
+  2026-10-08, at about 09:45Z, cleared `/tmp` (#186 comment 6068861167).
+  Both runs were built in a session scratch directory there, as the
+  2026-10-07 receipt's README records, so their disposable repositories are
+  gone and that receipt's logs are their only record. That is why run C is
+  kept host-local.
+- **An observation left out.** The run C comment on #186 (6068938765)
+  noted that `openspec validate migrate-to-triad --strict` with `openspec`
+  1.2.0 fails on pristine `837928a` too (`ADDED "Installation retains the
+  public interface and one revision" must contain SHALL or MUST`), so run C
+  does not cause it. The bench's `openspec` is now 1.13.1. On 2026-10-09
+  the same command exited 0 on `837928a` and on `71b05cb`, #192's head,
+  whose tree its squash `1abee1d` carries unchanged.
+
 ## Setup
 
-- **filter-repo:** `git-filter-repo` 2.47.0 from a private venv. The rebuilt
-  bench has no `ensurepip`, and `python3 -m venv` refused with
+- **filter-repo:** `git-filter-repo` 2.47.0 from a private venv.
+  `python3 -m venv` refused with
   `The virtual environment was not created successfully because ensurepip is
   not available.` So the venv was created with `--without-pip`. The wheel
   came from `pip download` with SHA256
@@ -32,6 +59,18 @@ the private receipt.
   the recorded value. That exact file was installed into the venv with
   `--no-index`. The venv's `git-filter-repo` came first on `PATH`, and
   `git filter-repo --version` printed `a40bce548d2c`.
+  - *Corrected 2026-10-09 (#193 item 12):* this bullet first gave the cause
+    as "the rebuilt bench has no `ensurepip`", and the bench contradicts it.
+    Its dpkg log has `python3-venv` and `python3.12-venv` installed on
+    2026-09-23 at 00:18:06Z, before the 2026-10-08 boot.
+    `/usr/bin/python3 -m ensurepip --version` prints `pip 24.0`, and
+    `/usr/bin/python3 -m venv` succeeds (lane 2, #186 comments 6072333212
+    and 6072724043; measured again on 2026-10-09). The refusal itself is
+    real: the receipt's setup log records it. Its cause is not established.
+    The `python3` the writer ran was the first on its `PATH`: the venv's
+    `pyvenv.cfg`, in run C's host-local arrangement, records a user-local
+    `python3` based on `/usr/bin/python3.12`. That entry is no longer on
+    the bench, so the refusal cannot be retried as it ran.
 - **Tool and source:** a fresh clone of openRepoShape at `7f84ca4`, unedited
   and clean afterwards, ignored files included. A fresh `--single-branch`
   clone of main, with one worktree and no linked worktrees. Its nested
@@ -64,6 +103,20 @@ for the published copy. On this branch the
 published copy. It differs from the executed plan only by its header,
 `local_path: .`, and the two closing status fields
 (`execution_authorized: false`).
+
+*Added 2026-10-09 (#193 item 10):* `check` validates against the source
+clone's local `main`, not its `HEAD`. In openRepoShape `7f84ca4`'s
+`adopt-project.py`, `_default_branch` (:288) takes the branch name from
+`origin/HEAD`, and `git rev-parse` of that name (:256-257) is the commit
+compared with the plan's source commit (:1026-1032). This plan therefore
+passes `check` only in a clone whose local `main` is `837928a`. Against any
+newer `main` it exits 1 with `FINDING plan-stale: the plan was written
+against 837928a1029a but main is now at …`, whatever `HEAD` is checked out.
+That includes main once this plan is on it: a plan cannot name the commit
+that carries it. Measured on 2026-10-09 with this plan and a fresh clone,
+local `main` at `63810dd` gave that finding and exit 1, also with `HEAD`
+detached at `837928a`. Local `main` moved to `837928a` gave `plan ok` and
+exit 0, also with `HEAD` detached at `63810dd`.
 
 ## Run C — main `837928a`
 

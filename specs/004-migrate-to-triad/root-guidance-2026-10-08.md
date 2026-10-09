@@ -3,7 +3,7 @@
 **Task**: T006 of [tasks.md](tasks.md), for opensoft/openRepoTools#186.
 **Writer**: lane openRepoTools-1, on 2026-10-08 and 2026-10-09.
 **Evidence branch**: `004-migrate-to-triad-root-guidance`.
-**State**: rehearsal evidence only. Nothing here lands on `main`, and today's layout is untouched.
+**State**: rehearsal evidence only. No patch here is applied to today's layout, which is untouched. (Corrected 2026-10-09: this line first said "Nothing here lands on `main`", but #192 brought this document and the patch files to main as evidence.)
 
 The 2026-10-07 build of this task ran against run B. It was lost when the bench
 restart cleared `/tmp`: clones, patches and logs alike. Nothing from it was ever
@@ -27,6 +27,34 @@ All work happened in host-local private scratch: my own bare copies of the
 three run C remotes and of the openRepoShape mirror. Nothing was written into
 the rehearsal directory, and nothing reached a real remote except this
 evidence branch.
+
+**No receipt (added 2026-10-09, #193 item 11).** T006's evidence cites no
+private receipt. None is named here, in the five patches, in #192's
+description or in T006's comment on #186 (6071824778). brett-wip's
+`migration/openRepoTools/`, which holds the migration's receipts, has none
+for T006 either (read 2026-10-09). Run C has one,
+`adopter-fix-20261008-1HztL0`.
+
+What the committed patches let anyone reproduce from public inputs alone
+(main `837928a` and openRepoShape `7f84ca4`), checked on 2026-10-09:
+- the patch SHA256s below;
+- the leg trees: `code-0001` and `spec-0001`, applied with `git am` to the
+  paths the plan gives each leg at `837928a` (trees `3915e78` and
+  `ad6cdcb`), give exactly `ca65c3b9…` and `10256135…`;
+- `assembly-0001`, applied with `git am` to `837928a`'s six root files,
+  gives section 2's 340-line `AGENTS.md` and 510-line `README.md`.
+
+The exact commit IDs, the assembly tree `6eb8145e…`, bootstrap and
+`make validate` need run C's host-local arrangement. These rows exist only
+in this document:
+- section 4's doctor and `shape_advisory` rows;
+- section 7's `setup-openspeckit`, paired-selection, `check-prerequisites`,
+  worktree-override and store-precedence rows, and its `openspec` 1.6.0
+  exits;
+- section 9's protocol hashes.
+
+T006's #186 comment repeats some of those exit codes from the same work,
+which is not separate evidence.
 
 The patches are in [patches/t006/](patches/t006/), as `git format-patch`
 output:
@@ -178,6 +206,7 @@ doctor's row for it is a `note`, which the shape's own agent rules say is
   - Pre-split code paths appear in 17 files under `openspec/` and `specs/`.
   - In completed features (002, 003 and the four other changes) they record acts done against the monorepo at a commit. Example: specs/002 tasks.md:9, "`bash tests/run.sh -k …` passed 165 checks … on implementation commit `64f4e93`". Rewriting such a line would falsify the record.
   - **Feature 004's own working files** carry 23 mentions in 9 files: plan.md 4, installer-design.md 4, proposal.md 4, design.md 3, adoption-plan.yaml 3, tasks.md 2, adopter-rehearsal.md 2, and spec.md, quickstart.md, preparation.md and adopter-blocker.md with 1 each. These are T017's to translate with the feature.
+    - *Noted 2026-10-09 (#193 item 9):* that list adds up to 26 mentions in 11 files, not 23 in 9. Section 10 and T006's comment on #186 (6071824778) repeat 23. The counting rule is not recorded, and three plausible recounts here reproduced neither the list nor the total, so which figure is right is not established.
   - 005's `analysis.md`:13 is likewise T016/T017's.
 - **`docs/README-lanes.md` (lane 3: the manual's content).** 21 lines name code-leg files:
   - lines 72, 572, 3601, 4163: `tests/test_lane_helpers.sh`;
@@ -192,7 +221,7 @@ doctor's row for it is a `note`, which the shape's own agent rules say is
   - `claude-current` 2: line 89 is a comment, and line 123 is `--help` output, so changing it changes the shipped command. Its owner is whoever owns `claude-current`'s text; it is not changed here.
   - A comment-only repair ahead of the functional change beside it would leave the comment disagreeing with the code.
 - **Code-leg OpenSpec object keys (lane 3).** `lanes-edit.sh` (12 lines, e.g. 280, 2770, 2814–2827, 2895–2897) and `lane-handoff`:2439 key a claim as `owner/repo:openspec/changes/<name>`. After the split a change lives in `opensoft/openRepoTools-spec`, not the assembly.
-- **External referrers (lane 2's reads; follow-ups, not edited here).** From lane 2's `consumer-reads-2026-10-07.md` on `004-migrate-to-triad-reads` (76dcb93, which contains ae70dc5); line numbers are as lane 2 recorded them.
+- **External referrers (lane 2's reads; follow-ups, not edited here).** From lane 2's `consumer-reads-2026-10-07.md` on `004-migrate-to-triad-reads` (76dcb93, which contains ae70dc5); line numbers are as lane 2 recorded them. That file has been on main since #189 (`63810dd`), in a later revision than `76dcb93`'s; what is cited here is as read at `76dcb93` (noted 2026-10-09).
   - **brett-wip:**
     - `lanes/LANES.md`:36 and :1305;
     - 12 `docs/README-lanes` lines in 9 files (first: `handoffs/openRepoTools/brief-lane-openRepoTools-1-2026-09-16.md`:9, `session-handoff-2026-09-16-lane-openRepoTools-1.md`:33, `lanes/log/openRepoTools-1.md`:22);
@@ -394,8 +423,9 @@ Lane 2 is reading that side.
 4. **`shape/` copies.** Keep `shape/.gitignore` and `shape/.gitattributes` (pinned). `shape/AGENTS.md`, `shape/CLAUDE.md` and `shape/README.md` are unpinned, and the shape's own follow-up says to delete the first two. Their deletion is left to T014's reviewer.
 5. **Doctor placement.** `MISPLACED (3 paths)` (`code/commands/`, `code/contracts/`, `code/skills/`) is the adoption plan's reasoned overrides, identical before and after. Relay it; do not move files.
 6. **T009: the hygiene tests read the wrong front door after the split.**
-   - 17 test functions read `README.md`, `AGENTS.md`, `CLAUDE.md`, `.gitattributes` or `docs/README-lanes.md` at the **code leg's** root: 16 in `test_repo_hygiene.py`, 1 in `test_openrepotools_command.py`.
-   - Measured on the code leg alone: before `code-0001`, 17 failed (all `FileNotFoundError`). After it, 13 fail (4 `FileNotFoundError` on `docs/README-lanes.md`, 9 assertions on the short leg README and AGENTS).
+   - 18 test functions read `README.md`, `AGENTS.md`, `CLAUDE.md`, `.gitattributes` or `docs/README-lanes.md` at the **code leg's** root: 17 in `test_repo_hygiene.py`, 1 in `test_openrepotools_command.py` (`test_the_help_and_the_readme_say_the_mode_the_receipt_is_born_at`). *Corrected 2026-10-09 (#193 item 9): this line first said 17, as 16 + 1.*
+   - Measured on the code leg alone with `-k repo_hygiene`, which selects only `test_repo_hygiene.py`: before `code-0001`, 17 failed (all `FileNotFoundError`). After it, 13 fail (4 `FileNotFoundError` on `docs/README-lanes.md`, 9 assertions on the short leg README and AGENTS).
+   - The command test is outside that subset. Called directly on 2026-10-09, it fails before `code-0001` (`FileNotFoundError` on `README.md`) and still fails after it (`AssertionError`: the leg's README has no install-receipt paragraph).
    - **4 now pass only because they read the leg's own files:** `test_agents_md_is_short_enough_to_be_read`, `test_readme_is_short_enough_to_be_read`, `test_claude_md_points_at_agents_md` and `test_the_root_carries_the_line_ending_rule`. A green there is about the wrong file.
    - Pointed back at the assembly root, the two length caps (`<= 316`, `<= 486`, today's counts) must rise to 340 and 510, each in a dated entry naming the rule its lines buy:
      - AGENTS.md: the shape's first-line pointer and the triad map the bootstrap protocol requires.
@@ -408,7 +438,7 @@ Lane 2 is reading that side.
    - `repos.tsv` has no `openRepoTools-spec` or `openRepoTools-code` aliases.
    - The installed handoff skill's writer-poll globs miss `<root>/worktrees/`.
    - The checkout's `/handoffs` symlink and `.git/info/exclude` persist through the in-place adoption.
-8. **T017.** Feature 004's own working files in the spec leg carry 23 pre-split path mentions. Some cited 004 commits (`dda91f1`, `52ce64e`) resolve only while the 004 branch or #187's PR ref survives.
+8. **T017.** Feature 004's own working files in the spec leg carry the pre-split path mentions listed in section 5: 23 by its stated total, 26 in 11 files by its per-file list, which is not settled (see there). Some cited 004 commits (`dda91f1`, `52ce64e`) resolve only while the 004 branch or #187's PR ref survives.
 9. **T007.** `assembly-0001`'s README sentence assumes T007's design: the root `openRepoTools` hands over to `code/openRepoTools` at the pinned commit. `code/openRepoTools`:1218 (`venv_note`) still cites `docs/README-lanes.md`.
 
 ## 11. What this task did not do
