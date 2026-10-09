@@ -408,6 +408,26 @@ def test_the_lane_suite_reads_the_manual_only_inside_its_guard():
         "no spec root under `set -u`:\n" + "\n".join(unguarded))
 
 
+def test_a_redirected_run_names_its_roots_where_quiet_output_keeps_them(tmp_path):
+    """A run whose roots a variable named says them at its foot, under the
+    `-q` every CI job and `tests/run.sh` use. The report header that said them
+    is dropped by `-q`, so a run pointed at another tree was silent about it
+    (lane openRepoTools-3's review of #190, #193 item 6). A run on today's
+    layout with no variable prints nothing new."""
+    root = assembly(tmp_path / "asm")
+    named = nested(tmp_path, {"OPENREPOTOOLS_ASSEMBLY_ROOT": str(root)},
+                   README_TEST, "test_repo_hygiene.py")
+    assert named.outcome(README_TEST)[0] == "passed", named.output[-2000:]
+    assert "openRepoTools test roots" in named.output, named.output[-2000:]
+    assert f"assembly: {root.resolve()} (OPENREPOTOOLS_ASSEMBLY_ROOT)" in named.output, (
+        named.output[-2000:])
+    plain = nested(tmp_path, {}, README_TEST, "test_repo_hygiene.py")
+    if conftest.ROOTS.layout == "single" and not conftest.ROOTS.how:
+        assert "openRepoTools test roots" not in plain.output, (
+            "today's layout, with no variable, printed the roots section:\n"
+            + plain.output[-2000:])
+
+
 def test_a_standalone_code_leg_skips_what_only_the_assembly_carries(tmp_path):
     """A code leg cloned on its own has no README: standalone, the README test
     SKIPS naming the assembly root, which is the courtesy the missing submodule

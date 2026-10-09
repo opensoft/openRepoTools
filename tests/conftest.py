@@ -370,6 +370,12 @@ class Roots:
                 f"never skips its way to acceptance: ")
         return head + "; ".join(lines)
 
+    def redirected(self) -> bool:
+        """Whether this run's roots are anything but today's one tree taken as
+        it stands: a root named by a variable, an assembly found, a leg, or the
+        composed mode."""
+        return bool(self.how) or self.layout != "single" or self.composed
+
     def describe(self) -> List[str]:
         """The roots, one line each, for the report header."""
         lines = [f"openRepoTools test roots: "
@@ -485,6 +491,21 @@ def pytest_configure(config):
 
 def pytest_report_header(config):
     return ROOTS.describe()
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    """THE ROOTS A RUN USED, WHERE `-q` CANNOT HIDE THEM (#193 item 6).
+
+    `OPENREPOTOOLS_CODE_ROOT` re-points `REPO` and `UPSTREAM`, and
+    `OPENREPOTOOLS_ASSEMBLY_ROOT` decides which README, AGENTS.md and length
+    caps are held. The report header says so, but `-q` drops the header, and
+    every CI job and `tests/run.sh` run `-q`. So a run whose roots are not
+    today's one tree says them again at its foot, which `-q` keeps. Today's
+    layout with no variable prints nothing here: its output is unchanged."""
+    if ROOTS.redirected():
+        terminalreporter.write_sep("-", "openRepoTools test roots")
+        for line in ROOTS.describe():
+            terminalreporter.write_line(line)
 
 #: AMENDMENT 14 — NO TEST NUDGES AN INSTALLED INDEXER BY ACCIDENT. Every
 #: `lanes-edit.sh` write that pushes starts a detached `lanes-index sync`
