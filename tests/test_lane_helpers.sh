@@ -6598,8 +6598,16 @@ hasnt "the listing no longer says the retire act writes a record" "$lanes_text" 
 has   "…it says what the act does, which is prove and print" "$lanes_text" "which PROVES the pid or uuid is"
 hasnt "the helper's parser comment no longer says one writer still writes that line" "$le_text" '`<pid|uuid>` writes `RETIRED'
 has   "…it names the line as the legacy an append-only log still carries" "$le_text" "NOTHING WRITES ONE ANY MORE"
+# The manual's half is guarded like the two sections that read it: `ln_doc` is
+# bound only when the run has a spec root, and this suite runs under `set -u`,
+# so an unguarded read ABORTS a code leg's run instead of skipping (the #190
+# review by lane openRepoTools-3).
+if [ -n "$LANE_MANUAL" ]; then
 hasnt "the manual no longer promises an Amendment 6(d) record" "$ln_doc" "which writes the Amendment 6(d) record"
 has   "…and says in terms that it writes nothing" "$ln_doc" "**It writes nothing**"
+else
+  skip "the manual says --retire writes nothing (two assertions)" "no spec root in this run: docs/README-lanes.md is the spec leg's (#186, T009)"
+fi
 # A PAUSED LANE WITH NO RECORDED PROFILE GETS NO `restart` LINE — it gets the
 # form that works, with the profile named as the one token to supply.
 has  "a lane with no recorded profile is offered the launcher form, not a line it cannot type" \

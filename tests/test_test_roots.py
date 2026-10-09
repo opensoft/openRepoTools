@@ -379,6 +379,35 @@ def test_the_lane_suite_fails_a_missing_manual_by_name():
             f"in the three lines above it:\n{guard}")
 
 
+def test_the_lane_suite_reads_the_manual_only_inside_its_guard():
+    """Every use of the manual's text in `tests/test_lane_helpers.sh` sits
+    inside an `if [ -n "$LANE_MANUAL" ]` guard, before that guard's `else` or
+    `fi`. `ss_doc` and `ln_doc` are bound only there, and the suite runs under
+    `set -u`. So one use outside a guard does not skip in a code leg with no
+    spec root: it ABORTS the whole suite with `ln_doc: unbound variable`.
+    Lane openRepoTools-3's review of #190 reproduced that, and so did this
+    work's own standalone-leg proof. Held on the text, like its neighbour
+    above."""
+    lines = (REPO / "tests" / "test_lane_helpers.sh").read_text(
+        encoding="utf-8").splitlines()
+    guard = 'if [ -n "$LANE_MANUAL" ]; then'
+    uses = [i for i, line in enumerate(lines)
+            if ("$ln_doc" in line or "$ss_doc" in line)
+            and not line.lstrip().startswith("#")]
+    assert len(uses) >= 16, (
+        f"expected the manual's sixteen uses, found {len(uses)}")
+    unguarded = []
+    for i in uses:
+        j = i - 1
+        while j >= 0 and lines[j] not in (guard, "else", "fi"):
+            j -= 1
+        if j < 0 or lines[j] != guard:
+            unguarded.append(f"{i + 1}: {lines[i].strip()}")
+    assert not unguarded, (
+        "the manual's text is used outside its guard, which aborts a run with "
+        "no spec root under `set -u`:\n" + "\n".join(unguarded))
+
+
 def test_a_standalone_code_leg_skips_what_only_the_assembly_carries(tmp_path):
     """A code leg cloned on its own has no README: standalone, the README test
     SKIPS naming the assembly root, which is the courtesy the missing submodule
