@@ -1,8 +1,8 @@
-# Rehearsal input, NOT the cutover plan: regenerated 2026-10-07 from source e43b2432976a22eb3bf8c419c96209399251d375 (chore/openreposhape-pin-7f84ca4)
+# Rehearsal input, NOT the cutover plan: regenerated 2026-10-08 from source 837928a1029ac53b050a9bdcbc0ef4055b10719b (main)
 # with openRepoShape adopt-project.py at 7f84ca42ca86a8902928345109d2bf6bad87bd91.
-# The October 4 mapping's 19 reasoned overrides are reapplied verbatim; the new paths lane-worktrees
-# and lanes-index (code) and ideation/ (spec) are resolved with reasons.
-# Disposable rehearsal evidence: ../../../specs/004-migrate-to-triad/adopter-rehearsal-2026-10-07.md.
+# Run C: the run B plan's 22 resolutions (the October 4 mapping's 19, plus lane-worktrees and
+# lanes-index to code and ideation/ to spec) are reapplied verbatim; no new top-level path.
+# Disposable rehearsal evidence: ../../../specs/004-migrate-to-triad/adopter-rehearsal-2026-10-08.md.
 # Gate B remains open (T006-T011); execution needs a frozen baseline and explicit Gate C approval.
 # Paths are relative to the source checkout (local_path published as "."); generated metadata
 # does not authorize repository creation.
@@ -15,17 +15,17 @@ kind: adoption-plan
 # drop and adding one line of `resolution:` beside it. `check` then
 # has to pass, and `execute` REFUSES while any leg is still null.
 
-generated_on: 2026-10-07
+generated_on: 2026-10-08
 tool: opensoft/openRepoShape adopt-project.py
 
 source:
   repository: opensoft/openRepoTools
   local_path: .
-  default_branch: chore/openreposhape-pin-7f84ca4
-  commit: e43b2432976a22eb3bf8c419c96209399251d375
-  files: 100
-  bytes: 6139047
-  commits: 91
+  default_branch: main
+  commit: "837928a1029ac53b050a9bdcbc0ef4055b10719b"
+  files: 120
+  bytes: 6292407
+  commits: 92
 
 # The adopted repository KEEPS its name, its identity and
 # its history and becomes the assembly root. `new-root` — a new
@@ -310,8 +310,8 @@ paths:
     confidence: high
     rule: spec-governance
     reason: "Requirements, decisions, contracts and governance prose — what the project has DECIDED, as opposed to what it currently runs. `contracts/` is here by the 2026-09-02 ruling even where the code reads it: the code reads across the assembly-root mount (`spec/contracts` from the root, `../spec/contracts` from `code/`), which is what the legs are mounted for."
-    files: 21
-    bytes: 135920
+    files: 28
+    bytes: 185941
     review_required: false
   - path: park
     leg: code
@@ -357,8 +357,8 @@ paths:
     confidence: high
     rule: spec-governance
     reason: "Requirements, decisions, contracts and governance prose — what the project has DECIDED, as opposed to what it currently runs. `contracts/` is here by the 2026-09-02 ruling even where the code reads it: the code reads across the assembly-root mount (`spec/contracts` from the root, `../spec/contracts` from `code/`), which is what the legs are mounted for."
-    files: 10
-    bytes: 20264
+    files: 23
+    bytes: 123603
     review_required: false
   - path: status
     leg: code
@@ -412,7 +412,7 @@ follow_ups:
   - "Preserve original .gitmodules, upstream/openRepoShape gitlink and contracts/openreposhape-pin.yaml together in code; rehearse existing-submodule extraction/removal and recursive bootstrap before real execution. Never weaken blob verification or edit the standard in place."
   - "Add an assembly openRepoTools compatibility entry point after byte-preserving split verification; resolve one immutable code pin for all installer artifacts and preserve OPENREPOTOOLS_REPO/REF forks, raw/gh and offline checkout behavior."
   - "Separate code, assembly and spec roots in test fixtures and hygiene checks; code CI must supply the exact compatible spec/assembly context where a test reads product documentation."
-  - "Current .specify and agent links are ignored local bootstrap artifacts, not the 100-file source tree; capture local configuration and regenerate root workflow using setup-openspeckit after manifest/legs are present."
+  - "Current .specify and agent links are ignored local bootstrap artifacts, not the 120-file source tree; capture local configuration and regenerate root workflow using setup-openspeckit after manifest/legs are present."
   - "Preserve all branch/PR/worktree and dirty/untracked work; source main extraction does not transport unfinished feature branches. Migrate selected patches to paired feature branches with old-to-new receipts before rebinding lanes."
   - "Regenerate this preliminary plan after planning lands and baseline freeze; require current coverage check, local bare-remote rehearsal, prerequisite availability and explicit approval before execute."
   - "Review genuine bounded features/<NNN-feature>/openspec/ amendment records explicitly as code; canonical/full proposals and archives remain spec even when created on a feature branch. No existing bounded amendment paths were observed; do not manufacture them for historical features."
@@ -422,20 +422,20 @@ follow_ups:
 
 summary:
   spec:
-    files: 45
-    bytes: 493610
-    file_share: 0.4500
-    byte_share: 0.0804
+    files: 65
+    bytes: 646970
+    file_share: 0.5417
+    byte_share: 0.1028
   code:
     files: 49
     bytes: 5579879
-    file_share: 0.4900
-    byte_share: 0.9089
+    file_share: 0.4083
+    byte_share: 0.8868
   root:
     files: 6
     bytes: 65558
-    file_share: 0.0600
-    byte_share: 0.0107
+    file_share: 0.0500
+    byte_share: 0.0104
   unresolved:
     files: 0
     bytes: 0
