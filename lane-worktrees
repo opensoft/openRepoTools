@@ -114,8 +114,12 @@ dependency nested in one as a `leg` row (never acted on; counted only where
 its HEAD's own `Lane:` trailer is this lane's and it holds work, or where it
 could not be read), lists the worktrees git registers in every leg, and takes
 `<assembly>/worktrees` - the paired `worktrees/<feature>/{spec,code}` - as a
-root whose trees are the lane's by that same trailer rule. A checkout with no
-`project.yaml` is asked nothing, and its table is what it always was.
+root whose trees are the lane's by that same trailer rule. The estate report
+counts each leg of every canonical assembly as a checkout of its own - its
+branches, root `main` and rescue branches, each row naming its assembly - and
+adds a section of the legs holding uncommitted or unpublished work, only where
+an assembly's leg is checked out. A checkout with no `project.yaml` is asked nothing, and its
+table and its report are what they always were.
 
 Exit codes:
   0  dry run: nothing to retire  ·  --yes: every act completed
@@ -2114,7 +2118,7 @@ def read_leg(leg: Leg, lane: str) -> None:
         if leg.upstream and leg.head:
             n = git_out(leg.path, "rev-list", "--count", "@{u}..HEAD")
             leg.ahead = int(n) if n and n.isdigit() else None
-    leg.claimed = bool(leg.head) and lane.lower() in own_trailers(leg.path) \
+    leg.claimed = bool(lane) and bool(leg.head) and lane.lower() in own_trailers(leg.path) \
         and head_lane_trailer(leg.path).lower() == lane.lower()
 
 
@@ -5252,6 +5256,8 @@ class Report:
         clones = [r for r in repos if os.path.isdir(os.path.join(r, ".git"))]
         canonical = self._canonical(clones)
         self.canonical = canonical
+        # T018: EVERY CANONICAL ASSEMBLY'S LEGS, each a checkout of its own.
+        self.legs = self._assembly_legs(canonical)
         parents = _lane_parents(self.root, canonical) + self._recorded_parents()
         self.state_dirs = _lane_state_dirs(parents)
         self.tree_roots = _lane_tree_roots(parents)
@@ -5260,6 +5266,8 @@ class Report:
         self._orphans(closed)
         self._branches(canonical)
         self._root_main(canonical)
+        if self.legs:
+            self._legs_section()
         self._aging(canonical)
         self._caches_and_sandboxes()
         self._ignored_and_evidence(repos, canonical)
@@ -5335,6 +5343,57 @@ class Report:
                 if g != keep:
                     self.duplicates[g] = (keep, len(named) != 1)
         return sorted(out)
+
+    def _assembly_legs(self, canonical: list) -> list:
+        """T018 (opensoft/openRepoTools#186): THE LEGS OF EVERY CANONICAL
+        ASSEMBLY - a checkout whose own `project.yaml` declares a leg other than
+        itself, read by `lanes-edit.sh project-legs`. A leg is a submodule, its
+        `.git` a FILE, so no leg was ever canonical and the branches all lane
+        work makes after a split never reached this report. Each is read as a
+        checkout of its own, its rows naming its assembly. A checkout with no
+        `project.yaml` is asked nothing, so a report of single repositories is
+        what it always was; a manifest that could not be read is a row of the
+        last section."""
+        legs = []
+        for c in canonical:
+            rows, why = project_legs(self.helper, c)
+            if why:
+                self._unread(c, f"its legs could not be read: {why}", record=False)
+                continue
+            for repository, decl, path in rows:
+                leg = Leg(path, decl, repository, c)
+                probe_leg(leg)
+                if leg.checkout or leg.read_error:
+                    legs.append(leg)
+        return legs
+
+    def _leg_cell(self, path: str) -> str:
+        """'' for a canonical checkout; for a leg, which assembly it is under."""
+        for g in getattr(self, "legs", []):
+            if g.path == path:
+                return f"the {g.decl} leg of {g.assembly}"
+        return ""
+
+    def _legs_section(self) -> None:
+        """T018: every leg checkout holding edits no commit carries or commits
+        no origin ref holds - or that could not be read - under its assembly."""
+        rows = []
+        for g in self.legs:
+            read_leg(g, "")
+            decide_leg(g)
+            if g.disposition in ("clean", "absent"):
+                continue
+            state = (g.read_error if g.disposition == "unreadable" else
+                     "; ".join(p for p in (
+                         f"{g.dirty} dirty or untracked path(s)" if g.dirty else "",
+                         ("HEAD carries commit(s) no origin ref holds"
+                          + (f" ({g.ahead} ahead of {g.upstream})" if g.upstream and g.ahead
+                             else "")) if g.head and g.on_origin is False else "") if p))
+            rows.append([g.path, f"the {g.decl} leg of {g.assembly}", g.label(), state])
+        self.add("Assembly legs with uncommitted or unpublished work", rows,
+                 "none: every leg checkout is clean and its HEAD is on origin",
+                 "A leg is a checkout of its own under its assembly (T018): it is the "
+                 "assembly's, shared by every lane it homes, and a person's to commit and push.")
 
     def _foreign(self, clones: list, canonical: list) -> None:
         rows = []
@@ -5415,7 +5474,7 @@ class Report:
         rows = []
         fmt = ("%(refname:short)%1f%(objectname:short=12)%1f%(upstream:short)%1f"
                "%(upstream:track)%1f%(committerdate:iso-strict)%1f%(contents:trailers)%00")
-        for c in canonical:
+        for c in canonical + [g.path for g in getattr(self, "legs", []) if g.checkout]:
             proc = git(c, "for-each-ref", f"--format={fmt}", "refs/heads/")
             if proc.returncode != 0:
                 continue
@@ -5443,7 +5502,8 @@ class Report:
                     continue
                 owner = (re.findall(r"^Lane:\s*(\S+)", trailers, re.MULTILINE) or ["-"])[-1]
                 rows.append([f"{c} {name}", tip, state, f"{_age_days(date)} d",
-                             owner, "held by a worktree" if name in held else ""])
+                             owner, "held by a worktree" if name in held else ""]
+                            + ([self._leg_cell(c)] if self._leg_cell(c) else []))
         rows.sort(key=lambda r: -int(r[3].split()[0]))
         self.add("Unmerged branches with a missing, diverged or unpushed upstream", rows,
                  "none", "Listed, never deleted: a person pushes each to rescue/<lane>/... "
@@ -5451,7 +5511,7 @@ class Report:
 
     def _root_main(self, canonical: list) -> None:
         rows = []
-        for c in canonical:
+        for c in canonical + [g.path for g in getattr(self, "legs", []) if g.checkout]:
             if git(c, "rev-parse", "-q", "--verify", "refs/heads/main").returncode != 0 or \
                     git(c, "rev-parse", "-q", "--verify", "refs/remotes/origin/main").returncode != 0:
                 continue
@@ -5465,7 +5525,8 @@ class Report:
                          "only handoff/register paths" if only else f"{len(paths)} path(s)",
                          "Amendment 4: handoffs and the register live in the workspace "
                          "repository and are pushed per write" if only else
-                         "push it through a pull request, or a person's word"])
+                         "push it through a pull request, or a person's word"]
+                        + ([self._leg_cell(c)] if self._leg_cell(c) else []))
         self.add("Root main divergence", rows, "none")
 
     def _aging(self, canonical: list) -> None:
@@ -5473,7 +5534,7 @@ class Report:
         rows = []
         rescue_count = 0
         seen = set()
-        for c in canonical:
+        for c in canonical + [g.path for g in getattr(self, "legs", []) if g.checkout]:
             proc = git(c, "for-each-ref", "--format=%(refname)\t%(committerdate:iso-strict)",
                        "refs/heads/rescue/", "refs/remotes/origin/rescue/")
             for line in proc.stdout.splitlines():
@@ -5488,7 +5549,8 @@ class Report:
                     first = name.split("/", 1)[0] if "/" in name else ""
                     owner = first if LANE_SHAPED_RE.match(first) else "-"
                     rows.append([f"{c} rescue/{name}", f"rescue branch, {age} d",
-                                 owner, "awaiting disposition"])
+                                 owner, "awaiting disposition"]
+                                + ([self._leg_cell(c)] if self._leg_cell(c) else []))
         for d in self.state_dirs:
             for lane in self._ls(d):
                 for rec in self._tree_records(os.path.join(d, lane, "trees")):

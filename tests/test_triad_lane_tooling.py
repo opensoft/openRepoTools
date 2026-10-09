@@ -616,6 +616,47 @@ def test_t018_a_manifest_or_leg_that_cannot_be_read_refuses(triad):
     assert "the legs of the assembly" in proc.stdout and "could not be read" in proc.stdout
 
 
+# ========================================================= (c) the daily report
+
+def _section(text: str, title: str) -> str:
+    start = text.index(f"## {title}")
+    end = text.find("\n## ", start + 3)
+    return text[start:end if end != -1 else len(text)]
+
+
+@NEEDS_TEMPLATE
+def test_t018_the_report_counts_each_leg_as_a_checkout_of_its_own(triad):
+    b, t = triad
+    a = t["assembly"]
+    tmp = b.root / "leg-branch"
+    b.git("worktree", "add", "-q", "-b", "leg-unpushed", tmp, "origin/main", cwd=t["code"])
+    b.commit(tmp, "leg work", {"l.txt": "l\n"}, lane="triad-1")
+    b.git("worktree", "remove", tmp, cwd=t["code"])
+    (t["spec"] / "edit.md").write_text("an edit in the spec leg\n")
+    proc = b.tool("lane-worktrees", "sweep", "--all", "--dry-run", "--report", "--estate",
+                  b.projects)
+    assert proc.returncode == 0, proc.stderr
+    branches = _section(proc.stdout, "Unmerged branches with a missing, diverged or unpushed upstream")
+    assert f"- {t['code']} leg-unpushed ·" in branches, branches
+    assert f"the code leg of {a}" in branches
+    legs = _section(proc.stdout, "Assembly legs with uncommitted or unpublished work")
+    assert f"- {t['spec']} · the spec leg of {a} ·" in legs, legs
+    assert "1 dirty or untracked path(s)" in legs
+    assert str(t["code"]) + " ·" not in legs
+    assert "| Assembly legs with uncommitted or unpublished work | 1 |" in proc.stdout
+
+
+@NEEDS_TEMPLATE
+def test_t018_a_report_with_no_assembly_has_no_legs_section(tmp_path):
+    b = Bench(tmp_path / "bench", REPO)
+    b.seeded("plain", {"p.txt": "p\n"})
+    b.git("clone", "-q", b.remotes / "plain.git", b.projects / "plain")
+    proc = b.tool("lane-worktrees", "sweep", "--all", "--dry-run", "--report", "--estate",
+                  b.projects)
+    assert proc.returncode == 0, proc.stderr
+    assert "Assembly legs" not in proc.stdout
+
+
 # ===================================================================== capture
 
 def capture(tools: Path, golden: Path) -> None:
