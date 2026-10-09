@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -102,8 +103,8 @@ legs:
     path: code
 """
 
-#: Git in a fixture: an identity of its own, and file transport allowed for
-#: the one local clone of the dependency.
+#: Git in a fixture: an identity of its own. The one clone of the dependency
+#: is a local-path clone, which needs no `protocol.file.allow` (#193 item 7).
 GIT_ENV = {"GIT_AUTHOR_NAME": "openRepoTools CI",
            "GIT_AUTHOR_EMAIL": "ci@openrepotools.invalid",
            "GIT_COMMITTER_NAME": "openRepoTools CI",
@@ -379,33 +380,241 @@ def test_the_lane_suite_fails_a_missing_manual_by_name():
             f"in the three lines above it:\n{guard}")
 
 
+# --- the lane suite's manual sections, read and run ---------------------------
+
+SUITE = REPO / "tests" / "test_lane_helpers.sh"
+MANUAL_GUARD = re.compile(r'^if \[ -n "\$LANE_MANUAL" \]$')
+MANUAL_USE = re.compile(r'\$\{?(?:ln_doc|ss_doc)\b')
+HEREDOC = re.compile(r"""<<(-?)\s*\\?(['"]?)([A-Za-z_][A-Za-z0-9_]*)\2""")
+
+
+def shell_commands(line: str) -> list:
+    """`line` cut at each `;` outside quotes, stopping at a `#` comment: a
+    reading of the suite's one-line `if …; then …` / `else …; fi` forms that
+    is enough to follow their nesting, and no more than that."""
+    out, cur, quote, i = [], [], None, 0
+    while i < len(line):
+        ch = line[i]
+        if quote:
+            cur.append(ch)
+            if ch == "\\" and quote == '"' and i + 1 < len(line):
+                cur.append(line[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+            cur.append(ch)
+        elif ch == "\\" and i + 1 < len(line):
+            cur.append(line[i:i + 2])
+            i += 2
+            continue
+        elif ch == "#" and (not cur or "".join(cur)[-1:].isspace()):
+            break
+        elif ch == ";":
+            out.append("".join(cur).strip())
+            cur = []
+        else:
+            cur.append(ch)
+        i += 1
+    out.append("".join(cur).strip())
+    return [c for c in out if c]
+
+
+def heredoc_in(line: str):
+    """The first here-document `line` opens outside quotes, as (dash, word):
+    its body is not shell this reading follows (the suite writes fakes and
+    Python through them)."""
+    quote, i = None, 0
+    while i < len(line):
+        ch = line[i]
+        if quote:
+            if ch == "\\" and quote == '"':
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "\\":
+            i += 2
+            continue
+        elif ch == "#" and (i == 0 or line[i - 1].isspace()):
+            return None
+        elif line.startswith("<<", i) and not line.startswith("<<<", i):
+            found = HEREDOC.match(line, i)
+            return (found.group(1) == "-", found.group(3)) if found else None
+        i += 1
+    return None
+
+
+def manual_reads(lines: list):
+    """Follow the suite's `if`/`elif`/`else`/`fi` nesting, here-documents
+    skipped. Returns each use of the manual's text (`$ss_doc`, `$ln_doc`, in
+    either spelling) with whether the THEN branch of an
+    `if [ -n "$LANE_MANUAL" ]` holds it; each such section's first and last
+    line; and the frames still open at the end, which must be none for the
+    reading to be trusted."""
+    stack, uses, blocks, heredoc = [], [], [], None
+    for n, raw in enumerate(lines):
+        if heredoc is not None:
+            if (raw.lstrip("\t") if heredoc[0] else raw) == heredoc[1]:
+                heredoc = None
+            continue
+        if raw.lstrip().startswith("#"):
+            continue
+        opened = heredoc_in(raw)
+        for cmd in shell_commands(raw):
+            word, _, rest = cmd.partition(" ")
+            rest = rest.strip()
+            if word in ("then", "do") and rest:
+                cmd = rest
+                word, _, rest = cmd.partition(" ")
+                rest = rest.strip()
+            if word == "if":
+                stack.append([bool(MANUAL_GUARD.match(cmd)), False, n])
+                continue
+            if word in ("elif", "else"):
+                if stack:
+                    stack[-1][1] = True
+                if word == "elif" or not rest:
+                    continue
+                cmd = rest
+            if word == "fi":
+                if stack:
+                    frame = stack.pop()
+                    if frame[0]:
+                        blocks.append((frame[2], n))
+                continue
+            if MANUAL_USE.search(cmd):
+                uses.append((n, any(f[0] and not f[1] for f in stack)))
+        if opened:
+            heredoc = opened
+    return uses, blocks, stack
+
+
 def test_the_lane_suite_reads_the_manual_only_inside_its_guard():
-    """Every use of the manual's text in `tests/test_lane_helpers.sh` sits
-    inside an `if [ -n "$LANE_MANUAL" ]` guard, before that guard's `else` or
-    `fi`. `ss_doc` and `ln_doc` are bound only there, and the suite runs under
-    `set -u`. So one use outside a guard does not skip in a code leg with no
-    spec root: it ABORTS the whole suite with `ln_doc: unbound variable`.
-    Lane openRepoTools-3's review of #190 reproduced that, and so did this
-    work's own standalone-leg proof. Held on the text, like its neighbour
-    above."""
-    lines = (REPO / "tests" / "test_lane_helpers.sh").read_text(
-        encoding="utf-8").splitlines()
-    guard = 'if [ -n "$LANE_MANUAL" ]; then'
-    uses = [i for i, line in enumerate(lines)
-            if ("$ln_doc" in line or "$ss_doc" in line)
-            and not line.lstrip().startswith("#")]
-    assert len(uses) >= 16, (
-        f"expected the manual's sixteen uses, found {len(uses)}")
-    unguarded = []
-    for i in uses:
-        j = i - 1
-        while j >= 0 and lines[j] not in (guard, "else", "fi"):
-            j -= 1
-        if j < 0 or lines[j] != guard:
-            unguarded.append(f"{i + 1}: {lines[i].strip()}")
+    """Every use of the manual's text in `tests/test_lane_helpers.sh` sits in
+    the THEN branch of an `if [ -n "$LANE_MANUAL" ]` guard. `ss_doc` and
+    `ln_doc` are bound only there, and the suite runs under `set -u`, so one
+    use outside a guard does not skip in a code leg with no spec root: it
+    ABORTS the whole suite with `ln_doc: unbound variable` (lane
+    openRepoTools-3's review of #190; fixed in `b50f197`).
+
+    The nesting is FOLLOWED, not guessed from the nearest line spelled `fi`:
+    the first reading missed a `${ln_doc}` and an indented closing `fi` (the
+    review of `b50f197`, point 6; #193 item 7). The reading planted with both
+    is held by the test below."""
+    uses, blocks, still_open = manual_reads(
+        SUITE.read_text(encoding="utf-8").splitlines())
+    assert not still_open, (
+        f"the suite's if/fi nesting could not be followed past line "
+        f"{still_open[0][2] + 1}, so where the manual is read cannot be vouched for")
+    assert len(uses) >= 16 and len(blocks) >= 3, (
+        f"expected the manual's sixteen uses in three guarded sections, found "
+        f"{len(uses)} in {len(blocks)}")
+    unguarded = [n + 1 for n, guarded in uses if not guarded]
     assert not unguarded, (
-        "the manual's text is used outside its guard, which aborts a run with "
-        "no spec root under `set -u`:\n" + "\n".join(unguarded))
+        f"the manual's text is used outside its guard at line(s) {unguarded}, "
+        f"which aborts a run with no spec root under `set -u`")
+
+
+@pytest.mark.parametrize("text, unguarded", [
+    pytest.param(
+        'if [ -n "$LANE_MANUAL" ]; then\n'
+        'ln_doc="$(cat "$LANE_MANUAL" 2>/dev/null || :)"\n'
+        'has "a" "$ln_doc" "x"\n'
+        'fi\n'
+        'has "b" "${ln_doc}" "y"\n', [5], id="braced-use-after-the-guard"),
+    pytest.param(
+        'if [ -n "$LANE_MANUAL" ]; then\n'
+        '  ln_doc="$(cat "$LANE_MANUAL" 2>/dev/null || :)"\n'
+        '  fi\n'
+        'has "c" "$ln_doc" "z"\n', [4], id="indented-closing-fi"),
+    pytest.param(
+        'if [ -n "$LANE_MANUAL" ]; then\n'
+        'ss_doc="$(cat "$LANE_MANUAL")"\n'
+        'else\n'
+        '  has "d" "$ss_doc" "w"\n'
+        'fi\n', [4], id="use-in-the-guards-else"),
+    pytest.param(
+        'if [ -n "$LANE_MANUAL" ]; then\n'
+        'if [ -r "$LANE_MANUAL" ]; then ok "r"\n'
+        'else bad "r" "no readable file"; fi\n'
+        'cat <<EOF\n'
+        'fi\n'
+        'EOF\n'
+        'has "e" "${ln_doc}" "v"\n'
+        'fi\n', [], id="nested-if-and-a-heredoc-inside-the-guard"),
+])
+def test_the_guard_reading_follows_the_nesting_not_a_spelling(text, unguarded):
+    """The planted cases the first reading got wrong (a braced use after the
+    guard, an indented closing `fi`) and two it must keep right."""
+    uses, _blocks, still_open = manual_reads(text.splitlines())
+    assert not still_open
+    assert [n + 1 for n, guarded in uses if not guarded] == unguarded
+
+
+def suite_helpers() -> str:
+    """The suite's own one-line assertion helpers, verbatim, and a stand-in
+    for the `excerpt` its `has` calls."""
+    wanted = re.compile(r"^(ok|bad|skip|has|hasnt)\(\) *\{")
+    found = [line for line in SUITE.read_text(encoding="utf-8").splitlines()
+             if wanted.match(line)]
+    assert len(found) == 5, f"expected the suite's five helpers, found {found}"
+    return "\n".join(found + ["excerpt() { printf '%.200s' \"$1\"; }"])
+
+
+@WINDOWS_SKIP
+@pytest.mark.skipif(shutil.which("bash") is None, reason="the suite is bash")
+def test_the_lane_suites_manual_sections_fail_skip_or_pass_by_name(tmp_path):
+    """THE MISSING-MANUAL BRANCH, RUN (#193 item 3; until now only its text
+    was checked). The suite's three `$LANE_MANUAL` sections, cut out of it by
+    the reading above and run under its own `set -uo pipefail` and its own
+    helpers:
+
+      * a manual that is NOT THERE is a FAIL naming the path, in each section
+        that reads it — never an empty string the quotes then misread;
+      * NO manual (no spec root) is three named skips, and the run reaches
+        its end — never `unbound variable`;
+      * the run's own manual, where it has one, passes every quote."""
+    lines = SUITE.read_text(encoding="utf-8").splitlines()
+    _uses, blocks, _open = manual_reads(lines)
+    body = "\n".join("\n".join(lines[a:b + 1]) for a, b in blocks)
+    script = tmp_path / "manual-sections.sh"
+    script.write_text(
+        "set -uo pipefail\npass=0; fail=0; skipped=0\n" + suite_helpers()
+        + '\nLANE_MANUAL="$MANUAL_UNDER_TEST"\n' + body
+        + '\nprintf "END %s passed, %s failed, %s skipped\\n" '
+          '"$pass" "$fail" "$skipped"\n', encoding="utf-8")
+
+    def run(manual: str) -> str:
+        env = dict(os.environ, MANUAL_UNDER_TEST=manual)
+        proc = subprocess.run([shutil.which("bash") or "bash", str(script)],
+                              env=env, capture_output=True, text=True,
+                              timeout=60, check=False)
+        out = proc.stdout + proc.stderr
+        assert proc.returncode == 0 and "\nEND " in "\n" + out, (
+            f"the manual sections did not run to their end with "
+            f"LANE_MANUAL={manual!r}:\n{out}")
+        assert "unbound variable" not in out, out
+        return out
+
+    missing = tmp_path / "no-spec-leg" / "docs" / "README-lanes.md"
+    out = run(str(missing))
+    named = out.count(f"no readable file at {missing}")
+    assert named == 2 and "\nFAIL " in out, (
+        f"a missing manual must FAIL naming {missing} in both sections that "
+        f"check it; it was named {named} time(s):\n{out}")
+    out = run("")
+    assert "END 0 passed, 0 failed, 3 skipped" in out, out
+    assert out.count("no spec root in this run") == 3, out
+    manual = conftest.ROOTS.root_of("spec")
+    if manual is not None:
+        out = run(str(manual / "docs" / "README-lanes.md"))
+        assert " 0 failed, 0 skipped" in out, out
+
 
 
 def test_a_redirected_run_names_its_roots_where_quiet_output_keeps_them(tmp_path):
