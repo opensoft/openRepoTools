@@ -1,0 +1,55 @@
+From 3e87e3941ff947d8160fa7d8b6204670af7926df Mon Sep 17 00:00:00 2001
+From: openRepoShape bump-leg <bump-leg@openreposhape.invalid>
+Date: Fri, 9 Oct 2026 00:29:18 +0000
+Subject: [PATCH 3/3] Bump code leg to 6169e8e96164 in openRepoTools
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+73b04d637634 -> 6169e8e96164, tree 697a080f3e86d368c31b82daf9088ee834537db6f3f49888dfcc7aa9c9ecfb4f.
+
+No workflow reference names this leg, so the gitlink and the pin file are the whole of it.
+
+The gitlink at code, `commit:` and `digests.tree_sha256` in contracts/code-pin.yaml, and every workflow reference to opensoft/openRepoTools-code move in ONE commit because `scripts/validate-pins.py` refuses when they disagree — a gitlink advanced alone is red on the next pull request, and on somebody else's change.
+
+Written by openRepoShape's `scripts/bump-leg.py`; the digest is recomputed from the leg's own objects, not adjusted.
+
+Lane: openRepoTools-1
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ code                    | 2 +-
+ contracts/code-pin.yaml | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/code b/code
+index 73b04d6..6169e8e 160000
+--- a/code
++++ b/code
+@@ -1 +1 @@
+-Subproject commit 73b04d637634f897ad24e22ee4c12bed287172d6
++Subproject commit 6169e8e9616425ce93a49447af5df426f4325312
+diff --git a/contracts/code-pin.yaml b/contracts/code-pin.yaml
+index 68e06c8..18b44c7 100644
+--- a/contracts/code-pin.yaml
++++ b/contracts/code-pin.yaml
+@@ -21,7 +21,7 @@ leg_role: code
+ source_repository: opensoft/openRepoTools-code
+ submodule_path: code
+ 
+-commit: "73b04d637634f897ad24e22ee4c12bed287172d6"
++commit: "6169e8e9616425ce93a49447af5df426f4325312"
+ revision_kind: commit
+ 
+ digest_algorithm: sha256
+@@ -36,7 +36,7 @@ digest_algorithm: sha256
+ # <oid>`, so a leg's own pin moving is drift too.
+ digest_definition: sorted-ls-tree-r-v1
+ digests:
+-  tree_sha256: "b4940a13bd8ecbe2d1c6ed49368d1545d1a5f1f7a92623c7fe11ac1cb3617604"
++  tree_sha256: "697a080f3e86d368c31b82daf9088ee834537db6f3f49888dfcc7aa9c9ecfb4f"
+ 
+ verify_pin: scripts/validate-pins.py
+ resync_runbook: "README.md#the-lockstep-invariant"
+-- 
+2.43.0
+
