@@ -401,6 +401,41 @@ def test_a_standalone_code_leg_skips_what_only_the_assembly_carries(tmp_path):
     assert not composed.outcomes, "a refused session ran tests anyway"
 
 
+#: The command's half of three mixed hygiene tests, and the line each asserts.
+COMMAND_HALVES = (
+    ("test_the_documents_say_what_bare_park_does_now", "park",
+     "PARKED EVERY ESTATE unasked"),
+    ("test_the_documents_say_what_status_is_and_is_not", "status",
+     "--no-optional-locks"),
+    ("test_the_documents_say_what_a_bare_lanes_lists", "openRepoTools",
+     "lanes [--all] [--fetch]"),
+)
+
+
+def test_a_standalone_code_leg_still_checks_each_commands_own_half(tmp_path):
+    """Where a test reads a command and the documents about it, the command's
+    half is asserted FIRST, so a standalone code leg — which skips the
+    documents — still checks the command (the #190 review). A leg whose three
+    commands lost their lines FAILS those three tests rather than skipping
+    them with the documents."""
+    leg = code_leg(tmp_path / "code")
+    for _, name, line in COMMAND_HALVES:
+        path = leg / name
+        text = path.read_text(encoding="utf-8")
+        assert line in text, f"{name} no longer carries {line!r}; this test is stale"
+        path.write_text(text.replace(line, "(removed for the fixture)"),
+                        encoding="utf-8")
+    run = nested(tmp_path, {"OPENREPOTOOLS_CODE_ROOT": str(leg)},
+                 " or ".join(test for test, _, _ in COMMAND_HALVES),
+                 "test_repo_hygiene.py")
+    for test, name, _ in COMMAND_HALVES:
+        outcome, message = run.outcome(test)
+        assert outcome == "failure", (
+            f"{test} {outcome} on a leg whose {name} lost its line: the "
+            f"command's half was not asserted before the documents' skip:\n"
+            f"{message}\n{run.output[-2000:]}")
+
+
 def test_the_pin_checks_read_the_code_roots_own_git_identity(tmp_path):
     """The lockstep check reads `git ls-tree HEAD` IN the code root it is given:
     a code leg whose gitlink disagrees with its pin FAILS it. Red at
