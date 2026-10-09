@@ -817,15 +817,95 @@ def test_the_suite_descriptions_run_no_command_of_their_own():
 
 
 #: A line that actually FETCHES, as opposed to a line of the usage heredoc
-#: that says the word. Both spellings take a quoted argument, which the prose
-#: never does.
+#: that says the word: a `gh api "…"`, a raw-content URL, or an
+#: `api.github.com/repos/…` URL (a `curl` of the REST API, which the first
+#: reading did not scan; lane openRepoTools-3's review of #191, delta 5). Each
+#: takes a quoted or variable argument, which the prose never does.
+def fetching_lines_of(code: str) -> list[str]:
+    return [line for line in code.splitlines()
+            if 'gh api "' in line or 'raw.githubusercontent.com/$' in line
+            or 'api.github.com/repos/' in line]
+
+
 def fetching_lines(path: Path) -> list[str]:
-    return [line for line in code_lines(path).splitlines()
-            if 'gh api "' in line or 'raw.githubusercontent.com/$' in line]
+    return fetching_lines_of(code_lines(path))
+
+
+#: The REPOSITORY a fetching line names: what follows `repos/` or the raw
+#: host, read as one shell expansion (`$X`, or `${…}` whole).
+FETCH_REPOSITORY = re.compile(
+    r"(?:repos/|raw\.githubusercontent\.com/)(\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*)")
+#: `$P`, `${P}`, or `${P:-$REPO}`: a variable standing for the repository.
+PAYLOAD_SLOT = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)(?::-\$REPO)?\}?")
+
+
+def assigned_values(code: str, name: str) -> list[tuple[str, str]]:
+    """Every `name=<value>` in `code`, as (value with its quotes off, the
+    line it is on)."""
+    found = []
+    pattern = re.compile(r"(?:^|[\s;(])" + re.escape(name)
+                         + r"""=("[^"]*"|'[^']*'|[^\s;)]*)""")
+    for line in code.splitlines():
+        for match in pattern.finditer(line):
+            found.append((match.group(1).strip("\"'"), line.strip()))
+    return found
+
+
+def installer_source_violations(code: str) -> list[str]:
+    """What `test_the_installer_reaches_only_this_repository` refuses in
+    `code` (comment lines already dropped): each fetching line whose
+    REPOSITORY is not `$REPO`, the pinned standard, or a payload variable
+    that only ever holds `$REPO` or a pin's `source_repository:`."""
+    def pin_named(var: str) -> bool:
+        values = assigned_values(code, var)
+        return bool(values) and all(
+            value == "" or "source_repository)" in line for value, line in values)
+
+    def honest(var: str) -> bool:
+        values = assigned_values(code, var)
+        if not values:
+            return False
+        for value, _line in values:
+            if value in ("", "$REPO", "${REPO}"):
+                continue
+            inner = PAYLOAD_SLOT.fullmatch(value)
+            if inner and inner.group(0) == value and pin_named(inner.group(1)):
+                continue
+            return False
+        return True
+
+    bad = []
+    for line in fetching_lines_of(code):
+        slots = FETCH_REPOSITORY.findall(line)
+        if not slots:
+            bad.append(f"names no repository this test can read: {line.strip()}")
+        for slot in slots:
+            if slot in ("$REPO", "${REPO}", "$SHAPE_REPOSITORY", "${SHAPE_REPOSITORY}"):
+                continue
+            var = PAYLOAD_SLOT.fullmatch(slot)
+            if var and honest(var.group(1)):
+                continue
+            bad.append(f"fetches from {slot}, which is not $REPO, the pinned "
+                       f"standard, or a variable holding only those or a pin's "
+                       f"source_repository: {line.strip()}")
+    return bad
 
 
 def test_the_installer_reaches_only_this_repository():
-    """`--install` fetches from `$OPENREPOTOOLS_REPO` and from nowhere else.
+    """`--install` fetches from `$OPENREPOTOOLS_REPO`, or from the code
+    repository the assembly it installs from PINS, and from nowhere else.
+
+    RESTATED for the adopted layout (#191's payload source; lane
+    openRepoTools-3's review of #191, delta 5, T009's to restate). The first
+    reading asked only that a fetching line CONTAIN `$REPO`, so a line fetching
+    from `${PAYLOAD_REPO:-$REPO}` passed by spelling whatever `PAYLOAD_REPO`
+    held, and a `curl` of `api.github.com` was never read at all. Now the
+    REPOSITORY each fetching line names is read out of it, and it must be one
+    of three things: `$REPO`; the pinned standard (`wip init`, below); or a
+    variable whose every assignment is empty, `$REPO`, or a variable that only
+    a pin's `source_repository:` sets — the code repository an adopted
+    assembly's `contracts/code-pin.yaml` names, which is this repository's own
+    code, moved.
 
     An `--install` that reached into openRepoShape to complete itself would
     make this repository's installer depend on the standard at run time, which
@@ -838,13 +918,43 @@ def test_the_installer_reaches_only_this_repository():
     `templates/workspace-root/` — nine files this repository deliberately does
     not carry a copy of, because a copy is a second answer to what the template
     is — and it does it AT THE PINNED COMMIT, not at that repository's `main`.
-    The test below is the one that holds it to the pin. Every other fetch in
-    this file is still `$REPO`'s.
+    The test below is the one that holds it to the pin.
     """
-    for line in fetching_lines(REPO / "openRepoTools"):
-        assert "$REPO" in line or "$SHAPE_REPOSITORY" in line, (
-            f"the command fetches from a repository that is neither "
-            f"$OPENREPOTOOLS_REPO nor the pinned standard:\n    {line.strip()}")
+    bad = installer_source_violations(code_lines(REPO / "openRepoTools"))
+    assert not bad, ("the command fetches from a repository it may not:\n    "
+                     + "\n    ".join(bad))
+
+
+@pytest.mark.parametrize("code, refused", [
+    pytest.param('OTHER="someone/else"\n'
+                 'gh api "repos/${OTHER:-$REPO}/contents/park?ref=$REF"\n',
+                 True, id="passes-by-spelling"),
+    pytest.param('curl -fsSL "https://api.github.com/repos/$OTHER/commits/$REF"\n',
+                 True, id="an-api-curl-the-first-reading-never-read"),
+    pytest.param('PAYLOAD_REPO="$FROM_THE_ENVIRONMENT"\n'
+                 'gh api "repos/${PAYLOAD_REPO:-$REPO}/contents/park"\n',
+                 True, id="a-payload-variable-set-from-elsewhere"),
+    pytest.param('PIN_SOURCE_REPOSITORY=""\n'
+                 'case "$key" in\n'
+                 '  source_repository) PIN_SOURCE_REPOSITORY="$PIN_SCALAR" ;;\n'
+                 'esac\n'
+                 'PAYLOAD_REPO=""\n'
+                 'PAYLOAD_REPO="$REPO" PAYLOAD_REV=""\n'
+                 'PAYLOAD_REPO="$PIN_SOURCE_REPOSITORY" PAYLOAD_REV="$PIN_COMMIT"\n'
+                 'gh api "repos/${PAYLOAD_REPO:-$REPO}/contents/$path"\n'
+                 'curl -fsSL "https://raw.githubusercontent.com/${PAYLOAD_REPO:-$REPO}/$rev/$path"\n'
+                 'curl -fsSL "https://api.github.com/repos/${PAYLOAD_REPO:-$REPO}/git/trees/$1"\n',
+                 False, id="the-adopted-source-honestly"),
+    pytest.param('gh api "repos/$REPO/contents/park?ref=$REF"\n'
+                 'gh api "repos/$SHAPE_REPOSITORY/contents/$f?ref=$ref"\n',
+                 False, id="todays-two-sources"),
+])
+def test_the_installer_source_rule_is_not_met_by_spelling(code, refused):
+    """The restated rule against planted lines: the two shapes the first
+    reading let through, a payload variable fed from anywhere else, and the
+    two shapes it must keep accepting."""
+    assert bool(installer_source_violations(code)) is refused, (
+        installer_source_violations(code))
 
 
 def test_the_template_is_fetched_from_the_pinned_standard_and_at_the_pin():
