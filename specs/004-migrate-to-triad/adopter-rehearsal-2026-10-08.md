@@ -28,8 +28,10 @@ the private receipt.
   on a branch as the paragraph above says.
 - **What run C superseded.** No record: runs A and B stand as recorded. Its
   plan did replace run B's as the
-  [mapping](../../openspec/changes/migrate-to-triad/adoption-plan.yaml), in
-  merge `1a26463`. On main that link opens run C's plan from both records.
+  [mapping](../../openspec/changes/migrate-to-triad/adoption-plan.yaml), on
+  main in #192's squash `1abee1d`. (On #192's branch it was merge `1a26463`,
+  which main does not contain.) On main that link opens run C's plan from
+  both records.
   So "On this branch" in the mapping section below holds for main, and the
   2026-10-07 record's "On this branch, the mapping is the regenerated run B
   plan" held only on its own branch. Run B's plan stays in history at
@@ -38,7 +40,11 @@ the private receipt.
   2026-10-08, at about 09:45Z, cleared `/tmp` (#186 comment 6068861167).
   Both runs were built in a session scratch directory there, as the
   2026-10-07 receipt's README records, so their disposable repositories are
-  gone and that receipt's logs are their only record. That is why run C is
+  gone and their logs survive only in that receipt. Two of their commits
+  live on in run C's legs: `558a12b`, the spec head of runs A and B, is the
+  parent of run C's spec head, and `48d98cd`, run A's code head, is the
+  parent of run C's code head. The splits `9e5f934` and `2726d3a`, run B's
+  code head `6d52162` and the local remotes are gone. That is why run C is
   kept host-local.
 - **An observation left out.** The run C comment on #186 (6068938765)
   noted that `openspec validate migrate-to-triad --strict` with `openspec`
