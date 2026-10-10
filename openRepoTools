@@ -805,9 +805,11 @@ payload_where() {   # the source collected from, for a refusal to name
 # --- the local source ---------------------------------------------------------
 
 #: DOES <pin> MOUNT ITS CODE LEG AT <name>? Its `submodule_path:` line, read
-#: leniently — the strict read is `pin_parse`'s, once the pin is known to be
-#: this checkout's — so that another project's pin, however it is written, is
-#: only ever compared with this directory's name.
+#: with `pin_scalar`'s grammar (quotes, a trailing `# comment`) and, where that
+#: grammar refuses the value, leniently — the strict read is `pin_parse`'s, once
+#: the pin is known to be this checkout's — so that another project's pin,
+#: however it is written, is only ever compared with this directory's name, and
+#: a valid pin of this checkout's is never missed for the way it is written.
 pin_mounts() {   # <pin> <name>
 	local line value
 	while IFS= read -r line || [ -n "$line" ]; do
@@ -815,6 +817,9 @@ pin_mounts() {   # <pin> <name>
 		submodule_path:*)
 			value="${line#submodule_path:}"
 			value="${value%"$ORT_CR"}"
+			if pin_scalar "$value" && [ -n "$PIN_SCALAR" ] && [ "$PIN_SCALAR" = "$2" ]; then
+				return 0
+			fi
 			value="${value#"${value%%[! $ORT_TAB]*}"}"
 			value="${value%"${value##*[! $ORT_TAB]}"}"
 			value="${value#[\"\']}"
@@ -874,7 +879,7 @@ recorded_gitlink() {   # <superproject> <path>
 }
 
 payload_local_adopted() {   # <assembly root> <the directory this file runs from>
-	local root="$1" here="$2" pin="$1/contracts/code-pin.yaml" me mount link name blob
+	local root="$1" here="$2" pin="$1/contracts/code-pin.yaml" me mount link name blob snap
 	local bad="" missing=""
 	pin_parse "$pin" || die "$pin is not a code pin this installer can follow: $PIN_WHY.
     It is the pin of the assembly this checkout sits in, and a pin that is present
@@ -900,12 +905,22 @@ payload_local_adopted() {   # <assembly root> <the directory this file runs from
     payload cannot be checked against it. NOTHING was installed and nothing already
     installed was replaced. Fetch it — git -C \"$here\" fetch origin — or run
     \`make bootstrap\` at $root, then re-run."
+	# WHAT IS CHECKED IS WHAT IS INSTALLED: each payload file is copied into
+	# this run's work directory FIRST, and the copy is what is hashed against
+	# the pinned commit and what `collect_commands`/`collect_skills` later read
+	# — so an edit to the checkout between the check and the copy cannot put
+	# unchecked bytes in place (#191, Copilot's first round).
+	workdir
+	snap="$WORKDIR/pinned-payload"
 	for name in $(payload_names); do
 		if [ -L "$here/$name" ]; then bad="${bad:+$bad }$name"; continue; fi
 		if [ ! -f "$here/$name" ]; then missing="${missing:+$missing }$name"; continue; fi
 		blob="$(git -C "$here" rev-parse --verify --quiet "$PIN_COMMIT:$name" 2>/dev/null)" ||
 			{ bad="${bad:+$bad }$name"; continue; }
-		[ "$(git -C "$here" hash-object --no-filters -- "$name" 2>/dev/null)" = "$blob" ] ||
+		mkdir -p -- "$snap/$(dirname -- "$name")" &&
+			cp -p -- "$here/$name" "$snap/$name" ||
+			{ bad="${bad:+$bad }$name"; continue; }
+		[ "$(git -C "$here" hash-object --no-filters -- "$snap/$name" 2>/dev/null)" = "$blob" ] ||
 			bad="${bad:+$bad }$name"
 	done
 	[ -z "$missing" ] || die "the code mounted at $root/$PIN_SUBMODULE_PATH is missing $missing,
@@ -921,7 +936,7 @@ payload_local_adopted() {   # <assembly root> <the directory this file runs from
         git -C \"$here\" checkout $PIN_COMMIT -- $bad
     To install a code feature on purpose, run the openRepoTools of its own worktree
     (<root>/worktrees/<NNN>/code), which installs that checkout's bytes and says so."
-	PAYLOAD_MODE=local PAYLOAD_DIR="$here" SOURCE_LAYOUT=adopted
+	PAYLOAD_MODE=local PAYLOAD_DIR="$snap" SOURCE_LAYOUT=adopted
 	say "openRepoTools: source: the code mounted at $root/$PIN_SUBMODULE_PATH, $PIN_SOURCE_REPOSITORY at $PIN_COMMIT as $root pins it; every payload file was checked against that commit and nothing fetched"
 }
 

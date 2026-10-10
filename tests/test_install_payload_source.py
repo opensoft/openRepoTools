@@ -1076,6 +1076,28 @@ def test_r02_an_adopted_checkout_installs_its_pinned_code_offline(tmp_path):
     assert "nothing fetched" in result.stdout
 
 
+@NEEDS_JQ
+def test_r02_an_adopted_checkout_whose_pin_comments_its_path_is_still_its_assembly(tmp_path):
+    """A pin `pin_parse` accepts — `submodule_path: code  # the mounted leg` —
+    is recognised as this checkout's assembly, so the pin, the gitlink and the
+    bytes are all checked, rather than the tree being copied as a plain
+    complete tree with none of them checked (#191, Copilot's first round)."""
+    world = World(tmp_path)
+    assembly, code, head = local_assembly(world)
+    pin = assembly / "contracts" / "code-pin.yaml"
+    text = pin.read_text(encoding="utf-8")
+    assert "submodule_path: code\n" in text
+    pin.write_text(text.replace("submodule_path: code\n",
+                                "submodule_path: code  # the mounted leg\n"), encoding="utf-8")
+    home = tmp_path / "home"
+    result = run_file(code / "openRepoTools", home, network(world), "--install")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert_installed(home, "local", result)
+    assert world.requests() == []
+    assert (f"openRepoTools: source: the code mounted at {assembly}/code, "
+            f"opensoft/openRepoTools-code at {head}") in result.stdout, result.stdout
+
+
 # =========================================================================
 # ROW 3 — an explicit local code feature
 # =========================================================================
