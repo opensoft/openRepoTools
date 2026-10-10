@@ -857,20 +857,27 @@ PIN_SCALAR_VALUES = ("$PIN_SCALAR", "${PIN_SCALAR}")
 
 
 def scalar_set_only_by_the_pin_reader(code: str) -> bool:
-    """Every non-empty `PIN_SCALAR=` in `code` sits inside `pin_scalar() {`
-    … `}`, so `$PIN_SCALAR` is a value parsed out of a pin and nothing else."""
-    inside = False
+    """`code` has a `pin_scalar() {` … `}` reader that sets `PIN_SCALAR` to a
+    parsed value, and nothing else sets it to anything but empty. Without the
+    reader, or with a reader that never sets it, `$PIN_SCALAR` would be
+    whatever the environment held (Copilot round 2 on #195)."""
+    inside = reader = False
+    parsed = 0
     for line in code.splitlines():
         stripped = line.strip()
         if re.match(r"pin_scalar\(\)", stripped):
-            inside = True
+            inside = reader = True
             continue
         if inside and stripped == "}":
             inside = False
             continue
-        if not inside and any(value for value, _ in assigned_values(line, "PIN_SCALAR")):
-            return False
-    return True
+        for value, _ in assigned_values(line, "PIN_SCALAR"):
+            if not value:
+                continue
+            if not inside:
+                return False
+            parsed += 1
+    return reader and parsed > 0
 
 
 def installer_source_violations(code: str) -> list[str]:
@@ -979,6 +986,21 @@ def test_the_installer_reaches_only_this_repository():
                  'PAYLOAD_REPO="$PIN_SOURCE_REPOSITORY"\n'
                  'gh api "repos/${PAYLOAD_REPO:-$REPO}/contents/park"\n',
                  True, id="a-scalar-set-outside-the-pin-reader"),
+    pytest.param('case "$key" in\n'
+                 '  source_repository) PIN_SOURCE_REPOSITORY="$PIN_SCALAR" ;;\n'
+                 'esac\n'
+                 'PAYLOAD_REPO="$PIN_SOURCE_REPOSITORY"\n'
+                 'gh api "repos/${PAYLOAD_REPO:-$REPO}/contents/park"\n',
+                 True, id="no-pin-reader-so-the-scalar-is-the-environments"),
+    pytest.param('pin_scalar() {\n'
+                 '\tPIN_SCALAR=""\n'
+                 '}\n'
+                 'case "$key" in\n'
+                 '  source_repository) PIN_SOURCE_REPOSITORY="$PIN_SCALAR" ;;\n'
+                 'esac\n'
+                 'PAYLOAD_REPO="$PIN_SOURCE_REPOSITORY"\n'
+                 'gh api "repos/${PAYLOAD_REPO:-$REPO}/contents/park"\n',
+                 True, id="a-pin-reader-that-never-sets-the-scalar"),
     pytest.param('PIN_SCALAR=""\n'
                  'pin_scalar() {\n'
                  '\tPIN_SCALAR="${rest%%"$q"*}"\n'

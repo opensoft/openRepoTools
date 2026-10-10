@@ -926,6 +926,33 @@ def test_only_the_two_designed_places_are_an_assemblys_code(tmp_path):
         composed)
 
 
+def test_a_stale_manifest_under_a_feature_does_not_hide_its_assembly(tmp_path):
+    """An ancestor carrying the assembly's two markers but failing the rest
+    (not a repository's top level, no gitlink) is skipped, not the end of the
+    search: discovery stopped there and found nothing (Copilot round 2 on
+    #195)."""
+    root, feature = paired_triad(tmp_path)
+    (feature / "contracts").mkdir()
+    (feature / "contracts" / "code-pin.yaml").write_text(
+        LEG_PIN.format(role="code", commit="0" * 40, digest="0" * 64), encoding="utf-8")
+    (feature / "project.yaml").write_text(PROJECT_YAML, encoding="utf-8")
+    roots = conftest.resolve_roots({}, feature / "code")
+    assert roots.assembly == root.resolve(), roots.describe()
+
+
+def test_a_stray_spec_tree_beside_a_paired_code_worktree_is_not_its_spec(tmp_path):
+    """The feature's own spec worktree must be a repository holding the spec
+    commit the assembly pins, as the paired code worktree must. A plain `docs/`
+    there is not it, and the mounted spec leg is read instead (Copilot round 2
+    on #195)."""
+    root, feature = paired_triad(tmp_path, spec_worktree=False)
+    stray = spec_leg(feature / "spec")              # files only, no repository
+    assert (stray / "docs" / "README-lanes.md").is_file()
+    roots = conftest.resolve_roots({}, feature / "code")
+    assert roots.spec == (root / "spec").resolve(), roots.describe()
+    assert roots.how["spec"] == "the assembly's spec leg", roots.how
+
+
 def test_the_variables_name_the_roots(tmp_path):
     code = code_leg(tmp_path / "code")
     root = assembly(tmp_path / "elsewhere" / "asm")

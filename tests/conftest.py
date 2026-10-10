@@ -172,6 +172,15 @@ def _mount(assembly: Path, role: str) -> str:
                    "submodule_path") or role
 
 
+def _own_repository_holding(root: Path, commit: str) -> bool:
+    """`root` is a repository's own top level, and its object store holds
+    `commit`: a worktree or clone of the leg the assembly pins, not a
+    directory that merely sits where one would."""
+    top = _git_out(root, "rev-parse", "--show-toplevel")
+    return bool(top and _same(Path(top), root)) and _git_out(
+        root, "cat-file", "-e", f"{commit}^{{commit}}") is not None
+
+
 def _paired_with(assembly: Path, code: Path, recorded: str) -> bool:
     """Whether `code` is a paired feature worktree of `assembly`'s code leg:
     `<assembly>/worktrees/<feature>/<the code mount's own name>`, a repository
@@ -179,12 +188,9 @@ def _paired_with(assembly: Path, code: Path, recorded: str) -> bool:
     last check is what keeps a checkout that merely sits there from being
     taken for the leg."""
     mount = _mount(assembly, "code")
-    if not (_same(code.parent.parent, assembly / PAIRED_WORKTREES)
-            and code.name == Path(mount).name):
-        return False
-    top = _git_out(code, "rev-parse", "--show-toplevel")
-    return bool(top and _same(Path(top), code)) and _git_out(
-        code, "cat-file", "-e", f"{recorded}^{{commit}}") is not None
+    return (_same(code.parent.parent, assembly / PAIRED_WORKTREES)
+            and code.name == Path(mount).name
+            and _own_repository_holding(code, recorded))
 
 
 def discover_assembly(code: Path) -> Optional[Path]:
@@ -193,7 +199,13 @@ def discover_assembly(code: Path) -> Optional[Path]:
     pin names, AND holds `code` in one of the two designed places: mounted at
     that gitlink, or as a paired feature worktree
     (`<assembly>/worktrees/<feature>/code`). Anything else is None, which is
-    today's layout and a standalone code clone alike."""
+    today's layout and a standalone code clone alike.
+
+    An ancestor that carries the markers but fails the rest is SKIPPED, not
+    the end of the search: a stale `project.yaml` and `contracts/code-pin.yaml`
+    under a feature directory must not hide the assembly above it (Copilot
+    round 2 on #195). Skipping cannot borrow an unrelated tree, because
+    acceptance is still one of the two exact placements."""
     code = code.resolve()
     for candidate in code.parents:
         if not _carries(candidate, ASSEMBLY_MARKERS):
@@ -202,10 +214,9 @@ def discover_assembly(code: Path) -> Optional[Path]:
         top = _git_out(candidate, "rev-parse", "--show-toplevel")
         recorded = _gitlink(candidate, mount)
         if not (top and _same(Path(top), candidate) and recorded):
-            return None
+            continue
         if _same(candidate / mount, code) or _paired_with(candidate, code, recorded):
             return candidate
-        return None
     return None
 
 
@@ -452,10 +463,16 @@ def resolve_roots(environ: Mapping[str, str], suite_root: Path) -> Roots:
                             f"carries none of {', '.join(SPEC_TREES)}")
     elif assembly is not None:
         # A paired feature's own spec worktree, beside its code worktree, is
-        # that feature's spec root; the assembly's mounted spec leg otherwise.
-        paired = code.parent / Path(_mount(assembly, "spec")).name
+        # that feature's spec root, held to the same proof as the paired code
+        # worktree: a repository of its own holding the spec commit the
+        # assembly pins. A stray `docs/` there is not it (Copilot round 2 on
+        # #195), and the assembly's mounted spec leg is read instead.
+        spec_mount = _mount(assembly, "spec")
+        paired = code.parent / Path(spec_mount).name
+        spec_pin = _gitlink(assembly, spec_mount)
         if (_same(code.parent.parent, assembly / PAIRED_WORKTREES)
-                and _carries_a_spec_tree(paired)):
+                and _carries_a_spec_tree(paired) and spec_pin
+                and _own_repository_holding(paired, spec_pin)):
             spec, how["spec"] = paired, "the paired spec worktree beside the code root"
         else:
             candidate = assembly / _mount(assembly, "spec")
