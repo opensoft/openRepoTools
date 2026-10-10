@@ -2,7 +2,7 @@
 
 **Task:** T007 and T008 of [tasks.md](tasks.md), under [#186](https://github.com/opensoft/openRepoTools/issues/186). Neither task is checked complete by this record.
 
-**Code:** [#191](https://github.com/opensoft/openRepoTools/pull/191), branch `feat/installer-payload-source-resolution` (head `2411f40`, based on `c4864ac`).
+**Code:** [#191](https://github.com/opensoft/openRepoTools/pull/191), branch `feat/installer-payload-source-resolution` (head `6568f08`, based on `c4864ac` with main `f87fd5a` merged in as `45979a4`).
 
 **Assembly entry point:** [patches/t007-assembly-entry-point.patch](patches/t007-assembly-entry-point.patch). It cannot land on `main` before the split, because its path is the implementation's.
 
@@ -141,7 +141,7 @@ The module is `WINDOWS_SKIP`, like every bash-driven test here. The composed tes
 
 ### Runs
 
-Every local run used `tests/run.sh`'s own invocation under its lock: the coordinator's deviation for a census that never reaches zero, with `PATH=/usr/bin:$PATH` because this profile's `~/bin/python3` is a venv without pytest.
+Locked runs used `tests/run.sh`'s own invocation under its lock. That is the coordinator's deviation for a census that never reaches zero. They ran with `PATH=/usr/bin:$PATH`, because this profile's `~/bin/python3` is a venv without pytest. Runs marked "unlocked" are scoped proofs of about two minutes, run under the coordinator's rule of 2026-10-09, with HOME, TMPDIR, `--basetemp` and `PYTHONPYCACHEPREFIX` all in the writer's scratch.
 
 | Run | Code | Selection | Result |
 | --- | --- | --- | --- |
@@ -152,9 +152,19 @@ Every local run used `tests/run.sh`'s own invocation under its lock: the coordin
 | Composed, strict | entry point `a02a45c` + code `ecb4ef3` | the module | **90 passed, 0 skipped** |
 | Composed, strict, 2026-10-09T00:47–01:01Z | entry point `a02a45c` + code `d12345b` (= `ecd7aa4`) | module + install suites + `repo_hygiene` | **395 passed, 19 failed**. 17 `repo_hygiene` checks and `test_the_help_and_the_readme_say_the_mode_the_receipt_is_born_at` are T006 §10.6's front-door findings (T009's): they read root documents the code leg does not carry. The 19th was this change's. `test_without_jq_it_refuses_and_places_nothing` saw exit 2 but `line 734: awk: command not found` instead of "needs `jq`": the mounted-leg path read the gitlink with `awk`, which the test's minimal `PATH` lacks. Fixed in `2411f40` and in the entry point (`8ed83b7`) by reading it with `read`. |
 | Green with the `read` fix, 2026-10-09T01:05–01:20Z | `2411f40` | as "Green with hygiene" | **479 passed, 5 failed, 7 skipped**: the same five `lanes-edit.sh` cases, nothing else. |
-| Composed, strict | entry point `8ed83b7` + code `ea17f30` (= `2411f40`) | module + install suites + `repo_hygiene` | Queued behind the shared lock at the checkpoint (2026-10-09T01:2xZ). The expected result is the 18 front-door findings only; to be recorded on resume. |
-| CI on `ecd7aa4` | | | SonarCloud, `guard-launch-mode`, `parse-macos` and `tests-windows` passed; `tests` and `tests-no-submodule` were still running when `2411f40` superseded it. |
-| CI on `2411f40` | | | Queued at the checkpoint; to be recorded on resume. |
+| Composed, strict | entry point `8ed83b7` + code `ea17f30` (= `2411f40`) | module + install suites + `repo_hygiene` | Not completed. The 2026-10-09T01:3xZ account swap stopped it, and `6568f08`'s run below superseded it. |
+| CI on `ecd7aa4` | | | All jobs green (run 37866464029). |
+| CI on `2411f40` | | | All jobs green (run 37869321635). `tests-macos` skipped (no `ready`). |
+| Review of #191 at `2411f40` | | | DO NOT LAND (review 5465121368). F1: on today's layout, the curl path needed api.github.com and `jq`. F2: an installed `wip init` refused at step 7 where base fell back to `main`. |
+| F1/F2 fix | `13cc752` | module | 90 passed, 7 skipped. CI on `13cc752`: green. Lane 3's delta review: LAND (5471121210), with the stale body (delta 8) and the `ready` macOS run as conditions. |
+| Round 2 | `fdc5f18`, `6fa3b43`, `6568f08` | | Dropped the `project.yaml` probe; bounded the assembly search (delta 4); the adopted pin refusal now says what answered (delta 6); r14 reads conftest's text (the `KeyError 'reason'` under #190's composed mode); a composed test for the root's gitlink check; merged main `f87fd5a`. |
+| Module, under the lock | `fdc5f18` content | `-k payload_source` | **96 passed, 7 skipped** |
+| New and changed tests × four installers, unlocked | `c4864ac` / `2411f40` / `13cc752` / `fdc5f18` | the 20 new and changed tests | **19 pass + 1 fail** (the adopted step-7 words, which are new behaviour) / **20 fail** / **16 pass + 4 fail** (the `project.yaml` request, the parent walk ×2, the partial refusal) / **20 pass** |
+| Delta 6 and r14, unlocked | `6fa3b43` | what-answered, documented skip, malformed pins, gitlink pins | **23 passed** |
+| Composed root gitlink test, strict, unlocked | root v2 `8ed83b7` / v3 `6acc147`, with code `fa460f2` | the module's composed tests | v2: the new test fails ×2. v3: **9 passed**. |
+| Broader suites, under the lock | `6568f08` | `payload_source`, `openrepotools_command`, `wip_init`, `install_skill_and_hook`, `install_by_rename`, `repo_hygiene`, `upstream_pin`, `test_roots` | **516 passed, 9 skipped, 5 failed**. The 5 are the `lanes-edit.sh who` exit-8 cases on this workstation's lane state. That file and its test are outside the diff, and CI runs them green. |
+| Composed, strict, under the lock, 2026-10-09T22:08–23:18Z | assembly `4c6a0b7` = root v3 `6acc147` + code `fa460f2` (this head's whole code leg) | module + install suites + `repo_hygiene` + `openrepotools_command` | **429 passed, 1 failed**. The failure is `test_the_root_carries_the_line_ending_rule`, which needs `.gitattributes` in the code leg; run C's legs carry none (T006 §10.2). After #190's roots, the 17 earlier front-door failures read the assembly root and pass. |
+| CI on `6568f08` | | | Run 37997688693: `tests` 1416 passed, 9 skipped. `tests-no-submodule`: 1196 passed, 229 skipped. `tests-windows`: 177 passed. `guard-launch-mode`: 165 passed. `parse-macos`, SonarCloud and Sourcery: pass. `tests-macos` waits on `ready`. |
 
 ## Lane 2's installer rows
 
