@@ -2,7 +2,7 @@
 
 **Task:** T007 and T008 of [tasks.md](tasks.md), under [#186](https://github.com/opensoft/openRepoTools/issues/186). Neither task is checked complete by this record.
 
-**Code:** [#191](https://github.com/opensoft/openRepoTools/pull/191), branch `feat/installer-payload-source-resolution` (head `6568f08`, based on `c4864ac` with main `f87fd5a` merged in as `45979a4`).
+**Code:** [#191](https://github.com/opensoft/openRepoTools/pull/191), branch `feat/installer-payload-source-resolution` (head `8246983`, based on `c4864ac` with main `f87fd5a` merged in as `45979a4`).
 
 **Assembly entry point:** [patches/t007-assembly-entry-point.patch](patches/t007-assembly-entry-point.patch). It cannot land on `main` before the split, because its path is the implementation's.
 
@@ -165,6 +165,9 @@ Locked runs used `tests/run.sh`'s own invocation under its lock. That is the coo
 | Broader suites, under the lock | `6568f08` | `payload_source`, `openrepotools_command`, `wip_init`, `install_skill_and_hook`, `install_by_rename`, `repo_hygiene`, `upstream_pin`, `test_roots` | **516 passed, 9 skipped, 5 failed**. The 5 are the `lanes-edit.sh who` exit-8 cases on this workstation's lane state. That file and its test are outside the diff, and CI runs them green. |
 | Composed, strict, under the lock, 2026-10-09T22:08–23:18Z | assembly `4c6a0b7` = root v3 `6acc147` + code `fa460f2` (this head's whole code leg) | module + install suites + `repo_hygiene` + `openrepotools_command` | **429 passed, 1 failed**. The failure is `test_the_root_carries_the_line_ending_rule`, which needs `.gitattributes` in the code leg; run C's legs carry none (T006 §10.2). After #190's roots, the 17 earlier front-door failures read the assembly root and pass. |
 | CI on `6568f08` | | | Run 37997688693: `tests` 1416 passed, 9 skipped. `tests-no-submodule`: 1196 passed, 229 skipped. `tests-windows`: 177 passed. `guard-launch-mode`: 165 passed. `parse-macos`, SonarCloud and Sourcery: pass. `tests-macos` waits on `ready`. |
+| Copilot round 1, on `6568f08` | `cddd1f7` | | Three findings. Fixed: a copy-time race on the mounted-leg path (the checked snapshot is what is installed), and a commented `submodule_path` that `pin_mounts` missed (its new test fails at `6568f08` and passes at `cddd1f7`, scoped and unlocked). Kept: the index-then-HEAD gitlink fallback, which is openRepoShape's `recorded_gitlink` contract. Local rows r02/r03/r10/r15, scoped and unlocked: **13 passed, 2 skipped**. |
+| Copilot round 2, on `cddd1f7` | `8246983` | | One finding: the PR body overclaimed a refusal for a ref that moves between the probe and the resolution. The body is corrected, and a test (moved right after the probe: adopted → installed whole at the second commit; single → refused) passes, together with row 7, scoped and unlocked: **3 passed**. The cap is reached. |
+| Composed, strict, unlocked | assembly `4b8b05a` = root v3 + code `3fc1e95` (= `8246983`) | the module's composed tests + r02, r03, r07, r10 | **22 passed** |
 
 ## Lane 2's installer rows
 
