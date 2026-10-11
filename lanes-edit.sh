@@ -7937,6 +7937,15 @@ lane_next_free() {   # <repo> ; rows on stdin
 # swapped_lanes [<workstation>] — one row per swapped lane, tab-separated:
 #   <lane>	<UTC>	<window>	<dir>	<profile>	<agent>	<transcript>
 #
+# THE FIRST FIELD IS THE REGISTER ROW'S SPELLING OF THE LANE (Amendment 15), the
+# way `window-lane`'s answer is, and not the spelling of the `PAUSED` line the
+# record was read from: a log is append-only and spells its lane however it was
+# typed on the day, so `repowin-1` in a log is the lane the row calls
+# `repoWin-1`. A caller of this output hands that field to `tmux rename-window`,
+# to `--name`, to `lane <name>` and to a read of the register, and each of them
+# wants the row's spelling. The log's own spelling is kept for the two things
+# that read the LOG — its path and the pickaxe key — and is never printed.
+#
 # THE LAST TWO ARE AMENDMENT 17(b)'s, and they are added at the END for the
 # reason the fourth and fifth were: the FIRST FIELD BEFORE THE FIRST TAB is the
 # contract every reader of this output takes (the launcher, the `handoff`
@@ -8037,8 +8046,13 @@ swapped_candidates() {
         # written, up to and including its object, which is unique to it and
         # which `git log -S` can find without a regex.
         # `nm[l]` AND NEVER `l` (Amendment 15, `8345d2f`): the key is the lane
-        # folded to one case and `nm` is the spelling the register row carries,
-        # which is the one a caller of this output hands back to a read.
+        # folded to one case and `nm` is the spelling used by the last line of
+        # that lane in its LOG, which is the register row spelling only when the
+        # two agree in case (Amendment 15 makes them one lane either way). It is
+        # the spelling the pickaxe key below needs, because `git log -S` matches
+        # bytes; the row spelling is for `swapped_lanes` to print as the first
+        # field, and `window-lane` canonicalises its answer the same way. (No
+        # apostrophe in this comment: this awk program is single-quoted.)
         printf "%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s — lane %s, session %s@%s, %s, %s\n",
           nm[l], 31, utc[l], 31, (w == "" ? "unknown" : w), 31,
           (d == "" ? "" : d), 31, (pf == "" ? "" : pf), 31,
@@ -8053,6 +8067,12 @@ swapped_lanes() {
   [ -n "$sw_rows" ] || return 0
   while IFS="$US" read -r sw_l sw_u sw_w sw_d sw_p sw_a sw_t sw_key; do
     [ -n "${sw_l:-}" ] || continue
+    # THE ROW'S SPELLING FOR THE FIRST FIELD, THE LOG'S FOR THE LOG (see above).
+    # `canon_lane` refuses a register holding the 15(d) pair and a table of
+    # former names it cannot read; this read keeps the log's own spelling then,
+    # for `window-lane`'s reason: it is informational and its contract is rows
+    # or 8, and the refusal belongs to the writer the lane leads to.
+    sw_can="$(canon_lane "$sw_l" 2>/dev/null || :)"
     sw_rank=999999999
     if have_remote_ref; then
       sw_sha="$(git -C "$LANES_REPO" log -1 --format=%H -S"$sw_key" "origin/$LANES_BRANCH" -- "$(log_path_for "$sw_l")" 2>/dev/null || :)"
@@ -8061,7 +8081,7 @@ swapped_lanes() {
         case "$sw_c" in ''|*[!0-9]*) : ;; *) sw_rank="$sw_c" ;; esac
       fi
     fi
-    printf '%09d%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' "$sw_rank" "$US" "$sw_l" "$US" "$sw_u" "$US" "$sw_w" \
+    printf '%09d%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' "$sw_rank" "$US" "${sw_can:-$sw_l}" "$US" "$sw_u" "$US" "$sw_w" \
       "$US" "${sw_d:-}" "$US" "${sw_p:-}" "$US" "${sw_a:-}" "$US" "${sw_t:-}"
   done <<EOF
 $sw_rows

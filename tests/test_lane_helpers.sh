@@ -7828,6 +7828,14 @@ is   "…so column 10 is the line that binds it, which needs both halves at once
 run "$E" window-lane Raven casewin:3
 is   "window-lane finds the lane from a record that spells it in another case" "$rc" 0
 is   "…and answers with the register row's spelling" "$out" "repoWin-1"
+# `swapped` READS THE SAME RECORD AND HAS TO ANSWER THE SAME WAY (#55). Its first
+# field is what a caller hands to `tmux rename-window`, to `--name` and to a read
+# of the register, so the log's `repowin-1` is the lane the ROW calls `repoWin-1`.
+# The row is picked by its window, because Raven holds another swapped lane.
+run "$E" swapped Raven
+is   "swapped lists a lane whose record spells it in another case" "$rc" 0
+is   "…with the register row's spelling in its first field, not the log line's" \
+     "$(printf '%s\n' "$out" | awk -F'\t' '$3 == "casewin:3" { print $1 }')" "repoWin-1"
 
 # `--all` CLEARS `--lane`, SO IT MUST NOT REFUSE FOR ONE EITHER. The register
 # here holds the 15(d) pair; `--all` is the every-lane listing and a `--lane`
