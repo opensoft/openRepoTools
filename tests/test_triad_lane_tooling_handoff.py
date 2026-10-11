@@ -236,6 +236,83 @@ def test_t018_a_manifest_the_handoff_cannot_read_is_said_and_the_handoff_goes_on
     assert inventory(b, "triad-1") == {str(lane_code): str(code), str(lane_root): str(a)}
 
 
+# ===================================================================== (3)
+
+@NEEDS_TEMPLATE
+def test_t018_reconcile_reports_what_the_legs_hold_and_no_sidecar_names(triad):
+    """(3) THE LEGS' REGISTRATIONS AND THE PAIRED ROOT ARE READ: a spec tree
+    made away from every root, a paired code tree, a clone where a paired
+    worktree belongs and a registration whose directory is gone are each
+    reported - unmanaged or stale - naming the leg, while a tree the inventory
+    records is not, and neither leg's own checkout is."""
+    b, t = triad
+    a, code, spec = t["assembly"], t["code"], t["spec"]
+    away = leg_tree(b, spec, b.projects / "away-spec", "away")
+    paired = leg_tree(b, code, a / "worktrees" / "010-v" / "code", "010-v")
+    clone = a / "worktrees" / "010-v" / "spec"
+    b.git("clone", "-q", b.remotes / "triad-spec.git", clone)
+    gone = leg_tree(b, code, b.projects / "gone-code", "gone")
+    shutil.rmtree(gone)
+    made = b.tool("lane-worktrees", "add", "triad-1", "c1", "--checkout", code)
+    assert made.returncode == 0, made.stderr
+    recorded = made.stdout.strip()
+
+    proc = b.tool("lanes-edit.sh", "lane-reconcile", "triad-1")
+    assert proc.returncode == 0, proc.stderr
+    rows = reconcile_rows(proc.stdout)
+    assert rows[real(away)][0] == "unmanaged", rows
+    assert f"git registers it in {spec}, the spec leg of {a}/project.yaml (opensoft/triad-spec)" \
+        in rows[real(away)][1], rows
+    assert rows[real(paired)][0] == "unmanaged", rows
+    assert f"the code leg of {a}/project.yaml" in rows[real(paired)][1], rows
+    assert rows[real(clone)][0] == "unmanaged", rows
+    assert f"paired feature trees ({a}/worktrees)" in rows[real(clone)][1], rows
+    assert rows[real(gone)][0] == "stale-registration", rows
+    assert f"git -C {code} worktree prune" in rows[real(gone)][1], rows
+    assert rows[real(recorded)][0] == "ok", rows
+    for not_a_tree in (a, code, spec, a / ".git" / "modules" / "code", a / ".git" / "modules" / "spec",
+                       a / "worktrees" / "010-v"):
+        assert real(not_a_tree) not in rows, rows
+    assert field(proc.stdout, "TREES") == ["1 inventoried", "0 dirty or unpushed",
+                                           "0 require recovery", "4 unmanaged or stale"], proc.stdout
+    assert field(proc.stdout, "VERDICT")[0] == "ungraceful-stop", proc.stdout
+
+
+@NEEDS_TEMPLATE
+def test_t018_reconcile_pronounces_no_clearance_over_legs_nobody_read(triad):
+    """A manifest, or the paired root, that could not be read leaves paths
+    nobody inspected: the verdict is `indeterminate`, never a clearance."""
+    b, t = triad
+    if os.geteuid() == 0:
+        pytest.skip("root reads a mode-000 file")
+    a, code = t["assembly"], t["code"]
+    paired = leg_tree(b, code, a / "worktrees" / "011-u" / "code", "011-u")
+    os.chmod(a / "project.yaml", 0)
+    try:
+        proc = b.tool("lanes-edit.sh", "lane-reconcile", "triad-1")
+    finally:
+        os.chmod(a / "project.yaml", 0o644)
+    assert proc.returncode == 0, proc.stderr
+    verdict = field(proc.stdout, "VERDICT")
+    assert verdict[0] == "indeterminate", proc.stdout
+    assert (f"the legs of the assembly {a} could not be read (its project.yaml is there and "
+            "unreadable)") in verdict[1], verdict
+    assert real(paired) not in reconcile_rows(proc.stdout)
+    # the paired root that cannot be listed: a clone stands in it, which only
+    # the listing could find (a registered tree is found through its leg)
+    b.git("worktree", "remove", paired, cwd=code)
+    b.git("clone", "-q", b.remotes / "triad-code.git", a / "worktrees" / "012-t" / "code")
+    os.chmod(a / "worktrees", 0)
+    try:
+        proc = b.tool("lanes-edit.sh", "lane-reconcile", "triad-1")
+    finally:
+        os.chmod(a / "worktrees", 0o755)
+    assert proc.returncode == 0, proc.stderr
+    verdict = field(proc.stdout, "VERDICT")
+    assert verdict[0] == "indeterminate", proc.stdout
+    assert f"the assembly's paired root {a}/worktrees could not be listed" in verdict[1], verdict
+
+
 # ===================================================== the single repository
 
 def single_repository_decoys(bench: Bench) -> list:

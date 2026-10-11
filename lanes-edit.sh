@@ -12760,7 +12760,10 @@ lane_real_path() {   # <path>
 
 # THE LANE'S TWO WORKTREE ROOTS — the same two `lane-handoff` polls, and they
 # are here rather than there so the poll and the reconciliation cannot come to
-# disagree about where a lane keeps its writers.
+# disagree about where a lane keeps its writers. Where the lane's checkout is an
+# ASSEMBLY (T018) both also read its paired root, `<assembly>/worktrees/
+# <feature>/<each leg's path>`, which is two levels deep and per feature, so it
+# is read beside these two (`lane_reconcile`, step 4) rather than as a third.
 lane_worktree_roots() {   # <lane> <the lane's checkout>
   lwr_lane="${1-}"; lwr_dir="${2-}"
   [ -n "$lwr_dir" ] || return 0
@@ -13070,6 +13073,22 @@ EOF
   # from the two lane roots on disk. It is REPORTED and never adopted, deleted
   # or overwritten: which lane a tree belongs to is a person's to say.
   lrc_unmanaged=0
+  # A TRIAD (opensoft/openRepoTools#186, plan task T018). WHERE THE LANE'S
+  # CHECKOUT IS AN ASSEMBLY — its own `project.yaml` declares a leg other than
+  # itself, read by `assembly_legs`, the one reader every lane tool asks — what
+  # its LEGS hold is read too: the worktrees git registers in each leg's
+  # repository, which `git worktree list` in the assembly never names, and the
+  # paired feature trees `<assembly>/worktrees/<feature>/<each leg's path>`.
+  # Both are reported exactly as the checkout's own registrations and the lane
+  # roots are, and adopted, deleted or overwritten no more. A checkout with no
+  # `project.yaml` is asked nothing, so its report is what it always was; a
+  # manifest, a leg's registrations or the paired root that could not be read
+  # leaves paths nobody read, and the verdict below says so.
+  lrc_legs=""; lrc_lgrc=8; lrc_legwhy=""; lrc_tab="$(printf '\t')"
+  if [ -n "$lrc_dir" ] && [ -d "$lrc_dir" ] && { [ -e "$lrc_dir/project.yaml" ] || [ -L "$lrc_dir/project.yaml" ]; }; then
+    lrc_lgrc=0
+    lrc_legs="$(assembly_legs "$lrc_dir")" || lrc_lgrc=$?
+  fi
   if [ -n "$lrc_dir" ] && [ -d "$lrc_dir" ]; then
     # THE CHECKOUT'S OWN ROW IS NOT AN UNMANAGED TREE, AND git ANSWERS WITH THE
     # PHYSICAL PATH. A recorded `dir` reached through a symlink — which is how
@@ -13105,6 +13124,46 @@ EOF
 $(git -C "$lrc_dir" worktree list --porcelain 2>/dev/null || :)
 EOF
   fi
+  # T018: EVERY LEG'S REGISTRATIONS, beside the checkout's own. A leg that is
+  # not checked out here is an empty directory of the assembly's, where git
+  # answers the ASSEMBLY — it registers nothing of its own, so it is passed
+  # over. A leg's main worktree is listed FIRST and spelled as its git
+  # directory under the assembly's `.git/modules/`, so it is skipped by place,
+  # not by name.
+  if [ "$lrc_lgrc" = 0 ]; then
+    while IFS="$lrc_tab" read -r lrc_lrepo lrc_ldecl lrc_labs; do
+      [ -n "$lrc_labs" ] && [ -d "$lrc_labs" ] || continue
+      lrc_ltop="$(git -C "$lrc_labs" rev-parse --show-toplevel 2>/dev/null </dev/null || :)"
+      [ -n "$lrc_ltop" ] && [ "$(lane_real_path "$lrc_ltop")" = "$(lane_real_path "$lrc_labs")" ] || continue
+      lrc_lwl=""; lrc_lwrc=0
+      lrc_lwl="$(git -C "$lrc_labs" worktree list --porcelain 2>/dev/null </dev/null)" || lrc_lwrc=$?
+      if [ "$lrc_lwrc" != 0 ]; then
+        lrc_legwhy="${lrc_legwhy:+$lrc_legwhy; }the worktrees git registers in $lrc_labs, the $lrc_ldecl leg, could not be listed (git worktree list exited $lrc_lwrc)"
+        continue
+      fi
+      lrc_first=1
+      while IFS= read -r lrc_wl; do
+        case "$lrc_wl" in worktree\ *) : ;; *) continue ;; esac
+        if [ "$lrc_first" = 1 ]; then lrc_first=0; continue; fi
+        lrc_wp="${lrc_wl#worktree }"
+        lrc_wpr="$(lane_real_path "$lrc_wp")"
+        case "$lrc_seen" in *" $lrc_wp "*|*" $lrc_wpr "*) continue ;; esac
+        if [ -d "$lrc_wp" ]; then
+          printf 'TREE%s%s%sunmanaged%s%s%sgit registers it in %s, the %s leg of %s/project.yaml (%s), and no sidecar of this lane names it; it is left exactly as it is\n' \
+            "$US" "$(tree_id_for "$lrc_wp")" "$US" "$US" "$lrc_wp" "$US" "$lrc_labs" "$lrc_ldecl" "$lrc_dir" "$lrc_lrepo"
+        else
+          printf 'TREE%s%s%sstale-registration%s%s%sgit registers it in %s, the %s leg of %s/project.yaml (%s), and the directory is gone; `git -C %s worktree prune` is a person'\''s act\n' \
+            "$US" "$(tree_id_for "$lrc_wp")" "$US" "$US" "$lrc_wp" "$US" "$lrc_labs" "$lrc_ldecl" "$lrc_dir" "$lrc_lrepo" "$lrc_labs"
+        fi
+        lrc_seen="$lrc_seen $lrc_wp $lrc_wpr "
+        lrc_unmanaged=$((lrc_unmanaged + 1))
+      done <<LRC_LEG_TREES
+$lrc_lwl
+LRC_LEG_TREES
+    done <<LRC_LEGS
+$lrc_legs
+LRC_LEGS
+  fi
   while IFS= read -r lrc_wr; do
     [ -n "$lrc_wr" ] || continue
     [ -d "$lrc_wr" ] || continue
@@ -13121,6 +13180,41 @@ EOF
   done <<EOF
 $(lane_worktree_roots "$lrc_lane" "$lrc_dir")
 EOF
+  # T018: THE PAIRED ROOT. A feature directory, and each declared leg's path
+  # under it, that holds a `.git` of its own and that nothing above named — a
+  # registration lost, or a clone where a worktree belongs. Anything else under
+  # it is the assembly's own working tree, where git answers too, so a `.git`
+  # is what makes a checkout here. A directory that cannot be listed is a read
+  # nobody made, never an empty one.
+  if [ "$lrc_lgrc" = 0 ] && [ -d "$lrc_dir/worktrees" ]; then
+    if [ ! -r "$lrc_dir/worktrees" ] || [ ! -x "$lrc_dir/worktrees" ]; then
+      lrc_legwhy="${lrc_legwhy:+$lrc_legwhy; }the assembly's paired root $lrc_dir/worktrees could not be listed"
+    else
+      for lrc_f in "$lrc_dir"/worktrees/*; do
+        [ -d "$lrc_f" ] && [ ! -L "$lrc_f" ] || continue
+        if [ ! -r "$lrc_f" ] || [ ! -x "$lrc_f" ]; then
+          lrc_legwhy="${lrc_legwhy:+$lrc_legwhy; }the assembly's feature directory $lrc_f could not be listed"
+          continue
+        fi
+        # THE FEATURE DIRECTORY ITSELF, then each declared leg's path under
+        # it — a relative one, as the standard writes them.
+        lrc_cands="$lrc_f
+$(printf '%s\n' "$lrc_legs" | awk -F'\t' -v f="$lrc_f" '$2 != "" && $2 !~ /^\// { p = $2; sub(/^\.\//, "", p); print f "/" p }')"
+        while IFS= read -r lrc_c; do
+          [ -n "$lrc_c" ] && [ -d "$lrc_c" ] && [ ! -L "$lrc_c" ] || continue
+          { [ -e "$lrc_c/.git" ] || [ -L "$lrc_c/.git" ]; } || continue
+          lrc_cr="$(lane_real_path "$lrc_c")"
+          case "$lrc_seen" in *" $lrc_c "*|*" $lrc_cr "*) continue ;; esac
+          printf 'TREE%s%s%sunmanaged%s%s%sit sits in the assembly'\''s paired feature trees (%s/worktrees) and no sidecar of this lane names it; it is left exactly as it is\n' \
+            "$US" "$(tree_id_for "$lrc_c")" "$US" "$US" "$lrc_c" "$US" "$lrc_dir"
+          lrc_seen="$lrc_seen $lrc_c $lrc_cr "
+          lrc_unmanaged=$((lrc_unmanaged + 1))
+        done <<LRC_PAIRED
+$lrc_cands
+LRC_PAIRED
+      done
+    fi
+  fi
 
   # 5. THE VERDICT — the lifecycle word crossed with the holder, which is the
   # whole of what tells the two crash kinds apart.
@@ -13163,6 +13257,20 @@ EOF
   if [ "$lrc_drc" != 0 ] && [ "$lrc_drc" != 8 ] && [ "$lrc_v" != indeterminate ]; then
     lrc_v=indeterminate
     lrc_why="lane $lrc_lane's object log could not be read, so its coordinator directory is NOT established and neither the worktrees git registers there nor the trees on disk under its roots were inspected — no clearance is pronounced over paths nobody read (Amendment 7(d))"
+  fi
+  # T018: AN ASSEMBLY WHOSE LEGS COULD NOT BE READ is one whose leg
+  # registrations and paired trees nobody inspected — the same paths-nobody-read
+  # as an unreadable object log, and the same answer. It is said in the words
+  # `lane-worktrees`' sweep refuses with (`the legs of the assembly <dir> could
+  # not be read`), because the sweep reads this verdict FIRST and refuses on
+  # it: one fact, one spelling, whichever reader a person meets.
+  if [ "$lrc_lgrc" != 0 ] && [ "$lrc_lgrc" != 8 ] && [ "$lrc_v" != indeterminate ]; then
+    lrc_v=indeterminate
+    lrc_why="the legs of the assembly $lrc_dir could not be read (its project.yaml is there and unreadable), so which legs it declares — and the worktrees they register and the paired feature trees under $lrc_dir/worktrees — is NOT established, and no clearance is pronounced over paths nobody read (T018, Amendment 7(d))"
+  fi
+  if [ -n "$lrc_legwhy" ] && [ "$lrc_v" != indeterminate ]; then
+    lrc_v=indeterminate
+    lrc_why="lane $lrc_lane's checkout $lrc_dir is an assembly and not all of what its legs hold could be read ($lrc_legwhy), so no clearance is pronounced over paths nobody read (T018, Amendment 7(d))"
   fi
   printf 'TREES%s%s inventoried%s%s dirty or unpushed%s%s require recovery%s%s unmanaged or stale\n' \
     "$US" "$lrc_n" "$US" "$lrc_dirty" "$US" "$lrc_recover" "$US" "$lrc_unmanaged"
