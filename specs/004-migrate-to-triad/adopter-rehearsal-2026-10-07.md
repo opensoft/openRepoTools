@@ -182,6 +182,12 @@ blob, `8043147a`. The source clone was unchanged except for the one new ref
   [quickstart.md](quickstart.md) and [preparation.md](preparation.md) still
   describe the October 4 version; the plan's owner decides when to refresh
   them.
+- *Dated 2026-10-09 (#193 item 8):* since #192, the mapping link above opens
+  run C's plan ([adopter-rehearsal-2026-10-08.md](adopter-rehearsal-2026-10-08.md)),
+  and run B's stays in history at `63810dd`. #188 landed as `837928a`. The
+  bench restart of 2026-10-08 cleared both runs' disposable repositories, so
+  their logs survive only in this file's receipt. Run C's legs still carry
+  `558a12b` and `48d98cd`, as the parents of their heads.
 - Each run used a fresh, empty `--local-remote-dir` and `--work-dir`. Without
   the first, `execute` calls `gh repo create`. The plan's
   `execution_authorized: false` is informational and the tool does not read it.
