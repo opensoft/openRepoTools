@@ -3922,6 +3922,43 @@ names, with the remedy a person's (commit and push from inside it; no `--yes` is
 offered when legs are all it counted), and lists a leg that holds work and is not
 this lane's below the table as NOT counted — whether the gate passes or not.
 
+**`lane-handoff` and `lane-reconcile` (T018 (b)).** Where the lane's checkout is an
+assembly, `lane-handoff` also polls the **paired root**: `<assembly>/worktrees/<feature>`
+and `<feature>/<each declared leg's path>`. It polls every directory there with a `.git`
+of its own, exactly as it polls `.claude/worktrees`, because the paired root is per
+feature, not per lane, and a writer with nothing committed yet has no trailer to be
+found by. So a writer in a paired tree is in the WRITERS block. Every tree it polls is
+**recorded under the checkout it belongs to**. A worktree of a leg's repository (a
+paired tree, or one `lane-worktrees add --checkout <assembly>/code` made under the
+lane's root) is recorded under that leg, the path `project-legs` prints and `add`
+records. Any other tree keeps the lane's `dir`, as before. A leg that is not checked
+out here (never initialized, or deinitialized) names no tree. In an assembly several
+lanes share, each lane's handoff records every paired tree, as it records every tree in
+`.claude/worktrees`. A tree two lanes' inventories both name is `keep` in both sweeps
+until a person says whose it is. A worktree a leg registers anywhere else is not polled
+as a writer, just as the checkout's own registrations elsewhere are not;
+`lanes-edit.sh lane-reconcile` reports it. The reconciliation reads what the legs hold
+beside what the checkout holds. Every worktree git registers in a checked-out leg that
+no sidecar names is a `TREE` row: `unmanaged`, or `stale-registration` where its
+directory is gone, naming the leg. A checkout in the paired root that nothing else named
+is `unmanaged`. Nothing is adopted, deleted or overwritten.
+
+**A `project.yaml` that cannot be read is never "no legs".** `lane-handoff` still
+completes (`R-A11-11`), but it does not poll the paired root. It says so in the top
+block's WRITERS section (`- NOT POLLED: …`), files no sidecar for a tree it cannot
+place (a tree of the lane's own repository is still recorded), and leaves the lane
+`SWAPPING`. The reconciliation's verdict is `indeterminate`, said in the words the
+sweep refuses with ("the legs of the assembly `<dir>` could not be read"): the sweep
+reads that verdict first and refuses on it, exit **2**. The verdict is `indeterminate`
+too where a leg's registrations, the paired root or a feature directory under it
+cannot be listed. **A checkout with no `project.yaml` is asked nothing**, and one whose
+`project.yaml` names no leg but itself is asked only `project-legs`, which answers 8.
+The handoff's output, top block and inventory, and the reconciliation, are byte for
+byte what they were. `tests/test_triad_lane_tooling_handoff.py` holds them to the
+output `c45a452`'s tools printed, on a repository laid out to look like a triad: a
+submodule's worktree under `worktrees/<feature>/code`, and a tree recorded with the
+submodule as its checkout.
+
 ### Two protocol lines this act assumes (proposed for the amendment that ratifies it)
 
 1. **A lane creates worktrees, never clones.** Every tree a lane works in is a
