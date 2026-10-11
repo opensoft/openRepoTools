@@ -4,6 +4,28 @@
 `fetch --all --prune` at 22:07:06Z. The GitHub reads were made between 20:32Z and 20:41Z and again
 between 21:58Z and 22:10Z. #186's comments were read through 22:06:49Z. Anything later is not in
 this walk.
+**Updated 2026-10-11T16:3xZ, after lane 3's review of #196 (5481348731 findings 12 and 14):**
+lines 20, 29 and 31 move from MET to PARTLY, because each carries an open defect, which this
+walk's own legend makes PARTLY (the legend now also says what does not count); and the walk now
+agrees with two records #196 carries beside it: the candidate record at `16e6ea4`, which
+publishes r2 and classifies every failure, and lane 2's slice B at `40f26f7`, which lane 3
+reviewed as LAND. Nothing else was re-walked. These later facts are not read into the lines:
+- #191 is at `8246983`, with lane 3's LAND (5481368124), `ready` since 16:31:43Z (6111192078).
+- IN is at `67a978c`. #196 carries `3cca1e7`, whose line 13 still names a host path, which
+  section 2 and section 5 item 4 say must go first (5481348731 finding 13).
+- The test-root follow-ups are #195, open at `e378871`. Lane 3's LAND (5481360555) covers
+  `fb77bed`; `e378871` adds #193 item 14, decided as "the test gives".
+- Lane 2's verification of T18 is posted (6103482530): the record holds, with five minor
+  contradictions and findings a–g the record does not report.
+- T007's v3 entry-point patch makes the T3 change, and #196 carries it. Its re-review is not
+  recorded here.
+- openRepoShape `main` is `20e13f0`, 8 ahead of `7f84ca4`. `e4decfb` (#194) makes a plan that
+  sends `.gitmodules` and a submodule it registers to different legs a `check` finding; this
+  plan sends both to code (5481348731 finding 14), so line 12 stays MET. `20e13f0` refuses a
+  leg mount path inside a path the root holds. Both change `adopt-project.py`, so six of the
+  eight commits do. Still only `22c9fdd` touches a mounted file. Question e1 names the head
+  current at the request.
+
 **By:** lane openRepoTools-1's reviewer, under [#186](https://github.com/opensoft/openRepoTools/issues/186).
 It ran read-only everywhere except this file and its own scratch. A first, unpublished pass was
 made at 13:27Z–13:50Z; section 1 says which statuses moved since.
@@ -31,8 +53,8 @@ Paths are under `specs/004-migrate-to-triad/` unless they start with `openspec/`
 | IN | `004-migrate-to-triad-installer` | `51993a4` |
 | RB | `004-migrate-to-triad-rollback` | `fa44d75` |
 | RR | `004-migrate-to-triad-rollback-refresh` (lane 2's slice A) | `2e7e55e` (`c1283b5`, `612ea94`, `2e7e55e` on RB) |
-| EF | `004-migrate-to-triad-evidence-2-followups` (lane 2's slice B) | `096de93` |
-| CA | `004-migrate-to-triad-candidate` | `935f53f` (the r1 build; r2 is not published) |
+| EF | `004-migrate-to-triad-evidence-2-followups` (lane 2's slice B) | `40f26f7`, as #196 carries it: `096de93` plus lane 3's findings 1–3 and one nit (the branch has since moved to `1578f99`) |
+| CA | `004-migrate-to-triad-candidate` | `16e6ea4`, r2 published and classified, as #196 carries it (on 2026-10-09 the branch was `935f53f`, the r1 build) |
 | T18 | `004-migrate-to-triad-t018` | `63bff08` |
 | L2 | `004-migrate-to-triad-reads` | `a7a8e00` |
 | #191 | `feat/installer-payload-source-resolution` | `13cc752` |
@@ -53,11 +75,12 @@ unchanged since `63810dd`; `git diff --stat 63810dd f87fd5a` over them is empty.
   22:07Z. Lane 2's T008 matrix at `13cc752` is final (#186 6088812080).
 - Lane 2's slices are on origin, both meant for the evidence-3 PR. A is RR: lane 3 reviewed
   `c1283b5` as LAND within evidence-3 (#186 6089982753), and `612ea94` and `2e7e55e` take in its
-  notes N1–N9 (6090048356). B is EF `096de93` (6088799627); lane 3's review of it is in progress.
+  notes N1–N9 (6090048356). B is EF: lane 3 reviewed `096de93` as LAND within evidence-3
+  (6092925484), and `40f26f7` takes in its findings 1–3 and one nit (6103529172).
 - Lane 3's review of FU and the T010 patches is posted (#186 6089801221, 21:47Z).
 - The r2 composed candidate's three suites finished at 18:20:47Z. Lane 2's reading of the logs is
-  #186 6087267593; this walk checked the summary lines against the logs. Lane 1's
-  classification of them is in progress.
+  #186 6087267593; this walk checked the summary lines against the logs. CA at `16e6ea4`
+  publishes them and classifies every failure, F1–F6 (CA §5).
 - In progress, so not counted as evidence: the Gate A capture-tool fix (#186 6087232548,
   6087261307; nothing new in brett-wip since `99eed35`, per 6089772323 and 6089982753); lane 2's
   verification of T18 (6089772323).
@@ -75,6 +98,10 @@ unchanged since `63810dd`; `git diff --stat 63810dd f87fd5a` over them is empty.
 - **OPEN**: no finished evidence.
 - **AFTER-GATE-C**: cannot be met before real legs exist.
 
+An open #193 item that is a defect in the line's own evidence makes the line PARTLY. A later
+step listed under "What remains", such as a rerun at the frozen source or a recheck at the
+request, does not (added 2026-10-11).
+
 Publishing the T006–T011 records on `main` is not itself a checklist line. It is listed among the
 blockers in section 5.
 
@@ -84,7 +111,7 @@ blockers in section 5.
 | --- | --- | --- | --- | --- | --- |
 | 1 | Leg names and visibility confirmed (T003, FR-012) | MET | #186 6035767825 ("legs and visibility confirmed"); M:`openspec/changes/migrate-to-triad/adoption-plan.yaml` (legs; `visibility: public`) | Recheck at the Gate C request. 404 is not proof the names are free (preparation.md:53–56) | Brett (given); lane 1 (recheck) |
 | 2 | `git-filter-repo` via the approved prerequisite path | PARTLY | M:adopter-rehearsal-2026-10-08.md#Setup; M:adopter-rehearsal-2026-10-07.md#Setup; #186 6072724043 (i) | No record names who approves the private-venv path for the real `execute` (plan.md:105–106, :160–162): question e4. Neither receipt carries the October 4 receipt's "existing bench/system installations were unchanged" (preparation.md:62–63), which the evidence column asks for (lane 2, 6088829392 item 10). The "no ensurepip" cause is withdrawn on EF; the refusal's cause is not established (#193 item 12) | Brett; lane 1 |
-| 3 | Plan regenerated for the rehearsal source, overrides kept | MET | M:`openspec/changes/migrate-to-triad/adoption-plan.yaml` (source `837928a`, 22 resolutions); M:adopter-rehearsal-2026-10-08.md#Mapping (T003); #192 review 5464893559; #186 6072724043 (iv) | The final plan is regenerated at the frozen source before the request (question e2). `check` reads the clone's local `main`, so the committed plan is `plan-stale` against any later `main` (#193 item 10; EF:adopter-rehearsal-2026-10-08.md:107–119) | lane 1 |
+| 3 | Plan regenerated for the rehearsal source, overrides kept | MET | M:`openspec/changes/migrate-to-triad/adoption-plan.yaml` (source `837928a`, 22 resolutions); M:adopter-rehearsal-2026-10-08.md#Mapping (T003); #192 review 5464893559; #186 6072724043 (iv) | The final plan is regenerated at the frozen source before the request (question e2). `check` reads the clone's local `main`, so the committed plan is `plan-stale` against any later `main` (#193 item 10; EF:adopter-rehearsal-2026-10-08.md:113–125) | lane 1 |
 | 4 | Standard `check` passes, every path, no unapproved drop | MET | M:adopter-rehearsal-2026-10-08.md#Run C (`plan ok`; 120 = 65/49/6/0); #186 6072724043 (ii) | Rerun at the frozen source | lane 1 |
 | 5 | Amendment folders to code; full proposals and specs to spec | MET | M plan: `docs/`, `ideation/`, `openspec/`, `specs/` to spec; 0 `features/` paths on `main` | Re-observe at the frozen source | lane 1 |
 | 6 | No amendment paths recorded where none exist | MET | M:inventory.json `refreshed.amendment_path_observations` (every head empty) | Re-observe at the Gate A final capture | lane 1 |
@@ -98,10 +125,10 @@ blockers in section 5.
 | 14 | Nested submodule; original `.gitmodules` | MET | M runs B and C (code keeps blob `8043147a`; the assembly gets its own) | — | — |
 | 15 | Pin integrity, coupled | MET | M run C (`3be52767…` MATCH); #186 6072724043 (v) | — | — |
 | 16 | Recursive bootstrap | MET | M run C (`bootstrap ok`, three validators) | — | — |
-| 17 | Root collisions and leg guidance as reviewed patches | MET | M:root-guidance-2026-10-08.md#1, #4; M:patches/t006/*; #192 review 5464893559 finding 7 (exact rebuild) | #193 items 8–13, the text fixes: on EF `096de93`, under lane 3's review, for evidence-3. The `shape/*.md` deletion is T014's reviewer's | lane 1 (EF by lane 2) |
-| 18 | Shape-aware root bootstrap after the legs exist | PARTLY | M:root-guidance#7; T18:t018-disposable-2026-10-09.md#1 (a second run: `setup-openspeckit --shape on` exit 0, `worktree_root: worktrees`) | Neither run is reviewed, and neither has a receipt: EF now says so plainly (#193 item 11; EF:root-guidance-2026-10-08.md:31–57). Lane 2 is verifying T18 (6089772323). T18 finds the bootstrap leaves the root "dirty" to `resume` (T18 §5 item 1): question e7 | lane 1; Brett |
+| 17 | Root collisions and leg guidance as reviewed patches | MET | M:root-guidance-2026-10-08.md#1, #4; M:patches/t006/*; #192 review 5464893559 finding 7 (exact rebuild) | #193 items 8–13, the text fixes: on EF, LAND by lane 3 (6092925484), carried by #196 at `40f26f7`; item 9's count stays open (line 20). The `shape/*.md` deletion is T014's reviewer's | lane 1 (EF by lane 2) |
+| 18 | Shape-aware root bootstrap after the legs exist | PARTLY | M:root-guidance#7; T18:t018-disposable-2026-10-09.md#1 (a second run: `setup-openspeckit --shape on` exit 0, `worktree_root: worktrees`) | Neither run is reviewed, and neither has a receipt: EF now says so plainly (#193 item 11; EF:root-guidance-2026-10-08.md:31–56). Lane 2's verification of T18 has since been posted (6103482530; the dated note). T18 finds the bootstrap leaves the root "dirty" to `resume` (T18 §5 item 1): question e7 | lane 1; Brett |
 | 19 | First-line guidance, relative paths, actual `.specify`, paired selection, no secrets | PARTLY | M:root-guidance#2, #3 (both verified by #192 review finding 7), #7, #8; T18 §2 (paired selection from the root, either leg and either worktree; `check-prerequisites.sh` agrees ×5) | `.specify` was read from today's checkout, not from Gate A's captured configuration (lane 2, L2 line 19). The `.specify` posture is undecided (question e7). `SPECIFY_FEATURE` alone gives a branch and directory that disagree (T18 §5 item 8). T18 is unreviewed | lane 1; Brett |
-| 20 | Provenance correspondence; link repair without guessed hashes | MET | M:root-guidance#6 (35/35; 47 citations resolve in the assembly), #3; #192 review finding 10 | EF marks "23 mentions in 9 files" as not established (#193 item 9). Feature 004's own pre-split paths are T017's | lane 1 |
+| 20 | Provenance correspondence; link repair without guessed hashes | PARTLY | M:root-guidance#6 (35/35; 47 citations resolve in the assembly), #3; #192 review finding 10 | The record's own count is open: "23 mentions in 9 files" sums to 26 in 11, and no recount settles it. EF says so and leaves it "not established" (EF:root-guidance-2026-10-08.md:210–211), and lane 3 rates that part of #193 item 9 PARTLY (6092925484). T017 recounts, with feature 004's own pre-split paths | lane 1 |
 | 21 | Explicit roots, local-root precedence, supported store selection | PARTLY | M:root-guidance#7 (store precedence; strict validate in the spec leg); T18 §3 (OpenSpec from each root with 1.2.0 and 1.6.0) | Store precedence rests on the document alone (#193 item 11). T18 shows the root and the code leg pass `validate --all --strict` vacuously, so validation must run in the spec leg (T18 §5 item 7). `--store` needs openspec 1.6.0 or later (question a) | lane 1; workBenches owner |
 | 22 | Protocol/command distribution per target workstation through workBenches | PARTLY (no owner) | M:root-guidance#9: Eagle's two installed protocol files carry "Triad Feature Amendments" (sha256 `f9dd6464…`, `bbbc2b2c…`) | Not via workBenches delivery; command and skill digests absent; no other workstation; no target list; no writer holds it (lane 2 read only vendoring, consumer-reads-2026-10-07.md:85–105). Section 2 records lane 2's NOBODY | Brett (names the workstations); workBenches owner; a holder to be named by lane 1 |
 | 23 | Installer design | MET | M:installer-design.md | — | — |
@@ -109,15 +136,15 @@ blockers in section 5.
 | 25 | Entry point and payload-source resolution as reviewed patches | PARTLY | IN:patches/t007-assembly-entry-point.patch; #191 @ `13cc752`: LAND with conditions (review 5471121210; delta 8 is the stale PR body, plus `tests-macos` under `ready`) | The next #191 head needs its own check; it was not on origin at 22:07Z. The entry-point patch is CHANGES REQUIRED (5471121210 T3: on the remote path, confirm the gitlink before running the pinned implementation). Not landed | lane 1; lane 3 |
 | 26 | One-liners resolve one code pin; no developer checkout | PARTLY | 5471121210 T1–T2 (a disposable assembly at `13cc752`: one code commit, the installed tree byte-identical to a checkout install, local delegation with no fallback); #186 6088812080 (final matrix at `13cc752`) | Rerun at the next head with the T3 fix. On the single layout a ref that moves mid-install mixes versions, as on `main` (6088812080 item 7); the PR body should scope "resolve once" to the adopted layout (5471121210 delta 8). Real one-liners are T015's | lane 2; lane 1 |
 | 27 | 15-row compatibility matrix measured | PARTLY | #186 6073209094 and 6073234714 (15/15 at `2411f40`); #186 6088812080 (final at `13cc752`, 337 row logs; F1, F2, (b) and (d) fixed) | Rows 18–22 bear on the next head (6088812080 items 1–6): the layout search walks every ancestor, and a HOME holding `contracts/code-pin.yaml` refuses to reinstall; a missing ref or repository is read as a single repository and never named; a 502 on a probe refuses where `main` installs; the 404 path; garbage at 200 is reported as a moved ref; (c) and (e) remain. Rerun at the next head | lane 2; lane 1 |
-| 28 | Names, counts, modes, hooks, receipts, all-or-none unchanged | PARTLY | 5471121210 delta 2 (offline install byte-identical at `13cc752`); #186 6088812080 (210 of 210 refusals placed nothing; 82 of 83 installs 29/29 byte-exact, the exception row 7's deliberate mixed case; 40 of 40 receipts consistent; both hook entries present); #186 6087267593 (the r2 install: 29 files byte-exact) | Rerun at the next head. An adopted `wip init` that refuses still leaves an empty server repository behind (#186 6087232548, its F2 row) | lane 2; lane 1 |
-| 29 | Explicit roots in fixtures and hygiene checks | MET | M@`f87fd5a` (#190 at `b50f197`): LAND 5464931249, LAND 5464938427, delta LAND 5471080687; CI green including `tests-macos` | FU @ `01ccc86` (#193 items 2, 6): lane 3 finds it fit for a PR onto `main` after one edit, dropping or re-premising the 340 → 347 assembly cap (6089801221 finding 7). #193 items 3–7 and 15 stay open; item 5, the paired layout, is wanted before Gate C | lane 1; lane 3 |
+| 28 | Names, counts, modes, hooks, receipts, all-or-none unchanged | PARTLY | 5471121210 delta 2 (offline install byte-identical at `13cc752`); #186 6088812080 (210 of 210 refusals placed nothing; 82 of 83 installs 29/29 byte-exact, the exception row 7's deliberate mixed case; 40 of 40 receipts consistent; both hook entries present); #186 6087267593 and CA §4 (the r2 install from the assembly root: the same 29 files as main's, byte-identical except the implementation, and a byte-identical `settings.json`) | Rerun at the next head. An adopted `wip init` that refuses still leaves an empty server repository behind (#186 6087232548, its F2 row) | lane 2; lane 1 |
+| 29 | Explicit roots in fixtures and hygiene checks | PARTLY | M@`f87fd5a` (#190 at `b50f197`): lane 3's LAND 5464931249 and 5464938427, and its verdict on `b50f197`, 6089801221 (a) (lane 1's own delta review is 5471080687); CI green including `tests-macos` | #193 items 2–7 and 15 are open defects of these fixtures on `main`. Item 5, the paired layout, is a Gate C item lane 3 wants settled before Gate C (section 5, item 2). The command test still reads the README before its `--help` half (6089801221 finding 9). The follow-ups were FU @ `01ccc86` at the read; see the dated note for #195 | lane 1; lane 3 |
 | 30 | `tests/run.sh -k upstream_pin` inside the rehearsed code leg | MET | #186 6072319462 (all 14 `test_upstream_pin.py` pass in code leg `73b04d6`); CI:test-roots-and-ci-2026-10-08.md#1 | The runs used `tests/run.sh`'s own pytest line under the same lock, not its census (#184) | lane 1 |
-| 31 | Composed checks refuse instead of skipping | MET | M@`f87fd5a` (#190); #186 6087267593 (five refusal cases exit 4 on an r2-equivalent); 6089801221 finding 15 | #193 item 4: conftest never reads a pin's `commit:`, closed in CI only by `composed.yml`'s step order (6089801221 finding 13). Item 15 (wording) is confirmed there (finding 14). About forty other conditional skips can still pass a composed run; none fires on ubuntu-latest today (finding 13 (ii)) | lane 1 |
+| 31 | Composed checks refuse instead of skipping | PARTLY | M@`f87fd5a` (#190); #186 6087267593 (five refusal cases exit 4 on an r2-equivalent); 6089801221 finding 15 | The checklist's evidence column is met, but this refusal carries two open defects. #193 item 15: it misnames a root that was named (6089801221 finding 14). Item 4: conftest never reads a pin's `commit:`, closed in CI only by `composed.yml`'s step order (finding 13). Lane 2 confirms both fixed on #195 (6103529172), which is open. About forty other conditional skips can still pass a composed run; none fires on ubuntu-latest today (finding 13 (ii)) | lane 1 |
 | 32 | Code-leg CI and assembly exact-pin job patches | PARTLY | CI:patches/t010-*.patch; CI:test-roots-and-ci#5–#6; lane 3's review 6089801221 (c): fit for evidence-3, both patches apply to run C and the code-leg patch to `f87fd5a` | `composed.yml` runs the suite through `run.sh`, whose long run root makes #180's two row-stamp assertions fail, so `exact-pins` would be red until #180 is fixed or the job uses a short `TMPDIR` (finding 13 (i), inferred). Both patches need a real author at T014 (finding 13 (iv)). `actionlint` last ran 2026-10-07. SonarCloud and required checks: question e9 | lane 1; lane 3; Brett |
 | 33 | Platform policies, Bash 3.2 and serialized locking kept | MET | CI:test-roots-and-ci#5; lane 3's review 6089801221 finding 12: all six jobs keep their names and order, `tests-macos` keeps its `ready` gate verbatim, the triggers, per-job `submodules:`, `parse-macos`'s bash 3.2 file list and the Windows env are unchanged, WSL stays a documentation policy, and locking is as today | The hosted run is line 35. The assembly has no `tests-macos` check, which T015's landing tooling must allow for (finding 12) | lane 1 |
-| 34 | Exact composed state passes required checks and the matrix (local) | PARTLY | #186 6087267593: r2 = code `4dbcf6c` (#190 `b50f197`, #191 `13cc752`, T006, T010), spec `9e1d006`, assembly `5d92962`. Composed 5 failed / 1411 passed; standalone 3 failed / 1389 passed / 24 skipped; no dependency 6 failed / 1168 passed / 242 skipped | It does not pass yet. `test_agents_md_names_the_pin_rules` (T006 × #190, #193 item 14) and `test_r14_the_documented_upstream_skip_is_unchanged` (`KeyError: 'reason'`, first seen in r1, unanalysed) need fixes. The lane-helper shell FAILs (row stamps, #180 per 6089801221 finding 13), the `test_run_wrapper` timeouts and the observer timeouts (load, inferred) need classifying. r2 rests on `13cc752`, so the composed record is redone at #191's final head and the other final heads, then published | lane 1 |
+| 34 | Exact composed state passes required checks and the matrix (local) | PARTLY | CA `16e6ea4` §§2, 5: r2 = code `4dbcf6c` (#190 `b50f197`, #191 `13cc752`, T006, T010), spec `9e1d006`, assembly `5d92962`; composed 1411 passed / 5 failed / 0 skipped; standalone 1389 / 3 / 24; no submodule 1168 / 6 / 242; every failure classified; private receipt `candidate-20261009-JR8YyA`. Lane 2's counts agree (6087267593) | It does not pass yet (CA §6). Two failures are candidate defects: F1, r14's `KeyError: 'reason'`, first seen in r1, fixed in #191's `6fa3b43` and not re-run; F2, `test_agents_md_names_the_pin_rules`, #193 item 14, pending in CA and since implemented on #195 as "the test gives". F3 and F4 are #180's row stamps; F5 is the harness's inherited ignored SIGINT, not load; both fail the same on main. F6 is timing under load, pre-existing. Owed: a composed rerun at #191's final head with T007's v3, F1 gone and F2 decided | lane 1 |
 | 35 | Hosted-runner part of T010 | AFTER-GATE-C | CI:test-roots-and-ci#5 ("Neither patch can run on GitHub until the legs exist"), #8 | Question d | Brett |
-| 36 | Restore/rollback of the candidate and installed payload | PARTLY | RB:gate-ab-evidence-2026-10-09.md#1–#2; lane 2's independent check (#186 6082370012: restore 91 PASS, four homes reproduce); M:candidate record r1 §4 on CA; RR (the record now says the hook rollback is vacuous and the backup holds no `settings.json`; lane 3 LAND at `c1283b5`, 6089982753) | No hook-changing rollback, no restore of the local candidate from preserved artifacts and no post-merge revert/pin-bump rollback is rehearsed (lane 3 6082139424 findings 11 and 19; 6082370012 (iv)). The capture tooling v2 cannot stand as evidence until A1 is fixed (6087261307). RR is not on `main` | lane 1 |
+| 36 | Restore/rollback of the candidate and installed payload | PARTLY | RB:gate-ab-evidence-2026-10-09.md#1–#2; lane 2's independent check (#186 6082370012: restore 91 PASS, four homes reproduce); CA §4 (r2's install; a reinstall from main restores main); RR (the record now says the hook rollback is vacuous and the backup holds no `settings.json`; lane 3 LAND at `c1283b5`, 6089982753) | No hook-changing rollback, no restore of the local candidate from preserved artifacts and no post-merge revert/pin-bump rollback is rehearsed (lane 3 6082139424 findings 11 and 19; 6082370012 (iv)). The capture tooling v2 cannot stand as evidence until A1 is fixed (6087261307). RR is not on `main` | lane 1 |
 | 37 | Work, jobs and claims survive; no force push, reset or pointer rewrite | PARTLY | RB:gate-ab-evidence#3; #186 6082370012 (verified; 0 non-fast-forward against GitHub); RR §3 | Jobs have no before/after record, only "no script … kills a process" (6082139424 finding 19). No force push is argued for a real rollback, not shown | lane 1 |
 | 38 | Publish the Gate A evidence | MET | M:preservation-2026-10-07.md, M:inventory.json (#189); receipt `prep-20261007T100559Z` | Gate A itself stays open (section 5) | lane 1; Brett |
 | 39 | Publish the Gate B rehearsal evidence (a receipt in adopter-rehearsal form) | MET | M:adopter-rehearsal-2026-10-07.md (runs A and B, #189) and M:adopter-rehearsal-2026-10-08.md (run C, #192); receipts `adopter-fix-20261007-iM20tv`, `adopter-fix-20261008-1HztL0`, verified in #186 6036838832 and 6072724043 | The other Gate B records are not on `main` (section 5, item 4) | lane 1 |
@@ -129,8 +156,8 @@ blockers in section 5.
 | 45 | Reviewed refreshed inventory (T001) with lines 2–6 | MET | M:inventory.json (stamp 2026-10-07T10:09:03Z; #189 LAND) | Refresh at the Gate A final capture | lane 1 |
 | 46 | A review record for each T006–T010 patch | PARTLY | T006: 5464893559 LAND (landed). T009: #190 LAND ×2 and delta LAND (landed). T007/T008 code side: #191 `13cc752` LAND with conditions (5471121210). T010: lane 3 6089801221 (c), fit for evidence-3 | The T007 entry-point patch is CHANGES REQUIRED (5471121210 T3). #191's next head: unchecked. T010's `composed.yml` carries finding 13 (line 32) | lane 3; lane 1 |
 
-**Counts (46):** MET 30 · PARTLY 15 · OPEN 0 · AFTER-GATE-C 1.
-- **PARTLY:** 2, 18, 19, 21, 22, 25, 26, 27, 28, 32, 34, 36, 37, 40, 46.
+**Counts (46):** MET 27 · PARTLY 18 · OPEN 0 · AFTER-GATE-C 1 (on 2026-10-09: 30 · 15 · 0 · 1).
+- **PARTLY:** 2, 18, 19, 20, 21, 22, 25, 26, 27, 28, 29, 31, 32, 34, 36, 37, 40, 46.
 - **AFTER-GATE-C:** 35.
 
 **Moved since lane 1's first pass (13:27Z–13:50Z, unpublished; then MET 29 · PARTLY 15 · OPEN 1 ·
@@ -143,6 +170,11 @@ AFTER-GATE-C 1):**
   candidate restore, the post-merge rollback and jobs are not rehearsed.
 - **39: PARTLY → MET.** Run C landed with #192. This walk now reads line 39 by the checklist's own
   evidence column; the other records' publication moves to section 5.
+
+**Moved on 2026-10-11** (lane 3's 5481348731 finding 12, by this walk's own legend):
+- **29: MET → PARTLY.** #193 items 2–7 and 15 are open defects of the fixtures it names.
+- **31: MET → PARTLY.** #193 items 4 and 15 are open defects of the refusal it names.
+- **20: MET → PARTLY.** The record's "23 in 9" count is open.
 
 ## 2. Reconciliation with lane 2's walk at `a7a8e00`
 
@@ -168,12 +200,13 @@ describes who holds a line. This walk's legend describes the evidence. The two m
 | 18 | EXISTS (document only) | PARTLY | A row that exists only in the writer's document, with no receipt and no independent rerun, is evidence not yet checked (#193 item 11). T18 adds a second run by lane 1 itself, also unreviewed, and a new finding: the bootstrapped root is "dirty" to `resume`. PARTLY. |
 | 19 | EXISTS | PARTLY | Lane 2's own note that `.specify` was read from today's checkout and not from Gate A's capture is a gap against the checklist's evidence column. The posture decision is open (e7), and T18 adds the `SPECIFY_FEATURE` disagreement. PARTLY. |
 | 21 | EXISTS (document only) | PARTLY | As for 18. T18 also shows that validation run from the root passes vacuously. PARTLY. |
+| 20, 29, 31 | EXISTS (unlanded) | PARTLY (2026-10-11) | All three landed (#192, #190), and each still carries an open defect in its own evidence: 20 the "23 in 9" count, 29 #193 items 2–7 and 15, 31 items 4 and 15. Lane 3's 5481348731 finding 12. PARTLY. |
 
 **Lines that agree in substance:**
 - **Same status, different legend:** 1, 4–11, 13–16, 23, 24, 30, 35, 38, 41–45 (MET or
   AFTER-GATE-C here; DECIDED, EXISTS or BLOCKED there).
-- **Unlanded at lane 2's cutoff, landed since:** 3, 17, 20, 29, 31 (lane 2's "EXISTS
-  (unlanded)" are MET now).
+- **Unlanded at lane 2's cutoff, landed since:** 3 and 17 (lane 2's "EXISTS (unlanded)"
+  are MET now). 20, 29 and 31 also landed, and are in the table above since 2026-10-11.
 - **Line 33:** EXISTS there, MET here since lane 3's review of the T010 patches (6089801221
   finding 12). This walk's earlier PARTLY waited only on that review.
 - **IN PROGRESS there, PARTLY here:** 25–28, 32, 34, 36, 37, 40, 46.
@@ -190,7 +223,8 @@ describes who holds a line. This walk's legend describes the evidence. The two m
 - **Item 16 (a host-absolute path in IN:installer-2026-10-08.md:13): agree.** It must be removed
   before IN goes into the evidence-3 PR; plan.md:38–39.
 - **Items 1 and 8 (the candidate receipt is absent from brett-wip; the record cites #191 at
-  `2411f40`): agree.** Both are owed with the r2 publication (line 34).
+  `2411f40`): agree, and both are answered.** CA at `16e6ea4` names the receipt
+  `candidate-20261009-JR8YyA` and records r2 against #191 at `13cc752` (line 34).
 - **Item 13 (two openspec results): agree.** It is question a. T18 §3 now measures 1.2.0 and
   1.6.0 side by side.
 - **Item 14 (two reviews of lane 1's PRs are headed "lane openRepoTools-1"): agree; a note, not a
@@ -230,10 +264,10 @@ Every task stays open on `main`.
 | T003 mapping | Names and visibility confirmed; filter-repo; run C's plan (`plan ok`, 0 drops) on `main` | Approve the prerequisite path (e4); regenerate and `check` at the frozen source; the final mapping goes into the approval (e2) | — |
 | T004 rehearsal | Run C on `main` | A rerun at the frozen source if question e3 requires one | The real `execute` is T013 |
 | T005 nested pin | Refusal, upstream fix and repin; the nested pin and bootstrap in runs B and C; upstream CI at `6fa4e07` and `7f84ca4` | Question e1 (stay on `7f84ca4`, or repin and rehearse again) | — |
-| T006 root/leg guidance | Collisions, 32 repairs, leg front doors, provenance 35/35 (on `main`); bootstrap, paired selection and OpenSpec roots measured twice (root-guidance §7; T18 §§1–3) | #193 items 8–13 (EF, unreviewed); lane 2's verification of T18, then a review; a receipt, or the sentence EF adds saying there is none; questions a, c, e7, e8 | T014 applies `assembly-0001`, `code-0001` and `spec-0001`, regenerates the two bumps with `bump-leg.py`, and settles `shape/*.md`. T18's follow-ups go to workBenches and lane 3 |
+| T006 root/leg guidance | Collisions, 32 repairs, leg front doors, provenance 35/35 (on `main`); bootstrap, paired selection and OpenSpec roots measured twice (root-guidance §7; T18 §§1–3) | #193 items 8–13 (EF: LAND, carried by #196 at `40f26f7`; item 9's count open); lane 2's verification of T18 (posted, 6103482530), then a review; a receipt, or the sentence EF adds saying there is none; questions a, c, e7, e8 | T014 applies `assembly-0001`, `code-0001` and `spec-0001`, regenerates the two bumps with `bump-leg.py`, and settles `shape/*.md`. T18's follow-ups go to workBenches and lane 3 |
 | T007 entry point | The entry-point patch (IN); #191's code side, LAND with conditions at `13cc752`; T1–T2 of 5471121210 | #191's next head: proof, lane 3's check, the PR body, `tests-macos`, landing, against the matrix findings of 6088812080. The entry-point patch's T3 change, then its re-review | T014: the entry point ships in the root-split PR itself (lane 3, #186 6072087071); T015: the real one-liners |
 | T008 matrix | 15 rows at `2411f40`; the final matrix at `13cc752` (337 row logs) | A rerun at #191's next head (one command, lane 2) | T015 against the real GitHub; workBenches re-vendors (W1/W3/W8) once the legs exist |
-| T009 test roots | #190 landed with `b50f197`; its CI green, macOS included | FU @ `01ccc86`: one edit (6089801221 finding 7), then a PR and landing; #193 items 3–7 and 15; item 5 (paired layout) before Gate C; item 14 settled by lane 1 | Verify at the real head (T015) |
+| T009 test roots | #190 landed with `b50f197`; its CI green, macOS included | Land the follow-ups (FU @ `01ccc86` at the read; #195 since): #193 items 2–7, 14 and 15, with item 5 (paired layout) before Gate C | Verify at the real head (T015) |
 | T010 CI | Two workflow patches; local proofs P1–P4; lane 3's review, fit for evidence-3 | `composed.yml` against #180 (finding 13 (i)); a composed run of the final candidate that passes (line 34); question d | Hosted runs at the real legs (T015); a real author on both patches (T014); SonarCloud binding and required checks (e9) |
 | T011 restore/rollback | Source restore and four rollback homes, independently verified; RR refreshes the record, LAND by lane 3 within evidence-3 | A hook-changing rollback, the candidate restore and a post-merge pin-bump rollback, or a dated statement of what cannot be rehearsed; jobs before/after | Rollback checks at the real head (T015) |
 | T012 freeze and approval | #97 and #121 landed and are in the baseline | Freeze; regenerate and `check`; recheck the names; present the plan, follow-ups and dispositions; Brett's approval | Refuse source drift before `execute` |
@@ -263,7 +297,9 @@ exit=0
 ```
 
 On lane 2's host the system openspec is 1.13.1, and it passes `migrate-to-triad` and 5 of 5
-changes on `main` (6088829392 item 8). EF records the bench's openspec as 1.13.1 too.
+changes on `main` (6088829392 item 8). EF records 1.13.1 on the bench it measured
+(EF:adopter-rehearsal-2026-10-08.md:53). On lane 3's host on 2026-10-11 the order was 1.2.0,
+then 1.6.0, as here (5481348731 finding 9). Which CLI runs depends on the container.
 
 **Cause.** 1.2.0's `extractRequirementText` (`dist/core/validation/validator.js:369-390` in its
 package) takes only the first non-blank body line of a requirement. Line 45 of
@@ -538,14 +574,14 @@ retiring worktrees."
    lane 2's pre-push run (6090038382); correct the PR body
    (5471121210 delta 8); `tests-macos` under `ready`; land. Then the T007 entry-point patch's T3
    change and its re-review. Or Brett's ruling on any kept difference (question e6).
-2. **The test-root follow-ups and the T010 patches.** FU's one edit (6089801221 finding 7), its
-   PR and landing; `composed.yml` against #180 (finding 13 (i)); #193 item 14 settled by lane 1,
-   and item 5 (paired-layout discovery) before Gate C.
-3. **The composed candidate at the final heads (r3).** Every suite passing, or each failure
-   classified with its cause: r14's `KeyError 'reason'`, `test_agents_md_names_the_pin_rules`,
-   the row stamps (#180), the load-sensitive timeouts. Then the install and rollback recheck,
-   and publication with its receipt (lines 34, 36, 40).
-4. **The evidence-3 PR.** Fold CI (`d28e2cc`'s three new files), IN (with the host-absolute path
+2. **The test-root follow-ups and the T010 patches.** The follow-ups, now #195 (#193 items
+   2–7, 14 and 15, item 5's paired-layout discovery among them), reviewed at their final head
+   and landed before Gate C; `composed.yml` against #180 (finding 13 (i)).
+3. **The composed candidate at the final heads.** r2 is published with its receipt, and every
+   failure is classified (CA `16e6ea4`). Owed: a composed rerun at #191's final head with
+   T007's v3, with F1 gone and F2 (#193 item 14) decided, then the install and rollback recheck
+   at those heads (lines 34, 36, 40).
+4. **The evidence-3 PR, #196.** Fold CI (`d28e2cc`'s three new files), IN (with the host-absolute path
    at installer-2026-10-08.md:13 removed), RR at `2e7e55e` (the branch tip's file: a cherry-pick of
    `c1283b5` alone conflicts, 6089982753), EF `096de93`, the candidate record, T18
    and this walk onto `main`; do not reuse `849592b`'s subject or body (6088884829); review;
@@ -579,6 +615,9 @@ gh api repos/opensoft/openRepoShape/compare/7f84ca4...main             # ahead 6
 gh api repos/opensoft/openRepoShape/commits/<each of the six>          # files changed
 gh api repos/opensoft/openRepoShape/pulls/162                          # head 6fa4e07, merge 7f84ca4
 gh api repos/opensoft/openRepoShape/commits/{6fa4e07,7f84ca4}/check-runs
+gh api repos/opensoft/openRepoTools/pulls/196/reviews                   # 5481348731 (2026-10-11)
+git -C <checkout> show 16e6ea4:specs/004-migrate-to-triad/candidate-2026-10-09.md   # CA
+git -C <checkout> show 40f26f7:<each of slice B's three records>                     # EF
 git clone -q --no-local --single-branch --branch main <checkout> <scratch>/main-clone
 command -v openspec; which -a openspec; <each> --version               # 1.2.0 first, 1.6.0 second
 (cd <scratch>/main-clone && ~/.npm-global/bin/openspec validate migrate-to-triad --strict)  # exit 1
