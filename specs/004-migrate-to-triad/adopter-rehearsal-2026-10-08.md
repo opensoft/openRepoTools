@@ -50,9 +50,19 @@ the private receipt.
   noted that `openspec validate migrate-to-triad --strict` with `openspec`
   1.2.0 fails on pristine `837928a` too (`ADDED "Installation retains the
   public interface and one revision" must contain SHALL or MUST`), so run C
-  does not cause it. The bench's `openspec` is now 1.13.1. On 2026-10-09
-  the same command exited 0 on `837928a` and on `71b05cb`, #192's head,
-  whose tree its squash `1abee1d` carries unchanged.
+  does not cause it. Lane 2's bench had `openspec` 1.13.1 (read on
+  2026-10-09, #186 comment 6088829392 item 8, and again on 2026-10-10,
+  6103482530). On 2026-10-09 the same command exited 0 on `837928a` and on
+  `71b05cb`, #192's head, whose tree its squash `1abee1d` carries unchanged.
+  *Corrected 2026-10-11 (lane 3's 5481348731 on #196, item 9): this note first
+  said "The bench's `openspec` is now 1.13.1", as if one version held on every
+  host. The version depends on the container. On lane 3's host on 2026-10-11 at
+  00:1xZ, `which -a openspec` lists a user-level npm install first, at 1.2.0,
+  and the system install second, at 1.6.0. The validate command above exits 1
+  under 1.2.0 (the SHALL or MUST error) and 0 under 1.6.0. So the result follows
+  which `openspec` comes first on the reader's `PATH`. Lane 1's walk records
+  the same split
+  ([gate-b-status-2026-10-09.md](gate-b-status-2026-10-09.md), section 4 (a)).*
 
 ## Setup
 
