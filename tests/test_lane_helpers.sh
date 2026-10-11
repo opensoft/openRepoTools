@@ -10387,9 +10387,10 @@ LANEBIN_PATH="$SANDBOX/lanebin:$PATH"
 # and handing back `128 + 9`, so a pick case reported `expected [2], got [137]`:
 # a wrong exit code that was really this driver's clock, and a helper that had
 # waited its own 60 s out and was about to say so could not be told from it.
-# Six CI runs are named in #107 alone — five on darwin, then both Linux jobs of
-# #61's `ready` run with fourteen pick cases at once — the killed case moving
-# between runs, and not one of them was a defect in `lane`.
+# Six CI runs are named in #107 alone — five on darwin, then one on Linux:
+# #61's `ready` run, both of whose Linux jobs went red with fourteen pick cases
+# at once — the killed case moving between runs, and not one of them was a
+# defect in `lane`.
 #
 # WHY IT WAS CROSSED: `lane` prints nothing until its listing is rendered,
 # because every read in front of the listing is a command substitution. Measured
