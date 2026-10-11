@@ -1312,6 +1312,42 @@ def test_r07_a_branch_that_moves_between_downloads_never_mixes_versions(tmp_path
                "main").strip() == second, "the branch never moved: the test proved nothing"
 
 
+@NEEDS_JQ
+@pytest.mark.parametrize("to", ["adopted", "single"])
+def test_r07_a_branch_that_moves_right_after_the_layout_question_is_read_at_one_commit(
+        tmp_path, to):
+    """The probe asks `contracts/code-pin.yaml` at the moving ref, and the ref
+    moves before it is resolved (#191, Copilot's second round). The probe only
+    decides the layout, and its bytes are never used. The commit the ref
+    resolves to is read whole: another adopted commit is installed entirely
+    from the code IT pins, never a mix. A commit that no longer carries a pin
+    is refused as a ref that moved between the two reads."""
+    world = World(tmp_path)
+    world.assembly(world.code(tag="first"))
+    if to == "adopted":
+        second_code = world.code(tag="second", branch=None)
+        second = world.assembly(second_code, branch=None)
+    else:
+        second = world.single(tag="second", branch=None)
+    world.moves = [{"after": 1, "repo": "opensoft/openRepoTools",
+                    "ref": "refs/heads/main", "to": second}]
+    world.write_conf()
+    home = tmp_path / "home"
+    result = run_stdin(world, home, network(world), "--install")
+    assert world.requests()[0]["target"].endswith("contents/contracts/code-pin.yaml?ref=main")
+    assert git("--git-dir", str(world.repo("opensoft/openRepoTools")), "rev-parse",
+               "main").strip() == second, "the branch never moved: the test proved nothing"
+    if to == "adopted":
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert_installed(home, "second", result)
+        for r in world.payload_requests():
+            assert second_code in r["target"], r
+    else:
+        assert_nothing_placed(home, result)
+        assert "the ref moved" in result.stderr, result.stderr
+        assert world.payload_requests() == []
+
+
 # =========================================================================
 # ROW 8 — missing pin in a valid single repository / partial adopted layout
 # =========================================================================
