@@ -105,6 +105,20 @@ printf '%s\n' "$*" >> "${FAKE_NODE_LOG:-/dev/null}"
 bash "$1"
 """
 
+#: A native version file that does not run, as `--version` finds it: a binary
+#: for another libc, a download cut short, and a first start that never returns.
+#: Like a working one it logs every call.
+BROKEN_CLAUDE = r"""#!/usr/bin/env bash
+printf '%s %s\n' "$0" "$*" >> "${FAKE_CLAUDE_LOG:-/dev/null}"
+@BODY@
+"""
+BROKEN_BODIES = {
+    "exits": "exit 126",
+    "silent": "exit 0",
+    "garbled": "echo 'cannot execute binary file: Exec format error'",
+    "hangs": "exec sleep 30",
+}
+
 
 class Sandbox:
     """One hermetic world for one case."""
@@ -142,6 +156,10 @@ class Sandbox:
 
     def native_version(self, version: str) -> Path:
         return self.claude(self.native / version, version)
+
+    def broken_native(self, version: str, how: str = "exits") -> Path:
+        return self._script(self.native / version,
+                            BROKEN_CLAUDE.replace("@BODY@", BROKEN_BODIES[how]))
 
     def user_copy(self, version: str) -> Path:
         """An npm install in the user prefix, laid out the way npm lays it out."""
@@ -274,6 +292,88 @@ def test_the_native_versions_are_ordered_numerically_not_by_name(box):
     newest = box.native_version("2.1.10")
     fields = porcelain(box.run("--porcelain", FAKE_NPM_PUBLISHED="2.1.10"))
     assert (fields["path"], fields["status"]) == (str(newest), "verified")
+
+
+@pytest.mark.parametrize("how", sorted(BROKEN_BODIES))
+def test_a_native_that_does_not_run_gives_way_to_the_next_one_that_does(box, how):
+    """Copilot on #134, opensoft/openRepoTools#154: the newest native file was
+    chosen by name before its `--version` was read, and when it did not run it
+    was dropped with every older native that did, so a working install read as
+    none. A broken file, a silent one, a garbled one and a hung one all fall
+    back, and the hung one is bounded by the version timeout."""
+    box.broken_native("2.1.285", how)
+    older = box.native_version("2.1.284")
+    started = time.monotonic()
+    result = box.run("--porcelain", CLAUDE_CURRENT_VERSION_TIMEOUT="1")
+    assert time.monotonic() - started < 20, "the version probe was not bounded"
+    assert result.returncode == 0, result.stderr
+    assert porcelain(result) == {"path": str(older), "version": "2.1.284",
+                                 "published": "2.1.284", "status": "verified"}
+    assert box.installs() == [], "a working native was there to launch"
+
+
+def test_the_fall_back_goes_down_every_native_to_the_first_that_runs(box):
+    box.broken_native("2.1.287")
+    box.broken_native("2.1.286", "garbled")
+    working = box.native_version("2.1.285")
+    box.native_version("2.1.284")
+    fields = porcelain(box.run("--porcelain", "--offline"))
+    assert (fields["path"], fields["version"], fields["status"]) == (
+        str(working), "2.1.285", "unverified")
+
+
+def test_only_the_newest_native_that_runs_is_probed(box):
+    """The fall back costs a probe only for each file that fails: with the
+    newest native working, an older one is never run, so a launch's cost is
+    what it was."""
+    box.native_version("2.1.283")
+    newest = box.native_version("2.1.284")
+    result = box.run("--porcelain", "--offline")
+    assert porcelain(result)["path"] == str(newest)
+    assert box.claude_log.read_text().splitlines() == [f"{newest} --version"]
+
+
+def test_a_native_that_does_not_run_is_not_asked_to_update_the_install(box):
+    """`claude update` runs through the native candidate. With the newest file
+    broken it is the older native that runs, so that one updates, and the
+    version it writes beside itself is read next."""
+    box.broken_native("2.1.285")
+    older = box.native_version("2.1.283")
+    result = box.run("--porcelain", FAKE_NATIVE_UPDATE_TO="2.1.284")
+    assert result.returncode == 0, result.stderr
+    fields = porcelain(result)
+    assert (fields["path"], fields["status"]) == (str(box.native / "2.1.284"), "verified")
+    calls = box.claude_log.read_text()
+    assert f"{older} update" in calls
+    assert f"{box.native / '2.1.285'} update" not in calls
+    assert box.installs() == [], "the native update reached npm's version"
+
+
+def test_every_native_broken_and_nothing_else_is_still_no_runnable_claude(box):
+    box.broken_native("2.1.285")
+    box.broken_native("2.1.284", "garbled")
+    for args, env in ((("--offline",), {}), ((), {"FAKE_NPM_INSTALL_RC": "1"})):
+        result = box.run(*args, **env)
+        assert result.returncode == 1, result.stderr
+        assert result.stdout == ""
+        assert "no runnable Claude Code was found by absolute path" in result.stderr
+
+
+def test_every_native_broken_is_replaced_by_the_user_prefix_install(box):
+    box.broken_native("2.1.285")
+    box.broken_native("2.1.284", "silent")
+    fields = porcelain(box.run("--porcelain"))
+    assert (fields["path"], fields["status"]) == (str(box.prefix / "bin" / "claude"), "verified")
+    assert len(box.installs()) == 1
+
+
+def test_a_broken_newest_native_behind_a_stale_user_copy_is_still_a_refusal(box):
+    box.broken_native("2.1.285")
+    link = box.user_copy("2.1.283")
+    result = box.run(FAKE_NPM_INSTALL_RC="1")
+    assert result.returncode == 2, result.stderr
+    assert result.stdout == ""
+    assert f"the newest installed is 2.1.283 at {link}" in result.stderr
 
 
 def test_one_file_under_two_spellings_is_read_once(box):

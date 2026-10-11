@@ -68,10 +68,11 @@ class Proc:
         return str(self.prefix / "lib" / "node_modules" / "@anthropic-ai"
                    / ".claude-code-h9B5EqFE" / "bin" / "claude.exe") + " (deleted)"
 
-    def native(self, *versions: str) -> None:
-        self.versions.mkdir(parents=True, exist_ok=True)
+    def native(self, *versions: str, directory: Path | None = None) -> None:
+        directory = directory or self.versions
+        directory.mkdir(parents=True, exist_ok=True)
         for v in versions:
-            f = self.versions / v
+            f = directory / v
             f.write_text("#!/bin/sh\n")
             f.chmod(0o755)
 
@@ -253,6 +254,110 @@ def test_the_native_directory_is_the_one_claude_current_reads(table):
     result = table.run("--running", "2.1.283", "--pid", "100", NO_COLOR="1",
                        CLAUDE_CURRENT_NATIVE_DIR=str(elsewhere))
     assert result.stdout == newer_copy("2.1.283", "2.1.290") + "\n"
+
+
+# --- a native directory CLAUDE_CURRENT_NATIVE_DIR moved (opensoft/openRepoTools#155) ---
+
+def custom_native(table: Proc, *versions: str) -> Path:
+    """A native versions directory that is not `.../claude/versions`, which is
+    the only spelling the process check used to know."""
+    directory = table.root / "custom" / "native"
+    table.native(*versions, directory=directory)
+    return directory
+
+
+def test_a_session_from_a_custom_native_directory_is_found(table):
+    """Copilot on #134: the installed versions were read from
+    CLAUDE_CURRENT_NATIVE_DIR but the running process was recognised only under
+    `.../claude/versions/`, so a session launched from the configured directory
+    was missed and a newer sibling went unannounced."""
+    directory = custom_native(table, "2.1.283", "2.1.284")
+    status_line_tree(table, str(directory / "2.1.283"))
+    result = table.run("--pid", "100", NO_COLOR="1",
+                       CLAUDE_CURRENT_NATIVE_DIR=str(directory))
+    assert result.stdout == newer_copy("2.1.283", "2.1.284") + "\n"
+
+
+def test_a_session_on_the_newest_custom_native_version_prints_nothing(table):
+    directory = custom_native(table, "2.1.9", "2.1.10")
+    status_line_tree(table, str(directory / "2.1.10"))
+    result = table.run("--pid", "100", CLAUDE_CURRENT_NATIVE_DIR=str(directory))
+    assert (result.returncode, result.stdout) == (0, "")
+
+
+def test_a_binary_replaced_in_a_custom_native_directory_asks_for_a_restart(table):
+    directory = custom_native(table, "2.1.284")
+    status_line_tree(table, str(directory / "2.1.283") + " (deleted)")
+    result = table.run("--pid", "100", NO_COLOR="1",
+                       CLAUDE_CURRENT_NATIVE_DIR=str(directory))
+    assert result.stdout == restart("2.1.283", "2.1.284") + "\n"
+
+
+@pytest.mark.parametrize("spelling", ["trailing-slash", "dot-dot"])
+def test_the_configured_directory_is_compared_by_its_canonical_path(table, spelling):
+    directory = custom_native(table, "2.1.283", "2.1.284")
+    configured = {"trailing-slash": f"{directory}/",
+                  "dot-dot": f"{directory}/../native"}[spelling]
+    status_line_tree(table, str(directory / "2.1.283"))
+    result = table.run("--pid", "100", NO_COLOR="1", CLAUDE_CURRENT_NATIVE_DIR=configured)
+    assert result.stdout == newer_copy("2.1.283", "2.1.284") + "\n"
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="no symlinks here")
+def test_a_symlinked_native_directory_matches_the_path_the_kernel_reports(table):
+    """`/proc/<pid>/exe` resolves every symlink, so a session launched through
+    a link into the configured directory reports the directory's real path."""
+    real = custom_native(table, "2.1.283", "2.1.284")
+    link = table.root / "versions-link"
+    link.symlink_to(real)
+    status_line_tree(table, str(real.resolve() / "2.1.283"))
+    result = table.run("--pid", "100", NO_COLOR="1",
+                       CLAUDE_CURRENT_NATIVE_DIR=str(link))
+    assert result.stdout == newer_copy("2.1.283", "2.1.284") + "\n"
+
+
+def test_a_session_from_the_default_directory_is_still_found_when_another_is_set(table):
+    table.native("2.1.283", "2.1.284")
+    status_line_tree(table, str(table.versions / "2.1.283"))
+    elsewhere = table.root / "elsewhere"
+    elsewhere.mkdir()
+    result = table.run("--pid", "100", NO_COLOR="1",
+                       CLAUDE_CURRENT_NATIVE_DIR=str(elsewhere))
+    assert result.stdout == newer_copy("2.1.283", "2.1.284") + "\n"
+
+
+@pytest.mark.parametrize("exe", ["tool", "nested/2.1.283", "2.1.283/claude"])
+def test_only_a_version_file_in_the_configured_directory_is_a_claude_binary(table, exe):
+    """Not every executable in the directory, and not one below it: the check
+    stays as narrow as `.../claude/versions/<x.y.z>` was."""
+    directory = custom_native(table, "2.1.284")
+    status_line_tree(table, str(directory / exe) + " (deleted)")
+    result = table.run("--pid", "100", CLAUDE_CURRENT_NATIVE_DIR=str(directory))
+    assert (result.returncode, result.stdout) == (0, "")
+
+
+def test_a_version_file_outside_the_configured_directory_is_not_claude(table):
+    directory = custom_native(table, "2.1.284")
+    other = table.root / "other" / "2.1.283"
+    other.parent.mkdir()
+    status_line_tree(table, str(other) + " (deleted)")
+    result = table.run("--pid", "100", CLAUDE_CURRENT_NATIVE_DIR=str(directory))
+    assert (result.returncode, result.stdout) == (0, "")
+
+
+def test_a_configured_directory_that_is_not_there_changes_nothing(table):
+    status_line_tree(table, str(table.root / "gone" / "2.1.283"))
+    result = table.run("--pid", "100",
+                       CLAUDE_CURRENT_NATIVE_DIR=str(table.root / "gone"))
+    assert (result.returncode, result.stdout, result.stderr) == (0, "", "")
+
+
+def test_a_custom_native_directory_with_no_process_table_prints_nothing(table):
+    directory = custom_native(table, "2.1.284")
+    result = table.run("--running", "2.1.283", "--pid", "100",
+                       CLAUDE_RESTART_CHECK_PROC=str(table.root / "no-proc"),
+                       CLAUDE_CURRENT_NATIVE_DIR=str(directory))
+    assert (result.returncode, result.stdout, result.stderr) == (0, "", "")
 
 
 def test_a_relative_user_prefix_is_read_under_home(table):
