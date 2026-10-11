@@ -49,13 +49,14 @@ blocks retry even if the supervisor was terminated.
 never respawned over an unrecorded lane, and a session is never ended without one.
 
 Run every step, in order, before telling the operator it is safe to reset usage or switch profiles. `$L`
-below is the symlink Amendment 5 left in place; every command is copy-pasteable as written once `lane` is
+below is `lanes-edit.sh` on `PATH` — `openRepoTools --install` puts it there — else the symlink Amendment 5
+left in place, which is how `/restart` finds it; every command is copy-pasteable as written once `lane` is
 derived in step 1. **From a shell, `lane-handoff` is these same steps as one command** — it is the same act
 and writes the same record; a session runs the steps here because a session can message its subagents and a
 shell cannot.
 
 ```sh
-L=~/projects/xFactory/lanes-edit.sh
+L="$(command -v lanes-edit.sh || printf '%s' ~/projects/xFactory/lanes-edit.sh)"
 
 # EVERY READ IN STEP 1 GOES THROUGH THIS ONE FENCE, and Amendment 7(d) is the
 # whole of it: `0` an answer · `8` NO ANSWER · `2` a helper predating the read —
@@ -123,7 +124,7 @@ ws="${ws_pair%%	*}"
 # repository and is not one of them. Clause (e)'s shape for a fact a writer
 # cannot carry is *"the gap named in the handoff"*, and that is what happens
 # here: `$ws_missing` is carried to step 2, which names it, and to step 4, which
-# skips (a) and (b) and still does (c).
+# skips (a), (b) and (c) alike — every register and log write.
 #
 # AND A HELPER PREDATING THE READ IS NOT A CONTAINER (#26, the review of
 # `29d3417`, this file's `:70`). `workstation` is one of Amendment 11's reads,
@@ -234,6 +235,19 @@ handoff="$(printf '%s' "$row" | awk -F'|' '{print $7}' | awk '{$1=$1};1')"
 uuid="$(printf '%s' "$row" | awk -F'|' '{print $3}' \
   | grep -o '[0-9a-f]\{8\}-[0-9a-f]\{4\}-[0-9a-f]\{4\}-[0-9a-f]\{4\}-[0-9a-f]\{12\}' | tail -n 1)"
 printf 'handoff=%s\nuuid=%s\n' "${handoff:-<none>}" "${uuid:-<none>}"
+# A ROW WITH NO UUID IN ITS SESSION CELL IS A LANE THAT HAS NEVER HAD A SESSION
+# RECORDED, and `R-A11-5` (A11 Addendum 1, F7) has the skill SAY SO BEFORE IT
+# WRITES, naming the act that supplies one: the writer's own refusal is the guard
+# behind this one, and the caller who would meet it is mid-swap with a session
+# about to die. THE SWAP GOES ON, as `ws_missing`'s does (*a swap is never left
+# unwritten*, `R-A11-11`): `$uuid_missing` is carried to the handoff below, which
+# names the gap, and to step 4, which skips the two writes that name a session. A
+# `session_…` footer id is no uuid, here as to the writer, and reads as none.
+uuid_missing=""
+if [[ -z "$uuid" ]]; then
+  uuid_missing=1
+  echo "NO SESSION RECORDED: lane $lane's row carries no session uuid, so this lane has never had one recorded, and the writer refuses a \`session\` field that is not a transcript uuid (\`R-A11-5\`, clause (e)). Step 4's object-log PAUSED and register-line writes are therefore NOT made — the second would read \`session @<ws>\` — while the row's state cell still is. The swap itself goes on: the handoff is refreshed and NAMES this gap, and the restart command is still printed. The act that gives the lane a session is Amendment 6(c)'s session-cell append: run \`lane-start --no-launch <repo> <n>\` in this lane's window (step 1 prints the same command for a window nothing binds), then re-run steps 2 and 4."
+fi
 ```
 
 If `$handoff` came back empty, **stop here** — this row does not split the way `row_cell` expects, a
@@ -298,6 +312,13 @@ all three, and where the count and the list disagree the count wins.
 **Line 1 and the blank line after it are STRUCTURAL**: `lane-start` splices its `RESUMED by …` stamp at the
 line immediately after the first blank line that follows line 1, so a block that does not open that way is a
 block the stamps land in the middle of.
+
+**If the read above set `$uuid_missing`, THE HANDOFF NAMES THAT GAP TOO** (`R-A11-5`: *"the gap named in the
+handoff"*). Say in the state line, in as many words, that this lane's row records no session uuid, that step 4's
+object-log `PAUSED` line and register line were therefore NOT written (the row's state cell was), and that
+`lane-start --no-launch <repo> <n>` is the act that records one — so the next session knows the log holds no
+record of this swap, and that its next start is a start rather than a resume, instead of believing the lane
+never paused. Write `session none` where the top block's first line carries `<uuid>`.
 
 **If step 1 set `$ws_missing`, THE HANDOFF IS WHERE THE GAP IS NAMED** (A11 Addendum 4 ruling 11, clause
 (e)'s shape for a fact a writer cannot carry). Say in the state line, in as many words, that this session ran
@@ -507,8 +528,9 @@ payload="swap"
 # `workstation <ws>` is NOT omitted the way `dir` and `profile` are, and that is
 # the difference `R-A11-14` settles: those two say something about the lane, and
 # this one is the KEY the records are filed under — a record without it is not
-# incomplete, it is unfindable. So where there is none the two WRITES stop
-# instead (ruling 11), and (c) below still runs.
+# incomplete, it is unfindable. So where there is none the register and log
+# writes stop instead — (a), (b) and (c) below, all three (ruling 11, `R-A11-27`)
+# — and what goes on is step 2's handoff, which is not one of them.
 [[ -z "$ws" ]] || payload="$payload; workstation $ws"
 payload="$payload; agent $agent_name; transcript $transcript_id"
 # AND THE KIND, AFTER THEM (Amendment 17 Addendum 1 (h), in force
@@ -535,6 +557,14 @@ if [[ "$kind" == unknown ]]; then why_text="$why kind unknown"; else why_text="$
 # target. One environment prefix is the fix; the writer's own refusal is the
 # guard behind it, not the fix.
 #
+# AND THE SKILL'S OWN REFUSAL IS THE GUARD IN FRONT OF IT (`R-A11-5`: *"the skill
+# refuses BEFORE it writes and says which act supplies the uuid"*). Step 2 set
+# `$uuid_missing` for a lane whose row records no session, and for that lane the
+# writer would refuse (a) while (b) would read `session @<ws>` — the placeholder
+# clause (e) keeps out of the log and `R-A11-14` out of this file — so NEITHER is
+# attempted, step 2 having said why and named the act, and `lane-handoff` makes
+# the same cut. The row's state cell names no session and is still set below.
+#
 # (a) AND (b) ARE THE TWO WRITES A MISSING WORKSTATION STOPS (ruling 11), and
 # the dispatcher guard would refuse them anyway — `lanes-edit.sh`'s dispatcher
 # gates `log`, `append-line`, `set-row-state` and every other writer on a
@@ -542,14 +572,17 @@ if [[ "$kind" == unknown ]]; then why_text="$why kind unknown"; else why_text="$
 # line number here would be stale the next time a verb joined it). Skipping them here means the skill says WHY once, in its own
 # words, instead of the helper saying it twice in the middle of a swap.
 if [[ -z "$ws_missing" ]]; then
+if [[ -z "$uuid_missing" ]]; then
 LANES_LANE="$lane" LANES_SESSION="$uuid" "$L" log PAUSED "lane:$lane" \
   → "$payload" \
   "on <operator>'s word: <sanitized verbatim>"
 # (b) the LANES.md file-level line, the shape every prior PAUSED/RESUMED used.
 # IT IS WRITTEN WHETHER OR NOT (a) COULD BE (A8(a) step 4, `R-A11-11`): a swap
 # is never left unwritten, so a lane whose object line was refused still gets
-# this line and the row's state cell, with the gap named in the handoff.
+# this line and the row's state cell, with the gap named in the handoff — EXCEPT
+# where there is no uuid to name, which is the `$uuid_missing` that skips both.
 "$L" append-line "PAUSED — lane $lane, session $uuid@$ws, $(date -u +%Y-%m-%dT%H:%M:%SZ), on <operator>'s word \"<sanitized verbatim>\"; <what's open, or NOTHING CLAIMED>; handoff refreshed"
+fi
 fi
 # (c) the row: ONE WRITE, which sets the whole state cell (Amendment 13(a)).
 # row_write_refused is what step 5 reads: empty on success, "1" the moment the
