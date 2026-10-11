@@ -1460,12 +1460,26 @@ def test_agents_md_names_the_pin_rules():
     """The three rules an agent touching the submodule has to have read, and
     the reason they are in AGENTS.md rather than only in the pin's header: an
     assistant is told to read this file, and a procedure that lives outside it
-    is a procedure performed from memory."""
+    is a procedure performed from memory.
+
+    THE PATHS ARE THE ONES THAT WORK FROM WHERE THE FILE IS READ (#193 item
+    14; the coordinator's decision of 2026-10-11). On today's single tree that
+    is `upstream/openRepoShape` and `git submodule update --init …`. At an
+    assembly root the submodule is the code leg's, so T006's `assembly-0001`
+    writes `code/upstream/openRepoShape` and `git -C code submodule update
+    --init …`: the unprefixed command fails there ("pathspec
+    'upstream/openRepoShape' did not match any file(s) known to git", measured
+    in the composed candidate). The prefix is the assembly's code mount, read
+    from its code pin, so either spelling in the wrong place fails."""
     text = doc("AGENTS.md").read_text(encoding="utf-8")
-    assert "Never edit anything under `upstream/openRepoShape` in place" in text
+    mount = ROOTS.code_mount()
+    where = f"{mount}/" if mount else ""
+    init = (f"git -C {mount} submodule update --init upstream/openRepoShape"
+            if mount else "git submodule update --init upstream/openRepoShape")
+    assert f"Never edit anything under `{where}upstream/openRepoShape` in place" in text
     assert "Never pin a commit that is not on that repository's `main`" in text
     assert "RECOMPUTED, never adjusted" in text
-    assert "git submodule update --init upstream/openRepoShape" in text
+    assert init in text, f"AGENTS.md does not give the command that works here: {init}"
 
 
 def test_agents_md_is_short_enough_to_be_read():

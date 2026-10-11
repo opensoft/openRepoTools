@@ -298,6 +298,13 @@ class Roots:
                     f"checkout has none ({why}); the composed run "
                     f"({ENV_COMPOSED}=1 from the assembly root) reads it")
 
+    def code_mount(self) -> Optional[str]:
+        """Where this run's assembly mounts the code leg (its code pin's
+        `submodule_path:`), or None where there is no assembly root: the
+        prefix a path in the assembly's documents carries to reach the code
+        leg (#193 item 14)."""
+        return None if self.assembly is None else _mount(self.assembly, "code")
+
     def tracked_roots(self) -> List[Tuple[str, Path]]:
         """Every distinct repository this run can read, code first."""
         out: List[Tuple[str, Path]] = []

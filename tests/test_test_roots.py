@@ -333,6 +333,32 @@ AGENTS_CAP_TEST = "test_agents_md_is_short_enough_to_be_read"
 README_CAP_TEST = "test_readme_is_short_enough_to_be_read"
 
 
+PIN_RULES_TEST = "test_agents_md_names_the_pin_rules"
+
+
+@pytest.mark.parametrize("prefixed, outcome", [
+    pytest.param(True, "passed", id="the-assemblys-code-prefixed-rules"),
+    pytest.param(False, "failure", id="todays-spelling-at-an-assembly-root"),
+])
+def test_the_pin_rules_are_read_with_the_assemblys_code_prefix(tmp_path, prefixed, outcome):
+    """At an assembly root the pin rules name the submodule through the code
+    mount, `code/upstream/openRepoShape` and `git -C code submodule update
+    …`, as T006's `assembly-0001` writes them; today's spelling there names a
+    path the assembly does not have, and FAILS (#193 item 14). Red at
+    `fb77bed`, which held the assembly's AGENTS.md to today's spelling."""
+    where, init = (("code/", "git -C code submodule update")
+                   if prefixed else ("", "git submodule update"))
+    root = assembly(tmp_path / "asm")
+    (root / "AGENTS.md").write_text(
+        f"1. **Never edit anything under `{where}upstream/openRepoShape` in place.**\n"
+        "2. **Never pin a commit that is not on that repository's `main`.**\n"
+        "3. **The digest is RECOMPUTED, never adjusted.**\n"
+        f"    {init} --init upstream/openRepoShape\n", encoding="utf-8")
+    run = nested(tmp_path, {"OPENREPOTOOLS_ASSEMBLY_ROOT": str(root)},
+                 PIN_RULES_TEST, "test_repo_hygiene.py")
+    assert run.outcome(PIN_RULES_TEST)[0] == outcome, run.output[-2000:]
+
+
 def test_the_length_caps_are_the_assembly_roots_where_one_is_named(tmp_path):
     """At an assembly root the two caps are 347 and 510 — this repository's 323
     and 486 plus the twenty-four lines each that T006's root guidance adds
