@@ -708,6 +708,26 @@ def test_t018_add_from_the_assembly_itself_says_its_legs_are_empty(triad):
     assert _inventory(b, "triad-1")[made.stdout.strip()] == str(a)
 
 
+
+@NEEDS_TEMPLATE
+def test_t018_add_refuses_where_the_manifest_cannot_be_read(triad):
+    """Never "no legs" (Amendment 7(d)): which checkout the tree would be
+    recorded under is unknown, so nothing is made, in the words the sweep
+    and the reconciliation use for the same fact."""
+    b, t = triad
+    if os.geteuid() == 0:
+        pytest.skip("root reads a mode-000 file")
+    os.chmod(t["assembly"] / "project.yaml", 0)
+    try:
+        proc = b.tool("lane-worktrees", "add", "triad-1", "c9", "--checkout", t["code"])
+    finally:
+        os.chmod(t["assembly"] / "project.yaml", 0o644)
+    assert proc.returncode == 2, proc.stderr
+    assert (f"REFUSED, nothing was made: the legs of the assembly {t['assembly']} could not "
+            "be read") in proc.stderr
+    assert not (t["assembly"].parent / ".lane-worktrees" / "triad-1" / "c9").exists()
+    assert not any(p.endswith("/c9") for p in _inventory(b, "triad-1"))
+
 # ===================================================================== capture
 
 def capture(tools: Path, golden: Path) -> None:

@@ -5900,7 +5900,7 @@ def add_tree(ns) -> int:
     record_co, leg_line, assembly_hint = checkout, "", ""
     legs, why = project_legs(helper, lane_dir)
     if why:
-        return refuse(f"the legs of the lane's assembly {lane_dir} could not be read, so which "
+        return refuse(f"the legs of the assembly {lane_dir} could not be read, so which "
                       f"checkout a tree of it belongs to is unknown (Amendment 7(d)): {why}")
     if legs:
         made_from = git_common_dir_of(checkout)
