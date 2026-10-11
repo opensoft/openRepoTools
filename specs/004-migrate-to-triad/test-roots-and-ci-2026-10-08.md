@@ -2,6 +2,12 @@
 
 **Updated:** October 9, 2026, for `e3a76b5`, `dbc6837`, both reviews and the
 follow-ups.
+**Landed (added October 11, 2026):** #192 landed as `1abee1d`
+(2026-10-09T20:24:58Z), then #190 as `f87fd5a` (20:26:03Z), squashed at
+`b50f197`. `git diff 1abee1d f87fd5a` and `git diff c4864ac b50f197` have the
+same patch-id (`cb2c7bf2…`). So `b50f197`, which is listed below as a
+follow-up outside #190, is in #190 as it landed. #192 landed before #190, as
+section 2 asks. The rest of section 9's follow-ups are #195 and #193.
 **Tasks:** T009 and T010 of [tasks.md](tasks.md), under
 [#186](https://github.com/opensoft/openRepoTools/issues/186). No task is
 checked complete by this record; Gate B stays open.
@@ -271,8 +277,14 @@ The failures, recorded rather than deleted:
   fixture home's `projects/…`),
   long enough to fall past the cut. CI runs the same suite with a short
   `TMPDIR` and passed it (1315 passed at `c139e88`, 1318 at `dbc6837`). These sections are untouched
-  by PR #190; the length interaction belongs with the run-root work of
-  #162/#184 (inferred from the expected and actual rows, not bisected).
+  by PR #190.
+  - The length interaction is **#180**. That is inferred from the expected and
+    actual rows, not bisected.
+  - This record first sent it to the run-root work of #162/#184. It was
+    corrected on 2026-10-11, after lane 3's 6089801221, finding 13 (i).
+  - `composed.yml` runs the suite through `code/tests/run.sh` (assembly patch,
+    line 125), so `exact-pins` inherits #180. It would be red on these two
+    assertions until #180 is fixed (section 8).
 * **The lane suite ABORTED in P3**, after those two FAILs, at
   `test_lane_helpers.sh: line 6595: ln_doc: unbound variable`. This is a
   defect in PR #190's own guard. `ln_doc` is bound only inside the
@@ -327,7 +339,22 @@ pytest, so every local run had `/usr/bin` first on `PATH`. CI is the record.
 * Re-measure against the frozen source chosen at Gate C; the run C commits
   here are rehearsal identities, not the cutover's.
 * The follow-ups of section 9. Items 1, 4, 5 and 6 should land before the
-  real split.
+  real split. Their state on 2026-10-11:
+  - item 6 (1), `b50f197`, is in #190;
+  - items 1–4, 6 (2) and (3), and 7 are #195;
+  - item 5 is the plan owner's.
+* From lane 3's 6089801221 (section 10). The patches here stay byte-identical
+  as rehearsed; each item below changes them at T014/T015, not in this
+  record.
+  - **#180 before `exact-pins` is relied on.** Fix #180, or give the job
+    `run.sh`'s pytest line with a short `TMPDIR` (finding 13 (i)).
+  - **Make "never skips" a guarantee.** About forty other conditional skips
+    would still pass with exit 0, so fail `exact-pins` on any skip, for
+    example on the junit skipped count (finding 13 (ii)).
+  - **The landing tooling reads `tests-macos` by name, and the assembly has
+    no such check** (finding 12).
+  - **Regenerate both patches with a real author.** They carry the fixture
+    identity `openRepoTools CI <ci@openrepotools.invalid>` (finding 13 (iv)).
 
 ## 9. Reviews and dated follow-ups
 
@@ -343,13 +370,19 @@ pytest, so every local run had `/usr/bin` first on `PATH`. CI is the record.
   - every subprocess of a composed run stayed inside its fixture;
   - the caps reproduced against T006's `assembly-0001`.
 * **Lane openRepoTools-3, reviewer of record:** **LAND** on `dbc6837`
-  (review 5464931249). It names three things to fix before the squash:
-  - (1) the `ln_doc` abort of section 6, with the fix ready;
-  - (2) the paired layout `<assembly>/worktrees/<feature>/code` finds no
-    assembly (measured on run C), so in a feature worktree every document
-    test would skip;
-  - (3) `OPENREPOTOOLS_CODE_ROOT` and `OPENREPOTOOLS_ASSEMBLY_ROOT` redirect
-    the suite silently, because the report header is hidden by `-q`.
+  (review 5464931249). It names one defect that is best fixed before the
+  squash, and two later items:
+  - (1) the `ln_doc` abort of section 6 (its finding 10), with the fix ready;
+  - (2) a **Gate C item** (its finding 11): the paired layout
+    `<assembly>/worktrees/<feature>/code` finds no assembly (measured on run
+    C), so in a feature worktree every document test would skip;
+  - (3) a **non-blocking hazard**: `OPENREPOTOOLS_CODE_ROOT` and
+    `OPENREPOTOOLS_ASSEMBLY_ROOT` redirect the suite silently, because the
+    report header is hidden by `-q`.
+
+  Corrected 2026-10-11 (lane 3's 5481348731, finding 5). This record first
+  said all three were to be fixed before the squash, following lane 3's
+  summary on #186 (6072817992). The review itself dates them as above.
 * **Copilot round 2** (on `dbc6837`) raised two findings:
   - (High) the pin `commit:` gap of section 3;
   - (Medium, "previously missed") `_carries` accepts a directory where a
@@ -358,8 +391,8 @@ pytest, so every local run had `/usr/bin` first on `PATH`. CI is the record.
   I answered on the thread. Nothing was pushed, because the macOS gate runs
   on `dbc6837`.
 
-These follow-ups are dated 2026-10-09 and recorded on #186. None of them is
-in #190.
+These follow-ups are dated 2026-10-09 and recorded on #186. None of them was
+in #190 at `dbc6837`. Item 6 (1) landed in it (see **Landed** at the top).
 
 1. **Review finding 11.** Three code-only assertions came after the first
    document read (`test_repo_hygiene.py:994`, `:1052` and `:1264` at
@@ -386,7 +419,8 @@ in #190.
    to say the code leg keeps its own `.gitattributes` (section 2).
 6. **Lane 3's review.**
    - (1) `feat/test-roots-manual-guard` `b50f197`, unless the coordinator
-     takes it into #190 before the squash.
+     takes it into #190 before the squash. He did: it was fast-forwarded at
+     2026-10-09T13:59Z and landed in `f87fd5a`.
    - (2) Assembly discovery for the paired worktree layout, before Gate C.
    - (3) Say which roots a run used where `-q` cannot hide it.
 7. **Review nits.**
@@ -395,6 +429,36 @@ in #190.
    - `tests/run.sh`'s `abs_root` turns a quoted `~/x` into `$PWD/~/x`.
    - The `GIT_ENV` comment in `tests/test_test_roots.py` says "file
      transport allowed".
+
+## 10. Lane 3's review of the T010 patches (6089801221), dated 2026-10-11
+
+Lane 3's review of #190's follow-ups and of these patches came after this
+record (2026-10-09T21:47Z, on `d28e2cc`). Its verdict on this branch was
+"fit for evidence-3", with one thing to settle before the composed job is
+relied on (finding 13 (i)). Each finding's disposition is below. "#195"
+means that PR as it stands on 2026-10-11: open at `e378871`, with lane 3's
+LAND on `fb77bed` (5481360555), and not landed.
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| 1–3 | `b50f197` covers every manual read, changes no outcome on today's layout, and does what it says | Confirmed. It landed in #190 (see **Landed** at the top). |
+| 4 | The text test finds the guard by exact line match: a false red, never a false green | Fixed in #195 (`43ee05b`): the test now follows the `if`/`fi` nesting. |
+| 5, 6 | How the follow-ups sit on main; no outcome changes | Confirmed. The follow-ups are #195. |
+| 7 (i) | The AGENTS.md paragraph describes rather than gives a rule | Open. #195 does not change it, and it is not yet filed. |
+| 7 (ii) | The 340 → 347 assembly cap rested on a false premise | Fixed in #195 (`c7b27bc`): the paragraph moved below `assembly-0001`'s hunks, so the patch applies and gives 347. |
+| 7 (iii) | The paragraph names only `docs/` for the spec leg | Open: #193 item 20. |
+| 8 | The nested proof covers 3 of 5 reordered tests, and asserts only the outcome | Open. The missing two are #193 item 20. That the proof checks only the outcome is not yet filed. |
+| 9 | The `--help` half of the receipt test; the refusal wording; items 3–7 and 15 | The `--help` half is #193 item 20. The rest is #195. |
+| 10 | Run C, standalone and composed, with the follow-ups' tests | Recorded. The `.gitattributes` failure is T006's `code-0001` (section 2). |
+| 11 | The patches apply; the branch as pushed conflicts with main | Confirmed. Evidence-3 (#196) carries this branch's three files onto main. |
+| 12 | `tests.yml` keeps everything the gate reads; the assembly has no `tests-macos` check | Confirmed. The missing check is in section 8. |
+| 13 | Copilot round 2's High is closed in CI only, by step order | Closed in the suite too by #195 (`e79bd82`): a pin whose `commit:` differs from the gitlink is refused. |
+| 13 (i) | #180 lands in `exact-pins` through `run.sh` | Open. Section 6 is corrected and section 8 lists it. The patch is unchanged here. |
+| 13 (ii) | "Fails, never skips" holds only for roots and the dependency | Open. Section 8: fail the job on any skip. |
+| 13 (iii), 14 | The refusal misnames a named root | Fixed in #195 (`0c89b9e`, #193 item 15). |
+| 13 (iv) | The patches carry the fixture author | Open. Section 8: regenerate at T014. |
+| 15 | The composed refusal contract holds | Confirmed. |
+| 16 | Eight local shell FAILs attributed to the environment | Recorded. CI is the record. |
 
 ## Log SHA256s
 
