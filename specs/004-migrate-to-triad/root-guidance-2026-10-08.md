@@ -51,6 +51,8 @@ in this document:
 - section 7's `setup-openspeckit`, paired-selection, `check-prerequisites`,
   worktree-override and store-precedence rows, and its `openspec` 1.6.0
   exits;
+- section 6's 85-token census of cited hashes, whose tokens were resolved
+  against the original checkout's branches as well as `main`;
 - section 9's protocol hashes.
 
 T006's #186 comment repeats some of those exit codes from the same work,
@@ -423,9 +425,10 @@ Lane 2 is reading that side.
 4. **`shape/` copies.** Keep `shape/.gitignore` and `shape/.gitattributes` (pinned). `shape/AGENTS.md`, `shape/CLAUDE.md` and `shape/README.md` are unpinned, and the shape's own follow-up says to delete the first two. Their deletion is left to T014's reviewer.
 5. **Doctor placement.** `MISPLACED (3 paths)` (`code/commands/`, `code/contracts/`, `code/skills/`) is the adoption plan's reasoned overrides, identical before and after. Relay it; do not move files.
 6. **T009: the hygiene tests read the wrong front door after the split.**
-   - 18 test functions read `README.md`, `AGENTS.md`, `CLAUDE.md`, `.gitattributes` or `docs/README-lanes.md` at the **code leg's** root: 17 in `test_repo_hygiene.py`, 1 in `test_openrepotools_command.py` (`test_the_help_and_the_readme_say_the_mode_the_receipt_is_born_at`). *Corrected 2026-10-09 (#193 item 9): this line first said 17, as 16 + 1.*
-   - Measured on the code leg alone with `-k repo_hygiene`, which selects only `test_repo_hygiene.py`: before `code-0001`, 17 failed (all `FileNotFoundError`). After it, 13 fail (4 `FileNotFoundError` on `docs/README-lanes.md`, 9 assertions on the short leg README and AGENTS).
-   - The command test is outside that subset. Called directly on 2026-10-09, it fails before `code-0001` (`FileNotFoundError` on `README.md`) and still fails after it (`AssertionError`: the leg's README has no install-receipt paragraph).
+   - At `837928a`, 18 test functions read `README.md`, `AGENTS.md`, `CLAUDE.md`, `.gitattributes` or `docs/README-lanes.md` at the **code leg's** root: 17 in `test_repo_hygiene.py`, 1 in `test_openrepotools_command.py` (`test_the_help_and_the_readme_say_the_mode_the_receipt_is_born_at`). *Corrected 2026-10-09 (#193 item 9): this line first said 17, as 16 + 1.*
+   - Measured on run C's code leg (`837928a`'s code paths) alone with `-k repo_hygiene`, which selects only `test_repo_hygiene.py`: before `code-0001`, 17 failed (all `FileNotFoundError`). After it, 13 fail (4 `FileNotFoundError` on `docs/README-lanes.md`, 9 assertions on the short leg README and AGENTS).
+   - The command test is outside that subset. Called directly on `837928a`'s code paths on 2026-10-09, it fails before `code-0001` (`FileNotFoundError` on `README.md`) and still fails after it (`AssertionError`: the leg's README has no install-receipt paragraph).
+   - *Since #190 (`f87fd5a`; noted 2026-10-10):* 17 of the 18 read their file from the root that owns it, through `ROOTS.path_for` in `tests/conftest.py`. `README.md`, `AGENTS.md` and `CLAUDE.md` belong to the assembly root and `docs/README-lanes.md` to the spec root, so in a standalone code leg these 17 skip, and a composed run reads them from those roots. The 18th, `test_the_root_carries_the_line_ending_rule`, deliberately reads the code root's own `.gitattributes`. Called directly on main's code paths (`f87fd5a`), the 17 skip, including the command test. The 18th raises `FileNotFoundError` before `code-0001` and passes after it.
    - **4 now pass only because they read the leg's own files:** `test_agents_md_is_short_enough_to_be_read`, `test_readme_is_short_enough_to_be_read`, `test_claude_md_points_at_agents_md` and `test_the_root_carries_the_line_ending_rule`. A green there is about the wrong file.
    - Pointed back at the assembly root, the two length caps (`<= 316`, `<= 486`, today's counts) must rise to 340 and 510, each in a dated entry naming the rule its lines buy:
      - AGENTS.md: the shape's first-line pointer and the triad map the bootstrap protocol requires.
