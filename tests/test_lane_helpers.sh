@@ -5998,6 +5998,57 @@ has  "…launching the same lane with the same profile, from the record" \
      "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoA11-1 team-05a"
 hasnt "…asking nothing here either" "$out$err" "[y/N]"
 
+# THE LAUNCHER'S PRECEDENCE — `$PCLAUDE`, else `lclaude`, else `pclaude` — IS
+# PROVED HERE AND NOT BY THE HOST (opensoft/openRepoTools#143). Every case above
+# runs under the `$PCLAUDE` export at the head of this section, so none of them
+# reaches the rule that picks a launcher when that seam is unset. Before the
+# export (`c1bac0d`) the rule was exercised by whatever the host had installed:
+# a workstation with workBenches' `lclaude` found the real one first, which is
+# `exec pclaude --with-lane "$@"`, and read eight false reds, while a CI runner
+# has no `lclaude` and could not tell the rule from its absence. Each case below
+# names its own PATH, so the host's launcher is never a candidate.
+#
+# THE TWO FAKES ARE IN TWO DIRECTORIES AND THE `pclaude` ONE COMES FIRST on the
+# PATH of the case that wants `lclaude`, because `command -v lclaude ||
+# command -v pclaude` prefers a NAME, and a case with both in one directory
+# would go green for a rule that took whichever was first on PATH. The last
+# case takes every directory that holds an `lclaude` out of PATH — the a17
+# section's own way of making a word absent — which on a workstation is the
+# directory the real one is in.
+LP_LOG="$SANDBOX/launcher-precedence.log"
+mkdir -p "$SANDBOX/lpref-l" "$SANDBOX/lpref-p"
+cat > "$SANDBOX/lpref-l/lclaude" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s cwd=%s argv=%s\n' "${0##*/}" "$PWD" "$*" >> "${LP_LOG:-/dev/null}"
+FAKE
+cp -p "$SANDBOX/lpref-l/lclaude" "$SANDBOX/lpref-p/pclaude"
+chmod +x "$SANDBOX/lpref-l/lclaude" "$SANDBOX/lpref-p/pclaude"
+lp_path_without_lclaude="$(printf '%s' "$PATH" | tr ':' '\n' | while IFS= read -r lp_d; do
+  [ -n "$lp_d" ] || continue
+  if [ -x "$lp_d/lclaude" ]; then continue; fi
+  printf '%s:' "$lp_d"
+done | sed 's/:$//')"
+
+: > "$LP_LOG"
+run env -u TMUX -u PCLAUDE PATH="$SANDBOX/lpref-p:$SANDBOX/lpref-l:$PATH" LP_LOG="$LP_LOG" \
+  "$LANE" repoA11-1 </dev/null
+is   "with \$PCLAUDE unset, lane <name> exits 0 with both launchers on PATH" "$rc" 0
+is   "…and runs lclaude, once and not pclaude, though pclaude's directory is first" \
+     "$(cat "$LP_LOG")" "lclaude cwd=$A11_DIR argv=--lane repoA11-1 team-05a"
+
+: > "$LP_LOG"
+run env -u TMUX -u PCLAUDE PATH="$SANDBOX/lpref-p:$lp_path_without_lclaude" LP_LOG="$LP_LOG" \
+  "$LANE" repoA11-1 </dev/null
+is   "…and with no lclaude on PATH it falls back to pclaude, exiting 0" "$rc" 0
+is   "…running pclaude with the same argv, from the lane's directory" \
+     "$(cat "$LP_LOG")" "pclaude cwd=$A11_DIR argv=--lane repoA11-1 team-05a"
+
+: > "$LP_LOG"
+run env -u TMUX PCLAUDE="$SANDBOX/lpref-p/pclaude" PATH="$SANDBOX/lpref-l:$PATH" LP_LOG="$LP_LOG" \
+  "$LANE" repoA11-1 </dev/null
+is   "…while \$PCLAUDE, where it is set, beats an lclaude on PATH, which is the seam this suite pins" \
+     "$(cat "$LP_LOG")" "pclaude cwd=$A11_DIR argv=--lane repoA11-1 team-05a"
+
 # A LANE WITH NO RECORDED PROFILE IS A REFUSAL AND NEVER A GUESS: a wrong
 # profile is a launch into another account, and nothing here may invent one.
 : > "$FAKE_PCLAUDE_LOG"
