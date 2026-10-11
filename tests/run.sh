@@ -72,6 +72,29 @@ set -uo pipefail
 
 prog="${0##*/}"
 
+# THE ROOTS ARE PASSED THROUGH, NEVER CHOSEN HERE (opensoft/openRepoTools#186,
+# T009). `OPENREPOTOOLS_CODE_ROOT`, `_ASSEMBLY_ROOT` and `_SPEC_ROOT` name the
+# trees `tests/conftest.py` reads, and they reach pytest in the environment as
+# they are - except that the `cd` below would read a RELATIVE one against the
+# code root rather than against where the caller stood. So a relative value is
+# made absolute against the caller's directory first, and nothing else is
+# touched. `OPENREPOTOOLS_COMPOSED` is a mode, not a path, and passes as it is.
+abs_root() {   # <value> - absolute against the caller's directory
+  case "$1" in
+    /*) printf '%s\n' "$1" ;;
+    *) printf '%s/%s\n' "$PWD" "$1" ;;
+  esac
+}
+if [ -n "${OPENREPOTOOLS_CODE_ROOT:-}" ]; then
+  OPENREPOTOOLS_CODE_ROOT="$(abs_root "$OPENREPOTOOLS_CODE_ROOT")"; export OPENREPOTOOLS_CODE_ROOT
+fi
+if [ -n "${OPENREPOTOOLS_ASSEMBLY_ROOT:-}" ]; then
+  OPENREPOTOOLS_ASSEMBLY_ROOT="$(abs_root "$OPENREPOTOOLS_ASSEMBLY_ROOT")"; export OPENREPOTOOLS_ASSEMBLY_ROOT
+fi
+if [ -n "${OPENREPOTOOLS_SPEC_ROOT:-}" ]; then
+  OPENREPOTOOLS_SPEC_ROOT="$(abs_root "$OPENREPOTOOLS_SPEC_ROOT")"; export OPENREPOTOOLS_SPEC_ROOT
+fi
+
 # THE REPOSITORY ROOT, so the suite runs the same from anywhere. `cd -P` is
 # the portable physical path: `readlink -f` is not in the stock macOS userland.
 cd -P -- "$(dirname -- "$0")/.." 2>/dev/null || {

@@ -35,7 +35,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import REPO, WINDOWS_SKIP
+from conftest import REPO, ROOTS, WINDOWS_SKIP
 
 SUITE = REPO / "tests" / "test_lane_helpers.sh"
 
@@ -170,6 +170,16 @@ def test_the_lane_helper_suite_passes():
                  "LANES_REPOS_TSV_SHIPPED", "AGENT_PROTOCOL_ROOT",
                  "OPENREPOTOOLS_BIN_DIR", "PROJECTS_ROOT", "CLAUDE_NO_LANE"):
         env.pop(name, None)
+    # THE LANE MANUAL IS THE SPEC LEG'S (opensoft/openRepoTools#186, T009):
+    # the suite quotes `docs/README-lanes.md` back against the code, and in the
+    # triad that file is not beside the code. Named from this run's roots - the
+    # code root itself on today's layout - and EMPTY where the run has no spec
+    # root (a standalone code leg), which the suite reads as "skip the quotes,
+    # naming why". A composed run without one never gets here: conftest
+    # refuses it before the first test.
+    spec = ROOTS.root_of("spec")
+    env["OPENREPOTOOLS_LANE_MANUAL"] = (
+        "" if spec is None else str(spec / "docs" / "README-lanes.md"))
 
     # `errors="replace"`, because the thing this wrapper exists to print is the
     # TRANSCRIPT, and a decode that raises loses all of it. The suite renders
