@@ -150,7 +150,7 @@ jobs:
 
   # THE SAME SUITE ON WINDOWS, because a person on Windows still CLONES this
   # repository and reads it. What this job proves is the checkout — that the
-  # `.gitattributes` rule holds and the three bash files are LF in the index —
+  # `.gitattributes` rule holds and the bash files are LF in the index —
   # and the hygiene tests, which need no shell. The estate and installer tests
   # carry `WINDOWS_SKIP` in `tests/conftest.py`: these files are bash, there is
   # no PowerShell twin to run instead, and on Windows the way in is WSL2.
@@ -271,7 +271,7 @@ jobs:
           /bin/bash -n tests/test_lane_helpers.sh
           /bin/bash -n tests/run.sh
 
-  # THE SAME SUITE ON macOS, because these four files are what a Mac runs.
+  # THE SAME SUITE ON macOS, because the shipped bash files are what a Mac runs.
   # This is the job openRepoShape's own macOS `/bin/bash -n` step existed for
   # before the split above, and it moved here with the files. Measured at
   # 49-54 minutes against Linux's 17-22, it no longer runs on every push:
