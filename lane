@@ -225,6 +225,24 @@ take_arg() {
 	*) die "$prog takes a lane and an optional profile: $prog [<name> [<profile>]]" 64 ;;
 	esac
 }
+# A FLAG WHERE A VALUE BELONGS IS REFUSED, in the spaced spelling (opensoft/
+# openRepoTools#80 item 1, Copilot's review of workBenches#91 at `lane:215`).
+# `lane --dir --all` took `--all` as the checkout: the flag a person typed was
+# swallowed as a value and never took effect, so the run asked a different
+# question from the one asked of it. `--force --dry-run` was worse, a REAL
+# takeover whose why was the word `--dry-run`, written into another place's
+# append-only log. `park`, `resume` and `status` refuse this with their shared
+# `flag_value` (92eab6c) and `lane-handoff` with its own; this is the same
+# answer for the three value-taking arms here. The `=` spelling is the way back
+# for a value that really does begin with `-` — `--dir=--odd` takes whatever
+# follows the `=` — and an empty one there is already refused at its arm.
+not_a_flag() {   # <flag> <the value the spaced spelling would take>
+	case "$2" in
+	-*) die "$1 needs a value and '$2' is a flag: nothing here swallows the next word
+    whatever it is. A value that really does begin with \`-\` is given after an
+    \`=\`:  $1=$2" 64 ;;
+	esac
+}
 while [ $# -gt 0 ]; do
 	if [ "$endopts" = 1 ]; then take_arg "$1"; shift; continue; fi
 	case "$1" in
@@ -233,11 +251,11 @@ while [ $# -gt 0 ]; do
 	--switch) switch=1; shift ;;
 	--dry-run) dry_run=1; shift ;;
 	--request-handoff) request_flag=1; shift ;;
-	--force) force_why="${2-}"; [ -n "$force_why" ] || die "--force takes the WHY you are taking a lane another place is bound to: it is written into that lane's append-only log and it is the sentence the bound session reads when it refuses every prompt from then on (Amendment 18(e))" 64; shift 2 ;;
+	--force) force_why="${2-}"; [ -n "$force_why" ] || die "--force takes the WHY you are taking a lane another place is bound to: it is written into that lane's append-only log and it is the sentence the bound session reads when it refuses every prompt from then on (Amendment 18(e))" 64; not_a_flag --force "$force_why"; shift 2 ;;
 	--force=*) force_why="${1#--force=}"; [ -n "$force_why" ] || die "--force takes the WHY you are taking a lane another place is bound to (Amendment 18(e))" 64; shift ;;
-	--wait) handoff_wait="${2-}"; [ -n "$handoff_wait" ] || die "--wait needs a number of seconds" 64; shift 2 ;;
+	--wait) handoff_wait="${2-}"; [ -n "$handoff_wait" ] || die "--wait needs a number of seconds" 64; not_a_flag --wait "$handoff_wait"; shift 2 ;;
 	--wait=*) handoff_wait="${1#--wait=}"; [ -n "$handoff_wait" ] || die "--wait needs a number of seconds" 64; shift ;;
-	--dir) dir_flag="${2-}"; [ -n "$dir_flag" ] || die "--dir needs a path" 64; shift 2 ;;
+	--dir) dir_flag="${2-}"; [ -n "$dir_flag" ] || die "--dir needs a path" 64; not_a_flag --dir "$dir_flag"; shift 2 ;;
 	--dir=*) dir_flag="${1#--dir=}"; [ -n "$dir_flag" ] || die "--dir needs a path" 64; shift ;;
 	--) endopts=1; shift ;;
 	-*) die "unknown option '$1' — see $prog --help" 64 ;;

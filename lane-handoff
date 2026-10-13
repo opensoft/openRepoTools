@@ -102,13 +102,17 @@
 #
 #   0  the handoff was written (and the pane respawned or exited, where asked)
 #   2  REFUSED — nothing was written, or the record was written and the act
-#      that follows it was refused before touching the pane
+#      that follows it was refused before touching the pane, or tmux would not
+#      rename the window and the record was NOT written (the refusal names
+#      what had landed before it: the handoff's top block, SWAPPING)
 #   1  a read failed, which is never "nothing to report" (Amendment 7(d))
 #
 #   $LANES_EDIT       the register's reader/writer (default: beside this file)
 #   $LANES_AGENT      this agent's name for the record (default: claude)
 #   $PCLAUDE          the launcher                 (default: lclaude, else pclaude, else claude-profile)
 #   $LANE_HANDOFF_NO_TMUX=1   never touch tmux (the identity fix, --exit, --restart)
+#                             — and with `$TMUX` unset, this is not inside tmux,
+#                             so tmux is not touched either
 #
 # lane-collision-protocol Amendment 17 (in force 2026-09-14T09:45:33Z),
 # Amendment 18(d) and Addendum 2 (in force 2026-09-14T16:50:32Z).
@@ -241,6 +245,13 @@ why=""
 # `resume` and `status` (`92eab6c`): `--lane --restart` must not hand off a lane
 # called `--restart`, and `--flag=value` is the spelling that gives a `-`-led
 # value back. One reader, byte-identical to theirs.
+# AND ITS REFUSAL ENDS THIS COMMAND, NOT ONLY ITS OWN SUBSHELL (opensoft/
+# openRepoTools#80). Every arm reads it as `x="$(flag_value …)"`, and a `die`
+# inside `$( )` exits the subshell it runs in: the REFUSED line was printed and
+# the run then went on with the value empty — `--lane --restart` handed off
+# whatever lane the window resolved to, and `--writers-file ""` wrote a handoff
+# with no briefs. So every arm ends `|| exit`, which carries the refusal's own
+# status out, and this file sets no `-e` that would have done it silently.
 flag_value() {   # <flag> <the next argument, if any>
 	case "${2-}" in
 	'') die "$1 needs a value" 2 ;;
@@ -273,19 +284,33 @@ while [ $# -gt 0 ]; do
 	# record.
 	--supervise) do_supervise=1; shift ;;
 	--restart-status) do_status=1; shift ;;
-	--operation) operation="$(flag_value --operation "${2-}")"; shift 2 ;;
+	# AN `=` WITH NOTHING AFTER IT IS A VALUE THAT WAS TYPED AND LOST, never one
+	# that was not typed (opensoft/openRepoTools#80, Copilot's review of
+	# workBenches#91 at `lane-handoff:242` and `:248`). Each `--flag=*` arm below
+	# takes whatever follows the `=`, and every one of these values is read
+	# further down as "was this given at all?": `--lane=` fell through to the
+	# window's own lane and handed THAT one off, `--writers-file=` wrote the
+	# WRITERS section with no brief for a writer the caller had briefed, and
+	# `--dir=` took the record's directory in place of the one being named. The
+	# spaced spelling has always refused an empty value through `flag_value`;
+	# this is the same refusal for the other spelling, in ONE arm ahead of the
+	# seven, because `case` takes the first pattern that matches. The arms below
+	# keep taking a value that begins with `-`, which is what `=` is for.
+	--operation= | --at= | --lane= | --agent= | --transcript= | --writers-file= | --dir=)
+		die "${1%=} needs a value, and '$1' gives it an empty one. Give it one after the '=', or leave the flag out." 2 ;;
+	--operation) operation="$(flag_value --operation "${2-}")" || exit; shift 2 ;;
 	--operation=*) operation="${1#--operation=}"; shift ;;
-	--at) late_at="$(flag_value --at "${2-}")"; shift 2 ;;
+	--at) late_at="$(flag_value --at "${2-}")" || exit; shift 2 ;;
 	--at=*) late_at="${1#--at=}"; shift ;;
-	--lane) lane="$(flag_value --lane "${2-}")"; shift 2 ;;
+	--lane) lane="$(flag_value --lane "${2-}")" || exit; shift 2 ;;
 	--lane=*) lane="${1#--lane=}"; shift ;;
-	--agent) agent="$(flag_value --agent "${2-}")"; shift 2 ;;
+	--agent) agent="$(flag_value --agent "${2-}")" || exit; shift 2 ;;
 	--agent=*) agent="${1#--agent=}"; shift ;;
-	--transcript) transcript="$(flag_value --transcript "${2-}")"; shift 2 ;;
+	--transcript) transcript="$(flag_value --transcript "${2-}")" || exit; shift 2 ;;
 	--transcript=*) transcript="${1#--transcript=}"; shift ;;
-	--writers-file) writers_file="$(flag_value --writers-file "${2-}")"; shift 2 ;;
+	--writers-file) writers_file="$(flag_value --writers-file "${2-}")" || exit; shift 2 ;;
 	--writers-file=*) writers_file="${1#--writers-file=}"; shift ;;
-	--dir) dir_flag="$(flag_value --dir "${2-}")"; shift 2 ;;
+	--dir) dir_flag="$(flag_value --dir "${2-}")" || exit; shift 2 ;;
 	--dir=*) dir_flag="${1#--dir=}"; shift ;;
 	--) shift; while [ $# -gt 0 ]; do why="${why:+$why }$1"; shift; done ;;
 	-*) die "unknown option '$1' — see $prog --help" 2 ;;
@@ -406,9 +431,17 @@ fi
 utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 UTC="$(utc_now)"
 
+# TMUX IS THIS LANE'S ONLY FROM INSIDE IT (opensoft/openRepoTools#80 item 10,
+# Copilot's review of workBenches#91 at `lane-handoff:351`). A `tmux` binary on
+# PATH is not a tmux client: from an ordinary shell on a host where any tmux
+# server runs — another person's, a leftover one — every `display-message`
+# below answers about that server's most recent client, and the rename, the
+# record's `window` and `--restart`/`--exit` would then read or act on a window
+# that is not this lane's. `$TMUX` is set only inside a real client, which is
+# the test `lane`'s `tmux_here` makes and the one made here.
 have_tmux() {
 	[ "${LANE_HANDOFF_NO_TMUX:-0}" = 1 ] && return 1
-	command -v tmux >/dev/null 2>&1
+	[ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1
 }
 
 # THIS COMMAND'S OWN ABSOLUTE PATH, because tmux starts the supervisor and a
@@ -1549,19 +1582,37 @@ fi
 # the HARNESS's own `tmux` field — which `window-session` matches a session
 # record on, and which is where the PANE comes from — is `<session>:<@id>`.
 # Reading one for the other is how a record names a window nothing can resolve.
+# AND EACH IS CHECKED AS A WHOLE STRING (opensoft/openRepoTools#80 item 3,
+# Copilot's review of workBenches#91 at `lane-handoff:434`). `*:[0-9]*` and
+# `@[0-9]*` were prefix globs, so `session:1junk` and `@123junk` passed —
+# from tmux and from the launcher's environment alike — and went into the
+# append-only `window` sub-field, where `window-lane` can never resolve them.
+# The launcher and `lane-start` hold the same two values to `^.+:[0-9]+$` and
+# `^@[0-9]+$`; these are those two rules, spelled in `case` as `lane-start`
+# spells its own id check. The ref: a session part that is not empty, then
+# digits and nothing else after the LAST `:`.
+window_ref_ok() {   # <session>:<index>
+	case "${1##*:}" in '' | *[!0-9]*) return 1 ;; esac
+	case "$1" in ?*:*) return 0 ;; esac
+	return 1
+}
+window_id_ok() {   # @<id>
+	case "$1" in @ | @*[!0-9]*) return 1 ;; @*) return 0 ;; esac
+	return 1
+}
 win=""; wid=""; window_name=""; win_harness=""
 if have_tmux; then
 	win="$(tmux display-message -p '#S:#I' 2>/dev/null || :)"
-	case "$win" in *:[0-9]*) : ;; *) win="" ;; esac
+	window_ref_ok "$win" || win=""
 	wid="$(tmux display-message -p '#{window_id}' 2>/dev/null || :)"
-	case "$wid" in @[0-9]*) : ;; *) wid="" ;; esac
+	window_id_ok "$wid" || wid=""
 	window_name="$(tmux display-message -p '#W' 2>/dev/null || :)"
 	win_harness="$(tmux display-message -p '#{session_name}:#{window_id}' 2>/dev/null || :)"
 fi
 [ -n "$win" ] || win="${WORKBENCHES_CLAUDE_WINDOW_REF:-}"
-case "$win" in *:[0-9]*) : ;; *) win="" ;; esac
+window_ref_ok "$win" || win=""
 [ -n "$wid" ] || wid="${WORKBENCHES_CLAUDE_WINDOW_ID:-}"
-case "$wid" in @[0-9]*) : ;; *) wid="" ;; esac
+window_id_ok "$wid" || wid=""
 window_ref="${win}${wid:+ $wid}"
 
 if [ -z "$lane" ] && [ -n "$window_name" ]; then
@@ -1814,15 +1865,10 @@ if [ "$do_restart" = 1 ]; then
   done
 fi
 
-# THE OTHER TWO NAMES MADE TO MATCH IT, mechanically. The window is renamed
-# here; the SESSION's name is the lane's messaging address (Amendment 2) and
-# there is no API to rename a running session from outside it, so where the
-# live record's name is not the lane the act is PRINTED — it is the operator's
-# `/rename`, and it is not a question.
-if have_tmux && [ -n "$window_name" ] && [ "$window_name" != "$lane" ]; then
-	tmux rename-window "$lane" 2>/dev/null &&
-		step "window renamed '$window_name' → '$lane' (Amendment 8(b): the window IS the lane)"
-fi
+# THE WINDOW IS NOT RENAMED HERE ANY MORE: the refusals between here and the
+# record must leave it as they found it, two of them say so in as many words,
+# and now they do. The rename is section 3a below, after the last of them
+# (opensoft/openRepoTools#80).
 
 # ---------------------------- the LATE record's preconditions, read FIRST
 #
@@ -2143,6 +2189,41 @@ if [ "$handoff_written" = 1 ] && [ "${LANES_NO_GIT:-0}" != 1 ]; then
     git -C $hs_repo commit -m \"handoff($lane@${ws:-unknown}): PAUSED\" -m \"Lane: $lane\" -- $hs_rel"
 		fi
 	fi
+fi
+
+# ------------------------- 3a. the window takes the lane's name, and only now
+#
+# THE OTHER TWO NAMES MADE TO MATCH IT, mechanically. The window is renamed
+# here; the SESSION's name is the lane's messaging address (Amendment 2) and
+# there is no API to rename a running session from outside it, so where the
+# live record's name is not the lane the act is PRINTED, beside the read of
+# that record above — it is the operator's `/rename`, and it is not a question.
+#
+# AFTER THE LAST REFUSAL AND BEFORE THE FIRST RECORD (opensoft/openRepoTools#80
+# items 2 and 11, Copilot's review of workBenches#91 at `lane-handoff:519`). The
+# rename used to run before the `--late` preconditions, the writers' snapshot
+# file, the row read and the `--restart` binding — every one of them a refusal,
+# two of them saying that nothing was renamed — so a refused handoff left the
+# window carrying the name of a lane it had not handed off. And its failure was
+# swallowed: the `&&` gated only the message, and the PAUSED record, the row and
+# the restart line went on as if the window were the lane's, which is how the
+# next handoff from that window binds the wrong lane. `lane-start` holds this
+# same rename fatal, and so does this command now: a rename tmux refuses is a
+# refusal, made before the PAUSED record, the LANES.md line and the row, and
+# before any pane is touched. What HAS landed by then is said, because the act
+# that follows is a re-run and a person deciding on one needs to know.
+if have_tmux && [ -n "$window_name" ] && [ "$window_name" != "$lane" ]; then
+	rn_err=""
+	if ! rn_err="$(tmux rename-window "$lane" 2>&1 >/dev/null)"; then
+		rn_landed=""
+		[ "$handoff_written" = 1 ] &&
+			rn_landed=" The handoff's new top block IS written, and a re-run puts a newer one above it."
+		[ -n "$lc_on" ] &&
+			rn_landed="$rn_landed The lane reads SWAPPING until a handoff finishes, and the next one supersedes this one."
+		die "tmux would not rename this window '$window_name' → '$lane'${rn_err:+ (tmux: $rn_err)}, and the window IS the lane (Amendment 8(b)): a record written beside a window that still carries another name is how the next handoff from it binds the wrong lane. So the PAUSED record, the LANES.md line and the row were NOT written, and no pane was touched.$rn_landed Rename the window, then run the same command again:
+    tmux rename-window $lane" 2
+	fi
+	step "window renamed '$window_name' → '$lane' (Amendment 8(b): the window IS the lane)"
 fi
 
 # ------------------------------------------------------- 4. the swap record
