@@ -716,6 +716,11 @@ if [ -n "$retire_dormant" ]; then
   rd_errf="$(mktemp "${TMPDIR:-/tmp}/lane-end-sweep.XXXXXX" 2>/dev/null || printf '')"
   [ -n "$rd_errf" ] ||
     die "no temporary file could be made to capture the read's own notes, so whether this workstation's session records could be read was never established — and DORMANT is 'no object log AND no live session here'. The rows are not counted over a fact that was not read (Amendment 7(d)). Fix \$TMPDIR (full, gone or not writable) and re-run. Nothing was written." 1
+  # `LE_TMP` IS WHAT `cleanup` REMOVES ON EVERY EXIT. The note is relayed on
+  # stderr, and where that write fails — a closed or full stderr — `set -e`
+  # leaves before a plain `rm` below is reached and the capture file stayed in
+  # `$TMPDIR`.
+  LE_TMP="$rd_errf"
   rd_rows="$("$LANES_EDIT" lanes --fetch --closed --prefix "$retire_dormant" 2>"$rd_errf")" || rd_rc=$?
   rd_err="$(cat "$rd_errf" 2>/dev/null || printf '')"
   printf '%s' "$rd_err" >&2
