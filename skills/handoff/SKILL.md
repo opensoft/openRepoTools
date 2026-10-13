@@ -643,8 +643,13 @@ lane-start --help 2>/dev/null | grep -q -- '--confirm' \
 # WHICH ACT REMOVES THIS LINE: none is scheduled, and that is why it is printed
 # CONDITIONALLY rather than always — it is fenced on *if its name is not the
 # lane*, and that test is the whole of it. There is no API to rename a running
-# session from inside, so wherever a session comes up outside `lane-start` the
-# operator's `/rename <lane>` is the only act there is.
+# session from inside, but a keystroke is not an API, and Amendment 12's name
+# guard sends it: the `SessionStart` hook (`lanes-edit.sh session-start`) and the
+# `UserPromptSubmit` guard (`lanes-edit.sh guard`) TYPE `/rename <lane>` into the
+# session's own tmux pane. So the session that comes up outside `lane-start` is
+# usually renamed for the person, and the operator's `/rename <lane>` is the
+# FALLBACK for where the guard has not run or could not type — hooks not
+# installed, a pane that is not running `claude`, tmux not answering.
 echo 'then, in the session that comes up: if its name is not the lane, type /rename <lane> (lane-start names every session it launches, the resume branches included, since adoption act 0 landed as opensoft/brett-wip#5 @3719d97; a session that came up WITHOUT it — a missing or refusing lane-start, a bare claude, or a workstation whose lane-start predates that commit — carries the name the harness derived, and no API renames one from inside)'
 ```
 
@@ -752,5 +757,5 @@ honest record of the state that session holds is its own next `/handoff`.
 
 ```sh
 lane-handoff --late --at 2026-09-14T12:02:27Z "late; usage limit hit before the swap"
-lclaude <profile>      # and only then; use pclaude --lane <lane> if lclaude is unavailable
+lclaude "${CLAUDE_PROFILE_NAME:-<profile>}"      # and only then; use pclaude --lane <lane> if lclaude is unavailable
 ```
