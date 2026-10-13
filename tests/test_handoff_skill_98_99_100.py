@@ -48,13 +48,13 @@ OLDER_UUID = "11111111-2222-4333-8444-555555555555"
 
 #: What a session records the helper's calls as: verb, the `LANES_SESSION` it
 #: was handed, then every argument. `lane-dir` answers 8 (no answer) and
-#: `register-row` prints `$STUB_ROW`, which are the only two reads these blocks
-#: make of it that matter here.
+#: `register-row` prints `$STUB_ROW` and exits `$STUB_REGISTER_RC`, which are the
+#: only two reads these blocks make of it that matter here.
 STUB = """#!/usr/bin/env bash
 printf '%s\\tsession=[%s]\\t%s\\n' "$1" "${LANES_SESSION-<unset>}" "$*" >> "$STUB_LOG"
 case "$1" in
   lane-dir) exit 8 ;;
-  register-row) [ -z "${STUB_ROW:-}" ] || printf '%s\\n' "$STUB_ROW" ;;
+  register-row) [ -z "${STUB_ROW:-}" ] || printf '%s\\n' "$STUB_ROW"; exit "${STUB_REGISTER_RC:-0}" ;;
 esac
 exit 0
 """
@@ -109,10 +109,11 @@ class Estate:
         self.home = root / "home"
         self.home.mkdir()
 
-    def run(self, script: str, row: str = "") -> subprocess.CompletedProcess:
+    def run(self, script: str, row: str = "",
+            extra: dict | None = None) -> subprocess.CompletedProcess:
         env = {"HOME": str(self.home), "PATH": f"{self.bin}:/usr/bin:/bin",
                "STUB_LOG": str(self.log), "STUB_ROW": row,
-               "TMPDIR": str(self.home)}
+               "TMPDIR": str(self.home), **(extra or {})}
         return subprocess.run([BASH, "-c", script], env=env, cwd=str(self.home),
                               capture_output=True, text=True, check=False)
 
@@ -233,10 +234,26 @@ def test_a_missing_workstation_stops_all_three_register_writes(estate):
 STEP2 = "register-row \"$lane\" 2>/dev/null | grep '^|'"
 
 
-def _step2(estate: Estate, row: str) -> subprocess.CompletedProcess:
-    script = "\n".join([f'L="{estate.helper}"', "lane=repoHS-1", _block(STEP2),
+def _step2(estate: Estate, row: str, *, lane: str = "repoHS-1",
+           ws_missing: str = "",
+           extra: dict | None = None) -> subprocess.CompletedProcess:
+    script = "\n".join([f'L="{estate.helper}"', f"lane={lane}",
+                        f'ws_missing="{ws_missing}"', _block(STEP2),
                         'printf "uuid_missing=[%s]\\n" "${uuid_missing:-}"'])
-    proc = estate.run(script, row=row)
+    proc = estate.run(script, row=row, extra=extra)
+    assert proc.returncode == 0, proc.stderr
+    return proc
+
+
+def _swap(estate: Estate, row: str, extra: dict | None = None) -> subprocess.CompletedProcess:
+    """Step 2 and step 4 in ONE shell, as a session runs them, so what step 2
+    decides is what step 4 does."""
+    script = "\n".join([
+        f'L="{estate.helper}"', "lane=repoHS-1", "ws=Eagle", 'why="a usage reset"',
+        'ws_missing=""', _block(STEP2), _block("# (c) the row: ONE WRITE"),
+        'printf "uuid_missing=[%s] row_write_refused=[%s]\\n" '
+        '"${uuid_missing:-}" "$row_write_refused"'])
+    proc = estate.run(script, row=row, extra=extra)
     assert proc.returncode == 0, proc.stderr
     return proc
 
@@ -293,8 +310,91 @@ def test_the_handoff_is_told_to_name_the_missing_session():
     assert "$uuid_missing" in prose, (
         "step 2's prose must say what to write in the handoff when the lane "
         "has no session recorded (R-A11-5: *the gap named in the handoff*)")
-    paragraph = next(p for p in prose.split("\n\n") if "$uuid_missing" in p)
+    paragraph = " ".join(next(p for p in prose.split("\n\n")
+                              if "$uuid_missing" in p).split())
     assert "lane-start --no-launch" in paragraph
     assert "NOT written" in paragraph or "NOT made" in paragraph, (
         "the paragraph must say that the object-log and register writes were "
         "not made, so the next session knows the log is behind the handoff")
+    assert "`session unknown`" in paragraph and "`session none`" not in paragraph, (
+        "the top block's first line carries the word `lane-handoff` writes "
+        "(`${uuid:-unknown}`), not another")
+    assert "nor the row's state cell" in paragraph, (
+        "with the workstation also missing the row's cell is NOT set either, "
+        "and the paragraph must not tell the next session it was")
+
+
+# --- #98, review round: the session's own id answers first; a failed read is
+# --- not an answer; the message says only what step 4 will do ----------------
+
+def test_the_sessions_own_id_answers_where_the_row_records_none(estate):
+    """`R-A11-5`: *a swap taken by a running session always has a uuid:
+    `$CLAUDE_CODE_SESSION_ID` is it … the refusal fires on no ordinary path.*"""
+    proc = _swap(estate, _row("none"), extra={"CLAUDE_CODE_SESSION_ID": UUID})
+    assert f"uuid={UUID}" in proc.stdout and "uuid_missing=[]" in proc.stdout, proc.stdout
+    assert "NO SESSION" not in proc.stdout, proc.stdout
+    assert estate.verbs() == ["register-row", "lane-dir", "log", "append-line",
+                              "set-row-state"], estate.calls()
+    calls = {verb: (session, args) for verb, session, args in estate.calls()}
+    assert calls["log"][0] == f"session=[{UUID}]"
+    assert f"session {UUID}@Eagle" in calls["append-line"][1]
+
+
+def test_the_sessions_own_id_beats_the_rows_last_one(estate):
+    _swap(estate, _row(f"harness `{OLDER_UUID}`"),
+          extra={"CLAUDE_CODE_SESSION_ID": UUID})
+    calls = dict((v, s) for v, s, _ in estate.calls())
+    assert calls.get("log") == f"session=[{UUID}]", estate.calls()
+
+
+def test_an_environment_id_that_is_not_a_uuid_is_ignored(estate):
+    proc = _swap(estate, _row(f"harness `{UUID}`"),
+                 extra={"CLAUDE_CODE_SESSION_ID": "not-a-uuid"})
+    assert f"uuid={UUID}" in proc.stdout
+    assert dict((v, s) for v, s, _ in estate.calls())["log"] == f"session=[{UUID}]"
+
+
+def test_neither_id_answering_skips_the_two_writes_and_keeps_the_row(estate):
+    """The rare case that is left: no session of its own (a plain shell) and a
+    row that records none."""
+    proc = _swap(estate, _row("none"))
+    assert "uuid_missing=[1]" in proc.stdout and "NO SESSION RECORDED" in proc.stdout
+    assert estate.verbs() == ["register-row", "lane-dir", "set-row-state"], estate.calls()
+
+
+def test_a_failed_row_read_is_not_a_lane_that_never_had_a_session(estate):
+    """Amendment 7(d): a read that failed is never an answer. With
+    `register-row` exiting 3 and printing nothing there is no row to say it
+    records no session; the `$handoff` stop beneath is what handles it."""
+    estate.log.write_text("")
+    script = "\n".join([f'L="{estate.helper}"', "lane=repoHS-1", 'ws_missing=""',
+                        _block(STEP2),
+                        'printf "uuid_missing=[%s] handoff=[%s]\\n" '
+                        '"${uuid_missing:-}" "$handoff"'])
+    proc = estate.run(script, row="", extra={"STUB_REGISTER_RC": "3"})
+    assert proc.returncode == 0, proc.stderr
+    assert "NO SESSION" not in proc.stdout, proc.stdout
+    assert "uuid_missing=[] handoff=[]" in proc.stdout
+
+
+@pytest.mark.parametrize("ws_missing, says, never", [
+    ("", "while the row's state cell still is", "for want of a workstation"),
+    ("1", "and neither is the row's state cell, for want of a workstation",
+     "still is"),
+], ids=["workstation-present", "workstation-also-missing"])
+def test_the_message_says_only_what_step_4_will_do_to_the_row(estate, ws_missing,
+                                                              says, never):
+    proc = _step2(estate, _row("none"), ws_missing=ws_missing)
+    assert says in proc.stdout and never not in proc.stdout, proc.stdout
+    _step4(estate, uuid="", ws_missing=ws_missing, uuid_missing="1")
+    called_row = "set-row-state" in estate.verbs()
+    assert called_row == (ws_missing == ""), (
+        "the message and step 4 disagree about whether the row's cell is set")
+
+
+def test_the_command_in_the_message_is_filled_in_from_the_lane(estate):
+    proc = _step2(estate, _row("none"), lane="repoHS-17")
+    assert "`lane-start --no-launch repoHS 17`" in proc.stdout, proc.stdout
+    proc = _step2(estate, _row("none"), lane="odd-lane-name")
+    assert "`lane-start --no-launch <repo> <n>`" in proc.stdout, (
+        "a lane name that is not <repo>-<n> must not be split into a guess")
