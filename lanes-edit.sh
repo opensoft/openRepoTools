@@ -1201,6 +1201,13 @@ rename_undo() {
   return 0
 }
 
+# `cleanup`'S TEMPORARIES START EMPTY, so none of them is a path the CALLER
+# chose. It runs on every exit and removes each one by name, and a variable
+# exported into the environment used to arrive here already set: `rl_htmp`
+# made a read-only `canon-lane` delete the file it named, and `TMPD` made it
+# `rm -rf` the directory (the review of #212; `pbh_tmp` and `TMPD` had the hole
+# before `rl_htmp` joined them). The writers below set them when they use them.
+TMPD=""; pbh_tmp=""; rl_htmp=""
 cleanup() {
   [ -z "${pbh_tmp:-}" ] || rm -f -- "$pbh_tmp"
   [ -z "${rl_htmp:-}" ] || rm -f -- "$rl_htmp"   # rename-lane's stamp before its replace (#158)

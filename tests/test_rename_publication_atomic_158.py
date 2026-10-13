@@ -204,3 +204,22 @@ def test_rename_replace_refused_or_interrupted_rolls_back_and_leaves_no_temporar
     assert rbox.tree() == before
     assert rbox.head() == head
     assert sorted(p.name for p in rbox.handoff.parent.iterdir()) == [rbox.handoff.name]
+
+
+@pytest.mark.parametrize("name", ["rl_htmp", "pbh_tmp", "TMPD"])
+def test_cleanup_removes_no_path_a_variable_inherits_from_the_environment(tmp_path, name):
+    """`cleanup` runs on every exit and removes its temporaries BY NAME, so a
+    name that arrived already set removed the caller's path: with `rl_htmp`
+    exported, a read-only `canon-lane` deleted that file (the review of #212),
+    and `pbh_tmp` and `TMPD` — the second under `rm -rf` — had the same hole
+    before it."""
+    box = Sandbox(tmp_path)
+    box.env["LANES_NO_FETCH"] = "1"
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    (victim / "keep.md").write_bytes(HANDOFF)
+    inherited = victim if name == "TMPD" else victim / "keep.md"
+    result = subprocess.run([str(box.bin / "lanes-edit.sh"), "canon-lane", LANE],
+                            cwd=box.lane_dir, env=dict(box.env, **{name: str(inherited)}),
+                            text=True, capture_output=True, timeout=60, check=False)
+    assert (victim / "keep.md").read_bytes() == HANDOFF, (result.returncode, result.stderr)
