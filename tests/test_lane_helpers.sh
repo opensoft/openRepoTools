@@ -96,6 +96,9 @@ cleanup() {
   [ -n "${RACE_PARENT:-}" ] && kill "$RACE_PARENT" 2>/dev/null
   [ -n "${RACE_CHILD:-}" ] && kill "$RACE_CHILD" 2>/dev/null
   [ -n "${GD_DUP:-}" ] && kill "$GD_DUP" 2>/dev/null
+  # #180's short, fixed checkout root for the clause (c) TAIL case: the one
+  # fixture this suite makes outside `$SANDBOX`.
+  [ -n "${A11T_ROOT:-}" ] && [ -d "$A11T_ROOT" ] && rm -rf -- "$A11T_ROOT"
   [ -n "${SANDBOX:-}" ] && [ -d "$SANDBOX" ] && rm -rf -- "$SANDBOX"
   return 0
 }
@@ -5348,12 +5351,35 @@ has  "…keeping the home and estate the line already carried" "$A11B_LOG" "home
 FAKE_TMUX_WINDOW="a11start:@42" FAKE_TMUX_WINDOW_INDEX=3 FAKE_TMUX_WINDOW_NAME=repoA11b-1 \
   CLAUDE_PROFILE_NAME=team-05a run "$START" repoA11b 1 --no-launch
 is   "lane-start exits 0 on a second start of the same lane" "$rc" 0
-has  "the row's stamp states clause (c)'s two facts for a person, in its TAIL" \
-     "$(grep '^| `repoA11b-1`' "$LANES")" "dir $HOME/projects/repoA11b; window a11start:3 @42"
-has  "…and that tail still says what actually happened, so --no-launch never claims a launch" \
+has  "…and its stamp says what actually happened, so --no-launch never claims a launch" \
      "$(grep '^| `repoA11b-1`' "$LANES")" ", no launch"
 has  "…while its HEAD is Amendment 8(d)'s and is untouched" \
      "$(grep '^| `repoA11b-1`' "$LANES")" "(lane repoA11b-1) — lane-start on Eagle: window renamed, no launch; dir "
+# THE TAIL IS READ ON A CHECKOUT AT A SHORT, FIXED PATH (opensoft/openRepoTools
+# #180). The stamp is ONE line under ratified decision O1's cap (Amendment
+# 13(a)), and `cut_to_line` takes `dir` and `window` first by design — both are
+# this same act's log sub-fields, asserted in full above — so the tail fits only
+# when the CHECKOUT PATH does. Read on `$HOME/projects/repoA11b`, this case's
+# answer was the run root's length: green under plain pytest's `/tmp`, red under
+# `tests/run.sh`'s per-run root, at the edge on macOS. `/tmp/ort-a11t.XXXXXX/
+# repoA11t` is 29 characters wherever the suite runs, which puts the line at
+# about 170, well inside the 230 the cut keeps. It is the one fixture outside
+# `$SANDBOX`, and `cleanup` removes it. `tests/test_lane_start_row_stamp.py`
+# drives the same stamp at three checkout lengths, the two that are cut included.
+A11T_ROOT="$(mktemp -d /tmp/ort-a11t.XXXXXX 2>/dev/null || :)"
+is   "the TAIL case has its short, fixed checkout root under /tmp" \
+     "$( [ -n "$A11T_ROOT" ] && [ -d "$A11T_ROOT" ] && echo yes || echo no )" "yes"
+A11T_DIR="${A11T_ROOT:-$SANDBOX/a11t-no-short-root}/repoA11t"
+git init -q -b main "$A11T_DIR"
+git -C "$A11T_DIR" remote add origin "https://github.com/opensoft/repoA11t.git"
+FAKE_TMUX_WINDOW="a11tail:@43" FAKE_TMUX_WINDOW_INDEX=5 FAKE_TMUX_WINDOW_NAME=claude \
+  run "$START" --dir "$A11T_DIR" repoA11t 1 --no-launch
+is   "lane-start exits 0 for a lane whose checkout is at that short path" "$rc" 0
+FAKE_TMUX_WINDOW="a11tail:@43" FAKE_TMUX_WINDOW_INDEX=5 FAKE_TMUX_WINDOW_NAME=repoA11t-1 \
+  run "$START" repoA11t 1 --no-launch
+is   "…and on its second start, which reads the checkout back from the lane's log" "$rc" 0
+has  "the row's stamp states clause (c)'s two facts for a person, in its TAIL" \
+     "$(grep '^| `repoA11t-1`' "$LANES")" "dir $A11T_DIR; window a11tail:5 @43"
 # NO PROFILE IS NO SUB-FIELD, never a guessed one (Amendment 7(i)).
 mkdir -p "$HOME/projects/repoA11c"
 git init -q -b main "$HOME/projects/repoA11c"
