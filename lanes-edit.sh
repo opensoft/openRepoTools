@@ -11550,15 +11550,24 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
     # sets no `pipefail`, so a `git show` that FAILED is masked by the parser
     # exiting 0 over empty input — and the lane then reads as having no
     # lane-kind line at all, which is the one answer that lets the sweep
-    # through. The object is asked for by name instead, which is `cat-file -e`
-    # and then `show` with its own status.
+    # through. The object is asked for by name instead, and then `show` with its
+    # own status.
+    # WHETHER THE PATH IS PUBLISHED IS THE TREE'S ANSWER, NOT THE BLOB'S
+    # (Copilot round 21 on #93, #138 item 17). It was `cat-file -e`, which
+    # fails for a blob that is missing or corrupt exactly as for a path that is
+    # not there, so a log the tree names and git cannot read was "no published
+    # log" and the sweep went on. `ls-tree` reads the tree alone.
     rr_pubp=""
     rr_pubp="$(log_path_ci "$rr_l")" ||
       die "lane $rr_l's object log is published twice under names that differ only by case (above) — 15(d)'s hand merge. Nothing was written." 2
-    if [ "$NO_GIT" != 1 ] && have_remote_ref &&
-       git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$rr_pubp" 2>/dev/null; then
-      git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$rr_pubp" >/dev/null 2>&1 ||
-        die "lane $rr_l's published object log ($rr_pubp) exists on origin/$LANES_BRANCH and could not be read, so whether it carries a lane-kind line is not known — and that is NOT 'it has none' (Amendment 7(d)). Nothing was written." 1
+    if [ "$NO_GIT" != 1 ] && have_remote_ref; then
+      rr_intree=""
+      rr_intree="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$rr_pubp" 2>/dev/null)" ||
+        die "the tree of origin/$LANES_BRANCH could not be listed, so whether lane $rr_l has a published object log is not known — and that is NOT 'it has none' (Amendment 7(d)). Nothing was written." 1
+      if [ -n "$rr_intree" ]; then
+        git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$rr_pubp" >/dev/null 2>&1 ||
+          die "lane $rr_l's published object log ($rr_pubp) exists on origin/$LANES_BRANCH and could not be read, so whether it carries a lane-kind line is not known — and that is NOT 'it has none' (Amendment 7(d)). Nothing was written." 1
+      fi
     fi
     rr_ev=""; rr_erc=0
     rr_ev="$(lane_log_events "$rr_l" 2>/dev/null)" || rr_erc=$?

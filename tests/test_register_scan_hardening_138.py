@@ -188,3 +188,25 @@ def test_a_sweep_that_writes_still_captures_the_peer_edit_as_its_own_commit(reg)
     assert "retire-dormant" in subjects[0]
     swept = reg.git("show", "--format=", "-U0", "HEAD", "--", "lanes/LANES.md")
     assert "a peer's half-written cell" not in swept
+
+
+# ------------------------------------------------- #138: retire_rows' scan
+
+def test_item_17_a_published_log_git_cannot_read_refuses_the_sweep(reg):
+    """#138 item 17: the probe was `cat-file -e`, which fails for an unreadable
+    blob exactly as for a missing path, so a log the tree names and git cannot
+    read was "no published log" and the row was retired. The tree answers now.
+    The local copy is out of the sparse checkout, so only origin speaks."""
+    reg.write("lanes/log/repoX-2.md", log_text(
+        "repoX-2", lane_line("STARTED", "repoX-2", OLD_ID, "2026-09-11T00:00:00Z"),
+        lane_line("PAUSED", "repoX-2", OLD_ID, "2026-09-11T01:00:00Z")))
+    reg.publish("repoX-2 is parked")
+    reg.git("update-index", "--skip-worktree", "lanes/log/repoX-2.md")
+    (reg.wip / "lanes/log/repoX-2.md").unlink()
+    reg.refuse_git("origin/main:lanes/log/repoX-2.md")
+    before = reg.head()
+    result = reg.sweep("repoX-2")
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert "exists on origin/main and could not be read" in result.stderr
+    assert reg.head() == before
+    assert not (reg.wip / "lanes/log/repoX-2.md").exists()
