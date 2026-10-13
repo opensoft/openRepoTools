@@ -356,12 +356,12 @@ def test_a_no_op_write_never_publishes_what_the_checkout_queued(box):
     head, origin = box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")
     result = box.helper("replace-in-row", LANE, "seeded", "seeded")
     assert result.returncode == 0, result.stderr
-    assert f"nothing staged for {REGISTER} — no commit made" in result.stderr
-    assert "stay local, and only `lanes-edit.sh commit` publishes them" in result.stderr
-    assert box.net_calls() == []
+    assert box.net_calls() == [], result.stderr
     assert (box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")) == (head, origin)
     assert box.origin_file(TOOL) == "#!/usr/bin/env bash\n"
     assert box.unpublished()[0].startswith(queued)
+    assert f"nothing staged for {REGISTER} — no commit made" in result.stderr
+    assert "stay local, and only `lanes-edit.sh commit` publishes them" in result.stderr
 
 
 @pytest.mark.parametrize("queued", [
