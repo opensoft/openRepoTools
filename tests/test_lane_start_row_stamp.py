@@ -19,9 +19,11 @@ depend on where pytest itself was run:
 
   * a short, fixed checkout keeps the whole tail, however long `$HOME` is —
     which is what `tests/test_lane_helpers.sh`'s clause (c) TAIL case now uses;
-  * a checkout as long as `run.sh` gave that case loses the `window` (#180);
-  * a longer one loses the path WHOLE, never a truncated path that reads as
-    a real one;
+  * a checkout whose path still fits loses only the `window` ref;
+  * a longer one loses the path WHOLE, never a truncated path that reads as a
+    real one. That is what #180's case read under `run.sh`'s root:
+    `… window renamed, no launch; dir ...`, its cut landing on the `;` that
+    follows the path, so the path went with it;
 
 and in every one the head is intact, the line is inside the cap, and the
 lane's log carries both facts in full.
@@ -101,6 +103,17 @@ case "${1-}" in
 esac
 """
 
+#: The workspace repository's first commit: a register with its header and no
+#: rows, and the handoffs directory a row's handoff path points into.
+WORKSPACE_SEED = {
+    "lanes/LANES.md": "\n".join((
+        "# LANES.md -- the sandbox register", "",
+        "| lane | session id | workstation / env / user | started (UTC) | "
+        "objects owned | handoff path | state |",
+        "|---|---|---|---|---|---|---|", "")),
+    "handoffs/README.md": "# handoffs\n",
+}
+
 FAKE_GH = """#!/usr/bin/env bash
 printf 'FAKE gh REFUSED: %s -- this suite reaches no GitHub surface\\n' "$*" >&2
 exit 90
@@ -161,19 +174,12 @@ class Sandbox:
 
         self.git("init", "-q", "--bare", "-b", "main", str(origin))
         self.git("clone", "-q", str(origin), str(self.wip))
-        (self.wip / "lanes").mkdir()
-        (self.wip / "handoffs").mkdir()
-        (self.wip / "handoffs" / "README.md").write_text(
-            "# handoffs\n", encoding="utf-8")
-        (self.wip / "lanes" / "LANES.md").write_text(
-            "# LANES.md -- the sandbox register\n\n"
-            "| lane | session id | workstation / env / user | started (UTC) "
-            "| objects owned | handoff path | state |\n"
-            "|---|---|---|---|---|---|---|\n", encoding="utf-8")
-        self.git("-C", str(self.wip), "add", "--", "lanes/LANES.md",
-                 "handoffs/README.md")
-        self.git("-C", str(self.wip), "commit", "-q", "-m", "seed")
-        self.git("-C", str(self.wip), "push", "-q", "origin", "main")
+        for rel, text in WORKSPACE_SEED.items():
+            (self.wip / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.wip / rel).write_text(text, encoding="utf-8")
+        for step in (("add", "--", *WORKSPACE_SEED), ("commit", "-q", "-m", "seed"),
+                     ("push", "-q", "origin", "main")):
+            self.git("-C", str(self.wip), *step)
         (self.home / ".agents" / "workspace.yaml").write_text(
             f"repository: {origin}\npath: {self.wip}\n", encoding="utf-8")
 
@@ -233,8 +239,8 @@ def _checkout_of_length(root: Path, length: int | None) -> Path:
 
 @pytest.mark.parametrize("length, keeps", [
     pytest.param(None, "dir and window", id="short-fixed-checkout"),
-    pytest.param(100, "dir", id="as-long-as-run-sh-gave-180"),
-    pytest.param(160, "nothing", id="longer-still"),
+    pytest.param(100, "dir", id="window-cut-dir-kept"),
+    pytest.param(160, "nothing", id="path-dropped-whole-as-in-180"),
 ])
 def test_the_stamp_tail_is_cut_by_the_checkout_path_and_never_the_head(
         tmp_path, short_root, length, keeps):
