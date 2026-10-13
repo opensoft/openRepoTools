@@ -11461,7 +11461,16 @@ retire_rows() {   # <lane>… [--reason "<why>"] [--writer <lane>]
     die "retire-rows requires a successful fresh fetch before rewriting several rows; $LOG_SYNC_FETCH. The local origin/$LANES_BRANCH ref may be stale. Nothing was written." 1
   fi
   rr_writer="$(canon_lane "$rr_writer")" || exit 2
-  rr_uuid="$(session_for "$rr_writer" 2>/dev/null || :)"
+  # THE WRITER'S TRANSCRIPT IS THIS CHECKOUT'S ROW'S LAST ID, and the published
+  # row's only where this checkout has none (Copilot round 18 on #93, #138 item
+  # 8). `session_for` reads `$LANES_SESSION` or the PUBLISHED row, and the
+  # documented call sets only `LANES_LANE`: a writer whose newest transcript is
+  # stamped here and not yet pushed signed every append-only RETIRED line with an
+  # older id. A checkout behind origin is refused below, so this row is never
+  # the older of the two — the same reason refusal 1 reads both rows' ids.
+  rr_uuid="${LANES_SESSION:-}"
+  [ -n "$rr_uuid" ] || rr_uuid="$(session_ids_local_of_lane "$rr_writer" 2>/dev/null | tail -n1)"
+  [ -n "$rr_uuid" ] || rr_uuid="$(session_for "$rr_writer" 2>/dev/null || :)"
   valid_uuid "$rr_uuid" ||
     die "the sweeping lane $rr_writer has no transcript uuid to write: \$LANES_SESSION is unset and its row's session cell holds none. Amendment 7(b) gives the session field a transcript uuid and ONLY that, and this log is append-only, so nothing is written. Run it from the lane's own session, or pass the id: LANES_SESSION=<uuid> LANES_LANE=$rr_writer lanes-edit.sh retire-rows …" 2
   # All path cleanliness and ref fences run under the same writer lock as the

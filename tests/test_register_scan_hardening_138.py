@@ -244,3 +244,20 @@ def test_item_12_a_symlinked_log_path_refuses_and_writes_nothing_through_it(reg)
     assert "is a symlink" in result.stderr
     assert outside.read_text() == "# not the register's\n"
     assert reg.head() == before
+
+
+def test_item_8_the_retired_line_carries_the_writers_unpushed_newest_transcript(reg):
+    """#138 item 8: the writer's uuid came from the PUBLISHED row alone, so a
+    sweeping lane whose newest transcript is stamped in this checkout and not
+    yet pushed signed its append-only RETIRED lines with the older one."""
+    newest = "dddd0138-0004-4000-8000-000000000004"
+    text = reg.read("lanes/LANES.md").replace(
+        f"| harness `{WRITER_ID}` |", f"| harness `{WRITER_ID}` `{newest}` |")
+    reg.write("lanes/LANES.md", text)
+    reg.commit("repoX-1 resumed in a new transcript, not yet pushed")
+    result = reg.sweep("repoX-2")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    retired = [line for line in reg.read("lanes/log/repoX-2.md").splitlines()
+               if line.startswith("RETIRED")]
+    assert len(retired) == 1
+    assert f"session {newest}@Eagle" in retired[0]
