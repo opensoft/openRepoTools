@@ -278,11 +278,18 @@ def test_a_session_from_a_custom_native_directory_is_found(table):
     assert result.stdout == newer_copy("2.1.283", "2.1.284") + "\n"
 
 
-def test_a_session_on_the_newest_custom_native_version_prints_nothing(table):
+def test_a_session_on_the_newest_custom_native_version_is_recognised_and_current(table):
+    """Silence alone would also be what a session the check never recognised
+    looks like. So the same process is asked twice: current, it prints nothing,
+    and told it runs an older version it names the newest, which only a
+    recognised session can do."""
     directory = custom_native(table, "2.1.9", "2.1.10")
     status_line_tree(table, str(directory / "2.1.10"))
-    result = table.run("--pid", "100", CLAUDE_CURRENT_NATIVE_DIR=str(directory))
-    assert (result.returncode, result.stdout) == (0, "")
+    env = {"CLAUDE_CURRENT_NATIVE_DIR": str(directory), "NO_COLOR": "1"}
+    current = table.run("--pid", "100", **env)
+    assert (current.returncode, current.stdout) == (0, "")
+    behind = table.run("--running", "2.1.9", "--pid", "100", **env)
+    assert behind.stdout == newer_copy("2.1.9", "2.1.10") + "\n"
 
 
 def test_a_binary_replaced_in_a_custom_native_directory_asks_for_a_restart(table):
@@ -313,6 +320,23 @@ def test_a_symlinked_native_directory_matches_the_path_the_kernel_reports(table)
     status_line_tree(table, str(real.resolve() / "2.1.283"))
     result = table.run("--pid", "100", NO_COLOR="1",
                        CLAUDE_CURRENT_NATIVE_DIR=str(link))
+    assert result.stdout == newer_copy("2.1.283", "2.1.284") + "\n"
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="no symlinks here")
+def test_a_symlinked_default_native_directory_is_found_with_no_variable_set(table):
+    """The default directory is compared by its canonical path too: with
+    `~/.local/share/claude` a link to `/x/persist/cl-native` the kernel reports
+    `/x/persist/cl-native/versions/<x.y.z>`, which holds no `/claude/versions/`,
+    and a session there was missed until CLAUDE_CURRENT_NATIVE_DIR was set to
+    that same default."""
+    real = table.root / "persist" / "cl-native"
+    table.native("2.1.283", "2.1.284", directory=real / "versions")
+    share = table.root / "home" / ".local" / "share"
+    share.mkdir(parents=True)
+    (share / "claude").symlink_to(real)
+    status_line_tree(table, str(real.resolve() / "versions" / "2.1.283"))
+    result = table.run("--pid", "100", NO_COLOR="1")
     assert result.stdout == newer_copy("2.1.283", "2.1.284") + "\n"
 
 

@@ -349,6 +349,20 @@ def test_a_native_that_does_not_run_is_not_asked_to_update_the_install(box):
     assert box.installs() == [], "the native update reached npm's version"
 
 
+def test_a_native_that_failed_is_not_probed_again_in_the_same_launch(box):
+    """A launch reads the candidates up to four times (before the lock, after
+    it, after each update). A native whose `--version` already failed would
+    cost its whole bound again each time, a hung one ten seconds a pass, so
+    each failure is remembered for the run."""
+    broken = [box.broken_native(v, "garbled") for v in ("2.1.287", "2.1.286", "2.1.285")]
+    box.user_copy("2.1.283")
+    result = box.run(FAKE_NPM_INSTALL_RC="1")
+    assert result.returncode == 2, result.stderr
+    probes = box.claude_log.read_text().splitlines()
+    for path in broken:
+        assert probes.count(f"{path} --version") == 1, probes
+
+
 def test_every_native_broken_and_nothing_else_is_still_no_runnable_claude(box):
     box.broken_native("2.1.285")
     box.broken_native("2.1.284", "garbled")
