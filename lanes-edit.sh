@@ -10684,18 +10684,13 @@ migrate_state_cells() {   # <1 = the act, 0 = the dry run>
   # `replace-in-row` landing in this checkout between the two moves the lines
   # under it, and `replace_line` then rewrites the wrong row — its one-line proof
   # holds for the line it was given, not for the row a person meant. So the scan
-  # and the write happen inside ONE hold of the lock, and the register's
-  # pre-existing edit is captured BEFORE the scan rather than after it, so what
-  # is read is what is committed.
+  # and the write happen inside ONE hold of the lock.
   #
   # THE DRY RUN TAKES NO LOCK AT ALL. It writes nothing, so a row that moves
   # under it costs a report one line of accuracy and nothing else — and a read
   # that holds the estate's one register mutex for the seconds this scan takes
   # is a read that blocks every lane's write to say what it would have done.
-  if [ "$msc_do" = 1 ]; then
-    acquire_lock
-    handle_preexisting "$LANES_PATH"
-  fi
+  [ "$msc_do" = 1 ] && acquire_lock
 
   # TWO ROWS FOR ONE LANE UNDER TWO CASES ARE 15(d)'s HAND MERGE, and both of
   # them are skipped rather than migrated into one log under a name that means
@@ -10944,9 +10939,19 @@ EOF
 
   # --------------------------------------------------------------- the write
   #
-  # THE LOCK IS ALREADY HELD and the register already captured — both were taken
-  # BEFORE the scan, so the line numbers rewritten below are the ones this
-  # invocation read (Copilot round 2 on openRepoTools#82).
+  # THE LOCK IS ALREADY HELD — it was taken BEFORE the scan, so the line numbers
+  # rewritten below are the ones this invocation read (Copilot round 2 on
+  # openRepoTools#82).
+  #
+  # AND A PEER'S REGISTER EDIT IS CAPTURED HERE, AFTER EVERY REFUSAL AND SKIP OF
+  # THE SCAN AND BEFORE THE FIRST BYTE IS WRITTEN (openRepoTools#157 item 4b).
+  # Captured before the scan, a refusal in it — the seam's, or the "nothing to
+  # migrate" one — left a `LANES(pre-existing@…)` commit behind: a refusal that
+  # wrote, which `capture_register_edit` names as the one thing it must never
+  # be. The capture commits the file's bytes and changes none of them, so what
+  # the scan read is what is committed, as it was. `retire_rows` and
+  # `archive_rows` capture at their writes for the same reason.
+  handle_preexisting "$LANES_PATH"
   #
   # EVERYTHING BELOW IS ONE COMMIT OR NONE. The archive, the appended logs and
   # the rewritten rows are made on disk first and published by the single
@@ -11464,8 +11469,9 @@ retire_rows() {   # <lane>… [--reason "<why>"] [--writer <lane>]
   # THE MUTEX COMES BEFORE THE SCAN, not between the scan and the write: this
   # act reads every row's LINE NUMBER and rewrites those lines by number, and a
   # peer's `add-row` landing in between moves them under it (the finding
-  # `migrate-state-cells` took in round 2 of openRepoTools#82).
-  handle_preexisting "$LANES_PATH"
+  # `migrate-state-cells` took in round 2 of openRepoTools#82). It is held from
+  # `acquire_lock` above; a peer's register edit is captured at the write, after
+  # every refusal of the scan (#157 item 4b, `migrate_state_cells`' reason).
 
   # THE LIVE READ IS FAIL-CLOSED, AND IT IS TAKEN INSIDE THE LOCK (Copilot round
   # 2 on #93). `lanes_rows` degrades to the log's verb when this workstation's
@@ -11672,7 +11678,9 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
   # `commit_push` at the end: a refusal in the middle leaves this checkout dirty
   # and the register unpublished, which `git status` shows and
   # `git checkout -- lanes` undoes whole. Nothing is half-published, because the
-  # commit is the only thing that publishes.
+  # commit is the only thing that publishes. A peer's register edit is
+  # committed as its own first, as `migrate_state_cells` says at its write.
+  handle_preexisting "$LANES_PATH"
   rr_paths=("$LANES_PATH")
   while IFS="$US" read -r rr_ln rr_l rr_new rr_head2 rr_tail; do
     [ -n "${rr_ln:-}" ] || continue
@@ -11746,7 +11754,6 @@ archive_rows() {   # <repo> <1 = the act, 0 = the dry run>
       esac
     fi
     acquire_lock
-    handle_preexisting "$LANES_PATH"
     # The cleanliness fence belongs INSIDE the writer lock. Another writer
     # could otherwise create or edit the archive while this act waits for it.
     # THE ARCHIVE IS NOT EXEMPT (Copilot round 4 on #93). It was, because this
@@ -11860,7 +11867,10 @@ EOF
 
   # THE ARCHIVE IS WRITTEN FIRST AND THE ROWS REMOVED SECOND, for the reason
   # `delete_lines` gives: a refusal between the two leaves a copy in the archive
-  # and the register whole, and never a row in neither file.
+  # and the register whole, and never a row in neither file. A peer's register
+  # edit is committed as its own first, after every refusal above (#157 item
+  # 4b, `migrate_state_cells`' reason).
+  handle_preexisting "$LANES_PATH"
   mkdir -p -- "$LANES_DIR/archive" ||
     die "could not create $LANES_DIR/archive — the archive is written before anything is removed, so nothing has been" 6
   if [ ! -f "$LANES_ARCH_FILE" ]; then
