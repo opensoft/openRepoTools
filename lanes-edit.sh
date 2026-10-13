@@ -1797,9 +1797,10 @@ refuse_dirty_checkout() {
     *)     note "an object-log write is ordered against other lanes by landing on main, and 'pull --rebase'"
            note "refuses on any unstaged tracked change — so this write cannot be ordered safely here." ;;
   esac
-  note "RECOVERY — whoever wrote those files commits them, then re-run:"
+  note "RECOVERY — whoever wrote those files commits them:"
   note "  lanes/LANES.md   LANES_LANE=<lane> lanes-edit.sh commit \"<what you wrote>\""
   note "  anything else    git -C $LANES_REPO commit -m \"handoff(<lane>@<workstation>): <what>\" -- <path>"
+  note "then re-run the refused $rd_what: its own push publishes their commits with it (#194)."
   die "refusing to $rd_what on a checkout that cannot be rebased" 2
 }
 
@@ -2019,11 +2020,29 @@ commit_push() {
     [ -z "$cp_byte" ] || die "$(bytecode_refusal_text "$cp_byte")" 2
     git -C "$LANES_REPO" -c "$CP_EXACT" add -- ${cp_add[@]+"${cp_add[@]}"} || die "git add failed" 6
   fi
+  # #194 — NOTHING STAGED IS NOT NOTHING TO PUBLISH. A write the push loop
+  # below could not get out (a peer's uncommitted file blocking the rebase, six
+  # rejected pushes) leaves its edit as a LOCAL commit, and the RECOVERY printed
+  # for it is to re-run `commit` once the way is clear. Returning here sent that
+  # re-run home with exit 0 and the commit still local. So a write with nothing
+  # of its own to commit still takes the push loop — under the caller's lock,
+  # with the dirty-elsewhere guard and the retries — whenever HEAD holds commits
+  # `origin/$LANES_BRANCH` does not, as of the last fetch (no such ref reads as
+  # none). With none it is the no-op it always was, and reaches no network.
+  cp_publish=0
   if git -C "$LANES_REPO" -c "$CP_EXACT" diff --cached --quiet -- "${CP_PATHS[@]}"; then
-    note "nothing staged for ${CP_PATHS[*]} — no commit made"
-    return 0
+    cp_ahead="$(git -C "$LANES_REPO" --no-pager log --oneline "origin/$LANES_BRANCH..HEAD" 2>/dev/null || :)"
+    if [ -z "$cp_ahead" ]; then
+      note "nothing staged for ${CP_PATHS[*]} — no commit made"
+      return 0
+    fi
+    note "nothing staged for ${CP_PATHS[*]} — no commit made; pushing the local commits origin/$LANES_BRANCH does not have:"
+    printf '%s\n' "$cp_ahead" | head -n 10 >&2 || :
+    cp_publish=1
   fi
-  if [ -n "$cp_ren" ]; then
+  if [ "$cp_publish" = 1 ]; then
+    :   # nothing of this write's own to commit: straight on to the push
+  elif [ -n "$cp_ren" ]; then
     cp_staged="$(git -C "$LANES_REPO" -c "$CP_EXACT" diff --cached --name-only)"
     cp_extra=""
     while IFS= read -r cp_s; do
@@ -2047,7 +2066,7 @@ EOF
   else
     git -C "$LANES_REPO" -c "$CP_EXACT" commit -q -m "$msg" -- "${CP_PATHS[@]}" || die "git commit failed" 6
   fi
-  note "committed: $msg"
+  [ "$cp_publish" = 1 ] || note "committed: $msg"
   if ! remote_has_branch; then
     if ! git_net -C "$LANES_REPO" push -q -u origin "$LANES_BRANCH"; then
       [ "$GIT_TIMED_OUT" = 1 ] && git_timeout_die "git push -u origin $LANES_BRANCH"
@@ -2086,7 +2105,8 @@ EOF
       if [ "$attempt" -ge 6 ]; then
         note "RECOVERY: their author commits those files (a handoff: handoff(<lane>@<workstation>): <what>),"
         note "  then re-run: LANES_LANE=<lane> lanes-edit.sh commit \"<what you wrote>\"  — your edit is already"
-        note "  a local commit here: git -C $LANES_REPO log --oneline origin/$LANES_BRANCH..HEAD"
+        note "  a local commit here, so that re-run stages nothing, makes no commit of its own, and"
+        note "  pushes the local commits this lists (#194): git -C $LANES_REPO log --oneline origin/$LANES_BRANCH..HEAD"
         die "could not push origin/$LANES_BRANCH: behind the remote, and a peer's uncommitted file blocks the rebase. Nothing was lost — your commit is local." 3
       fi
     elif git_net -C "$LANES_REPO" pull --rebase -q origin "$LANES_BRANCH"; then
@@ -2150,8 +2170,12 @@ EOF
       note "  git -C $LANES_REPO fetch origin $LANES_BRANCH || echo FETCH-FAILED   # if that printed FETCH-FAILED, STOP and retry — a stale or unreachable origin proves nothing either way"
       note "  git -C $LANES_REPO cherry origin/$LANES_BRANCH $cp_sha | grep -c '^+'   # BY CONTENT, not by sha: a peer's rebase changes the hash but git cherry still finds the same patch"
       note "  if that printed 0, STOP — reset or redo now would write it a second time."
+      note "  git -C $LANES_REPO cherry -v origin/$LANES_BRANCH $cp_sha   # WHOSE: one '+' line per local commit origin lacks, and this checkout is shared"
+      note "  if any '+' line is not your own write, STOP and take it to the lane its subject names:"
+      note "  never reset, stash or overwrite a peer's work — the reset below drops EVERY '+' commit in this checkout,"
+      note "  theirs with yours, and origin holds no copy of any of them (#194)."
       note "  git -C $LANES_REPO diff origin/$LANES_BRANCH..HEAD -- ${CP_PATHS[*]}   # only if it is not there: read back exactly what you wrote"
-      note "  git -C $LANES_REPO reset --hard origin/$LANES_BRANCH                # then drop the local commits (NOTE: also drops any"
+      note "  git -C $LANES_REPO reset --hard origin/$LANES_BRANCH                # only if every '+' line is yours: drop the local commits (NOTE: also drops any"
       note "                                                          # uncommitted peer edit in this checkout)"
       note "  then re-read LANES.md and redo the edit with lanes-edit.sh, on top of the peer's version."
       die "rebase conflict on origin/$LANES_BRANCH — not pushed by this attempt; a later write from this checkout may already carry it, so look before you retry." 3

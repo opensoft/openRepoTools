@@ -94,7 +94,9 @@ files — `pull --rebase` refuses outright on any unstaged tracked change — an
 pushes straight out instead, warning and naming the files. If the push is also
 rejected (the remote moved), it stops with exit 3, leaves your edit as a local
 commit, and prints the recovery: the owner of that file commits it, then you
-re-run `lanes-edit.sh commit`.
+re-run `lanes-edit.sh commit`. With nothing left to stage, that re-run makes no
+commit of its own and pushes the local commits origin does not have yet, through
+the same loop, guard and retries (#194); with none, it is the no-op it always was.
 
 ## THE ONE HAZARD — `sed -i` DESTROYS THE SYMLINK
 
@@ -205,7 +207,14 @@ dangling commit by rebasing it onto a newer base, which changes its hash, so
 actually published. `git -C <the workspace checkout> cherry origin/main <your
 commit> | grep -c '^+'` compares by patch instead and still finds it; 0 means
 it is already there, in which case STOP. Only once fetch succeeded AND this
-prints something other than 0 do you read your edit back with
+prints something other than 0 do you list WHOSE they are, with
+`git -C <the workspace checkout> cherry -v origin/main <your commit>`: one `+`
+line per local commit origin lacks, and in a shared checkout not every one is
+yours. If any `+` line is not your own write, STOP and take it to the lane its
+subject names. Never reset, stash or overwrite a peer's work: `reset --hard`
+drops EVERY `+` commit in the checkout, theirs with yours, and origin holds no
+copy of any of them (#194). Only when every `+` line is yours do you read your
+edit back with
 `git -C <the workspace checkout> diff origin/main..HEAD -- lanes/LANES.md`,
 then `git -C <the workspace checkout> reset --hard origin/main` and redo it on
 top of the peer's version.

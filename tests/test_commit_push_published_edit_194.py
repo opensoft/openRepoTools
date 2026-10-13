@@ -204,7 +204,7 @@ def test_the_printed_recovery_publishes_the_edit_it_stranded(box):
     assert "a peer's uncommitted file blocks the rebase" in stranded.stderr
     assert len(box.unpublished()) == 1, "the edit is a local commit and only that"
     # The RECOVERY names the re-run and says what it does once nothing is staged.
-    assert f'LANES_LANE=<lane> lanes-edit.sh commit "<what you wrote>"' in stranded.stderr
+    assert 'LANES_LANE=<lane> lanes-edit.sh commit "<what you wrote>"' in stranded.stderr
     assert "pushes the local commits this lists" in stranded.stderr, stranded.stderr
 
     box.wgit("commit", "-q", "-m", f"handoff({PEER_LANE}@Eagle): the mid-write line",
@@ -258,10 +258,13 @@ def test_publishing_past_a_peers_dirty_file_keeps_the_dirty_elsewhere_guard(box)
     result = box.helper("commit", SUBJECT)
     assert result.returncode == 0, result.stderr
     assert f"nothing staged for {REGISTER} — no commit made" in result.stderr
-    assert f"WARNING: this checkout has uncommitted changes to files OTHER than the register" in result.stderr
+    assert ("WARNING: this checkout has uncommitted changes to files OTHER than the register"
+            in result.stderr)
     assert PEER_HANDOFF in result.stderr
     assert "pushed origin/main (attempt 1, no pull" in result.stderr, result.stderr
-    assert not any(c.startswith(f"-C {box.wip} pull") for c in box.net_calls()), box.net_calls()
+    calls = [f" {c} " for c in box.net_calls()]
+    assert not any(" pull " in c for c in calls), calls
+    assert any(" push " in c for c in calls), calls
     assert box.wgit("rev-parse", "HEAD") == box.ogit("rev-parse", "main")
     assert _row(LANE, "LIVE · edited by hand") in box.origin_file(REGISTER)
     assert box.wgit("diff", "--name-only").split() == [PEER_HANDOFF]
@@ -298,7 +301,7 @@ def test_the_conflict_recovery_warns_that_a_reset_drops_a_peers_commits(box):
 
     # The listing the RECOVERY prints is a command that runs, and it names
     # the peer's commit as one origin does not have.
-    command = err.splitlines()[listing].split("#", 1)[0].split()
+    command = err.splitlines()[listing].split("lanes-edit: ", 1)[1].split("#", 1)[0].split()
     listed = subprocess.run(command, env=box.env, capture_output=True,
                             text=True, check=True).stdout
     assert f"+ {peer_commit}" in listed, listed
