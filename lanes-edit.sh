@@ -11596,6 +11596,14 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
     # does not catch a tracked one.
     rr_lev=""
     rr_lf="$(log_file_for "$rr_l")"
+    # A LOG PATH THAT IS A SYMLINK, OR THERE AND NOT A REGULAR FILE, IS REFUSED
+    # BEFORE IT IS READ (Copilot round 18 on #93, #138 item 12). The write
+    # appends with `>>`, which follows a link: a tracked link here put the
+    # RETIRED line in whatever file it named, outside the repository, while the
+    # commit recorded only the link.
+    if [ -L "$rr_lf" ] || { [ -e "$rr_lf" ] && [ ! -f "$rr_lf" ]; }; then
+      die "lane $rr_l's object log $(log_path_for "$rr_l") is a symlink, or is there and not a regular file, in this checkout. This sweep appends to it with '>>', which writes through a link to whatever file it names while the commit records only the link. Put the log itself there as a regular file, commit that, and re-run. Nothing was written." 2
+    fi
     if [ -f "$rr_lf" ]; then
       [ -r "$rr_lf" ] ||
         die "lane $rr_l's object log $rr_lf exists in this checkout and could not be read, so whether it carries a lane-kind line is not known — and that is NOT 'it has none' (Amendment 7(d)). Nothing was written." 1

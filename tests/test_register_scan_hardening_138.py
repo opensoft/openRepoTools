@@ -228,3 +228,19 @@ def test_item_9_a_log_directory_that_cannot_be_listed_refuses_in_the_scan(reg):
     assert "exists and could not be listed" in result.stderr
     assert reg.head() == before
     assert reg.dirty() == ""
+
+
+def test_item_12_a_symlinked_log_path_refuses_and_writes_nothing_through_it(reg):
+    """#138 item 12: a tracked symlink at a lane's log path passed the scan, and
+    the sweep's `>>` put the RETIRED line in the file it named — outside the
+    repository — while the commit published only the link."""
+    outside = reg.tmp / "outside.md"
+    outside.write_text("# not the register's\n")
+    (reg.wip / "lanes/log/repoX-2.md").symlink_to(os.path.join("..", "..", "..", "outside.md"))
+    reg.publish("a link where a log belongs")
+    before = reg.head()
+    result = reg.sweep("repoX-2")
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "is a symlink" in result.stderr
+    assert outside.read_text() == "# not the register's\n"
+    assert reg.head() == before
