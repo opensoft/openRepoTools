@@ -9471,6 +9471,69 @@ is    "…and nothing was written by any of the three" "$(grep -c '^PAUSED' "$LO
 # `PAUSED` lines on purpose: section 3 below is the `--late` rule, and its whole
 # question is what a lane with no paused record does.)
 
+# A ONE-LINE RECORD CANNOT TAKE A NEWLINE, AND IT IS REFUSED BEFORE ANYTHING IS
+# WRITTEN (opensoft/openRepoTools#85, #72 item 6). `append-line` used to append
+# its text and only THEN prove it was one line, so a text carrying a newline
+# left two lines in the register, the checkout dirty, and a refusal (exit 5)
+# that came after the write. And `lane-handoff` put its `why` into four places
+# with only two of them sanitized: a `why` carrying a newline refreshed and
+# committed the handoff, had its PAUSED refused by `write_event`, handed
+# `append-line` two lines — which the row flip after it then committed as a
+# peer's `pre-existing` edit — and exited 0. Every case here is asked on
+# repoHF-7, whose log is kept EMPTY of `PAUSED` lines for section 3: a refusal
+# writes nothing, and that is exactly what these assert.
+a17_nl_head="$(git -C "$WIP" rev-parse HEAD)"
+a17_nl_status="$(git -C "$WIP" status --porcelain)"
+cp -- "$LANES" "$SANDBOX/a17-nl-lanes.md"
+cp -- "$WIP/handoffs/repoHF/repoHF-7.md" "$SANDBOX/a17-nl-handoff.md"
+cp -- "$LOGD/repoHF-7.md" "$SANDBOX/a17-nl-log.md"
+a17_nl_same() {   # <file> <its copy> — `same` where not one byte moved
+  if cmp -s -- "$1" "$2"; then printf same; else printf changed; fi
+}
+run env LANES_LANE=repoHF-7 "$E" append-line \
+    "$(printf 'PAUSED — lane repoHF-7, session %s@Eagle, 2026-09-14T09:30:00Z, clear\nsecond line; handoff refreshed' "$HF4_ID")"
+is    "append-line refuses a text carrying a newline" "$rc" 2
+has   "…saying it appends ONE line" "$err" "append-line appends ONE line"
+is    "…before it writes: the register is byte for byte as it was" \
+      "$(a17_nl_same "$LANES" "$SANDBOX/a17-nl-lanes.md")" same
+is    "…and the checkout is as it was, so the next writer in it is not refused for a dirty register" \
+      "$(git -C "$WIP" status --porcelain)" "$a17_nl_status"
+run env LANES_LANE=repoHF-7 "$E" append-line "$(printf 'LANDING — lane repoHF-7, a carriage\rreturn')"
+is    "…and a carriage return the same way, which the line count after the write never saw" "$rc" 2
+is    "…with nothing written for it either" "$(a17_nl_same "$LANES" "$SANDBOX/a17-nl-lanes.md")" same
+
+# AND THE GATE IS IN `append_text_line` ITSELF, so every caller has it — `add-row`,
+# `log`'s Rule 6 line, a rename's lines — and not only the verb that met it.
+# Lifted out of the helper the way the `cut_to_line` cases below lift theirs,
+# and asked against a file of its own.
+printf 'line one\n' > "$SANDBOX/a17-nl-atl.txt"
+run bash -c 'eval "$(sed -n -e "/^die()/,/^}/p" -e "/^note()/p" -e "/^append_text_line()/,/^}/p" "$1")"; append_text_line "$2" "$3"' \
+    _ "$E" "$(printf 'two\nthree')" "$SANDBOX/a17-nl-atl.txt"
+is    "append_text_line refuses a newline itself, whichever verb called it" "$rc" 2
+is    "…before its copy and its \`>>\`: the file is still its one line" "$(cat "$SANDBOX/a17-nl-atl.txt")" "line one"
+
+run env PATH="$A17PATH" CLAUDE_CODE_SESSION_ID="$HF4_ID" CLAUDE_PROFILE_NAME=team-05a \
+    "$HANDOFF_CMD" --lane repoHF-7 "$(printf 'clear\nsecond line')"
+is    "lane-handoff refuses a why carrying a newline" "$rc" 2
+has   "…at the door, saying the why is one line" "$err" "the why is ONE line"
+is    "…the handoff not refreshed" \
+      "$(a17_nl_same "$WIP/handoffs/repoHF/repoHF-7.md" "$SANDBOX/a17-nl-handoff.md")" same
+is    "…the object log not written" "$(a17_nl_same "$LOGD/repoHF-7.md" "$SANDBOX/a17-nl-log.md")" same
+is    "…the register byte for byte as it was" "$(a17_nl_same "$LANES" "$SANDBOX/a17-nl-lanes.md")" same
+is    "…nothing committed" "$(git -C "$WIP" rev-parse HEAD)" "$a17_nl_head"
+is    "…and the checkout as it was" "$(git -C "$WIP" status --porcelain)" "$a17_nl_status"
+run env PATH="$A17PATH" CLAUDE_CODE_SESSION_ID="$HF4_ID" CLAUDE_PROFILE_NAME=team-05a \
+    "$HANDOFF_CMD" --lane repoHF-7 "$(printf 'clear\r')"
+is    "…and a carriage return is refused the same way" "$rc" 2
+
+# `sanitize` IS THE SECOND LINE OF DEFENCE: a break that reaches it is spelled
+# `; `, one per break whatever its spelling, so the act still happens on one
+# line. Lifted out of `lane-handoff` in a shell of its own, because this file
+# has a `sanitize` of its own (the transcript directory's).
+run bash -c 'eval "$(sed -n "/^sanitize()/,/^}/p" "$1")"; sanitize "$2"' \
+    _ "$HANDOFF_CMD" "$(printf 'a\r\nb\rc\nd — e')"
+is    "lane-handoff's sanitize spells every line break '; ', as it does ' — '" "$out" "a; b; c; d; e"
+
 # `--utc` IS THE LATE `PAUSED`'s SEAM AND HAS NO OTHER CALLER (Amendment 17,
 # adoption act 7). This log is append-only and FILE ORDER is what every state
 # read means by "last", so a STARTED or a RESUMED dated by hand changes what
@@ -9894,6 +9957,15 @@ has   "…the stamp naming the agent and its own id" \
 has   "…the row's session cell appended in the agent's own spelling" \
       "$(grep '^| `repoAG-1`' "$LANES")" "→ Codex \`$CODEX_ID\`"
 has   "…and the row's stamp says who resumed it" "$(grep '^| `repoAG-1`' "$LANES")" "RESUMED by codex $CODEX_ID (lane repoAG-1)"
+# THE FIRST ACT IT DEFERS KEEPS THE AGENT (opensoft/openRepoTools#72 item 5).
+# `codex` keeps no id this command can pass, so a codex launch ALWAYS defers its
+# log line and its Rule 3 stamp to the session's own `--no-launch` — and the
+# command printed for that act dropped `--agent`, leaving `lane-agent` to choose:
+# the agent of the lane's last PAUSED, not the one now running it.
+ag_deferred() {   # <stderr> — the one command lane-start prints for the deferred records
+  printf '%s\n' "$1" | awk 'f { print; exit } /which is this session.s own:$/ { f = 1 }'
+}
+has   "…and the first act it defers to the session carries --agent codex" "$(ag_deferred "$err")" " --agent codex"
 
 : > "$FAKE_CODEX_LOG"
 export FAKE_CODEX_WATCH="$WIP/handoffs/repoAG/repoAG-2.md"
@@ -9952,6 +10024,19 @@ has   "…saying whose the recorded transcript is, and that this launch does not
       "$err" "names agent claude and this launch is codex"
 hasnt "…and the session cell is NOT appended with a Claude uuid in Codex's spelling" \
       "$(grep '^| `repoAG-4`' "$LANES")" "Codex \`$HF2_ID\`"
+# THE CASE #72 ITEM 5 IS ABOUT: the record names claude and the person named
+# codex, so a deferred act without the flag would be settled by claude.
+is    "…and its deferred first act names codex, which this lane's record would not" \
+      "$(ag_deferred "$err")" "lane-start:   lane-start --no-launch repoAG 4 --agent codex"
+# AND A RUN THAT NAMED NO AGENT, OVER A RECORD THAT NAMES NONE, PRINTS NONE:
+# the flag is written down where this run's agent was explicit and only there,
+# so the deferred act chooses its agent exactly as this run did. repoAG-10 has
+# no row and no log, and with nothing minted its records are deferred too.
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="agsess:@41" CLAUDE_PROFILE_NAME=team-05a LANE_START_SESSION_ID=0 \
+    "$START" --dir "$AG_DIR" repoAG-10 --no-launch
+is    "a default-agent start with no uuid to name exits 0" "$rc" 0
+has   "…deferring its records to the session's own first act" "$(ag_deferred "$err")" "--no-launch repoAG 10"
+hasnt "…and naming no agent in it" "$(ag_deferred "$err")" "--agent"
 
 # A LANE WITH NO ROW IS A `STARTED`, WHATEVER BRANCH LAUNCHED IT. `--agent` and
 # the `/ctx` seam both set the verb to RESUMED because they resume a lane that
