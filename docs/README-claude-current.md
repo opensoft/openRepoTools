@@ -42,7 +42,8 @@ absolute path, in this order, and runs each one's `--version`:
    x.y.z name (workBenches #109's ordering), whose `--version` answers. A
    newer file that does not run, or does not answer within
    `$CLAUDE_CURRENT_VERSION_TIMEOUT`, gives way to the next one that does, so
-   a broken download cannot hide a working install;
+   a broken download cannot hide a working install, and is not read again in
+   the same run;
 2. `<user npm prefix>/bin/claude`. The prefix is `$CLAUDE_CURRENT_NPM_PREFIX`,
    else `$NPM_CONFIG_PREFIX`, else `$npm_config_prefix`, else the `prefix=`
    line of `~/.npmrc`, else `~/.npm-global`. A relative prefix is taken under
@@ -218,8 +219,9 @@ claude-restart-check [--running <version>] [--pid <pid>]
 It walks at most three processes, from `--pid` (default: its own parent) up
 through their parents, to the first one whose `/proc/<pid>/exe` is a Claude
 Code binary: a native version file (`…/claude/versions/<x.y.z>`, or `<x.y.z>`
-directly in `$CLAUDE_CURRENT_NATIVE_DIR`, compared by that directory's
-canonical path because the kernel reports `exe` with every symlink resolved),
+directly in the native versions directory, `$CLAUDE_CURRENT_NATIVE_DIR` or its
+default, compared by that directory's canonical path because the kernel
+reports `exe` with every symlink resolved),
 or the npm package's `…/node_modules/@anthropic-ai/<dir>/bin/claude.exe`. The
 status line runs its command under `/bin/sh -c`, and dash does not `exec` it,
 so claude is the status line script's grandparent. That was measured on a live

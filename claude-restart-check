@@ -27,8 +27,8 @@
 # HOW IT DECIDES, cheaply, because it runs at every status line render
 #   - Walks at most three processes, from --pid up through its parents, to
 #     the first one whose /proc/<pid>/exe is a Claude Code binary: a native
-#     version file (.../claude/versions/<x.y.z>, or <x.y.z> directly in
-#     $CLAUDE_CURRENT_NATIVE_DIR, compared by its canonical path because the
+#     version file (.../claude/versions/<x.y.z>, or <x.y.z> directly in the
+#     native versions directory, compared by its canonical path because the
 #     kernel reports exe with every symlink resolved) or the npm package's
 #     .../node_modules/@anthropic-ai/<dir>/bin/claude.exe.
 #   - The binary was REPLACED when that exe link ends in " (deleted)". npm
@@ -201,17 +201,20 @@ vercmp() {
 	precmp "$ap" "$bp"
 }
 
-# The canonical path of $CLAUDE_CURRENT_NATIVE_DIR, when it is set and there:
-# /proc/<pid>/exe names a file by its real path, so a configured directory that
-# is (or sits below) a symlink is compared by where it leads. `cd -P`, `pwd -P`
-# and no `readlink -f`, for bash 3.2 and a BSD `readlink`.
+# The native versions directory, as claude-current reads it ($HOME unset leaves
+# only a configured one), and its canonical path when it is there:
+# /proc/<pid>/exe names a file by its real path, so a directory that is (or
+# sits below) a symlink, configured or the default, is compared by where it
+# leads. `cd -P`, `pwd -P` and no `readlink -f`, for bash 3.2 and a BSD
+# `readlink`.
+native_dir="${CLAUDE_CURRENT_NATIVE_DIR:-${HOME:+$HOME/.local/share/claude/versions}}"
 native_real=""
-if [ -n "${CLAUDE_CURRENT_NATIVE_DIR:-}" ]; then
-	native_real="$(cd -P -- "$CLAUDE_CURRENT_NATIVE_DIR" 2>/dev/null && pwd -P)" || native_real=""
+if [ -n "$native_dir" ]; then
+	native_real="$(cd -P -- "$native_dir" 2>/dev/null && pwd -P)" || native_real=""
 fi
 
 # is_native_binary <exe target>: a native version file, in any directory named
-# .../claude/versions or as <x.y.z> directly in the configured native directory.
+# .../claude/versions or as <x.y.z> directly in the native versions directory.
 is_native_binary() {
 	case "$1" in
 		*/claude/versions/*) return 0 ;;
@@ -338,7 +341,7 @@ else
 	esac
 fi
 if [ -n "${HOME:-}" ]; then
-	consider "$(highest_in "${CLAUDE_CURRENT_NATIVE_DIR:-$HOME/.local/share/claude/versions}")"
+	consider "$(highest_in "$native_dir")"
 	consider "$(package_version "$(npm_user_prefix)/lib/node_modules/@anthropic-ai/claude-code/package.json")"
 fi
 
