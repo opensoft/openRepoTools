@@ -27,10 +27,13 @@ that file.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shutil
+import signal
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -151,6 +154,99 @@ def test_the_liveness_fixture_outlives_the_suite_timeout():
         "Raise the sleep in tests/test_lane_helpers.sh above this bound.")
 
 
+#: How long the suite's process group gets to answer a TERM - its own trap
+#: removes the sandbox it made - before it is KILLed. `tests/run.sh`'s
+#: `stop_group` gives its group the same ten seconds.
+GROUP_TERM_GRACE = 10
+
+
+class _Signalled(BaseException):
+    """A TERM or HUP reached this process while it waited on the suite."""
+
+    def __init__(self, signum):
+        super().__init__(signum)
+        self.signum = signum
+
+
+def _raise_signalled(signum, _frame):
+    raise _Signalled(signum)
+
+
+def stop_group(child) -> None:
+    """Stop the process group `child` leads: TERM, up to GROUP_TERM_GRACE
+    seconds for its leader to answer it, then KILL for whatever is left, and
+    reap the leader. A group that is already gone is not an error."""
+    for signum in (signal.SIGTERM, signal.SIGKILL):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(child.pid, signum)
+        if signum == signal.SIGTERM:
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                child.wait(timeout=GROUP_TERM_GRACE)
+    child.wait()
+
+
+def run_in_own_group(argv, *, timeout, **popen_kwargs):
+    """`subprocess.run(argv, capture_output=True, timeout=timeout)` with the
+    command in a session of its own, which is stopped whenever this does not
+    return normally.
+
+    THE SUITE RUNS IN A SESSION OF ITS OWN (opensoft/openRepoTools#142, item
+    3). `subprocess.run(timeout=)` kills only the bash it started, and the
+    suite's `EXIT` trap does not run on that SIGKILL, so the liveness
+    fixture's `sleep` - longer than TIMEOUT_SECONDS on purpose - and every
+    later fixture's were orphaned for up to 70 minutes. The child leads its
+    session, so its pid is its group's id, and the group is what `stop_group`
+    stops: TERM first, so the suite's own TERM trap removes its sandbox.
+
+    A SESSION OF ITS OWN IS NOT THE GROUP `tests/run.sh` STOPS, NOR THE
+    TERMINAL'S. A TERM to that group, a hangup and a Ctrl-C now reach THIS
+    process and no longer reach the suite. pytest has no handler for the first
+    two, so one is installed here for as long as this waits - only where the
+    disposition is still the default, so a `nohup`'d run goes on ignoring a
+    hangup - and it stops the group and then lets the signal take this
+    process as it would have. The timeout and a KeyboardInterrupt stop it too.
+
+    WHAT THIS DOES NOT REACH: the pty driver's children (`LANE_PTY` in the
+    suite) are session leaders of their own (`pty.fork` runs `setsid`), so they
+    are outside the group; each is bounded by that driver's own silence limit.
+
+    `errors="replace"`, because the thing the wrapper below exists to print is
+    the TRANSCRIPT, and a decode that raises loses all of it. The suite renders
+    its own failures with bash substrings for that reason (R-A9-11), so a
+    stray byte here should be impossible - and if one ever gets through, a
+    `\\ufffd` in one line is a readable result where `UnicodeDecodeError` is
+    none at all. Measured: at `dcf1027` one truncated em dash cost the whole
+    998-line transcript on the macOS job.
+    """
+    handled = []
+    try:
+        if threading.current_thread() is threading.main_thread():
+            for signum in (signal.SIGTERM, signal.SIGHUP):
+                if signal.getsignal(signum) == signal.SIG_DFL:
+                    signal.signal(signum, _raise_signalled)
+                    handled.append(signum)
+        with subprocess.Popen(argv, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, encoding="utf-8",
+                              errors="replace", start_new_session=True,
+                              **popen_kwargs) as child:
+            try:
+                stdout, stderr = child.communicate(timeout=timeout)
+            except BaseException:
+                for signum in handled:   # a second signal must not cut the stop short
+                    signal.signal(signum, signal.SIG_IGN)
+                stop_group(child)
+                raise
+        return subprocess.CompletedProcess(child.args, child.returncode,
+                                           stdout, stderr)
+    except _Signalled as caught:
+        signal.signal(caught.signum, signal.SIG_DFL)
+        os.kill(os.getpid(), caught.signum)
+        raise   # not reached: the signal ends this process
+    finally:
+        for signum in handled:
+            signal.signal(signum, signal.SIG_DFL)
+
+
 @WINDOWS_SKIP
 @pytest.mark.skipif(shutil.which("bash") is None,
                     reason="the lane helpers and their suite are bash")
@@ -181,17 +277,8 @@ def test_the_lane_helper_suite_passes():
     env["OPENREPOTOOLS_LANE_MANUAL"] = (
         "" if spec is None else str(spec / "docs" / "README-lanes.md"))
 
-    # `errors="replace"`, because the thing this wrapper exists to print is the
-    # TRANSCRIPT, and a decode that raises loses all of it. The suite renders
-    # its own failures with bash substrings for that reason (R-A9-11), so a
-    # stray byte here should be impossible — and if one ever gets through, a
-    # `\ufffd` in one line is a readable result where `UnicodeDecodeError` is
-    # none at all. Measured: at `dcf1027` one truncated em dash cost the whole
-    # 998-line transcript on the macOS job.
-    proc = subprocess.run(["bash", str(SUITE)], capture_output=True,
-                          encoding="utf-8", errors="replace",
-                          check=False, cwd=str(REPO), timeout=TIMEOUT_SECONDS,
-                          env=env)
+    proc = run_in_own_group(["bash", str(SUITE)], timeout=TIMEOUT_SECONDS,
+                            cwd=str(REPO), env=env)
     tail = proc.stdout.strip().splitlines()[-1:] or ["(no output)"]
     assert proc.returncode == 0, (
         f"tests/test_lane_helpers.sh failed ({tail[0]}):\n"
