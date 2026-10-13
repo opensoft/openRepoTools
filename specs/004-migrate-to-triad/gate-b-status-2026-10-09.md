@@ -11,8 +11,11 @@ agrees with two records #196 carries beside it: the candidate record at `16e6ea4
 publishes r2 and classifies every failure, and lane 2's slice B at `40f26f7`, which lane 3
 reviewed as LAND. Nothing else was re-walked. These later facts are not read into the lines:
 - #191 is at `8246983`, with lane 3's LAND (5481368124), `ready` since 16:31:43Z (6111192078).
+  *2026-10-13:* it landed on `main` as `a74c7fc`, the squash of `8246983`.
 - IN is at `67a978c`. #196 carries `3cca1e7`, whose line 13 still names a host path, which
-  section 2 and section 5 item 4 say must go first (5481348731 finding 13).
+  section 2 and section 5 item 4 say must go first (5481348731 finding 13). *2026-10-13:* the
+  host path is gone from `7668c51` on, and #196's final refold carries the installer record
+  from there (the 2026-10-13 entry below).
 - The test-root follow-ups are #195, open at `e378871`. Lane 3's LAND (5481360555) covers
   `fb77bed`; `e378871` adds #193 item 14, decided as "the test gives".
 - Lane 2's verification of T18 is posted (6103482530): the record holds, with five minor
@@ -25,6 +28,31 @@ reviewed as LAND. Nothing else was re-walked. These later facts are not read int
   leg mount path inside a path the root holds. Both change `adopt-project.py`, so six of the
   eight commits do. Still only `22c9fdd` touches a mounted file. Question e1 names the head
   current at the request.
+
+**Updated 2026-10-13T18:4xZ, before #196's final refold.** No line's status changes; the counts
+stay MET 27 · PARTLY 18 · OPEN 0 · AFTER-GATE-C 1.
+- #191 landed on `main` as `a74c7fc` on 2026-10-13, the squash of `8246983`. #195 is still
+  open at `e378871`.
+- #196's final refold carries each record from the earliest head that holds its fixes. The exact
+  heads are in #196's "Input heads carried" table, which moves with each fold:
+  - the installer record from `7668c51` on: no host path at its line 13, and lane 3's 5481368376
+    answered; from `7428e78` on, also lane 2's check at `8246983`;
+  - slice B from `2c040d6` on, for lane 3's 5481348731 items 7–9: item 8's leftover at
+    `1578f99`, item 7 at `17dd54f`, item 9 (the host behind openspec 1.13.1) at `2c040d6`. The
+    T011 record, `gate-ab-evidence-2026-10-09.md`, is now taken from slice B, which carries RR
+    `2e7e55e`'s file with those corrections;
+  - the candidate record from `e81100c` on: r3, #191 at its final head `8246983` with T007's v3,
+    the four install modules green in composed mode, and F1 gone. The full composed suite is
+    redone at the frozen source for Gate C.
+
+**Hold, 2026-10-13, on Brett Heap's word relayed by lane 3 (#186 6152410188, 18:29:47Z):** the
+cutover (Gate C), any new adoption rehearsal or adoption plan at `7f84ca4`, and any bump of
+`upstream/openRepoShape` wait until openRepoShape v1.0.0 is tagged. After the tag, in order: the
+pin-bump PR, a fresh rehearsal and adoption plan at v1.0.0, then the cutover. #196 is not held,
+because it is evidence of what held at `7f84ca4`, which is what the statuses here record. The
+same comment reports that five of the eight mounted files have changed upstream since
+`7f84ca4`. For that later `main`, this supersedes the 2026-10-11 count of one above. Read
+question e1 with this hold.
 
 **By:** lane openRepoTools-1's reviewer, under [#186](https://github.com/opensoft/openRepoTools/issues/186).
 It ran read-only everywhere except this file and its own scratch. A first, unpublished pass was
@@ -52,9 +80,9 @@ Paths are under `specs/004-migrate-to-triad/` unless they start with `openspec/`
 | CI | `004-migrate-to-triad-ci` | `d28e2cc` |
 | IN | `004-migrate-to-triad-installer` | `51993a4` |
 | RB | `004-migrate-to-triad-rollback` | `fa44d75` |
-| RR | `004-migrate-to-triad-rollback-refresh` (lane 2's slice A) | `2e7e55e` (`c1283b5`, `612ea94`, `2e7e55e` on RB) |
-| EF | `004-migrate-to-triad-evidence-2-followups` (lane 2's slice B) | `40f26f7`, as #196 carries it: `096de93` plus lane 3's findings 1–3 and one nit (the branch has since moved to `1578f99`) |
-| CA | `004-migrate-to-triad-candidate` | `16e6ea4`, r2 published and classified, as #196 carries it (on 2026-10-09 the branch was `935f53f`, the r1 build) |
+| RR | `004-migrate-to-triad-rollback-refresh` (lane 2's slice A) | `2e7e55e` (`c1283b5`, `612ea94`, `2e7e55e` on RB). *2026-10-13:* #196's final refold takes this file from slice B |
+| EF | `004-migrate-to-triad-evidence-2-followups` (lane 2's slice B) | `40f26f7`, as #196 carries it: `096de93` plus lane 3's findings 1–3 and one nit (the branch has since moved to `1578f99`). *2026-10-13:* the final refold carries it from `2c040d6` on |
+| CA | `004-migrate-to-triad-candidate` | `16e6ea4`, r2 published and classified, as #196 carries it (on 2026-10-09 the branch was `935f53f`, the r1 build). *2026-10-13:* the final refold carries r3, from `e81100c` on |
 | T18 | `004-migrate-to-triad-t018` | `63bff08` |
 | L2 | `004-migrate-to-triad-reads` | `a7a8e00` |
 | #191 | `feat/installer-payload-source-resolution` | `13cc752` |
@@ -221,7 +249,8 @@ describes who holds a line. This walk's legend describes the evidence. The two m
 
 **Lane 2's "Facts noticed" — this walk's verdicts:**
 - **Item 16 (a host-absolute path in IN:installer-2026-10-08.md:13): agree.** It must be removed
-  before IN goes into the evidence-3 PR; plan.md:38–39.
+  before IN goes into the evidence-3 PR; plan.md:38–39. *2026-10-13:* it is removed from
+  `7668c51` on, and #196's final refold carries the record from there.
 - **Items 1 and 8 (the candidate receipt is absent from brett-wip; the record cites #191 at
   `2411f40`): agree, and both are answered.** CA at `16e6ea4` names the receipt
   `candidate-20261009-JR8YyA` and records r2 against #191 at `13cc752` (line 34).
@@ -445,7 +474,8 @@ keeps the originals." The minimal form, exactly what #190 asks, is the row 59 ch
 layout:
 - #190: `tests`, `tests-no-submodule`, `tests-windows`, `parse-macos`, `tests-macos`,
   `guard-launch-mode` and SonarCloud, all green;
-- #191: the same less `tests-macos`, which waits on `ready`.
+- #191: the same less `tests-macos`, which waits on `ready`. *2026-10-13:* #191 landed as
+  `a74c7fc`.
 
 What only the legs can show:
 - the code leg standalone with its document checks skipping by name;
@@ -585,7 +615,10 @@ retiring worktrees."
    at installer-2026-10-08.md:13 removed), RR at `2e7e55e` (the branch tip's file: a cherry-pick of
    `c1283b5` alone conflicts, 6089982753), EF `096de93`, the candidate record, T18
    and this walk onto `main`; do not reuse `849592b`'s subject or body (6088884829); review;
-   land.
+   land. *2026-10-13:* the final refold carries the installer record from `7668c51` on (host
+   path removed), slice B from `2c040d6` on (with the T011 record now taken from it), and the
+   candidate record from `e81100c` on (r3). The exact heads are in #196's "Input heads carried"
+   table.
 5. **Gate A.** Capture tooling v3 (A1, A2) and lane 2's re-verification; the owner-coordinated
    freeze; the final capture; owner dispositions (question e5); installed-file receipts for
    py-bench and the other workstations.
