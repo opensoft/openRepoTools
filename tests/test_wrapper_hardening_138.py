@@ -275,7 +275,7 @@ def test_sweep_refuses_when_the_stderr_capture_cannot_be_made(box, extra):
     sweep_box(box, mktemp_works=False)
     result = box.run("lane-end", "--retire-dormant", "repoD", *extra)
     assert result.returncode == 1, (result.stdout, result.stderr)
-    assert "could not be made" in result.stderr
+    assert "no temporary file could be made" in result.stderr
     assert "Nothing was written" in result.stderr
     assert "DRY RUN" not in result.stdout
     assert "retire-rows" not in box.calls()
