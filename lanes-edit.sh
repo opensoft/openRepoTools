@@ -7604,6 +7604,43 @@ EOF2
     # which is what `lane <name>`, `lane-start` and the handoff would all have
     # been told by an empty answer.
     if [ -n "$lr_class" ] && [ "$lr_closed" = 0 ] && [ -z "$lr_one" ]; then continue; fi
+    # THE ROW'S OWN STATE, WHERE THE LOG HAS NONE TO GIVE (#89, out of the
+    # suppressed comments of Copilot's review of #82). Amendment 13(a) makes the
+    # state cell the lane's CURRENT STATE, and `migrate-state-cells` leaves
+    # exactly that behind: the phrase in the cell and, in the log, NOTED lines
+    # and no lane-kind line at all. So the STATE above said `NO LOG` over a cell
+    # saying `PAUSED`, and the one column the amendment exists to make
+    # authoritative was the one column this listing did not consult. Where the
+    # log gave no answer and `mig_cell_is_phrase` proves the cell is the phrase
+    # — the same test the migration and the class above make of the same cell —
+    # the STATE is the cell's word with ` (row)` after it.
+    #
+    # ` (row)` IS PART OF THE WORD, AND THAT IS THE POINT: the word is SHOWN and
+    # never bound. A row with no lane-kind line records no directory, no profile
+    # and no binding, so there is nothing for `lane` to resume — and every
+    # reader that keys on the log's own `PAUSED` (column 10 below, `lane_groups`,
+    # the `bind it:` line of `lanes`) passes this word by without a change of
+    # its own. `lane_groups` files it `rowonly`, and `lane` refuses that group by
+    # name rather than launching on a word no log wrote.
+    #
+    # FOUR WORDS STAY `NO LOG`. `ENDED`, `RETIRED` and the migration's
+    # `MIGRATED` are the cells of Amendment 19(a)'s DORMANT rows, which 19(b)
+    # shows as `NO LOG` with that cell's head on a line of its own. And `LIVE` is
+    # the one case that is NOT symmetric: a cell cannot prove a session is
+    # running, only a live record can, and the read above has already been
+    # asked — a row it did not find live whose cell still says `LIVE` is the row
+    # column 17 flags, and a STATE column saying so would tell a person a lane
+    # is running that nothing has proved is.
+    #
+    # BELOW THE CLASS, ON PURPOSE: the cell is read only for a row with no object
+    # log and only below the narrowing filter (ruling 12), and the class is the
+    # LOG's question, decided on the log's answer before this changes the word.
+    if [ "$lr_state" = 'NO LOG' ] && mig_cell_is_phrase "$lr_was"; then
+      case "${lr_was%% · *}" in
+        LIVE | ENDED | RETIRED | MIGRATED) : ;;
+        *) lr_state="${lr_was%% · *} (row)" ;;
+      esac
+    fi
     [ -n "$lr_obj" ] || lr_obj="none open"
     lr_age="$([ -n "$lr_utc" ] && age_of "$lr_utc" "$lr_now" || printf 'age unknown')"
     # THE TWO SETS `lane_forks` WOULD OTHERWISE RE-READ THE REGISTER FOR, handed
@@ -7776,6 +7813,10 @@ EOF
 #               another workstation's: the session records are local files, so
 #               saying NOT LIVE about Raven from Eagle would be a claim this
 #               machine has no way to make. Clause (c)'s handoff question.
+#   rowonly     NOT A PICK: a STATE `lanes_rows` read out of the row's own
+#               13(a) cell, `<WORD> (row)`, because the log has no lane-kind
+#               line to give one (#89). Shown by `lanes`, never numbered by
+#               `lane`, and refused by name — there is no log to resume from.
 #
 # CLOSED AND DORMANT LANES LEAVE THE PICK (Amendment 19). A lane whose last act
 # was its last is not a lane a person picks, and a pick that offered one would
@@ -7797,6 +7838,15 @@ lane_groups() {   # <workstation> ; rows on stdin
       cls = (NF >= 14 ? $14 : "")
       if (cls == "closed" || cls == "dormant") next
       if (st == "ENDED" || st == "RETIRED" || st == "CLOSED" || st == "DORMANT") next
+      # A STATE READ OUT OF THE ROW-S OWN CELL IS SHOWN AND NEVER PICKED (#89).
+      # `lanes_rows` prints `<WORD> (row)` for a row whose log has no lane-kind
+      # line and whose cell is Amendment 13(a)-s phrase, and such a row records
+      # no directory, no profile and no binding: there is no log to resume it
+      # from. It is in none of the three groups, so the pick never numbers it,
+      # and `rowonly` is the group `lane <name>` refuses by name. Asked BEFORE
+      # the workstation, because a row with no log on this workstation was
+      # filed AVAILABLE on that column alone.
+      if (st ~ / \(row\)$/) { print "rowonly" "\t" $0; next }
       w = tolower($3); sub(/\..*$/, "", w)
       # COLUMN 13 IS THE READ-S OWN ANSWER to *"may this place pronounce on that
       # binding"* (Amendment 18(b)), and an `IDLE` row is exactly the row that
