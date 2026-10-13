@@ -293,6 +293,24 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
+# THE WHY IS ONE LINE, AND IT IS REFUSED AT THE DOOR (opensoft/openRepoTools#72
+# item 6, #85). It reaches FOUR places, and only the last two pass through
+# `sanitize`: the handoff's top block, where a newline writes a malformed prompt
+# (a `---` line among them, which is where `lane-start`'s `handoff_top_block`
+# ends the first prompt it hands the next session); the handoff commit's
+# subject; the object log's PAUSED line, where `write_event` refuses it, but
+# only AFTER section 2 has refreshed and committed the handoff, so the act ends
+# with a top block and no record behind it; and the register's file-level
+# line, where `append-line` used to write it first and refuse it after. One
+# test here covers all four, and it comes before the identity triple, the
+# refresh and every write, so the refusal leaves nothing to undo. It is the
+# rule `lane-end --reason` and `rename-lane`'s reason already keep for a free
+# text that becomes one line. `sanitize` flattens a newline as well, but that
+# is the second line of defence and not this one.
+if [ "${why//[$'\n\r']/}" != "$why" ]; then
+	die "the why is ONE line: it is written into the handoff's top block, its commit message, the object log's PAUSED line and the register's file-level line, and a newline or carriage return in it would split each of them — the last two in files nothing rewrites. Nothing was written. Put it on one line, with '; ' where the break was, and re-run." 2
+fi
+
 # ONE ACT AT A TIME AFTER THE RECORD. `--restart` respawns the pane for a lane
 # that STAYS HERE and `--exit` ends the session for a lane going somewhere else
 # (Amendment 18(d)); asking for both is asking the same pane to do two opposite
@@ -2150,7 +2168,22 @@ fi
 # THE FREE TEXT IS SANITIZED ONCE: Amendment 7(b)/R26 refuses any payload or
 # free text containing ` — ` (exit 2), because that separator is what divides a
 # line's fields from its free text.
-sanitize() { printf '%s' "$1" | sed 's/ — /; /g'; }
+#
+# AND A LINE BREAK IS SPELLED `; ` TOO (opensoft/openRepoTools#85), whatever
+# its spelling — CRLF, a lone CR, a lone LF — so that one break is one `; `.
+# Both writers this text reaches refuse a newline before they write
+# (`write_event` for the log, `append-line` for the register), and a why that
+# carries one is refused at the door, right after the arguments are read, so
+# nothing that reaches here today carries one. This is the second line of
+# defence, in the shape #85 asks of the caller: where a break does arrive, the
+# act still happens, on one line. `sed` cannot do it, because `sed` reads a
+# line at a time and hands the break back.
+sanitize() {
+	sz="${1//$'\r\n'/; }"
+	sz="${sz//$'\r'/; }"
+	sz="${sz//$'\n'/; }"
+	printf '%s' "$sz" | sed 's/ — /; /g'
+}
 # THE FREE TEXT NAMES THE KIND AFTER ITS WHY (Amendment 17 Addendum 1 (h), in
 # force 2026-09-14T20:59:31Z): `clear in-process`, `clear respawn`, `switch
 # respawn`, `reset respawn` — the why the caller gave, then the word for what
