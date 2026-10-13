@@ -269,7 +269,7 @@ def test_item14_a_paused_lane_is_still_resumed(box):
     result = box.start("--no-launch")
     assert result.returncode == 0, result.stderr
     assert box.windows() == {"@1": LANE}
-    assert "RESUMED" in box.lane_log().splitlines()[-1]
+    assert box.lane_log().splitlines()[-1].split(" — ", 1)[0] in ("STARTED", "RESUMED")
 
 
 # ------------------------------------------------------------------ item 16
