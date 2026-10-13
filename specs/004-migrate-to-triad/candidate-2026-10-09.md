@@ -5,6 +5,14 @@
 section 7 of `gate-ab-evidence-2026-10-09.md` (branch `004-migrate-to-triad-rollback`
 at `fa44d75`): "No composed candidate carrying every follow-up has run the suite."
 No task is checked complete by this record, and it approves nothing.
+*2026-10-13, where that gap is recorded:*
+- **The quoted sentence** is `gate-ab-evidence-2026-10-09.md:347` at `fa44d75`.
+  `git ls-remote` at 18:46Z shows `004-migrate-to-triad-rollback` still at `fa44d75`.
+- **In #196** (`004-migrate-to-triad-evidence-3` @ `7c08f7e`) the same sentence is
+  `:590`. That file's dated refresh at `:602–608` (2026-10-09T20:30Z) says no suite run of
+  the candidate "is recorded on origin".
+- **That was true then.** This record's suite results reached origin later: r2's in
+  `16e6ea4` (2026-10-10T23:47Z) and r3's in `e81100c` (2026-10-11T17:00Z).
 **Writer:** lane openRepoTools-1, 2026-10-09: 01:47Z–02:42Z (r1), 13:29Z–18:20Z (r2), and
 the classification from 21:56Z to 2026-10-10T02:4xZ.
 **Evidence branch:** `004-migrate-to-triad-candidate`, from `main` `63810dd`.
@@ -38,6 +46,10 @@ it says r1.
 sha256 `67d8e7ce…`). Code `9c11276`, spec `9e1d006`, assembly `3891943`. The install
 modules, composed: 281 passed, 0 failed, 0 skipped. F1 is gone. The install differs from
 main `f87fd5a` only in the implementation it hands over to.
+
+*2026-10-13:* #191 landed on `main` as `a74c7fc`, a squash of `8246983` with parent
+`f87fd5a`. Its tree, `d77e80b3`, is `8246983`'s, and `openRepoTools` is blob `7aa697c` at
+`cddd1f7`, `8246983` and `a74c7fc` alike. So r3 measured the code now on `main`.
 
 ## 1. Inputs
 
@@ -244,6 +256,18 @@ None of those jobs is composed.
 | F5 | `test_run_wrapper.py::test_a_killed_run_removes_its_run_root_and_stops_the_suite[flock-2-130]` and `[mkdir-lock-2-130]` | all three | `subprocess.TimeoutExpired: … tests/run.sh … timed out after 30 seconds` | **Environment, of this writer's harness, and not load.** The driver was launched as an asynchronous command of a non-interactive shell, so every run inherited SIGINT *ignored*, and bash cannot trap a signal ignored at entry. Only the SIGINT cases failed; the SIGTERM cases passed. Measured isolated at load 42–61: with SIGINT at its default, 4 passed in 1.9 s; launched the way the runs were, the same 2 failed with the same timeout. Main `63810dd` behaves identically (4 passed, then 2 failed) | none for the candidate. The test could start its wrapper with both signals at default, as `test_openrepotools_command.py::test_a_run_killed_mid_placement_leaves_no_temporary` already does (`preexec_fn=default_signals`, whose docstring names this very trap) (follow-up 4) |
 | F6 | `test_supervised_restart_regressions.py::test_restart_observer_confirms_late_uuid_prepared_by_real_child[live]`, `::test_respawn_restores_configured_roots_in_new_pane`, `::test_completed_observer_cleanup_never_signals_saved_pid[signal]` | no-submodule only | `subprocess.TimeoutExpired: … lane-handoff --supervise …` / `Failed: observer never confirmed readiness` | **Environment: timing under load.** These files and `lane-handoff` are byte-identical to main's. All three passed in the composed and standalone runs of the same code. Rerun isolated at load 48–54: all three passed, once with SIGINT at default and once ignored. But a sibling, `test_completed_observer_cleanup_never_signals_saved_pid[exit]`, failed once in that rerun. So these tests are timing-sensitive on this bench, independent of the candidate | none for the candidate; the flake is pre-existing (follow-up 5) |
 
+*2026-10-13, F2's decision.*
+- **Decided on 2026-10-11: the test gives.** #193 item 14 was settled by lane 1's
+  decision (#186 comment 6103665910, 00:16Z), as #195's writer recommended in 6103460962.
+  T006's `assembly-0001` is unchanged.
+- **Implemented in #195 at `e378871`.** At an assembly root,
+  `test_agents_md_names_the_pin_rules` now expects `code/upstream/openRepoShape` and
+  `git -C code submodule update --init upstream/openRepoShape`, taking the prefix from
+  the code pin.
+- **#195's status at 18:46Z:** open at `e378871`. Its CI on the merge with `a74c7fc` is
+  still running (run 38447402302), and lane 1 lands it when green.
+- **Until #195 lands, F2 stands** against `main`'s test.
+
 **Lane 2's reading** (#186 comment 6087267593) **checked against the logs.** Its counts are
 right for all three runs, and so is its S2 finding (no abort on r2). One refinement and
 one correction:
@@ -325,8 +349,22 @@ run has one.
 
 1. **#191 carries F1's fix** (`6fa3b43`, in its head `6568f08`: the r14 test reads
    conftest's text). The composed rerun at `6568f08` with T007 v3 is owed (section 6).
+   *2026-10-13, reconciled with section 9.*
+   - **What was asked.** Lane 3's review 5481348534, finding 6, asked for the composed
+     suite and the install comparison at #191's final head.
+   - **What r3 covered,** at `8246983` (`a74c7fc` on `main`): the install comparison in
+     full, and the composed suite for the four install modules only (281 passed).
+   - **Still owed:** the full composed suite on this candidate at the final head.
+   - **Why it is not run now.** openRepoShape v1.0.0 holds any new rehearsal at
+     `7f84ca4` (Brett Heap's word, #186 comment 6152410188). The coordinator's order of
+     2026-10-11 runs it once, at the frozen source, for Gate C.
+   - **Lane 2's run is not this record's.** Lane 2's full composed run on its own r3
+     (`f87fd5a` + #191 `8246983` + #195 `e378871`) gave 1454 passed and 1 failed: the
+     lane suite's 5400 s timeout (#186 comment 6152491855).
 2. **F2, #193 item 14:** decide whether `test_agents_md_names_the_pin_rules` or T006's
    `assembly-0001` gives, before the composed run is the record.
+   *2026-10-13:* decided on 2026-10-11, the test gives. It is implemented in #195
+   `e378871`; see the dated note under section 5's table.
 3. **#180:** under `tests/run.sh`'s run root the row-stamp cases fail locally. There are 2
    at a 70-character run root and 3 at 71, the third being F4. CI is unaffected. Today
    any local full run is red on them, main included.
