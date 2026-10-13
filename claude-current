@@ -26,7 +26,9 @@
 #   2. Reads each installed candidate's `--version`, by absolute path, in this
 #      order:
 #        - the newest native version in $CLAUDE_CURRENT_NATIVE_DIR (default
-#          ~/.local/share/claude/versions), by its x.y.z name;
+#          ~/.local/share/claude/versions), by its x.y.z name, whose
+#          `--version` answers: a newer file that does not run gives way to
+#          the next one that does, and is not read again in the same run;
 #        - <user npm prefix>/bin/claude. The prefix is $CLAUDE_CURRENT_NPM_PREFIX,
 #          else $NPM_CONFIG_PREFIX, else $npm_config_prefix, else the
 #          `prefix=` line of ~/.npmrc, else ~/.npm-global. A relative one is
@@ -405,26 +407,10 @@ npm_user_prefix() {
 }
 USER_PREFIX="$(npm_user_prefix)"
 
-# native_newest: the executable regular file with the highest x.y.z name in the
-# native versions directory (workBenches #109's ordering), or nothing.
-native_newest() {
-	local f name best="" bestv=""
-	[ -d "$NATIVE_DIR" ] || return 0
-	for f in "$NATIVE_DIR"/*; do
-		[ -f "$f" ] && [ -x "$f" ] && [ ! -L "$f" ] || continue
-		name="${f##*/}"
-		[[ "$name" =~ $core_re ]] || continue
-		if [ -z "$best" ] || [ "$(vercmp "$name" "$bestv")" = 1 ]; then
-			best="$f"
-			bestv="$name"
-		fi
-	done
-	printf '%s' "$best"
-}
-
 cands=""       # one "<path><TAB><version>" line per candidate, in order
 seen=$'\n'     # the physical paths already read
-native_path="" # the native candidate, when there is one
+native_path="" # the native candidate that runs, when there is one
+native_broken=$'\n' # the native files whose version read failed, for the whole run
 
 add_candidate() {
 	local p="$1" real v
@@ -437,12 +423,52 @@ add_candidate() {
 	cands="$cands$p"$'\t'"$v"$'\n'
 }
 
+# native_names: the x.y.z names of the executable regular files in the native
+# versions directory, highest first (workBenches #109's ordering), one per
+# line. One pass and one `sort`, because ordering by `vercmp` is a process for
+# every comparison.
+native_names() {
+	local f name
+	for f in "$NATIVE_DIR"/*; do
+		[ -f "$f" ] && [ -x "$f" ] && [ ! -L "$f" ] || continue
+		name="${f##*/}"
+		[[ "$name" =~ $core_re ]] || continue
+		printf '%s\n' "$name"
+	done | sort -t. -k1,1nr -k2,2nr -k3,3nr
+}
+
+# add_native: the native candidate is the newest native file whose `--version`
+# answers. A newer file that does not run (a download cut short, a binary for
+# another libc, a first start that hangs) must not hide an older one that
+# does, so each is read from the highest down and the first that answers is
+# kept. A working newest file costs one read. A file that failed is
+# remembered for the run: collect runs up to four times, and a hung file would
+# cost its whole bound on each.
+add_native() {
+	local name f before
+	native_path=""
+	[ -d "$NATIVE_DIR" ] || return 0
+	while IFS= read -r name; do
+		[ -n "$name" ] || continue
+		f="$NATIVE_DIR/$name"
+		case "$native_broken" in *$'\n'"$f"$'\n'*) continue ;; esac
+		before="$cands"
+		add_candidate "$f"
+		if [ "$cands" != "$before" ]; then
+			native_path="$f"
+			return 0
+		fi
+		native_broken="$native_broken$f"$'\n'
+	done <<EOF
+$(native_names)
+EOF
+}
+
 collect() {
 	local p old_ifs
 	cands=""
 	seen=$'\n'
-	native_path="$(native_newest)"
-	add_candidate "$native_path"
+	add_native
 	add_candidate "$USER_PREFIX/bin/claude"
 	add_candidate "$HOME/.local/bin/claude"
 	old_ifs="$IFS"

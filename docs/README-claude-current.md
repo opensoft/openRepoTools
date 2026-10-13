@@ -39,7 +39,11 @@ It never resolves `claude` through `PATH`. It reads these candidates by
 absolute path, in this order, and runs each one's `--version`:
 
 1. the newest native version in `~/.local/share/claude/versions`, by its
-   x.y.z name (workBenches #109's ordering);
+   x.y.z name (workBenches #109's ordering), whose `--version` answers. A
+   newer file that does not run, or does not answer within
+   `$CLAUDE_CURRENT_VERSION_TIMEOUT`, gives way to the next one that does, so
+   a broken download cannot hide a working install, and is not read again in
+   the same run;
 2. `<user npm prefix>/bin/claude`. The prefix is `$CLAUDE_CURRENT_NPM_PREFIX`,
    else `$NPM_CONFIG_PREFIX`, else `$npm_config_prefix`, else the `prefix=`
    line of `~/.npmrc`, else `~/.npm-global`. A relative prefix is taken under
@@ -85,9 +89,9 @@ reads the owner again.
 After it takes the lock it reads the candidates again, because another launch
 may have updated while it waited. A lock it cannot take within
 `CLAUDE_CURRENT_LOCK_WAIT` seconds is a refusal, unless that other launch's
-update has already produced npm's version. A native install gets
+update has already produced npm's version. A native install that runs gets
 `claude update`. When that does not reach npm's version, or there is no
-native install, it runs
+native install that runs, it runs
 `npm install -g --prefix <user prefix> @anthropic-ai/claude-code@<published>`.
 If `--version` still differs after that, it runs the package's own
 `install.cjs` with `node`. npm 12's install-script policy skips that hook, so
@@ -214,11 +218,14 @@ claude-restart-check [--running <version>] [--pid <pid>]
 
 It walks at most three processes, from `--pid` (default: its own parent) up
 through their parents, to the first one whose `/proc/<pid>/exe` is a Claude
-Code binary: a native version file (`…/claude/versions/<x.y.z>`), or the npm
-package's `…/node_modules/@anthropic-ai/<dir>/bin/claude.exe`. The status line
-runs its command under `/bin/sh -c`, and dash does not `exec` it, so claude is
-the status line script's grandparent. That was measured on a live bench on
-2026-09-29.
+Code binary: a native version file (`…/claude/versions/<x.y.z>`, or `<x.y.z>`
+directly in the native versions directory, `$CLAUDE_CURRENT_NATIVE_DIR` or its
+default, compared by that directory's canonical path because the kernel
+reports `exe` with every symlink resolved),
+or the npm package's `…/node_modules/@anthropic-ai/<dir>/bin/claude.exe`. The
+status line runs its command under `/bin/sh -c`, and dash does not `exec` it,
+so claude is the status line script's grandparent. That was measured on a live
+bench on 2026-09-29.
 
 It warns when either of these holds:
 
