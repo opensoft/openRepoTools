@@ -1728,8 +1728,11 @@ scrub_cell() {
 # than 240 characters or one carrying `|` or CR/LF, so a cell with any of them
 # was not written by it, and narrowing there dropped its prose from the scan
 # all the same: an open LANDING in that prose closed the lane. That cell is
-# scanned whole, like a diary. In a C locale `${#x}` counts bytes, which only
-# over-counts, and an over-count reads more of the cell.
+# scanned whole, like a diary. The cap is in CHARACTERS and `${#x}` is BYTES in
+# a C locale, where a line of `—` and `→` inside it would read as past it and
+# a lane merely waiting for a LANDING would be held by it: past 240, the count
+# is redone with the UTF-8 continuation bytes taken out, the same number in
+# every locale.
 cell_for_scan() {   # <state cell> — the part of it that says where the lane is
   cfs="$1"
   case "$cfs" in
@@ -1746,9 +1749,18 @@ cell_for_scan() {   # <state cell> — the part of it that says where the lane i
       # `LIVE` there would close a lane over an open landing.
       case "$cfs_three" in
         '' | *' · '*) printf '%s' "$cfs"; return 0 ;;
+      esac
+      # O1's OWN RULES FOR THE LINE, which `mig_cell_is_phrase` does not test
+      # and `set-row-state` does (#90): no `|`, no CR/LF, at most 240 characters.
+      case "$cfs_three" in
         *'|'* | *$'\n'* | *$'\r'*) printf '%s' "$cfs"; return 0 ;;
       esac
-      [ "${#cfs_three}" -le 240 ] || { printf '%s' "$cfs"; return 0; }
+      # `wc -c` pads on BSD, hence `$((…))`; a count that cannot be made is a long line.
+      cfs_len="${#cfs_three}"
+      [ "$cfs_len" -le 240 ] ||
+        cfs_len="$(printf '%s' "$cfs_three" | LC_ALL=C tr -d '\200-\277' | wc -c)" ||
+        cfs_len=241
+      [ "$((cfs_len))" -le 240 ] || { printf '%s' "$cfs"; return 0; }
       cfs_ok=0
       case "$cfs_one" in
         LIVE|PAUSED|LANDED|ENDED|RETIRED|'HANDED OFF'|MIGRATED) cfs_ok=1 ;;

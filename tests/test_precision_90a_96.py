@@ -81,8 +81,36 @@ def _line(length: int, tail: str) -> str:
     return "x" * filler + tail
 
 
-@pytest.fixture
-def ended(tmp_path: Path):
+def _wide_line(length: int, tail: str) -> str:
+    """The same, but the filler is `—` and `→`: three bytes a character, so a
+    line inside the cap by characters is far past it by bytes."""
+    line = ("—→" * length)[:length - len(tail)] + tail
+    assert len(line) == length and len(line.encode()) > 2 * length
+    return line
+
+
+def _utf8_locale() -> str | None:
+    """A UTF-8 locale this host has, or None. `locale -a` spells them
+    `C.utf8` or `en_US.UTF-8` by platform."""
+    try:
+        out = subprocess.run(["locale", "-a"], capture_output=True, text=True,
+                             timeout=10, check=False).stdout
+    except OSError:
+        return None
+    names = [n for n in out.split() if n.lower().replace("-", "").endswith(".utf8")]
+    return names[0] if names else None
+
+
+UTF8 = _utf8_locale()
+
+#: `${#x}` counts CHARACTERS in a UTF-8 locale and BYTES in `C`, and the cap is
+#: O1's 240 CHARACTERS in both: every `lane-end` case runs under each.
+LOCALES = ["C", pytest.param(UTF8, id="UTF-8", marks=pytest.mark.skipif(
+    UTF8 is None, reason="this host has no UTF-8 locale"))]
+
+
+@pytest.fixture(params=LOCALES)
+def ended(tmp_path: Path, request):
     """`ended(cell)` runs `lane-end` on a lane whose register row carries
     `cell` as its state, in this checkout's row and in the published one, and
     returns the process and the row as the register has it afterwards."""
@@ -108,10 +136,11 @@ def ended(tmp_path: Path):
         if published is None:
             box.git("-C", str(box.wip), "commit", "-q", "-am", "the row")
             box.git("-C", str(box.wip), "push", "-q", "origin", "main")
-        env = dict(box.env, LANE_WORKTREES=str(stub))
+        env = dict(box.env, LANE_WORKTREES=str(stub), LC_ALL=request.param)
         result = subprocess.run([str(box.bin / "lane-end"), LANE], env=env,
                                 cwd=str(box.lane_dir), capture_output=True,
-                                text=True, timeout=120, check=False)
+                                encoding="utf-8", errors="replace",
+                                timeout=120, check=False)
         after = next(l for l in register.read_text(encoding="utf-8").splitlines()
                      if l.startswith(f"| `{LANE}`"))
         return result, after
@@ -168,6 +197,27 @@ def test_a_line_exactly_at_the_cap_is_still_prose(ended):
     result, after = ended(f"LIVE · {UTC} · {line}")
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert "| ENDED · " in after, after
+
+
+def test_a_wide_line_exactly_at_the_cap_is_still_prose(ended):
+    """THE CAP IS COUNTED IN CHARACTERS IN EVERY LOCALE. A valid 240-character
+    line of `—` and `→` is some 680 bytes: counted as bytes under `C` it read as
+    past the cap, the cell was scanned whole, and the lane waiting for a
+    LANDING was held by it (the false hold Amendment 13(a)'s narrowing exists
+    to prevent)."""
+    line = _wide_line(240, " waiting for " + HOLD)
+    result, after = ended(f"LIVE · {UTC} · {line}")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "| ENDED · " in after, after
+
+
+def test_a_wide_line_one_past_the_cap_cannot_hide_an_open_landing(ended):
+    """...and one character more is past it in every locale, wide or not."""
+    line = _wide_line(241, " " + HOLD)
+    result, after = ended(f"LIVE · {UTC} · {line}")
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert READ in result.stderr, result.stderr
+    assert "lane-end on" not in after, after
 
 
 def test_a_line_over_the_cap_that_holds_nothing_still_ends(ended):
