@@ -759,21 +759,27 @@ def test_the_index_read_is_byte_identical_to_the_source_read(estate):
     permitted difference — and says so on stderr. Then a write the index has
     not followed: the lag is SAID, never refused.
 
-    STDERR TOO, the `read:` line aside (opensoft/openRepoTools#166 item 3):
-    `history repoA-1` prints LOG_AWK's warnings for its log's nine unreadable
-    lines AND the count that closes them, and `history repoA-1 --index` said
-    the nine without the count."""
+    STDERR TOO (opensoft/openRepoTools#166 item 3): `history repoA-1` prints
+    LOG_AWK's warnings for its log's nine unreadable lines AND the count that
+    closes them, and `history repoA-1 --index` said the nine without the
+    count. Two lines are the flag's own and are set aside on both sides: the
+    `read:` line, and `history`'s no-fetch note where the index answered - the
+    read is the index's, so that arm fetches nothing in front of it."""
     assert estate.index("sync").returncode == 0
     sha12 = estate.tip()[:12]
+
+    def told(stderr: str) -> str:
+        return "".join(line for line in stderr.splitlines(keepends=True)
+                       if not line.startswith("read: ")
+                       and "not fetching; reading origin/" not in line)
+
     for argv in READS:
         src, idx = _pair(estate, argv)
         assert idx.returncode == src.returncode, (argv, idx.stderr)
         assert AGE.sub("<AGE>", idx.stdout) == AGE.sub("<AGE>", src.stdout), argv
         assert f"read: index (sqlite) at register@{sha12}; 0 commits behind" in idx.stderr, (argv, idx.stderr)
         assert "read: " not in src.stderr
-        told = "".join(line for line in idx.stderr.splitlines(keepends=True)
-                       if not line.startswith("read: "))
-        assert told == src.stderr, (argv, told, src.stderr)
+        assert told(idx.stderr) == told(src.stderr), (argv, idx.stderr, src.stderr)
     src, _idx = _pair(estate, ("bash", LANES_EDIT, "history", "repoA-1"))
     assert "9 unreadable line(s) above" in src.stderr, "the fixture lost its unreadable lines: vacuous"
     assert estate.note("repoA-1", "a note the index has not seen").returncode == 0
