@@ -227,20 +227,43 @@ def test_rename_in_place_handoff_in_a_read_only_directory_refuses_and_rolls_back
     assert sorted(p.name for p in rbox.handoff.parent.iterdir()) == [rbox.handoff.name]
 
 
-@pytest.mark.parametrize("name", ["rl_htmp", "pbh_tmp", "TMPD"])
+#: EVERY NAME THE EXIT AND SIGNAL TRAPS REMOVE A PATH THROUGH — `cleanup`
+#: itself, `rename_undo` and `release_lock` — with what an exported variable of
+#: that name must carry to point at the victim. The undo and the lock are each
+#: armed by a flag of their own, so the flag is exported beside the paths.
+#: `rl_htmp`, `pbh_tmp` and `TMPD` deleted the victim before the fix; the rest
+#: were already set at top level (`SE_CACHE_FILE` before any normal exit, its
+#: gap being a signal before its assignment), and are held here so they stay so.
+INHERITED = {
+    "rl_htmp": {"rl_htmp": "{file}"},
+    "pbh_tmp": {"pbh_tmp": "{file}"},
+    "TMPD": {"TMPD": "{dir}"},
+    "SE_CACHE_FILE": {"SE_CACHE_FILE": "{file}"},
+    "RL_SNAP": {"RL_SNAP": "{dir}"},
+    "LANES_IDX_DIR": {"LANES_IDX_DIR": "{dir}"},
+    "LANES_WT_IDX_DIR": {"LANES_WT_IDX_DIR": "{dir}"},
+    "rename_undo": {"RL_ACTIVE": "1", "RL_ALIAS_EXISTED": "0", "RL_LOG_NEW": "{file}",
+                    "RL_H_NEW": "{file}", "RL_ALIAS": "{file}"},
+    "release_lock": {"LOCK_HELD": "1", "LOCK": "{dir}"},
+}
+
+
+@pytest.mark.parametrize("name", sorted(INHERITED))
 def test_cleanup_removes_no_path_a_variable_inherits_from_the_environment(tmp_path, name):
     """`cleanup` runs on every exit and removes its temporaries BY NAME, so a
     name that arrived already set removed the caller's path: with `rl_htmp`
     exported, a read-only `canon-lane` deleted that file (the review of #212),
     and `pbh_tmp` and `TMPD` — the second under `rm -rf` — had the same hole
-    before it."""
+    before it (the reviews of #212 and #213)."""
     box = Sandbox(tmp_path)
     box.env["LANES_NO_FETCH"] = "1"
     victim = tmp_path / "victim"
     victim.mkdir()
-    (victim / "keep.md").write_bytes(HANDOFF)
-    inherited = victim if name == "TMPD" else victim / "keep.md"
+    kept = {victim / "keep.md": HANDOFF, victim / "pid": b"1\n"}
+    for path, data in kept.items():
+        path.write_bytes(data)
+    inherited = {k: v.format(dir=victim, file=victim / "keep.md") for k, v in INHERITED[name].items()}
     result = subprocess.run([str(box.bin / "lanes-edit.sh"), "canon-lane", LANE],
-                            cwd=box.lane_dir, env=dict(box.env, **{name: str(inherited)}),
+                            cwd=box.lane_dir, env=dict(box.env, **inherited),
                             text=True, capture_output=True, timeout=60, check=False)
-    assert (victim / "keep.md").read_bytes() == HANDOFF, (result.returncode, result.stderr)
+    assert {p: p.read_bytes() for p in kept if p.exists()} == kept, (result.returncode, result.stderr)
