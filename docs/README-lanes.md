@@ -1169,7 +1169,7 @@ else.
 | 6 | `git add` / `commit` / `push` failed |
 | 7 | another act got there first and this one wrote nothing: `claim`'s `CLAIM-LOST` (another lane's claim landed first), and `set-lane-state` / `set-lane-tree`'s lifecycle fence (openRepoTools#91, below) |
 | 9 | `CLAIM-LOST` — issue #30's own dead-lane verdict could not be reconfirmed before a `--force` takeover's push landed: the source lane resumed, a live session now backs it up, or that could not be read at all (`claim` only). Never 7 — that code is a RIVAL's claim, and this is the same lane the takeover was granted over |
-| 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read (openRepoTools#91, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim` |
+| 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read (openRepoTools#91, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim`. `lane-trees`: the lane's `trees` directory is there and could not be listed (#157 item 4e) — never the 8 that means it recorded no tree |
 | 8 | no record — and no other meaning |
 | 64 | `swapped`'s own usage error — never the dispatcher's 2 |
 
@@ -3187,7 +3187,9 @@ lanes-edit.sh lane-tree-now <worktree path>
 # <branch> <head> <upstream> <dirty> <unpushed>   — what git says about one tree NOW
 ```
 
-Every lane's records on this workstation, one row per tree, are `lanes
+A `trees` directory that is there and cannot be listed is `lane-trees`' exit
+**10**, never the **8** of a lane that recorded no tree (opensoft/openRepoTools#157
+item 4e). Every lane's records on this workstation, one row per tree, are `lanes
 --worktrees`; the derived index keeps them as its `worktrees` table, which no
 act reads (*The derived index*, below).
 

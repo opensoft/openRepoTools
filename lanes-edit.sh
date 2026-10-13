@@ -520,6 +520,9 @@
 #      both, and the one that was carrying both was 8 (R22, Amendment 7(d)).
 #      IT WAS 9 until main's #61 landed with 9 as `claim --force`'s abandoned
 #      takeover; each PR had taken 9 as unused, and the later one moved.
+#      `lane-trees` spends it for an inventory directory that EXISTS and
+#      cannot be listed, which is never "this lane recorded no tree" (#157
+#      item 4e).
 #
 # --no-sweep (DEFAULT, added 2026-09-09 after 0d84d34/a1f2438 swept another
 #   lane's uncommitted hand edit into an unrelated commit): every mutating
@@ -12596,7 +12599,13 @@ lane_tree_put() {   # <root> <lane> <path> <checkout> <branch> <head> <upstream>
 
 # EVERY RECORDED TREE, ONE PER LINE, US-separated:
 #   <id><US><path><US><branch><US><head><US><upstream><US><dirty><US><unpushed><US><writer><US><observed><US><checkout><US><generation><US><operation><US><schema>
-# 0 with rows, 8 with none, 1 where no control root could be derived.
+# 0 with rows, 8 with none, 1 where no control root could be derived, 10 where
+# the `trees` directory is there and cannot be listed.
+#
+# THAT 10 IS NOT AN 8 (#157 item 4e). A directory this process may not read or
+# search yields an empty glob, which read as a lane that recorded no tree — the
+# unreadable sidecar's rule above, one level up. `worktree_rows` already tells
+# the two apart before it asks; `lane-trees` and its callers now can too.
 #
 # THE LAST THREE ARE NEW AND THEY ARE AT THE END (Copilot round 5 on
 # openRepoTools#97): the fence the observation was RECORDED UNDER, and the
@@ -12619,6 +12628,7 @@ lane_trees_list() {   # <lane>
   ltl_root="$(lane_control_root "${1-}")" || ltl_rc=$?
   [ "$ltl_rc" = 0 ] || return 1
   [ -d "$ltl_root/trees" ] || return 8
+  [ -r "$ltl_root/trees" ] && [ -x "$ltl_root/trees" ] || return 10
   for ltl_f in "$ltl_root"/trees/*.yaml; do
     [ -e "$ltl_f" ] || [ -L "$ltl_f" ] || continue
     ltl_n=$((ltl_n + 1))
@@ -16783,6 +16793,7 @@ EOF
     case "$ltr_rc" in
       0) : ;;
       8) exit 8 ;;
+      10) die "lane $lane's worktree inventory directory $(lane_control_root "$lane" 2>/dev/null || printf '<no control root>')/trees is there and could not be listed. That is NOT 'this lane recorded no tree' — 8 says that, and a reader that goes on over it relaunches writers onto trees nobody looked at (R22, Amendment 7(d)). Read it by hand." 10 ;;
       *) die "lane $lane has no lifecycle control root, so its worktree inventory could not be read. That is NOT 'this lane owns no worktree' (Amendment 7(d))." 1 ;;
     esac
     printf '%s\n' "$ltr_out"
