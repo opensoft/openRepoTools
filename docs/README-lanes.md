@@ -385,7 +385,9 @@ manual.
    the stamp — and it is what this run resumes and stamps. There is no flag for
    it and there could not be one: the id does not exist until the session does.
    The act is `lane-start --no-launch <repo> <n>` run **in** that window, which
-   is what the SessionStart hook's block asks the new session to do;
+   is what the SessionStart hook's block asks the new session to do. (The one
+   caller already *inside* that session, the name guard, names it with `--bind
+   <uuid>` — its binding mode, below — and that flag is the guard's alone);
 3c. `--confirm`, when it was passed and this window is not already named for
    the lane: the **triple** — the window, the session live in it, the row — and
    the question `Take lane <lane> in this window? [y/N]`. Before the rename and
@@ -487,6 +489,21 @@ manual.
 five and prints the `claude` command on **stdout** instead of running it —
 that is the hook a launcher uses, and it is the only thing either script ever
 writes to stdout.
+
+**`--bind <uuid>` is the name guard's binding mode, and nobody else's**
+(openRepoTools#70). The guard passes it on a person's choice `2` at its offer
+(see *The offer* below), naming the transcript of the session live in that
+window. Step 3b then takes that session even where ANOTHER row records its uuid
+— veto 1 answered by the person's `2`, which is the yes clause (h) rule 4 asks
+for — and appends it to the session cell (anchored on the published last id, or
+on `none recorded` / `pending — set by the session's first act` where the cell
+has no uuid) before the stamp. The row's stamp, the lane's `RESUMED` log line
+and the handoff's Rule 3 stamp all name **that** uuid, never the id the row
+would otherwise have resumed. It binds or it refuses, exit **2**, before
+anything is written: it is given only with `--no-launch`, never with `--fresh`
+or `--agent`, its `<uuid>` must be a transcript uuid and the session live in
+this window, and a window still named for another lane is refused — veto 2
+stands. No command printed for a person to type carries it.
 
 The env column records the Claude **profile** (`team-05b`), which is the thing
 that actually varies between lanes on one workstation; `WSL2` in the older
@@ -2192,24 +2209,35 @@ with a `<path>` placeholder in it: the move is
 the path filled in, and the offer is kept. On choice `2` the **window is renamed first** and that order is
 load-bearing: `lane-start`'s step 3b veto 2 refuses to take the session live in
 a window named for another lane, which after choice `2` is exactly what this
-window is — without the rename the lane would be started and stamped with this
-transcript left out of its session cell.
+window is — without the rename `lane-start --bind` refuses, because its binding
+mode answers veto 1 and never veto 2.
 
-**And the LAST write of choice `2` is the guard's own**, because `lane-start`
-may not make it: its step 3b **veto 1** never takes a uuid that belongs to
-ANOTHER row (Amendment 11 clause (d) rule 1), and after the rename this uuid
-still belongs to the lane being left. So `lane-start` mints a fresh id for the
-new lane and the person's own transcript stays out of the cell — and the next
-prompt then finds a lane window whose row does not name this transcript and
-refuses, with a cure that vetoes for the same reason and changes nothing. A
-blocking hook that refuses for ever, on a state it created by obeying the
-person, is the worst outcome this surface has, so after `lane-start` returns
-the guard appends this uuid to the new lane's cell itself — with `lane-start`'s
-own anchor discipline, the PUBLISHED last id, so a stale copy of the row
-refuses rather than writing a cell that no longer matches. That is not a hole
-in veto 1: the veto exists for the take nobody asked for, and clause (h) rule
-4's limit is that the lock never moves a uuid between rows **without the person
-saying so** — here they have, in the answer given at this very prompt.
+**And choice `2` runs `lane-start` in its binding mode, `--no-launch --bind
+<this uuid>`** (openRepoTools#70). Its step 3b **veto 1** never takes a uuid
+that belongs to ANOTHER row (Amendment 11 clause (d) rule 1), and after the
+rename this uuid still belongs to the lane being left. Without an answer to that
+veto `lane-start` left the person's own transcript out of the new lane's cell —
+and the next prompt then found a lane window whose row did not name this
+transcript and refused, with a cure that vetoed for the same reason and changed
+nothing. A blocking hook that refuses for ever, on a state it created by obeying
+the person, is the worst outcome this surface has. So the guard used to append
+this uuid to the cell itself after `lane-start` returned — by which time
+`lane-start` had taken the destination row's ordinary resume path and stamped
+the row, the lane's log and the handoff `RESUMED` by the id **that row already
+had**, under `--no-launch`, about a conversation nobody was in. `--bind` is the
+person's `2` handed to `lane-start`: it appends this uuid to the cell first,
+with its own anchor discipline (the PUBLISHED last id, so a stale copy of the
+row refuses rather than writing a cell that no longer matches), and every stamp
+it writes names this uuid. The guard makes no register write of its own for it
+any more: it reads the cell back and says it ends on this uuid, or prints the
+act that puts it there where `lane-start`'s append could not land — a copy of
+the row older than the published one, or a cell carrying no uuid and neither
+`none recorded` nor the `pending` line. Its old write is not kept behind that as
+a fallback, because it used the same anchor and would have refused in exactly
+the same places. That is not a hole in veto 1: the veto exists for the take
+nobody asked for, and clause (h) rule 4's limit is that the lock never moves a
+uuid between rows **without the person saying so** — here they have, in the
+answer given at this very prompt.
 
 ### The duplicate read (Amendment 18(h))
 
