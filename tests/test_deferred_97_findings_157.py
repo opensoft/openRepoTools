@@ -49,10 +49,14 @@ def register(box: Sandbox) -> Path:
     return box.wip / "lanes" / "LANES.md"
 
 
-def commit_state_cell_here(box: Sandbox, cell: str, message: str) -> None:
-    """Replace the lane's state cell in THIS checkout and commit it, unpushed —
-    as a writer that crashed between its commit and its push leaves it."""
-    lines = register(box).read_text(encoding="utf-8").splitlines(keepends=True)
+def commit_state_cell_here(box: Sandbox, cell: str, message: str,
+                           checkout: Path | None = None) -> None:
+    """Replace the lane's state cell in THIS checkout (or `checkout`) and commit
+    it, unpushed — as a writer that crashed between its commit and its push
+    leaves it."""
+    checkout = checkout or box.wip
+    path = checkout / "lanes" / "LANES.md"
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
     for i, line in enumerate(lines):
         if line.startswith(f"| `{LANE}` "):
             body = line.rstrip("\n").rstrip()
@@ -62,8 +66,17 @@ def commit_state_cell_here(box: Sandbox, cell: str, message: str) -> None:
             break
     else:
         raise AssertionError(f"no row for {LANE} in the sandbox register")
-    register(box).write_text("".join(lines), encoding="utf-8")
-    box.git("-C", str(box.wip), "commit", "-qam", message)
+    path.write_text("".join(lines), encoding="utf-8")
+    box.git("-C", str(checkout), "commit", "-qam", message)
+
+
+def says_which_copy(stderr: str, read: Path) -> None:
+    """The refusal names the register file it READ and both ways the two
+    copies can disagree, each with its remedy."""
+    assert f"register file, {read.resolve()}, carries" in stderr, stderr
+    assert "AHEAD of origin" in stderr and "publish that change or undo it" in stderr
+    assert "BEHIND it" in stderr and "fast-forward it" in stderr
+    assert f"git -C {read.resolve().parent} status --short --branch -- LANES.md" in stderr
 
 
 def fingerprint(box: Sandbox) -> tuple:
@@ -85,8 +98,35 @@ def test_4a_an_unpushed_local_marker_reads_as_unknown_not_legacy(box):
     assert result.returncode == 1, (result.stdout, result.stderr)
     assert result.stdout == ""
     assert "UNKNOWN" in result.stderr
-    assert "this checkout" in result.stderr
-    assert "origin/main..HEAD" in result.stderr
+    says_which_copy(result.stderr, register(box))
+
+
+def test_4a_a_checkout_behind_an_origin_that_dropped_the_marker_reads_as_unknown(box):
+    commit_state_cell_here(box, "MANAGED OWNER · ledger-1", "the ledger's marker")
+    box.git("-C", str(box.wip), "push", "-q", "origin", "main")
+    assert helper(box, "managed-projection", LANE).stdout == "ledger-1\n"
+    peer = box.root / "peer"
+    box.git("clone", "-q", str(box.origin), str(peer))
+    commit_state_cell_here(box, "PAUSED · 2026-10-13T00:00:00Z · the ledger let go",
+                           "the ledger drops its marker, elsewhere", checkout=peer)
+    box.git("-C", str(peer), "push", "-q", "origin", "main")
+    result = helper(box, "managed-projection", LANE)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    says_which_copy(result.stderr, register(box))
+
+
+def test_4a_a_runtime_clone_names_the_register_file_read_not_the_clone(box):
+    clone = box.root / "runtime-clone"
+    box.git("clone", "-q", str(box.origin), str(clone))
+    commit_state_cell_here(box, "MANAGED OWNER · ledger-1",
+                           "an unpushed marker, in this checkout only")
+    env = dict(box.env, LANES_REPO=str(clone))
+    result = subprocess.run([str(box.bin / "lanes-edit.sh"), "managed-projection", LANE],
+                            cwd=box.lane_dir, env=env, text=True,
+                            capture_output=True, timeout=60, check=False)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    says_which_copy(result.stderr, register(box))
+    assert str(clone) not in result.stderr
 
 
 def test_4a_lane_start_refuses_an_unpushed_local_marker_at_its_gate(box):

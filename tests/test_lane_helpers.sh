@@ -14547,7 +14547,9 @@ git -C "$MGM_WIP" commit -q -am "an unpushed marker, in this checkout only"
 mg_b="$(mgm_fp)"
 run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" managed-projection repoMG-2
 is    "the two copies' disagreement reads as unknown (1), never the published row's legacy 8" "$rc" 1
-has   "…naming this checkout's change" "$err" "origin/main..HEAD"
+has   "…naming the register file it read" "$err" "register file, $MGM_WIP/lanes/LANES.md, carries"
+has   "…and both ways the copies can disagree" "$err" "AHEAD of origin"
+has   "…a fast-forward being the other remedy" "$err" "fast-forward it"
 run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" migrate-state-cells --yes
 mgm_refused "migrate-state-cells --yes over a marker only this checkout carries" 1 - "$mg_b"
 has   "…saying the two copies disagree" "$err" "the two copies disagree on"

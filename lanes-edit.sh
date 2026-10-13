@@ -12099,7 +12099,7 @@ managed_seam_refuse() {   # <canonical lane> <the act>
     *) die "whether the managed ledger owns lane $msr_lane is UNKNOWN: its register row carries managed-owner vocabulary that does not parse as a marker, or the register could not be read — and an ownership nobody could establish is never read as 'legacy' (Amendment 7(d)). $msr_act was refused and nothing was written. Read it: lanes-edit.sh managed-projection $msr_lane" 1 ;;
   esac
   managed_local_hint "$msr_lane" ||
-    die "whether the managed ledger owns lane $msr_lane is UNKNOWN: this checkout's row for it carries managed-owner vocabulary (or could not be read) where the published register's does not, and a legacy act rewrites THIS checkout's row — an ownership the two copies disagree on is never read as 'legacy' (Amendment 7(d)). $msr_act was refused and nothing was written. Publish or undo this checkout's change to that row first: git -C $LANES_REPO log origin/$LANES_BRANCH..HEAD -- $LANES_PATH" 1
+    die "whether the managed ledger owns lane $msr_lane is UNKNOWN: its row in this checkout's register file, $LANES_FILE, carries managed-owner vocabulary (or could not be read) where the published register's, origin/$LANES_BRANCH, does not, and a legacy act rewrites THAT file's row — an ownership the two copies disagree on is never read as 'legacy' (Amendment 7(d)). $msr_act was refused and nothing was written. $(managed_local_remedy)" 1
   return 0
 }
 
@@ -12120,6 +12120,18 @@ managed_local_hint() {   # <canonical lane>
     mlh_hint=0; managed_projection_hint "$mlh_loc" || mlh_hint=$?
   fi
   [ "$mlh_hint" = 8 ]
+}
+
+# WHAT A PERSON DOES ABOUT IT, in the words both refusals above print. The file
+# named is the one `managed_local_hint` READ, which is not always in
+# `$LANES_REPO`: a caller that points `LANES_REPO` at a runtime clone and sets
+# no `LANES_WORKSPACE_ROOT` reads the published register in that clone and this
+# file in workspace.yaml's tree. And the two copies can disagree in either
+# direction: a change here that origin has not got, or a change on origin
+# (the ledger removing its marker) that this checkout has not pulled.
+managed_local_remedy() {
+  printf 'That file is AHEAD of origin — the row changed there and not pushed, or not committed at all: publish that change or undo it — or BEHIND it — origin has dropped the vocabulary since that checkout last moved: fast-forward it. Which one: git -C %s fetch && git -C %s status --short --branch -- %s' \
+    "${LANES_FILE%/*}" "${LANES_FILE%/*}" "${LANES_FILE##*/}"
 }
 
 # ============================================================================
@@ -16652,7 +16664,7 @@ EOF
       0) printf '%s\n' "$mpj_out" ;;
       8)
         managed_local_hint "$lane" ||
-          die "lane $lane's row in THIS checkout carries managed-owner vocabulary (or could not be read) where the published register's does not: the two copies disagree on whether the managed ledger owns it, so that is UNKNOWN, and it is never read as 'legacy' (Amendment 7(d)) — every legacy writer refuses it for the same reason. Publish or undo this checkout's change to that row first: git -C $LANES_REPO log origin/$LANES_BRANCH..HEAD -- $LANES_PATH" 1
+          die "lane $lane's row in this checkout's register file, $LANES_FILE, carries managed-owner vocabulary (or could not be read) where the published register's, origin/$LANES_BRANCH, does not: the two copies disagree on whether the managed ledger owns it, so that is UNKNOWN, and it is never read as 'legacy' (Amendment 7(d)) — every legacy writer refuses it for the same reason. $(managed_local_remedy)" 1
         exit 8 ;;
       *) die "lane $lane's register row carries managed-owner vocabulary that does not parse as a marker, or the register could not be read: whether the managed ledger owns it is UNKNOWN, and that is never read as 'legacy' (Amendment 7(d))." 1 ;;
     esac
