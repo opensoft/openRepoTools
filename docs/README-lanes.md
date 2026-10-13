@@ -3896,7 +3896,8 @@ one passed `lane-end`.
   the leg's own, as `code/upstream/openRepoShape` will be), as a **`leg` row** —
   `clean`, `dirty`, `unpushed`, `dirty+unpushed`, `absent` (not checked out here)
   or `unreadable`. A leg is the assembly's, shared by every lane the assembly
-  homes, as the assembly's own checkout is: **no `--yes` acts on one**. It is
+  homes, as the assembly's own checkout is: **no `--yes` acts on a leg
+  checkout** (its branches are another matter: see `--branches` below). It is
   COUNTED (exit 3, and `lane-end`'s gate) only where its HEAD's own `Lane:` trailer
   is this lane's and it holds edits or commits origin lacks — the rule the sweep
   already applies to `.claude/worktrees` — or where it could not be read; one
@@ -3904,12 +3905,20 @@ one passed `lane-end`.
 * lists the worktrees git registers in **every leg** — a FOREIGN row names the leg
   it is registered in — so a tree recorded with the leg as its checkout is the
   lane's as any recorded tree is;
-* takes **`<assembly>/worktrees`** as a root: a tree there is the lane's by its
-  HEAD's own `Lane:` trailer and by nothing else, because the paired root, like
-  `.claude/worktrees`, is per feature and not per lane; a standalone clone there is
-  FOREIGN; a directory there that cannot be listed refuses, exit **2**;
-* with `--branches`, reads every leg's branches too, each row naming its leg; with
-  `--fetch` (and under `--yes`), asks each leg's origin.
+* takes **`<assembly>/worktrees`** as a root: a tree there that the lane's
+  inventory does not record is the lane's by its HEAD's own `Lane:` trailer and by
+  nothing else, because the paired root, like `.claude/worktrees`, is per feature
+  and not per lane — and `lane-handoff` records a tree there only on that rule, or
+  where the lane's own writers file names it (below), so the inventory does not
+  take in other lanes' trees; a standalone clone there
+  is FOREIGN; the root, a feature directory or a leg's directory under it that
+  cannot be listed or searched refuses, exit **2**;
+* with `--branches`, makes each leg's branches rows like the checkout's own, each
+  naming its leg, and **`--yes` deletes a merged lane branch there exactly as it
+  does in the checkout** — bundling first any commits only its reflog names, and
+  deleting its origin branch too where the row says `delete+remote`. No `--yes`
+  acts on a leg *checkout*. With `--fetch` (and under `--yes`), it asks each leg's
+  origin.
 
 A manifest, or a leg's own submodule list, that cannot be read refuses, exit
 **2**. **A checkout with no `project.yaml` is asked nothing** — no helper call, no
@@ -3923,19 +3932,38 @@ offered when legs are all it counted), and lists a leg that holds work and is no
 this lane's below the table as NOT counted — whether the gate passes or not.
 
 **`lane-handoff` and `lane-reconcile` (T018 (b)).** Where the lane's checkout is an
-assembly, `lane-handoff` also polls the **paired root**: `<assembly>/worktrees/<feature>`
-and `<feature>/<each declared leg's path>`. It polls every directory there with a `.git`
-of its own, exactly as it polls `.claude/worktrees`, because the paired root is per
-feature, not per lane, and a writer with nothing committed yet has no trailer to be
-found by. So a writer in a paired tree is in the WRITERS block. Every tree it polls is
-**recorded under the checkout it belongs to**. A worktree of a leg's repository (a
-paired tree, or one `lane-worktrees add --checkout <assembly>/code` made under the
-lane's root) is recorded under that leg, the path `project-legs` prints and `add`
-records. Any other tree keeps the lane's `dir`, as before. A leg that is not checked
-out here (never initialized, or deinitialized) names no tree. In an assembly several
-lanes share, each lane's handoff records every paired tree, as it records every tree in
-`.claude/worktrees`. A tree two lanes' inventories both name is `keep` in both sweeps
-until a person says whose it is. A worktree a leg registers anywhere else is not polled
+assembly, `lane-handoff` also looks in the **paired root**:
+`<assembly>/worktrees/<feature>` and `<feature>/<each declared leg's path>`, at every
+directory there with a `.git` of its own. The paired root is per feature and not per
+lane — every lane the assembly homes keeps its feature trees there — so the handoff
+takes a tree there as this lane's on the sweep's terms and on no wider ones. It
+**polls and records a paired tree only where one of three things holds**:
+
+* this lane's inventory already names it;
+* its HEAD's own last `Lane:` trailer is this lane's, on a commit origin's default
+  branch lacks — the sweep's own rule for that root;
+* the `--writers-file` names it, because a writer with nothing committed yet has no
+  trailer to be found by.
+
+Those trees are in the WRITERS block and its count. **Every other checkout there is
+another lane's, or nobody's**: one line in the top block under a heading of its own,
+outside WRITERS — `- PAIRED ROOT, not this lane's: <path> — branch …`, with its last
+commit and its HEAD's own trailer, which is what finds its lane. It is not counted, not
+recorded, and never a writer for the next session to relaunch; its own lane's handoff
+records it. So one lane's `lane-end` never refuses on another lane's paired work, and
+its `sweep --yes` never acts on it. This is option (a) of the pre-PR review's M1,
+pending lane 1's ruling on #186: a handoff that recorded every paired tree made other
+lanes' trees the running lane's inventory, and a tree two lanes' inventories both name
+is `keep`, counted, in both sweeps.
+
+Every tree it polls is **recorded under the checkout it belongs to**. A worktree of a
+leg's repository (a paired tree, or one `lane-worktrees add --checkout
+<assembly>/code` made under the lane's root) is recorded under that leg, the path
+`project-legs` prints and `add` records. A tree the inventory already records under a
+checkout of the tree's own repository keeps it: a dependency nested in a leg
+(`--checkout <assembly>/code/upstream/<dep>`) is no declared leg. Any other tree keeps
+the lane's `dir`, as before. A leg that is not checked out here (never initialized, or
+deinitialized) names no tree. A worktree a leg registers anywhere else is not polled
 as a writer, just as the checkout's own registrations elsewhere are not;
 `lanes-edit.sh lane-reconcile` reports it. The reconciliation reads what the legs hold
 beside what the checkout holds. Every worktree git registers in a checked-out leg that
@@ -3951,7 +3979,11 @@ place (a tree of the lane's own repository is still recorded), and leaves the la
 sweep refuses with ("the legs of the assembly `<dir>` could not be read"): the sweep
 reads that verdict first and refuses on it, exit **2**. The verdict is `indeterminate`
 too where a leg's registrations, the paired root or a feature directory under it
-cannot be listed. **A checkout with no `project.yaml` is asked nothing**, and one whose
+cannot be listed, or a leg's directory under a feature cannot be searched. For the
+same directories, and where the lane's inventory cannot be read (which paired trees it
+names would then be unknown), `lane-handoff` gives the same three signs: a
+`- NOT POLLED: …` line in WRITERS, a note on stderr, and the lane left `SWAPPING`.
+**A checkout with no `project.yaml` is asked nothing**, and one whose
 `project.yaml` names no leg but itself is asked only `project-legs`, which answers 8.
 The handoff's output, top block and inventory, and the reconciliation, are byte for
 byte what they were. `tests/test_triad_lane_tooling_handoff.py` holds them to the
@@ -3972,7 +4004,9 @@ assembly**, run that dry run and read every FOREIGN row under `<assembly>/worktr
 one whose HEAD, or whose branch's upstream, is a `wip: park … — lane <this lane>`
 commit, or that holds uncommitted edits, may be this lane's parked work. Land it or
 hand it over first, or record it with `lanes-edit.sh set-lane-tree <lane> <path>
---checkout <assembly>/<leg>` so the gate counts it.
+--checkout <assembly>/<leg>` so the gate counts it. `lane-handoff` does not record it
+for you: on the sweep's terms it records a paired tree with no trailer of the lane's
+only where the inventory or the writers file already names it.
 
 ### Two protocol lines this act assumes (proposed for the amendment that ratifies it)
 

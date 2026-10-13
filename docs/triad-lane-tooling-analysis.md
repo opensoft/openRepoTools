@@ -33,7 +33,11 @@ checks) and T018 (feature selection, park/resume and bindings).
    `$selfdir` or `__file__`. All of those helpers move to `code/` together, so that lookup
    works unchanged. The only code that really reads across legs is in the **tests**. Lane 1's
    PR #190 (`feat/test-roots-for-the-triad` at `c139e88`) gives the suite those roots, so this
-   branch carries no test change of its own (§6).
+   branch carries no test change of its own (§6). **2026-10-13:** that was true of this
+   branch's first commit only. It now carries T018's shape-gated changes to five tools,
+   with two test modules of its own (`tests/test_triad_lane_tooling.py`,
+   `tests/test_triad_lane_tooling_handoff.py`) and their two goldens; it still changes none
+   of the suite's roots. The §4.4 note of 2026-10-09 and the §6 notes say what it carries.
 2. **The installer is the most fragile surface.** The README one-liners and every
    already-installed copy's own `openRepoTools --install` fetch files by **repository-root
    path** from `opensoft/openRepoTools@main` (openRepoTools:70-71, :258-275, :1370-1394). Once
@@ -570,6 +574,18 @@ the leg it made a tree from. On a single repository every output is byte for byt
 `tests/fixtures/t018-handoff/`. Usage text moves for every shape (§4.4). The branch merges
 main at `f87fd5a` (#190) and changes none of #190's test-root files.
 
+**2026-10-13: the paired root in `lane-handoff`, after the pre-PR review.** (b) above is
+narrower now (the review's M1, option (a), pending lane 1's ruling on #186). The handoff
+polls and records a paired tree only where the lane's inventory names it, its HEAD's own
+`Lane:` trailer is the lane's on a commit origin's default branch lacks (the sweep's
+rule), or the writers file names it. Every other paired tree is a `PAIRED ROOT, not this
+lane's` line in the top block, outside WRITERS, not counted and not recorded. A paired
+root, feature directory or leg directory it cannot list or search, and an inventory it
+cannot read, are `NOT POLLED` and leave the lane `SWAPPING`, as `lane-reconcile` is
+`indeterminate` and the sweep refuses for the same directories. The heading below,
+"why this branch carries no test change", means no change to the suite's **roots**: the
+branch's own tests are the two modules and goldens named above.
+
 **Overlap with #190, and why this branch carries no test change.** An earlier draft of this
 branch made the suite's roots shape-aware. Lane 1's PR #190 does the same work, more
 completely, under other names. The draft was dropped before it was committed; its diff is
@@ -640,7 +656,10 @@ kept only in this lane's scratch directory.
     unclaimed leg checkouts. It is counted only where the lane's #97 inventory names
     it, which happens through `lanes-edit.sh set-lane-tree`, or a `lane-handoff` that
     ran while it stood (T018 (b)); `lane-worktrees add` makes its trees under the
-    lane's own root, never in the paired root. Lane 3 changed no attribution code; `docs/README-lanes.md`
+    lane's own root, never in the paired root. **2026-10-13:** since the handoff polls the
+    paired root by the sweep's rule (§6, note of that date), it records a parked or
+    resumed tree only where the inventory or the writers file already names it, so the
+    handoff no longer closes this gap by itself. Lane 3 changed no attribution code; `docs/README-lanes.md`
     (T018 section) says what to check before `lane-end`. **Choose:** (i) the sweep also
     reads park's WIP subject as the lane's mark, which couples `lane-worktrees` to a
     workBenches subject format; or (ii) park's WIP commit carries a `Lane: <lane>`
