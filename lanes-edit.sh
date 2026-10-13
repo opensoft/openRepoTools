@@ -7938,13 +7938,14 @@ lane_next_free() {   # <repo> ; rows on stdin
 #   <lane>	<UTC>	<window>	<dir>	<profile>	<agent>	<transcript>
 #
 # THE FIRST FIELD IS THE REGISTER ROW'S SPELLING OF THE LANE (Amendment 15), the
-# way `window-lane`'s answer is, and not the spelling of the `PAUSED` line the
-# record was read from: a log is append-only and spells its lane however it was
-# typed on the day, so `repowin-1` in a log is the lane the row calls
-# `repoWin-1`. A caller of this output hands that field to `tmux rename-window`,
-# to `--name`, to `lane <name>` and to a read of the register, and each of them
-# wants the row's spelling. The log's own spelling is kept for the two things
-# that read the LOG — its path and the pickaxe key — and is never printed.
+# way `window-lane`'s answer is. The record is read under the lane's LOG FILE
+# name, and a log written before Amendment 15 is still `lanes/log/<lower>.md`
+# beside a row that spells the lane in mixed case (`lanes/log/openxfactory-4.md`
+# and `openXfactory-4`), so the raw name is the wrong one to print. A caller of
+# this output hands that field to `tmux rename-window`, to `--name`, to
+# `lane <name>` and to a read of the register, and each of them wants the row's
+# spelling. The log's own spelling is kept for the two things that read the LOG
+# — its path and the pickaxe key — and is never printed.
 #
 # THE LAST TWO ARE AMENDMENT 17(b)'s, and they are added at the END for the
 # reason the fourth and fifth were: the FIRST FIELD BEFORE THE FIRST TAB is the
@@ -8046,13 +8047,15 @@ swapped_candidates() {
         # written, up to and including its object, which is unique to it and
         # which `git log -S` can find without a regex.
         # `nm[l]` AND NEVER `l` (Amendment 15, `8345d2f`): the key is the lane
-        # folded to one case and `nm` is the spelling used by the last line of
-        # that lane in its LOG, which is the register row spelling only when the
-        # two agree in case (Amendment 15 makes them one lane either way). It is
-        # the spelling the pickaxe key below needs, because `git log -S` matches
-        # bytes; the row spelling is for `swapped_lanes` to print as the first
-        # field, and `window-lane` canonicalises its answer the same way. (No
-        # apostrophe in this comment: this awk program is single-quoted.)
+        # folded to one case and `nm` is the lane as the event stream spells
+        # it, which is the base name of the lane LOG FILE (Amendment 16(c) keys
+        # every line to its file). That is NOT the register row spelling
+        # wherever the file does not carry it: a log written before Amendment 15
+        # is still `lanes/log/openxfactory-4.md` beside the row `openXfactory-4`.
+        # It stays the spelling of the log itself, for the pickaxe key below and for
+        # `log_path_for`; the row spelling is for `swapped_lanes` to print as
+        # the first field, and `window-lane` canonicalises its answer the same
+        # way. (No apostrophe in this comment: this awk program is single-quoted.)
         printf "%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s — lane %s, session %s@%s, %s, %s\n",
           nm[l], 31, utc[l], 31, (w == "" ? "unknown" : w), 31,
           (d == "" ? "" : d), 31, (pf == "" ? "" : pf), 31,

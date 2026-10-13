@@ -7518,6 +7518,13 @@ add_seed_row "| \`repoSwap-1\` | harness \`$DEAD_ID\` | Raven / test / brett | 2
   printf 'PAUSED — lane reposwap-1, session %s@Raven, 2026-09-12T09:00:00Z, lane:reposwap-1 → swap; window swapwin:4; workstation Raven\n' "$DEAD_ID"
   printf 'RESUMED — lane repoSwap-1, session %s@Raven, 2026-09-12T10:00:00Z, lane:repoSwap-1 → home opensoft/repoSwap\n' "$DEAD_ID"
 } > "$LOGD/repoSwap-1.md"
+# A SWAPPED LANE WHOSE ONLY LOG FILE IS LOWERCASE, which is every lane that
+# predates Amendment 15: `lanes/log/openxfactory-4.md` beside the row
+# `openXfactory-4`. `swapped` read the lane under the file's name and printed it.
+add_seed_row "| \`repoSwLow-1\` | harness \`$DEAD_ID\` | Raven / test / brett | 2026-09-11T00:00Z | none | handoffs/repoSwLow/x.md | ACTIVE |"
+{ printf '# lane reposwlow-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'PAUSED — lane reposwlow-1, session %s@Raven, 2026-09-12T09:30:00Z, lane:reposwlow-1 → swap; window lowwin:5; workstation Raven\n' "$DEAD_ID"
+} > "$LOGD/reposwlow-1.md"
 # THE PAIR THE AMENDMENT MAKES IMPOSSIBLE, seeded as it existed: two rows whose
 # lane names differ only by case. Every writer refuses on it until 15(d)'s merge.
 add_seed_row "| \`repoPair-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoPair/x.md | ACTIVE |"
@@ -7828,13 +7835,21 @@ is   "…so column 10 is the line that binds it, which needs both halves at once
 run "$E" window-lane Raven casewin:3
 is   "window-lane finds the lane from a record that spells it in another case" "$rc" 0
 is   "…and answers with the register row's spelling" "$out" "repoWin-1"
-# `swapped` READS THE SAME RECORD AND HAS TO ANSWER THE SAME WAY (#55). Its first
-# field is what a caller hands to `tmux rename-window`, to `--name` and to a read
-# of the register, so the log's `repowin-1` is the lane the ROW calls `repoWin-1`.
-# The row is picked by its window, because Raven holds another swapped lane.
+# `swapped` READS THE SAME RECORD AND HAS TO ANSWER WITH THE SAME SPELLING (#55).
+# Its first field is what a caller hands to `tmux rename-window`, to `--name` and
+# to a read of the register, so it is the ROW's spelling. The raw name the record
+# is read under is the log FILE's base name (Amendment 16(c)), and a log written
+# before Amendment 15 is lowercase beside a mixed-case row: `repoSwLow-1`, whose
+# only log is `reposwlow-1.md`. Each lane is picked by its window, because Raven
+# holds other swapped lanes too.
 run "$E" swapped Raven
-is   "swapped lists a lane whose record spells it in another case" "$rc" 0
-is   "…with the register row's spelling in its first field, not the log line's" \
+is   "swapped lists the lanes a swap paused on that workstation" "$rc" 0
+is   "…naming a lane whose log FILE is lowercase by the register row's spelling" \
+     "$(printf '%s\n' "$out" | awk -F'\t' '$3 == "lowwin:5" { print $1 }')" "repoSwLow-1"
+# THE `repoWin-1` ROW PASSES WITH OR WITHOUT THE FIX: its log file already
+# carries the row's spelling, only its PAUSED line is lowercase, and every line
+# is keyed to its file. It stays as the other shape of the same two spellings.
+is   "…and a lane whose log file carries the row's spelling by that spelling" \
      "$(printf '%s\n' "$out" | awk -F'\t' '$3 == "casewin:3" { print $1 }')" "repoWin-1"
 
 # `--all` CLEARS `--lane`, SO IT MUST NOT REFUSE FOR ONE EITHER. The register

@@ -1344,13 +1344,13 @@ it is what makes a fourth and a fifth field safe to add at all.
 `<lane>`, `<UTC>`, `<window>` — the window being the `window <s>:<i>` the
 `/swap` recorded, which is where that lane was. **The lane is the register
 row's spelling** (Amendment 15), as `window-lane`'s answer is, and not the
-spelling of the `PAUSED` line it was read from: a log is append-only and spells
-its lane however it was typed on the day, so a lane paused as `repowin-1` is
-listed as `repoWin-1` when that is its row, and a reader may hand the field
-straight to `tmux rename-window` or to a read of the register. **Exit 0** with
+spelling of the lane's log file: a log written before that amendment is still
+`lanes/log/openxfactory-4.md` beside the row `openXfactory-4`, and `swapped`
+lists that lane as `openXfactory-4`, so a reader may hand the field straight to
+`tmux rename-window` or to a read of the register. **Exit 0** with
 rows, **8** with none (and the reason on stderr, so stdout is only ever rows). A
-launcher takes
-the first row's lane as its default and hands it to `lane-start --confirm`.
+launcher takes the first row's lane as its default and hands it to
+`lane-start --confirm`.
 
 **The rows are in LANDING ORDER — most recently landed first — and not in UTC
 order.** Amendment 7's file-order rule orders one lane's own lines and does not
