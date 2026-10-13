@@ -210,3 +210,21 @@ def test_item_17_a_published_log_git_cannot_read_refuses_the_sweep(reg):
     assert "exists on origin/main and could not be read" in result.stderr
     assert reg.head() == before
     assert not (reg.wip / "lanes/log/repoX-2.md").exists()
+
+
+@ROOT_ONLY
+def test_item_9_a_log_directory_that_cannot_be_listed_refuses_in_the_scan(reg):
+    """#138 item 9: `log_files_named_ci` was `ls 2>/dev/null | awk`, so an
+    unreadable log directory passed the scan as "no log" and the sweep failed
+    on it later, inside its write loop (exit 5). It refuses in the scan now."""
+    logs = reg.wip / "lanes" / "log"
+    before = reg.head()
+    logs.chmod(0)
+    try:
+        result = reg.sweep("repoX-2")
+    finally:
+        logs.chmod(0o755)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert "exists and could not be listed" in result.stderr
+    assert reg.head() == before
+    assert reg.dirty() == ""

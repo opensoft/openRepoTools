@@ -2606,8 +2606,18 @@ log_path_for() { printf '%s%s.md\n' "$LANES_LOG_PREFIX" "$1"; }
 # asserts the parse itself as well, on every platform. Dropping `--` would hand
 # a directory whose name begins with `-` back to `ls` as flags and change
 # nothing else.
+#
+# AND IT RETURNS 1 WHERE THE DIRECTORY IS THERE AND COULD NOT BE LISTED (#138
+# item 9). It was `ls … 2>/dev/null | awk`, whose status is the awk's, so an
+# unreadable directory answered "no log of any case" — which `retire_rows`' scan
+# took as a lane with no log, and its write loop then failed on that directory
+# after the scan had passed. A missing directory is still no log, and 0.
 log_files_named_ci() {   # <lane> — every existing log file for it, whatever its case
-  ls -- "$LANES_LOG_DIR" 2>/dev/null | awk -v want="$1" -v d="$LANES_LOG_DIR" '
+  lfn_ls=""
+  if [ -e "$LANES_LOG_DIR" ]; then
+    lfn_ls="$(ls -- "$LANES_LOG_DIR" 2>/dev/null)" || return 1
+  fi
+  printf '%s\n' "$lfn_ls" | awk -v want="$1" -v d="$LANES_LOG_DIR" '
     BEGIN { w = tolower(want) ".md" }
     tolower($0) == w { print d "/" $0 }'
 }
@@ -11623,7 +11633,10 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
     # smuggles into a commit that names something else. Both halves of
     # `ensure_log`'s question are asked HERE, in the scan, so the refusal comes
     # before any byte is written rather than half-way through the run.
-    rr_loc="$(log_files_named_ci "$rr_l")"
+    # AND A LOG DIRECTORY THAT CANNOT BE LISTED IS A REFUSAL HERE (#138 item 9),
+    # not a lane with no log that `ensure_log` then fails on inside the loop.
+    rr_loc="$(log_files_named_ci "$rr_l")" ||
+      die "the log directory $LANES_LOG_DIR exists and could not be listed, so whether lane $rr_l has a log of any case in this checkout is not known — and that is NOT 'it has none' (Amendment 7(d)). Nothing was written." 1
     rr_ln2="$(printf '%s' "$rr_loc" | grep -c . || :)"
     [ "$rr_ln2" -le 1 ] ||
       die "lane $rr_l has $rr_ln2 object logs in this checkout whose names differ only by case: $(printf '%s\n' "$rr_loc" | tr '\n' ' ')— one lane is ONE lane under any case (Amendment 15) and no read of it is unambiguous. Merge them by hand into $(log_file_for "$rr_l") (15(d)) and re-run. Nothing was written." 2
