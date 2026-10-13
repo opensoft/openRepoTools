@@ -3335,8 +3335,8 @@ lanes-edit.sh managed-projection <lane>
 | exit | meaning | what every legacy act does |
 |---|---|---|
 | 0 | a valid marker; the owner is printed | **refuses with 2**, names the owner, writes nothing |
-| 8 | no marker and no managed-owner vocabulary | runs exactly as it always has |
-| 1 | managed-owner vocabulary that does not parse (a `generation=0`, an empty daemon, a `bound-lane` that is not this lane, an empty shorthand token, a `managed:` anywhere in the row), a row that is not seven columns, or a register that could not be read | **refuses with 1**: ownership is UNKNOWN, and an ownership nobody could establish is never read as legacy (Amendment 7(d)) |
+| 8 | no marker and no managed-owner vocabulary, in the published row or this checkout's — whatever the row's shape: a row with none cannot be a marker, and a writer refuses a row it cannot split on its own (2) | runs exactly as it always has |
+| 1 | managed-owner vocabulary that does not parse (a `generation=0`, an empty daemon, a `bound-lane` that is not this lane, an empty shorthand token, a `managed:` anywhere in the row), a row carrying the vocabulary that is not seven columns, vocabulary that only this checkout's row carries (committed here and not pushed, or not committed), or a register that could not be read | **refuses with 1**: ownership is UNKNOWN, and an ownership nobody could establish is never read as legacy (Amendment 7(d)) |
 | 64 | usage | — |
 
 The acts that ask, each before its first write: `lane-start` (at the head of its
@@ -3352,8 +3352,11 @@ row refuses the whole move), `append-session-id`, `add-row` for a lane that
 already has a row, `set-row-state`, `replace-in-row` and `rename-lane`. Each
 reads this checkout's row as well as the published one, because this
 checkout's row is the one a legacy writer rewrites: vocabulary in one copy and
-not the other is UNKNOWN (1). A claim or a release is about the object, not the
-lane, and is not refused. `lane-reconcile` reads nothing of a managed lane and prints
+not the other is UNKNOWN (1). `managed-projection` reads both copies the same
+way (opensoft/openRepoTools#157 item 4a), so the gates of `lane-start`,
+`lane-handoff` and `lane-end`, which ask it, refuse what the writers refuse —
+before a launch moves a transcript rather than after. A claim or a release is
+about the object, not the lane, and is not refused. `lane-reconcile` reads nothing of a managed lane and prints
 `VERDICT managed-owned` (and `indeterminate` where ownership is unknown). And no
 legacy writer — `set-row-state`, `add-row`, `replace-in-row`, `append-line`,
 `append-session-id`, `rename-lane`'s new name, the sweep — may write the
