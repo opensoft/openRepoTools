@@ -7050,18 +7050,99 @@ has   "…and this window is the other lane now" "$err" "MOVED: this window is n
 has   "…the window renamed by lane-start's own act" "$(grep 'rename-window' "$FAKE_TMUX_LOG" | tail -n1)" "rename-window repoGD-2"
 has   "…this session appended to that lane's cell, which is what the next resume follows" \
       "$("$E" register-row repoGD-2 2>/dev/null || :)" "$GD_LANE_ID"
-# AND THE GUARD SAYS IT MADE THAT WRITE, because `lane-start` cannot: its step
-# 3b veto 1 never takes a uuid another row records, and after the rename this
-# one is repoGD-1's. Without this the new row would carry a FRESH id, the next
-# prompt would find a lane whose row does not name this transcript, and the
-# guard would refuse for ever on a state it created by obeying the person.
-has   "…the guard having made that one write itself, on the person's choice 2" "$err" "session cell now ends on $GD_LANE_ID"
+# AND `lane-start` MADE THAT WRITE, IN ITS BINDING MODE (openRepoTools#70). Its
+# step 3b veto 1 never takes a uuid another row records, and after the rename
+# this one is repoGD-1's: without a write that answers it the new row would carry
+# a FRESH id, the next prompt would find a lane whose row does not name this
+# transcript, and the guard would refuse for ever on a state it created by
+# obeying the person. The guard used to make that write itself; `--bind` is the
+# person's choice 2 handed to `lane-start`, so the guard now only reads it back.
+has   "…lane-start having made that one write, on the person's choice 2" "$err" "session cell now ends on $GD_LANE_ID"
+has   "…in a commit of its own that says which act it was" \
+      "$(git -C "$WIP" log -n 12 --format=%s)" "session cell: bound $GD_LANE_ID on the person's choice 2 at the name guard"
+hasnt "…and with no register write of the guard's own" \
+      "$(git -C "$WIP" log -n 12 --format=%s)" "the name guard moved this window from repoGD-1"
 has   "…and the lane it LEFT marked PAUSED, so the register says where the work went" \
       "$("$E" register-row repoGD-1 2>/dev/null || :)" "PAUSED · "
 has   "…naming the lane this window moved to (Amendment 13(a): the cell is SET, never appended to)" \
       "$("$E" register-row repoGD-1 2>/dev/null || :)" "this window moved to lane repoGD-2"
 is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
 unset FAKE_TMUX_RENAME_STICKS FAKE_TMUX_NAME_FILE
+
+# ---- THE DESTINATION ALREADY RECORDS A TRANSCRIPT (openRepoTools#70).
+#
+# The case the binding mode exists for. The lane a person renamed their session
+# to has a row whose cell names a transcript this directory has, so before
+# `--bind` the guard's `yes` ran `lane-start --no-launch`, which took that row's
+# ordinary RESUME path and wrote `RESUMED` naming the id THE ROW ALREADY HAD —
+# into the row's stamp and into the lane's append-only log — about a
+# conversation nobody was in, launched by nothing. The guard then appended this
+# session to the cell, so the row ended right and the log said something else.
+GD_ROW6_ID="aaaa0012-6666-4000-8000-aaaa00126666"
+"$E" add-row "| \`repoGD-6\` | harness $GD_ROW6_ID (transcript uuid; profile t1) | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoGD/t.md | ACTIVE |" >/dev/null 2>&1
+gd6_tdir="$HOME/.claude/projects/$(sanitize "$HOME/projects/repoGD")"
+mkdir -p "$gd6_tdir"
+printf '{"type":"user"}\n' > "$gd6_tdir/$GD_ROW6_ID.jsonl"
+export FAKE_TMUX_WINDOW_NAME=repoGD-1
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
+gd_rec "$GD_LANE_ID" repoGD-6 user "$GD_NEW_MS"
+
+# THE FLAG FIRST, DRIVEN DIRECTLY, AND EVERY REFUSAL BEFORE ANYTHING IS WRITTEN.
+# It is the guard's alone, so what it may be combined with is narrow: a uuid,
+# `--no-launch`, never `--fresh`, and only the session live in THIS window, in
+# a window not named for another lane.
+gd6_row="$("$E" register-row repoGD-6 2>/dev/null || :)"
+run   "$START" repoGD 6 --no-launch --bind not-a-uuid
+is    "lane-start --bind refuses a value that is not a transcript uuid" "$rc" 2
+has   "…saying what it takes" "$err" "--bind takes the transcript uuid of the session live in this window"
+run   "$START" repoGD 6 --no-launch --bind=
+is    "…and an empty value, in the \`=\` spelling as in the other" "$rc" 2
+has   "…saying what it needs" "$err" "--bind needs the transcript uuid of the session being bound"
+run   "$START" repoGD 6 --bind "$GD_LANE_ID"
+is    "…and refuses without --no-launch: the session it binds is already running" "$rc" 2
+has   "…saying so" "$err" "it is given only with --no-launch"
+run   "$START" repoGD 6 --no-launch --fresh --bind "$GD_LANE_ID"
+is    "…and beside --fresh, which is a second answer to which session this lane is" "$rc" 2
+has   "…naming both" "$err" "--bind binds the session live in this window and --fresh starts a new one"
+run   "$START" repoGD 6 --no-launch --agent codex --bind "$GD_LANE_ID"
+is    "…and beside --agent, since the session it binds is the Claude one in this window" "$rc" 2
+has   "…saying a run that launches nothing has no agent to name" "$err" "a run that launches nothing has no agent to name"
+run   "$START" repoGD 6 --no-launch --bind "$GD_FREE_ID"
+is    "…and a uuid that is not the session live in this window" "$rc" 2
+has   "…naming the one that is" "$err" "the session live in this window is $GD_LANE_ID"
+run   "$START" repoGD 6 --no-launch --bind "$GD_LANE_ID"
+is    "…and a window still named for ANOTHER lane, because --bind answers veto 1 and never veto 2" "$rc" 2
+has   "…saying which veto" "$err" "veto 2, which --bind does not lift"
+is    "…every one of them before anything was written" "$("$E" register-row repoGD-6 2>/dev/null || :)" "$gd6_row"
+is    "…and nothing launched" "$(cat "$FAKE_CLAUDE_LOG" 2>/dev/null | grep -c "repoGD-6" || :)" "0"
+
+# THEN THE GUARD'S `yes`, which renames the window first and so reaches the bind.
+export FAKE_TMUX_RENAME_STICKS=1 FAKE_TMUX_NAME_FILE="$SANDBOX/tmux-window-name"
+printf 'repoGD-1\n' > "$FAKE_TMUX_NAME_FILE"
+gd_run "$GD_LANE_ID"
+is    "a rename to a lane that already records a transcript is the offer" "$rc" 2
+has   "…naming that lane's own last session" "$err" "2) adjust the lane to session repoGD-6 (existing lane; last session $GD_ROW6_ID)"
+gd_run "$GD_LANE_ID" "2"
+is    "…and \`yes\` moves the window" "$rc" 2
+has   "…saying so" "$err" "MOVED: this window is now lane repoGD-6"
+gd6_log="$(cat "$LOGD/repoGD-6.md" 2>/dev/null || :)"
+has   "…and the destination's log records a RESUMED by the transcript BOUND" \
+      "$(printf '%s\n' "$gd6_log" | grep '^RESUMED')" "session $GD_LANE_ID@"
+hasnt "…never by the transcript its row already had, which nobody is in" "$gd6_log" "$GD_ROW6_ID"
+gd6_row="$("$E" register-row repoGD-6 2>/dev/null || :)"
+has   "…the row's stamp names the bound transcript too" "$gd6_row" "RESUMED by $GD_LANE_ID"
+hasnt "…and not the old one" "$gd6_row" "RESUMED by $GD_ROW6_ID"
+hasnt "…nor does any stamp lane-start wrote or owed on the way through" "$err" "RESUMED by $GD_ROW6_ID"
+is    "…and the session cell ENDS on it, which is what the next resume follows" \
+      "$(printf '%s\n' "$gd6_row" | awk -F'|' '{print $3}' | grep -oiE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tail -n1)" \
+      "$GD_LANE_ID"
+has   "…keeping the id it had, in front of it, as the cell's history" "$gd6_row" "$GD_ROW6_ID"
+has   "…which the guard reads back and says" "$err" "repoGD-6's session cell now ends on $GD_LANE_ID"
+hasnt "…and the guard-only flag is in no command printed for a person to type" "$err" "--bind $GD_LANE_ID"
+is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
+unset FAKE_TMUX_RENAME_STICKS FAKE_TMUX_NAME_FILE
+export FAKE_TMUX_WINDOW_NAME=repoGD-1
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
 
 # ---- CHOICE 3 IS A TYPED ACT, AND A PANE THAT WILL NOT TAKE IT LEAVES THE
 # QUESTION STANDING. M1's condition is the pane's current command: `/rename
@@ -7272,7 +7353,9 @@ is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo 
 # destination can be in: veto 1 refuses this window's uuid because the row being
 # LEFT still records it. Anchored only on `none recorded`, the guard's own last
 # write could not be made there and the next prompt refused for ever on a state
-# it had created by obeying the person (Copilot round 3 on this PR).
+# it had created by obeying the person (Copilot round 3 on this PR). That write
+# is `lane-start --bind`'s now (openRepoTools#70), and the anchor rule went with
+# it.
 "$E" add-row "| \`repoGD-4\` | pending — set by the session's first act | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoGD/w.md | ACTIVE |" >/dev/null 2>&1
 export FAKE_TMUX_RENAME_STICKS=1 FAKE_TMUX_NAME_FILE="$SANDBOX/tmux-window-name"
 printf 'repoGD-1\n' > "$SANDBOX/tmux-window-name"
@@ -7283,7 +7366,7 @@ has   "…naming the lane it would move to" "$err" "2) adjust the lane to sessio
 gd_run "$GD_LANE_ID" "2"
 is    "…and \`yes\` moves the window" "$rc" 2
 has   "…saying so" "$err" "MOVED: this window is now lane repoGD-4"
-has   "…with the guard's own last write anchored on the cell's \`pending\` text" "$err" "session cell now ends on $GD_LANE_ID"
+has   "…with lane-start's binding mode anchored on the cell's \`pending\` text" "$err" "session cell now ends on $GD_LANE_ID"
 has   "…which the register carries" "$("$E" register-row repoGD-4 2>/dev/null || :)" "$GD_LANE_ID"
 unset FAKE_TMUX_RENAME_STICKS FAKE_TMUX_NAME_FILE
 export FAKE_TMUX_WINDOW_NAME=repoGD-1
