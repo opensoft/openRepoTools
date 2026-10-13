@@ -945,7 +945,10 @@ from inside the lane's last binding** (Amendment 18(b)): the `host` and
 this place's — a line from before Amendment 18(a) is matched on its own
 workstation — or the binding's window must be gone from a tmux server this
 host shares with it. A lane last bound anywhere else is UNKNOWN, never dead,
-and `--force` refuses it, naming that binding. Before this the only path
+and `--force` refuses it, naming that binding. The session ids that check asks
+about are the row's, published and this checkout's own, so a register that
+could not be read is refused as well: it never confirms a lane dead
+(opensoft/openRepoTools#67). Before this the only path
 was a `release` of the dead lane's held objects by hand, one at a time, run
 under its own name on the taker's word.
 
@@ -1740,7 +1743,9 @@ Amendment 8 ruling (g)'s `kind: bg` record carrying the same id in the same
 profile as an interactive record of it, which is one session and not a rival
 holder, together with any wrapper whose child is that companion. A records
 tree that cannot be read for that test is a read that failed, never "no
-companion". `lane-end <lane> --retire <pid>` tries `forks`
+companion", and a register that cannot be read is never "no duplicate": the
+row's ids are the whole search, so it exits 1 and names the read
+(opensoft/openRepoTools#67). `lane-end <lane> --retire <pid>` tries `forks`
 first and this second, and on a match here it TERMs the pair — the
 `bg-pty-host` parent and its child — and reports the pids it signalled; it
 refuses, naming the reason, when the pid given is the lane's own live session
