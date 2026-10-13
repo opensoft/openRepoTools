@@ -1755,12 +1755,12 @@ cell_for_scan() {   # <state cell> — the part of it that says where the lane i
       case "$cfs_three" in
         *'|'* | *$'\n'* | *$'\r'*) printf '%s' "$cfs"; return 0 ;;
       esac
-      # `wc -c` pads on BSD, hence `$((…))`; a count that cannot be made is a long line.
+      # A count that cannot be made is a long line; BSD `wc` pads, hence the `tr`.
       cfs_len="${#cfs_three}"
       [ "$cfs_len" -le 240 ] ||
-        cfs_len="$(printf '%s' "$cfs_three" | LC_ALL=C tr -d '\200-\277' | wc -c)" ||
+        cfs_len="$(printf '%s' "$cfs_three" | LC_ALL=C tr -d '\200-\277' | wc -c | tr -d ' ')" ||
         cfs_len=241
-      [ "$((cfs_len))" -le 240 ] || { printf '%s' "$cfs"; return 0; }
+      [ "$cfs_len" -le 240 ] || { printf '%s' "$cfs"; return 0; }
       cfs_ok=0
       case "$cfs_one" in
         LIVE|PAUSED|LANDED|ENDED|RETIRED|'HANDED OFF'|MIGRATED) cfs_ok=1 ;;
