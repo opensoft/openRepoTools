@@ -706,17 +706,20 @@ if [ -n "$retire_dormant" ]; then
   # would count zero dormant rows and exit 8 announcing that none are dormant,
   # which is a reason it has not got. The stream is passed through either way:
   # it is the person's.
+  # AND THE CAPTURE IS NOT OPTIONAL (#138 item 6, the review of `dbbb117`).
+  # Where `mktemp` cannot make the file, the read ran with its stderr
+  # uncaptured and `rd_err` stayed empty, so the sentence above never reached
+  # the check below that refuses on it and the sweep went on over a fact that
+  # was not read. Not being able to read the read's notes is not their absence.
   rd_rc=0
   rd_err=""
   rd_errf="$(mktemp "${TMPDIR:-/tmp}/lane-end-sweep.XXXXXX" 2>/dev/null || printf '')"
-  if [ -n "$rd_errf" ]; then
-    rd_rows="$("$LANES_EDIT" lanes --fetch --closed --prefix "$retire_dormant" 2>"$rd_errf")" || rd_rc=$?
-    rd_err="$(cat "$rd_errf" 2>/dev/null || printf '')"
-    printf '%s' "$rd_err" >&2
-    rm -f -- "$rd_errf"
-  else
-    rd_rows="$("$LANES_EDIT" lanes --fetch --closed --prefix "$retire_dormant")" || rd_rc=$?
-  fi
+  [ -n "$rd_errf" ] ||
+    die "no temporary file could be made to capture the read's own notes, so whether this workstation's session records could be read was never established — and DORMANT is 'no object log AND no live session here'. The rows are not counted over a fact that was not read (Amendment 7(d)). Fix \$TMPDIR (full, gone or not writable) and re-run. Nothing was written." 1
+  rd_rows="$("$LANES_EDIT" lanes --fetch --closed --prefix "$retire_dormant" 2>"$rd_errf")" || rd_rc=$?
+  rd_err="$(cat "$rd_errf" 2>/dev/null || printf '')"
+  printf '%s' "$rd_err" >&2
+  rm -f -- "$rd_errf"
   case "$rd_err" in
     *"session records could not be read"*)
       die "this workstation's session records could not be read (the read says so above), so whether any of $retire_dormant's rows has a LIVE session here was never established — and DORMANT is 'no object log AND no live session here'. The rows are not counted over a fact that was not read (Amendment 7(d)). Fix the read and re-run; nothing was written." 1 ;;
