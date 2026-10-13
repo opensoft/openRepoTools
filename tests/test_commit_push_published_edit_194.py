@@ -38,6 +38,9 @@ LANE = "repoP-1"
 PEER_LANE = "repoQ-1"
 REGISTER = "lanes/LANES.md"
 PEER_HANDOFF = f"handoffs/{PEER_LANE}.md"
+#: A tracked file outside `lanes/` and `handoffs/`, the kind the #214 review
+#: saw a queued commit delete from origin.
+TOOL = "scripts/link-estates"
 SUBJECT = "row rewritten by hand"
 
 #: The environment a case must not inherit from the host that runs it.
@@ -111,7 +114,8 @@ class Box:
                    f"{_row(LANE, 'LIVE · seeded')}\n"
                    f"{_row(PEER_LANE, 'LIVE · seeded')}\n")
         self.write(self.wip, PEER_HANDOFF, f"# {PEER_LANE}\n")
-        self.git("-C", str(self.wip), "add", "--", REGISTER, PEER_HANDOFF)
+        self.write(self.wip, TOOL, "#!/usr/bin/env bash\n")
+        self.git("-C", str(self.wip), "add", "--", REGISTER, PEER_HANDOFF, TOOL)
         self.git("-C", str(self.wip), "commit", "-q", "-m", "seed")
         self.git("-C", str(self.wip), "push", "-q", "origin", "main")
         self.git("clone", "-q", str(self.origin), str(self.peer))
@@ -153,6 +157,17 @@ class Box:
         """A peer lane's handoff, mid-write and uncommitted in THIS checkout."""
         with (self.wip / PEER_HANDOFF).open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")
+
+    def queue(self, message: str, *, write: str = "", delete: str = "") -> str:
+        """A commit made in THIS checkout and not pushed: someone's queue."""
+        if write:
+            with (self.wip / write).open("a", encoding="utf-8") as fh:
+                fh.write(f"{message}\n")
+            self.wgit("add", "--", write)
+        if delete:
+            self.wgit("rm", "-q", "--", delete)
+        self.wgit("commit", "-q", "-m", message)
+        return self.wgit("rev-parse", "--short", "HEAD").strip()
 
     def helper(self, *args: str, lane: str = LANE, **extra: str) -> subprocess.CompletedProcess:
         self.net_log.write_text("", encoding="utf-8")
@@ -205,6 +220,7 @@ def test_the_printed_recovery_publishes_the_edit_it_stranded(box):
     assert len(box.unpublished()) == 1, "the edit is a local commit and only that"
     # The RECOVERY names the re-run and says what it does once nothing is staged.
     assert 'LANES_LANE=<lane> lanes-edit.sh commit "<what you wrote>"' in stranded.stderr
+    assert "If lanes/LANES.md is clean, that re-run makes no commit of its own" in stranded.stderr
     assert "pushes the local commits this lists" in stranded.stderr, stranded.stderr
 
     box.wgit("commit", "-q", "-m", f"handoff({PEER_LANE}@Eagle): the mid-write line",
@@ -292,19 +308,28 @@ def test_the_conflict_recovery_warns_that_a_reset_drops_a_peers_commits(box):
     assert "REBASE CONFLICT on origin/main" in err
     assert box.wgit("merge-base", "--is-ancestor", peer_commit, "HEAD") == ""
 
+    aborted_at = box.wgit("rev-parse", "HEAD").strip()
     count = _line_of(err, "cherry origin/main")
-    listing = _line_of(err, "cherry -v origin/main")
-    warning = _line_of(err, "never reset, stash or overwrite a peer's work")
+    moved = _line_of(err, f"rev-parse HEAD   # if this is not {aborted_at}, STOP")
+    listing = _line_of(err, "cherry -v origin/main HEAD")
+    warning = _line_of(err, "Never reset, stash or overwrite a peer's work")
     drops = _line_of(err, "drops EVERY '+' commit in this checkout")
     reset = _line_of(err, "reset --hard origin/main")
-    assert count < listing < warning <= drops < reset, err
+    assert count < moved < listing < warning < drops < reset, err
+    assert f"cherry origin/main {aborted_at}" in err.splitlines()[count]
+    captures = "\n".join(err.splitlines()[listing:drops + 1])
+    assert "LANES(concurrent@" in captures and "LANES(pre-existing@" in captures, captures
+    assert "names no lane, so it is NOT yours" in captures, captures
 
-    # The listing the RECOVERY prints is a command that runs, and it names
-    # the peer's commit as one origin does not have.
+    # The listing reads HEAD, which is what the reset acts on: a peer's commit
+    # made AFTER the abort is in it too, and the moved-checkout STOP fires.
+    later = box.queue(f"handoff({PEER_LANE}@Eagle): written after the abort", write=PEER_HANDOFF)
+    assert box.wgit("rev-parse", "HEAD").strip() != aborted_at
     command = err.splitlines()[listing].split("lanes-edit: ", 1)[1].split("#", 1)[0].split()
     listed = subprocess.run(command, env=box.env, capture_output=True,
                             text=True, check=True).stdout
     assert f"+ {peer_commit}" in listed, listed
+    assert any(line.startswith("+ ") and later in line.split()[1] for line in listed.splitlines()), listed
 
 
 def test_the_dirty_checkout_refusal_names_the_act_to_re_run(box):
@@ -320,3 +345,58 @@ def test_the_dirty_checkout_refusal_names_the_act_to_re_run(box):
     assert result.returncode == 2, result.stderr
     assert "RECOVERY — whoever wrote those files commits them:" in result.stderr
     assert "then re-run the refused write NOTED" in result.stderr, result.stderr
+
+
+def test_a_no_op_write_never_publishes_what_the_checkout_queued(box):
+    """THE #214 REVIEW'S BLOCKER. This shared checkout holds another lane's
+    unpushed commit that deletes a file outside lane tooling's trees. A write
+    whose result is the line already there must stay what it is on `main`:
+    exit 0, no network call, origin untouched. Only `commit` publishes."""
+    queued = box.queue("another lane's commit: retire the tool", delete=TOOL)
+    head, origin = box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")
+    result = box.helper("replace-in-row", LANE, "seeded", "seeded")
+    assert result.returncode == 0, result.stderr
+    assert f"nothing staged for {REGISTER} — no commit made" in result.stderr
+    assert "stay local, and only `lanes-edit.sh commit` publishes them" in result.stderr
+    assert box.net_calls() == []
+    assert (box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")) == (head, origin)
+    assert box.origin_file(TOOL) == "#!/usr/bin/env bash\n"
+    assert box.unpublished()[0].startswith(queued)
+
+
+@pytest.mark.parametrize("queued", [
+    {"delete": TOOL, "status": "D", "path": TOOL},
+    {"write": "workspaces/repoP.yaml", "status": "A", "path": "workspaces/repoP.yaml"},
+    {"delete": PEER_HANDOFF, "status": "D", "path": PEER_HANDOFF},
+], ids=["deletes-a-tool", "outside-lane-tooling", "deletes-a-handoff"])
+def test_commit_refuses_a_queue_that_is_not_lane_toolings_to_publish(box, queued):
+    """`commit` publishes the register and handoff commits lane tooling strands
+    and nothing else: one queued commit that deletes a file, or touches a path
+    outside `lanes/` and `handoffs/`, refuses the WHOLE publish with 2, names
+    the commit and the path, and pushes nothing, not even the stranded edit."""
+    box.set_state(box.wip, LANE, "LIVE · edited by hand")
+    box.wgit("commit", "-q", "-m", f"LANES({LANE}@Eagle): {SUBJECT}", "--", REGISTER)
+    if "write" in queued:
+        (box.wip / queued["write"]).parent.mkdir(parents=True, exist_ok=True)
+    sha = box.queue("a queued commit", write=queued.get("write", ""),
+                    delete=queued.get("delete", ""))
+    head, origin = box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")
+
+    result = box.helper("commit", SUBJECT)
+    assert result.returncode == 2, result.stderr
+    assert f"  {sha} {queued['status']} {queued['path']}" in result.stderr, result.stderr
+    assert "nothing was pushed" in result.stderr
+    assert "pushing the" not in result.stderr
+    assert box.net_calls() == []
+    assert (box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")) == (head, origin)
+
+
+def test_the_publish_counts_what_its_list_leaves_out(box):
+    """The list of commits being pushed shows ten and counts the rest."""
+    for n in range(12):
+        box.queue(f"handoff({PEER_LANE}@Eagle): stamp {n}", write=PEER_HANDOFF)
+    result = box.helper("commit", SUBJECT)
+    assert result.returncode == 0, result.stderr
+    assert "pushing the 12 local commit(s) origin/main does not have:" in result.stderr
+    assert "  … and 2 more" in result.stderr, result.stderr
+    assert box.wgit("rev-parse", "HEAD") == box.ogit("rev-parse", "main")
