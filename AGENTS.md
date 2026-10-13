@@ -314,3 +314,10 @@ repository and reaches no network — every remote is a bare repository in a
 temporary directory, every `$HOME` is a temporary directory, and the one test
 that exercises a fetch answers it with a fake `gh` and a `curl` that refuses.
 Never test by creating a real GitHub repository.
+
+**FOUR ROOTS, NOT ONE TREE** (#186, T009): the suite reads each file from the
+tree that owns it — the code leg, the assembly root (`README.md`, `AGENTS.md`,
+`CLAUDE.md`) and the spec leg (`docs/`), with `upstream/openRepoShape` nested in
+the code leg — found from the layout or named by `OPENREPOTOOLS_CODE_ROOT`,
+`OPENREPOTOOLS_ASSEMBLY_ROOT` and `OPENREPOTOOLS_SPEC_ROOT`. Standalone, a root a
+checkout lacks is SKIPPED by name; `OPENREPOTOOLS_COMPOSED=1` REFUSES instead.
