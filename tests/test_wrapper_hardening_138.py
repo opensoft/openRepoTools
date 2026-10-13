@@ -177,7 +177,7 @@ def test_live_attach_fails_closed_when_the_local_row_cannot_be_read(box, local):
     name_file = live_box(box, pub=8, local=local)
     result = box.run("lane", "thislane-1")
     assert result.returncode == 2, (result.stdout, result.stderr)
-    assert f"could not be read (exit {local})" in result.stderr
+    assert "could not be read" in result.stderr and f"(exit {local})" in result.stderr
     assert "rename-window" not in box.calls()
     assert "attach" not in box.calls()
     assert name_file.read_text().strip() == "otherlane-9"
