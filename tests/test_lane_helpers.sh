@@ -95,6 +95,16 @@ cleanup() {
   [ -n "${DUP_CHILD:-}" ] && kill "$DUP_CHILD" 2>/dev/null
   [ -n "${RACE_PARENT:-}" ] && kill "$RACE_PARENT" 2>/dev/null
   [ -n "${RACE_CHILD:-}" ] && kill "$RACE_CHILD" 2>/dev/null
+  # opensoft/openRepoTools#76 and #86's fixtures. `PART_CHILD_B` ignores TERM
+  # on purpose, so it is the one that takes KILL.
+  [ -n "${SP_PARENT:-}" ] && kill "$SP_PARENT" 2>/dev/null
+  [ -n "${SP_CHILD:-}" ] && kill "$SP_CHILD" 2>/dev/null
+  [ -n "${TWO_PARENT:-}" ] && kill "$TWO_PARENT" 2>/dev/null
+  [ -n "${TWO_CHILD_A:-}" ] && kill "$TWO_CHILD_A" 2>/dev/null
+  [ -n "${TWO_CHILD_B:-}" ] && kill "$TWO_CHILD_B" 2>/dev/null
+  [ -n "${PART_PARENT:-}" ] && kill "$PART_PARENT" 2>/dev/null
+  [ -n "${PART_CHILD_A:-}" ] && kill "$PART_CHILD_A" 2>/dev/null
+  [ -n "${PART_CHILD_B:-}" ] && kill -KILL "$PART_CHILD_B" 2>/dev/null
   [ -n "${GD_DUP:-}" ] && kill "$GD_DUP" 2>/dev/null
   [ -n "${SANDBOX:-}" ] && [ -d "$SANDBOX" ] && rm -rf -- "$SANDBOX"
   return 0
@@ -5203,25 +5213,36 @@ rm -f "$sessions_dir/$DUP_CHILD-repoM1-companion.json"
 # absent) must not have the wrong one attached to this parent's row. Pure
 # discovery, no kill: fixed numbers are fine here, `lane-end --retire` is
 # never called against them.
+#
+# AND A SECOND RIGHT CHILD (opensoft/openRepoTools#86): the scan used to stop
+# at the first child that verified, and the record had one child slot, so
+# $AMBIG_CHILD_RIGHT2, listed by pgrep -P after $AMBIG_CHILD_RIGHT, was left
+# out of the report `lane-end --retire` acts on. The slot is a space-separated
+# list of every verified child now, in pgrep -P's order.
 AMBIG_PARENT=900101
 AMBIG_CHILD_RIGHT=900102
 AMBIG_CHILD_WRONG=900103
+AMBIG_CHILD_RIGHT2=900104
 WRONG_ID="aaaa0007-7777-4000-8000-aaaa00077777"
-FAKE_PS_AMBIG="$(printf '%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s' \
-  "$AMBIG_PARENT"      1               "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl" \
-  "$AMBIG_CHILD_RIGHT" "$AMBIG_PARENT" "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl" \
-  "$AMBIG_CHILD_WRONG" "$AMBIG_PARENT" "claude --session-id $WRONG_ID --fork-session --resume /nonexistent/other-projects/$WRONG_ID.jsonl")"
-FAKE_PGREP_F_AMBIG="$(printf '%s\n%s\n%s\n%s' "$LIVE_PID" "$AMBIG_PARENT" "$AMBIG_CHILD_WRONG" "$AMBIG_CHILD_RIGHT")"
+FAKE_PS_AMBIG="$(printf '%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s' \
+  "$AMBIG_PARENT"       1               "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl" \
+  "$AMBIG_CHILD_RIGHT"  "$AMBIG_PARENT" "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl" \
+  "$AMBIG_CHILD_WRONG"  "$AMBIG_PARENT" "claude --session-id $WRONG_ID --fork-session --resume /nonexistent/other-projects/$WRONG_ID.jsonl" \
+  "$AMBIG_CHILD_RIGHT2" "$AMBIG_PARENT" "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl")"
+FAKE_PGREP_F_AMBIG="$(printf '%s\n%s\n%s\n%s\n%s' "$LIVE_PID" "$AMBIG_PARENT" "$AMBIG_CHILD_WRONG" "$AMBIG_CHILD_RIGHT" "$AMBIG_CHILD_RIGHT2")"
 # THE WRONG CHILD LISTED FIRST (Copilot round 8), so a fix that merely kept
 # "whichever `pgrep -P` lists first" would still pass every OTHER assertion
 # here and only this ordering would catch it.
-FAKE_PGREP_CHILDREN_AMBIG="$(printf '%s\t%s\n%s\t%s' "$AMBIG_CHILD_WRONG" "$AMBIG_PARENT" "$AMBIG_CHILD_RIGHT" "$AMBIG_PARENT")"
+FAKE_PGREP_CHILDREN_AMBIG="$(printf '%s\t%s\n%s\t%s\n%s\t%s' "$AMBIG_CHILD_WRONG" "$AMBIG_PARENT" "$AMBIG_CHILD_RIGHT" "$AMBIG_PARENT" "$AMBIG_CHILD_RIGHT2" "$AMBIG_PARENT")"
 
 run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_AMBIG" FAKE_PS_RECORDS="$FAKE_PS_AMBIG" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_AMBIG" \
   "$E" duplicate-holder repoM-1
-is   "two fork-session children of one wrapper: still one row, and no crash" "$rc" 0
+is   "three fork-session children of one wrapper: still one row, and no crash" "$rc" 0
 has  "…names the parent" "$out" "$AMBIG_PARENT"
 has  "…and the child that actually resumes THIS transcript" "$out" "$AMBIG_CHILD_RIGHT"
+has  "…and the SECOND child that resumes it too, not only the first (#86)" "$out" "$AMBIG_CHILD_RIGHT2"
+is   "…the child slot is both, space-separated, in pgrep -P's order" \
+     "$(printf '%s\n' "$out" | cut -d "$(printf '\037')" -f2)" "$AMBIG_CHILD_RIGHT $AMBIG_CHILD_RIGHT2"
 hasnt "…never the sibling resuming a DIFFERENT transcript, though pgrep -P lists it first" "$out" "$AMBIG_CHILD_WRONG"
 is   "…exactly one row" "$(printf '%s\n' "$out" | grep -c .)" 1
 
@@ -5324,6 +5345,145 @@ is   "…and the fixture pair really is gone before its pids are freed" \
      "$(kill -0 "$RACE_PARENT" 2>/dev/null && echo alive || echo gone),$(kill -0 "$RACE_CHILD" 2>/dev/null && echo alive || echo gone)" \
      "gone,gone"
 RACE_PARENT=""; RACE_CHILD=""
+
+# ------------- opensoft/openRepoTools#76: a --resume path with a SPACE in it
+#
+# `ps -o args=` joins the argv with spaces and quotes nothing, so a duplicate
+# resumed from a directory with a space in it reads back as `--resume
+# /nonexistent/projects with a space/<id>.jsonl`, and the cut both reads made
+# at the first space (`${v%% *}`) took `/nonexistent/projects` from that and
+# matched nothing: `duplicate-holder` answered 8 over a duplicate that was
+# there, and `lane-end --retire`'s pre-kill recheck, the same cut, could only
+# have withheld its TERM. Trailing options after the path, as a harness passes
+# them, prove the value ends at its `.jsonl` and not at the end of the line.
+# Real processes, for the reason $DUP_PARENT's comment gives.
+sleep 3000 & SP_PARENT=$!
+sleep 3000 & SP_CHILD=$!
+SP_ARGS="claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects with a space/$MLIVE_ID.jsonl --output-format stream-json"
+FAKE_PS_SP="$(printf '%s\t%s\t%s\n%s\t%s\t%s' \
+  "$SP_PARENT" 1            "$SP_ARGS" \
+  "$SP_CHILD"  "$SP_PARENT" "$SP_ARGS")"
+FAKE_PGREP_F_SP="$(printf '%s\n%s\n%s' "$LIVE_PID" "$SP_PARENT" "$SP_CHILD")"
+FAKE_PGREP_CHILDREN_SP="$(printf '%s\t%s' "$SP_CHILD" "$SP_PARENT")"
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_SP" FAKE_PS_RECORDS="$FAKE_PS_SP" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_SP" \
+  "$E" duplicate-holder repoM-1
+is   "a duplicate resumed from a directory with a SPACE in it is found (#76)" "$rc" 0
+has  "…naming its parent" "$out" "$SP_PARENT"
+has  "…and its child, whose own --resume value is read whole too" "$out" "$SP_CHILD"
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_SP" FAKE_PS_RECORDS="$FAKE_PS_SP" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_SP" \
+  "$END" repoM-1 --retire "$SP_PARENT"
+is   "…and lane-end --retire's pre-kill recheck reads it whole as well: retired, 0" "$rc" 0
+has  "…reporting RETIRED" "$err" "RETIRED lane repoM-1's duplicate holder"
+has  "…the parent TERMed, not withheld as an argv that no longer matched" "$err" "pid $SP_PARENT (bg-pty-host): gone"
+has  "…and the child" "$err" "pid $SP_CHILD (child): gone"
+sleep 0.2
+is   "…and both really are gone" \
+     "$(kill -0 "$SP_PARENT" 2>/dev/null && echo alive || echo gone),$(kill -0 "$SP_CHILD" 2>/dev/null && echo alive || echo gone)" \
+     "gone,gone"
+# CLEARED ONLY ONCE GONE, the rule $DUP_PARENT's own clearing gives: a pid
+# still alive here (a failed case above) stays the trap's to end.
+kill -0 "$SP_PARENT" 2>/dev/null || SP_PARENT=""
+kill -0 "$SP_CHILD" 2>/dev/null || SP_CHILD=""
+
+# …AND READING THE VALUE WHOLE REOPENS NEITHER CUT PR #61 ALREADY MADE.
+# Copilot round 5's own shape, `--resume /other.jsonl --label /<id>.jsonl`,
+# still reads `/other.jsonl`: the value ends at the first `.jsonl` that ends
+# an argument. And a `--resume` given a bare session id, with this
+# transcript's path in a LATER option, has no `.jsonl` of its own to stop at,
+# so the value would run across that option; a value holding a word that
+# opens with `--` is refused rather than read across it. Discovery only, so
+# fixed numbers, as the AMBIG case above says.
+SPAN_PARENT_A=900201
+SPAN_PARENT_B=900202
+FAKE_PS_SPAN="$(printf '%s\t%s\t%s\n%s\t%s\t%s' \
+  "$SPAN_PARENT_A" 1 "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/other.jsonl --label /nonexistent/projects/$MLIVE_ID.jsonl" \
+  "$SPAN_PARENT_B" 1 "claude --session-id $MLIVE_ID --fork-session --resume $WRONG_ID --append-system-prompt-file /nonexistent/projects/$MLIVE_ID.jsonl")"
+FAKE_PGREP_F_SPAN="$(printf '%s\n%s\n%s' "$LIVE_PID" "$SPAN_PARENT_A" "$SPAN_PARENT_B")"
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_SPAN" FAKE_PS_RECORDS="$FAKE_PS_SPAN" FAKE_PGREP_CHILDREN="" \
+  "$E" duplicate-holder repoM-1
+is    "…and a --resume value is never read across into a LATER argument: 8" "$rc" 8
+hasnt "…not round 5's --label shape, which still reads /other.jsonl" "$out" "$SPAN_PARENT_A"
+hasnt "…nor a bare session id followed by an option naming this transcript" "$out" "$SPAN_PARENT_B"
+
+# ------- opensoft/openRepoTools#86: --retire acts on EVERY verified child
+#
+# A wrapper with TWO children, both resuming this transcript. Before #86 the
+# discovery named only the first, `lane-end --retire` TERMed the parent and
+# that one child, said RETIRED, and the second went on holding the
+# transcript: Amendment 18(h)'s double holder, surviving a retirement
+# reported clean. Real processes, so the TERM is proved, not asserted.
+sleep 3000 & TWO_PARENT=$!
+sleep 3000 & TWO_CHILD_A=$!
+sleep 3000 & TWO_CHILD_B=$!
+TWO_ARGS="claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl"
+FAKE_PS_TWO="$(printf '%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s' \
+  "$TWO_PARENT"  1             "$TWO_ARGS" \
+  "$TWO_CHILD_A" "$TWO_PARENT" "$TWO_ARGS" \
+  "$TWO_CHILD_B" "$TWO_PARENT" "$TWO_ARGS")"
+FAKE_PGREP_F_TWO="$(printf '%s\n%s\n%s\n%s' "$LIVE_PID" "$TWO_PARENT" "$TWO_CHILD_A" "$TWO_CHILD_B")"
+FAKE_PGREP_CHILDREN_TWO="$(printf '%s\t%s\n%s\t%s' "$TWO_CHILD_A" "$TWO_PARENT" "$TWO_CHILD_B" "$TWO_PARENT")"
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_TWO" FAKE_PS_RECORDS="$FAKE_PS_TWO" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_TWO" \
+  "$END" repoM-1 --retire 777777
+is   "a pid that is none of them is still refused 2 beside a two-child duplicate" "$rc" 2
+has  "…and the listing it prints names BOTH children of the wrapper (#86)" "$err" "pid $TWO_PARENT (bg-pty-host), pid $TWO_CHILD_A (child), pid $TWO_CHILD_B (child)"
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_TWO" FAKE_PS_RECORDS="$FAKE_PS_TWO" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_TWO" \
+  "$END" repoM-1 --retire "$TWO_PARENT" --dry-run
+is   "--retire --dry-run on a wrapper with two verified children exits 0" "$rc" 0
+has  "…naming BOTH children it would TERM (#86)" "$err" "and pid $TWO_CHILD_A (child) and pid $TWO_CHILD_B (child)"
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_TWO" FAKE_PS_RECORDS="$FAKE_PS_TWO" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_TWO" \
+  "$END" repoM-1 --retire "$TWO_PARENT"
+is   "lane-end --retire TERMs EVERY verified child of a duplicate holder, not the first (#86)" "$rc" 0
+has  "…reporting RETIRED" "$err" "RETIRED lane repoM-1's duplicate holder"
+has  "…the parent gone" "$err" "pid $TWO_PARENT (bg-pty-host): gone"
+has  "…the first child gone" "$err" "pid $TWO_CHILD_A (child): gone"
+has  "…and the SECOND child gone, which it used to leave running" "$err" "pid $TWO_CHILD_B (child): gone"
+sleep 0.2
+is   "…and all three really are gone" \
+     "$(kill -0 "$TWO_PARENT" 2>/dev/null && echo alive || echo gone),$(kill -0 "$TWO_CHILD_A" 2>/dev/null && echo alive || echo gone),$(kill -0 "$TWO_CHILD_B" 2>/dev/null && echo alive || echo gone)" \
+     "gone,gone,gone"
+kill -0 "$TWO_PARENT" 2>/dev/null || TWO_PARENT=""
+kill -0 "$TWO_CHILD_A" 2>/dev/null || TWO_CHILD_A=""
+kill -0 "$TWO_CHILD_B" 2>/dev/null || TWO_CHILD_B=""
+
+# …AND ONE CHILD STILL ALIVE, WHICHEVER IT IS, IS A PARTIAL RETIREMENT AND
+# NEVER RETIRED. The SECOND child ignores TERM (an ignored signal survives
+# `exec`), and it is named as the target itself, which before #86 matched
+# nothing at all, because the child slot held only the first. Its `exec` is
+# waited for before the act, so the TERM cannot reach the shell before the
+# shell has set the trap; the real `ps` (`command -p`), because the suite's
+# fake knows nothing of this process.
+sleep 3000 & PART_PARENT=$!
+sleep 3000 & PART_CHILD_A=$!
+bash -c 'trap "" TERM; exec sleep 3000' & PART_CHILD_B=$!
+part_tries=0
+while [ "$part_tries" -lt 50 ]; do
+  case "$(command -p ps -o comm= -p "$PART_CHILD_B" 2>/dev/null)" in *sleep*) break ;; esac
+  part_tries=$((part_tries + 1)); sleep 0.1
+done
+PART_ARGS="claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl"
+FAKE_PS_PART="$(printf '%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s' \
+  "$PART_PARENT"  1              "$PART_ARGS" \
+  "$PART_CHILD_A" "$PART_PARENT" "$PART_ARGS" \
+  "$PART_CHILD_B" "$PART_PARENT" "$PART_ARGS")"
+FAKE_PGREP_F_PART="$(printf '%s\n%s\n%s\n%s' "$LIVE_PID" "$PART_PARENT" "$PART_CHILD_A" "$PART_CHILD_B")"
+FAKE_PGREP_CHILDREN_PART="$(printf '%s\t%s\n%s\t%s' "$PART_CHILD_A" "$PART_PARENT" "$PART_CHILD_B" "$PART_PARENT")"
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_PART" FAKE_PS_RECORDS="$FAKE_PS_PART" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_PART" \
+  "$END" repoM-1 --retire "$PART_CHILD_B"
+is    "the SECOND child's pid is a --retire target too, and one survivor makes it partial: 1" "$rc" 1
+has   "…naming the survivor as alive despite the TERM it was sent" "$err" "pid $PART_CHILD_B (child): STILL ALIVE despite TERM delivered"
+has   "…and the child that did go" "$err" "pid $PART_CHILD_A (child): gone"
+has   "…and the parent" "$err" "pid $PART_PARENT (bg-pty-host): gone"
+has   "…refusing as only partly retired" "$err" "was only partly retired"
+hasnt "…never RETIRED over a child still holding the transcript" "$err" "RETIRED lane repoM-1's duplicate holder"
+is    "…and the survivor really is still running" "$(kill -0 "$PART_CHILD_B" 2>/dev/null && echo alive || echo gone)" "alive"
+kill -KILL "$PART_CHILD_B" 2>/dev/null || :
+sleep 0.2
+is    "…and the fixture trio really is gone before its pids are freed" \
+      "$(kill -0 "$PART_PARENT" 2>/dev/null && echo alive || echo gone),$(kill -0 "$PART_CHILD_A" 2>/dev/null && echo alive || echo gone),$(kill -0 "$PART_CHILD_B" 2>/dev/null && echo alive || echo gone)" \
+      "gone,gone,gone"
+kill -0 "$PART_PARENT" 2>/dev/null || PART_PARENT=""
+kill -0 "$PART_CHILD_A" 2>/dev/null || PART_CHILD_A=""
+kill -0 "$PART_CHILD_B" 2>/dev/null || PART_CHILD_B=""
 
 # --------------------------- clause (c): lane-start RECORDS dir and profile
 mkdir -p "$HOME/projects/repoA11b"
