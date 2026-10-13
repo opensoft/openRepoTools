@@ -675,6 +675,7 @@ unambiguously at the first space after it; payload sub-fields are separated by
 |---|---|
 | issue | `CLAIMED`, `RELEASED`, `TAKEOVER ← <stale claim URL>`, `CLOSED → owner/repo#pr` |
 | PR | `OPENED ← owner/repo#i [owner/repo#j …]`, `LANDING`, `LANDED → <sha>`, `WITHDRAWN`, `CLOSED` |
+| issue or PR | `TAKEOVER ← lane:<dispossessed lane>` |
 | lane | `STARTED`, `PAUSED`, `RESUMED`, `ENDED`, `RETIRED` |
 | narrative | `NOTED`, `RULED [→ <object>]` (Amendment 13(b)) |
 | race | `CLAIM-LOST → lane:<other>` |
