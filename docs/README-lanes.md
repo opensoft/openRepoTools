@@ -3432,10 +3432,15 @@ The flag is typed per invocation — **never** taken from the environment or a
 configuration. It replaces the **published** reads (the register, the archive,
 the alias table, the logs) and nothing else, so the live session records, tmux
 and this checkout's own files are read as they are without it. Where the index
-is current the answer is **byte for byte the source read's**, the clock's
-columns aside (the listing's AGE and its "last heard from origin" age, computed
-the same way at the moment of the read). One line on stderr says which was
-read:
+is current the answer is **byte for byte the source read's**, on stderr as on
+stdout — the warnings for a log's unreadable lines and the count that closes
+them included (opensoft/openRepoTools#166) — the clock's columns aside (the
+listing's AGE and its "last heard from origin" age, computed the same way at
+the moment of the read). And it is **one commit's image**: `lanes-index export`
+reads the provenance and every table in ONE read snapshot — a SQLite read
+transaction, a Postgres `REPEATABLE READ READ ONLY` one — so a sync landing
+mid-read is in the answer whole or not at all (#166). One line on stderr says
+which was read:
 
 ```text
 read: index (sqlite) at register@1a2b3c4d5e6f; 0 commits behind

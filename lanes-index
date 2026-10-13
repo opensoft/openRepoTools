@@ -1125,6 +1125,30 @@ class SqliteStore:
         return [dict(zip(["record_id"] + columns, r)) for r in self.conn.execute(
             f"SELECT {cols} FROM {table} WHERE source = ?", (source,))]
 
+    def read_image(self, source: str, reads: list) -> tuple:
+        """`provenance(source)`, then `rows(table, source, columns)` for each
+        `(table, columns)` of `reads`, as ONE READ SNAPSHOT (opensoft/openRepoTools#166
+        item 1). Each statement was its own snapshot, so a sync committing
+        between two of them made an image of two commits under a `meta` naming
+        the first. One read transaction holds the SHARED lock in the rollback
+        journal - a writer's commit waits the fraction of a second the export
+        takes - and in WAL mode it is a snapshot."""
+        import sqlite3
+        try:
+            self.conn.execute("BEGIN")
+        except sqlite3.Error as exc:
+            raise StoreUnusable("unreachable", f"{self.path}: {exc}")
+        try:
+            prov = self.provenance(source)
+            tables = [self.rows(table, source, columns) for table, columns in reads]
+        finally:
+            # A read transaction ends however its reads did; nothing was written.
+            try:
+                self.conn.execute("COMMIT")
+            except sqlite3.Error:
+                pass
+        return prov, tables
+
     def apply(self, source: str, old: dict | None, new_sha: str, upserts: dict,
               deletes: dict, generation: int | None = None) -> None:
         """The rows and the provenance, ONE transaction, the compare-and-swap
@@ -1284,15 +1308,20 @@ class PostgresStore:
             raise StoreUnusable("unreachable", err[-1])
         return proc.stdout
 
-    def _query_many(self, queries: list[str]) -> list[list[list]]:
+    def _query_many(self, queries: list[str], snapshot: bool = False) -> list[list[list]]:
         """Several SELECTs in ONE connection, each answered as TEXT-format COPY
         rows; a marker line no COPY row can be (one field, a control
-        character) separates them."""
+        character) separates them. With `snapshot`, in ONE read-only
+        REPEATABLE READ transaction: every SELECT reads the same snapshot."""
         marker = "\x1eLANES-INDEX-NEXT"
         parts = [f"SET search_path TO \"{self.schema}\";"]
+        if snapshot:
+            parts.append("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;")
         for query in queries:
             parts.append(f"COPY ({query}) TO STDOUT;")
             parts.append("\\echo '\\036LANES-INDEX-NEXT'")
+        if snapshot:
+            parts.append("COMMIT;")
         out = self._run("\n".join(parts) + "\n")
         results, current = [], []
         for line in out.split("\n"):
@@ -1338,14 +1367,8 @@ class PostgresStore:
         self.open_read()
 
     def provenance(self, source: str) -> dict | None:
-        res = self._query_many([
-            f"SELECT commit_sha, generation, indexed_utc, schema_version FROM provenance "
-            f"WHERE source = {_pg_quote(source)}"])
-        if not res or not res[0]:
-            return None
-        r = res[0][0]
-        return {"commit_sha": r[0], "generation": r[1], "indexed_utc": r[2],
-                "schema_version": r[3]}
+        res = self._query_many([self._provenance_query(source)])
+        return self._provenance_of(res[0] if res else [])
 
     def all_provenance(self) -> list:
         res = self._query_many([
@@ -1355,17 +1378,50 @@ class PostgresStore:
                  "schema_version": r[4]} for r in (res[0] if res else [])]
 
     def rows(self, table: str, source: str, columns: list[str]) -> list:
-        res = self._query_many([
-            f"SELECT {', '.join(['record_id'] + columns)} FROM {table} "
-            f"WHERE source = {_pg_quote(source)}"])
+        res = self._query_many([self._rows_query(table, source, columns)])
+        return self._rows_of(res[0] if res else [], columns)
+
+    @staticmethod
+    def _provenance_query(source: str) -> str:
+        return (f"SELECT commit_sha, generation, indexed_utc, schema_version FROM provenance "
+                f"WHERE source = {_pg_quote(source)}")
+
+    @staticmethod
+    def _provenance_of(answer: list) -> dict | None:
+        if not answer:
+            return None
+        r = answer[0]
+        return {"commit_sha": r[0], "generation": r[1], "indexed_utc": r[2],
+                "schema_version": r[3]}
+
+    @staticmethod
+    def _rows_query(table: str, source: str, columns: list[str]) -> str:
+        return (f"SELECT {', '.join(['record_id'] + columns)} FROM {table} "
+                f"WHERE source = {_pg_quote(source)}")
+
+    @staticmethod
+    def _rows_of(answer: list, columns: list[str]) -> list:
         out = []
-        for r in (res[0] if res else []):
+        for r in answer:
             rec = dict(zip(["record_id"] + columns, r))
             for col in columns:
                 if col in INTEGER_COLUMNS and rec[col] is not None:
                     rec[col] = int(rec[col])
             out.append(rec)
         return out
+
+    def read_image(self, source: str, reads: list) -> tuple:
+        """`SqliteStore.read_image`'s answer, ONE `psql` session and one
+        REPEATABLE READ READ ONLY transaction (opensoft/openRepoTools#166 item 1):
+        each `rows()` was a session of its own, and a snapshot of its own."""
+        res = self._query_many([self._provenance_query(source)] +
+                               [self._rows_query(table, source, columns)
+                                for table, columns in reads], snapshot=True)
+        if len(res) != len(reads) + 1:
+            raise StoreUnusable("unreachable", f"psql answered {len(res)} of the "
+                                f"{len(reads) + 1} reads of one export")
+        return self._provenance_of(res[0]), [self._rows_of(answer, columns)
+                                             for answer, (_table, columns) in zip(res[1:], reads)]
 
     def apply(self, source: str, old: dict | None, new_sha: str, upserts: dict,
               deletes: dict, generation: int | None = None) -> None:
@@ -2252,16 +2308,19 @@ def cmd_export(out_dir: str, requested: str | None, worktrees: bool = False) -> 
         source = resolve_source(requested, root)
         store = open_store(cfg, "reader")
         store.open_read()
-        prov = store.provenance(source)
+        # ONE COMMIT'S IMAGE (opensoft/openRepoTools#166 item 1): the provenance
+        # and every table in one read snapshot, or a sync committing between two
+        # reads writes rows of two commits under a `meta` naming the first.
+        prov, (file_rows, lanes, reg_lines, aliases, log_rows) = store.read_image(source, [
+            ("source_files", TABLE_COLUMNS["source_files"]),
+            ("lanes", ["row_file", "row_ordinal", "row_text"]),
+            ("register_lines", ["ordinal", "raw"]),
+            ("lane_aliases", ["ordinal", "raw"]),
+            ("log_lines", [c for c in TABLE_COLUMNS["log_lines"]
+                           if c not in ("payload_fields", "raw")])])
         if prov is None or not prov.get("commit_sha"):
             return unusable("wiped", f"no provenance for {source} in the {cfg['store']} store")
-        files = {r["record_id"]: r for r in store.rows("source_files", source,
-                                                        TABLE_COLUMNS["source_files"])}
-        lanes = store.rows("lanes", source, ["row_file", "row_ordinal", "row_text"])
-        reg_lines = store.rows("register_lines", source, ["ordinal", "raw"])
-        aliases = store.rows("lane_aliases", source, ["ordinal", "raw"])
-        log_rows = store.rows("log_lines", source, [c for c in TABLE_COLUMNS["log_lines"]
-                                                     if c not in ("payload_fields", "raw")])
+        files = {r["record_id"]: r for r in file_rows}
     except Refusal as exc:
         unusable("refused", str(exc))
         return 2
