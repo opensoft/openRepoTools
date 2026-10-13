@@ -154,9 +154,9 @@ class Box:
         with (self.wip / PEER_HANDOFF).open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")
 
-    def helper(self, *args: str, lane: str = LANE) -> subprocess.CompletedProcess:
+    def helper(self, *args: str, lane: str = LANE, **extra: str) -> subprocess.CompletedProcess:
         self.net_log.write_text("", encoding="utf-8")
-        env = dict(self.env, LANES_LANE=lane)
+        env = dict(self.env, LANES_LANE=lane, **extra)
         return subprocess.run(["bash", str(REPO / "lanes-edit.sh"), *args],
                               env=env, cwd=str(self.wip), capture_output=True,
                               text=True, timeout=180, check=False)
@@ -313,7 +313,10 @@ def test_the_dirty_checkout_refusal_names_the_act_to_re_run(box):
     were the re-run. The authors commit their files; what is re-run is the
     act that was refused, whose own push publishes their commits."""
     box.peer_edit_in_wip("a peer's line, mid-write")
-    result = box.helper("log", "NOTED", f"lane:{LANE}", "a note")
+    # An event names the transcript taking the act (Amendment 7(b)); without
+    # one the write refuses before it ever reads the checkout.
+    result = box.helper("log", "NOTED", f"lane:{LANE}", "a note",
+                        LANES_SESSION="0e3c9a52-6d1b-4b8e-9f3a-2a7c5d4e6f81")
     assert result.returncode == 2, result.stderr
     assert "RECOVERY — whoever wrote those files commits them:" in result.stderr
     assert "then re-run the refused write NOTED" in result.stderr, result.stderr
