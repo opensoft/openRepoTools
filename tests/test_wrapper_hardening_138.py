@@ -13,6 +13,10 @@ Each is a read the wrapper could not make, taken for an answer:
     stderr left the "session records could not be read" sentence unread, and
     the sweep went on.
 
+Two older gaps beside those lines are closed with them: `lanes` claimed none was
+recorded when the hidden-row read itself FAILED, and `lane-end --retire-dormant`
+left its stderr capture file behind when the note could not be relayed.
+
 The register helper, tmux and mktemp are fakes on a controlled PATH, as in
 `test_guard_launch_mode.py`; nothing here touches a real register or a real
 tmux server.
@@ -195,7 +199,8 @@ def test_live_attach_still_refuses_a_window_named_for_a_published_row(box):
 
 #: `lanes` is empty (exit 8, no rows) and `lanes --closed` is `$FAKE_ROWS` rows
 #: of CLOSED lanes, written one printf at a time so that a reader which stops
-#: at the first line leaves the producer writing into a closed pipe.
+#: at the first line leaves the producer writing into a closed pipe, then exits
+#: `$FAKE_CLOSED_RC` where that is set (a read that FAILED, rows or no rows).
 FAKE_LANES_EDIT = r'''
 sub="${1-}"; shift || :
 case "$sub" in
@@ -208,6 +213,7 @@ case "$sub" in
           printf 'repoH-%s\tENDED\tEagle\tteam\tnone\t%s\t/work\tnone\t1d\tnone\towner/repoH\t0\there\tclosed\t2026-09-01\tnone\tnone\n' "$i" "$FAKE_UUID"
           i=$((i + 1))
         done
+        [ -z "${FAKE_CLOSED_RC:-}" ] || exit "$FAKE_CLOSED_RC"
         [ "${FAKE_ROWS:-0}" -gt 0 ] || exit 8 ;;
       *) exit 8 ;;
     esac ;;
@@ -217,9 +223,10 @@ esac
 '''
 
 
-def listing(box: Box, rows: int):
+def listing(box: Box, rows: int, closed_rc: int | None = None):
     box.edit(FAKE_LANES_EDIT)
-    return box.run("lanes", "--prefix", "repoH", FAKE_ROWS=str(rows), FAKE_UUID=UUID)
+    extra = {} if closed_rc is None else {"FAKE_CLOSED_RC": str(closed_rc)}
+    return box.run("lanes", "--prefix", "repoH", FAKE_ROWS=str(rows), FAKE_UUID=UUID, **extra)
 
 
 @pytest.mark.parametrize("rows", [1, 40000])
@@ -240,6 +247,17 @@ def test_empty_listing_of_an_empty_repository_still_says_none_is_recorded(box):
     assert "is not the same as none being recorded" not in result.stdout
 
 
+@pytest.mark.parametrize("rows", [0, 3])
+@pytest.mark.parametrize("closed_rc", [1, 2])
+def test_empty_listing_claims_nothing_when_the_hidden_row_read_fails(box, rows, closed_rc):
+    # A read that FAILED, with or without rows, is not "none is recorded".
+    result = listing(box, rows, closed_rc=closed_rc)
+    assert result.returncode == 8, (result.stdout, result.stderr)
+    assert "no lane of repoH is recorded" not in result.stdout
+    assert "could not be read" in result.stdout
+    assert f"exited {closed_rc}" in result.stdout
+
+
 # --- item 6: `lane-end --retire-dormant`, the stderr capture -----------------
 
 #: The sweep's read: one DORMANT row (class, the fourteenth column), and the
@@ -251,6 +269,7 @@ sub="${1-}"; shift || :
 case "$sub" in
   lanes)
     [ "${FAKE_UNREAD:-0}" != 1 ] || printf "this workstation's session records could not be read\n" >&2
+    [ -z "${FAKE_NOTE:-}" ] || printf '%s\n' "$FAKE_NOTE" >&2
     printf 'repoD-1\tNO LOG\tEagle\tnone\tnone\tnone\tnone\tnone\t9d\tnone\tnone\t0\there\tdormant\t2026-09-02\told cell\tnone\n' ;;
   retire-rows) printf 'retire-rows %s\n' "$*" >> "$FAKE_LOG" ;;
   *) printf 'fake lanes-edit: unexpected subcommand %s\n' "$sub" >&2; exit 99 ;;
@@ -299,3 +318,18 @@ def test_sweep_dry_run_and_act_still_work_with_a_capture_file(box):
     act = box.run("lane-end", "--retire-dormant", "repoD", "--yes")
     assert act.returncode == 0, (act.stdout, act.stderr)
     assert "retire-rows repoD-1 --writer repoW-1" in box.calls()
+
+
+@pytest.mark.skipif(not os.path.exists("/dev/full"), reason="needs /dev/full to fail a write")
+def test_sweep_leaves_no_capture_file_when_its_note_cannot_be_relayed(box):
+    # The read's stderr is relayed to the person's own; where that write fails
+    # the script exits under `set -e` before it reaches its `rm`.
+    sweep_box(box)
+    box.env["FAKE_NOTE"] = "a note to relay"
+    with open("/dev/full", "w") as full:
+        result = subprocess.run(["bash", str(REPO / "lane-end"), "--retire-dormant", "repoD"],
+                                env=box.env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=full, text=True, timeout=60, check=False)
+    assert result.returncode != 0, result.stdout
+    assert "DRY RUN" not in result.stdout
+    assert list(box.tmpdir.glob("lane-end-sweep.*")) == []
