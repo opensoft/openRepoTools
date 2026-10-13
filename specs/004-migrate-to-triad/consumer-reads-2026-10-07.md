@@ -37,49 +37,51 @@ This document records facts only. "Covered" means installer-design.md at ff6f6a7
 
 ## Exact commands
 
+In the listing below, `$READS` is lane 2's worktree of the planning branch, at the commit recorded below, and `$ORT` is an openRepoTools checkout. Their host paths are left out of this record.
+
 Plan files (lane 2's worktree, same commit as the planning branch):
 
 ```sh
 date -u +%Y-%m-%dT%H:%M:%SZ
-git -C /workspace/projects/.lane-worktrees/openRepoTools-2/triad-reads rev-parse HEAD
-git -C /workspace/projects/.lane-worktrees/openRepoTools-2/triad-reads status --short
-cat -n /workspace/projects/.lane-worktrees/openRepoTools-2/triad-reads/openspec/changes/migrate-to-triad/adoption-plan.yaml
-cat -n /workspace/projects/.lane-worktrees/openRepoTools-2/triad-reads/specs/004-migrate-to-triad/installer-design.md
-cat -n /workspace/projects/.lane-worktrees/openRepoTools-2/triad-reads/specs/004-migrate-to-triad/tasks.md
-cat -n /workspace/projects/.lane-worktrees/openRepoTools-2/triad-reads/specs/004-migrate-to-triad/plan.md
-cat -n /workspace/projects/.lane-worktrees/openRepoTools-2/triad-reads/specs/004-migrate-to-triad/spec.md
+git -C $READS rev-parse HEAD
+git -C $READS status --short
+cat -n $READS/openspec/changes/migrate-to-triad/adoption-plan.yaml
+cat -n $READS/specs/004-migrate-to-triad/installer-design.md
+cat -n $READS/specs/004-migrate-to-triad/tasks.md
+cat -n $READS/specs/004-migrate-to-triad/plan.md
+cat -n $READS/specs/004-migrate-to-triad/spec.md
 ```
 
 openRepoTools main (read-only; no fetch):
 
 ```sh
-git -C /workspace/projects/openRepoTools rev-parse main c4864ac
-git -C /workspace/projects/openRepoTools ls-tree --name-only c4864ac
-git -C /workspace/projects/openRepoTools ls-tree -r --name-only c4864ac | wc -l                                   # 100
-git -C /workspace/projects/openRepoTools ls-tree -r --name-only daed20957f2dd2f22cca24053bb5bc8636ff6b3f | wc -l   # 64
-git -C /workspace/projects/openRepoTools diff --name-status daed20957f2dd2f22cca24053bb5bc8636ff6b3f c4864ac
-git -C /workspace/projects/openRepoTools ls-tree c4864ac upstream/openRepoShape
-git -C /workspace/projects/openRepoTools show c4864ac:.gitmodules
-git -C /workspace/projects/openRepoTools ls-tree -r --name-only c4864ac contracts
-git -C /workspace/projects/openRepoTools show c4864ac:openRepoTools > <scratchpad>/openRepoTools.c4864ac
+git -C $ORT rev-parse main c4864ac
+git -C $ORT ls-tree --name-only c4864ac
+git -C $ORT ls-tree -r --name-only c4864ac | wc -l                                   # 100
+git -C $ORT ls-tree -r --name-only daed20957f2dd2f22cca24053bb5bc8636ff6b3f | wc -l   # 64
+git -C $ORT diff --name-status daed20957f2dd2f22cca24053bb5bc8636ff6b3f c4864ac
+git -C $ORT ls-tree c4864ac upstream/openRepoShape
+git -C $ORT show c4864ac:.gitmodules
+git -C $ORT ls-tree -r --name-only c4864ac contracts
+git -C $ORT show c4864ac:openRepoTools > <scratchpad>/openRepoTools.c4864ac
 grep -n 'raw.githubusercontent\|gh api\|OPENREPOTOOLS_REPO\|OPENREPOTOOLS_REF\|^REPO=\|^REF=\|INSTALLABLES\|repos.tsv\|SCRIPT_DIR\|script_dir\|BASH_SOURCE\|\$0' <scratchpad>/openRepoTools.c4864ac
 grep -n 'selfdir\|skills/\|commands/\|contracts/\|upstream/\|docs/\|^[a-z_]*() *{' <scratchpad>/openRepoTools.c4864ac
 sed -n '1,135p;136,440p;955,1002p;1210,1222p;1285,1368p;1365,1400p;2490,2545p' <scratchpad>/openRepoTools.c4864ac
-git -C /workspace/projects/openRepoTools grep -n 'raw.githubusercontent\|gh api repos/opensoft/openRepoTools\|bash -s -- --install\|OPENREPOTOOLS_REF\|OPENREPOTOOLS_REPO' c4864ac -- README.md AGENTS.md docs
-git -C /workspace/projects/openRepoTools show c4864ac:repos.tsv
-git -C /workspace/projects/openRepoTools show c4864ac:lanes-edit.sh | grep -n 'repos.tsv'
-git -C /workspace/projects/openRepoTools show c4864ac:lanes-edit.sh | grep -n '\.lane-state'
-git -C /workspace/projects/openRepoTools show c4864ac:lane-worktrees | grep -n 'inventor'
-git -C /workspace/projects/openRepoTools show c4864ac:lane-worktrees | sed -n '2120,2128p;2164,2175p;2708,2716p;4808,4822p'
-git -C /workspace/projects/openRepoTools show c4864ac:link-estates | grep -n 'handoffs\|PROJECTS\|projects/\|estate'
-git -C /workspace/projects/openRepoTools show c4864ac:.gitignore
-for c in 2fb854f 5eb3d5f 500687c c4864ac; do git -C /workspace/projects/openRepoTools show $c:openRepoTools | sha256sum; done
-git -C /workspace/projects/openRepoTools show c4864ac:lane-worktrees | sha256sum
-git -C /workspace/projects/openRepoTools show c4864ac:lanes-edit.sh | sha256sum
-ls -la /workspace/projects/openRepoTools
-git -C /workspace/projects/openRepoTools status --porcelain=v1 --ignored
-cat /workspace/projects/openRepoTools/.git/info/exclude
-stat -c '%y' /workspace/projects/openRepoTools/.git/index   # 2026-10-07 04:28:20Z, before this read: the status call wrote no index
+git -C $ORT grep -n 'raw.githubusercontent\|gh api repos/opensoft/openRepoTools\|bash -s -- --install\|OPENREPOTOOLS_REF\|OPENREPOTOOLS_REPO' c4864ac -- README.md AGENTS.md docs
+git -C $ORT show c4864ac:repos.tsv
+git -C $ORT show c4864ac:lanes-edit.sh | grep -n 'repos.tsv'
+git -C $ORT show c4864ac:lanes-edit.sh | grep -n '\.lane-state'
+git -C $ORT show c4864ac:lane-worktrees | grep -n 'inventor'
+git -C $ORT show c4864ac:lane-worktrees | sed -n '2120,2128p;2164,2175p;2708,2716p;4808,4822p'
+git -C $ORT show c4864ac:link-estates | grep -n 'handoffs\|PROJECTS\|projects/\|estate'
+git -C $ORT show c4864ac:.gitignore
+for c in 2fb854f 5eb3d5f 500687c c4864ac; do git -C $ORT show $c:openRepoTools | sha256sum; done
+git -C $ORT show c4864ac:lane-worktrees | sha256sum
+git -C $ORT show c4864ac:lanes-edit.sh | sha256sum
+ls -la $ORT
+git -C $ORT status --porcelain=v1 --ignored
+cat $ORT/.git/info/exclude
+stat -c '%y' $ORT/.git/index   # 2026-10-07 04:28:20Z, before this read: the status call wrote no index
 ```
 
 workBenches (read-only; committed objects at HEAD `7fd01e3`):
@@ -388,10 +390,10 @@ git -C /workspace/projects/brett-wip show "ab88a10347fb605588643e7ea2e528217dab9
 The commands this revision added (read-only):
 
 ```sh
-git -C /workspace/projects/openRepoTools show c4864ac:lanes-edit.sh | sed -n '2440,2470p'
-git -C /workspace/projects/openRepoTools show c4864ac:repos.tsv | sed -n '8,14p;23p'
+git -C $ORT show c4864ac:lanes-edit.sh | sed -n '2440,2470p'
+git -C $ORT show c4864ac:repos.tsv | sed -n '8,14p;23p'
 grep -n 'missing or empty\|worktree_root: worktrees\|exits non-zero when the manifest' ~/.agents/protocols/project-agent-bootstrap.md
 grep -n '\[ -d "\$worktree" \]' ~/.claude/skills/handoff/SKILL.md
-ls /workspace/projects/openRepoTools/.specify/extensions/git/
-grep -n 'worktree_root\|checkout_mode\|base_branch' /workspace/projects/openRepoTools/.specify/extensions/git/git-config.yml
+ls $ORT/.specify/extensions/git/
+grep -n 'worktree_root\|checkout_mode\|base_branch' $ORT/.specify/extensions/git/git-config.yml
 ```
