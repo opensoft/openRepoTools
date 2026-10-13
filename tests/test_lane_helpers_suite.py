@@ -27,9 +27,11 @@ that file.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shutil
+import signal
 import subprocess
 from pathlib import Path
 
@@ -188,10 +190,29 @@ def test_the_lane_helper_suite_passes():
     # `\ufffd` in one line is a readable result where `UnicodeDecodeError` is
     # none at all. Measured: at `dcf1027` one truncated em dash cost the whole
     # 998-line transcript on the macOS job.
-    proc = subprocess.run(["bash", str(SUITE)], capture_output=True,
-                          encoding="utf-8", errors="replace",
-                          check=False, cwd=str(REPO), timeout=TIMEOUT_SECONDS,
-                          env=env)
+    #
+    # THE SUITE RUNS IN A SESSION OF ITS OWN, so that giving up on it takes
+    # everything it started (opensoft/openRepoTools#142, item 3).
+    # `subprocess.run(timeout=)` kills only the bash it started, and the suite's
+    # `EXIT` trap does not run on that SIGKILL, so the liveness fixture's
+    # `sleep` - longer than TIMEOUT_SECONDS on purpose - and every later
+    # fixture's were orphaned for up to 70 minutes. The child leads its session,
+    # so its pid is its group's id. Any exception takes the group, not only the
+    # timeout: a session of its own is not the terminal's foreground group, so a
+    # Ctrl-C reaches pytest and no longer reaches the suite by itself.
+    # `tests/test_lane_helpers_suite_timeout.py` runs this path.
+    with subprocess.Popen(["bash", str(SUITE)], stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, encoding="utf-8",
+                          errors="replace", cwd=str(REPO), env=env,
+                          start_new_session=True) as child:
+        try:
+            stdout, stderr = child.communicate(timeout=TIMEOUT_SECONDS)
+        except BaseException:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(child.pid, signal.SIGKILL)
+            raise
+    proc = subprocess.CompletedProcess(child.args, child.returncode, stdout,
+                                       stderr)
     tail = proc.stdout.strip().splitlines()[-1:] or ["(no output)"]
     assert proc.returncode == 0, (
         f"tests/test_lane_helpers.sh failed ({tail[0]}):\n"
