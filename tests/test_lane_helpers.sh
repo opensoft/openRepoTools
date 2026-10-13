@@ -625,6 +625,14 @@ add_seed_row "| \`repoL-3\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026
 add_seed_row "| \`repoL-4\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoL/x.md | ACTIVE |"
 add_seed_row "| \`repoL-5\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoL/x.md | ACTIVE |"
 add_seed_row "| \`repoL-6\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoL/x.md | ACTIVE |"
+# repoChain-1/2/3 — opensoft/openRepoTools#74: CHAINS of takeovers, every link
+# naming the lane it displaced as `← lane:<x>` (the payload issue #30's
+# dead-lane takeover writes), all three lanes dead (RETIRED, no live session).
+# repoChain-4 is the taker that makes the third link of the chain below.
+add_seed_row "| \`repoChain-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoChain/x.md | ACTIVE |"
+add_seed_row "| \`repoChain-2\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoChain/x.md | ACTIVE |"
+add_seed_row "| \`repoChain-3\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoChain/x.md | ACTIVE |"
+add_seed_row "| \`repoChain-4\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoChain/x.md | ACTIVE |"
 add_seed_row "| \`repoM-1\` | harness \`$MLIVE_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoM/x.md | ACTIVE |"
 # repoN-1 / repoN-2 — issue #30's OTHER terminal verb: a plain `lane-end`
 # (no --retire) writes ENDED, never RETIRED, and `holder_is_dead` names both
@@ -935,6 +943,32 @@ NOW_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'TAKEOVER — lane repoL-5, session %s@Eagle, %s, opensoft/repoL#40 ← lane:repoL-0\n' "$DEAD_ID" "$OLD_UTC"
   printf 'RETIRED — lane repoL-5, session %s@Eagle, %s, lane:repoL-5\n' "$DEAD_ID" "$NOW_UTC"
 } > "$WIP/lanes/log/repoL-5.md"
+# repoChain-1/2/3 — opensoft/openRepoTools#74, three objects:
+#   #1  a chain: repoChain-1 claims, repoChain-2 takes it over from repoChain-1,
+#       repoChain-3 from repoChain-2; repoChain-4 makes the third link below.
+#   #2  the race README-lanes.md calls "Known, deliberate": repoChain-2 AND
+#       repoChain-3 each took over repoChain-1's claim, neither naming the other.
+#   #3  two TAKEOVERs naming EACH OTHER, which no file order can put in order.
+{ printf '# lane repoChain-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoChain-1, session %s@Eagle, %s, lane:repoChain-1 → home opensoft/repoChain; estate repoChain\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'CLAIMED — lane repoChain-1, session %s@Eagle, %s, opensoft/repoChain#1\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'CLAIMED — lane repoChain-1, session %s@Eagle, %s, opensoft/repoChain#2\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'RETIRED — lane repoChain-1, session %s@Eagle, %s, lane:repoChain-1\n' "$DEAD_ID" "$NOW_UTC"
+} > "$WIP/lanes/log/repoChain-1.md"
+{ printf '# lane repoChain-2 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoChain-2, session %s@Eagle, %s, lane:repoChain-2 → home opensoft/repoChain; estate repoChain\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'TAKEOVER — lane repoChain-2, session %s@Eagle, %s, opensoft/repoChain#1 ← lane:repoChain-1\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'TAKEOVER — lane repoChain-2, session %s@Eagle, %s, opensoft/repoChain#2 ← lane:repoChain-1\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'TAKEOVER — lane repoChain-2, session %s@Eagle, %s, opensoft/repoChain#3 ← lane:repoChain-3\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'RETIRED — lane repoChain-2, session %s@Eagle, %s, lane:repoChain-2\n' "$DEAD_ID" "$NOW_UTC"
+} > "$WIP/lanes/log/repoChain-2.md"
+{ printf '# lane repoChain-3 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoChain-3, session %s@Eagle, %s, lane:repoChain-3 → home opensoft/repoChain; estate repoChain\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'TAKEOVER — lane repoChain-3, session %s@Eagle, %s, opensoft/repoChain#1 ← lane:repoChain-2\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'TAKEOVER — lane repoChain-3, session %s@Eagle, %s, opensoft/repoChain#2 ← lane:repoChain-1\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'TAKEOVER — lane repoChain-3, session %s@Eagle, %s, opensoft/repoChain#3 ← lane:repoChain-2\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'RETIRED — lane repoChain-3, session %s@Eagle, %s, lane:repoChain-3\n' "$DEAD_ID" "$NOW_UTC"
+} > "$WIP/lanes/log/repoChain-3.md"
 # repoN-1 — issue #30's OTHER dead verdict: ENDED (a plain `lane-end`, no
 # `--retire`), no live session, one CLAIMED issue left open.
 { printf '# lane repoN-1 — object log (lane-collision-protocol Amendment 7)\n'
@@ -1608,25 +1642,63 @@ L6="$(cat "$LOGD/repoL-6.md")"
 has  "…writing a TAKEOVER line" "$L6" "TAKEOVER — lane repoL-6, session "
 has  "…referencing the dead lane with ←, not the lane it had itself taken over from" "$L6" "opensoft/repoL#40 ← lane:repoL-5"
 hasnt "…never the earlier dispossessed lane repoL-5 never held directly" "$L6" "← lane:repoL-0"
-# THE WRITE IS RIGHT; THE DERIVED VIEW IS NOT (filed as opensoft/openRepoTools#74,
-# claimed, not fixed here): `superseded_by`'s own "does some OTHER lane's last
-# line here read TAKEOVER" test does not stop at the CURRENT one — repoL-5's
-# now-stale TAKEOVER (over repoL-0) is still read as proof that repoL-6 is
-# ALSO superseded, so `holders_of` drops BOTH ends of the chain instead of
-# only the one repoL-6 actually displaced. This is a pre-existing gap in
-# `superseded_by` (it has always compared positions across different lanes'
-# own files this way); PR #61's broadening of the open-verb gate to admit a
-# dead lane's own TAKEOVER (issue #30) is what makes a CHAIN of two takeovers
-# reachable from one ordinary `--force`, where before only the pre-existing
-# simultaneous-race shape (`repoG-1`/`repoG-2` above) could produce two lanes
-# each ending on TAKEOVER. Nothing here is corrupted: every line above is
-# correct and in the right order, and this asserts the CURRENT, honest
-# (if wrong) reported count rather than assuming the write's correctness
-# implies the read's.
+# THE WRITE IS RIGHT, AND SINCE opensoft/openRepoTools#74 SO IS THE READ: a
+# chain of takeovers resolves to its LAST LINK. repoL-5's own TAKEOVER (over
+# repoL-0) is displaced by repoL-6's, which names it; repoL-6's is displaced by
+# nothing, because no standing TAKEOVER names repoL-6. Until #74 this block
+# pinned ZERO holders as the known gap: `superseded_by` asked only "does some
+# OTHER lane's last line here read TAKEOVER", read repoL-5's stale TAKEOVER as
+# proof that repoL-6 was superseded too, and `holders_of` dropped BOTH ends of
+# the chain — reachable from one ordinary `--force` since PR #61 (issue #30)
+# let a dead lane's own TAKEOVER be taken over.
 run "$E" who "opensoft/repoL#40"
-is   "…but who reports ZERO holders, not one (opensoft/openRepoTools#74)" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 0
-hasnt "…repoL-5's own dead TAKEOVER is not reported as a live hold either way" "$out" "HOLDS    lane repoL-5"
-hasnt "…and neither, wrongly, is repoL-6's — the gap #74 tracks, not a new one here" "$out" "HOLDS    lane repoL-6"
+is   "…and who reports exactly ONE holder of the chain, not zero (#74)" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 1
+has  "…the chain's last link, repoL-6" "$out" "HOLDS    lane repoL-6"
+hasnt "…repoL-5's own dead TAKEOVER is not reported as a live hold" "$out" "HOLDS    lane repoL-5"
+has  "…repoL-5 reads as superseded by repoL-6, the TAKEOVER that names it" \
+     "$(printf '%s\n' "$out" | grep '^super\.   lane repoL-5 ')" "superseded by TAKEOVER (lane:repoL-6)"
+run "$E" who --lane repoL-6
+is   "who --lane on the chain's last link exits 0" "$rc" 0
+has  "…lists its TAKEOVER" "$out" "opensoft/repoL#40"
+hasnt "…and never tells the holder it was taken over by the lane it took the object from" "$out" "taken over by"
+
+# --------- opensoft/openRepoTools#74: a THREE-link chain, its third link made
+# here by `claim --force`. Read one-hop, repoChain-2 and repoChain-3 displaced
+# EACH OTHER, the object read FREE, and this claim was granted as a plain
+# CLAIMED over a held object — the one outcome Rule 1 exists to prevent.
+# Followed to its last link, repoChain-3 is the one holder, and, dead, it is
+# taken over like any dead lane's hold.
+run env LANES_LANE=repoChain-4 "$E" claim "opensoft/repoChain#1" --no-github --force
+is   "--force takes over the LAST link of a chain of two TAKEOVERs (#74)" "$rc" 0
+LC4="$(cat "$LOGD/repoChain-4.md" 2>/dev/null)"
+has  "…writing a TAKEOVER, not a CLAIMED as if the object were free" "$LC4" "TAKEOVER — lane repoChain-4, session "
+has  "…naming the chain's last link, never an earlier one" "$LC4" "opensoft/repoChain#1 ← lane:repoChain-3"
+run "$E" who "opensoft/repoChain#1"
+is   "…and who reports exactly ONE holder of the three-link chain" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 1
+has  "…the third link, repoChain-4" "$out" "HOLDS    lane repoChain-4"
+has  "…the second link superseded by the third, which names it" \
+     "$(printf '%s\n' "$out" | grep '^super\.   lane repoChain-3 ')" "superseded by TAKEOVER (lane:repoChain-4)"
+has  "…the first link superseded by the second, which names it" \
+     "$(printf '%s\n' "$out" | grep '^super\.   lane repoChain-2 ')" "superseded by TAKEOVER (lane:repoChain-3)"
+has  "…and the CLAIMED the chain began with names the lane that holds it NOW" \
+     "$(printf '%s\n' "$out" | grep '^super\.   lane repoChain-1 ')" "superseded by TAKEOVER (lane:repoChain-4)"
+
+# Two TAKEOVERs of one stale claim, NEITHER naming the other: README-lanes.md's
+# "Known, deliberate" race, BOTH holders and the conflict visible. A TAKEOVER is
+# displaced only by one that names its lane (#74); the one-hop test had each
+# displace the other since PR #61 (issue #30) widened its gate, and `who` called
+# the object FREE — so `claim` granted a third lane a plain CLAIMED over it.
+run "$E" who "opensoft/repoChain#2"
+is   "two takers of one claim, neither naming the other, are BOTH holders" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 2
+has  "…the state is HELD, never FREE" "$out" "state    HELD"
+run env LANES_LANE=repoChain-4 "$E" claim "opensoft/repoChain#2" --no-github --force
+is   "…and --force refuses an object two lanes hold" "$rc" 2
+has  "…saying so" "$err" "is held by 2 lanes"
+hasnt "…writing nothing" "$(cat "$LOGD/repoChain-4.md" 2>/dev/null)" "opensoft/repoChain#2"
+# And two TAKEOVERs that name EACH OTHER: nothing in two files says which was
+# written last, so both hold, visibly, rather than displacing each other.
+run "$E" who "opensoft/repoChain#3"
+is   "two TAKEOVERs naming EACH OTHER are both holders, never zero" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 2
 
 # repoN-1's OWN terminal verb is ENDED, not RETIRED (Copilot round 3, PR #61:
 # `holder_is_dead`'s case accepts both, but only RETIRED was ever seeded).

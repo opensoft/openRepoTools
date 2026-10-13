@@ -755,22 +755,30 @@ exists to prevent — and `who --lane` and `lane-end` disagreed about the same
 object. No clock and no cross-file order is needed to ask this: both halves are
 "what is this lane's last line", read off two append-only files.
 
-*Known, deliberate.* Two lanes that each end on a `TAKEOVER` of one object are
-**both** reported as holders. That is a visible conflict rather than a silent
+**A chain of takeovers resolves to its last link** (opensoft/openRepoTools#74).
+The dead-lane exception below lets a `TAKEOVER` displace an earlier `TAKEOVER`
+— `A` claims; `B` takes over from `A`; `C` takes over from `B` once `B` is
+dead — and every link that displaces a `TAKEOVER` names the lane it displaced
+as `TAKEOVER ← lane:<x>` (a stale claim's comment URL is only ever the payload
+for a `CLAIMED` taken over). So a lane whose own last line is a `TAKEOVER` is
+displaced only by another lane's standing `TAKEOVER` that **names it**: `B` by
+`C`, and `C` by nothing, so `C` alone holds the object. Any other open verb is
+displaced by any standing `TAKEOVER`, as above, and the taker named is one no
+other standing `TAKEOVER` names: `A`'s line reads `superseded by TAKEOVER
+(lane:C)`. Read one hop at a time — "does some other lane's last line here
+read `TAKEOVER`" — `B`'s own stale `TAKEOVER` was proof that `C` was displaced
+too: `who` reported **zero** holders, `who --lane C` told `C` to release an
+object it held, and `claim` granted the next lane a plain `CLAIMED` over it.
+
+*Known, deliberate.* Two lanes that each end on a `TAKEOVER` of one object,
+**neither naming the other** (two takers of one stale claim), are **both**
+reported as holders; so are two whose `TAKEOVER`s name *each other*, which no
+file order can put in order. That is a visible conflict rather than a silent
 one, and it is not reachable through the helpers in the ordinary case — a live
 lane's `claim --force` takes over a stale `CLAIMED` and nothing else (or, per
 the dead-lane exception below, a **dead** lane's hold of any verb, an earlier
 `TAKEOVER` included), and refuses outright when more than one lane holds the
 object.
-
-*Known, NOT deliberate — opensoft/openRepoTools#74.* A CHAIN of two takeovers
-on one object (`A` claims; `B` takes over from `A`; `C` later takes over from
-`B` — the dead-lane exception's own `TAKEOVER`-of-a-`TAKEOVER` shape) makes
-`who` report **zero** holders, neither `B` nor `C`: `superseded_by`'s "does
-some other lane's last line here read `TAKEOVER`" test does not distinguish
-the CURRENT taker from an earlier, already-superseded one, so `B`'s own
-stale `TAKEOVER` is misread as proof that `C` is superseded too. Every log
-line involved is correct and in order; only this derived view is wrong.
 
 **State is read in FILE ORDER, never by comparing timestamps.** A lane's log is
 append-only and single-writer, so its line order *is* that lane's write order,
@@ -3510,7 +3518,7 @@ One versioned schema (`schema_version`); every row carries its `provenance`
 | `lane_aliases` | alias-table line | `old_name`, `new_name`, UTC |
 | `transcript_pointers` | pointer | a row's session-cell ids and each `transcript` a `PAUSED` names, with its `agent` — pointers only |
 | `source_files` | file of the source | kind, blob, line counts — what the read flags need to answer as `origin` would |
-| `holds` (a VIEW) | open hold | `holders_of`'s answer, which is `who`'s: per lane (case-insensitively), its last line on each object **in file order**, never by UTC, where its verb is open — and not while another lane's own last line there is a `TAKEOVER`. The object is keyed AS WRITTEN: a line naming a repository by a spelling `lanes/repos.tsv` has since renamed (R20) is its own key here, where `who` folds its argument into the canonical one. Computed, never stored |
+| `holds` (a VIEW) | open hold | `holders_of`'s answer, which is `who`'s: per lane (case-insensitively), its last line on each object **in file order**, never by UTC, where its verb is open — and not while another lane's own last line there is a `TAKEOVER`. **Not yet where one `TAKEOVER` displaced another**: `holders_of` displaces a `TAKEOVER` only by one that names its lane (`← lane:<x>`, opensoft/openRepoTools#74), and this view still reads any other lane's `TAKEOVER` as displacing it, so for a chain of takeovers it holds no row where `who` names the last link, and for two takers neither naming the other no row where `who` names both. The object is keyed AS WRITTEN: a line naming a repository by a spelling `lanes/repos.tsv` has since renamed (R20) is its own key here, where `who` folds its argument into the canonical one. Computed, never stored |
 | `provenance` | source | the indexed commit (or generation), UTC, schema version |
 
 **Created empty and written by nothing here**: `swap_states` and
