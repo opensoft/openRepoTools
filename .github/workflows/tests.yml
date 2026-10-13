@@ -5,14 +5,15 @@ name: tests
 # network, and must never create a real repository.
 #
 # EVERY CHECKOUT THAT RUNS THE SUITE TAKES `submodules: true`, `parse-macos`
-# excepted: it runs no pytest, reads no estate fixture, and checks out
-# `submodules: false` on purpose, so it is not one more job the claim below
-# has to be quietly true of. The estate tests read eight of openRepoShape's
-# own files out of `upstream/openRepoShape`, and `wip init`'s tests read the
-# nine of `templates/workspace-root/`, all pinned by
-# `contracts/openreposhape-pin.yaml`. Without them those tests SKIP rather than
-# fail — which is what the `tests-no-submodule` job below proves on purpose,
-# and what every suite job besides it must not be quietly doing.
+# and `tests-no-submodule` excepted: both check out `submodules: false` on
+# purpose. `parse-macos` runs no pytest and reads no estate fixture, and
+# `tests-no-submodule` is the job that proves the skip below, so neither is
+# one more job the claim below has to be quietly true of. The estate tests
+# read eight of openRepoShape's own files out of `upstream/openRepoShape`, and
+# `wip init`'s tests read the nine of `templates/workspace-root/`, all pinned
+# by `contracts/openreposhape-pin.yaml`. Without them those tests SKIP rather
+# than fail — which is what the `tests-no-submodule` job below proves on
+# purpose, and what every suite job besides it must not be quietly doing.
 #
 # THE LANE HELPERS' OWN SUITE RUNS IN THESE JOBS TOO, and it runs because
 # `tests/test_lane_helpers_suite.py` calls it: this repository's CI is
@@ -26,9 +27,10 @@ name: tests
 # (`opened`, `synchronize`, `reopened`): the coordinator applying `ready` to
 # an already-open PR is a `pull_request` event only under `labeled`, and
 # `tests-macos`'s `if:` below has to see that event to react to it. `push`
-# (main only) and the nightly `schedule` are `tests-macos`'s other two homes
-# now that it has left the per-push gate — see the comment on that job
-# (Brett Heap's RULING of 2026-09-16, "do all three"). The cron is UTC.
+# (main only), the nightly `schedule` and `workflow_dispatch` are
+# `tests-macos`'s other three homes now that it has left the per-push gate —
+# see the comment on that job (Brett Heap's RULING of 2026-09-16, "do all
+# three"). The cron is UTC.
 #
 # Adding `labeled` to `pull_request` means EVERY job in this file — not only
 # `tests-macos` — now also runs when ANY label lands on a PR, `ready` or
