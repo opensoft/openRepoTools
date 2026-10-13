@@ -365,7 +365,12 @@ EOF
 	if [ "$wt_unread" != 0 ]; then
 		say "$wt_unread lane(s) above have an inventory that is there and could not be read: that is NOT a lane with no worktrees."
 	fi
-	say "  the current truth of one lane:  lanes-edit.sh lane-reconcile <lane>   (it reads the disk; this listing decides nothing)"
+	# THE ACT IS NAMED WITH WHERE IT RUNS (opensoft/openRepoTools#173, Copilot's
+	# fourth review of #171). An `--index` listing holds every workstation that
+	# syncs into the store, so Raven lists Eagle's rows, and `lane-reconcile`
+	# reads only the sidecars and the disk of the workstation it is run on. The
+	# line is the same on both reads, so the two stay the same bytes.
+	say "  the current truth of one lane:  lanes-edit.sh lane-reconcile <lane>, run ON THE WORKSTATION its rows name   (it reads that workstation's own sidecars and disk; this listing decides nothing)"
 	exit 0
 fi
 

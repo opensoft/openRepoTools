@@ -42,12 +42,14 @@ disk. Its rows are keyed by (source, `<lane>:<path>`) and versioned by the same
 digest; a tree the inventory no longer names leaves in the same sync. Its
 provenance moves only forward PER LANE: a sync that reads a lane's lifecycle
 generation below the one its rows were written at writes nothing for that lane
-(`reconcile` takes the lane as it now stands, and says so), and the source's own
-row carries a fingerprint of the whole table as its compare-and-swap token and a
-sync generation that only counts up. `lanes-edit.sh` nudges `sync --source
-inventory` after every inventory write. Nothing that acts reads this table
-either: `lane-reconcile`, `lane-start`, `lane-end` and the sweep read the
-sidecars and the disk.
+(`reconcile` takes the lane as it now stands, and says so); a lane whose
+inventory is there and could not be read keeps its rows and gets one marker row
+with no path (#173), which `export --worktrees` writes back as the source's own
+`UNREAD` line; and the source's own row carries a fingerprint of the whole table
+as its compare-and-swap token and a sync generation that only counts up.
+`lanes-edit.sh` nudges `sync --source inventory` after every inventory write.
+Nothing that acts reads this table either: `lane-reconcile`, `lane-start`,
+`lane-end` and the sweep read the sidecars and the disk.
 
 THE STORE (clause (c)): QA Postgres where this workstation's configuration
 names a `url=`, reached through `psql` and only then; otherwise one SQLite file
@@ -1121,9 +1123,18 @@ class SqliteStore:
             raise StoreUnusable("wiped", f"{self.path}: {exc}")
 
     def rows(self, table: str, source: str, columns: list[str]) -> list:
+        # A TABLE THAT CANNOT BE READ IS A STORE THAT CANNOT ANSWER, said as the
+        # provenance's reads say it (opensoft/openRepoTools#173, Copilot's
+        # fourth review of #171): a `worktrees` table dropped or damaged under
+        # valid provenance was a traceback, before `status` reached its
+        # `rows: unread` line and before `export` could write its `why`.
+        import sqlite3
         cols = ", ".join(["record_id"] + columns)
-        return [dict(zip(["record_id"] + columns, r)) for r in self.conn.execute(
-            f"SELECT {cols} FROM {table} WHERE source = ?", (source,))]
+        try:
+            return [dict(zip(["record_id"] + columns, r)) for r in self.conn.execute(
+                f"SELECT {cols} FROM {table} WHERE source = ?", (source,))]
+        except sqlite3.Error as exc:
+            raise StoreUnusable("wiped", f"{self.path}: {exc}")
 
     def read_image(self, source: str, reads: list) -> tuple:
         """`provenance(source)`, then `rows(table, source, columns)` for each
@@ -1821,6 +1832,31 @@ def tree_line(row: dict, provenance) -> str:
         "unpushed_count")] + [text(provenance)])
 
 
+#: THE BRANCH OF A LANE'S UNREAD MARKER (opensoft/openRepoTools#173): a
+#: `worktrees` row with NO PATH - which no tree has, since a tree's path, or
+#: the id standing in for it, is never empty - saying the lane's inventory was
+#: there and could not be read at the last sync, and why.
+UNREAD_BRANCH = "unreadable inventory"
+
+
+def unread_record(workstation: str, lane: str, why: str) -> dict:
+    """The marker row of a lane whose inventory could not be read."""
+    record = {col: None for col in TABLE_COLUMNS["worktrees"]}
+    record.update(workstation=workstation, lane=lane, path="",
+                  branch=f"{UNREAD_BRANCH} ({why})", _provenance=None)
+    return record
+
+
+def unread_line(row: dict) -> str:
+    """The `UNREAD` line a marker row came from - `UNREAD <workstation> <lane>
+    <why>`, as `lanes-edit.sh worktrees` prints it, so that `lanes --index
+    --worktrees` says NOT READ wherever the source read said it."""
+    why = row.get("branch") or ""
+    if why.startswith(f"{UNREAD_BRANCH} (") and why.endswith(")"):
+        why = why[len(UNREAD_BRANCH) + 2:-1]
+    return US.join(["UNREAD", row.get("workstation") or "", row.get("lane") or "", why])
+
+
 def inventory_digest(record: dict) -> str:
     """The register's digest, and the row's provenance with it: two
     observations of one tree filed under two generations are two versions."""
@@ -2003,11 +2039,29 @@ def run_inventory(mode: str, requested: str | None, dry_run: bool) -> int:
                          f"{stored_gen[lane]} to {gen} (a snapshot moved aside or replaced); "
                          f"reconcile takes it as it now stands")
 
+    # THE UNREAD STATE IS KEPT AS WELL AS THE ROWS (opensoft/openRepoTools#173,
+    # Copilot's third review of #171). A lane held because its inventory could
+    # not be read gets ONE marker row, which `export --worktrees` writes back as
+    # the source's own `UNREAD` line. Without it a FIRST sync that could not
+    # read a lane committed usable provenance with nothing for it, and the
+    # index answered "no worktree is inventoried" where the source says NOT
+    # READ; and rows held over from an earlier sync read as freshly read - so
+    # the marker says they are kept. It leaves with the first sync that reads
+    # its lane, a lane held for its generation included: that lane was read.
+    workstation = source[len(INVENTORY_PREFIX):]
+    markers: dict = {}
+    for lane, why in unread.items():
+        rows_kept = sum(1 for row in stored.values() if row["lane"] == lane and row.get("path"))
+        if rows_kept:
+            why = (f"{why} - the {rows_kept} row(s) listed for it are kept from the last sync "
+                   f"that read it")
+        markers[f"{lane}:"] = unread_record(workstation, lane, why)
+
     fill_prs(trees, stored, mode, held)
     upserts, deletes, kept = {}, [], 0
-    for rec_id, rec in trees.items():
+    for rec_id, rec in list(trees.items()) + list(markers.items()):
         rec["digest"] = inventory_digest(rec)
-        if rec["lane"] in held:
+        if rec["lane"] in held and rec_id not in markers:
             continue
         row = stored.get(rec_id)
         if row is not None:
@@ -2022,10 +2076,14 @@ def run_inventory(mode: str, requested: str | None, dry_run: bool) -> int:
                 continue
         upserts[rec_id] = rec
     for rec_id, row in stored.items():
-        if row["lane"] not in held and rec_id not in trees:
+        if rec_id in trees or rec_id in markers:
+            continue
+        if row["lane"] not in held or not row.get("path"):
             deletes.append(rec_id)
     after = {rid: rec["digest"] for rid, rec in trees.items() if rec["lane"] not in held}
-    after.update({rid: row["digest"] for rid, row in stored.items() if row["lane"] in held})
+    after.update({rid: row["digest"] for rid, row in stored.items()
+                  if row["lane"] in held and row.get("path")})
+    after.update({rid: rec["digest"] for rid, rec in markers.items()})
     fingerprint = hashlib.sha256("\n".join(
         f"{rid}\t{digest}" for rid, digest in sorted(after.items())).encode("utf-8")).hexdigest()
 
@@ -2089,6 +2147,20 @@ def cmd_sync(requested: str | None) -> int:
         return 0
     kind = "inventory" if is_inventory(requested) else "register"
     asked = {kind: requested}
+    # A SOURCE IS REFUSED BEFORE THE LOCK IS ASKED FOR (opensoft/openRepoTools#173,
+    # Copilot's fourth review of #171). Behind a held lock this sync only
+    # leaves a mark of its KIND, and the holder syncs THIS workstation's source
+    # for it - so `--source inventory:Raven` on Eagle, `--source inventory` in
+    # a container with no name, or another register, exited 0 there instead of
+    # 2. A refusal leaves through `main`; a helper that cannot answer is the
+    # sync's own to say and record, as it was.
+    try:
+        if kind == "inventory":
+            inventory_source(requested)
+        elif requested:
+            resolve_source(requested, workspace_root())
+    except StoreUnusable:
+        pass
     lock = SyncLock()
     # THE HANDSHAKE, BOTH HALVES (Codex on #164). A sync that finds the lock
     # held leaves its mark and then tries ONCE MORE: if that fails, somebody
@@ -2252,8 +2324,14 @@ def cmd_status() -> int:
                 say(f"  provenance:  inventory@{fp[:12]} (sync {prov.get('generation')}, indexed "
                     f"{prov['indexed_utc']}, schema {prov['schema_version']})")
                 try:
-                    count = len(store.rows("worktrees", name, ["lane"]))
-                    say(f"  rows:        {count} worktree(s)")
+                    wt_rows = store.rows("worktrees", name, ["path"])
+                    count = sum(1 for row in wt_rows if row["path"])
+                    # A LANE'S UNREAD MARKER IS NOT A WORKTREE (#173), and is said
+                    # as what it is.
+                    unread = len(wt_rows) - count
+                    say(f"  rows:        {count} worktree(s)" + (
+                        f", and {unread} lane(s) whose inventory could not be read at the "
+                        f"last sync" if unread else ""))
                 except StoreUnusable as exc:
                     say(f"  rows:        unread - {exc.kind}: {exc.detail}")
                     rc = 1
@@ -2386,7 +2464,10 @@ def _export_worktrees(out_dir: str, cfg: dict, unusable) -> int:
         for prov in provs:
             for row in store.rows("worktrees", prov["source"],
                                   TABLE_COLUMNS["worktrees"] + ["provenance"]):
-                lines.append(tree_line(row, row.get("provenance")))
+                # A ROW WITH NO PATH IS A LANE'S UNREAD MARKER (#173), written
+                # back as the `UNREAD` line it was read from.
+                lines.append(tree_line(row, row.get("provenance")) if row.get("path")
+                             else unread_line(row))
     except Refusal as exc:
         unusable("refused", str(exc))
         return 2
