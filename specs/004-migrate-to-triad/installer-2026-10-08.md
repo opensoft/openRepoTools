@@ -4,13 +4,15 @@
 
 **Code:** [#191](https://github.com/opensoft/openRepoTools/pull/191), branch `feat/installer-payload-source-resolution` (head `8246983`, based on `c4864ac` with main `f87fd5a` merged in as `45979a4`).
 
+**Landed:** #191 landed on main as `a74c7fc` on 2026-10-13, the squash of `8246983`.
+
 **Assembly entry point:** [patches/t007-assembly-entry-point.patch](patches/t007-assembly-entry-point.patch). It cannot land on `main` before the split, because its path is the implementation's.
 
 **Writer:** lane openRepoTools-1.
 
 ## The rehearsed arrangement relied on
 
-Run C (`/workspace/projects/.openrepotools-private-prep/work-20261008/rehearsal/README.txt`), cloned out of it read-only:
+Run C (its `rehearsal/README.txt` in the private prep area's `work-20261008/`), cloned out of it read-only:
 
 | Repository | Commit |
 | --- | --- |
@@ -67,9 +69,10 @@ Each key that is read must appear once. The file must be LF-only, quotes must cl
   - History:
     - v1, `a02a45c` (tree `a9fa46e`): the first version.
     - v2, `8ed83b7` (tree `79db0a4`): `recorded_gitlink` reads the gitlink with `read` instead of `awk` (see the runs below).
-    - v3, this commit: on the remote path, the gitlink is now checked against the pin BEFORE any implementation is fetched or run. This answers lane 3's review of the v2 patch (#191 review 5471121210, T3), which found a stale or rolled-back pin running whichever installer it selected, with a misleading refusal.
+    - v3, this commit: on the remote path, the gitlink is checked against the pin BEFORE any implementation is fetched or run. That is the change T3 of lane 3's review of v2 required (#191 review 5471121210): a pin its gitlink disagrees with now refuses, naming both commits, with no request to the code repository (measured by lane 3 in 5481368376, finding 1).
+    - **What v3 does not close** is T3's second case, a pin and gitlink that agree on code from before #191 (a rollback, or run C's own `73b04d6`). It passes the check, and the root then runs that older installer, which reads the assembly root as a single repository. On a real root that is a refusal in that installer's words, with nothing placed and the cause unnamed. With decoy files at the root (synthetic) it installs them (lane 2's item 7; lane 3's 5481368376, finding 2). This is recorded as a T015 item below, and a capability check is proposed for #193.
 - **In a checkout,** it requires the pin (strict grammar), the gitlink (index first, then HEAD) and `code/openRepoTools`'s raw bytes (`hash-object --no-filters`) to name one commit. Then it `exec`s `code/openRepoTools` with every argument. That is the same process, so the exit status, signals and the implementation's own temporary-file cleanup are the implementation's. There are no temporaries of its own.
-- **Anywhere else** (stdin, or a copy of the file on its own), it does four things:
+- **Anywhere else** (stdin, or a copy of the file on its own), it does five things:
   - it resolves `OPENREPOTOOLS_REF` once, `gh` first and `curl` second;
   - it reads `contracts/code-pin.yaml` at that commit;
   - it reads the gitlink at the pin's `submodule_path` in that commit (one level of the tree, by `gh api --jq`, or by `curl` and `jq`). It refuses, naming both commits and with "nothing ran", unless the gitlink is the pinned commit;
@@ -86,7 +89,7 @@ Each key that is read must appear once. The file must be LF-only, quotes must cl
 - The standard's `scripts/bump-leg.py` (tool `7f84ca4`, with `--local-remote-dir` pointing at that copy) made the lockstep commits. Its validators printed `pins ok` and `manifest ok` and recomputed both digests:
   - on `t007-assembly-entry-point`, `9321107` moved the code pin to `ecb4ef3` (PR at `e406e0e`), and `58e3ac5` moved it to `d12345b` (PR at `ecd7aa4`);
   - on `t007-assembly-entry-point-v2`, `7bbd60b` moved it to `ea17f30` (PR at `2411f40`), then `e5a901e` and `316aed6` to the round-1 heads;
-  - on `t007-assembly-entry-point-v3`, `4c6a0b7` moved it to `fa460f2`. That commit is the whole code leg as the PR head `6568f08` has it, merged with main `f87fd5a`. It includes #190's test roots, and every one of the leg's paths is the PR head's blob.
+  - on `t007-assembly-entry-point-v3`, `4c6a0b7` moved it to `fa460f2`. That commit is the whole code leg as the PR head `6568f08` has it, merged with main `f87fd5a`. It includes #190's test roots, and every one of the leg's paths is the PR head's blob. `4b8b05a` then moved the pin to `3fc1e95`, the code leg at the final head `8246983`.
 - Each bump printed bump-leg's `NEXT … push -u origin …` line. It was deliberately not followed.
 - The clone's push URL is disabled.
 
@@ -117,25 +120,29 @@ Transcript of row 3 in the writer's clone (assembly `7bbd60b`, code pin `ea17f30
 
 ## T008: the compatibility matrix
 
-The tests are in `tests/test_install_payload_source.py` on #191. The fixtures build their own GitHub out of bare repositories, answered by one fake for `gh api`, `gh repo` and `curl` that runs `git` and logs every request. There is no real `gh` or `curl` on `PATH`, and every `$HOME` is temporary.
+The tests are `tests/test_install_payload_source.py` at #191's final head `8246983`, which is main `a74c7fc`: 52 tests, 109 cases. Every `def test_` line in that file is in the table below, and no name outside it is. The fixtures build their own GitHub out of bare repositories, answered by one fake for `gh api`, `gh repo` and `curl` that runs `git` and logs every request. There is no real `gh` or `curl` on `PATH`, and every `$HOME` is temporary.
 
-| # | Row | Tests | Base `c4864ac` | After | Composed (run C clone) |
-| --- | --- | --- | --- | --- | --- |
-| 1 | Raw/gh one-liners | `test_r01_the_one_liner_against_a_single_repository_installs_as_before`; `test_r01_the_one_liner_against_an_adopted_assembly_installs_the_pinned_code[gh,curl]`; `test_r01_composed_the_documented_one_liners_resolve_through_the_root_entry_point[openRepoShape,gh]`; `test_r01_composed_the_root_entry_point_delegates_locally`; `test_r01_composed_a_signal_reaches_the_implementation_and_its_temporaries_go` | pass / 2 red / skip | pass | pass |
-| 2 | Offline local single / adopted checkout | `test_r02_a_complete_single_repository_tree_installs_offline_byte_for_byte` (sentinel REPO/REF, zero requests); `test_r02_an_adopted_checkout_installs_its_pinned_code_offline` | pass / red | pass | pass |
-| 3 | Explicit local code feature | `test_r03_an_explicit_code_feature_checkout_installs_its_own_bytes_and_names_them`; `test_r03_an_incomplete_code_feature_checkout_is_refused_not_completed_from_elsewhere` | 2 red | pass | pass |
-| 4 | Installed reinstall / skill-only | `test_r04_an_installed_copy_reinstalls_from_the_adopted_source_without_any_checkout`; `test_r04_an_installed_copy_on_a_single_repository_keeps_the_sibling_rule` | red / pass | pass | pass |
-| 5 | Override / adopted fork | `test_r05_a_single_repository_fork_named_by_the_override_installs_as_before`; `test_r05_an_adopted_fork_follows_its_own_pin_not_a_guessed_code_name` | pass / red | pass | pass |
-| 6 | Branch, tag, commit, slash refs | `test_r06_every_ref_form_is_resolved_once_and_every_payload_names_one_commit` (4 forms × 2 layouts) | 8 red | pass | pass |
-| 7 | Branch moves between downloads | `test_r07_a_branch_that_moves_between_downloads_never_mixes_versions[adopted,single]` | 2 red (single installed mixed versions) | pass | pass |
-| 8 | Missing pin (single) / partial or wrong pin | `test_r08_a_single_repository_without_a_code_pin_is_permitted`; `…an_adoption_manifest_without_a_code_pin_is_refused`; `…a_malformed_code_pin_is_refused_never_read_as_a_single_repository` (19 malformations); `…a_pin_the_gitlink_disagrees_with_is_refused`; `…a_pin_naming_a_commit_its_repository_lacks_is_refused` | pass / 22 red (base exited 0 installing the assembly root's decoys) | pass | pass |
-| 9 | API answer missing/malformed, auth, transport | `test_r09_an_api_failure_is_a_refusal_never_a_fallback_to_a_single_repository` (5 steps × 401/403/404/transport/garbage, both transports) | 25 red (decoys installed) | pass | pass |
-| 10 | Changed gitlink / payload, incomplete local set | `test_r10_a_local_gitlink_that_disagrees_with_the_pin_is_refused_before_staging`; `…a_changed_local_payload_is_refused_before_staging`; `…an_incomplete_local_adopted_payload_is_refused_without_a_fetch` | 3 red | pass | pass |
-| 11 | Missing command/skill/alias, failed merge | `test_r11_a_payload_file_missing_from_the_pinned_code_changes_nothing[park,skills/restart/SKILL.md,commands/swap.md]`; `test_r11_a_settings_merge_that_cannot_be_computed_changes_nothing` | 4 red | pass | pass |
-| 12 | Modes, receipts, targets, foreign files, hooks | `test_r12_an_adopted_install_keeps_modes_receipts_targets_and_what_is_not_ours` | red | pass | pass |
-| 13 | WIP init / template lookup | `test_r13_wip_init_takes_the_standard_from_codes_dependency_pin_not_the_assemblys` | red (seeded from the assembly's decoy pin commit) | pass | pass |
-| 14 | Missing nested dependency | `test_r14_with_no_nested_standard_anywhere_the_dependency_pin_alone_selects`; `test_r14_the_documented_upstream_skip_is_unchanged`; `test_r14_composed_acceptance_requires_the_nested_dependency` | red (seeded from `main`) / pass / skip | pass | pass |
-| 15 | bash 3.2, Windows/WSL | `test_r15_the_adopted_path_holds_under_macos_one_true_awk`; `test_r15_the_installer_uses_nothing_bash_3_2_lacks`; `test_r15_the_three_lists_stay_one_line_arrays_a_consumer_parses`; `test_r15_composed_the_root_entry_points_pin_reader_is_the_implementations`; `test_r15_composed_the_root_entry_point_parses_and_uses_nothing_bash_3_2_lacks` | red / pass / pass / skip / skip | pass | pass |
+`tests/test_openrepotools_command.py` gains no test. Its fake `gh` answers the one layout question (`contracts/code-pin.yaml`) with GitHub's 404, and 4 of its 63 tests run the single-repository fetch path through that fake: `test_install_places_all_nine_or_none`, `test_a_withheld_command_file_places_nothing_either`, `test_install_from_stdin_fetches_itself_into_a_live_workdir` and `test_a_fetching_install_follows_the_ref_it_was_given`. No assertion of theirs changed.
+
+**Base column:** `8246983`'s module was run against `c4864ac`'s installer, under the lock, on 2026-10-11: **27 passed, 73 failed, 9 skipped** (the composed cases). Every pass is a case that must behave exactly as base does (today's single repository, or a tree that is not this assembly's), or a static check. **The `8246983` column:** CI run 38097860219 (`tests`: 1419 passed, 9 skipped, the 9 being the composed cases). The composed tests passed in the strict composed runs recorded below.
+
+| # | Row | Tests at `8246983` (cases) | Base `c4864ac`, per test | `8246983` |
+| --- | --- | --- | --- | --- |
+| 1 | Raw/gh one-liners | `test_r01_the_one_liner_against_a_single_repository_installs_as_before`; `test_r01_the_one_liner_against_an_adopted_assembly_installs_the_pinned_code` (2); `test_r01_a_single_repository_by_curl_never_needs_api_github_com` (2); `test_r01_a_single_repository_without_jq_fetches_then_names_jq_as_it_always_did`; `test_r01_a_single_repository_by_gh_asks_for_files_and_nothing_else`; `test_r01_composed_the_documented_one_liners_resolve_through_the_root_entry_point` (2); `test_r01_composed_the_root_entry_point_delegates_locally`; `test_r01_composed_a_signal_reaches_the_implementation_and_its_temporaries_go` | pass; 2 red; 2 pass; pass; pass; skip (composed); skip (composed); skip (composed) | pass; composed tests pass composed |
+| 2 | Offline local single / adopted checkout | `test_r02_a_complete_single_repository_tree_installs_offline_byte_for_byte`; `test_r02_a_complete_tree_inside_another_projects_assembly_installs_as_before` (2); `test_r02_an_adopted_checkout_installs_its_pinned_code_offline`; `test_r02_an_adopted_checkout_whose_pin_comments_its_path_is_still_its_assembly` | pass; 2 pass; red; red | pass |
+| 3 | Explicit local code feature | `test_r03_an_explicit_code_feature_checkout_installs_its_own_bytes_and_names_them`; `test_r03_an_incomplete_code_feature_checkout_is_refused_not_completed_from_elsewhere` | red; red | pass |
+| 4 | Installed reinstall / skill-only | `test_r04_an_installed_copy_reinstalls_from_the_adopted_source_without_any_checkout`; `test_r04_an_installed_copy_on_a_single_repository_keeps_the_sibling_rule` | red; pass | pass |
+| 5 | Override / adopted fork | `test_r05_a_single_repository_fork_named_by_the_override_installs_as_before`; `test_r05_an_adopted_fork_follows_its_own_pin_not_a_guessed_code_name` | pass; red | pass |
+| 6 | Branch, tag, commit, slash refs | `test_r06_every_ref_form_is_resolved_once_and_every_payload_names_one_commit` (4); `test_r06_a_single_repository_reads_every_ref_form_as_it_always_did` (4) | 4 red; 4 pass | pass |
+| 7 | Branch moves between downloads | `test_r07_a_branch_that_moves_between_downloads_never_mixes_versions`; `test_r07_a_branch_that_moves_right_after_the_layout_question_is_read_at_one_commit` (2) | red; 2 red | pass |
+| 8 | Missing pin (single) / partial or wrong pin | `test_r08_a_single_repository_without_a_code_pin_is_permitted`; `test_r08_an_assembly_root_without_its_code_pin_refuses_as_a_single_repository_would`; `test_r08_composed_the_root_entry_point_refuses_a_pin_its_gitlink_disagrees_with` (2); `test_r08_a_malformed_code_pin_is_refused_never_read_as_a_single_repository` (19); `test_r08_a_pin_the_gitlink_disagrees_with_is_refused`; `test_r08_a_pin_naming_a_commit_its_repository_lacks_is_refused` | pass; pass; skip (composed); 19 red; red; red | pass; composed tests pass composed |
+| 9 | API answer missing/malformed, auth, transport | `test_r09_an_api_failure_is_a_refusal_never_a_fallback_to_a_single_repository` (24); `test_r09_a_pin_the_listing_shows_but_that_will_not_come_back_is_refused_saying_what_answered` | 24 red; red | pass |
+| 10 | Changed gitlink / payload, incomplete local set | `test_r10_a_local_gitlink_that_disagrees_with_the_pin_is_refused_before_staging`; `test_r10_a_changed_local_payload_is_refused_before_staging`; `test_r10_an_incomplete_local_adopted_payload_is_refused_without_a_fetch` | red; red; red | pass |
+| 11 | Missing command/skill/alias, failed merge | `test_r11_a_payload_file_missing_from_the_pinned_code_changes_nothing` (3); `test_r11_a_single_repository_missing_a_file_refuses_in_the_words_it_always_did` (2); `test_r11_a_single_repository_at_a_ref_it_lacks_refuses_in_the_words_it_always_did` (2); `test_r11_a_settings_merge_that_cannot_be_computed_changes_nothing` | 3 red; 2 pass; 2 pass; red | pass |
+| 12 | Modes, receipts, targets, foreign files, hooks | `test_r12_an_adopted_install_keeps_modes_receipts_targets_and_what_is_not_ours` | red | pass |
+| 13 | WIP init / template lookup | `test_r13_wip_init_takes_the_standard_from_codes_dependency_pin_not_the_assemblys`; `test_r13_an_installed_wip_init_whose_source_does_not_answer_seeds_from_main_as_before`; `test_r13_an_installed_wip_init_at_a_ref_the_source_lacks_seeds_from_main_as_before`; `test_r13_an_installed_wip_init_never_needs_a_single_repositorys_commit_lookup`; `test_r13_an_installed_wip_init_on_a_single_repository_reads_its_pin_as_before`; `test_r13_an_adopted_source_wip_init_cannot_follow_refuses_in_step_7s_words` | red; pass; pass; pass; pass; red | pass |
+| 14 | Missing nested dependency | `test_r14_with_no_nested_standard_anywhere_the_dependency_pin_alone_selects`; `test_r14_the_documented_upstream_skip_is_unchanged`; `test_r14_composed_acceptance_requires_the_nested_dependency` | red; pass; skip (composed) | pass; composed tests pass composed |
+| 15 | bash 3.2, Windows/WSL | `test_r15_the_installer_uses_nothing_bash_3_2_lacks`; `test_r15_the_three_lists_stay_one_line_arrays_a_consumer_parses`; `test_r15_the_adopted_path_holds_under_macos_one_true_awk`; `test_r15_composed_the_root_entry_points_pin_reader_is_the_implementations`; `test_r15_composed_the_root_entry_point_parses_and_uses_nothing_bash_3_2_lacks` | pass; pass; red; skip (composed); skip (composed) | pass; composed tests pass composed |
 
 The module is `WINDOWS_SKIP`, like every bash-driven test here. The composed tests skip in standalone code, and under `OPENREPOTOOLS_COMPOSED=1` (T009's convention) they fail instead.
 
@@ -155,7 +162,7 @@ Locked runs used `tests/run.sh`'s own invocation under its lock. That is the coo
 | Composed, strict | entry point `8ed83b7` + code `ea17f30` (= `2411f40`) | module + install suites + `repo_hygiene` | Not completed. The 2026-10-09T01:3xZ account swap stopped it, and `6568f08`'s run below superseded it. |
 | CI on `ecd7aa4` | | | All jobs green (run 37866464029). |
 | CI on `2411f40` | | | All jobs green (run 37869321635). `tests-macos` skipped (no `ready`). |
-| Review of #191 at `2411f40` | | | DO NOT LAND (review 5465121368). F1: on today's layout, the curl path needed api.github.com and `jq`. F2: an installed `wip init` refused at step 7 where base fell back to `main`. |
+| Review of #191 at `2411f40` | | | DO NOT LAND (lane 1's reviewer, 5465121368; lane 3's 5464963807 reached the same verdict on F1). F1: on today's layout, the curl path needed api.github.com and `jq`. F2: an installed `wip init` refused at step 7 where base fell back to `main`. |
 | F1/F2 fix | `13cc752` | module | 90 passed, 7 skipped. CI on `13cc752`: green. Lane 3's delta review: LAND (5471121210), with the stale body (delta 8) and the `ready` macOS run as conditions. |
 | Round 2 | `fdc5f18`, `6fa3b43`, `6568f08` | | Dropped the `project.yaml` probe; bounded the assembly search (delta 4); the adopted pin refusal now says what answered (delta 6); r14 reads conftest's text (the `KeyError 'reason'` under #190's composed mode); a composed test for the root's gitlink check; merged main `f87fd5a`. |
 | Module, under the lock | `fdc5f18` content | `-k payload_source` | **96 passed, 7 skipped** |
@@ -168,6 +175,9 @@ Locked runs used `tests/run.sh`'s own invocation under its lock. That is the coo
 | Copilot round 1, on `6568f08` | `cddd1f7` | | Three findings. Fixed: a copy-time race on the mounted-leg path (the checked snapshot is what is installed), and a commented `submodule_path` that `pin_mounts` missed (its new test fails at `6568f08` and passes at `cddd1f7`, scoped and unlocked). Kept: the index-then-HEAD gitlink fallback, which is openRepoShape's `recorded_gitlink` contract. Local rows r02/r03/r10/r15, scoped and unlocked: **13 passed, 2 skipped**. |
 | Copilot round 2, on `cddd1f7` | `8246983` | | One finding: the PR body overclaimed a refusal for a ref that moves between the probe and the resolution. The body is corrected, and a test (moved right after the probe: adopted → installed whole at the second commit; single → refused) passes, together with row 7, scoped and unlocked: **3 passed**. The cap is reached. |
 | Composed, strict, unlocked | assembly `4b8b05a` = root v3 + code `3fc1e95` (= `8246983`) | the module's composed tests + r02, r03, r07, r10 | **22 passed** |
+| CI on `8246983` | | | Run 38097860219: `tests` 1419 passed, 9 skipped. `tests-no-submodule`: 1199 passed, 229 skipped. `tests-windows`: 177 passed. `guard-launch-mode`: 165 passed. `parse-macos`, SonarCloud and Sourcery: pass. `tests-macos` ran on the `ready` label (run 38155833862). Lane 3's delta check: LAND (5481368124). |
+| Base column, under the lock, 2026-10-11 | module at `8246983`, installer `c4864ac` | `-k payload_source` | **27 passed, 73 failed, 9 skipped** (the composed cases). This is the T008 table's base column. |
+| Landed | `a74c7fc` | | #191 landed on main as `a74c7fc` on 2026-10-13, the squash of `8246983`. |
 
 ## Lane 2's installer rows
 
@@ -180,7 +190,7 @@ These are the 15 rows of "The installer's own assumptions" in `consumer-reads-20
 | `:258-275` `fetch_from_repo` | Covered: it reads the resolved source, still `gh` first. |
 | `:282-285, 338, 962-990` `INSTALLABLES`/`collect_commands` | Covered: the names sit at the code root, and the three arrays stay one line (`test_r15_…one_line_arrays…`, the W4 constraint). |
 | `:1290-1398` `collect_skills` from `~/.local/bin` | Covered: rows 4 and 11. |
-| `:2502-2517` `wip_shape_ref` | Covered: rows 13 and 14. `main` stays the fallback only for a source that carries no pin. |
+| `:2502-2517` `wip_shape_ref` | Covered: rows 13 and 14. For a single repository the pin is read at `$REF` as before. For an adopted assembly it is the pinned code's pin. `main` is the fallback, as on main, for a source that carries no pin, a source that does not answer, and a ref the source lacks (#191's F2 fix: `test_r13_an_installed_wip_init_whose_source_does_not_answer_…`, `…_at_a_ref_the_source_lacks_…`, `…_never_needs_a_single_repositorys_commit_lookup`). An adopted source that cannot be followed refuses at step 7, in step 7's words (`test_r13_an_adopted_source_wip_init_cannot_follow_refuses_in_step_7s_words`). |
 | `:2519-2523` `wip_fetch_template_file` | Unchanged. Row 13 shows the template comes from the standard the code pins. |
 | `:1218-1222` `venv_note` names `docs/README-lanes.md` | **Not changed.** It is a comment this PR does not touch, and it names a spec-leg path after the split. Listed for T014's reconciliation (also T006 §10.9). |
 | `:28-56, 393-396` counts vs design `:61-64` | Recorded: 17 commands, 23 payload files, 29 placed files, 31 artifacts on this layout, derived from the lists. The design's 15/27/29 are `daed209`'s. |
@@ -193,6 +203,22 @@ These are the 15 rows of "The installer's own assumptions" in `consumer-reads-20
 
 workBenches-side: the sentinel REPO/REF partial row is covered (`test_r02_…byte_for_byte`), and so is W4 (one-line arrays). W1, W3 and W8 (re-vendoring from `openRepoTools-code`) are workBenches follow-ups that wait for real legs; nothing here changes workBenches.
 
+## Lane 2's open items on #191 (#186 comment 6090038382)
+
+Lane 2's matrix ran on `6568f08` with v3. Each item it found there holds at the final head `8246983` too: `cddd1f7` touched only the mounted-leg snapshot and `pin_mounts`' grammar, and `8246983` added a test only. Each item is fixed, accepted (with the reason), or given to another task:
+
+| Item | Disposition |
+| --- | --- |
+| 1. The walk residue: an unrelated pin whose `submodule_path` names this directory (`outer/product` refuses; `outer/worktrees/001-x/product` installs with the "NOT the code … pins" line; an installed copy in `$H/bin` under a `$HOME` pin with `submodule_path: bin` refuses to reinstall). | **Accepted residual, proposed for #193.** `fdc5f18` limited the walk to the two layouts the design names, and the pin must name this directory. A foreign pin that names exactly this directory as its leg cannot be told apart from this tree's own with what the walk reads. The proposal is to also require the checkout's own identity to match the pin (its `origin` is the pin's `source_repository`, or its HEAD is the pinned commit). Unreachable today: no ancestor of a checkout or of `~/.local/bin` carries `contracts/` (lane 3, #191 review 5471121210, delta 4). |
+| 2. A missing ref or repository is read as a single repository and refused in main's words, without naming the ref. | **Accepted, by the byte-for-byte rule.** These are main's words for the same request (`test_r11_a_single_repository_at_a_ref_it_lacks_refuses_in_the_words_it_always_did[gh, curl]`). |
+| 3. A 502 on `contracts/code-pin.yaml` refuses where main installs. | **Accepted and disclosed.** It is the one extra request on today's layout. An unanswered layout question is a refusal, never a reading of the older layout (the design's "no silent legacy fallback"). #191's body says so. |
+| 4. Garbage or an empty body at 200 on `code-pin.yaml` gives "the ref moved between the two reads". | **Open, wording only; proposed for #193.** The refusal is right, because nothing is placed, but its words assume a move. The proposed words name both readings: the ref moved, or the first answer was not GitHub's. |
+| 5. The offline reinstall from an installed copy refuses in different words from main's. | **Accepted and disclosed** in #191's body as the one new refusal on today's layout (lane 3's delta 3). Base refused there too. |
+| 6. A missing pin on the adopted path is read as a single repository, so decoys at the root (synthetic) install. | **Accepted, by structure.** Asking `project.yaml` on the 404 would add a second request to today's layout. An adopter writes the pin and the manifest in one commit, and `make validate` refuses one without the other. A real assembly root carries no payload, so it refuses in main's words (`test_r08_an_assembly_root_without_its_code_pin_refuses_as_a_single_repository_would`). For T015: confirm that the real assembled root carries no payload file. |
+| 7. v3 with pin = gitlink at code before #191. | **T015 item** (see T007 above). The cutover must pin a code commit that carries #191, and T015 checks it at the assembled head. Proposed for #193: the root refuses an implementation that lacks the adopted resolver (a declared marker, or `payload_resolve_remote()`), naming the pin as older than T007. |
+| 8. The adopted one-liner needs `jq` at the entry point on the curl path. | **T014** (the network-needs sentence below). |
+| 9. Row 7, single: a branch that moves mid-install still mixes versions, as on main. | **Accepted, by the byte-for-byte rule.** Freezing the ref needs api.github.com, which today's layout never needed. Row 7 holds the adopted layout only. |
+
 ## For other tasks
 
 - **T009:** `test_the_installer_reaches_only_this_repository` holds because every fetching line names `$REPO`. Its docstring should say that the one other repository reached is the one `$REPO`'s own validated pin names. The composed hygiene results above are T006 §10.6's front-door findings.
@@ -200,7 +226,11 @@ workBenches-side: the sentinel REPO/REF partial row is covered (`test_r02_…byt
 - **T014:**
   - `venv_note`'s `docs/README-lanes.md` comment.
   - The README's one-liners need a sentence on network needs after the cutover, next to the one-liner (lane 3's T4 on the v2 patch). Today's single repository needs raw.githubusercontent.com only, or `gh`. After the cutover, the curl one-liner needs api.github.com and `jq`. By reading v3 and the PR head, that is 6 api.github.com requests per install: the root makes 2 (`commits`, `git/trees`), and the implementation makes 4 (`commits`, two `git/trees`, the pinned commit). Lane 3 measured 5 on v2, which had no root tree read. So a gh-less machine that is rate-limited (60 an hour per address, unauthenticated) cannot install.
-- **T015:** validate at the real assembled head, with a code pin that carries this change, against the real GitHub. That includes the one-liners and `bump-leg.py`'s lockstep, and the 3.2 parse of the root entry point (`parse-macos` covers the implementation only).
+- **T015:**
+  - Validate at the real assembled head, with a code pin that carries this change, against the real GitHub. That includes the one-liners, `bump-leg.py`'s lockstep, and the 3.2 parse of the root entry point (`parse-macos` covers the implementation only).
+  - **Named item, the pre-T007 pin:** confirm that the pinned code carries #191 before the cutover. v3 does not refuse a lockstep-consistent pin at older code (lane 2's item 7).
+  - **Named item, a root with no payload:** confirm that the assembled root carries no payload file (lane 2's item 6).
+- **#193 (follow-ups, proposed):** a capability check in the root entry point (item 7); clearer words for a 200-garbage probe (item 4); an identity match for the walk (item 1).
 
 ## What this does not do
 
