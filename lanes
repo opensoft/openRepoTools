@@ -559,15 +559,32 @@ case "$rc" in
 		# `--closed` read answers it directly, and it is made HERE — on the path
 		# that has already found nothing to show — and nowhere else.
 		e_hidden=0
-		# `command grep`, BECAUSE THE EXIT STATUS IS THE ANSWER (AGENTS.md, the
-		# measured defect of openRepoTools#51: under the harness `grep` is a
-		# shell function whose status is 1 when its stdout is `/dev/null`, which
-		# is exactly what `-q` makes it).
-		if "$LANES_EDIT" lanes --closed ${idx_args[@]+"${idx_args[@]}"} ${args[@]+"${args[@]}"} 2>/dev/null | command grep -q .; then e_hidden=1; fi
+		e_hrc=0
+		# THE WHOLE STREAM IS READ, AND THE STATUS DECIDES BEFORE THE TEXT DOES
+		# (#138 item 15, Copilot round 20 on #93, and the gap beside it). `grep
+		# -q .` exits on the first line, and past a pipe buffer's worth of rows
+		# the producer then takes SIGPIPE: under `pipefail` the pipeline answered
+		# 141, `e_hidden` stayed 0, and the listing said none was recorded about
+		# a repository with hidden rows. Reading the output into a variable
+		# closes nothing on the producer. And a read that FAILED, with rows or
+		# without, answered the same "none is recorded": the status is kept, `0`
+		# says there is something to see if it printed anything, `8` says there
+		# is nothing, and anything else is a read that did not answer
+		# (Amendment 7(d)).
+		e_rows="$("$LANES_EDIT" lanes --closed ${idx_args[@]+"${idx_args[@]}"} ${args[@]+"${args[@]}"} 2>/dev/null)" || e_hrc=$?
+		case "$e_hrc" in
+		0) case "$e_rows" in *[![:space:]]*) e_hidden=1 ;; esac ;;
+		8) : ;;
+		*) e_hidden=unread ;;
+		esac
 		if [ "$e_hidden" = 1 ]; then
 			say "no lane of $here_repo is LISTED — and that is not the same as none being recorded: closed and dormant lanes are left out (Amendment 19(b))."
 			say ""
 			say "  see them:            $prog --closed --prefix $here_repo"
+		elif [ "$e_hidden" = unread ]; then
+			say "no lane of $here_repo is LISTED — and whether closed or dormant lanes are recorded could not be read (\`lanes-edit.sh lanes --closed\` exited $e_hrc), so this listing does not say that none is (Amendment 7(d))."
+			say ""
+			say "  try it by hand:      $prog --closed --prefix $here_repo"
 		else
 			say "no lane of $here_repo is recorded."
 			say ""
