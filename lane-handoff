@@ -2017,13 +2017,25 @@ poll_writer() {   # <path>
 # two things follow, and neither touches a checkout with no `project.yaml`,
 # which is asked nothing and polled and recorded exactly as before:
 #
-#   * THE PAIRED ROOT IS POLLED — `<assembly>/worktrees/<feature>` and
-#     `<feature>/<each declared leg's path>`, the standard's three-leg feature
-#     trees — exactly as `.claude/worktrees` is: every checkout there, because
-#     the paired root, like that one, is per feature and not per lane, and a
-#     writer with nothing committed yet has no trailer to be found by. Only a
-#     directory with a `.git` of its own is a checkout there: anything else
-#     under it is the assembly's own working tree, where git answers too.
+#   * THE PAIRED ROOT IS POLLED BY THE SWEEP'S RULE — `<assembly>/worktrees/
+#     <feature>` and `<feature>/<each declared leg's path>`, the standard's
+#     three-leg feature trees. The paired root is per feature and NOT per
+#     lane: every lane the assembly homes keeps its feature trees there. So a
+#     tree there is polled and recorded as THIS lane's writer only where one
+#     of three things holds: this lane's inventory already names it; its
+#     HEAD's own last `Lane:` trailer is this lane's on a commit origin's
+#     default branch lacks (`lane-worktrees`' `own_trailers` and
+#     `head_lane_trailer`, the rule its sweep claims the same root by); or
+#     the writers file names it, because a writer with nothing committed yet
+#     has no trailer to be found by. Every other checkout there is ANOTHER
+#     LANE'S OR NOBODY'S: one informational line in the top block, outside
+#     WRITERS, never counted and never recorded. A handoff that recorded them
+#     all made other lanes' feature trees this lane's inventory, so its
+#     `lane-end` refused on their work, its `sweep --yes` could act on it, and
+#     the next session was told to relaunch writers into them (the pre-PR
+#     review of T018, M1, option (a)). Only a directory with a `.git` of its
+#     own is a checkout there: anything else under it is the assembly's own
+#     working tree, where git answers too.
 #   * A TREE IS RECORDED UNDER THE CHECKOUT IT BELONGS TO. A tree of a leg's
 #     repository — `lane-worktrees add --checkout <assembly>/code` makes one
 #     under the lane's own root, and every paired tree is one — was re-recorded
@@ -2035,8 +2047,13 @@ poll_writer() {   # <path>
 # (`R-A11-11`): the paired root is then NOT polled, the top block's WRITERS
 # section says so, no tree is recorded under a checkout nobody could establish,
 # and the lane stays SWAPPING — a poll that could not look everywhere is not
-# the record a recovery reads as a finished swap.
+# the record a recovery reads as a finished swap. SO IS A PAIRED ROOT, A
+# FEATURE DIRECTORY OR A LEG'S DIRECTORY UNDER IT THAT COULD NOT BE LISTED, and
+# an inventory that could not be read (`paired_unread`): each is a place a
+# tree of this lane's may stand unseen, exactly as `lane-reconcile` says
+# `indeterminate` and the sweep refuses for the same directories.
 legs_state=""; legs_unread=""; leg_rows=""; leg_commons=""; dir_common=""
+paired_unread=""; paired_others=""; paired_other_count=0; paired_inv=""
 tab="$(printf '\t')"
 # THE PHYSICAL PATH OF A CHECKOUT'S COMMON GIT DIRECTORY, or nothing: a leg
 # and every worktree of its repository share one (`<assembly>/.git/modules/
@@ -2060,7 +2077,7 @@ if [ -n "$dir" ] && { [ -e "$dir/project.yaml" ] || [ -L "$dir/project.yaml" ]; 
 	8) leg_rows="" ;;
 	*)
 		leg_rows=""; legs_state=unread
-		legs_unread="$dir/project.yaml is there and its legs could not be read (\`$LANES_EDIT project-legs $dir\` exited $legs_rc)"
+		legs_unread="the legs of the assembly $dir could not be read (its project.yaml is there, and \`$LANES_EDIT project-legs $dir\` exited $legs_rc)"
 		dir_common="$(common_dir_of "$dir")"
 		note "$legs_unread — which is never 'no legs' (Amendment 7(d)). So the assembly's paired feature trees under $dir/worktrees were NOT polled, and a tree that is not of $dir's own repository is NOT recorded: read them by hand before a writer is relaunched there. The handoff goes on (\`R-A11-11\`), and where it records a lifecycle the lane stays SWAPPING for it." ;;
 	esac
@@ -2084,10 +2101,49 @@ if [ "$legs_state" = known ]; then
 $leg_rows
 LEG_ROWS
 fi
+# A PLACE THE POLL COULD NOT LOOK, said where it is found and kept for the top
+# block's `- NOT POLLED` line and the lifecycle.
+paired_note_unread() {   # <why>
+	paired_unread="${paired_unread:+$paired_unread; }$1"
+	note "$1 — a read that failed is never an empty one (Amendment 7(d)). So a tree of this lane's there may be missing from the WRITERS section: read it by hand before a writer is relaunched there. The handoff goes on (\`R-A11-11\`), and where it records a lifecycle the lane stays SWAPPING for it."
+}
+# THIS LANE'S INVENTORY, READ ONCE, where the checkout is an assembly whose legs
+# were read: which paired trees are already this lane's, and the checkout each
+# recorded tree was filed under (`writer_checkout`). `<path> TAB <checkout>`, one
+# a line. A checkout with no `project.yaml` never asks it.
+if [ "$legs_state" = known ]; then
+	pi_out=""; pi_rc=0
+	pi_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-trees "$lane" 2>/dev/null </dev/null)" || pi_rc=$?
+	case "$pi_rc" in
+	0)
+		paired_inv="$(printf '%s\n' "$pi_out" | awk -F'\037' 'NF >= 2 && $2 != "" { print $2 "\t" $10 }')"
+		pi_bad="$(printf '%s\n' "$pi_out" | awk -F'\037' 'NF >= 2 && $2 == "" { printf "%s ", $1 }')"
+		[ -z "$pi_bad" ] ||
+			paired_note_unread "this lane's worktree inventory holds record(s) that could not be read (${pi_bad% }), so a paired tree only they name could not be told from another lane's" ;;
+	8) : ;;
+	*) paired_note_unread "this lane's worktree inventory could not be read (\`$LANES_EDIT lane-trees $lane\` exited $pi_rc), so a paired tree only it names could not be told from another lane's" ;;
+	esac
+fi
+# THE CHECKOUT THIS LANE'S INVENTORY RECORDS FOR A TREE, under either spelling
+# of the tree's path, or nothing.
+inventory_checkout() {   # <tree>
+	[ -n "$paired_inv" ] || return 1
+	ic_r="$(physical_of "$1")"
+	IC_P="$1" IC_R="$ic_r" awk -F'\t' '
+		$1 == ENVIRON["IC_P"] || (ENVIRON["IC_R"] != "" && $1 == ENVIRON["IC_R"]) { print $2; f = 1; exit }
+		END { exit f ? 0 : 1 }' <<IC_ROWS
+$paired_inv
+IC_ROWS
+}
 # THE CHECKOUT A POLLED TREE IS RECORDED UNDER, in an assembly: the leg whose
-# repository it is a worktree of; else the lane's own `dir`, as always. Where
-# the legs could not be read, only a tree of `dir`'s own repository can be
-# vouched for, and anything else answers NOTHING (the caller files nothing).
+# repository it is a worktree of; else the checkout this lane's inventory
+# already records for it, where that is a checkout of the tree's own
+# repository — a dependency nested in a leg (`add --checkout
+# <assembly>/code/upstream/<dep>`) is no declared leg, and re-recording its
+# tree under the assembly would lose the checkout `add` recorded; else the
+# lane's own `dir`, as always. Where the legs could not be read, only a tree
+# of `dir`'s own repository can be vouched for, and anything else answers
+# NOTHING (the caller files nothing).
 writer_checkout() {   # <tree>
 	wc_c="$(common_dir_of "$1")"
 	if [ -n "$wc_c" ] && [ -n "$leg_commons" ]; then
@@ -2097,8 +2153,75 @@ writer_checkout() {   # <tree>
 $leg_commons
 WC_ROWS
 	fi
-	if [ "$legs_state" = known ]; then printf '%s' "${dir:-unknown}"; return 0; fi
+	if [ "$legs_state" = known ]; then
+		wc_rec="$(inventory_checkout "$1" </dev/null || :)"
+		if [ -n "$wc_c" ] && [ -n "$wc_rec" ] && [ -d "$wc_rec" ] &&
+		   [ "$(common_dir_of "$wc_rec" </dev/null)" = "$wc_c" ]; then
+			printf '%s' "$wc_rec"; return 0
+		fi
+		printf '%s' "${dir:-unknown}"; return 0
+	fi
 	if [ -n "$wc_c" ] && [ -n "$dir_common" ] && [ "$wc_c" = "$dir_common" ]; then printf '%s' "$dir"; fi
+	return 0
+}
+
+# WHOSE A PAIRED TREE IS (M1 (a) of the T018 pre-PR review). Three answers make
+# it this lane's, cheapest first; anything else is another lane's or nobody's.
+#
+# THE WRITERS FILE, read exactly as `brief_for` reads it: a line whose first
+# field is the tree.
+writers_name() {   # <tree>
+	[ -n "$writers_file" ] && [ -r "$writers_file" ] || return 1
+	awk -F'\t' -v p="$1" '$1 == p { f = 1; exit } END { exit f ? 0 : 1 }' "$writers_file"
+}
+# EVERY `Lane:` TRAILER of the messages on stdin, one a line, as
+# `lane-worktrees` reads them (`^Lane:\s*(\S+)\s*$`, multi-line).
+lane_trailers() {
+	awk '/^Lane:[[:space:]]*[^[:space:]]+[[:space:]]*$/ {
+		v = $0; sub(/^Lane:[[:space:]]*/, "", v); sub(/[[:space:]]+$/, "", v); print v }'
+}
+# THE SWEEP'S OWN CLAIM ON THE PAIRED ROOT (`lane-worktrees`' `_lane_claims`,
+# with `own_trailers` and `head_lane_trailer`): HEAD's own last `Lane:`
+# trailer is this lane's, and this lane's trailer is among the commits HEAD has
+# that origin's default branch lacks — `origin/HEAD`, else `origin/main`; with
+# neither there is no base to tell them by, and no claim. Compared without
+# case, as the sweep compares. A standalone CLONE is never claimed by its
+# trailer, as the sweep never adopts one.
+head_trailer_is_lane() {   # <tree>
+	[ -d "$1/.git" ] && return 1
+	ht_base="$(git -C "$1" symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null || :)"
+	if [ -z "$ht_base" ] && git -C "$1" rev-parse -q --verify refs/remotes/origin/main >/dev/null 2>&1; then
+		ht_base=refs/remotes/origin/main
+	fi
+	[ -n "$ht_base" ] || return 1
+	ht_want="$(printf '%s' "$lane" | tr '[:upper:]' '[:lower:]')"
+	ht_head="$(git -C "$1" log -1 --format=%B HEAD 2>/dev/null | lane_trailers | tail -n 1 | tr '[:upper:]' '[:lower:]')"
+	[ -n "$ht_head" ] && [ "$ht_head" = "$ht_want" ] || return 1
+	git -C "$1" log --format=%B "$ht_base..HEAD" 2>/dev/null | lane_trailers | tr '[:upper:]' '[:lower:]' |
+		HT_W="$ht_want" awk '$0 == ENVIRON["HT_W"] { f = 1 } END { exit f ? 0 : 1 }'
+}
+# ONE CHECKOUT OF THE PAIRED ROOT: polled and recorded as this lane's writer,
+# or named once as not this lane's — its branch, its last commit and its HEAD's
+# own trailer, which is what a person needs to find its lane — and never
+# counted, recorded or offered for a relaunch.
+paired_tree() {   # <tree>
+	if inventory_checkout "$1" >/dev/null || writers_name "$1" || head_trailer_is_lane "$1"; then
+		poll_writer "$1"
+		return 0
+	fi
+	pt_branch="$(git -C "$1" symbolic-ref -q --short HEAD 2>/dev/null)"; pt_brc=$?
+	case "$pt_brc" in 0) : ;; 1) pt_branch='(detached)' ;; *) pt_branch='?' ;; esac
+	pt_last="$(git -C "$1" log -1 --format='%h %s' 2>/dev/null || :)"
+	pt_trailer="$(git -C "$1" log -1 --format=%B HEAD 2>/dev/null | lane_trailers | tail -n 1)"
+	pt_shown=none
+	[ -z "$pt_trailer" ] || pt_shown="\`$pt_trailer\`"
+	paired_other_count=$((paired_other_count + 1))
+	say ""
+	say "PAIRED ROOT, not this lane's: $1 — branch $pt_branch, last commit ${pt_last:-<none>}"
+	say "  HEAD's own Lane: trailer ${pt_trailer:-none}; neither lane $lane's inventory nor its writers file names it, so it is not polled, counted or recorded for $lane"
+	paired_others="$paired_others$(printf -- '- PAIRED ROOT, not this lane'"'"'s: `%s` — branch `%s`, last commit `%s`, HEAD'"'"'s own `Lane:` trailer %s' \
+		"$1" "$pt_branch" "${pt_last:-<none>}" "$pt_shown")
+"
 	return 0
 }
 
@@ -2109,23 +2232,40 @@ if [ -n "$dir" ]; then
 	for w in "$parent"/.lane-worktrees/"$lane"/*; do poll_writer "$w"; done
 	# THE PAIRED ROOT, where the checkout is an assembly whose legs were read.
 	# `</dev/null` on every poll inside the loop: its rows are the loop's
-	# stdin, and nothing the poll runs may take them.
+	# stdin, and nothing the poll runs may take them. A directory there that
+	# cannot be listed is said, as `lane-reconcile` says it (`indeterminate`)
+	# and the sweep refuses on it — never passed over as an empty one.
 	if [ "$legs_state" = known ]; then
-		for wf in "$dir"/worktrees/*; do
-			[ -d "$wf" ] && [ ! -L "$wf" ] || continue
-			if [ -e "$wf/.git" ] || [ -L "$wf/.git" ]; then poll_writer "$wf" </dev/null; fi
-			while IFS="$tab" read -r lg_repo lg_decl lg_abs; do
-				case "$lg_decl" in ''|/*) continue ;; esac
-				wl="$wf/${lg_decl#./}"
-				[ -d "$wl" ] && [ ! -L "$wl" ] || continue
-				if [ -e "$wl/.git" ] || [ -L "$wl/.git" ]; then poll_writer "$wl" </dev/null; fi
-			done <<LEG_ROWS
+		pr_root="$dir/worktrees"
+		if [ -d "$pr_root" ] && { [ ! -r "$pr_root" ] || [ ! -x "$pr_root" ]; }; then
+			paired_note_unread "the assembly's paired root $pr_root could not be listed"
+		else
+			for wf in "$pr_root"/*; do
+				[ -d "$wf" ] && [ ! -L "$wf" ] || continue
+				if [ ! -r "$wf" ] || [ ! -x "$wf" ]; then
+					paired_note_unread "the assembly's feature directory $wf could not be listed"
+					continue
+				fi
+				if [ -e "$wf/.git" ] || [ -L "$wf/.git" ]; then paired_tree "$wf" </dev/null; fi
+				while IFS="$tab" read -r lg_repo lg_decl lg_abs; do
+					case "$lg_decl" in ''|/*) continue ;; esac
+					wl="$wf/${lg_decl#./}"
+					[ -d "$wl" ] && [ ! -L "$wl" ] || continue
+					if [ ! -x "$wl" ]; then
+						paired_note_unread "the assembly's paired tree directory $wl could not be searched" </dev/null
+						continue
+					fi
+					if [ -e "$wl/.git" ] || [ -L "$wl/.git" ]; then paired_tree "$wl" </dev/null; fi
+				done <<LEG_ROWS
 $leg_rows
 LEG_ROWS
-		done
+			done
+		fi
 	fi
 fi
 step "writers polled: $writer_count under ${dir:-<no recorded checkout>}"
+[ "$paired_other_count" = 0 ] ||
+	step "paired root: $paired_other_count tree(s) under $dir/worktrees are not lane $lane's — listed in the top block, never counted or recorded"
 
 # ------------------------------------------------------ 2. refresh the handoff
 #
@@ -2191,7 +2331,21 @@ top_block() {
 		printf -- '- NOT POLLED: %s, so the assembly'"'"'s paired feature trees under `%s/worktrees` are not in this list. Read them by hand before relaunching a writer there.\n' \
 			"$legs_unread" "$dir"
 	fi
+	if [ -n "$paired_unread" ]; then
+		printf -- '- NOT POLLED: %s, so a tree of this lane'"'"'s under `%s/worktrees` may be missing from this list. Read it by hand before relaunching a writer there.\n' \
+			"$paired_unread" "$dir"
+	fi
 	printf '\n'
+	# T018, M1 (a): THE PAIRED ROOT'S OTHER TREES, OUTSIDE WRITERS. They are
+	# other lanes' feature trees, or nobody's: named so the next session knows
+	# they are there and whose to ask, never counted above, never recorded, and
+	# never a writer to relaunch. Nothing is printed where there are none, so
+	# a checkout with no `project.yaml` gets the block it always got.
+	if [ -n "$paired_others" ]; then
+		printf '**PAIRED ROOT at %s: %s tree(s) under `%s/worktrees` that are NOT this lane'"'"'s.** None is in this lane'"'"'s inventory, carries its `Lane:` trailer on a commit origin'"'"'s default branch lacks, or is named by its writers file, so none is counted above or recorded. Each is another lane'"'"'s feature tree, or nobody'"'"'s: NEVER relaunch a writer into one of them.\n\n' \
+			"$UTC" "$paired_other_count" "$dir"
+		printf '%s\n' "$paired_others"
+	fi
 }
 
 handoff_written=0
@@ -2352,6 +2506,7 @@ if [ "$do_late" = 1 ]; then
 		[ "$handoff_written" = 1 ] || lc_unfinished="the handoff file was not refreshed"
 		[ -z "$lc_inventory_missed" ] || lc_unfinished="${lc_unfinished:+$lc_unfinished; }the worktree inventory was not recorded for $lc_inventory_missed"
 		[ -z "$legs_unread" ] || lc_unfinished="${lc_unfinished:+$lc_unfinished; }the assembly's legs could not be read, so its paired feature trees were not polled"
+		[ -z "$paired_unread" ] || lc_unfinished="${lc_unfinished:+$lc_unfinished; }a directory of the assembly's paired root, or this lane's inventory, could not be read, so a paired tree of this lane's may not have been polled"
 		lifecycle_finish "$lc_unfinished"
 	else
 		lifecycle_finish "the late PAUSED record was refused by the helper"
@@ -2475,6 +2630,7 @@ lc_unfinished=""
 [ "$handoff_written" = 1 ] || lc_unfinished="${lc_unfinished:+$lc_unfinished; }the handoff file was not refreshed"
 [ -z "$lc_inventory_missed" ] || lc_unfinished="${lc_unfinished:+$lc_unfinished; }the worktree inventory was not recorded for $lc_inventory_missed"
 [ -z "$legs_unread" ] || lc_unfinished="${lc_unfinished:+$lc_unfinished; }the assembly's legs could not be read, so its paired feature trees were not polled"
+[ -z "$paired_unread" ] || lc_unfinished="${lc_unfinished:+$lc_unfinished; }a directory of the assembly's paired root, or this lane's inventory, could not be read, so a paired tree of this lane's may not have been polled"
 lifecycle_finish "$lc_unfinished"
 
 # ------------------------------------------- 5. the restart line — one command

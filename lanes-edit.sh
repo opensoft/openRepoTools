@@ -13197,14 +13197,22 @@ EOF
           continue
         fi
         # THE FEATURE DIRECTORY ITSELF, then each declared leg's path under
-        # it — a relative one, as the standard writes them.
+        # it — a relative one, as the standard writes them. The directory is
+        # passed through the ENVIRONMENT: `awk -v` reads escapes in a value,
+        # so a name holding `\` would come out as another path.
         lrc_cands="$lrc_f
-$(printf '%s\n' "$lrc_legs" | awk -F'\t' -v f="$lrc_f" '$2 != "" && $2 !~ /^\// { p = $2; sub(/^\.\//, "", p); print f "/" p }')"
+$(printf '%s\n' "$lrc_legs" | LRC_F="$lrc_f" awk -F'\t' '$2 != "" && $2 !~ /^\// { p = $2; sub(/^\.\//, "", p); print ENVIRON["LRC_F"] "/" p }')"
         while IFS= read -r lrc_c; do
           [ -n "$lrc_c" ] && [ -d "$lrc_c" ] && [ ! -L "$lrc_c" ] || continue
-          { [ -e "$lrc_c/.git" ] || [ -L "$lrc_c/.git" ]; } || continue
           lrc_cr="$(lane_real_path "$lrc_c")"
           case "$lrc_seen" in *" $lrc_c "*|*" $lrc_cr "*) continue ;; esac
+          # A LEG'S DIRECTORY THAT CANNOT BE SEARCHED hides whether a `.git`
+          # stands in it: a read nobody made, never an empty directory.
+          if [ ! -x "$lrc_c" ]; then
+            lrc_legwhy="${lrc_legwhy:+$lrc_legwhy; }the assembly's paired tree directory $lrc_c could not be searched"
+            continue
+          fi
+          { [ -e "$lrc_c/.git" ] || [ -L "$lrc_c/.git" ]; } || continue
           printf 'TREE%s%s%sunmanaged%s%s%sit sits in the assembly'\''s paired feature trees (%s/worktrees) and no sidecar of this lane names it; it is left exactly as it is\n' \
             "$US" "$(tree_id_for "$lrc_c")" "$US" "$US" "$lrc_c" "$US" "$lrc_dir"
           lrc_seen="$lrc_seen $lrc_c $lrc_cr "

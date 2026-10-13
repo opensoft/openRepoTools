@@ -1964,9 +1964,12 @@ class Leg:
     a dependency NESTED in one - an initialized submodule of the leg's own
     (`code/upstream/openRepoShape`). It is the ASSEMBLY'S, shared by every
     lane the assembly homes, as the assembly's own checkout is, so a sweep
-    NEVER acts on one: it is read - for the worktrees git registers in it, for
-    its branches, and for its own dirty and unpushed state - and counted for
-    this lane only where its HEAD's own `Lane:` trailer is this lane's."""
+    NEVER acts on the CHECKOUT: it is read - for the worktrees git registers
+    in it and for its own dirty and unpushed state - and counted for this lane
+    only where its HEAD's own `Lane:` trailer is this lane's. Its BRANCHES are
+    another matter: under `--branches` they are rows like the checkout's own
+    (`_branch_checkouts`), and `--yes` deletes a merged lane branch there
+    exactly as it does in the checkout, bundling first."""
 
     def __init__(self, path: str, decl: str, repository: str, assembly: str,
                  nested_in: str = ""):
@@ -2544,16 +2547,25 @@ class Sweep:
         <feature>/<each declared leg path>` (and `<feature>` itself), that no
         registration above named - a registration lost, or a clone where a
         worktree belongs. A directory that cannot be listed refuses, as a lane
-        root does (#170 G1): an unread root is never an empty one."""
+        root does (#170 G1): an unread root is never an empty one. One that can
+        be listed and not SEARCHED is unread too - what stands in it cannot be
+        told - and so is a leg's directory under a feature that cannot be
+        searched: `lane-reconcile` and `lane-handoff` say the same of each."""
         root = self.paired_root
         try:
             names = sorted(os.listdir(root))
+            unsearchable = not os.access(root, os.X_OK)
         except (FileNotFoundError, NotADirectoryError):
             return
         except OSError as exc:
             self.refusal = self.refusal or (
                 f"the assembly's worktree root {root} could not be listed "
                 f"({exc.strerror or exc}), so which feature trees stand in it is unknown")
+            return
+        if unsearchable:
+            self.refusal = self.refusal or (
+                f"the assembly's worktree root {root} could not be listed (it cannot be "
+                "searched), so which feature trees stand in it is unknown")
             return
         decls = [g.decl for g in self.legs if not g.nested_in]
         for name in names:
@@ -2562,13 +2574,21 @@ class Sweep:
                 continue
             try:
                 os.listdir(fdir)
+                why = "" if os.access(fdir, os.X_OK) else "it cannot be searched"
             except OSError as exc:
+                why = exc.strerror or str(exc)
+            if why:
                 self.refusal = self.refusal or (
                     f"the assembly's feature directory {fdir} could not be listed "
-                    f"({exc.strerror or exc}), so which trees stand in it is unknown")
+                    f"({why}), so which trees stand in it is unknown")
                 continue
             for full in [fdir] + [os.path.join(fdir, d) for d in decls]:
                 if not os.path.isdir(full) or os.path.islink(full) or real(full) in seen:
+                    continue
+                if not os.access(full, os.X_OK):
+                    self.refusal = self.refusal or (
+                        f"the assembly's paired tree directory {full} could not be searched, "
+                        "so whether a tree stands in it is unknown")
                     continue
                 if not os.path.lexists(os.path.join(full, ".git")):
                     continue
@@ -5915,8 +5935,9 @@ def add_tree(ns) -> int:
             assembly_hint = (f"lane {lane}'s checkout {lane_dir} is an ASSEMBLY, and this tree is "
                              "of the assembly itself: a worktree does not check its legs out ("
                              + ", ".join(f"{d}/" for _r, d, _p in legs) + " are empty in it). A "
-                             "tree of a leg is made from the leg: --checkout "
-                             + os.path.join(lane_dir, legs[-1][1]))
+                             "tree of a leg is made from that leg: "
+                             + " or ".join(f"--checkout {os.path.join(lane_dir, d)}"
+                                           for _r, d, _p in legs))
     # THE RECORD MUST HAVE SOMEWHERE TO GO BEFORE THE TREE IS MADE: a tree
     # this act could not record is the very thing it exists to stop.
     tproc = helper.call("lane-trees", lane)

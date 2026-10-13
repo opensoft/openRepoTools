@@ -43,18 +43,17 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from conftest import REPO, UPSTREAM, WINDOWS_SKIP  # noqa: E402
+from conftest import NEEDS_UPSTREAM, REPO, UPSTREAM, WINDOWS_SKIP  # noqa: E402
 
 pytestmark = [WINDOWS_SKIP, pytest.mark.skipif(
     shutil.which("git") is None or shutil.which("bash") is None,
     reason="the lane tools are bash and Python over git")]
 
 GOLDEN = Path(__file__).resolve().parent / "fixtures" / "t018" / "single-repository.golden"
+#: The assembly is built from the pinned openRepoShape's own template bytes,
+#: so every assembly case wears conftest's `NEEDS_UPSTREAM`: standalone it
+#: skips where the submodule is not checked out, and composed it FAILS.
 TEMPLATE = UPSTREAM / "templates" / "assembly-root"
-NEEDS_TEMPLATE = pytest.mark.skipif(
-    not (TEMPLATE / "project.yaml").is_file(),
-    reason="the pinned openRepoShape is not checked out; "
-           "run `git submodule update --init upstream/openRepoShape`")
 
 UUID = "18018018-1111-4180-8180-180180180001"
 #: Every command the bench installs beside each other, as `--install` does.
@@ -461,7 +460,7 @@ def test_t018_the_legs_reader_is_lane_starts_rung_5_line_for_line():
     assert theirs == ours
 
 
-@NEEDS_TEMPLATE
+@NEEDS_UPSTREAM
 def test_t018_project_legs_reads_the_templates_manifest(tmp_path):
     b = Bench(tmp_path / "bench", REPO)
     t = build_assembly(b)
@@ -483,7 +482,7 @@ def test_t018_project_legs_reads_the_templates_manifest(tmp_path):
         os.chmod(a / "project.yaml", 0o644)
 
 
-@NEEDS_TEMPLATE
+@NEEDS_UPSTREAM
 def test_t018_the_sweep_reads_every_leg_and_its_nested_dependency(triad):
     b, t = triad
     proc = b.sweep("triad-1", "--dry-run", "--porcelain")
@@ -498,7 +497,7 @@ def test_t018_the_sweep_reads_every_leg_and_its_nested_dependency(triad):
     assert "3 leg checkout(s), 0 counted" in table.stdout
 
 
-@NEEDS_TEMPLATE
+@NEEDS_UPSTREAM
 def test_t018_a_paired_code_tree_with_unpushed_lane_work_holds_lane_end(triad):
     """THE GAP §4.4 MEASURED: a paired `worktrees/<feature>/code` tree, made
     as Speckit makes one (a worktree of the code leg's repository), holding the
@@ -530,7 +529,7 @@ def test_t018_a_paired_code_tree_with_unpushed_lane_work_holds_lane_end(triad):
     assert other[str(tree)]["disposition"] == "foreign"
 
 
-@NEEDS_TEMPLATE
+@NEEDS_UPSTREAM
 def test_t018_a_leg_tree_made_elsewhere_is_registered_in_its_leg(triad):
     b, t = triad
     away = b.projects / "away-code"
@@ -546,7 +545,7 @@ def test_t018_a_leg_tree_made_elsewhere_is_registered_in_its_leg(triad):
     assert row["retire"] == "retire" and row["disposition"] == "remove", row
 
 
-@NEEDS_TEMPLATE
+@NEEDS_UPSTREAM
 def test_t018_a_leg_holding_the_lanes_unpushed_commit_is_counted(triad):
     """A lane working in the code leg itself: its HEAD's own trailer is this
     lane's and origin lacks it, so the leg is COUNTED - the gate refuses, and
@@ -571,7 +570,7 @@ def test_t018_a_leg_holding_the_lanes_unpushed_commit_is_counted(triad):
     assert b.tool("lane-end", "triad-2").returncode == 0
 
 
-@NEEDS_TEMPLATE
+@NEEDS_UPSTREAM
 def test_t018_a_dirty_leg_that_is_no_lanes_is_listed_never_counted(triad):
     b, t = triad
     (t["code"] / "scratch.txt").write_text("someone's edit\n")
@@ -588,7 +587,7 @@ def test_t018_a_dirty_leg_that_is_no_lanes_is_listed_never_counted(triad):
     assert "listed and NOT counted" in end.stderr and str(t["dep"]) in end.stderr
 
 
-@NEEDS_TEMPLATE
+@NEEDS_UPSTREAM
 def test_t018_the_legs_branches_are_read_under_branches(triad):
     b, t = triad
     tmp = b.root / "leg-branch"
@@ -602,7 +601,7 @@ def test_t018_the_legs_branches_are_read_under_branches(triad):
     assert rows[0][2] == "retire" and rows[0][4].startswith("in the code leg of"), rows
 
 
-@NEEDS_TEMPLATE
+@NEEDS_UPSTREAM
 def test_t018_a_manifest_or_leg_that_cannot_be_read_refuses(triad):
     b, t = triad
     if os.geteuid() == 0:
@@ -616,6 +615,171 @@ def test_t018_a_manifest_or_leg_that_cannot_be_read_refuses(triad):
     assert "the legs of the assembly" in proc.stdout and "could not be read" in proc.stdout
 
 
+@NEEDS_UPSTREAM
+def test_t018_a_leg_git_cannot_read_is_counted_and_holds_lane_end(triad):
+    """A LEG WITH A `.git` OF ITS OWN THAT GIT CANNOT READ is a read that
+    failed, never an absent or a clean leg (Amendment 7(d)): its row is
+    `unreadable` and counted, the dry run exits 3, and `lane-end` refuses,
+    naming it."""
+    b, t = triad
+    (t["spec"] / ".git").write_text("gitdir: /nonexistent/t018-spec\n")
+    proc = b.sweep("triad-1", "--dry-run", "--porcelain")
+    assert proc.returncode == 3, proc.stdout + proc.stderr
+    leg = porcelain_rows(proc.stdout, "leg")[str(t["spec"])]
+    assert leg["disposition"] == "unreadable" and leg["retire"] == "retire", leg
+    assert "git could not be read through it" in leg["why"], leg
+    end = b.tool("lane-end", "triad-1")
+    assert end.returncode == 2, end.stderr
+    assert "lane triad-1 is NOT ended" in end.stderr and str(t["spec"]) in end.stderr
+
+
+@NEEDS_UPSTREAM
+def test_t018_dependencies_a_leg_nests_that_cannot_be_listed_refuse_the_sweep(triad):
+    """THE SWEEP'S OWN REFUSAL, UNSHADOWED: `git submodule status --recursive`
+    failing in a checked-out leg - here a nested dependency whose `.git` names
+    no repository - leaves the assembly's checkouts unknown, so the sweep
+    refuses, exit 2. `lane-reconcile` does not read nested dependencies, so its
+    verdict is no `indeterminate` that refuses first: this is `_assembly`'s."""
+    b, t = triad
+    a = t["assembly"]
+    (t["dep"] / ".git").write_text("gitdir: /nonexistent/t018-dep\n")
+    rec = b.tool("lanes-edit.sh", "lane-reconcile", "triad-1")
+    verdict = next((ln.split(US)[1] for ln in rec.stdout.splitlines()
+                    if ln.split(US)[0] == "VERDICT"), "")
+    assert verdict and verdict != "indeterminate", rec.stdout
+    proc = b.sweep("triad-1", "--dry-run", "--porcelain")
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert f"the legs of the assembly {a} could not be read" in proc.stdout, proc.stdout
+    assert "the dependencies nested in the code leg" in proc.stdout
+    assert "could not be listed (git submodule status failed)" in proc.stdout
+
+
+@NEEDS_UPSTREAM
+def test_t018_a_leg_that_is_not_checked_out_is_absent_and_claims_no_tree_of_the_assembly(triad):
+    """A DEINITIALIZED LEG is an empty directory of the assembly's, where git
+    answers the ASSEMBLY. The sweep lists it `absent`, counted for nobody; the
+    assembly's own trees and registrations stay the assembly's rather than
+    becoming that leg's (`probe_leg`'s toplevel guard); and `add` from the
+    assembly records the assembly, never the empty leg (`add`'s guard)."""
+    b, t = triad
+    a = t["assembly"]
+    b.git("submodule", "deinit", "-q", "spec", cwd=a)
+    assert not any((a / "spec").iterdir())
+    made = b.tool("lane-worktrees", "add", "triad-1", "root-work")
+    assert made.returncode == 0, made.stderr
+    tree = made.stdout.strip()
+    assert "is an ASSEMBLY, and this tree is of the assembly itself" in made.stderr
+    assert "the spec leg of" not in made.stderr, made.stderr
+    assert _inventory(b, "triad-1")[tree] == str(a)
+    away = b.projects / "away-root"
+    b.git("worktree", "add", "-q", "-b", "away-root", away, "origin/main", cwd=a)
+    proc = b.sweep("triad-1", "--dry-run", "--porcelain")
+    legs = porcelain_rows(proc.stdout, "leg")
+    assert legs[str(t["spec"])]["disposition"] == "absent", legs
+    assert legs[str(t["spec"])]["retire"] == "-", legs
+    assert "not checked out here" in legs[str(t["spec"])]["why"], legs
+    assert legs[str(t["code"])]["disposition"] == "clean", legs
+    trees = porcelain_rows(proc.stdout, "tree")
+    assert trees[tree]["retire"] == "retire", trees
+    for path in (tree, str(away)):
+        assert "spec leg" not in trees[path]["why"], trees[path]
+    assert trees[str(away)]["disposition"] == "foreign", trees
+
+
+def _lane_worktrees_module():
+    """`lane-worktrees` as a module, its bytecode written nowhere (as
+    tests/test_lane_worktrees.py loads it)."""
+    import importlib.util
+    from importlib.machinery import SourceFileLoader
+    loader = SourceFileLoader("lane_worktrees_t018", str(REPO / "lane-worktrees"))
+    spec = importlib.util.spec_from_loader("lane_worktrees_t018", loader)
+    module = importlib.util.module_from_spec(spec)
+    was = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = was
+    return module
+
+
+def test_t018_the_sweeps_paired_root_refuses_what_it_cannot_list_or_search(tmp_path):
+    """THE SWEEP'S OWN PAIRED-ROOT REFUSAL (`Sweep._paired`), which no run
+    shows: `lane-reconcile` reads the same directories first and says
+    `indeterminate`, and the sweep refuses on that verdict before it looks.
+    Called directly: the root, a feature directory, or a leg's directory under
+    it that cannot be listed or searched each refuse, naming it; readable,
+    the tree in it is found."""
+    if os.geteuid() == 0:
+        pytest.skip("root lists and searches a mode-000 directory")
+    import types
+    lw = _lane_worktrees_module()
+    root = tmp_path / "worktrees"
+    feature = root / "001-a"
+    tree = feature / "code"
+    tree.mkdir(parents=True)
+    (tree / ".git").write_text("gitdir: /nonexistent\n")
+    legs = [types.SimpleNamespace(decl="spec", nested_in=""),
+            types.SimpleNamespace(decl="code", nested_in="")]
+
+    def paired():
+        sweep = types.SimpleNamespace(paired_root=str(root), legs=legs, refusal="")
+        seen: dict = {}
+        lw.Sweep._paired(sweep, seen)
+        return sweep.refusal, seen
+
+    refusal, seen = paired()
+    assert refusal == "" and list(seen) == [lw.real(str(tree))], (refusal, seen)
+    for target, mode, words in ((root, 0, "worktree root"), (root, 0o600, "worktree root"),
+                                (feature, 0, "feature directory"),
+                                (feature, 0o600, "feature directory"),
+                                (tree, 0o600, "paired tree directory")):
+        os.chmod(target, mode)
+        try:
+            refusal, seen = paired()
+        finally:
+            os.chmod(target, 0o755)
+        assert f"{words} {target} could not be" in refusal, (target, oct(mode), refusal)
+        assert not seen, (target, oct(mode), seen)
+
+
+@NEEDS_UPSTREAM
+def test_t018_project_legs_reads_quoted_scalars_as_openreposhape_v1_writes_them(triad):
+    """openRepoShape v1.0.0 (opensoft/openRepoShape#395) writes the assembly
+    template's scalars QUOTED: `path: "{{SPEC_PATH}}"` under `legs:`, and `id:`,
+    `elected_on:`, `visibility:` and `tracking_branch:` alike. The one reader
+    every lane tool asks reads `path: "code"` and `path: 'code'` - and a quoted
+    `repository:` - exactly as `path: code`, so the sweep's leg rows are the
+    same three."""
+    b, t = triad
+    a = t["assembly"]
+    want = [f"opensoft/triad-spec\tspec\t{a}/spec", f"opensoft/triad-code\tcode\t{a}/code"]
+    proc = b.tool("lanes-edit.sh", "project-legs", a)
+    assert proc.returncode == 0 and proc.stdout.splitlines() == want, proc.stdout + proc.stderr
+    plain = (a / "project.yaml").read_text(encoding="utf-8")
+    for q in ('"', "'"):
+        lines, inlegs, quoted = [], False, 0
+        for line in plain.splitlines():
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*:", line):
+                inlegs = line.startswith("legs:")
+            top = re.match(r"^(id|elected_on|visibility|tracking_branch):\s*(\S.*?)\s*$", line)
+            leg = re.match(r"^(\s+(?:repository|path):\s*)(\S.*?)\s*$", line) if inlegs else None
+            m = top or leg
+            if m:
+                head = f"{m.group(1)}: " if top else m.group(1)
+                line = f"{head}{q}{m.group(2).strip(chr(34) + chr(39))}{q}"
+                quoted += 1
+            lines.append(line)
+        assert quoted >= 10, quoted
+        (a / "project.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        assert f"path: {q}spec{q}" in (a / "project.yaml").read_text()
+        proc = b.tool("lanes-edit.sh", "project-legs", a)
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout.splitlines() == want, (q, proc.stdout)
+        legs = porcelain_rows(b.sweep("triad-1", "--dry-run", "--porcelain").stdout, "leg")
+        assert list(legs) == [str(t["spec"]), str(t["code"]), str(t["dep"])], (q, legs)
+
+
 # ========================================================= (c) the daily report
 
 def _section(text: str, title: str) -> str:
@@ -624,7 +788,7 @@ def _section(text: str, title: str) -> str:
     return text[start:end if end != -1 else len(text)]
 
 
-@NEEDS_TEMPLATE
+@NEEDS_UPSTREAM
 def test_t018_the_report_counts_each_leg_as_a_checkout_of_its_own(triad):
     b, t = triad
     a = t["assembly"]
@@ -646,7 +810,6 @@ def test_t018_the_report_counts_each_leg_as_a_checkout_of_its_own(triad):
     assert "| Assembly legs with uncommitted or unpublished work | 1 |" in proc.stdout
 
 
-@NEEDS_TEMPLATE
 def test_t018_a_report_with_no_assembly_has_no_legs_section(tmp_path):
     b = Bench(tmp_path / "bench", REPO)
     b.seeded("plain", {"p.txt": "p\n"})
@@ -671,7 +834,7 @@ def _inventory(b: Bench, lane: str) -> dict:
     return rows
 
 
-@NEEDS_TEMPLATE
+@NEEDS_UPSTREAM
 def test_t018_add_records_the_leg_it_made_a_tree_from(triad):
     b, t = triad
     a = t["assembly"]
@@ -697,19 +860,20 @@ def test_t018_add_records_the_leg_it_made_a_tree_from(triad):
     assert row["retire"] == "retire", row
 
 
-@NEEDS_TEMPLATE
+@NEEDS_UPSTREAM
 def test_t018_add_from_the_assembly_itself_says_its_legs_are_empty(triad):
     b, t = triad
     a = t["assembly"]
     made = b.tool("lane-worktrees", "add", "triad-1", "root-work")
     assert made.returncode == 0, made.stderr
     assert "is an ASSEMBLY, and this tree is of the assembly itself" in made.stderr
-    assert f"--checkout {a}/code" in made.stderr
+    # every leg is named, never only the last one the manifest declares
+    assert f"--checkout {a}/spec or --checkout {a}/code" in made.stderr, made.stderr
     assert _inventory(b, "triad-1")[made.stdout.strip()] == str(a)
 
 
 
-@NEEDS_TEMPLATE
+@NEEDS_UPSTREAM
 def test_t018_add_refuses_where_the_manifest_cannot_be_read(triad):
     """Never "no legs" (Amendment 7(d)): which checkout the tree would be
     recorded under is unknown, so nothing is made, in the words the sweep

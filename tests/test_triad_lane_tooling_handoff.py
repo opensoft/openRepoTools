@@ -48,9 +48,9 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from conftest import REPO, WINDOWS_SKIP  # noqa: E402
+from conftest import NEEDS_UPSTREAM, REPO, WINDOWS_SKIP  # noqa: E402
 from test_triad_lane_tooling import (  # noqa: E402
-    NEEDS_TEMPLATE, US, Bench, build_assembly, normalise, parse_golden, render_golden, shown)
+    US, Bench, build_assembly, normalise, parse_golden, render_golden, shown)
 
 pytestmark = [WINDOWS_SKIP, pytest.mark.skipif(
     shutil.which("git") is None or shutil.which("bash") is None,
@@ -95,9 +95,17 @@ def field(out: str, key: str) -> list:
     return next((ln.split(US)[1:] for ln in out.splitlines() if ln.split(US)[0] == key), [])
 
 
-def handoff(b: Bench, lane: str, cwd: Path, why: str = "t018 handoff") -> subprocess.CompletedProcess:
+def handoff(b: Bench, lane: str, cwd: Path, why: str = "t018 handoff",
+            *flags: str) -> subprocess.CompletedProcess:
     return b.tool("lane-handoff", "--lane", lane, "--transcript", "none", "--agent", "claude",
-                  why, cwd=cwd)
+                  *flags, why, cwd=cwd)
+
+
+def writers_file(b: Bench, lane: str, rows: dict) -> Path:
+    """A `--writers-file`: `<worktree> TAB <brief>`, one a line."""
+    path = b.root / f"writers-{lane}.tsv"
+    path.write_text("".join(f"{tree}\t{brief}\n" for tree, brief in rows.items()))
+    return path
 
 
 def top_block(b: Bench, lane: str) -> str:
@@ -120,7 +128,7 @@ def triad(tmp_path):
 
 # ============================================================= (1) and (2)
 
-@NEEDS_TEMPLATE
+@NEEDS_UPSTREAM
 def test_t018_the_handoff_polls_the_paired_trees_and_records_each_tree_under_its_leg(triad):
     """(1) THE PAIRED TREES ARE POLLED: a paired code tree holding the lane's
     unpushed commit and a paired spec tree holding a writer's first edit are in
@@ -147,8 +155,11 @@ def test_t018_the_handoff_polls_the_paired_trees_and_records_each_tree_under_its
     # under the paired root and NOT a checkout of its own: the assembly's tree
     (a / "worktrees" / "007-y" / "notes").mkdir()
     (a / "worktrees" / "007-y" / "notes" / "n.md").write_text("n\n")
+    # the spec writer has committed nothing, so no trailer finds it: the
+    # writers file names it, and that makes it this lane's (M1 (a))
+    wf = writers_file(b, "triad-1", {paired_spec: "the 007-y spec writer"})
 
-    proc = handoff(b, "triad-1", a)
+    proc = handoff(b, "triad-1", a, "t018 handoff", "--writers-file", str(wf))
     assert proc.returncode == 0, proc.stdout + proc.stderr
     for tree, branch in ((lane_code, "c1"), (lane_root, "root"), (paired_code, "007-y"),
                          (paired_spec, "007-y")):
@@ -164,6 +175,8 @@ def test_t018_the_handoff_polls_the_paired_trees_and_records_each_tree_under_its
     assert (f"- `{paired_code}` — branch `007-y`, last commit" in block
             and "0 dirty, 1 unpushed" in block.split(f"`{paired_code}`", 1)[1].split("\n", 1)[0]), block
     assert "1 dirty, 0 unpushed" in block.split(f"`{paired_spec}`", 1)[1].split("\n", 1)[0], block
+    assert "brief: the 007-y spec writer" in block, block
+    assert "PAIRED ROOT" not in block and "PAIRED ROOT" not in proc.stdout, block
 
     inv = inventory(b, "triad-1")
     assert inv == {str(lane_code): str(code), str(lane_root): str(a),
@@ -178,7 +191,7 @@ def test_t018_the_handoff_polls_the_paired_trees_and_records_each_tree_under_its
     assert field(rec.stdout, "TREES")[0] == "4 inventoried", rec.stdout
 
 
-@NEEDS_TEMPLATE
+@NEEDS_UPSTREAM
 def test_t018_a_leg_that_is_not_checked_out_claims_no_tree_of_the_assembly(triad):
     """A LEG THAT IS NOT CHECKED OUT is an empty directory of the assembly's,
     where git answers the ASSEMBLY - so read naively, its repository would be
@@ -192,13 +205,14 @@ def test_t018_a_leg_that_is_not_checked_out_claims_no_tree_of_the_assembly(triad
     assert made.returncode == 0, made.stderr
     lane_root = Path(made.stdout.strip())
     paired_code = leg_tree(b, code, a / "worktrees" / "008-z" / "code", "008-z")
+    b.commit(paired_code, "the feature's code", {"z.txt": "z\n"}, lane="triad-1")
     proc = handoff(b, "triad-1", a)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert f"writers polled: 2 under {a}" in proc.stderr, proc.stderr
     assert inventory(b, "triad-1") == {str(lane_root): str(a), str(paired_code): str(code)}
 
 
-@NEEDS_TEMPLATE
+@NEEDS_UPSTREAM
 def test_t018_a_manifest_the_handoff_cannot_read_is_said_and_the_handoff_goes_on(triad):
     """A `project.yaml` that is there and cannot be read is never "no legs"
     (Amendment 7(d)), and a swap is never left unwritten (`R-A11-11`): the
@@ -224,7 +238,8 @@ def test_t018_a_manifest_the_handoff_cannot_read_is_said_and_the_handoff_goes_on
     finally:
         os.chmod(a / "project.yaml", 0o644)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert f"{a}/project.yaml is there and its legs could not be read" in proc.stderr, proc.stderr
+    assert (f"the legs of the assembly {a} could not be read (its project.yaml is there, "
+            "and ") in proc.stderr, proc.stderr
     assert "paired feature trees" in proc.stderr and "were NOT polled" in proc.stderr
     assert f"WRITER {paired_code} —" not in proc.stdout, proc.stdout
     assert f"WRITER {lane_code} —" in proc.stdout and f"WRITER {lane_root} —" in proc.stdout
@@ -236,9 +251,122 @@ def test_t018_a_manifest_the_handoff_cannot_read_is_said_and_the_handoff_goes_on
     assert inventory(b, "triad-1") == {str(lane_code): str(code), str(lane_root): str(a)}
 
 
+@NEEDS_UPSTREAM
+def test_t018_a_handoff_takes_no_other_lanes_paired_tree(triad):
+    """M1 OF THE PRE-PR REVIEW, OPTION (a): THE PAIRED ROOT IS POLLED BY THE
+    SWEEP'S RULE. Two lanes share one assembly, and its paired root holds lane
+    2's trees: one whose HEAD's own trailer is lane 2's, unpushed, and one with
+    nothing committed that only lane 2's writers file names. Lane 1's handoff
+    neither polls, counts nor records either - each is one `PAIRED ROOT, not
+    this lane's` line outside WRITERS - so lane 1's `lane-end` passes; and lane
+    2's handoff polls and records both, each under its leg."""
+    b, t = triad
+    a, code, spec = t["assembly"], t["code"], t["spec"]
+    theirs = leg_tree(b, code, a / "worktrees" / "020-b" / "code", "020-b")
+    b.commit(theirs, "lane 2's feature code", {"b.txt": "b\n"}, lane="triad-2")
+    fresh = leg_tree(b, spec, a / "worktrees" / "021-c" / "spec", "021-c")
+    (fresh / "draft.md").write_text("lane 2's writer's first edit\n")
+    wf2 = writers_file(b, "triad-2", {fresh: "lane 2's 021-c spec writer"})
+
+    one = handoff(b, "triad-1", a)
+    assert one.returncode == 0, one.stdout + one.stderr
+    for tree in (theirs, fresh):
+        assert f"WRITER {tree} —" not in one.stdout, one.stdout
+        assert f"PAIRED ROOT, not this lane's: {tree} — branch" in one.stdout, one.stdout
+    assert f"writers polled: 0 under {a}" in one.stderr, one.stderr
+    assert "paired root: 2 tree(s)" in one.stderr, one.stderr
+    assert "lifecycle: SWAPPED" in one.stdout, one.stdout
+    assert "NOT POLLED" not in one.stdout + one.stderr
+    block = top_block(b, "triad-1")
+    writers, _sep, rest = block.partition("**PAIRED ROOT at ")
+    assert "(0 found under" in writers and "- none running at the handoff." in writers, block
+    assert str(theirs) not in writers and str(fresh) not in writers, block
+    assert f"2 tree(s) under `{a}/worktrees` that are NOT this lane's" in rest, block
+    assert (f"- PAIRED ROOT, not this lane's: `{theirs}` — branch `020-b`, last commit "
+            in rest), block
+    assert "HEAD's own `Lane:` trailer `triad-2`" in rest, block
+    assert f"- PAIRED ROOT, not this lane's: `{fresh}` — branch `021-c`" in rest, block
+    assert "HEAD's own `Lane:` trailer none" in rest, block
+    assert inventory(b, "triad-1") == {}
+    end = b.tool("lane-end", "triad-1")
+    assert end.returncode == 0, end.stdout + end.stderr
+
+    two = handoff(b, "triad-2", a, "t018 handoff", "--writers-file", str(wf2))
+    assert two.returncode == 0, two.stdout + two.stderr
+    for tree in (theirs, fresh):
+        assert f"WRITER {tree} —" in two.stdout, two.stdout
+    assert f"writers polled: 2 under {a}" in two.stderr, two.stderr
+    assert "PAIRED ROOT" not in two.stdout and "PAIRED ROOT" not in top_block(b, "triad-2")
+    assert inventory(b, "triad-2") == {str(theirs): str(code), str(fresh): str(spec)}
+
+
+@NEEDS_UPSTREAM
+def test_t018_a_paired_directory_the_handoff_cannot_list_is_said_and_the_lane_stays_swapping(triad):
+    """S1 OF THE PRE-PR REVIEW: a paired root, a feature directory, or a leg's
+    directory under one that could not be listed or searched hid what stood in
+    it from the poll IN SILENCE, while `lane-reconcile` said `indeterminate`
+    and the sweep refused. Now each is a `- NOT POLLED` line in WRITERS and a
+    note on stderr, the handoff still exits 0 (`R-A11-11`), and the lane stays
+    SWAPPING; the reconciliation is `indeterminate` for every one of them."""
+    b, t = triad
+    if os.geteuid() == 0:
+        pytest.skip("root lists and searches a mode-000 directory")
+    a, code = t["assembly"], t["code"]
+    mine = leg_tree(b, code, a / "worktrees" / "030-m" / "code", "030-m")
+    b.commit(mine, "the lane's feature code", {"m.txt": "m\n"}, lane="triad-1")
+    clone = a / "worktrees" / "031-n" / "spec"
+    b.git("clone", "-q", b.remotes / "triad-spec.git", clone)
+    cases = (
+        (a / "worktrees", f"the assembly's paired root {a}/worktrees could not be listed", False),
+        (a / "worktrees" / "030-m",
+         f"the assembly's feature directory {a}/worktrees/030-m could not be listed", False),
+        (clone, f"the assembly's paired tree directory {clone} could not be searched", True),
+    )
+    for target, words, mine_seen in cases:
+        os.chmod(target, 0)
+        try:
+            proc = handoff(b, "triad-1", a, "unlistable")
+            rec = b.tool("lanes-edit.sh", "lane-reconcile", "triad-1")
+        finally:
+            os.chmod(target, 0o755)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert (f"WRITER {mine} —" in proc.stdout) is mine_seen, (target, proc.stdout)
+        assert words in proc.stderr, (target, proc.stderr)
+        assert "may not have been polled" in proc.stderr, (target, proc.stderr)
+        assert "lifecycle: SWAPPING" in proc.stdout, (target, proc.stdout)
+        assert f"- NOT POLLED: {words}" in top_block(b, "triad-1"), target
+        verdict = field(rec.stdout, "VERDICT")
+        assert verdict and verdict[0] == "indeterminate", (target, rec.stdout)
+        assert words in verdict[1], (target, verdict)
+    proc = handoff(b, "triad-1", a, "readable again")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"WRITER {mine} — branch 030-m" in proc.stdout, proc.stdout
+    assert f"PAIRED ROOT, not this lane's: {clone} —" in proc.stdout, proc.stdout
+    assert "NOT POLLED" not in proc.stdout + proc.stderr
+    assert "lifecycle: SWAPPED" in proc.stdout, proc.stdout
+
+
+@NEEDS_UPSTREAM
+def test_t018_a_tree_of_a_nested_dependency_keeps_the_checkout_add_recorded(triad):
+    """N5 OF THE PRE-PR REVIEW: a tree `add` made from a dependency nested in a
+    leg (`--checkout <assembly>/code/upstream/dep`) is no declared leg's, and
+    the next handoff re-recorded it under the assembly - the loss (b) fixed for
+    the legs. A recorded checkout of the tree's own repository is now kept."""
+    b, t = triad
+    dep = t["dep"]
+    made = b.tool("lane-worktrees", "add", "triad-1", "d1", "--checkout", dep)
+    assert made.returncode == 0, made.stderr
+    tree = made.stdout.strip()
+    assert inventory(b, "triad-1")[tree] == str(dep)
+    proc = handoff(b, "triad-1", t["assembly"])
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"WRITER {tree} —" in proc.stdout, proc.stdout
+    assert inventory(b, "triad-1")[tree] == str(dep)
+
+
 # ===================================================================== (3)
 
-@NEEDS_TEMPLATE
+@NEEDS_UPSTREAM
 def test_t018_reconcile_reports_what_the_legs_hold_and_no_sidecar_names(triad):
     """(3) THE LEGS' REGISTRATIONS AND THE PAIRED ROOT ARE READ: a spec tree
     made away from every root, a paired code tree, a clone where a paired
@@ -278,7 +406,7 @@ def test_t018_reconcile_reports_what_the_legs_hold_and_no_sidecar_names(triad):
     assert field(proc.stdout, "VERDICT")[0] == "ungraceful-stop", proc.stdout
 
 
-@NEEDS_TEMPLATE
+@NEEDS_UPSTREAM
 def test_t018_reconcile_pronounces_no_clearance_over_legs_nobody_read(triad):
     """A manifest, or the paired root, that could not be read leaves paths
     nobody inspected: the verdict is `indeterminate`, never a clearance."""
