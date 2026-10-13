@@ -3959,6 +3959,21 @@ output `c45a452`'s tools printed, on a repository laid out to look like a triad:
 submodule's worktree under `worktrees/<feature>/code`, and a tree recorded with the
 submodule as its checkout.
 
+**A parked paired tree is not the lane's to the sweep — a gap, for lane 1's ruling
+(docs/triad-lane-tooling-analysis.md §7, item 11).** The sweep and `lane-end`'s gate
+give a tree under `<assembly>/worktrees` to a lane by its HEAD's own `Lane:` trailer
+and by nothing else, unless the lane's inventory names it. `make park` commits a dirty
+leg tree as `wip: park <UTC time> — lane <lane>`, with no trailer, and `resume`
+soft-resets those commits, leaving the work uncommitted on the commit below them. So a
+parked or resumed paired tree is a FOREIGN row of `lane-worktrees sweep <lane>
+--dry-run` ("… its HEAD carries no Lane: trailer of this lane's as its own"), counted
+for nobody, and a gate that passes says nothing of it. **Before `lane-end` in an
+assembly**, run that dry run and read every FOREIGN row under `<assembly>/worktrees`:
+one whose HEAD, or whose branch's upstream, is a `wip: park … — lane <this lane>`
+commit, or that holds uncommitted edits, may be this lane's parked work. Land it or
+hand it over first, or record it with `lanes-edit.sh set-lane-tree <lane> <path>
+--checkout <assembly>/<leg>` so the gate counts it.
+
 ### Two protocol lines this act assumes (proposed for the amendment that ratifies it)
 
 1. **A lane creates worktrees, never clones.** Every tree a lane works in is a

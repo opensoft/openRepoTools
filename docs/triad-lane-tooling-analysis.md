@@ -557,6 +557,19 @@ Every behaviour change proposed in §4 changes what a command prints or does **t
 this repository or for the estate's existing triads. Each is written above as a proposal with
 a sketch, for a ruling.
 
+**2026-10-11: what the branch now ships.** That paragraph described the branch's first
+commit. The branch now also carries T018's shape-gated changes (§4.4, 2026-10-09 note):
+(a) `lanes-edit.sh project-legs`, the one reader of an assembly's legs, with
+`lane-worktrees sweep` and `lane-end`'s gate enumerating the legs, the worktrees they
+register and the paired root; (b) `lane-handoff` polling the paired root and recording
+each tree under its leg, and `lane-reconcile` reading the legs' registrations and the
+paired root (merged from writer 2's `feat/triad-lane-tooling-handoff`); (c) the daily
+report counting each leg as a checkout of its own; (d) `lane-worktrees add` recording
+the leg it made a tree from. On a single repository every output is byte for byte what
+`c45a452` printed, which two stored goldens hold: `tests/fixtures/t018/` and
+`tests/fixtures/t018-handoff/`. Usage text moves for every shape (§4.4). The branch merges
+main at `f87fd5a` (#190) and changes none of #190's test-root files.
+
 **Overlap with #190, and why this branch carries no test change.** An earlier draft of this
 branch made the suite's roots shape-aware. Lane 1's PR #190 does the same work, more
 completely, under other names. The draft was dropped before it was committed; its diff is
@@ -609,3 +622,30 @@ kept only in this lane's scratch directory.
     `<assembly>/worktrees/<feature>/code`, with the spec root at `../spec` (§4.13), and
     move the third manual read (#190's test_lane_helpers.sh:6595-6596) inside its `if`, or
     a standalone code-leg run aborts on `ln_doc: unbound variable` (§4.13, measured).
+11. **Parked paired trees (T018).** **2026-10-11**, from lane 3's review of #196's T018
+    record (review 5481327496 on #196, finding 2), **derived** from the code of this
+    branch and of workBenches `ffd5516`, not run. The sweep, and so `lane-end`'s
+    close-out gate, gives a tree under `<assembly>/worktrees` to a lane only by its
+    HEAD's own `Lane:` trailer, among the commits origin's default branch lacks:
+    `lane-worktrees` at 9991d69, :2424-2431 (the paired-root claim) and :4473-4494
+    (`own_trailers`, `head_lane_trailer`), and a leg checkout by the same rule, :2124.
+    workBenches' `park.sh`
+    (`devBenches/base-image/files/speckit-worktree/templates/specify/extensions/git/scripts/bash/park.sh`)
+    puts the lane only in the WIP commit's subject, `wip: park <UTC> — lane <lane>`
+    (:226), committed with `-m "$WIP_SUBJECT"` and no trailer (:860). `resume.sh` knows
+    those commits by that subject (:221-231) and `reset --soft HEAD~<depth>`s them
+    (:746), so HEAD is back on the commit below them and the work is uncommitted. A
+    parked or resumed paired tree is therefore FOREIGN, counted for nobody, and a gate
+    that passes prints nothing of it: `lane-end`'s pass path (:2122-2127) names only the
+    unclaimed leg checkouts. It is counted only where the lane's #97 inventory names
+    it, which happens through `lanes-edit.sh set-lane-tree`, or a `lane-handoff` that
+    ran while it stood (T018 (b)); `lane-worktrees add` makes its trees under the
+    lane's own root, never in the paired root. Lane 3 changed no attribution code; `docs/README-lanes.md`
+    (T018 section) says what to check before `lane-end`. **Choose:** (i) the sweep also
+    reads park's WIP subject as the lane's mark, which couples `lane-worktrees` to a
+    workBenches subject format; or (ii) park's WIP commit carries a `Lane: <lane>`
+    trailer, a workBenches change that resume's subject match does not disturb. Either
+    way a RESUMED tree has no trailer of its own until its writer next commits, because
+    its HEAD is back below the WIP commits. So decide too whether `resume` records the
+    tree it rebuilds in the lane's inventory (`lanes-edit.sh set-lane-tree <lane> <path>
+    --checkout <assembly>/<leg>`), which covers both states.
