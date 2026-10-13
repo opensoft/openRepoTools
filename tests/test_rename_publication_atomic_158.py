@@ -206,6 +206,27 @@ def test_rename_replace_refused_or_interrupted_rolls_back_and_leaves_no_temporar
     assert sorted(p.name for p in rbox.handoff.parent.iterdir()) == [rbox.handoff.name]
 
 
+def test_rename_in_place_handoff_in_a_read_only_directory_refuses_and_rolls_back(tmp_path):
+    """The one behaviour #158 changes on purpose. A handoff stamped where it is
+    needed only the FILE writable; a temporary beside it needs the directory
+    too. f87fd5a stamped this case in place and exited 0."""
+    if os.geteuid() == 0:
+        pytest.skip("a read-only directory binds an unprivileged writer only")
+    rbox = RenameBox(tmp_path, "in-place")
+    before, head = rbox.tree(), rbox.head()
+    rbox.handoff.parent.chmod(0o555)
+    try:
+        result = rbox.rename()
+    finally:
+        rbox.handoff.parent.chmod(0o755)
+    assert result.returncode == 5, (result.stdout, result.stderr)
+    assert "no temporary file could be made beside" in result.stderr
+    assert "the rename was rolled back" in result.stderr
+    assert rbox.tree() == before
+    assert rbox.head() == head
+    assert sorted(p.name for p in rbox.handoff.parent.iterdir()) == [rbox.handoff.name]
+
+
 @pytest.mark.parametrize("name", ["rl_htmp", "pbh_tmp", "TMPD"])
 def test_cleanup_removes_no_path_a_variable_inherits_from_the_environment(tmp_path, name):
     """`cleanup` runs on every exit and removes its temporaries BY NAME, so a
