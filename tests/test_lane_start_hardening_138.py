@@ -15,7 +15,9 @@ the file and `rename-window` edits it.
            rename is now read back: a name another window also carries after it
            is refused, and this window's own rename undone.
   item 14  the retired-identity fence asked only the ARCHIVE, so a row RETIRED
-           (or ENDED) in `lanes/LANES.md`, or a log ending on either, passed.
+           in `lanes/LANES.md`, or a log ending on RETIRED, passed. ENDED is
+           not terminal (Amendment 18(b): it releases the binding) and an
+           ENDED lane is still resumed.
   item 16  the new-lane window-name fence skipped THIS window, so a new lane
            started from a window still named for another registered lane took
            that lane's tmux address.
@@ -23,6 +25,7 @@ the file and `rename-window` edits it.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -116,6 +119,17 @@ class Box(Sandbox):
     def register(self) -> Path:
         return self.wip / "lanes" / "LANES.md"
 
+    def row_state(self, lane: str) -> str:
+        line = next(ln for ln in self.register().read_text(encoding="utf-8").splitlines()
+                    if ln.startswith(f"| `{lane}`"))
+        return line.split("|")[-2].strip()
+
+    def transcript(self, sid: str = SID) -> None:
+        """The row's session as a transcript here, so a start resumes it by id."""
+        key = re.sub(r"[^A-Za-z0-9]", "-", str(self.lane_dir))
+        _write(self.home / ".claude" / "projects" / key / f"{sid}.jsonl",
+               '{"type":"user"}\n', 0o644)
+
     def seed(self, rows=(), logs=None, push=True) -> None:
         """Append rows to the register and write object logs, in one commit."""
         reg = self.register()
@@ -198,6 +212,17 @@ def test_item3_the_undo_restores_automatic_rename_when_the_window_had_it(box):
     assert "set-option -w -u automatic-rename" in box.tmux_calls()
 
 
+def test_item3_a_window_with_no_name_to_go_back_to_says_the_undo_was_not_made(box):
+    box.windows({"@1": "", "@2": "zsh"})
+    before = box.commits()
+    result = box.start("--no-launch", FAKE_TMUX_RIVAL="@2")
+    assert result.returncode == 2, result.stderr
+    assert "could NOT be undone" in result.stderr
+    assert "rename is undone" not in result.stderr
+    assert box.tmux_calls().count("rename-window") == 1, box.tmux_calls()
+    nothing_done(box, before, result)
+
+
 def test_item3_a_read_back_that_fails_is_not_a_name_that_is_free(box):
     before = box.commits()
     result = box.start("--no-launch", FAKE_TMUX_LIST_FAILS_AFTER_RENAME="1")
@@ -216,23 +241,46 @@ def test_item3_an_uncontested_rename_is_kept(box):
 
 # ------------------------------------------------------------------ item 14
 
-@pytest.mark.parametrize("cell, verbs, word", [
-    ("RETIRED · 2026-10-01T00:00:00Z · swept as dormant", ("STARTED", "RETIRED"), "RETIRED"),
-    ("RETIRED · 2026-10-01T00:00:00Z · swept as dormant", (), "RETIRED"),
-    ("ENDED · 2026-10-01T00:00:00Z · lane-end on Eagle: window closing", (), "ENDED"),
-    ("PAUSED · 2026-10-01T00:00:00Z · swapped", ("STARTED", "RETIRED"), "RETIRED"),
-    ("PAUSED · 2026-10-01T00:00:00Z · swapped", ("STARTED", "PAUSED", "ENDED"), "ENDED"),
+RETIRED_CELL = "RETIRED · 2026-10-01T00:00:00Z · swept as dormant"
+ENDED_CELL = "ENDED · 2026-10-01T00:00:00Z · lane-end on Eagle: window closing"
+PAUSED_CELL = "PAUSED · 2026-10-01T00:00:00Z · swapped"
+
+
+@pytest.mark.parametrize("cell, verbs", [
+    (RETIRED_CELL, ("STARTED", "RETIRED")),
+    (RETIRED_CELL, ()),
+    (PAUSED_CELL, ("STARTED", "RETIRED")),
 ])
-def test_item14_a_closed_lane_still_in_the_register_is_not_started(box, cell, verbs, word):
+def test_item14_a_retired_lane_still_in_the_register_is_not_started(box, cell, verbs):
     """No archive row exists, so `retired-identity` answers 8: only the row's
-    state cell or its log's last lane-kind line says the lane is finished."""
+    state cell or its log's last lane-kind line says the lane is retired."""
     box.seed([row(LANE, cell)], {LANE: verbs} if verbs else None)
+    box.transcript()
     before = box.commits()
     result = box.start("--no-launch")
     assert result.returncode == 2, result.stderr
-    assert word in result.stderr
+    assert "RETIRED" in result.stderr
     assert "rename-window" not in box.tmux_calls()
     nothing_done(box, before, result)
+
+
+@pytest.mark.parametrize("cell, verbs", [
+    (ENDED_CELL, ()),
+    (PAUSED_CELL, ("STARTED", "PAUSED", "ENDED")),
+    (PAUSED_CELL, ("STARTED", "PAUSED")),
+])
+def test_item14_an_ended_or_paused_lane_is_still_resumed(box, cell, verbs):
+    """ENDED is "the window is closing", not "the lane is not coming back": it
+    releases the binding as a PAUSED does (Amendment 18(b)), and the lane is
+    resumed by its recorded session."""
+    box.seed([row(LANE, cell)], {LANE: verbs} if verbs else None)
+    box.transcript()
+    result = box.start("--no-launch")
+    assert result.returncode == 0, result.stderr
+    assert f"--resume {SID}" in result.stdout
+    assert box.windows() == {"@1": LANE}
+    assert box.row_state(LANE).startswith("LIVE · "), box.row_state(LANE)
+    assert box.lane_log().splitlines()[-1].startswith(f"RESUMED — lane {LANE}, session {SID}@")
 
 
 def test_item14_a_retirement_this_checkout_has_not_pushed_is_still_one(box):
@@ -261,15 +309,6 @@ def test_item14_a_log_that_cannot_be_read_is_not_a_lane_that_is_open(box):
     assert "lane-last" in result.stderr
     assert "rename-window" not in box.tmux_calls()
     nothing_done(box, before, result)
-
-
-def test_item14_a_paused_lane_is_still_resumed(box):
-    box.seed([row(LANE, "PAUSED · 2026-10-01T00:00:00Z · swapped")],
-             {LANE: ("STARTED", "PAUSED")})
-    result = box.start("--no-launch")
-    assert result.returncode == 0, result.stderr
-    assert box.windows() == {"@1": LANE}
-    assert box.lane_log().splitlines()[-1].split(" — ", 1)[0] in ("STARTED", "RESUMED")
 
 
 # ------------------------------------------------------------------ item 16

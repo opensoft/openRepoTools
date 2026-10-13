@@ -2209,28 +2209,34 @@ case "$retired_rc" in
   *) die "the lane archive could not be checked for $LANE (exit $retired_rc). Nothing was renamed or written." 1 ;;
 esac
 
-# AND A CLOSED ROW THAT IS STILL IN THE REGISTER (opensoft/openRepoTools#138
+# AND A RETIRED ROW THAT IS STILL IN THE REGISTER (opensoft/openRepoTools#138
 # item 14). The archive holds a retired row only once `archive-rows` has moved
 # it there; until then the row says so itself, and `retired-identity` answers 8
 # about it. So the row is asked too — this checkout's copy and the published
 # one, either of which may be ahead — and so is the lane's own log: a state
-# word of ENDED or RETIRED, or a last lane-kind line that is either, is a lane
-# whose last act was its last. Resuming it would append a STARTED or RESUMED
-# after its closing line, in a log nothing ever rewrites.
-for closed_row in "$row" "$pub_row"; do
-  closed_word="$(printf '%s\n' "$closed_row" | awk -F'|' 'NF > 2 {
-    split($(NF - 1), w, " "); if (w[1] == "ENDED" || w[1] == "RETIRED") { print w[1]; exit } }')"
-  [ -z "$closed_word" ] ||
-    die "lane $LANE's register row says $closed_word: a lane whose last act was its last is not started again (opensoft/openRepoTools#138 item 14). Nothing was renamed or written; choose a free position." 2
+# word of RETIRED, or a last lane-kind line that is RETIRED, is a lane that is
+# not coming back, and resuming it would append a STARTED or RESUMED after its
+# retirement in a log nothing ever rewrites.
+#
+# RETIRED ONLY, AND NOT ENDED. `lane-end` is "the window is closing" and
+# `--retire` is "the lane is not coming back" (docs/README-lanes.md); a binding
+# is released by a PAUSED or an ENDED alike (Amendment 18(b)), `lane` sends a
+# closed lane back here to be reopened, and an ENDED lane resumed by this
+# command is in the real register. Making ENDED terminal is a ruling's to make.
+for retired_row in "$row" "$pub_row"; do
+  retired_word="$(printf '%s\n' "$retired_row" | awk -F'|' 'NF > 2 {
+    split($(NF - 1), w, " "); if (w[1] == "RETIRED") { print w[1]; exit } }')"
+  [ -z "$retired_word" ] ||
+    die "lane $LANE's register row says RETIRED, though the archive does not hold it yet: a retired lane is not coming back (opensoft/openRepoTools#138 item 14). Nothing was renamed or written; choose a free position." 2
 done
-closed_rc=0
-closed_last="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-last "$LANE" 2>/dev/null)" || closed_rc=$?
-closed_verb="$(printf '%s\n' "$closed_last" | cut -f1)"
-case "$closed_rc:$closed_verb" in
-  0:ENDED | 0:RETIRED)
-    die "lane $LANE's object log ends on its $closed_verb line: a lane whose last act was its last is not started again (opensoft/openRepoTools#138 item 14). Nothing was renamed or written; choose a free position." 2 ;;
+retired_last_rc=0
+retired_last="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-last "$LANE" 2>/dev/null)" || retired_last_rc=$?
+retired_verb="$(printf '%s\n' "$retired_last" | cut -f1)"
+case "$retired_last_rc:$retired_verb" in
+  0:RETIRED)
+    die "lane $LANE's object log ends on its RETIRED line, though the archive does not hold it yet: a retired lane is not coming back (opensoft/openRepoTools#138 item 14). Nothing was renamed or written; choose a free position." 2 ;;
   0:* | 8:*) : ;;
-  *) die "\`$LANES_EDIT lane-last $LANE\` exited $closed_rc, so whether lane $LANE's log ends on ENDED or RETIRED could NOT be read — and that is not 'it does not' (Amendment 7(d)). Nothing was renamed or written." 1 ;;
+  *) die "\`$LANES_EDIT lane-last $LANE\` exited $retired_last_rc, so whether lane $LANE's log ends on RETIRED could NOT be read — and that is not 'it does not' (Amendment 7(d)). Nothing was renamed or written." 1 ;;
 esac
 
 # A lane name is a tmux-window address. tmux itself allows two distinct
@@ -2559,9 +2565,16 @@ if (( ! dry_run )) && [ "$row_count" = 0 ]; then
     rb_why="after the rename another tmux window ($WNL_ID) is named $WNL_NAME too: a second start took this NEW lane's name between this run's check and its rename"
   fi
   if [ -n "$rb_why" ]; then
-    rb_undo="This window's rename is undone"
+    # NO NAME TO GO BACK TO IS NO UNDO: where tmux answered `#W` with nothing,
+    # nothing here can name this window back, and the refusal says so rather
+    # than claiming an undo it did not make.
+    rb_undo="This window's rename could NOT be undone, because its earlier name is not known — rename it yourself: tmux rename-window <its name>"
     if [ -n "$this_window_name" ]; then
-      tmux rename-window "$this_window_name" 2>/dev/null || rb_undo="This window's rename could NOT be undone — rename it back yourself: tmux rename-window $this_window_name"
+      if tmux rename-window "$this_window_name" 2>/dev/null; then
+        rb_undo="This window's rename is undone"
+      else
+        rb_undo="This window's rename could NOT be undone — rename it back yourself: tmux rename-window $this_window_name"
+      fi
     fi
     case "$win_auto_was" in
       "") tmux set-option -w -u automatic-rename 2>/dev/null || : ;;
