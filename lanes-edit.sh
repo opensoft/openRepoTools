@@ -6715,7 +6715,7 @@ EOF
 # usually a no-op is exactly what a fence should be, and `lane-end` asks the
 # same question again, in words, before it sends a single signal.
 #
-# One line per surviving match: `<parent pid><US><child pid, or empty><US>
+# One line per surviving match: `<parent pid><US><child pids, or empty><US>
 # <the matched uuid>` — `$US`, never a TAB. A CONFIRMED CHILD OF THE CI RUN ON
 # PR #61: with a real, honest, DOCUMENTED-empty child slot (the line just
 # above — "the child slot stays empty" is not a race-only rarity, it is this
@@ -6862,10 +6862,12 @@ DHPLINE
     # THE ACTUAL `--resume` VALUE, NOT A GLOB THAT CAN SPAN OTHER ARGUMENTS
     # (Copilot round 5, PR #61): `*"--resume"*"/$id.jsonl"*` also matches
     # `--resume /other.jsonl --label /<id>.jsonl`, since `*` between them
-    # freely crosses argument boundaries. The token right after `--resume ` —
-    # up to the next space or the end of argv — is what was actually
-    # resumed, and that is the only thing compared now.
-    dhp_resume="${dhp_args_lc#*--resume }"; dhp_resume="${dhp_resume%% *}"
+    # freely crosses argument boundaries. What was actually resumed is the
+    # value right after `--resume `, and that is the only thing compared —
+    # read WHOLE, spaces and all, by `dhp_resume_value` below this function
+    # (opensoft/openRepoTools#76: cutting it at the first space never matched
+    # a directory that has one).
+    dhp_resume_value "$dhp_args_lc"; dhp_resume="$dhp_rv"
     for dhp_id in $dhp_ids; do
       dhp_id_lc="$(printf '%s' "$dhp_id" | tr 'A-F' 'a-f')"
       # AN EXACT PATH COMPONENT, NOT AN ARBITRARY SUBSTRING (Copilot round 4,
@@ -6905,9 +6907,10 @@ DHPLINE
           # which round 9 found true a wrapper with exactly one child for a
           # DIFFERENT transcript could exploit). Both facts are proven in one
           # pass, never two:
-          #   * a candidate whose `ps -p` reads and whose `--resume` token
-          #     matches `$dhp_id_lc` exactly is VERIFIED — accepted at once,
-          #     however many other candidates there are;
+          #   * a candidate whose `ps -p` reads and whose `--resume` value
+          #     matches `$dhp_id_lc` exactly is VERIFIED — named, however many
+          #     other candidates there are, and so is EVERY other child that
+          #     verifies (opensoft/openRepoTools#86, below);
           #   * a candidate whose `ps -p` reads but whose `--resume` does NOT
           #     match is a CONFIRMED MISMATCH — a different transcript's fork,
           #     and it is never named, however few other candidates there are;
@@ -6924,6 +6927,19 @@ DHPLINE
           # Two or more unresolved fallbacks are left unnamed rather than
           # guessed between; the parent is still reported and retirable on
           # its own in every one of these shapes.
+          #
+          # EVERY VERIFIED CHILD, NOT THE FIRST (opensoft/openRepoTools#86,
+          # Copilot on 11bf0f0, PR #61): this loop used to `break` on the first
+          # child that verified, and the record had one child slot, so a
+          # wrapper with two children both resuming this transcript had the
+          # second left out of the report `lane-end --retire` acts on — which
+          # then TERMed the parent and the one child it was told about,
+          # reported RETIRED, and left the other still holding the transcript.
+          # The loop now runs to the end, and the slot carries every verified
+          # child, space-separated, in the order `pgrep -P` listed them. A
+          # pid never contains a space and `$US` is the record's only field
+          # separator, so `lane-end`'s `IFS=$'\037' read` still takes the
+          # whole list as one field.
           dhp_verified=""; dhp_fallback=""; dhp_fallback_n=0
           for dhp_c in $dhp_kids; do
             case "$dhp_cand_fence" in *" $dhp_c "*) : ;; *) continue ;; esac
@@ -6939,8 +6955,10 @@ DHPLINE
             # `--fork-session ` WITH ITS OWN TRAILING SPACE (Copilot round 11,
             # PR #61) — same fix, same reason as the parent's own check above.
             case "$dhp_c_args_lc" in *"--fork-session "*"--resume "*) : ;; *) continue ;; esac
-            dhp_c_resume="${dhp_c_args_lc#*--resume }"; dhp_c_resume="${dhp_c_resume%% *}"
-            case "$dhp_c_resume" in */"$dhp_id_lc.jsonl") dhp_verified="$dhp_c"; break ;; esac
+            dhp_resume_value "$dhp_c_args_lc"; dhp_c_resume="$dhp_rv"
+            case "$dhp_c_resume" in
+              */"$dhp_id_lc.jsonl") dhp_verified="${dhp_verified}${dhp_verified:+ }${dhp_c}" ;;
+            esac
           done
           if [ -n "$dhp_verified" ]; then
             dhp_child="$dhp_verified"
@@ -6969,6 +6987,60 @@ $dhp_cand
 EOF
   [ -n "$dhp_out" ] || return 8
   printf '%s' "$dhp_out"
+}
+
+# THE `--resume` VALUE, READ WHOLE (opensoft/openRepoTools#76), for both of
+# `duplicate_holder_pids`' matches above. It sets `dhp_rv` in the caller's own
+# shell, never through `$( … )`, which would fork once per candidate, to the
+# value after the FIRST `--resume ` in a flattened, already-lowercased argv,
+# or to empty where there is no value it can name.
+#
+# `ps -o args=` JOINS THE ARGV WITH SPACES AND QUOTES NOTHING, so where one
+# argument ends is gone from the line this reads. Measured with procps on
+# Linux: `--resume "/home/Jane Doe/.claude/projects/p/<id>.jsonl"
+# --output-format stream-json` reads back as `--resume /home/Jane
+# Doe/.claude/projects/p/<id>.jsonl --output-format stream-json`. The cut this
+# replaced, `${v%% *}`, took `/home/jane` from that and matched nothing, so a
+# duplicate resumed from a home, profile or project directory with a space in
+# it was never found, and `lane-end`'s pre-kill recheck, which made the same
+# cut, would have withheld the TERM it is there to send.
+#
+# THE VALUE ENDS AT THE FIRST `.jsonl` THAT ENDS AN ARGUMENT, one followed by
+# a space or by the end of the line, because the transcript path a harness
+# resumes ends exactly there. That keeps both of PR #61's earlier guarantees:
+# Copilot round 5's `--resume /other.jsonl --label /<id>.jsonl` still reads
+# `/other.jsonl` and never this transcript, and round 4's `<id>.jsonl.bak`
+# is still not `<id>.jsonl`, because its `.jsonl` ends no argument.
+#
+# A WORD OPENING WITH `--` INSIDE IT IS A LATER OPTION, NOT A DIRECTORY, and a
+# value that holds one is EMPTY. `--resume <a bare session id> --x
+# /<id>.jsonl` has no `.jsonl` of its own to stop at, so the first one that
+# ends an argument is the later option's, and naming the process from it
+# would hand `lane-end --retire` a TERM for something that resumed another
+# session.
+#
+# KNOWN LIMITS, and they are the flattening's rather than this read's. A
+# directory whose own name holds `.jsonl ` or ` --` is cut short or refused,
+# which only ever misses. A value that does not itself end in `.jsonl`,
+# followed by a later plain word (no `--`) ending in `/<id>.jsonl`, reads as
+# one value with a space in it; that is the one shape this read can still
+# mistake. Linux's `/proc/<pid>/cmdline` keeps the argument boundaries and
+# BSD/macOS has nothing like it, so one portable reading of `ps`, the same on
+# every platform and under the suite's own fake `ps`, is kept over two that
+# could disagree. `lane-end` carries the same rule for its pre-kill recheck
+# (`dh_resume_value`), and the two must stay the same rule.
+dhp_resume_value() {   # <flattened argv, lowercased> — sets dhp_rv
+  dhp_rv=""
+  case "${1-}" in *"--resume "*) : ;; *) return 0 ;; esac
+  dhp_rv_rest="${1#*--resume }"
+  while :; do
+    case "$dhp_rv_rest" in *.jsonl*) : ;; *) dhp_rv=""; return 0 ;; esac
+    dhp_rv="${dhp_rv}${dhp_rv_rest%%.jsonl*}.jsonl"
+    dhp_rv_rest="${dhp_rv_rest#*.jsonl}"
+    case "$dhp_rv_rest" in "" | " "*) break ;; esac
+  done
+  case "$dhp_rv" in *" --"*) dhp_rv="" ;; esac
+  return 0
 }
 
 # ------------------------------- decisions 6 and 7: THE LANE LISTING READ

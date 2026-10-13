@@ -1733,7 +1733,10 @@ DOES record — while a second live process now holds the one transcript
 Amendment 18(h) says exactly one may. `lanes-edit.sh duplicate-holder <lane>`
 finds it in the PROCESS TABLE instead (`pgrep -f` for a live `--fork-session`,
 then `ps -o pid=,ppid=,args= -p` per candidate — portable across GNU and
-BSD/macOS), matched against every id this lane's row has ever carried, and
+BSD/macOS), matched against every id this lane's row has ever carried by the
+`--resume` value read whole, a directory with a space in it included
+(opensoft/openRepoTools#76: `ps` joins the argv with spaces and quotes nothing,
+so the value runs to the first `.jsonl` that ends an argument), and
 excludes the lane's own live holder (`live_holder`, the same implementation
 `live-holder` already calls) **and the harness's own companion of it** —
 Amendment 8 ruling (g)'s `kind: bg` record carrying the same id in the same
@@ -1741,11 +1744,12 @@ profile as an interactive record of it, which is one session and not a rival
 holder, together with any wrapper whose child is that companion. A records
 tree that cannot be read for that test is a read that failed, never "no
 companion". `lane-end <lane> --retire <pid>` tries `forks`
-first and this second, and on a match here it TERMs the pair — the
-`bg-pty-host` parent and its child — and reports the pids it signalled; it
-refuses, naming the reason, when the pid given is the lane's own live session
-rather than the duplicate. Before this the retirement was a bare `kill -TERM`,
-outside every tool this estate has.
+first and this second, and on a match here it TERMs the `bg-pty-host` parent
+and EVERY child of it that resumes the same transcript, not only the first
+(opensoft/openRepoTools#86), reports each pid it signalled, and says RETIRED
+only once every one of them is gone; it refuses, naming the reason, when the
+pid given is the lane's own live session rather than the duplicate. Before this
+the retirement was a bare `kill -TERM`, outside every tool this estate has.
 
 ### The workstation's name
 
