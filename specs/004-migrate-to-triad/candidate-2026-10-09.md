@@ -34,6 +34,11 @@ it says r1.
   entry-point patch to v3 (`004-migrate-to-triad-installer` `4f773b8`). Neither is in
   this record (section 6).
 
+**r3 (2026-10-11), section 9:** #191 at its final head `8246983`, with T007 v3 (patch
+sha256 `67d8e7ce…`). Code `9c11276`, spec `9e1d006`, assembly `3891943`. The install
+modules, composed: 281 passed, 0 failed, 0 skipped. F1 is gone. The install differs from
+main `f87fd5a` only in the implementation it hands over to.
+
 ## 1. Inputs
 
 Every input was read without checking it out in any existing worktree. Patches were
@@ -300,7 +305,9 @@ run has one.
       is `.gitattributes`: that code leg did not carry T006's `code-0001`.
     - CI on `6568f08`: `tests` 1416 passed, 9 skipped.
     - Neither is this candidate, and neither is the full composed suite.
-  - The record owes a composed rerun at `6568f08` with T007 v3. The rebuild takes about 5
+  - The record owes a composed rerun at `6568f08` with T007 v3. *(2026-10-11: done in
+    scoped form at the final head `8246983`, in section 9. The full composed suite is
+    redone at the frozen source for Gate C.)* The rebuild takes about 5
     minutes: the code leg plus a regenerated code bump, and the assembly with the v3
     patch in place of v1.
   - The full composed run took 1:48 at load 130 here. CI's `tests` takes 45–48 minutes.
@@ -403,6 +410,98 @@ written.
 | `rehearsal-listing-before.txt` | `1dbf1ae38a9f98fac7b9f1ded1f0b6b2d699cc8ecb7b4f914c2cd5171f412038` |
 | `rehearsal-listing-after.txt` | `1dbf1ae38a9f98fac7b9f1ded1f0b6b2d699cc8ecb7b4f914c2cd5171f412038` |
 | `network-shim-calls.log` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+
+## 9. r3: the install path at #191's final head — October 10–11, 2026
+
+**Why a scoped rerun.** After r2, #191 moved on:
+- `6568f08` carried F1's fix;
+- `cddd1f7` installs exactly the bytes that were checked from a mounted code leg;
+- `8246983` is lane 3's LAND.
+
+T007's entry point also moved, to v3. On the coordinator's order this is the scoped
+rerun section 6 offered: the install modules composed, plus the install comparison. The
+full composed suite is redone once, at the frozen source, for Gate C.
+
+**Inputs.** Every input not listed here is r2's:
+
+| Input | Identity |
+| --- | --- |
+| PR #191 | `8246983`. Its 10 non-merge commits since `f87fd5a`, by `git format-patch f87fd5a..8246983`. The merge of main, `45979a4`, has no conflict hunks (`git show --cc` is empty) |
+| PR #190 | as landed, `f87fd5a`. Every path under `tests/` has `b50f197`'s blob, so r2's #190 stack (`6e294fe`) is the base |
+| T007 entry point v3 | `specs/004-migrate-to-triad/patches/t007-assembly-entry-point.patch` at `004-migrate-to-triad-installer` `67a978c`: blob `407741b`, unchanged since `4f773b8`; **sha256 `67d8e7ce8b0f7008d2151a44c0eabaf74cda7cd2697c6e09ee7da0c341c671b5`**, as `installer-2026-10-08.md` records. It writes `openRepoTools` as blob `ff432c6`, mode 100755, sha256 `8248224d…` |
+
+**Build. Every `git am` exited 0, with no resolution:**
+
+| Leg | Steps | Commit | Tree |
+| --- | --- | --- | --- |
+| code | `6e294fe` + #191's 10 commits (`e06fd90` … `830f673`) | `830f673` | `b0d15e4a` |
+| code | + T006 `code-0001` (`6e4761b`) + T010 `tests.yml` | **`9c112769d4311675b4eee89852cf7e51384bfb4b`** | **`e53dfa62`**; pinned digest `268cd8ca6dcb5cd35a1c7060ee112399d060db41bba9d4b0ed4a08bcdb10dd0b` |
+| spec | unchanged | **`9e1d006`** | `10256135` |
+| assembly | `69b8924` + `assembly-0001` (`4f1e522`) + `composed.yml` (`738857c`) + T007 v3 (`325131e`) + `bump-leg.py` spec (`23439bb`) and code | **`3891943274f74b6c87683153e35ee9a961b5b1eb`** | **`fd997c3d`** |
+
+What was checked:
+- **The code leg is #191's final head.** All 51 code-leg paths that `8246983` carries
+  have its blob.
+- **The assembly is valid.** `bootstrap.py` reports both legs "branch tip == pin";
+  `make validate` exits 0; `composed.yml`'s context step exits 0.
+- **It reproduces.** A fresh recursive clone bootstraps and validates the same way.
+
+**The install modules, composed** (`test_install_payload_source.py`,
+`test_openrepotools_command.py`, `test_install_skill_and_hook.py`,
+`test_install_by_rename.py`):
+- **How:** isolated, with `HOME`, `TMPDIR`, `--basetemp` and `PYTHONPYCACHEPREFIX` in
+  scratch. `OPENREPOTOOLS_COMPOSED=1`, with the assembly and spec roots named.
+- **SIGINT at its default:** reset before `flock`, and printed as
+  `default_int_handler` by the process that then became pytest, so F5 cannot recur.
+- **The lock:** one `flock` on the workstation lock, 2026-10-11T16:33:32Z–16:59:15Z,
+  at load about 150.
+
+| Run | Result |
+| --- | --- |
+| **r3, `8246983` + T007 v3** | **281 passed, 0 failed, 0 skipped** in 25:39 |
+| r3a, `6568f08` + T007 v3 (2026-10-10T23:52Z, superseded within the hour by `cddd1f7`) | 278 passed, 0 failed, 0 skipped in 10:59; code `663d775`, assembly `e195ba9` |
+
+**F1 is gone.** `test_r14_the_documented_upstream_skip_is_unchanged` passes in both
+module runs. Run alone in r3's composed tree it is `PASSED` (0.53 s). At `8246983` the
+test reads the command from conftest's own text, so composed mode no longer depends on
+`NEEDS_UPSTREAM` being a `skipif`.
+
+**The install, compared with main `f87fd5a`.** Same method as section 4 (one disposable
+home path, the same seed, `env -i`, refusing shims: **0 calls**):
+
+| Stage | Result |
+| --- | --- |
+| A: main `f87fd5a`'s `./openRepoTools --install` | exit 0; `17 of 17 placed`; 29 `installed at`; 29 receipt rows |
+| B: the r3 assembly root's `./openRepoTools --install` (T007 v3) | exit 0. First line: "source: the code mounted at `<clone>/code`, opensoft/openRepoTools-code at 9c112769d431… as `<clone>` pins it; every payload file was checked against that commit and nothing fetched". Then `17 of 17 placed`, 29 rows |
+| B2: the candidate again | exit 0; 31 `unchanged` |
+| C: main again, over B | exit 0; 1 `updated`, 30 `unchanged` |
+
+Between A and B the only differences are these two:
+- `~/.local/bin/openRepoTools`: `47cfe74e…` becomes `697fdbd4977454f18b80f33d3501c8d2b7dee44335f1afafbd1e1595d76f2aed`,
+  which is the bytes of `8246983:openRepoTools`, not the entry point (`8248224d…`);
+- that file's receipt row, and the receipt's timestamps.
+
+`settings.json` is byte-identical, and the foreign command and skills are untouched. C
+restores A, except the receipt's timestamps. r3a gave the same result with
+`6568f08`'s implementation, `b2ff0f1c…`.
+
+**What r3 changes, and what it does not.**
+- **F1 is closed** at #191's final head.
+- **The install path is green** in composed mode with T007 v3.
+- **F2–F6 stand as classified in section 5.** None is in these modules.
+- **This is not the full composed suite.** That run is redone once at the frozen source,
+  for Gate C.
+
+| r3 log (in the receipt's `logs/`) | SHA256 |
+| --- | --- |
+| `90-r3f-build.log` | `1654219464e453fdea2cc652b07decea9e6baf374055660b0ea485b9863b252a` |
+| `92-r3f-install-modules-composed.log` | `3eb6c875cdd223aaaf174ea5a8cb4fd09f1d2238323406326fd4664641e572b3` |
+| `93-r3f-install-check.log` | `364bd77941704c420008fa5f9ad13fc90da43e6cf6c3009acdc5e23149eb5095` |
+| `94-r3f-install-compare.log` | `09369829865ad226f4c2e8a4e71852c738ccb5981a5082dc8891caebd40acee0` |
+| `95-r3f-r14-composed.log` | `e66b0843a2ffa3fb74f386615ae0e6d40ad3a4f42bdbf6f3d127856e78c7f567` |
+| `80-r3-build.log` (r3a) | `1663134c45fbc3c3f8588a72d461d2e20205d653eca28861b0323e50d6325754` |
+| `82-r3-install-modules-composed.log` (r3a) | `bc11cf7936a75b9ba0851beca7b311dae7fd9d614103296ff36207b8cf156ddf` |
+| `84-r3-install-compare.log` (r3a) | `d3d15457017dc0fe84a0a5338a005c177ea0b5c118233a12ffb595c853d42674` |
 
 This record authorizes no conversion, repository creation, merge, default-branch move or
 lane rebinding.
