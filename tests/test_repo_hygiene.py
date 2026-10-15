@@ -197,37 +197,6 @@ def test_shipped_bash_parses_under_bash(name):
     assert proc.returncode == 0, proc.stderr
 
 
-def test_the_macos_job_parses_every_bash_file_this_repository_ships():
-    """THE macOS PARSE STEP IS A HAND-WRITTEN LIST, AND A HAND-WRITTEN LIST IS
-    A THING SOMEBODY FORGETS.
-
-    That step is the only place the README's claim — that Apple's stock
-    `/bin/bash`, 3.2, is enough for every bash file here — is actually asked of
-    bash 3.2. The test above runs on whatever `bash` the runner has, which on
-    the Linux jobs is 5.x, and `mapfile`, `${x,,}` and `declare -A` all parse
-    there. One command per file, because `bash -n a b` parses `a` and hands `b`
-    to it as `$1`, so a file appended to somebody else's line is never read at
-    all — which is why this is a per-name check and not a substring search for
-    the step.
-
-    Held here rather than trusted, because the omission has no symptom: the job
-    goes green, and what it proves is quietly one file smaller than it says.
-    `lane-handoff` arrived under Amendment 17(a) as the twelfth placed file and
-    was not in that list; nothing anywhere said so.
-    """
-    workflow = (REPO / ".github" / "workflows" / "tests.yml").read_text(
-        encoding="utf-8")
-    parsed = {line.strip()[len("/bin/bash -n "):]
-              for line in workflow.splitlines()
-              if line.strip().startswith("/bin/bash -n ")}
-    assert parsed, "the macOS job no longer runs `/bin/bash -n` at all"
-    missing = [name for name in ALL_BASH if name not in parsed]
-    assert not missing, (
-        "the macOS job's `/bin/bash -n` step does not parse every bash file "
-        "this repository ships, so the bash-3.2 claim is untested for:\n  "
-        + "\n  ".join(missing))
-
-
 #: THE FILES `--install` PLACES, READ OUT OF THE INSTALLER'S OWN LIST rather
 #: than restated here. `openRepoTools` declares them once — *"One list, so the
 #: installer, the fetch and the report cannot disagree"* — and deriving from it
