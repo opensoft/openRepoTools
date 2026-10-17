@@ -334,8 +334,8 @@ placement, and changes nothing.
 - `type -P openRepoTools` finds the first on `PATH`. bash 3.2 has `type -P`.
 - It is resolved with Decision 6's loop.
 - It is compared with `<prefix>/bin/openRepoTools`, where `<prefix>` is the
-  directory four levels above the payload
-  (`<prefix>/lib/pythonX.Y/site-packages/openrepotools/payload`).
+  directory five levels above the payload directory, the parent of its
+  `lib/` (`<prefix>/lib/pythonX.Y/site-packages/openrepotools/payload`).
 - On a mismatch, or when nothing is found, it prints one line, and the exit
   status is unchanged:
 
