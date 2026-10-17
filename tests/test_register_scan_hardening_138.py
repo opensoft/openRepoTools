@@ -435,3 +435,25 @@ def test_item_18_an_unreadable_published_register_refuses_add_row(reg):
     assert reg.head() == before
     published = reg.raw_git("-C", str(reg.origin), "show", "main:lanes/LANES.md")
     assert published.count("| `repoX-5` |") == 1
+
+
+def test_item_1_an_unreadable_published_register_refuses_the_sweep(reg):
+    """#138 item 1, ALREADY FIXED on main: refusal 1 reads both rows' ids
+    through `|| :`, but the seam asked just before it (`managed_seam_refuse`,
+    from #97) reads the published register and this checkout's row with their
+    status and refuses UNKNOWN (1) on either failing. Pinned here, because the
+    fence for a live session whose id is only in the published row now rests
+    on it: that row is the published one this checkout's edit dropped."""
+    live = "cccc0138-0003-4000-8000-000000000003"
+    text = reg.read("lanes/LANES.md").replace(f"| `repoX-2` | harness `{OLD_ID}`", f"| `repoX-2` | harness `{live}`")
+    reg.write("lanes/LANES.md", text)
+    reg.publish("repoX-2 is live in a session here")
+    reg.write("lanes/LANES.md", text.replace(live, OLD_ID))
+    reg.live(live)
+    reg.refuse_git("show origin/main:lanes/LANES.md")
+    before = reg.head()
+    result = reg.sweep("repoX-2", LANES_SESSION=WRITER_ID)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert "is UNKNOWN" in result.stderr
+    assert reg.head() == before
+    assert not (reg.wip / "lanes/log/repoX-2.md").exists()
