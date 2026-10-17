@@ -3072,11 +3072,17 @@ remote_log_events() {
   fi
   [ "$NO_GIT" = 1 ] && { log_events; return 0; }
   git -C "$LANES_REPO" rev-parse --verify -q "origin/$LANES_BRANCH" >/dev/null 2>&1 || { log_events; return 0; }
+  # A LOG THE TREE NAMES AND `show` CANNOT READ IS SAID, by path (#138 item
+  # 11). The parser's status is the pipeline's, so the failure left no trace:
+  # the lane simply had no lines, which the listing reads as DORMANT. The line
+  # reaches the person through `state_events`' warnings, and `lanes_rows` reads
+  # it back out of that file by its fixed prefix.
   git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_LOG_PREFIX" 2>/dev/null \
   | while IFS= read -r rf; do
       [ -n "$rf" ] || continue
       case "${rf##*/}" in README.md) continue ;; esac
       git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$rf" 2>/dev/null | parse_log_stream "$rf"
+      [ "${PIPESTATUS[0]}" = 0 ] || note "unreadable log: $rf — git could not read it, so none of its lines are in this read"
     done
 }
 
@@ -7323,6 +7329,23 @@ lanes_rows() {
   else
     lr_facts="$(state_events 2>/dev/null | lane_row_facts)"
   fi
+  # AND A PUBLISHED LOG THAT COULD NOT BE READ IS NOT A LANE WITH NO LOG (#138
+  # item 11). A lane absent from the facts is DORMANT below, and a log whose
+  # `git show` failed gave no lines; `remote_log_events` names each such log,
+  # and those lanes are fenced out of the class here. Without the warnings file
+  # (no temporary file could be made) no read can be told from a failed one, so
+  # no row is classed dormant at all.
+  lr_unread=" "; lr_unread_ok=1; lr_unread_paths=""
+  if [ -z "$lr_one" ] && [ -z "$LANES_IDX_DIR" ]; then
+    if [ -n "$SE_WARN_FILE" ]; then
+      lr_unread_paths="$(sed -n -e 's/^lanes-edit: unreadable log: \(.*\) — git could not read it.*$/\1/p' "$SE_WARN_FILE" 2>/dev/null)"
+      lr_unread=" $(printf '%s\n' "$lr_unread_paths" | awk 'NF { n = $0; sub(/^.*\//, "", n); sub(/\.md$/, "", n); print tolower(n) }' | tr '\n' ' ')"
+    else
+      lr_unread_ok=0
+    fi
+  fi
+  [ -z "$lr_unread_paths" ] ||
+    note "these published logs could not be read, so no lane of theirs is classed DORMANT: $(printf '%s\n' "$lr_unread_paths" | tr '\n' ' ')"
   # THE REGISTER AND THE LIVE RECORDS, EACH READ ONCE FOR THE WHOLE LISTING
   # (ruling 12). Both were per-lane before, and `live_session_ids` was rebuilt
   # from 564 session records for every one of them.
@@ -7613,11 +7636,15 @@ EOF2
         # up); this is what it does about it — leaves the class unset, so the
         # row stays listed and the sweep is never offered it.
         if [ -n "$lr_row" ] && [ "$lr_lanekind" = 0 ] && [ "$lr_live_rc" = 0 ] &&
-           [ "$lr_cellrow" = 1 ] && [ "$lr_logs_rc" = 0 ]; then
+           [ "$lr_cellrow" = 1 ] && [ "$lr_logs_rc" = 0 ] && [ "$lr_unread_ok" = 1 ]; then
           lr_class=dormant
-          # A LOG THIS CHECKOUT HAS AND `origin` HAS NOT IS STILL AN OBJECT LOG.
+          # A LOG THIS CHECKOUT HAS AND `origin` HAS NOT IS STILL AN OBJECT LOG,
+          # AND SO IS ONE `origin` HAS AND GIT COULD NOT READ (item 11).
           case "$lr_logfiles" in
             *" $lr_ll.md "*) lr_class="" ;;
+          esac
+          case "$lr_unread" in
+            *" $lr_ll "*) lr_class="" ;;
           esac
           if mig_cell_is_phrase "$lr_was"; then
             case "${lr_was%% · *}" in

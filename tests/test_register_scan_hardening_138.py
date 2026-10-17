@@ -365,7 +365,7 @@ def test_item_5_a_register_path_that_renders_empty_offers_no_position(reg, kind)
 
 # ------------------------------------------- #138: the listing's DORMANT class
 
-def classes(reg: Register) -> dict:
+def classes(reg: Register) -> tuple:
     result = reg.run("lanes", "--closed", "--prefix", "repoX")
     assert result.returncode == 0, (result.stdout, result.stderr)
     return {f[0]: f[13] for f in (line.split("\t") for line in result.stdout.splitlines()) if len(f) > 13}, result.stderr
@@ -390,3 +390,22 @@ def test_item_4_a_log_directory_that_cannot_be_listed_classes_no_row_dormant(reg
         logs.chmod(0o755)
     assert unreadable["repoX-2"] == "none"
     assert "could not be listed" in err
+
+
+def test_item_11_a_published_log_git_cannot_read_is_never_classed_dormant(reg):
+    """#138 item 11: DORMANT is read from a lane's absence from the facts pass,
+    and a published log whose `git show` failed gave that pass no lines, so an
+    IDLE lane read as NO LOG, was hidden, and was offered to the sweep. Its
+    local copy is out of the sparse checkout, so only origin speaks for it."""
+    reg.write("lanes/log/repoX-2.md", log_text(
+        "repoX-2", lane_line("STARTED", "repoX-2", OLD_ID, "2026-10-13T00:00:00Z")))
+    reg.publish("repoX-2 started")
+    reg.git("update-index", "--skip-worktree", "lanes/log/repoX-2.md")
+    (reg.wip / "lanes/log/repoX-2.md").unlink()
+    readable, _ = classes(reg)
+    assert readable["repoX-2"] == "none" and readable["repoX-3"] == "dormant"
+    reg.refuse_git("origin/main:lanes/log/repoX-2.md")
+    unreadable, err = classes(reg)
+    assert unreadable["repoX-2"] == "none"
+    assert unreadable["repoX-3"] == "dormant"
+    assert "lanes/log/repoX-2.md" in err
