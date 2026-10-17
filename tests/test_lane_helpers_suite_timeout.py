@@ -46,6 +46,11 @@ pytestmark = [
 
 TESTS = Path(__file__).resolve().parent
 
+#: Windows has no SIGHUP, and everything here is skipped there - but a test
+#: module has to import on Windows to be skipped, and this one names it in a
+#: decorator.
+SIGHUP = getattr(signal, "SIGHUP", None)
+
 #: The stand-in answers TERM the way the suite does (`trap 'cleanup; exit 143'
 #: TERM`), leaving a marker where the suite would remove its sandbox. Its
 #: `sleep` outlives every bound below by a wide margin, so it is only ever gone
@@ -238,7 +243,7 @@ def runner(tmp_path):
         proc.wait()
 
 
-@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGHUP],
+@pytest.mark.parametrize("signum", [signal.SIGTERM, SIGHUP],
                          ids=["TERM", "HUP"])
 def test_a_signal_to_the_runners_group_leaves_no_process_behind(
         signum, standin, runner):
@@ -258,7 +263,7 @@ def test_a_hangup_that_was_ignored_stays_ignored(standin, runner):
     stand = standin(STANDIN)
     proc = runner(stand, prelude="signal.signal(signal.SIGHUP, signal.SIG_IGN)")
     pid = sleep_pid(stand.pidfile)
-    os.killpg(proc.pid, signal.SIGHUP)
+    os.killpg(proc.pid, SIGHUP)
     time.sleep(1)
     assert proc.poll() is None and running(pid), (
         "a hangup the run was ignoring ended it:\n"
