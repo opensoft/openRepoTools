@@ -2528,13 +2528,24 @@ BENCH_ABSOLUTE_PATH = re.compile(r"(?<![\w.~$}])" + re.escape(_BENCH_ROOT))
 #:     `grep -rn '^path: …'` and `grep -E '…'` (`git grep -n -e '…'` is this
 #:     form too: `-e` reads as one more flag), or
 #:   - the argument of a further `-e`, as in `grep -n -e 'a' -e 'b'`.
-#: Everything else stays a finding: a second quoted operand is a FILE (`grep -n
-#: 'x' '<path>'`), a double-quoted string can hold a variable, a flag that takes
-#: a value (`grep -m 1 '…'`) ends the run of flags, and a path before the
-#: `grep` (`git -C <path> grep …`) is outside it. Within a line only: no
-#: whitespace in these patterns may be a newline.
+#: Everything else stays a finding. The run of flags ends at the first word that
+#: is not a short flag, so a flag followed by a bare value (`grep -m 1 '…'`)
+#: licenses nothing; and a bundle that carries a lowercase `f` (`-f`, `-rf`) is
+#: not a flag of the run at all, because `-f` names a pattern FILE, which is a
+#: path and never a pattern (`-F`, fixed strings, is an ordinary flag). Likewise
+#: a second quoted operand is a FILE (`grep -n 'x' '<path>'`), a double-quoted
+#: string can hold a variable, and a path before the `grep` (`git -C <path>
+#: grep …`) is outside it.
+#:
+#: A scrubbed span is replaced by `grep ` WITH its space: a bare `grep` ends in a
+#: word character, and the root's lookbehind would then drop a path glued onto
+#: the closing quote. The key is the word `grep`, not a command position, so
+#: prose or an `echo` that says `grep '…'` is scrubbed the same way; this is a
+#: lexical rule for text a person reviews, not a shell parser. Within a line
+#: only: no whitespace in these patterns may be a newline.
 QUOTED_SEARCH_PATTERNS = re.compile(
-    r"\bgrep(?:[ \t]+-[A-Za-z]+)*[ \t]+'[^'\n]*'(?:[ \t]+-e[ \t]+'[^'\n]*')*")
+    r"\bgrep(?:[ \t]+-(?![A-Za-z]*f)[A-Za-z]+)*[ \t]+'[^'\n]*'"
+    r"(?:[ \t]+-e[ \t]+'[^'\n]*')*")
 
 
 def host_absolute_path_hits(text: str) -> list[str]:
@@ -2544,7 +2555,7 @@ def host_absolute_path_hits(text: str) -> list[str]:
     text is clean."""
     hits = HOST_ABSOLUTE_PATH.findall(text)
     for number, line in enumerate(text.splitlines(), 1):
-        scrubbed = QUOTED_SEARCH_PATTERNS.sub("grep", line)
+        scrubbed = QUOTED_SEARCH_PATTERNS.sub("grep ", line)
         if BENCH_ABSOLUTE_PATH.search(scrubbed):
             hits.append(f"line {number}: {line.strip()[:120]}")
     return hits
@@ -2984,6 +2995,16 @@ BENCH_PATH_REFUSED = [
      'grep -E "<root>projects/x" file'),
     ("a flag that takes a value ends the run of flags",
      "grep -m 1 '<root>projects/x' file"),
+    ("-f names a pattern FILE, which is a path and not a pattern",
+     "grep -f '<root>projects/pat.txt' log"),
+    ("-f under git grep names a pattern file too",
+     "git grep -f '<root>projects/pat.txt' HEAD"),
+    ("-f inside a flag bundle is still -f",
+     "grep -rf '<root>projects/pat.txt' ."),
+    ("-f ahead of an -e chain licenses nothing in it",
+     "grep -f '<root>projects/pat.txt' -e 'x' -e 'y' log"),
+    ("a path glued onto the closing quote of a pattern",
+     "grep -E 'x'<root>projects/y log"),
     ("a quoted path piped INTO a grep is still an echoed path",
      "echo '<root>projects/x' | grep -n 'y'"),
     ("a grep on one line licenses nothing on the next",
