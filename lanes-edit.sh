@@ -11812,6 +11812,15 @@ archive_rows() {   # <repo> <1 = the act, 0 = the dry run>
        ! git -C "$LANES_REPO" ls-files --error-unmatch -- "$LANES_ARCH_PATH" >/dev/null 2>&1; then
       die "$LANES_ARCH_PATH exists in this checkout but is NOT TRACKED — somebody's uncommitted work, which this move would commit inside its own commit. Commit it first (\`git -C $LANES_REPO commit -m \"<what it is>\" -- $LANES_ARCH_PATH\`) and re-run. Nothing was written." 2
     fi
+    # AN ARCHIVE THAT IS A SYMLINK, OR THERE AND NOT A REGULAR FILE, IS REFUSED
+    # (Copilot on #93's `afd5481`, #138 item 10). The rows are appended with
+    # `>>`, which follows a link: a tracked link here put them in whatever file
+    # it named, outside the repository, while the commit published the link and
+    # their removal from the register — the rows left the repository entirely.
+    if [ -L "$LANES_DIR/archive" ] || [ -L "$LANES_ARCH_FILE" ] ||
+       { [ -e "$LANES_ARCH_FILE" ] && [ ! -f "$LANES_ARCH_FILE" ]; }; then
+      die "$LANES_ARCH_PATH, or its directory, is a symlink — or the archive is there and not a regular file. This move appends the rows with '>>', which writes through a link to whatever file it names while the commit records the link and removes the rows from the register. Put the archive itself there as a regular file, commit it, and re-run. Nothing was written." 2
+    fi
   fi
 
   # THE REGISTER IS READ WITH ITS OWN STATUS (Copilot round 4 on #93). Inside

@@ -261,3 +261,32 @@ def test_item_8_the_retired_line_carries_the_writers_unpushed_newest_transcript(
                if line.startswith("RETIRED")]
     assert len(retired) == 1
     assert f"session {newest}@Eagle" in retired[0]
+
+
+# ------------------------------------------------ #138: archive_rows' preflight
+
+def retire_repo_x_2(reg: Register) -> None:
+    text = reg.read("lanes/LANES.md").replace(
+        "| old words |", "| RETIRED · 2026-09-01T00:00:00Z · swept |")
+    reg.write("lanes/LANES.md", text)
+
+
+def test_item_10_a_symlinked_archive_refuses_and_the_row_stays_in_the_register(reg):
+    """#138 item 10: a tracked symlink at the archive path passed every check,
+    the rows were appended through it to a file outside the repository, and the
+    commit published their removal from the register: the rows left the
+    repository altogether."""
+    retire_repo_x_2(reg)
+    outside = reg.tmp / "outside.md"
+    outside.write_text("# not the archive\n")
+    (reg.wip / "lanes/archive").mkdir()
+    (reg.wip / "lanes/archive/LANES-retired.md").symlink_to(
+        os.path.join("..", "..", "..", "outside.md"))
+    reg.publish("repoX-2 retired, and a link where the archive belongs")
+    before = reg.head()
+    result = reg.run("archive-rows", "repoX", "--yes", LANES_LANE="repoX-1")
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "is a symlink" in result.stderr
+    assert outside.read_text() == "# not the archive\n"
+    assert reg.head() == before
+    assert "`repoX-2`" in reg.git("show", "origin/main:lanes/LANES.md")
