@@ -361,3 +361,32 @@ def test_item_5_a_register_path_that_renders_empty_offers_no_position(reg, kind)
     result = next_free(reg)
     assert result.returncode == 1, (result.stdout, result.stderr)
     assert result.stdout == ""
+
+
+# ------------------------------------------- #138: the listing's DORMANT class
+
+def classes(reg: Register) -> dict:
+    result = reg.run("lanes", "--closed", "--prefix", "repoX")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    return {f[0]: f[13] for f in (line.split("\t") for line in result.stdout.splitlines()) if len(f) > 13}, result.stderr
+
+
+@ROOT_ONLY
+def test_item_4_a_log_directory_that_cannot_be_listed_classes_no_row_dormant(reg):
+    """#138 item 4: the listing's fence of this checkout's logs was
+    `ls 2>/dev/null`, so an unreadable directory hid a log committed here and
+    not yet pushed, and its lane was classed DORMANT — hidden, and offered to
+    the sweep."""
+    reg.write("lanes/log/repoX-2.md", log_text(
+        "repoX-2", lane_line("STARTED", "repoX-2", OLD_ID, "2026-10-13T00:00:00Z")))
+    reg.commit("repoX-2 started here, not yet pushed")
+    readable, _ = classes(reg)
+    assert readable["repoX-2"] == "none" and readable["repoX-3"] == "dormant"
+    logs = reg.wip / "lanes" / "log"
+    logs.chmod(0)
+    try:
+        unreadable, err = classes(reg)
+    finally:
+        logs.chmod(0o755)
+    assert unreadable["repoX-2"] == "none"
+    assert "could not be listed" in err

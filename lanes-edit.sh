@@ -7393,7 +7393,16 @@ lanes_rows() {
   # disagree about the amendment's own condition. One `ls` for the whole
   # listing, matched with a `case` per lane, and lower-cased because a lane name
   # is ONE name under any case (Amendment 15).
-  lr_logfiles=" $(ls -- "$LANES_LOG_DIR" 2>/dev/null | awk '{ print tolower($0) }' | tr '\n' ' ')"
+  # AND A DIRECTORY THAT IS THERE AND CANNOT BE LISTED IS NOT ONE WITH NO LOG IN
+  # IT (#138 item 4): the fence would be empty and a lane whose only log is here
+  # classed DORMANT. It is said, and no row is classed dormant over it below.
+  lr_logfiles=""; lr_logs_rc=0
+  if [ -e "$LANES_LOG_DIR" ]; then
+    lr_logfiles="$(ls -- "$LANES_LOG_DIR" 2>/dev/null)" || lr_logs_rc=1
+  fi
+  lr_logfiles=" $(printf '%s\n' "$lr_logfiles" | awk '{ print tolower($0) }' | tr '\n' ' ')"
+  [ "$lr_logs_rc" = 0 ] ||
+    note "$LANES_LOG_DIR exists and could not be listed, so whether a row has a log this checkout has and origin has not is not known, and no row is classed DORMANT here. Fix the read and re-run before sweeping."
   if [ "$lr_live_rc" != 0 ] || [ "$lr_fork_rc" != 0 ]; then
     note "this workstation's session records could not be read, so the STATE column below is the LOG's verb alone: a lane that is live may show as IDLE or PAUSED here, and no fork of any lane is established either way. Fix the read and re-run before acting on a restart line."
   fi
@@ -7604,7 +7613,7 @@ EOF2
         # up); this is what it does about it — leaves the class unset, so the
         # row stays listed and the sweep is never offered it.
         if [ -n "$lr_row" ] && [ "$lr_lanekind" = 0 ] && [ "$lr_live_rc" = 0 ] &&
-           [ "$lr_cellrow" = 1 ]; then
+           [ "$lr_cellrow" = 1 ] && [ "$lr_logs_rc" = 0 ]; then
           lr_class=dormant
           # A LOG THIS CHECKOUT HAS AND `origin` HAS NOT IS STILL AN OBJECT LOG.
           case "$lr_logfiles" in
