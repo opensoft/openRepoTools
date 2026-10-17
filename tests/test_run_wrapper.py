@@ -16,6 +16,10 @@ what #162 added around it:
   * the repository's virtual environment is used when it has pytest, with the
     command line still reading `python3 -m pytest`.
 
+And what #72 asked of the `mkdir` lock itself: a run that cannot record its
+pid in the lock does not start, and a run's exit removes the lock only while
+that pid is still the one inside.
+
 THE SUITE ITSELF IS A STUB. A fake `python3` records how it was called and
 sleeps or exits on cue, and a fake `pgrep` reports no other run - the real one
 would see THIS suite's own `python3 -m pytest` and wait for ever.
@@ -24,6 +28,7 @@ would see THIS suite's own `python3 -m pytest` and wait for ever.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import signal
 import subprocess
@@ -71,6 +76,16 @@ if [ -n "${FAKE_SUITE_LEAVE:-}" ]; then
   printf '%s\n' "$!" > "$FAKE_SUITE_LOG.child"
   exit 0
 fi
+if [ -n "${FAKE_SUITE_TAKEOVER:-}" ]; then
+  # THE LOCK IS TAKEN OVER WHILE THIS RUN HOLDS IT (#72 item 2): claimed as a
+  # waiter that read this holder as gone claims it, and made again with that
+  # waiter's pid inside.
+  mv "$FAKE_SUITE_TAKEOVER" "$FAKE_SUITE_TAKEOVER.claimed" &&
+    rm -rf "$FAKE_SUITE_TAKEOVER.claimed" &&
+    mkdir "$FAKE_SUITE_TAKEOVER" &&
+    printf '%s\\n' "$FAKE_SUITE_OTHER" > "$FAKE_SUITE_TAKEOVER/pid" || exit 99
+  exit 0
+fi
 if [ -n "${FAKE_SUITE_SLEEP:-}" ]; then
   # A CHILD OF ITS OWN, as pytest waits on a shell suite or a `git`: the
   # wrapper must stop it too, not only the process it started.
@@ -84,6 +99,18 @@ exit "${FAKE_SUITE_RC:-0}"
 """
 
 FAKE_PGREP = "#!/bin/sh\nexit 1\n"
+
+# THE REAL `mkdir`, and then - for the workstation's lock directory alone - a
+# DIRECTORY where the holder's pid file goes, so the wrapper's write of its pid
+# fails (#72 item 1) the same way on every platform and for every user, root
+# included, where a directory it cannot write would not stop root.
+FAKE_MKDIR = """#!/bin/sh
+REAL_MKDIR "$@" || exit
+case "$1" in
+  *.lock.d) REAL_MKDIR "$1/pid" || exit 99 ;;
+esac
+exit 0
+"""
 
 
 class Box:
@@ -221,6 +248,49 @@ def test_a_killed_run_removes_its_run_root_and_stops_the_suite(tmp_path, sig, rc
             raise AssertionError(f"{what} outlived its wrapper")
     if not flock:
         assert not (box.lockdir / "openrepotools-pytest.lock.d").exists(), "the lock was kept"
+        # NOR A COPY OF IT (#72 item 2): the lock is released by renaming it
+        # to a name only this run uses, and that copy goes too.
+        assert os.listdir(box.lockdir) == [], os.listdir(box.lockdir)
+
+
+def test_a_run_that_cannot_record_its_pid_in_the_mkdir_lock_does_not_start(tmp_path):
+    """#72 item 1: the holder's pid write was `|| :`, so a run that could not
+    write it entered the suite anyway - holding a lock every waiter reads as
+    stale, claims after three polls and runs beside. A pid that is not there
+    to be read is a refusal before the suite: the run releases the directory
+    it made and exits 1, naming the path."""
+    box = Box(tmp_path, flock=False)
+    fake = box.fakebin / "mkdir"
+    real = os.readlink(fake)
+    fake.unlink()
+    fake.write_text(FAKE_MKDIR.replace("REAL_MKDIR", shlex.quote(real)))
+    fake.chmod(0o755)
+    lock = box.lockdir / "openrepotools-pytest.lock.d"
+    proc = box.popen()
+    err = box.finish(proc)
+    assert not box.log.exists(), "the suite started with no pid in its lock"
+    assert proc.returncode == 1, err
+    assert f"cannot record this run's pid in {lock}/pid" in err, err
+    assert not lock.exists(), "a run that did not start kept the lock"
+    assert os.listdir(box.lockdir) == [], os.listdir(box.lockdir)
+    assert box.runs() == [], "a run that did not start made a run root"
+
+
+def test_a_holder_whose_mkdir_lock_was_taken_over_leaves_the_new_lock(tmp_path):
+    """#72 item 2: a waiter that reads a live holder as gone claims the lock
+    and makes it again with its own pid inside, and the old holder's EXIT
+    trap then removed the path - the NEW holder's lock. The trap removes the
+    lock only while it still carries this run's pid."""
+    box = Box(tmp_path, flock=False)
+    lock = box.lockdir / "openrepotools-pytest.lock.d"
+    other = str(os.getpid())                     # a live run that is not this one
+    proc = box.popen(FAKE_SUITE_TAKEOVER=str(lock), FAKE_SUITE_OTHER=other)
+    err = box.finish(proc)
+    assert proc.returncode == 0, err
+    assert lock.is_dir(), "the old holder's exit removed the new holder's lock"
+    assert (lock / "pid").read_text() == f"{other}\n"
+    assert os.listdir(box.lockdir) == [lock.name], os.listdir(box.lockdir)
+    assert box.runs() == [], "the run root outlived the run"
 
 
 @pytest.mark.skipif(not hasattr(os, "openpty") or sys.platform.startswith("win"),
