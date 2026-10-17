@@ -145,10 +145,12 @@ parent holds a regular file `_release.py`.
   included, with exit 2:
 
   ```text
-  REFUSED: this package's stamp (openrepotools/_release.py) names part of a release and not all of it: <why>. This build is broken. Install a release: pipx install --force openrepotools
+  REFUSED: this package's stamp (openrepotools/_release.py) names part of a release and not all of it: <why>. This build is broken. Reinstall it: pipx reinstall openrepotools
   ```
 
-  This is the model's wording, adapted.
+  This is the model's wording, adapted. The refusal names the stamp file and
+  the fix, `pipx reinstall openrepotools` (the lead's ruling 3, Open
+  Questions).
 - **Alternative rejected:** reading the stamp only for `--version`. A broken
   build would then run `--install` and place files under a release identity
   nobody can name.
@@ -506,7 +508,51 @@ adds to it:
 
 ## Open Questions
 
-- **The workBenches condition.** Position (c) is pending Brett Heap's word.
+### Resolved by the lead
+
+Lane openRepoTools-3, the lead, ruled on the points this file's writer
+raised. Each is marked with the date of the ruling.
+
+1. **The `.dist-info` check is confirmed.** Resolved by the lead,
+   2026-10-17.
+   - The release build and the `package` job both require the wheel's
+     `.dist-info` to hold exactly `METADATA`, `WHEEL`, `RECORD`,
+     `entry_points.txt` and `licenses/LICENSE`, with that `LICENSE` equal to
+     the commit's (Decisions 9 and 10).
+   - This check is how "the package never tolerates a missing `LICENSE`" is
+     enforced, because hatchling 1.27.0's `license-files` glob does not fail
+     on a missing file.
+   - The order stands: T006's `code-0001` is the code leg's first commit,
+     right after `execute`.
+2. **workBenches main is noted at `bdab3e2`.** Resolved by the lead,
+   2026-10-17. Both of its checks, `check_target_preflight` and
+   `verify_installed`, still hold there, and this change cites `bdab3e2`.
+3. **The stricter stamp rules are confirmed.** Resolved by the lead,
+   2026-10-17.
+   - Unstamped means `VERSION` `0.0.0` with an empty `REPOSITORY`.
+   - `TAG` equals `v$VERSION`.
+   - `REPOSITORY` is an owner/name slug.
+   - A broken stamp refuses every package-mode invocation, `--help`
+     included (Decision 4).
+   - The refusal names the stamp file and the fix,
+     `pipx reinstall openrepotools`. Decision 4's line says so, in place of
+     the `pipx install --force openrepotools` it named before this ruling.
+4. **The design's additions are confirmed.** Resolved by the lead,
+   2026-10-17.
+   - The `jq` check stays where it is (Decision 6).
+   - A venv-looking link that fails the pipx rule is refused, with no `rm`
+     advice (Decision 6).
+   - The stamp reader keeps the docstring guard (Decision 5).
+   - The fixtures include a pipx home with a space in it (Decision 6).
+5. **The checkout's count line is confirmed.** Resolved by the lead,
+   2026-10-17. It is exactly the line the proposal ("Coexistence with the
+   other installers") and the `pypi-package` delta spec fix (Decision 7).
+
+### Still open
+
+- **The workBenches condition.** Brett Heap's choice of (a), (b) or (c) is
+  still open, as the lead recorded on 2026-10-17. The proposal's single
+  bullet that depends on it, position (c), stays marked pending his word.
   Whatever he chooses changes only that bullet in the proposal and when the
   README PR of step 6 can open. It changes none of the code, specs or
   decisions here.
