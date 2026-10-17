@@ -17,8 +17,9 @@ under plain pytest's short `/tmp`, red under `tests/run.sh`'s per-run root
 as `run.sh`'s — with the checkout at three EXACT lengths, so the answer does not
 depend on where pytest itself was run:
 
-  * a short, fixed checkout keeps the whole tail, however long `$HOME` is —
-    which is what `tests/test_lane_helpers.sh`'s clause (c) TAIL case now uses;
+  * a short checkout keeps the whole tail, however long `$HOME` is — which is
+    what `tests/test_lane_helpers.sh`'s clause (c) TAIL case now uses, on a
+    checkout of at most 65 characters;
   * a checkout whose path still fits loses only the `window` ref;
   * a longer one loses the path WHOLE, never a truncated path that reads as a
     real one. That is what #180's case read under `run.sh`'s root:
