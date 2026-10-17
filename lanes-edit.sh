@@ -1201,8 +1201,20 @@ rename_undo() {
   return 0
 }
 
+# `cleanup`'S TEMPORARIES START EMPTY, so none of them is a path the CALLER
+# chose. It runs on every exit and removes each one by name, and a variable
+# exported into the environment used to arrive here already set: `rl_htmp`
+# made a read-only `canon-lane` delete the file it named, and `TMPD` made it
+# `rm -rf` the directory (the reviews of #212 and #213; `pbh_tmp` and `TMPD`
+# had the hole before `rl_htmp` joined them). `SE_CACHE_FILE` is assigned only
+# at the state-event cache below, so a signal before that line removed what it
+# inherited. Every other path `cleanup`, `rename_undo` and `release_lock`
+# remove is set above, before the trap: `RL_*`, `LANES_IDX_DIR`,
+# `LANES_WT_IDX_DIR`, `LOCK` and `LOCK_HELD`.
+TMPD=""; pbh_tmp=""; rl_htmp=""; SE_CACHE_FILE=""
 cleanup() {
   [ -z "${pbh_tmp:-}" ] || rm -f -- "$pbh_tmp"
+  [ -z "${rl_htmp:-}" ] || rm -f -- "$rl_htmp"   # rename-lane's stamp before its replace (#158)
   rename_undo
   if [ "$LOCK_HELD" = 1 ]; then release_lock; fi
   [ -n "${RL_SNAP:-}" ] && [ -d "${RL_SNAP:-}" ] && rm -rf -- "$RL_SNAP"
@@ -14380,7 +14392,31 @@ EOF
         rm -rf -- "$rl_htmpd"
         die "the handoff at $rl_hfile_new cannot take Rule 3's stamp without rewriting a byte of it, and a handoff written whole from anything but its own bytes is the act that lost two lanes' rows on 2026-09-08. The line it wants under its header block is: $rl_hstamp" 5
       fi
-      cat -- "$rl_htmpd/out" > "$rl_hfile_new" || { rm -rf -- "$rl_htmpd"; die "the handoff at $rl_hfile_new could not be written, so Rule 3's stamp is not there and this rename is not made without it." 5; }
+      # AND THE STAMPED COPY REPLACES THE HANDOFF BY RENAME, NEVER THROUGH A
+      # REDIRECT INTO IT (opensoft/openRepoTools#158). `>` truncated the handoff
+      # before the first stamped byte was written, so a writer killed inside
+      # that `cat` — or a machine that lost power there — left a handoff cut
+      # short, and no undo reached it: `rename_undo` is a trap and SIGKILL runs
+      # none, so every later read took the short file for the handoff. The
+      # bytes now go to an exclusive temporary file BESIDE the handoff, in the
+      # physical directory it resolves to, with its mode (`cp -p` first), and
+      # `mv -f` replaces it in one rename: a reader sees the handoff whole
+      # before the stamp or whole after it. These are `publish-handoff`'s
+      # mechanics, inlined because that verb takes the lock this write already
+      # holds. The leaf is never a link — refused above, before the first byte
+      # — so replacing it rather than writing through it is the same file.
+      # `cleanup` removes the temporary on every handled exit; one a crash
+      # leaves is `<handoff>.rename.XXXXXX`, which no reader of `*.md` takes
+      # for a handoff. THIS MAKES THE STAMP ATOMIC, NOT THE RENAME: a crash
+      # between two of the four moves still leaves them apart.
+      rl_hpub="$( CDPATH=''; cd -P -- "$(dirname -- "$rl_hfile_new")" && pwd -P )" || { rm -rf -- "$rl_htmpd"; die "the directory of the handoff at $rl_hfile_new could not be resolved, so Rule 3's stamp cannot be published beside it and this rename is not made without it." 5; }
+      rl_hpub="$rl_hpub/$(basename -- "$rl_hfile_new")"
+      rl_htmp="$(mktemp "$rl_hpub.rename.XXXXXX")" || { rl_htmp=""; rm -rf -- "$rl_htmpd"; die "no temporary file could be made beside the handoff at $rl_hfile_new, and Rule 3's stamp is not written into a handoff in place. This rename is not made without it." 5; }
+      if ! cp -p -- "$rl_hpub" "$rl_htmp" || ! cat -- "$rl_htmpd/out" > "$rl_htmp" || ! mv -f -- "$rl_htmp" "$rl_hpub"; then
+        rm -f -- "$rl_htmp"; rl_htmp=""; rm -rf -- "$rl_htmpd"
+        die "the handoff at $rl_hfile_new could not be written, so Rule 3's stamp is not there and this rename is not made without it." 5
+      fi
+      rl_htmp=""
       rm -rf -- "$rl_htmpd"
       note "handoff stamped at line $((rl_hat + 1)) of $rl_hpath_new: $rl_hstamp"
     fi

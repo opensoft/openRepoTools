@@ -215,8 +215,8 @@ another operation. Do not edit or redirect into the canonical handoff directly;
 perform the existing explicit-pathspec commit/push after successful publication.
 Legacy `rename-lane` is a separate four-file transaction under the same mutex;
 it refuses unfinished/failed restart ownership and uses EXIT rollback. Its
-existing direct stamp writer is an explicit exception to this atomic publication
-contract, not a crash-atomic rename guarantee.
+stamp now atomically replaces the handoff through a temporary file beside it
+(#158), but the four-file rename itself is still not crash-atomic (#224).
 
 
 The handoff path is the row's own handoff column. Derive it; do not guess it — and read the row FETCHED,
