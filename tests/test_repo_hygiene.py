@@ -2497,6 +2497,58 @@ HOST_ABSOLUTE_PATH = re.compile(
     r"|C:\\Users\\(?!runneradmin\\)[^\s\\]+\\"
 )
 
+#: THE BENCH ROOT, A RULE OF ITS OWN (opensoft/openRepoTools#193, item 22). A
+#: path under a bench's root names one machine as surely as a home directory
+#: does, and the rule above never matched it: 87 lines in two committed files
+#: carried one, checked by a person's eye alone. It is a second pattern, and
+#: not a fifth alternative above, because it has an allowance the first rule
+#: has no use for (`QUOTED_SEARCH_PATTERNS`, below).
+#:
+#: The pattern wants the root at the START of a path. Nothing that continues a
+#: path segment (a word character), a home directory (`~`), a variable (`$`,
+#: `}`) or a relative walk (`.`) may stand directly before it, so a relative
+#: `templates/<name>/` directory called `workspace`, or `~/workspace/…`, is not
+#: this bench's root and is not a finding. The root's name carries the trailing
+#: slash on purpose: `workspace.yaml` and `workspace-root/` are not it.
+#:
+#: THE ROOT IS SPELLED IN TWO PIECES for the reason `_CLAUDE_TMP_PREFIX` is:
+#: this file is scanned like every other, and a contiguous spelling here would
+#: be a finding in the very file that defines the rule.
+_BENCH_ROOT = "/work" + "space/"
+BENCH_ABSOLUTE_PATH = re.compile(r"(?<![\w.~$}])" + re.escape(_BENCH_ROOT))
+
+#: THE ONE ALLOWANCE: a path inside a quoted SEARCH PATTERN. A recorded
+#: `grep -e '<root>/…'` says what was searched for, and swapping a placeholder
+#: into it would make the record claim a different search. Three lines of
+#: `specs/004-migrate-to-triad/consumer-reads-2026-10-07.md` are exactly that.
+#:
+#: It is narrow on purpose. An allowed span is a SINGLE-QUOTED string (the shell
+#: expands nothing in one, so it is plainly a literal) that is
+#:   - the first quoted operand after a `grep` word and its short flags, as in
+#:     `grep -rn '^path: …'` and `grep -E '…'` (`git grep -n -e '…'` is this
+#:     form too: `-e` reads as one more flag), or
+#:   - the argument of a further `-e`, as in `grep -n -e 'a' -e 'b'`.
+#: Everything else stays a finding: a second quoted operand is a FILE (`grep -n
+#: 'x' '<path>'`), a double-quoted string can hold a variable, a flag that takes
+#: a value (`grep -m 1 '…'`) ends the run of flags, and a path before the
+#: `grep` (`git -C <path> grep …`) is outside it. Within a line only: no
+#: whitespace in these patterns may be a newline.
+QUOTED_SEARCH_PATTERNS = re.compile(
+    r"\bgrep(?:[ \t]+-[A-Za-z]+)*[ \t]+'[^'\n]*'(?:[ \t]+-e[ \t]+'[^'\n]*')*")
+
+
+def host_absolute_path_hits(text: str) -> list[str]:
+    """Every host-absolute path in `text`: the matched strings of
+    `HOST_ABSOLUTE_PATH`, then one `line N: <the line>` for each line that
+    names the bench root outside a quoted search pattern. A bare `[]` means the
+    text is clean."""
+    hits = HOST_ABSOLUTE_PATH.findall(text)
+    for number, line in enumerate(text.splitlines(), 1):
+        scrubbed = QUOTED_SEARCH_PATTERNS.sub("grep", line)
+        if BENCH_ABSOLUTE_PATH.search(scrubbed):
+            hits.append(f"line {number}: {line.strip()[:120]}")
+    return hits
+
 
 def _dispatcher_arms(text: str) -> list[str]:
     """Every subcommand the main dispatcher has an arm for, in file order.
@@ -2881,6 +2933,11 @@ def test_no_committed_file_names_a_host_absolute_path():
     assembly and the spec leg beside the code leg, which is every file the one
     repository carried before the split. Their gitlinks are paths and not files,
     like the one above.
+
+    THE BENCH ROOT IS A HOST PATH TOO (opensoft/openRepoTools#193, item 22):
+    `host_absolute_path_hits` reads it beside the home-directory forms, with
+    one allowance, a path inside a quoted `grep` search pattern. The tests
+    after this one hold both halves of that rule, red and green.
     """
     offenders = {}
     for rel, path in tracked_files():
@@ -2890,11 +2947,141 @@ def test_no_committed_file_names_a_host_absolute_path():
             text = path.read_bytes().decode("utf-8")
         except UnicodeDecodeError:
             continue
-        hits = HOST_ABSOLUTE_PATH.findall(text)
+        hits = host_absolute_path_hits(text)
         if hits:
-            offenders[rel] = hits
+            # FIVE PER FILE: a file with eighty-six findings should say so, not
+            # print them all into one assertion.
+            offenders[rel] = (hits if len(hits) <= 5
+                              else hits[:5] + [f"... and {len(hits) - 5} more"])
     assert not offenders, (
         f"committed file(s) name a host-absolute path: {offenders}")
+
+
+def _plant(template: str) -> str:
+    """`template` with `<root>` replaced by the bench root. The rule's own
+    constant fills it, so this file never spells the root contiguously and the
+    scan above has nothing of its own to find."""
+    return template.replace("<root>", _BENCH_ROOT)
+
+
+#: TEXT THE BENCH-ROOT RULE MUST REFUSE. Each row is (why, text).
+BENCH_PATH_REFUSED = [
+    ("a path as a command's operand",
+     "cat <root>projects/x/file"),
+    ("a path in a yaml value, the shape of the ideation sample",
+     "directory: <root>projects/openRepoTools"),
+    ("a path in prose and in a table cell",
+     "| `<root>projects/openRepoTools/handoffs` | the checkout's symlink |"),
+    ("a path as `git -C` argument, though the same line quotes a pattern",
+     "git -C <root>projects/x grep -n -e '<root>projects/y' HEAD -- ."),
+    ("a quoted path that is not a search pattern",
+     "ls '<root>projects/x'"),
+    ("a second quoted operand of grep, which is a file",
+     "grep -n 'x' '<root>projects/x/file'"),
+    ("a path after the pattern, which is the file searched",
+     "grep -n '<root>projects/x' <root>projects/y"),
+    ("a double-quoted pattern, which can hold a variable",
+     'grep -E "<root>projects/x" file'),
+    ("a flag that takes a value ends the run of flags",
+     "grep -m 1 '<root>projects/x' file"),
+    ("a quoted path piped INTO a grep is still an echoed path",
+     "echo '<root>projects/x' | grep -n 'y'"),
+    ("a grep on one line licenses nothing on the next",
+     "grep -n\n'<root>projects/x' file"),
+    ("a file:// URL names the same host path",
+     "file://<root>projects/x"),
+]
+
+#: TEXT IT MUST ACCEPT. The first five are the allowance, each in one of the
+#: shapes a recorded search takes; the rest are look-alikes that are not the
+#: bench's root at all.
+BENCH_PATH_ACCEPTED = [
+    ("grep -E with a quoted pattern",
+     "grep -E '<root>projects/x' file"),
+    ("grep -rn with an anchored pattern and a placeholder for the files",
+     "grep -rn '^path: <root>projects/openRepoTools/' $LS/openRepoTools-{1,2,3} | wc -l"),
+    ("git grep with several -e patterns and a placeholder for the checkout",
+     "git -C $WB grep -n -e '<root>projects/openRepoTools' "
+     "-e 'openRepoTools-worktrees' -e '\\.lane-worktrees' HEAD -- ."),
+    ("a later -e carries the path",
+     "grep -n -e 'a' -e '<root>projects/x' file"),
+    ("a pattern after a pipe",
+     "git show HEAD:x | grep -n '<root>projects/x'"),
+    ("a placeholder is not a path",
+     "git -C $ORT rev-parse HEAD"),
+    ("a path under the home directory, by tilde, $HOME and ${HOME}",
+     "~<root>x $HOME<root>x ${HOME}<root>x"),
+    ("a relative directory that happens to carry the root's name",
+     "templates<root>x ..<root>x .<root>x"),
+    ("the workspace record and a template directory are not the root",
+     "~/.agents/workspace.yaml and templates/workspace-root/ and workspace/"),
+]
+
+
+@pytest.mark.parametrize("why,template", BENCH_PATH_REFUSED,
+                         ids=[why for why, _ in BENCH_PATH_REFUSED])
+def test_the_bench_root_rule_is_red_on_a_planted_path(why, template):
+    """RED: a path at the bench's root is a finding wherever it stands, except
+    inside a quoted search pattern. Every row plants one in a place the
+    allowance must NOT reach, and `git -C <path> grep -e '<path>'` is the row
+    that matters most: the first path is as host-absolute as ever, and the
+    pattern beside it licenses nothing."""
+    hits = host_absolute_path_hits(_plant(template))
+    assert hits, f"the rule let this through ({why}): {_plant(template)!r}"
+
+
+@pytest.mark.parametrize("why,template", BENCH_PATH_ACCEPTED,
+                         ids=[why for why, _ in BENCH_PATH_ACCEPTED])
+def test_the_bench_root_rule_is_green_on_the_allowed_forms(why, template):
+    """GREEN: a path inside a quoted search pattern is the recorded command's
+    own text and stays; so does everything that merely resembles the root."""
+    text = _plant(template)
+    assert host_absolute_path_hits(text) == [], (
+        f"the rule refused this ({why}): {text!r}")
+
+
+def test_the_quoted_pattern_allowance_scrubs_the_pattern_and_nothing_beside_it():
+    """One line, two roots: the allowance takes the quoted pattern out of the
+    line and the other path stays a finding, reported by line number."""
+    line = _plant("git -C <root>projects/x grep -n -e '<root>projects/y' HEAD")
+    hits = host_absolute_path_hits("fine\n" + line + "\nalso fine\n")
+    assert len(hits) == 1 and hits[0].startswith("line 2: git -C "), hits
+
+
+def test_the_consumer_reads_search_lines_are_red_as_main_carried_them_and_green_fixed():
+    """The three recorded searches of `consumer-reads-2026-10-07.md` (lines 94,
+    132 and 142 on main), each as #189 landed it and as it reads once the root
+    BESIDE the pattern is a placeholder. The pattern itself is byte for byte
+    the same in both, which is the whole claim: a placeholder in it would have
+    changed what the command searched for."""
+    pairs = [
+        ("git -C <root>projects/workBenches grep -n -e '<root>projects/openRepoTools'"
+         " -e 'openRepoTools-worktrees' -e '\\.lane-worktrees' HEAD -- .",
+         "git -C $WB grep -n -e '<root>projects/openRepoTools'"
+         " -e 'openRepoTools-worktrees' -e '\\.lane-worktrees' HEAD -- ."),
+        ("git -C <root>projects/brett-wip grep -n -e '<root>projects/openRepoTools'"
+         " -e '~/projects/openRepoTools' ab88a10 -- .   # 341 lines",
+         "git -C $BW grep -n -e '<root>projects/openRepoTools'"
+         " -e '~/projects/openRepoTools' ab88a10 -- .   # 341 lines"),
+        ("grep -rn '^path: <root>projects/openRepoTools/'"
+         " <root>projects/.lane-state/openRepoTools-{1,2,3} | wc -l",
+         "grep -rn '^path: <root>projects/openRepoTools/'"
+         " $LS/openRepoTools-{1,2,3} | wc -l"),
+    ]
+    for before, after in pairs:
+        assert host_absolute_path_hits(_plant(before)), _plant(before)
+        assert host_absolute_path_hits(_plant(after)) == [], _plant(after)
+
+
+def test_the_bench_rule_leaves_the_home_directory_rule_as_it_was():
+    """The bench root is a second pattern beside the first, not an edit of it:
+    the home-directory forms are still found, and the Windows runner's own
+    account is still the one exemption."""
+    unix = "/home" + "/alice/"
+    mac = "/Users" + "/Bob/"
+    assert host_absolute_path_hits(unix + "x") == [unix]
+    assert host_absolute_path_hits(mac + "x") == [mac]
+    assert host_absolute_path_hits("C:" + "\\Users\\runneradmin\\x") == []
 
 
 def test_the_root_carries_the_line_ending_rule():
