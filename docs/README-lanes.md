@@ -96,11 +96,15 @@ rejected (the remote moved), it stops with exit 3, leaves your edit as a local
 commit, and prints the recovery: the owner of that file commits it, then you
 re-run `lanes-edit.sh commit`. If `lanes/LANES.md` is clean, that re-run makes
 no commit of its own and pushes the local commits origin does not have yet,
-through the same loop, guard and retries (#194). It refuses with 2 and pushes
-nothing if any of those commits deletes a file or touches a path outside
-`lanes/` and `handoffs/`. Only `commit` publishes that queue: any other write with
-nothing to stage leaves it local, and with nothing ahead `commit` is the no-op
-it always was.
+through the same loop, guard and retries (#194). It reads that queue on
+`refs/heads/main`, the branch the push sends, with HEAD required to be on it,
+and pushes exactly the commit it read. It refuses with 2 and pushes nothing
+unless every queued commit is a non-merge commit whose every change is an added
+or modified regular file under `lanes/` or `handoffs/`. That refuses a merge, a
+deletion (a lane rename's included), a type change, a symlink, a gitlink and
+any other path. Only `commit` publishes that queue: any other write with nothing
+to stage leaves it local, and with nothing ahead `commit` is the no-op it always
+was.
 
 ## THE ONE HAZARD — `sed -i` DESTROYS THE SYMLINK
 
@@ -1178,7 +1182,7 @@ else.
 |---|---|
 | 0 | done |
 | 1 | environment — no register, no writer |
-| 2 | refusal — bad arguments, the object is held, an unknown alias, a checkout that cannot be rebased |
+| 2 | refusal — bad arguments, the object is held, an unknown alias, a checkout that cannot be rebased, or `commit` refusing to publish local commits that are not register or handoff writes, or from a checkout whose HEAD is off the branch (#194; nothing pushed) |
 | 3 | the edit is never a permanent loss, but this attempt cannot confirm whether it also reached origin — a rebase conflict (not pushed by this attempt; a later write from this checkout may already carry it to origin, so look by content before you retry), a network timeout on a push or a pull (a hung one often already landed), or six attempts exhausted because a peer's uncommitted file blocks every rebase |
 | 4 | the mutex could not be taken within 60s |
 | 5 | an edit moved more than one line and was refused |

@@ -431,7 +431,10 @@
 #      `canon-lane` refuse until 15(d)'s merge, or AMENDMENT 12's BLOCKED
 #      PROMPT, or — opensoft/openRepoTools#162 — a commit whose pathspec
 #      would stage bytecode, a cache or a virtual environment
-#      (`commit_push`, `pathspec-check`). SEVEN MEANINGS ON ONE NUMBER, and they
+#      (`commit_push`, `pathspec-check`), or — #194 — `commit` refusing to
+#      publish local commits that are not register or handoff writes, or a
+#      checkout whose HEAD is off the branch (`cp_publish_fence`), nothing
+#      pushed. EIGHT MEANINGS ON ONE NUMBER, and they
 #      stay readable only because of where each can occur: bad arguments to a
 #      subcommand that predates Amendment 11; `register-row`'s "not lane-shaped";
 #      AN UNKNOWN SUBCOMMAND (the `*)` arm below), which is how a caller detects
@@ -1102,6 +1105,10 @@ CP_AFTER_REBASE=""
 # staged, commit_push publishes the local commits ahead of origin for that one
 # write and for no other (#194).
 CP_PUBLISH_AHEAD=0
+# A publish's push sends the commit its fence read, `<sha>:refs/heads/<branch>`;
+# empty, every push sends the branch as it stands, as it always has (#194).
+CP_PUSH_SPEC=""
+CP_FENCE_TIP=""
 
 # die "<message>" [<exit code>] — the MESSAGE is $1 alone. It used to be "$*",
 # which joined the exit code on to the end of every refusal that passed one:
@@ -1953,6 +1960,81 @@ BRT_EOF
   printf 'Nothing was staged or committed. Unstage or delete those paths, then re-run.'
 }
 
+# #194, AS #214's ADVERSARIAL CHECK HARDENED IT — WHAT `commit` MAY PUBLISH
+# WITH NOTHING STAGED, read from the objects the push will send and nothing
+# else. Three ordinary checkout states got a deletion past the first fence,
+# which read `git log --name-status origin/<b>..HEAD`:
+#
+#   * A MERGE's own changes: `log` prints no diff for a merge, so a deletion
+#     made while resolving one passed unread. A merge or root commit refuses.
+#   * HEAD ON ANOTHER BRANCH: the fence read HEAD and the push sent
+#     `refs/heads/<b>`. The range is the branch, and HEAD must be it, because
+#     `pull --rebase` moves HEAD and the push moves the branch.
+#   * A LOCAL BRANCH NAMED `origin/<b>`, which shadows the tracking ref. Both
+#     ends of the range are spelled in full.
+#
+# The reads are plumbing (`rev-list`, `diff-tree --raw`), which no `color.*` or
+# `diff.ignoreSubmodules` reshapes, under `--no-replace-objects`, so a replace
+# ref cannot show the fence one commit while the push sends another. A change
+# passes only as an ADDED or MODIFIED REGULAR FILE under the register's own
+# directory (`$LANES_PREFIX`, derived, as every path of the register's is) or
+# `handoffs/`. A deletion, a type change, a symlink or a gitlink refuses, and so
+# does a path anywhere else. That includes lane tooling's own lane rename,
+# which deletes a log to re-add it: a deletion is the one change origin cannot
+# get back, and the fence keeps one rule for it. A read or a classification
+# that fails refuses too (2), because it proves nothing.
+#
+# It leaves CP_FENCE_TIP at the commit it read, and the publish pushes exactly
+# that commit (`<sha>:refs/heads/<b>`). A commit another lane makes in this
+# shared checkout between the read and the push stays local.
+cp_publish_fence() {
+  cpf_ref="refs/heads/$LANES_BRANCH"
+  cpf_head="$(git -C "$LANES_REPO" symbolic-ref -q HEAD 2>/dev/null || :)"
+  [ "$cpf_head" = "$cpf_ref" ] || die "refusing to publish: HEAD is ${cpf_head:-detached}, not $cpf_ref, and the push sends $cpf_ref while \`pull --rebase\` moves HEAD, so what would be published is not what HEAD shows. Nothing was pushed (#194). Whoever moved this shared checkout off $LANES_BRANCH puts it back; never reset or check out over their work." 2
+  cpf_rc=0
+  cpf_base="$(git --no-replace-objects -C "$LANES_REPO" rev-parse -q --verify "refs/remotes/origin/$LANES_BRANCH^{commit}")" || cpf_rc=$?
+  cpf_tip="$(git --no-replace-objects -C "$LANES_REPO" rev-parse -q --verify "$cpf_ref^{commit}")" || cpf_rc=$?
+  cpf_revs="$(git --no-replace-objects -C "$LANES_REPO" rev-list --parents "$cpf_base..$cpf_tip")" || cpf_rc=$?
+  cpf_odd="$(printf '%s\n' "$cpf_revs" | awk 'NF > 0 && NF != 2 { printf "  %s %s\n", substr($1, 1, 12), (NF > 2 ? "is a merge commit" : "is a root commit") }')" || cpf_rc=$?
+  cpf_pairs="$(printf '%s\n' "$cpf_revs" | awk 'NF == 2')" || cpf_rc=$?
+  # `diff-tree --stdin` SKIPS A COMMIT IT CANNOT READ and still exits 0, and
+  # prints no header for an empty diff unless told `--always`: so every commit
+  # handed to it must come back as a header, or the read refuses.
+  cpf_raw=""; cpf_n=0
+  if [ -n "$cpf_pairs" ]; then
+    cpf_n="$(printf '%s\n' "$cpf_pairs" | awk 'END { print NR }')" || cpf_rc=$?
+    cpf_raw="$(printf '%s\n' "$cpf_pairs" | git --no-replace-objects -C "$LANES_REPO" -c core.quotePath=false diff-tree --stdin --always -r --no-renames --raw --ignore-submodules=none)" || cpf_rc=$?
+  fi
+  cpf_bad="$(printf '%s\n' "$cpf_raw" | awk -F '\t' -v want="$cpf_n" -v reg="$LANES_PREFIX" -v logp="$LANES_LOG_PREFIX" \
+      -v reg_path="$LANES_PATH" -v alias_path="$LANES_ALIASES_PATH" '
+    function inside(p) {
+      return (reg != "" && index(p, reg) == 1) || (logp != "" && index(p, logp) == 1) ||
+             index(p, "handoffs/") == 1 || p == reg_path || p == alias_path
+    }
+    NF == 0 { next }
+    NF == 1 && $1 ~ /^[0-9a-f]+$/ { c = substr($1, 1, 12); seen++; next }
+    { split($1, f, " "); st = f[5]; mode = f[2]
+      if (!(NF == 2 && (st == "A" || st == "M") && (mode == "100644" || mode == "100755") && inside($2)))
+        printf "  %s %s %s %s\n", c, st, mode, $2 }
+    END { if (seen != want) exit 3 }')" || cpf_rc=$?
+  [ "$cpf_rc" = 0 ] || die "git could not read, or this helper could not classify, the local commits on $cpf_ref ahead of refs/remotes/origin/$LANES_BRANCH, so whether they are \`commit\`'s to publish is unknown; nothing was pushed (#194)" 2
+  if [ -n "$cpf_odd$cpf_bad" ]; then
+    note "of the local commits on $cpf_ref ahead of origin/$LANES_BRANCH, these are not register or handoff writes (a merge or root commit, or a change that is not an added or modified regular file under ${LANES_PREFIX:-the register directory} or handoffs/):"
+    [ -z "$cpf_odd" ] || printf '%s\n' "$cpf_odd" >&2
+    [ -z "$cpf_bad" ] || printf '%s\n' "$cpf_bad" >&2
+    die "refusing to publish: \`commit\` pushes only the register and handoff commits lane tooling strands (#194), so nothing was pushed. A lane rename (Amendment 16) deletes and re-adds its log and is refused here too; the next register write from this checkout carries it. Anything else, whoever queued it publishes it; never reset it away. Read them: git -C $LANES_REPO log --stat refs/remotes/origin/$LANES_BRANCH..$cpf_ref" 2
+  fi
+  CP_FENCE_TIP="$cpf_tip"
+}
+
+# The publish's CP_AFTER_REBASE: `pull --rebase` has rewritten the queue onto
+# what origin holds now, and may have taken in a commit made since the first
+# read, so the fence reads it again and the push is pinned to what it read.
+cp_publish_refence() {
+  cp_publish_fence
+  CP_PUSH_SPEC="$CP_FENCE_TIP:refs/heads/$LANES_BRANCH"
+}
+
 # commit_push "<subject>" [<pathspec>...] — the pathspecs default to the
 # register alone, which is every caller that predates Amendment 7. A LANDING
 # or LANDED writes TWO (the register and the lane's log) so that both halves
@@ -2032,20 +2114,21 @@ commit_push() {
   # and the RECOVERY printed for it is to re-run `commit` once the way is clear.
   # Returning here sent that re-run home with exit 0 and the commit still local.
   # So `commit`, the one caller that sets CP_PUBLISH_AHEAD, still takes the push
-  # loop (its lock, the dirty-elsewhere guard, the retries) whenever HEAD holds
-  # commits `origin/$LANES_BRANCH` does not, as of the last fetch; no such ref
-  # reads as none. Every other write with nothing to stage stays the no-op it
+  # loop (its lock, the dirty-elsewhere guard, the retries) whenever the branch
+  # holds commits `origin/$LANES_BRANCH` does not, as of the last fetch; no such
+  # ref reads as none. Every other write with nothing to stage stays the no-op it
   # always was and reaches no network: a repeated `set-row-state` must not turn
   # into a push of whatever this SHARED checkout has queued (the #214 review
   # measured exactly that deleting `scripts/link-estates` on origin).
   #
-  # AND `commit` PUBLISHES ONLY WHAT LANE TOOLING STRANDS. Every queued commit is
-  # read first; one that DELETES a file, or touches a path outside `lanes/` and
-  # `handoffs/`, refuses the whole publish (2) and nothing is pushed. A read
-  # that fails refuses the same way, because it proves nothing either way.
+  # AND `commit` PUBLISHES ONLY WHAT LANE TOOLING STRANDS, and only what it read:
+  # `cp_publish_fence` (above) reads the queue on the branch the push sends and
+  # refuses the whole publish (2) for anything that is not a register or
+  # handoff write. The push is pinned to the commit the fence read, and every
+  # `pull --rebase` reads it again (CP_AFTER_REBASE) and re-pins it.
   cp_publish=0
   if git -C "$LANES_REPO" -c "$CP_EXACT" diff --cached --quiet -- "${CP_PATHS[@]}"; then
-    cp_ahead="$(git -C "$LANES_REPO" --no-pager log --oneline "origin/$LANES_BRANCH..HEAD" 2>/dev/null || :)"
+    cp_ahead="$(git --no-replace-objects -C "$LANES_REPO" --no-pager log --oneline "refs/remotes/origin/$LANES_BRANCH..refs/heads/$LANES_BRANCH" 2>/dev/null || :)"
     if [ -z "$cp_ahead" ]; then
       note "nothing staged for ${CP_PATHS[*]} — no commit made"
       return 0
@@ -2055,19 +2138,12 @@ commit_push() {
       note "nothing staged for ${CP_PATHS[*]} — no commit made; the $cp_n local commit(s) ahead of origin/$LANES_BRANCH stay local, and only \`lanes-edit.sh commit\` publishes them"
       return 0
     fi
-    cp_files=""; cp_frc=0
-    cp_files="$(git -C "$LANES_REPO" -c core.quotePath=false --no-pager log --no-renames --name-status --format='commit %h' "origin/$LANES_BRANCH..HEAD")" || cp_frc=$?
-    [ "$cp_frc" = 0 ] || die "git could not list what the $cp_n local commit(s) ahead of origin/$LANES_BRANCH change, so whether they are \`commit\`'s to publish is unknown; nothing was pushed (#194)" 2
-    cp_bad="$(printf '%s\n' "$cp_files" | awk -F '\t' '/^commit / { c = substr($0, 8); next }
-      NF >= 2 && ($1 == "D" || ($2 !~ /^lanes\// && $2 !~ /^handoffs\//)) { printf "  %s %s %s\n", c, $1, $2 }')"
-    if [ -n "$cp_bad" ]; then
-      note "nothing staged for ${CP_PATHS[*]}, and of the $cp_n local commit(s) ahead of origin/$LANES_BRANCH these delete a file or reach outside lanes/ and handoffs/:"
-      printf '%s\n' "$cp_bad" >&2
-      die "refusing to publish: \`commit\` pushes only the register and handoff commits lane tooling strands (#194), so nothing was pushed. Whoever queued those commits publishes them; never reset them away. Read them: git -C $LANES_REPO log --stat origin/$LANES_BRANCH..HEAD" 2
-    fi
-    note "nothing staged for ${CP_PATHS[*]} — no commit made; pushing the $cp_n local commit(s) origin/$LANES_BRANCH does not have:"
+    cp_publish_fence
+    note "nothing staged for ${CP_PATHS[*]} — no commit made; pushing the $cp_n local commit(s) origin/$LANES_BRANCH does not have, up to ${CP_FENCE_TIP:0:12}:"
     printf '%s\n' "$cp_ahead" | head -n 10 >&2 || :
     [ "$cp_n" -le 10 ] || note "  … and $((cp_n - 10)) more"
+    CP_PUSH_SPEC="$CP_FENCE_TIP:refs/heads/$LANES_BRANCH"
+    CP_AFTER_REBASE=cp_publish_refence
     cp_publish=1
   fi
   if [ "$cp_publish" = 1 ]; then
@@ -2125,7 +2201,7 @@ EOF
       note "WARNING: this checkout has uncommitted changes to files OTHER than the register — not this invocation's:"
       printf '  %s\n' $others >&2
       note "skipping 'pull --rebase' (it refuses on any unstaged tracked change) and pushing straight out"
-      if git_net -C "$LANES_REPO" push -q origin "$LANES_BRANCH"; then
+      if git_net -C "$LANES_REPO" push -q origin "${CP_PUSH_SPEC:-$LANES_BRANCH}"; then
         LANES_INDEX_NUDGE=1
         note "pushed origin/$LANES_BRANCH (attempt $attempt, no pull — see the warning above)"
         return 0
@@ -2136,8 +2212,8 @@ EOF
         note "RECOVERY: their author commits those files (a handoff: handoff(<lane>@<workstation>): <what>),"
         note "  then re-run: LANES_LANE=<lane> lanes-edit.sh commit \"<what you wrote>\"  — your edit is already"
         note "  a local commit here. If $LANES_PATH is clean, that re-run makes no commit of its own and"
-        note "  pushes the local commits this lists (#194), refusing (2) and pushing nothing if any of them"
-        note "  deletes a file or reaches outside lanes/ and handoffs/: git -C $LANES_REPO log --oneline origin/$LANES_BRANCH..HEAD"
+        note "  pushes the local commits this lists (#194), refusing (2) and pushing nothing unless every one"
+        note "  is a register or handoff write: git -C $LANES_REPO log --oneline origin/$LANES_BRANCH..HEAD"
         die "could not push origin/$LANES_BRANCH: behind the remote, and a peer's uncommitted file blocks the rebase. Nothing was lost — your commit is local." 3
       fi
     elif git_net -C "$LANES_REPO" pull --rebase -q origin "$LANES_BRANCH"; then
@@ -2147,7 +2223,7 @@ EOF
       if [ -n "${CP_AFTER_REBASE:-}" ]; then
         "$CP_AFTER_REBASE" || return $?
       fi
-      if git_net -C "$LANES_REPO" push -q origin "$LANES_BRANCH"; then
+      if git_net -C "$LANES_REPO" push -q origin "${CP_PUSH_SPEC:-$LANES_BRANCH}"; then
         LANES_INDEX_NUDGE=1
         note "pushed origin/$LANES_BRANCH (attempt $attempt)"
         return 0
