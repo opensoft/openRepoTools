@@ -441,9 +441,9 @@ def test_item_1_an_unreadable_published_register_refuses_the_sweep(reg):
     """#138 item 1, ALREADY FIXED on main: refusal 1 reads both rows' ids
     through `|| :`, but the seam asked just before it (`managed_seam_refuse`,
     from #97) reads the published register and this checkout's row with their
-    status and refuses UNKNOWN (1) on either failing. Pinned here, because the
-    fence for a live session whose id is only in the published row now rests
-    on it: that row is the published one this checkout's edit dropped."""
+    status and refuses UNKNOWN (1) on either failing. Pinned here, because
+    the fence for a live session whose id is only in the published row rests
+    on that refusal: here this checkout's uncommitted edit dropped the id."""
     live = "cccc0138-0003-4000-8000-000000000003"
     text = reg.read("lanes/LANES.md").replace(f"| `repoX-2` | harness `{OLD_ID}`", f"| `repoX-2` | harness `{live}`")
     reg.write("lanes/LANES.md", text)

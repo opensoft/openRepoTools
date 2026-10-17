@@ -11895,7 +11895,7 @@ archive_rows() {   # <repo> <1 = the act, 0 = the dry run>
       ar_pubarch="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_ARCH_PATH" 2>/dev/null)" ||
         die "the tree of origin/$LANES_BRANCH could not be listed, so whether $LANES_ARCH_PATH is published is not known — and a move that creates one beside a published one drops every position it reserves (Amendment 7(d)). Nothing was written." 1
       [ -z "$ar_pubarch" ] ||
-        die "$LANES_ARCH_PATH is published on origin/$LANES_BRANCH and this checkout does not have it (it is outside a sparse checkout, or marked skip-worktree). A move made here would create a new archive holding only these rows, and its commit would drop every retired position the published one reserves (Amendment 19(b)). Bring the archive into this checkout and re-run. Nothing was written." 2
+        die "$LANES_ARCH_PATH is published on origin/$LANES_BRANCH and this checkout does not have it (it is outside a sparse checkout, or marked skip-worktree). A move made here would create a new archive holding only these rows, and its commit would drop every retired position the published one reserves (Amendment 19(b)). Bring it into this checkout — \`git -C $LANES_REPO sparse-checkout add ${LANES_ARCH_PATH%/*}\`, or for a skip-worktree path \`git -C $LANES_REPO update-index --no-skip-worktree $LANES_ARCH_PATH\` and \`git -C $LANES_REPO checkout -- $LANES_ARCH_PATH\` — and re-run. Nothing was written." 2
     fi
   fi
 
