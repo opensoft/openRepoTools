@@ -472,6 +472,8 @@ def test_t018_reconcile_reports_a_leg_git_cannot_read_as_the_sweep_counts_it(tri
                               "not be read through it (it has a .git of its own and git could not "
                               "read it: "), why
         assert answer in why and f"(git -C {spec} status)" in why, (answer, why)
+        # N2 of the review of bf2a220: a leg is the assembly's, not a writer's tree
+        assert why.endswith("before relaunching a writer onto a tree of its repository"), why
         assert field(rec.stdout, "TREES") == ["0 inventoried", "0 dirty or unpushed",
                                               "1 require recovery", "0 unmanaged or stale"], rec.stdout
         assert field(rec.stdout, "VERDICT")[0] == "ungraceful-stop", rec.stdout
@@ -542,6 +544,22 @@ def test_t018_the_handoff_reports_a_leg_git_cannot_read_as_the_sweep_counts_it(t
         assert line.startswith(f"- UNREADABLE LEG: `{spec}` is unreadable, {words}"), writers
         assert answer in line and f"(`git -C {spec} status`)" in line, line
         assert writers.count("- UNREADABLE LEG: ") == 1, writers
+        # N2 of the review of bf2a220: a leg is the assembly's, not a writer's tree
+        assert line.endswith("before relaunching a writer onto a tree of its repository."), line
+        assert proc.stderr.split(f"the leg {spec} is unreadable: ", 1)[1].split("\n", 1)[0] \
+            .endswith("before relaunching a writer onto a tree of its repository."), proc.stderr
+        # N1: the leg's line says what was withheld, and a withheld tree's own line
+        # says it is NOT recorded, where a recorded tree's line does not
+        if unplaced:
+            assert (f"the {len(unplaced)} tree(s) this handoff could not place are named "
+                    "above, each marked (NOT recorded)") in line, line
+        else:
+            assert ("every tree this handoff polled could still be placed, so none is "
+                    "withheld for it") in line, line
+        for tree in trees:
+            assert (f"- `{tree}` (NOT recorded) — branch `" in writers) is (tree in unplaced), \
+                (tree, writers)
+            assert (f"- `{tree}` — branch `" in writers) is (tree not in unplaced), (tree, writers)
 
     (spec / ".git").write_text("gitdir: /nonexistent/t018-spec\n")
     check("/nonexistent/t018-spec", (lane_root,), (), "SWAPPED")
@@ -571,6 +589,185 @@ def test_t018_the_handoff_reports_a_leg_git_cannot_read_as_the_sweep_counts_it(t
     assert f"the leg {spec} is unreadable" not in proc.stderr, proc.stderr
     assert "of the assembly's legs under" not in proc.stderr, proc.stderr
     assert "UNREADABLE LEG" not in top_block(b, "triad-1")
+    assert "lifecycle: SWAPPED" in proc.stdout, proc.stdout
+    assert inventory(b, "triad-1") == want
+
+
+@NEEDS_UPSTREAM
+def test_t018_an_unreadable_leg_withholds_no_tree_of_another_repository(triad):
+    """S1 OF THE REVIEW OF bf2a220: while a leg was unreadable, the handoff
+    withheld EVERY tree that was not of the assembly's own repository - a
+    worktree of an unrelated repository in the lane's own root included, as
+    lane openRepoTools-3's root holds today - so the lane stayed SWAPPING on
+    every handoff and those trees' records went stale for as long as the leg
+    stayed broken. Now only a tree that could be of the leg's repository is
+    withheld: one whose common git directory lies inside the assembly, or one
+    the inventory records under the unreadable leg. A worktree of a third
+    repository, recorded before or new, is recorded under the lane's `dir` as
+    when every leg reads, and with nothing else withheld the lane is SWAPPED."""
+    b, t = triad
+    a, spec = t["assembly"], t["spec"]
+    third = b.projects / "third"
+    b.git("clone", "-q", b.seeded("third", {"t.txt": "a third repository\n"}), third)
+    root = b.projects / ".lane-worktrees" / "triad-1"
+    before = leg_tree(b, third, root / "nw-before", "nw-before")
+    proc = handoff(b, "triad-1", a, "every leg reads")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert inventory(b, "triad-1") == {str(before): str(a)}
+
+    (spec / ".git").write_text("gitdir: /nonexistent/t018-spec\n")
+    after = leg_tree(b, third, root / "nw-after", "nw-after")
+    proc = handoff(b, "triad-1", a, "unreadable leg")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"the leg {spec} is unreadable: " in proc.stderr, proc.stderr
+    assert f"writers polled: 2 under {a}" in proc.stderr, proc.stderr
+    for tree in (before, after):
+        assert f"WRITER {tree} — branch {tree.name}" in proc.stdout, proc.stdout
+        assert f"the worktree inventory entry for {tree} was NOT written" not in proc.stderr, \
+            proc.stderr
+    assert "lifecycle: SWAPPED" in proc.stdout, proc.stdout
+    writers = top_block(b, "triad-1").split("**WRITERS at ", 1)[1]
+    assert "(NOT recorded)" not in writers, writers
+    assert ("every tree this handoff polled could still be placed, so none is withheld "
+            "for it") in writers, writers
+    assert inventory(b, "triad-1") == {str(before): str(a), str(after): str(a)}
+
+    # A RECORD NAMING THE UNREADABLE LEG still withholds its tree, whatever
+    # repository the tree's own common directory says it is of.
+    named = leg_tree(b, third, root / "nw-named", "nw-named")
+    rec = b.tool("lanes-edit.sh", "set-lane-tree", "triad-1", named, "--checkout", spec)
+    assert rec.returncode == 0, rec.stderr
+    proc = handoff(b, "triad-1", a, "unreadable leg, and a record naming it")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert (f"the worktree inventory entry for {named} was NOT written: the assembly has 1 "
+            "unreadable leg(s)") in proc.stderr, proc.stderr
+    for tree in (before, after):
+        assert f"the worktree inventory entry for {tree} was NOT written" not in proc.stderr, \
+            proc.stderr
+    assert "lifecycle: SWAPPING" in proc.stdout, proc.stdout
+    writers = top_block(b, "triad-1").split("**WRITERS at ", 1)[1]
+    assert f"- `{named}` (NOT recorded) — branch `nw-named`" in writers, writers
+    for tree in (before, after):
+        assert f"- `{tree}` — branch `{tree.name}`" in writers, writers
+    assert ("the 1 tree(s) this handoff could not place are named above, each marked "
+            "(NOT recorded)") in writers, writers
+    assert inventory(b, "triad-1") == {str(before): str(a), str(after): str(a),
+                                       str(named): str(spec)}
+
+
+@NEEDS_UPSTREAM
+def test_t018_a_tree_git_cannot_read_in_an_assembly_is_named_and_holds_the_lane_swapping(triad):
+    """S2 OF THE REVIEW OF bf2a220: the poll passed over IN SILENCE any tree
+    with a `.git` git cannot read. With the spec leg's module directory
+    deleted after `add --checkout spec`, every tree of that leg - the one
+    `add` made, and a paired spec tree the inventory names - vanished from
+    WRITERS and from its count, and the lane went SWAPPED. Now each is listed
+    and counted, `UNREADABLE` and `(NOT recorded)`, its record is kept, and
+    the lane stays SWAPPING. Scoped to assemblies: a single repository's tree
+    that git cannot read is passed over, as it always was."""
+    b, t = triad
+    a, spec = t["assembly"], t["spec"]
+    made = b.tool("lane-worktrees", "add", "triad-1", "s1", "--checkout", spec)
+    assert made.returncode == 0, made.stderr
+    lane_spec = Path(made.stdout.strip())
+    made = b.tool("lane-worktrees", "add", "triad-1", "root")
+    assert made.returncode == 0, made.stderr
+    lane_root = Path(made.stdout.strip())
+    paired_spec = leg_tree(b, spec, a / "worktrees" / "040-p" / "spec", "040-p")
+    b.commit(paired_spec, "the feature's spec", {"p.md": "p\n"}, lane="triad-1")
+    proc = handoff(b, "triad-1", a, "every leg reads")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    want = {str(lane_spec): str(spec), str(lane_root): str(a), str(paired_spec): str(spec)}
+    assert inventory(b, "triad-1") == want
+
+    shutil.rmtree(a / ".git" / "modules" / "spec")
+    proc = handoff(b, "triad-1", a, "the spec leg's module directory is gone")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"the leg {spec} is unreadable: " in proc.stderr, proc.stderr
+    assert f"writers polled: 3 under {a}" in proc.stderr, proc.stderr
+    assert f"WRITER {lane_root} — branch root" in proc.stdout, proc.stdout
+    block = top_block(b, "triad-1")
+    assert f"(3 found under `{a}`)" in block, block
+    writers = block.split("**WRITERS at ", 1)[1]
+    for tree in (lane_spec, paired_spec):
+        assert (f"WRITER {tree} — UNREADABLE: it has a .git of its own and git could not "
+                "read it: ") in proc.stdout, proc.stdout
+        assert (f"the worktree inventory entry for {tree} was NOT written: it has a .git of "
+                "its own and git could not read it") in proc.stderr, proc.stderr
+        assert (f"- `{tree}` (NOT recorded) — UNREADABLE: it has a .git of its own and git "
+                "could not read it (") in writers, writers
+        assert f"(`git -C {tree} status`)" in writers, writers
+    assert f"- `{lane_root}` — branch `root`" in writers, writers
+    assert ("the 2 tree(s) this handoff could not place are named above, each marked "
+            "(NOT recorded)") in writers, writers
+    assert "lifecycle: SWAPPING" in proc.stdout, proc.stdout
+    held = proc.stderr.split("the worktree inventory was not recorded for ", 1)[1].split("\n", 1)[0]
+    assert str(lane_spec) in held and str(paired_spec) in held and str(lane_root) not in held, held
+    assert inventory(b, "triad-1") == want
+
+    # A SINGLE REPOSITORY PASSES OVER SUCH A TREE, AS IT ALWAYS DID.
+    b.origin("plain")
+    s = b.projects / "plain"
+    b.git("clone", "-q", b.remotes / "plain.git", s)
+    b.commit(s, "seed", {"README.md": "plain\n"})
+    b.git("push", "-q", "origin", "main", cwd=s)
+    b.lanes("opensoft/plain", s, "plain-1")
+    made = b.tool("lane-worktrees", "add", "plain-1", "w")
+    assert made.returncode == 0, made.stderr
+    w = Path(made.stdout.strip())
+    admin = (w / ".git").read_text().split("gitdir:", 1)[1].strip()
+    shutil.rmtree(admin)
+    proc = handoff(b, "plain-1", s, "a tree git cannot read")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"writers polled: 0 under {s}" in proc.stderr, proc.stderr
+    assert "UNREADABLE" not in proc.stdout + proc.stderr
+    assert "NOT recorded" not in proc.stdout + proc.stderr + top_block(b, "plain-1")
+    assert "lifecycle: SWAPPED" in proc.stdout, proc.stdout
+
+
+@NEEDS_UPSTREAM
+def test_t018_a_leg_tree_add_made_is_withheld_where_the_legs_git_is_an_empty_directory(triad):
+    """N4 OF THE REVIEW OF bf2a220: the empty-`.git`-directory case was run
+    only with no tree of that leg, and its path differs from the gitfile
+    case's: git answers the ASSEMBLY in the leg, so the common directory of
+    the checkout the tree's record names is the assembly's own `.git`, not
+    nothing. A tree `add --checkout spec` made is still withheld - named,
+    marked `(NOT recorded)`, its record kept under the leg and never moved to
+    the assembly - and the lane stays SWAPPING; readable again, the tree is
+    recorded under its leg and the lane is SWAPPED."""
+    b, t = triad
+    a, spec = t["assembly"], t["spec"]
+    made = b.tool("lane-worktrees", "add", "triad-1", "s1", "--checkout", spec)
+    assert made.returncode == 0, made.stderr
+    lane_spec = Path(made.stdout.strip())
+    want = {str(lane_spec): str(spec)}
+    assert inventory(b, "triad-1") == want
+    gitfile = (spec / ".git").read_text()
+    (spec / ".git").unlink()
+    (spec / ".git").mkdir()
+    # the path this case takes: in the leg, git answers the assembly
+    assert real(b.git("rev-parse", "--show-toplevel", cwd=spec)) == real(a)
+    assert real(spec / b.git("rev-parse", "--git-common-dir", cwd=spec)) == real(a / ".git")
+    proc = handoff(b, "triad-1", a, "the spec leg's .git is an empty directory")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"the leg {spec} is unreadable: " in proc.stderr, proc.stderr
+    assert f"git answers {real(a)} there" in proc.stderr, proc.stderr
+    assert f"WRITER {lane_spec} — branch s1" in proc.stdout, proc.stdout
+    assert (f"the worktree inventory entry for {lane_spec} was NOT written: the assembly has 1 "
+            "unreadable leg(s)") in proc.stderr, proc.stderr
+    assert "lifecycle: SWAPPING" in proc.stdout, proc.stdout
+    writers = top_block(b, "triad-1").split("**WRITERS at ", 1)[1]
+    assert f"- `{lane_spec}` (NOT recorded) — branch `s1`" in writers, writers
+    assert ("the 1 tree(s) this handoff could not place are named above, each marked "
+            "(NOT recorded)") in writers, writers
+    assert inventory(b, "triad-1") == want
+
+    shutil.rmtree(spec / ".git")
+    (spec / ".git").write_text(gitfile)
+    proc = handoff(b, "triad-1", a, "readable again")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "UNREADABLE LEG" not in top_block(b, "triad-1")
+    assert "(NOT recorded)" not in top_block(b, "triad-1")
     assert "lifecycle: SWAPPED" in proc.stdout, proc.stdout
     assert inventory(b, "triad-1") == want
 

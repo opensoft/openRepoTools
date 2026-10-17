@@ -13165,7 +13165,7 @@ EOF
             | awk 'NF { sub(/^[ \t]+/, ""); sub(/[ \t]+$/, ""); print; exit }' | tr -d '\037')"
           lrc_lerr="${lrc_lerr:-no answer}"
         fi
-        printf 'TREE%s%s%sunreadable%s%s%sthe %s leg of %s/project.yaml%s: git could not be read through it (it has a .git of its own and git could not read it: %s), so NOTHING is assumed about it — not its own state, nor the worktrees it registers, which were not listed; a read that failed is never a clean leg (Amendment 7(d)) — read it by hand (git -C %s status) before relaunching a writer onto it\n' \
+        printf 'TREE%s%s%sunreadable%s%s%sthe %s leg of %s/project.yaml%s: git could not be read through it (it has a .git of its own and git could not read it: %s), so NOTHING is assumed about it — not its own state, nor the worktrees it registers, which were not listed; a read that failed is never a clean leg (Amendment 7(d)) — read it by hand (git -C %s status) before relaunching a writer onto a tree of its repository\n' \
           "$US" "$(tree_id_for "$lrc_labs")" "$US" "$US" "$lrc_labs" "$US" "$lrc_ldecl" "$lrc_dir" \
           "${lrc_lrepo:+ ($lrc_lrepo)}" "$lrc_lerr" "$lrc_labs"
         lrc_seen="$lrc_seen $lrc_labs $lrc_lr "

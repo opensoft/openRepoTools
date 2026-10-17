@@ -1916,10 +1916,49 @@ brief_for() {   # <worktree path>
 }
 
 writer_count=0
+pw_withheld_count=0
+# A TREE WITH A `.git` OF ITS OWN THAT GIT CANNOT READ, IN AN ASSEMBLY (T018,
+# S2 of the review of bf2a220), is NAMED, never passed over. A leg whose
+# module directory (`<assembly>/.git/modules/<leg>`) is damaged takes every
+# worktree of its repository with it: the trees `lane-worktrees add --checkout
+# <assembly>/<leg>` made, and the paired trees this lane's inventory names.
+# Passed over, they vanished from the WRITERS section and from its count while
+# the lane went SWAPPED, as if the poll had looked everywhere it looks. So such
+# a tree is listed and counted as a writer whose state nobody could read, it is
+# NOT recorded (a guessed reading would replace the one its record names), and
+# the lane stays SWAPPING for it. Only `poll_writer` calls this, and only where
+# the checkout is an assembly: a checkout with no `project.yaml` naming a leg
+# passes over such a tree as it always did, which its golden holds.
+unreadable_writer() {   # <tree>
+	uw_d="$1"
+	uw_err="$(git -C "$uw_d" rev-parse --git-dir 2>&1 >/dev/null </dev/null \
+		| awk 'NF { sub(/^[ \t]+/, ""); sub(/[ \t]+$/, ""); print; exit }')"
+	uw_err="${uw_err:-no answer}"
+	uw_brief="$(brief_for "$uw_d" || printf '')"
+	writer_count=$((writer_count + 1))
+	pw_withheld_count=$((pw_withheld_count + 1))
+	say ""
+	say "WRITER $uw_d — UNREADABLE: it has a .git of its own and git could not read it: $uw_err"
+	say "  nothing is assumed about its branch, its commits or its edits, and it is NOT recorded"
+	printf -- '- `%s` (NOT recorded) — UNREADABLE: it has a .git of its own and git could not read it (%s), so nothing is assumed about its branch, its commits or its edits. A read that failed is never a clean tree (Amendment 7(d)) — read it by hand (`git -C %s status`) before relaunching a writer onto it; brief: %s\n' \
+		"$uw_d" "$uw_err" "$uw_d" "${uw_brief:-(fill in: the brief this writer was given)}" >> "$writers_tmp"
+	if [ -n "$lc_on" ]; then
+		lc_inventory_missed="${lc_inventory_missed:+$lc_inventory_missed }$uw_d"
+		note "the worktree inventory entry for $uw_d was NOT written: it has a .git of its own and git could not read it ($uw_err), so neither what it holds nor which checkout it is recorded under is known, and a guessed reading would replace the one its record names now. This handoff's WRITERS section names it, the lane stays SWAPPING for it, and \`$LANES_EDIT lane-reconcile $lane\` says what the inventory holds."
+	else
+		note "the tree $uw_d has a .git of its own and git could not read it ($uw_err), so nothing is assumed about it, and this handoff's WRITERS section names it. Read it by hand (git -C $uw_d status) before relaunching a writer onto it."
+	fi
+	return 0
+}
 poll_writer() {   # <path>
 	pw_d="$1"
 	[ -d "$pw_d" ] || return 0
-	git -C "$pw_d" rev-parse --git-dir >/dev/null 2>&1 || return 0
+	if ! git -C "$pw_d" rev-parse --git-dir >/dev/null 2>&1; then
+		[ -n "$legs_state" ] || return 0
+		{ [ -e "$pw_d/.git" ] || [ -L "$pw_d/.git" ]; } || return 0
+		unreadable_writer "$pw_d"
+		return 0
+	fi
 	# THE OBSERVATION IS THE HELPER'S, AND THIS COMMAND MAKES NONE OF ITS OWN
 	# (Copilot round 5 on openRepoTools#97). `lanes-edit.sh lane-tree-now` is the
 	# one implementation of *what git says about this tree right now* — the same
@@ -1964,8 +2003,19 @@ poll_writer() {   # <path>
 	[ -n "$pw_status" ] && printf '%s\n' "$pw_status" | sed 's/^/    /'
 	say "  git log @{u}..: ${pw_ahead} unpushed"
 	[ -n "$pw_unpushed" ] && printf '%s\n' "$pw_unpushed" | sed 's/^/    /'
-	printf -- '- `%s` — branch `%s`, last commit `%s`, %s dirty, %s unpushed; brief: %s\n' \
-		"$pw_d" "$pw_branch" "${pw_last:-<none>}" "$pw_dirty" "$pw_ahead" \
+	# WHERE IT IS RECORDED, decided before its line is written (below), so that a
+	# tree this handoff withholds says so in its own line — `(NOT recorded)` —
+	# rather than reading exactly as a recorded one (N1 of the review of
+	# bf2a220). A checkout with no `project.yaml` naming a leg withholds nothing,
+	# and its line is the one it always was.
+	pw_co=""; pw_withheld=""
+	if [ -n "$lc_on" ] && [ "$pw_orc" = 0 ]; then
+		pw_co="${dir:-unknown}"
+		[ -z "$legs_state" ] || pw_co="$(writer_checkout "$pw_d")"
+		[ -n "$pw_co" ] || pw_withheld=" (NOT recorded)"
+	fi
+	printf -- '- `%s`%s — branch `%s`, last commit `%s`, %s dirty, %s unpushed; brief: %s\n' \
+		"$pw_d" "$pw_withheld" "$pw_branch" "${pw_last:-<none>}" "$pw_dirty" "$pw_ahead" \
 		"${pw_brief:-(fill in: the brief this writer was given)}" >> "$writers_tmp"
 	# AND THE SAME OBSERVATION, MACHINE-READABLE, BESIDE THE LANE AND NOT INSIDE
 	# IT (openRepoTools#91). The WRITERS section above is what a person and the
@@ -1985,9 +2035,8 @@ poll_writer() {   # <path>
 	# checkout would replace the one `add` recorded, so the tree is named and
 	# the lane stays SWAPPING for it, as for a refused write.
 	if [ -n "$lc_on" ] && [ "$pw_orc" = 0 ]; then
-		pw_co="${dir:-unknown}"
-		[ -z "$legs_state" ] || pw_co="$(writer_checkout "$pw_d")"
-		if [ -z "$pw_co" ]; then
+		if [ -n "$pw_withheld" ]; then
+			pw_withheld_count=$((pw_withheld_count + 1))
 			lc_inventory_missed="${lc_inventory_missed:+$lc_inventory_missed }$pw_d"
 			if [ "$legs_state" = known ]; then
 				pw_cant="the assembly has $legs_unreadable_count unreadable leg(s), each named by an UNREADABLE LEG line in the top block, so whether this tree is of such a leg's repository"
@@ -2058,7 +2107,7 @@ poll_writer() {   # <path>
 # an inventory that could not be read (`paired_unread`): each is a place a
 # tree of this lane's may stand unseen, exactly as `lane-reconcile` says
 # `indeterminate` and the sweep refuses for the same directories.
-legs_state=""; legs_unread=""; leg_rows=""; leg_commons=""; dir_common=""
+legs_state=""; legs_unread=""; leg_rows=""; leg_commons=""; dir_common=""; dir_phys=""
 paired_unread=""; paired_others=""; paired_other_count=0; paired_inv=""
 tab="$(printf '\t')"
 # THE PHYSICAL PATH OF A CHECKOUT'S COMMON GIT DIRECTORY, or nothing: a leg
@@ -2124,12 +2173,15 @@ if [ "$legs_state" = known ]; then
 			fi
 			lg_why="the $lg_decl leg of $dir/project.yaml${lg_repo:+ ($lg_repo)}: git could not be read through it (it has a .git of its own and git could not read it: $lg_err)"
 			legs_unreadable_count=$((legs_unreadable_count + 1))
-			legs_unreadable="$legs_unreadable$(printf -- '- UNREADABLE LEG: `%s` is unreadable, %s. So NOTHING is assumed about it — not its own state, nor which tree is of its repository: a tree this handoff could not place is named above and NOT recorded. A read that failed is never a clean leg (Amendment 7(d)) — read it by hand (`git -C %s status`) before relaunching a writer onto it.' \
-				"$lg_abs" "$lg_why" "$lg_abs")
+			# `<leg> TAB <why>`, one a line: the top block writes each leg's line
+			# once the poll has said whether any tree was withheld (N1), and
+			# `writer_checkout` asks whether a record names one of these legs.
+			legs_unreadable="$legs_unreadable$lg_abs$tab$lg_why
 "
-			# ONLY A TREE OF THE ASSEMBLY'S OWN REPOSITORY IS STILL VOUCHED FOR.
+			# WHAT IS STILL VOUCHED FOR, AND WHAT COULD BE A LEG'S (`writer_checkout`).
 			[ -n "$dir_common" ] || dir_common="$(common_dir_of "$dir" </dev/null)"
-			note "the leg $lg_abs is unreadable: $lg_why — a read that failed is never a clean leg (Amendment 7(d)), so nothing is assumed about it or about which tree is of its repository, and the top block's WRITERS section names it. Read it by hand (git -C $lg_abs status) before relaunching a writer onto it."
+			[ -n "$dir_phys" ] || dir_phys="$(physical_of "$dir" </dev/null)"
+			note "the leg $lg_abs is unreadable: $lg_why — a read that failed is never a clean leg (Amendment 7(d)), so nothing is assumed about it or about which tree is of its repository, and the top block's WRITERS section names it. Read it by hand (git -C $lg_abs status) before relaunching a writer onto a tree of its repository."
 			continue
 		fi
 		lg_c="$(common_dir_of "$lg_abs" </dev/null)"
@@ -2182,10 +2234,35 @@ IC_ROWS
 # tree under the assembly would lose the checkout `add` recorded; else the
 # lane's own `dir`, as always. Where the legs could not be read, only a tree
 # of `dir`'s own repository can be vouched for, and anything else answers
-# NOTHING (the caller files nothing). AND THE SAME WHERE A LEG IS UNREADABLE
-# (`legs_unreadable_count`): a tree of no readable leg's repository may be of
-# that leg's, whose common directory nobody could read, and the lane's `dir`
-# would then replace the leg `add` recorded.
+# NOTHING (the caller files nothing).
+#
+# AND WHERE A LEG IS UNREADABLE (`legs_unreadable_count`), NOTHING IS ANSWERED
+# FOR A TREE THAT COULD BE OF THAT LEG'S REPOSITORY, whose common directory
+# nobody could read: the lane's `dir` would then replace the leg `add`
+# recorded. Such a tree is one whose common git directory nobody could read;
+# or one whose common git directory lies physically inside the assembly, or
+# inside the assembly's own git directory, without being the assembly's own
+# (`<assembly>/.git/modules/<leg>`, a leg's own `.git`, or a linked worktree's
+# `modules/` under the common directory); or one this lane's inventory records
+# under an unreadable leg, or under a checkout inside one. A tree of ANY OTHER
+# repository (a worktree of an unrelated repository in the lane's own root)
+# is of no leg, so it keeps the lane's `dir`, exactly as where every leg reads
+# (S1 of the review of bf2a220): withheld, it left the lane SWAPPING on every
+# handoff and its record going stale for as long as the leg stayed broken.
+recorded_under_unreadable_leg() {   # <checkout a record names>
+	ru_p="$(physical_of "$1")"
+	while IFS="$tab" read -r ru_abs ru_why; do
+		[ -n "$ru_abs" ] || continue
+		case "$1/" in "$ru_abs"/*) return 0 ;; esac
+		ru_lp="$(physical_of "$ru_abs" </dev/null)"
+		if [ -n "$ru_p" ] && [ -n "$ru_lp" ]; then
+			case "$ru_p/" in "$ru_lp"/*) return 0 ;; esac
+		fi
+	done <<RU_ROWS
+$legs_unreadable
+RU_ROWS
+	return 1
+}
 writer_checkout() {   # <tree>
 	wc_c="$(common_dir_of "$1")"
 	if [ -n "$wc_c" ] && [ -n "$leg_commons" ]; then
@@ -2202,8 +2279,15 @@ WC_ROWS
 			printf '%s' "$wc_rec"; return 0
 		fi
 		if [ "$legs_unreadable_count" -gt 0 ]; then
-			if [ -n "$wc_c" ] && [ -n "$dir_common" ] && [ "$wc_c" = "$dir_common" ]; then printf '%s' "$dir"; fi
-			return 0
+			if [ -n "$wc_c" ] && [ -n "$dir_common" ] && [ "$wc_c" = "$dir_common" ]; then
+				printf '%s' "$dir"; return 0
+			fi
+			[ -n "$wc_c" ] && [ -n "$dir_phys" ] || return 0
+			case "$wc_c/" in "$dir_phys"/*) return 0 ;; esac
+			if [ -n "$dir_common" ]; then
+				case "$wc_c/" in "$dir_common"/*) return 0 ;; esac
+			fi
+			if [ -n "$wc_rec" ] && recorded_under_unreadable_leg "$wc_rec" </dev/null; then return 0; fi
 		fi
 		printf '%s' "${dir:-unknown}"; return 0
 	fi
@@ -2383,8 +2467,24 @@ top_block() {
 		printf -- '- NOT POLLED: %s, so a tree of this lane'"'"'s under `%s/worktrees` may be missing from this list. Read it by hand before relaunching a writer there.\n' \
 			"$paired_unread" "$dir"
 	fi
-	# AND A LEG GIT COULD NOT READ, one line a leg, in the sweep's words.
-	[ -z "$legs_unreadable" ] || printf '%s' "$legs_unreadable"
+	# AND A LEG GIT COULD NOT READ, one line a leg, in the sweep's words. Its
+	# last clause says what the poll then withheld, and only that (N1 of the
+	# review of bf2a220): the trees it could not place are each marked
+	# `(NOT recorded)` above, and where there are none the line says so.
+	if [ -n "$legs_unreadable" ]; then
+		if [ "$pw_withheld_count" -gt 0 ]; then
+			tb_placed="the $pw_withheld_count tree(s) this handoff could not place are named above, each marked (NOT recorded)"
+		else
+			tb_placed="every tree this handoff polled could still be placed, so none is withheld for it"
+		fi
+		while IFS="$tab" read -r tb_abs tb_why; do
+			[ -n "$tb_abs" ] || continue
+			printf -- '- UNREADABLE LEG: `%s` is unreadable, %s. So NOTHING is assumed about it — not its own state, nor which tree is of its repository: %s. A read that failed is never a clean leg (Amendment 7(d)) — read it by hand (`git -C %s status`) before relaunching a writer onto a tree of its repository.\n' \
+				"$tb_abs" "$tb_why" "$tb_placed" "$tb_abs"
+		done <<TB_ROWS
+$legs_unreadable
+TB_ROWS
+	fi
 	printf '\n'
 	# T018, M1 (a): THE PAIRED ROOT'S OTHER TREES, OUTSIDE WRITERS. They are
 	# other lanes' feature trees, or nobody's: named so the next session knows

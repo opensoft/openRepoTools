@@ -3965,10 +3965,21 @@ checkout of the tree's own repository keeps it: a dependency nested in a leg
 the lane's `dir`, as before. A leg that is not checked out here (never initialized, or
 deinitialized) names no tree. A leg with a `.git` of its own that git cannot read is
 `unreadable`, the sweep's word: one `- UNREADABLE LEG: …` line in WRITERS and a note on
-stderr, counted, and the lane is not held `SWAPPING` for the leg itself. A polled tree
-it then cannot place (of no readable leg's repository, not of the assembly's own, and
-recorded under no checkout of its own repository) is named and not recorded, so the
-checkout `add` recorded stays, and the lane stays `SWAPPING` for that tree. A worktree
+stderr, and counted on stderr's `legs: N of the assembly's legs under <dir> unreadable`
+line, never in WRITERS' `(N found)`. The lane is not held `SWAPPING` for the leg
+itself. A polled tree that could then be of that leg's repository is one it cannot
+place: its common git directory lies inside the assembly or its git directory (a
+leg's `.git/modules/<leg>`) and is no readable leg's and not the assembly's own, or
+the inventory records it under the unreadable leg. Such a tree is named, marked
+`(NOT recorded)` in its WRITERS line, and not recorded, so the checkout `add` recorded
+stays, and the lane stays `SWAPPING` for that tree. The `UNREADABLE LEG` line says how
+many trees were withheld, or that none was. A tree of any other repository, such as a
+worktree of an unrelated repository in the lane's own root, is recorded under the
+lane's `dir`, as when every leg reads. A tree with a `.git` of its own that git cannot
+read at all (a damaged `.git/modules/<leg>` takes every worktree of that leg with it)
+is listed in WRITERS and counted, marked `(NOT recorded)` and `UNREADABLE`, never
+recorded, and the lane stays `SWAPPING` for it. A checkout with no `project.yaml`
+naming a leg passes over such a tree, as it always did. A worktree
 a leg registers anywhere else is not polled
 as a writer, just as the checkout's own registrations elsewhere are not;
 `lanes-edit.sh lane-reconcile` reports it. The reconciliation reads what the legs hold
