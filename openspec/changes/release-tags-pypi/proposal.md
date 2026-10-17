@@ -369,6 +369,14 @@ while they track `main`, which is the failure the Why exists to prevent.
   - The two wheels must be one file (`cmp`).
   - Every file in the wheel, except the stamp and the metadata, must be the
     commit's own blob.
+  - The wheel's `.dist-info` must hold exactly `METADATA`, `WHEEL`, `RECORD`,
+    `entry_points.txt` and `licenses/LICENSE`, and that `LICENSE` must be the
+    commit's, as openRepoShape's build checks (`release.yml:649-655` at
+    v1.1.0). This check, and not hatchling, is what makes a missing `LICENSE`
+    fatal. Hatchling 1.27.0 builds its licence list from a `glob` of each
+    `license-files` pattern and raises nothing when a pattern matches no file
+    (`hatchling/metadata/core.py:757-770` in its published wheel), so a tree
+    with no `LICENSE` would otherwise build a wheel without one.
   - The wheel's sha256 is recorded. It is checked again before and after each
     upload.
 - **The uploads.** TestPyPI comes first, in the environment `testpypi`. Then
@@ -432,6 +440,8 @@ while they track `main`, which is the failure the Why exists to prevent.
   - builds the wheel twice at the commit's time and compares the two;
   - checks every packaged payload file against the commit's blob, and its
     mode against the commit's;
+  - checks the wheel's `.dist-info`, `licenses/LICENSE` included, as the
+    release build does;
   - installs the wheel with pipx;
   - runs the unstamped `--version`;
   - runs an offline `--install` into a temporary home with a pipx link in
@@ -539,7 +549,8 @@ This mirrors opensoft/openRepoShape#850 (Brett Heap's ruling of
   sequencing below. It is the release owner that #850's lanes' side names.
 - **The code leg's `LICENSE`.** T006's patch `code-0001` is the code leg's
   first commit, right after `execute` and before any CI, package or release
-  run there, because `license-files = ["LICENSE"]` fails without it. Lane
+  run there, because the wheel must carry `LICENSE` and the `package` job and
+  the release build refuse one that does not (see "The build"). Lane
   openRepoTools-3 checks that `LICENSE` on `openRepoTools-code` is blob
   `261eeb9` before the first `package` run. The package never tolerates a
   missing `LICENSE`.
