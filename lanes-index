@@ -43,10 +43,11 @@ digest; a tree the inventory no longer names leaves in the same sync. Its
 provenance moves only forward PER LANE: a sync that reads a lane's lifecycle
 generation below the one its rows were written at writes nothing for that lane
 (`reconcile` takes the lane as it now stands, and says so); a lane whose
-inventory is there and could not be read keeps its rows and gets one marker row
-with no path (#173), which `export --worktrees` writes back as the source's own
-`UNREAD` line; and the source's own row carries a fingerprint of the whole table
-as its compare-and-swap token and a sync generation that only counts up.
+inventory is there and could not be read keeps its rows and gets one marker
+row, with no path and a branch no git ref can be (#173), which `export
+--worktrees` writes back as the source's own `UNREAD` line; and the source's own
+row carries a fingerprint of the whole table as its compare-and-swap token and a
+sync generation that only counts up.
 `lanes-edit.sh` nudges `sync --source inventory` after every inventory write.
 Nothing that acts reads this table either: `lane-reconcile`, `lane-start`,
 `lane-end` and the sweep read the sidecars and the disk.
@@ -73,6 +74,7 @@ schema - the reason is in `<out>/why`) · 64 usage.
 from __future__ import annotations
 
 import datetime as _dt
+import functools
 import hashlib
 import json
 import os
@@ -1772,9 +1774,15 @@ def _helper_run(args: list, timeout: float, what: str) -> subprocess.CompletedPr
         raise StoreUnusable("unread", f"`lanes-edit.sh {' '.join(args)}` could not be run: {exc}")
 
 
+@functools.lru_cache(maxsize=None)
 def this_workstation() -> tuple[str, str]:
     """`lanes-edit.sh workstation`'s first two columns: the name every row of
-    this workstation is filed under, and where it came from."""
+    this workstation is filed under, and where it came from.
+
+    ASKED ONCE A PROCESS (the review of #219): the refusal `cmd_sync` makes
+    before the lock asks it, and the sync that then takes the lock asked again
+    for the same answer - one environment, one name. A read that failed raises,
+    and is not kept."""
     proc = _helper_run(["workstation"], 60, "this workstation's name")
     first = (proc.stdout.splitlines() or [""])[0].split("\t")
     if proc.returncode != 0 or not first[0]:
@@ -1833,10 +1841,22 @@ def tree_line(row: dict, provenance) -> str:
 
 
 #: THE BRANCH OF A LANE'S UNREAD MARKER (opensoft/openRepoTools#173): a
-#: `worktrees` row with NO PATH - which no tree has, since a tree's path, or
-#: the id standing in for it, is never empty - saying the lane's inventory was
-#: there and could not be read at the last sync, and why.
+#: `worktrees` row with no path AND a branch beginning `unreadable inventory (`,
+#: saying the lane's inventory was there and could not be read at the last
+#: sync, and why. The path alone is not enough (the review of #219): a
+#: current-schema sidecar with no `path:` is a tree whose path is empty. No
+#: tree's branch is this: a git ref carries no space, and the helper's own words
+#: for a branch it could not read are `unreadable sidecar`, `unknown schema <n>`
+#: and `detached <sha>`. Its key is `<lane>:` and a US, which no tree's is.
 UNREAD_BRANCH = "unreadable inventory"
+
+
+def is_unread_marker(row: dict) -> bool:
+    return not row.get("path") and str(row.get("branch") or "").startswith(f"{UNREAD_BRANCH} (")
+
+
+def unread_key(lane: str) -> str:
+    return f"{lane}:{US}unread"
 
 
 def unread_record(workstation: str, lane: str, why: str) -> dict:
@@ -1906,7 +1926,18 @@ def collect_inventory() -> tuple[dict, dict]:
                                 f"indexer does not read ({len(fields)} fields): {line[:120]!r} - "
                                 f"is the helper on PATH another version?")
         record = tree_record(fields)
-        trees[f"{record['lane']}:{record['path']}"] = record
+        # TWO TREES OF ONE LANE WITH ONE PATH ARE TWO ROWS (the review of #219):
+        # a current-schema sidecar with no `path:` is a tree whose path is
+        # EMPTY, and a second one replaced the first here. A later one is keyed
+        # with its place among them - the read is sorted, so the place is
+        # stable - after a US, which no path in a US-separated line can carry.
+        key = f"{record['lane']}:{record['path']}"
+        if key in trees:
+            n = 2
+            while f"{key}{US}{n}" in trees:
+                n += 1
+            key = f"{key}{US}{n}"
+        trees[key] = record
     return trees, unread
 
 
@@ -2051,11 +2082,12 @@ def run_inventory(mode: str, requested: str | None, dry_run: bool) -> int:
     workstation = source[len(INVENTORY_PREFIX):]
     markers: dict = {}
     for lane, why in unread.items():
-        rows_kept = sum(1 for row in stored.values() if row["lane"] == lane and row.get("path"))
+        rows_kept = sum(1 for row in stored.values()
+                        if row["lane"] == lane and not is_unread_marker(row))
         if rows_kept:
             why = (f"{why} - the {rows_kept} row(s) listed for it are kept from the last sync "
                    f"that read it")
-        markers[f"{lane}:"] = unread_record(workstation, lane, why)
+        markers[unread_key(lane)] = unread_record(workstation, lane, why)
 
     fill_prs(trees, stored, mode, held)
     upserts, deletes, kept = {}, [], 0
@@ -2078,11 +2110,11 @@ def run_inventory(mode: str, requested: str | None, dry_run: bool) -> int:
     for rec_id, row in stored.items():
         if rec_id in trees or rec_id in markers:
             continue
-        if row["lane"] not in held or not row.get("path"):
+        if row["lane"] not in held or is_unread_marker(row):
             deletes.append(rec_id)
     after = {rid: rec["digest"] for rid, rec in trees.items() if rec["lane"] not in held}
     after.update({rid: row["digest"] for rid, row in stored.items()
-                  if row["lane"] in held and row.get("path")})
+                  if row["lane"] in held and not is_unread_marker(row)})
     after.update({rid: rec["digest"] for rid, rec in markers.items()})
     fingerprint = hashlib.sha256("\n".join(
         f"{rid}\t{digest}" for rid, digest in sorted(after.items())).encode("utf-8")).hexdigest()
@@ -2324,8 +2356,8 @@ def cmd_status() -> int:
                 say(f"  provenance:  inventory@{fp[:12]} (sync {prov.get('generation')}, indexed "
                     f"{prov['indexed_utc']}, schema {prov['schema_version']})")
                 try:
-                    wt_rows = store.rows("worktrees", name, ["path"])
-                    count = sum(1 for row in wt_rows if row["path"])
+                    wt_rows = store.rows("worktrees", name, ["path", "branch"])
+                    count = sum(1 for row in wt_rows if not is_unread_marker(row))
                     # A LANE'S UNREAD MARKER IS NOT A WORKTREE (#173), and is said
                     # as what it is.
                     unread = len(wt_rows) - count
@@ -2464,10 +2496,10 @@ def _export_worktrees(out_dir: str, cfg: dict, unusable) -> int:
         for prov in provs:
             for row in store.rows("worktrees", prov["source"],
                                   TABLE_COLUMNS["worktrees"] + ["provenance"]):
-                # A ROW WITH NO PATH IS A LANE'S UNREAD MARKER (#173), written
-                # back as the `UNREAD` line it was read from.
-                lines.append(tree_line(row, row.get("provenance")) if row.get("path")
-                             else unread_line(row))
+                # A LANE'S UNREAD MARKER (#173) is written back as the `UNREAD`
+                # line it was read from.
+                lines.append(unread_line(row) if is_unread_marker(row)
+                             else tree_line(row, row.get("provenance")))
     except Refusal as exc:
         unusable("refused", str(exc))
         return 2

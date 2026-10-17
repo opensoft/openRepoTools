@@ -2380,6 +2380,65 @@ def test_an_inventory_that_cannot_be_read_keeps_its_rows(inv):
     assert "NOT READ" not in idx.stdout
 
 
+def test_a_tree_with_no_path_is_a_tree_and_not_an_unread_marker(inv):
+    """A TREE'S PATH CAN BE EMPTY (the review of #219 at ab853b1): a
+    current-schema sidecar with a `tree:` and no `path:` is a `TREE` line
+    whose path is empty, and a marker read from the empty path alone exported
+    it as `UNREAD` and counted its lane as not read. The marker is a row with
+    no path AND the branch `unreadable inventory (...)`, which no git ref can
+    be; it has a key of its own, so holding the lane never writes it over such
+    a tree; and two trees of one lane with one path are two rows, as they are
+    two lines of the source read."""
+    trees = inv.lsr / "repoM-1" / "trees"
+    for tid, branch in (("c1-nopath-x", "feat/x"), ("c2-nopath-y", "feat/y")):
+        (trees / f"{tid}.yaml").write_text("\n".join([
+            "schema: 1", "lane: repoM-1", f"tree: {tid}", "checkout: unknown",
+            f"branch: {branch}", "head: " + "3" * 40, "upstream: none", "dirty: 0",
+            "unpushed: 0", "writer: none", "generation: 0", "operation: none",
+            "observed: 2026-10-04T00:00:00Z", ""]))
+    res = inv.sync()
+    assert res.returncode == 0, res.stderr
+    src, idx = _wt(inv, "repoM-1"), _wt(inv, "repoM-1", "--index")
+    assert "read: index (sqlite)" in idx.stderr, idx.stderr
+    assert "feat/x" in src.stdout and "feat/y" in src.stdout, src.stdout
+    assert (idx.returncode, idx.stdout) == (src.returncode, src.stdout), idx.stdout
+    assert "NOT READ" not in idx.stdout
+    st = inv.e.index("status")
+    assert "rows:        7 worktree(s)\n" in st.stdout, st.stdout
+    # HELD OVER, ALL THREE STAY, the two with no path among them.
+    trees.chmod(0)
+    try:
+        if os.access(trees, os.R_OK):
+            pytest.skip("this account reads a mode-000 directory (root): nothing to prove here")
+        assert inv.sync().returncode == 0
+        idx = _wt(inv, "repoM-1", "--index")
+        assert "feat/x" in idx.stdout and "feat/y" in idx.stdout, idx.stdout
+        assert "the 3 row(s) listed for it are kept from the last sync" in idx.stdout, idx.stdout
+    finally:
+        trees.chmod(0o755)
+    healed = inv.sync()
+    assert healed.returncode == 0 and "0 upserted, 1 removed" in healed.stdout, healed.stdout
+    src, idx = _wt(inv, "repoM-1"), _wt(inv, "repoM-1", "--index")
+    assert (idx.returncode, idx.stdout) == (src.returncode, src.stdout), idx.stdout
+
+
+def test_an_inventory_sync_asks_for_the_workstation_once(estate):
+    """ONE `workstation` READ A SYNC (the review of #219 at ab853b1): the
+    refusal before the lock asks `lanes-edit.sh workstation`, and a sync that
+    then takes the lock asked a second time for the same answer. It is the
+    process's own and is asked once."""
+    calls = estate.root / "helper-calls"
+    wrapper = estate.root / "lanes-edit-counting"
+    wrapper.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$1\" >> {calls}\n"
+                       f"exec bash {LANES_EDIT} \"$@\"\n")
+    wrapper.chmod(0o755)
+    res = estate.index("sync", "--source", "inventory", env={"LANES_EDIT": str(wrapper)})
+    assert res.returncode == 0, (res.stdout, res.stderr)
+    asked = calls.read_text().splitlines()
+    assert "worktrees" in asked, asked  # not vacuous: the sync took the lock and read
+    assert asked.count("workstation") == 1, asked
+
+
 def test_a_first_sync_that_cannot_read_a_lane_says_not_read_in_the_index(inv):
     """A FIRST SYNC IS NOT AN EMPTY ANSWER (opensoft/openRepoTools#173): a lane
     whose `trees` directory is there and cannot be listed at the FIRST sync has

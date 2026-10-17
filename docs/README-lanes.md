@@ -3436,11 +3436,13 @@ is current the answer is **byte for byte the source read's**, on stderr as on
 stdout — the warnings for a log's unreadable lines and the count that closes
 them included (opensoft/openRepoTools#166) — the clock's columns aside (the
 listing's AGE and its "last heard from origin" age, computed the same way at
-the moment of the read). And it is **one commit's image**: `lanes-index export`
-reads the provenance and every table in ONE read snapshot — a SQLite read
-transaction, a Postgres `REPEATABLE READ READ ONLY` one — so a sync landing
-mid-read is in the answer whole or not at all (#166). One line on stderr says
-which was read:
+the moment of the read). Stderr carries the flag's OWN lines besides: the
+`read:` line below, and for `history` the `LANES_NO_FETCH=1 — not fetching …`
+note, because where the index answers that arm fetches nothing in front of it.
+And it is **one commit's image**: `lanes-index export` reads the provenance and
+every table in ONE read snapshot — a SQLite read transaction, a Postgres
+`REPEATABLE READ READ ONLY` one — so a sync landing mid-read is in the answer
+whole or not at all (#166). One line on stderr says which was read:
 
 ```text
 read: index (sqlite) at register@1a2b3c4d5e6f; 0 commits behind
@@ -3571,15 +3573,18 @@ written at (a snapshot moved aside and begun again) writes nothing for that lane
 and says so, and `reconcile --source inventory` is the act that takes the lane
 as it now stands. A lane whose `trees` directory is there and cannot be listed
 keeps its rows — it is not a lane with no worktrees — and gets ONE MARKER ROW,
-with no `path` and the `branch` `unreadable inventory (<why>)`, which the
-`--index` read prints as the same `inventory NOT READ` line the sidecars give
-(opensoft/openRepoTools#173): a FIRST sync that cannot read a lane has no rows
-to keep and is still not an empty answer, and rows held over from an earlier
-sync are said to be, on that line. The marker leaves with the first sync that
-reads the lane, and `lanes-index status` counts it apart from the worktrees.
-The source's own row
-carries a fingerprint of the whole table as its compare-and-swap token and a
-sync count that only goes up. A container with no `LANES_WORKSTATION` syncs
+with no `path` AND the `branch` `unreadable inventory (<why>)` — a tree's path
+can be empty (a sidecar with no `path:`), and no git ref carries a space — which
+the `--index` read prints as the same `inventory NOT READ` line the sidecars
+give (opensoft/openRepoTools#173): a FIRST sync that cannot read a lane has no
+rows to keep and is still not an empty answer, and rows held over from an
+earlier sync are said to be, on that line. The marker leaves with the first
+sync that reads the lane, and `lanes-index status` counts it apart from the
+worktrees. The schema stays 1, so an indexer from before #173 sharing a
+Postgres store reads a marker as a tree: its `export --worktrees` prints it as
+a `TREE` line with an empty path and that branch, and its `status` counts it as
+a worktree. The source's own row carries a fingerprint of the whole table as
+its compare-and-swap token and a sync count that only goes up. A container with no `LANES_WORKSTATION` syncs
 nothing (exit 2): a source named for a container's own id is one no restart
 finds again.
 
