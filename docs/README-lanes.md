@@ -4072,7 +4072,7 @@ machine whose repository already exists it clones it, adds nothing to a seeded
 repository, writes the pointer file and runs `link-estates`:
 
 ```sh
-openRepoTools --install     # the thirteen commands, the three skills, the three command files and the hook entry
+openRepoTools --install     # the commands, the three skills, the three command files and the hook entry
 openRepoTools wip init      # create or adopt the workspace, and link it
 ```
 
