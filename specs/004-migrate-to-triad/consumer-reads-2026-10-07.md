@@ -10,10 +10,10 @@ Bench paths are written as placeholders, defined here once, for the same reason.
 - `$LS`: the lane-state root, `$PROJECTS/.lane-state`.
 - `$XF`: the xFactory checkout, `$PROJECTS/xFactory`.
 - `$ORT`: the openRepoTools checkout, `$PROJECTS/openRepoTools`.
-- `$ORTW`: the openRepoTools-worktrees root, where Brett Heap's feature worktrees for openRepoTools live, `$PROJECTS/openRepoTools-worktrees`.
-- `$READS`: lane 2's worktree of the planning branch, `$PROJECTS/.lane-worktrees/openRepoTools-2/triad-reads`.
+- `$ORTW`: the single-repository Speckit worktree root, `$PROJECTS/openRepoTools-worktrees`.
+- `$READS`: lane 2's worktree at the planning branch's commit ff6f6a7 (on lane 2's branch `004-migrate-to-triad-reads`), `$PROJECTS/.lane-worktrees/openRepoTools-2/triad-reads`.
 
-Three recorded searches keep a path inside a single-quoted `grep` pattern exactly as it was typed (the workBenches and brett-wip `grep -e '…'` lines, and the `.lane-state` count), because a placeholder in the pattern would change what was searched for. The hygiene test allows a path inside a quoted `grep` pattern and nowhere else. The paths these placeholders stand for are in lane 2's transcript and in this file as #189 landed it.
+Three recorded searches keep a path inside a single-quoted `grep` pattern exactly as it was typed (the workBenches and brett-wip `grep -e '…'` lines, and the `.lane-state` count), because a placeholder in the pattern would change what was searched for. The hygiene test allows a path inside a single-quoted `grep` pattern and nowhere else. The paths these placeholders stand for are in lane 2's transcript and in this file as #189 landed it.
 
 Read at 2026-10-07T10:04:44Z–11:07:10Z by lane openRepoTools-2's writer, under #186, from ff6f6a7. An API-side error cut the run, and it resumed at 11:03:49Z, when every head was checked again.
 
