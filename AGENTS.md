@@ -229,17 +229,14 @@ proposals — measured: `tests-macos` running 49-54 minutes per push against
 Linux's 17-22, pull requests drawing 6-12 Copilot review rounds, and this
 suite queuing up to 1h20 behind the workstation lock described below):
 
-1. **`TESTS-MACOS` LEAVES THE PER-PUSH GATE.** On `pull_request`
-   (`.github/workflows/tests.yml`) this workflow runs `tests`,
-   `tests-no-submodule` and `tests-windows` only; `tests-macos` itself runs
-   there only once the coordinator has put the `ready` label on the PR — the
-   landing gate, applied once, right before the squash — and otherwise on
-   push to main, nightly at 04:17Z, and on `workflow_dispatch`. A red nightly
-   or main `tests-macos` is a follow-up issue, never a revert. `parse-macos`
-   is the one piece of the old per-push job that never left: it runs the
-   bash-3.2 parse below on every `pull_request` push and every push to main
-   — the same two triggers as the three jobs above it, never gated on the
-   label — because that parse is worthless on Linux's bash 5.
+1. **`TESTS-MACOS` LEFT THE PER-PUSH GATE, AND THEN LEFT CI.** This ruling
+   moved `tests-macos` behind the `ready` label and split `parse-macos` off
+   it. Both are superseded by Brett Heap's decision of 2026-10-15, for the
+   whole estate, to run the suite on Linux only: `tests-windows`, `parse-macos`
+   and `tests-macos` are gone, and `.github/workflows/tests.yml` runs
+   `guard-launch-mode`, `tests` and `tests-no-submodule`, all on ubuntu — on
+   `pull_request`, push to main, nightly at 04:17Z and `workflow_dispatch`.
+   Nothing in CI parses a file under macOS's bash 3.2 now.
 2. **COPILOT REVIEW IS CAPPED AT TWO ROUNDS PER PULL REQUEST.** Rounds one
    and two are taken; a finding after that is filed as an issue and the PR
    lands regardless.
@@ -290,9 +287,10 @@ a person with no checkout in front of them.
 
 `tests/test_lane_helpers.sh` is 122 KB of bash that arrived with the move;
 `tests/test_lane_helpers_suite.py` is what makes `pytest` run it, so it is one
-slow test rather than no test at all. Everything shipped here is parsed under
-macOS **bash 3.2** in CI, where `${x,,}`, `mapfile`, `declare -A` and
-`local -n` are syntax errors — write `tr '[:upper:]' '[:lower:]'` and a loop.
+slow test rather than no test at all. Everything shipped here is written for
+macOS **bash 3.2**, where `${x,,}`, `mapfile`, `declare -A` and `local -n` are
+syntax errors — write `tr '[:upper:]' '[:lower:]'` and a loop. No CI job checks
+this since 2026-10-15, so nothing but your own care holds it.
 
 **`awk -v name=value` CARRIES ONE LINE.** The value is processed as a string
 literal and one cannot span lines: macOS's `awk` is the one-true-awk, which
