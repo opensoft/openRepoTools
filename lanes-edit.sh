@@ -11821,6 +11821,20 @@ archive_rows() {   # <repo> <1 = the act, 0 = the dry run>
        { [ -e "$LANES_ARCH_FILE" ] && [ ! -f "$LANES_ARCH_FILE" ]; }; then
       die "$LANES_ARCH_PATH, or its directory, is a symlink — or the archive is there and not a regular file. This move appends the rows with '>>', which writes through a link to whatever file it names while the commit records the link and removes the rows from the register. Put the archive itself there as a regular file, commit it, and re-run. Nothing was written." 2
     fi
+    # A PUBLISHED ARCHIVE THIS CHECKOUT DOES NOT HAVE IS REFUSED (Copilot on #93's
+    # `d0310f6`, #138 item 2). Out of a sparse checkout, or marked skip-worktree,
+    # the file is absent here and in nobody's dirty list, so the move created a
+    # NEW archive of only its own rows, whose commit would drop every position the
+    # published one reserves (Amendment 19(b)). Refused rather than seeded from
+    # origin: git (2.43, measured) will not stage a skip-worktree path, so a seeded
+    # archive fails at the commit after the rows have left the register here.
+    if [ "$NO_GIT" != 1 ] && have_remote_ref && [ ! -e "$LANES_ARCH_FILE" ] && [ ! -L "$LANES_ARCH_FILE" ]; then
+      ar_pubarch=""
+      ar_pubarch="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_ARCH_PATH" 2>/dev/null)" ||
+        die "the tree of origin/$LANES_BRANCH could not be listed, so whether $LANES_ARCH_PATH is published is not known — and a move that creates one beside a published one drops every position it reserves (Amendment 7(d)). Nothing was written." 1
+      [ -z "$ar_pubarch" ] ||
+        die "$LANES_ARCH_PATH is published on origin/$LANES_BRANCH and this checkout does not have it (it is outside a sparse checkout, or marked skip-worktree). A move made here would create a new archive holding only these rows, and its commit would drop every retired position the published one reserves (Amendment 19(b)). Bring the archive into this checkout and re-run. Nothing was written." 2
+    fi
   fi
 
   # THE REGISTER IS READ WITH ITS OWN STATUS (Copilot round 4 on #93). Inside

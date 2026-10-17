@@ -290,3 +290,24 @@ def test_item_10_a_symlinked_archive_refuses_and_the_row_stays_in_the_register(r
     assert outside.read_text() == "# not the archive\n"
     assert reg.head() == before
     assert "`repoX-2`" in reg.git("show", "origin/main:lanes/LANES.md")
+
+
+def test_item_2_a_published_archive_this_checkout_lacks_refuses_the_move(reg):
+    """#138 item 2: with the published archive outside this checkout (skip-
+    worktree, as a sparse checkout leaves it), the move created a NEW archive of
+    its own rows and removed them from the register before git refused to stage
+    the path (exit 6). It refuses before writing now."""
+    reg.write("lanes/archive/LANES-retired.md", "# archive\n\n" + HEADER + row(
+        "repoX-9", OLD_ID, "RETIRED · 2026-08-02T00:00:00Z · an earlier move", "2026-08-01"))
+    retire_repo_x_2(reg)
+    reg.publish("an archive with repoX-9, and repoX-2 retired")
+    reg.git("update-index", "--skip-worktree", "lanes/archive/LANES-retired.md")
+    (reg.wip / "lanes/archive/LANES-retired.md").unlink()
+    before, register = reg.head(), reg.read("lanes/LANES.md")
+    result = reg.run("archive-rows", "repoX", "--yes", LANES_LANE="repoX-1")
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "is published on origin/main and this checkout does not have it" in result.stderr
+    assert reg.head() == before
+    assert reg.read("lanes/LANES.md") == register
+    assert not (reg.wip / "lanes/archive/LANES-retired.md").exists()
+    assert reg.dirty() == ""
