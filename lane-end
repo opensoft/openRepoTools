@@ -540,7 +540,16 @@ LANE_WORKTREES="${LANE_WORKTREES:-$(lane_worktrees_default)}"
 
 LE_TMP=""
 cleanup() { [ -n "${LE_TMP:-}" ] && rm -f -- "$LE_TMP"; return 0; }
-trap cleanup EXIT INT TERM
+# A SIGNAL ENDS THE RUN, AND `cleanup` RUNS ON THE WAY OUT. `cleanup` returns
+# rather than exits, so the one trap `cleanup EXIT INT TERM` ran it and then
+# RESUMED the script at the next command — harmless while nothing was left to
+# delete, and a fail-open once the sweep's capture file is `LE_TMP`: the
+# resumed script read the deleted file as an empty note and went on to write
+# (#138 item 6, the delta review of fe6e38a). The codes are the shell's own,
+# 128 plus the signal, and the EXIT trap does the removing once.
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 note() { printf '%s: %s\n' "$prog" "$*" >&2; }
 step() { printf '%s: %s\n' "$prog" "$*" >&2; }
@@ -722,7 +731,10 @@ if [ -n "$retire_dormant" ]; then
   # `$TMPDIR`.
   LE_TMP="$rd_errf"
   rd_rows="$("$LANES_EDIT" lanes --fetch --closed --prefix "$retire_dormant" 2>"$rd_errf")" || rd_rc=$?
-  rd_err="$(cat "$rd_errf" 2>/dev/null || printf '')"
+  # AND A CAPTURE THAT CANNOT BE READ BACK IS NOT AN EMPTY ONE: the empty note
+  # is the one that never refuses.
+  rd_err="$(cat -- "$rd_errf")" ||
+    die "the capture of the read's own notes could not be read back, so whether this workstation's session records could be read was never established — and DORMANT is 'no object log AND no live session here'. The rows are not counted over a fact that was not read (Amendment 7(d)). Nothing was written." 1
   printf '%s' "$rd_err" >&2
   rm -f -- "$rd_errf"
   case "$rd_err" in
