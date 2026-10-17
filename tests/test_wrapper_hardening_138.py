@@ -13,9 +13,11 @@ Each is a read the wrapper could not make, taken for an answer:
     stderr left the "session records could not be read" sentence unread, and
     the sweep went on.
 
-Two older gaps beside those lines are closed with them: `lanes` claimed none was
+Older gaps beside those lines are closed with them: `lanes` claimed none was
 recorded when the hidden-row read itself FAILED, and `lane-end --retire-dormant`
-left its stderr capture file behind when the note could not be relayed.
+left its stderr capture file behind when the note could not be relayed, resumed
+after a signal that had removed it, and took an unreadable capture for an empty
+one.
 
 The register helper, tmux and mktemp are fakes on a controlled PATH, as in
 `test_guard_launch_mode.py`; nothing here touches a real register or a real
@@ -26,8 +28,10 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import stat
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -258,18 +262,30 @@ def test_empty_listing_claims_nothing_when_the_hidden_row_read_fails(box, rows, 
     assert f"exited {closed_rc}" in result.stdout
 
 
+def test_empty_listing_treats_rows_printed_before_an_exit_8_as_hidden(box):
+    # The real helper never does this; a listing that says "none is recorded"
+    # over rows it was just handed would be saying something it can see is false.
+    result = listing(box, 3, closed_rc=8)
+    assert result.returncode == 8, (result.stdout, result.stderr)
+    assert "is not the same as none being recorded" in result.stdout
+    assert "no lane of repoH is recorded" not in result.stdout
+
+
 # --- item 6: `lane-end --retire-dormant`, the stderr capture -----------------
 
 #: The sweep's read: one DORMANT row (class, the fourteenth column), and the
 #: sentence `lanes_rows` says on stderr when it could not read this
-#: workstation's session records, when `$FAKE_UNREAD` is 1. `retire-rows` is
-#: the sweep's one write and only logs that it was called.
+#: workstation's session records, when `$FAKE_UNREAD` is 1. Where `$FAKE_READY`
+#: names a file the read touches it once its notes are written and then takes
+#: two seconds, so a test can signal the sweep mid-read. `retire-rows` is the
+#: sweep's one write and only logs that it was called.
 FAKE_SWEEP_EDIT = r'''
 sub="${1-}"; shift || :
 case "$sub" in
   lanes)
     [ "${FAKE_UNREAD:-0}" != 1 ] || printf "this workstation's session records could not be read\n" >&2
     [ -z "${FAKE_NOTE:-}" ] || printf '%s\n' "$FAKE_NOTE" >&2
+    [ -z "${FAKE_READY:-}" ] || { : > "$FAKE_READY"; sleep 2; }
     printf 'repoD-1\tNO LOG\tEagle\tnone\tnone\tnone\tnone\tnone\t9d\tnone\tnone\t0\there\tdormant\t2026-09-02\told cell\tnone\n' ;;
   retire-rows) printf 'retire-rows %s\n' "$*" >> "$FAKE_LOG" ;;
   *) printf 'fake lanes-edit: unexpected subcommand %s\n' "$sub" >&2; exit 99 ;;
@@ -332,4 +348,47 @@ def test_sweep_leaves_no_capture_file_when_its_note_cannot_be_relayed(box):
                                 stderr=full, text=True, timeout=60, check=False)
     assert result.returncode != 0, result.stdout
     assert "DRY RUN" not in result.stdout
+    assert list(box.tmpdir.glob("lane-end-sweep.*")) == []
+
+
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
+def test_sweep_does_not_resume_after_a_signal_during_the_read(box, sig):
+    # A signal that reaches the lane-end shell ALONE (not its process group)
+    # while the read runs. `cleanup` used to be the whole trap, so the script
+    # resumed after it: with the capture file gone the unread-records refusal
+    # read an empty note, and `--yes` went on to write.
+    if sig == signal.SIGINT and signal.getsignal(signal.SIGINT) is signal.SIG_IGN:
+        pytest.skip("SIGINT is ignored at entry, so no script can trap it")
+    sweep_box(box, unread=True)
+    ready = box.root / "ready"
+    box.env["FAKE_READY"] = str(ready)
+    proc = subprocess.Popen(["bash", str(REPO / "lane-end"), "--retire-dormant", "repoD", "--yes"],
+                            env=box.env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True)
+    try:
+        deadline = time.monotonic() + 30
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert ready.exists(), "the read never started"
+        proc.send_signal(sig)
+        proc.communicate(timeout=60)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+    assert proc.returncode == 128 + sig, proc.returncode
+    assert "retire-rows" not in box.calls()
+    assert list(box.tmpdir.glob("lane-end-sweep.*")) == []
+
+
+def test_sweep_refuses_when_the_capture_cannot_be_read_back(box):
+    # `cat` fails on the capture file, which `|| printf ''` used to turn into
+    # an empty note, and an empty note is the one that never refuses.
+    sweep_box(box, unread=True)
+    _script(box.bin / "cat", f'case "$*" in *lane-end-sweep.*) exit 1 ;; esac\nexec {shutil.which("cat")} "$@"\n')
+    result = box.run("lane-end", "--retire-dormant", "repoD", "--yes")
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert "could not be read back" in result.stderr
+    assert "Nothing was written" in result.stderr
+    assert "retire-rows" not in box.calls()
     assert list(box.tmpdir.glob("lane-end-sweep.*")) == []
