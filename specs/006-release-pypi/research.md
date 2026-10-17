@@ -319,9 +319,14 @@ were read read-only.
 ## R16. Line caps move by dated entries
 
 - **Decision**:
-  - README.md is 485 lines against a cap of 486
-    (`tests/test_repo_hygiene.py:2253`), and AGENTS.md is 314 against 316
+  - At this branch's base `aaa7bc8`, README.md is 485 lines against a cap of
+    486 (`tests/test_repo_hygiene.py:2253`), and AGENTS.md is 314 against 316
     (`:1748`).
+  - `main` has moved since. At `2732d59` (2026-10-17), AGENTS.md is 321
+    against 323, and README is still 485 against 486. The tests are
+    `test_agents_md_is_short_enough_to_be_read` and
+    `test_readme_is_short_enough_to_be_read`, wherever they now sit.
+  - tasks.md has the branch brought up to `main` before Phase 1.
   - Each file's change is cut to the fewest lines that carry its facts. Where
     a cap still moves, the move goes in that test's docstring as a dated
     entry, in that test's own form. It names the lines and why, and states
