@@ -311,3 +311,31 @@ def test_item_2_a_published_archive_this_checkout_lacks_refuses_the_move(reg):
     assert reg.read("lanes/LANES.md") == register
     assert not (reg.wip / "lanes/archive/LANES-retired.md").exists()
     assert reg.dirty() == ""
+
+
+# ---------------------------------- #138: the reads that hand out a position
+
+def next_free(reg: Register, repo: str = "repoX") -> subprocess.CompletedProcess:
+    env = dict(reg.env)
+    return subprocess.run(["bash", str(REPO / "lanes-edit.sh"), "next-free", repo],
+                          input="repoX-1\trow\n", cwd=str(reg.wip), env=env, text=True,
+                          capture_output=True, timeout=60, check=False)
+
+
+@pytest.mark.parametrize("kind", ["directory", "broken symlink", "fifo"])
+def test_item_7_a_local_archive_that_is_not_a_regular_file_offers_no_position(reg, kind):
+    """#138 item 7: `archive_text`'s local rung asked `-f` alone, so an archive
+    path that is there and not a regular file read as no archive, and the
+    positions it should reserve were offered again."""
+    path = reg.wip / "lanes/archive/LANES-retired.md"
+    path.parent.mkdir()
+    if kind == "directory":
+        path.mkdir()
+    elif kind == "broken symlink":
+        path.symlink_to("gone.md")
+    else:
+        os.mkfifo(path)
+    result = next_free(reg)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert result.stdout == ""
+    assert "could not be read" in result.stderr

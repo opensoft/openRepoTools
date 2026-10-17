@@ -3259,8 +3259,21 @@ archive_text() {
   # AND THE LOCAL COPY IS THE SAME RULE ONE RUNG DOWN: a file that is THERE and
   # will not open is a read that FAILED, and its rows hold positions. Saying
   # nothing here would put a retired `<repo>-<n>` back on offer.
+  archive_local_text
+}
+
+# THIS CHECKOUT'S ARCHIVE: its text, nothing where there is none, and 1 where
+# the path is THERE AND IS NOT A REGULAR FILE (#138 item 7) as well as where it
+# will not open. Asked with `-f` alone, a directory, a FIFO or a broken symlink
+# read as no archive and its retired positions came back on offer; `cat` on the
+# FIFO would have blocked besides. `archive_text`'s last rung and
+# `retired_identity_hits`' second read are both this.
+archive_local_text() {
   if [ -f "$LANES_ARCH_FILE" ]; then
     cat -- "$LANES_ARCH_FILE" 2>/dev/null || return 1
+  elif [ -e "$LANES_ARCH_FILE" ] || [ -L "$LANES_ARCH_FILE" ]; then
+    note "$LANES_ARCH_PATH is there and is not a regular file, so the retired positions it should hold cannot be read"
+    return 1
   fi
   return 0
 }
@@ -3271,9 +3284,7 @@ retired_identity_hits() { # <lane>; stdout: matching retired spellings
   ri_lane="$1"
   ri_pub="$(archive_text 2>/dev/null)" || return 1
   ri_local=""
-  if [ -f "$LANES_ARCH_FILE" ]; then
-    ri_local="$(cat -- "$LANES_ARCH_FILE" 2>/dev/null)" || return 1
-  fi
+  ri_local="$(archive_local_text 2>/dev/null)" || return 1
   printf '%s\n%s\n' "$ri_pub" "$ri_local" | awk -v want="$ri_lane" '
     function key(n,   h, p) {
       p = n; sub(/^.*-/, "", p); sub(/[A-Za-z]$/, "", p)
