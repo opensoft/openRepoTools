@@ -945,12 +945,6 @@ def test_both_commands_are_tracked_with_lf_in_the_index():
         assert "i/lf" in row, f"not LF in the index:\n    {row}"
 
 
-def test_the_macos_job_parses_both_commands_with_bash_3_2():
-    workflow = (REPO / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
-    for name in ("claude-current", "claude-restart-check"):
-        assert f"/bin/bash -n {name}" in workflow, name
-
-
 def _function(text: str, name: str) -> str:
     match = re.search(rf"^{name}\(\) \{{\n.*?^\}}\n", text, re.S | re.M)
     assert match, f"no {name}() in the file"

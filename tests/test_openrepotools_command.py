@@ -2217,6 +2217,14 @@ def fake_github(tmp_path, served_names) -> dict:
     routes = "".join(
         f"*/contents/{name}\\?*) exec cat '{served / name}' ;;\n"
         for name in served_names)
+    # THE ONE FILE A REAL GITHUB IS ASKED FOR BEFORE ANY OF THOSE (#186,
+    # T007), answered the way it answers for a single repository: a 404 for
+    # the code pin, which `gh` reports on stderr with the status in it. Every
+    # assertion below is unchanged; the server just answers the one question
+    # the installer now asks first.
+    routes += (
+        "*/contents/contracts/code-pin.yaml\\?*) "
+        "printf 'gh: Not Found (HTTP 404)\\n' >&2; exit 1 ;;\n")
     (fake / "gh").write_text(
         "#!/bin/sh\n"
         'case "$*" in\n'
