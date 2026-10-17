@@ -567,14 +567,13 @@ case "$rc" in
 		# 141, `e_hidden` stayed 0, and the listing said none was recorded about
 		# a repository with hidden rows. Reading the output into a variable
 		# closes nothing on the producer. And a read that FAILED, with rows or
-		# without, answered the same "none is recorded": the status is kept, `0`
-		# says there is something to see if it printed anything, `8` says there
-		# is nothing, and anything else is a read that did not answer
-		# (Amendment 7(d)).
+		# without, answered the same "none is recorded": the status is kept. `0`
+		# and `8` are answers, and rows it printed are rows (an `8` that printed
+		# some is a contradiction and fails towards showing them); anything
+		# else is a read that did not answer (Amendment 7(d)).
 		e_rows="$("$LANES_EDIT" lanes --closed ${idx_args[@]+"${idx_args[@]}"} ${args[@]+"${args[@]}"} 2>/dev/null)" || e_hrc=$?
 		case "$e_hrc" in
-		0) case "$e_rows" in *[![:space:]]*) e_hidden=1 ;; esac ;;
-		8) : ;;
+		0 | 8) case "$e_rows" in *[![:space:]]*) e_hidden=1 ;; esac ;;
 		*) e_hidden=unread ;;
 		esac
 		if [ "$e_hidden" = 1 ]; then
