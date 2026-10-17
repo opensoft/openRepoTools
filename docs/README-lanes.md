@@ -3969,7 +3969,10 @@ as a writer, just as the checkout's own registrations elsewhere are not;
 beside what the checkout holds. Every worktree git registers in a checked-out leg that
 no sidecar names is a `TREE` row: `unmanaged`, or `stale-registration` where its
 directory is gone, naming the leg. A checkout in the paired root that nothing else named
-is `unmanaged`. Nothing is adopted, deleted or overwritten.
+is `unmanaged`. A leg with a `.git` of its own that git cannot read is a `TREE` row
+`unreadable` that requires recovery: the sweep's rule and word for its `leg` row, which
+it counts. The verdict is not `indeterminate` for it, so the sweep still lists and
+counts that leg. Nothing is adopted, deleted or overwritten.
 
 **A `project.yaml` that cannot be read is never "no legs".** `lane-handoff` still
 completes (`R-A11-11`), but it does not poll the paired root. It says so in the top

@@ -13130,11 +13130,36 @@ EOF
   # over. A leg's main worktree is listed FIRST and spelled as its git
   # directory under the assembly's `.git/modules/`, so it is skipped by place,
   # not by name.
+  # A LEG WITH A `.git` OF ITS OWN THAT GIT CANNOT READ is no absent leg: it is
+  # a read that failed, never an absent or a clean one (Amendment 7(d)), and
+  # passed over it was a leg this reconciliation said nothing of while the
+  # sweep counted it. So it is the sweep's rule (`probe_leg`: git's toplevel
+  # there is not the leg, and a `.git` stands in it) and the sweep's word: a
+  # TREE row `unreadable`, which requires recovery, as the sweep's `leg` row is
+  # `unreadable` and counted. It is NO `indeterminate`: the sweep counts that
+  # leg and goes on (exit 3), and a verdict it refuses on would hide the count.
   if [ "$lrc_lgrc" = 0 ]; then
     while IFS="$lrc_tab" read -r lrc_lrepo lrc_ldecl lrc_labs; do
       [ -n "$lrc_labs" ] && [ -d "$lrc_labs" ] || continue
       lrc_ltop="$(git -C "$lrc_labs" rev-parse --show-toplevel 2>/dev/null </dev/null || :)"
-      [ -n "$lrc_ltop" ] && [ "$(lane_real_path "$lrc_ltop")" = "$(lane_real_path "$lrc_labs")" ] || continue
+      if [ -z "$lrc_ltop" ] || [ "$(lane_real_path "$lrc_ltop")" != "$(lane_real_path "$lrc_labs")" ]; then
+        { [ -e "$lrc_labs/.git" ] || [ -L "$lrc_labs/.git" ]; } || continue
+        lrc_lr="$(lane_real_path "$lrc_labs")"
+        case "$lrc_seen" in *" $lrc_labs "*|*" $lrc_lr "*) continue ;; esac
+        if [ -n "$lrc_ltop" ]; then
+          lrc_lerr="git answers $lrc_ltop there"
+        else
+          lrc_lerr="$(git -C "$lrc_labs" rev-parse --show-toplevel 2>&1 >/dev/null </dev/null \
+            | awk 'NF { sub(/^[ \t]+/, ""); sub(/[ \t]+$/, ""); print; exit }' | tr -d '\037')"
+          lrc_lerr="${lrc_lerr:-no answer}"
+        fi
+        printf 'TREE%s%s%sunreadable%s%s%sthe %s leg of %s/project.yaml%s: git could not be read through it (it has a .git of its own and git could not read it: %s), so NOTHING is assumed about it — not its own state, nor the worktrees it registers, which were not listed; a read that failed is never a clean leg (Amendment 7(d)) — read it by hand (git -C %s status) before relaunching a writer onto it\n' \
+          "$US" "$(tree_id_for "$lrc_labs")" "$US" "$US" "$lrc_labs" "$US" "$lrc_ldecl" "$lrc_dir" \
+          "${lrc_lrepo:+ ($lrc_lrepo)}" "$lrc_lerr" "$lrc_labs"
+        lrc_seen="$lrc_seen $lrc_labs $lrc_lr "
+        lrc_recover=$((lrc_recover + 1))
+        continue
+      fi
       lrc_lwl=""; lrc_lwrc=0
       lrc_lwl="$(git -C "$lrc_labs" worktree list --porcelain 2>/dev/null </dev/null)" || lrc_lwrc=$?
       if [ "$lrc_lwrc" != 0 ]; then

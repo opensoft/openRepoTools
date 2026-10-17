@@ -50,7 +50,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from conftest import NEEDS_UPSTREAM, REPO, WINDOWS_SKIP  # noqa: E402
 from test_triad_lane_tooling import (  # noqa: E402
-    US, Bench, build_assembly, normalise, parse_golden, render_golden, shown)
+    US, Bench, build_assembly, normalise, parse_golden, porcelain_rows, render_golden, shown)
 
 pytestmark = [WINDOWS_SKIP, pytest.mark.skipif(
     shutil.which("git") is None or shutil.which("bash") is None,
@@ -439,6 +439,59 @@ def test_t018_reconcile_pronounces_no_clearance_over_legs_nobody_read(triad):
     verdict = field(proc.stdout, "VERDICT")
     assert verdict[0] == "indeterminate", proc.stdout
     assert f"the assembly's paired root {a}/worktrees could not be listed" in verdict[1], verdict
+
+
+@NEEDS_UPSTREAM
+def test_t018_reconcile_reports_a_leg_git_cannot_read_as_the_sweep_counts_it(triad):
+    """A LEG WITH A `.git` OF ITS OWN THAT GIT CANNOT READ was passed over by
+    the reconciliation IN SILENCE, as a leg that is not checked out is, while
+    the sweep's `leg` row for it is `unreadable` and counted. Now it is the
+    sweep's rule and the sweep's word: one TREE row, `unreadable`, that requires
+    recovery - for a `.git` naming no repository, and for one where git answers
+    the assembly. Its verdict is no `indeterminate`, so the sweep still lists
+    and counts that leg (exit 3) rather than refusing on the verdict. Readable
+    again, or not checked out at all, the leg names nothing."""
+    b, t = triad
+    a, spec = t["assembly"], t["spec"]
+    gitfile = (spec / ".git").read_text()
+
+    def reconciled_rows() -> tuple:
+        rec = b.tool("lanes-edit.sh", "lane-reconcile", "triad-1")
+        assert rec.returncode == 0, rec.stderr
+        return rec, reconcile_rows(rec.stdout)
+
+    def check(answer: str) -> None:
+        rec, rows = reconciled_rows()
+        assert list(rows) == [real(spec)], rows
+        cls, why = rows[real(spec)]
+        assert cls == "unreadable", rows
+        assert why.startswith(f"the spec leg of {a}/project.yaml (opensoft/triad-spec): git could "
+                              "not be read through it (it has a .git of its own and git could not "
+                              "read it: "), why
+        assert answer in why and f"(git -C {spec} status)" in why, (answer, why)
+        assert field(rec.stdout, "TREES") == ["0 inventoried", "0 dirty or unpushed",
+                                              "1 require recovery", "0 unmanaged or stale"], rec.stdout
+        assert field(rec.stdout, "VERDICT")[0] == "ungraceful-stop", rec.stdout
+        sweep = b.sweep("triad-1", "--dry-run", "--porcelain")
+        assert sweep.returncode == 3, sweep.stdout + sweep.stderr
+        leg = porcelain_rows(sweep.stdout, "leg")[str(spec)]
+        assert leg["disposition"] == "unreadable" and leg["retire"] == "retire", leg
+        assert "git could not be read through it" in leg["why"] and answer in leg["why"], leg
+
+    (spec / ".git").write_text("gitdir: /nonexistent/t018-spec\n")
+    check("/nonexistent/t018-spec")
+    (spec / ".git").unlink()
+    (spec / ".git").mkdir()
+    check(f"git answers {real(a)} there")
+    shutil.rmtree(spec / ".git")
+    (spec / ".git").write_text(gitfile)
+    for state in ("readable again", "deinitialized"):
+        if state == "deinitialized":
+            b.git("submodule", "deinit", "-q", "spec", cwd=a)
+            assert not any(spec.iterdir())
+        rec, rows = reconciled_rows()
+        assert real(spec) not in rows, (state, rows)
+        assert field(rec.stdout, "TREES")[2] == "0 require recovery", (state, rec.stdout)
 
 
 # ===================================================== the single repository
