@@ -106,7 +106,6 @@ only when the step it names has actually happened, and with its evidence.
 
 - **Feature:** `006-release-pypi`
 - **Branch:** `006-release-pypi`
-- **Tasks:** `specs/006-release-pypi/tasks.md`, pending /speckit.specify
-
-That directory does not exist yet. This change is not ready for
-`/opsx:apply` until `/speckit.specify` creates it and item 2.3 records it.
+- **Tasks:** `specs/006-release-pypi/tasks.md`
+- **Specified:** 2026-10-17, by `/speckit.specify`
+  (`specs/006-release-pypi/spec.md`)
