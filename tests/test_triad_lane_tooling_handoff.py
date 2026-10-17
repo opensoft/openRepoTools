@@ -209,6 +209,9 @@ def test_t018_a_leg_that_is_not_checked_out_claims_no_tree_of_the_assembly(triad
     proc = handoff(b, "triad-1", a)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert f"writers polled: 2 under {a}" in proc.stderr, proc.stderr
+    # not checked out is no unreadable leg: it has no `.git` of its own
+    assert f"the leg {a / 'spec'} is unreadable" not in proc.stderr, proc.stderr
+    assert "UNREADABLE LEG" not in top_block(b, "triad-1")
     assert inventory(b, "triad-1") == {str(lane_root): str(a), str(paired_code): str(code)}
 
 
@@ -492,6 +495,84 @@ def test_t018_reconcile_reports_a_leg_git_cannot_read_as_the_sweep_counts_it(tri
         rec, rows = reconciled_rows()
         assert real(spec) not in rows, (state, rows)
         assert field(rec.stdout, "TREES")[2] == "0 require recovery", (state, rec.stdout)
+
+
+@NEEDS_UPSTREAM
+def test_t018_the_handoff_reports_a_leg_git_cannot_read_as_the_sweep_counts_it(triad):
+    """THE SAME SILENT SKIP IN `lane-handoff`: a leg with a `.git` of its own
+    that git cannot read was passed over as a leg that is not checked out is,
+    so the handoff said nothing of it, and a tree `add` made from that leg was
+    re-recorded under the ASSEMBLY - the loss (2) fixed. Now it is the sweep's
+    rule and word: one `- UNREADABLE LEG` line in WRITERS, a note on stderr and
+    a count, for a `.git` naming no repository and for one where git answers
+    the assembly. The lifecycle is not held for the leg itself (the
+    reconciliation's verdict is not `indeterminate` for it either): with no
+    tree of that leg the lane is SWAPPED. A tree of that leg keeps the checkout
+    `add` recorded - named, NOT recorded, and the lane stays SWAPPING for it -
+    while a tree of the assembly is recorded as always. Readable again, the
+    leg names nothing and its tree is recorded under it."""
+    b, t = triad
+    a, spec = t["assembly"], t["spec"]
+    made = b.tool("lane-worktrees", "add", "triad-1", "root")
+    assert made.returncode == 0, made.stderr
+    lane_root = Path(made.stdout.strip())
+    gitfile = (spec / ".git").read_text()
+    words = (f"the spec leg of {a}/project.yaml (opensoft/triad-spec): git could not be read "
+             "through it (it has a .git of its own and git could not read it: ")
+
+    def check(answer: str, trees: tuple, unplaced: tuple, state: str) -> None:
+        proc = handoff(b, "triad-1", a, "unreadable leg")
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert f"the leg {spec} is unreadable: {words}" in proc.stderr, proc.stderr
+        assert answer in proc.stderr.split(f"the leg {spec} is unreadable: ", 1)[1], proc.stderr
+        assert f"legs: 1 of the assembly's legs under {a} unreadable" in proc.stderr, proc.stderr
+        assert f"writers polled: {len(trees)} under {a}" in proc.stderr, proc.stderr
+        for tree in trees:
+            assert f"WRITER {tree} —" in proc.stdout, proc.stdout
+            missed = f"the worktree inventory entry for {tree} was NOT written: "
+            if tree in unplaced:
+                assert (missed + "the assembly has 1 unreadable leg(s), each named by an "
+                        "UNREADABLE LEG line in the top block") in proc.stderr, proc.stderr
+            else:
+                assert missed not in proc.stderr, proc.stderr
+        assert f"lifecycle: {state}" in proc.stdout, proc.stdout
+        assert "NOT POLLED" not in proc.stdout + proc.stderr
+        writers = top_block(b, "triad-1").split("**WRITERS at ", 1)[1]
+        line = next((ln for ln in writers.splitlines() if ln.startswith("- UNREADABLE LEG: ")), "")
+        assert line.startswith(f"- UNREADABLE LEG: `{spec}` is unreadable, {words}"), writers
+        assert answer in line and f"(`git -C {spec} status`)" in line, line
+        assert writers.count("- UNREADABLE LEG: ") == 1, writers
+
+    (spec / ".git").write_text("gitdir: /nonexistent/t018-spec\n")
+    check("/nonexistent/t018-spec", (lane_root,), (), "SWAPPED")
+    assert inventory(b, "triad-1") == {str(lane_root): str(a)}
+    rec = b.tool("lanes-edit.sh", "lane-reconcile", "triad-1")
+    assert reconcile_rows(rec.stdout)[real(spec)][0] == "unreadable", rec.stdout
+    assert field(rec.stdout, "TREES")[2] == "1 require recovery", rec.stdout
+    assert field(rec.stdout, "VERDICT")[0] == "resumable", rec.stdout
+    (spec / ".git").unlink()
+    (spec / ".git").mkdir()
+    check(f"git answers {real(a)} there", (lane_root,), (), "SWAPPED")
+    shutil.rmtree(spec / ".git")
+    (spec / ".git").write_text(gitfile)
+
+    made = b.tool("lane-worktrees", "add", "triad-1", "s1", "--checkout", spec)
+    assert made.returncode == 0, made.stderr
+    lane_spec = Path(made.stdout.strip())
+    want = {str(lane_spec): str(spec), str(lane_root): str(a)}
+    assert inventory(b, "triad-1") == want
+    (spec / ".git").write_text("gitdir: /nonexistent/t018-spec\n")
+    check("/nonexistent/t018-spec", (lane_spec, lane_root), (lane_spec,), "SWAPPING")
+    assert inventory(b, "triad-1") == want
+
+    (spec / ".git").write_text(gitfile)
+    proc = handoff(b, "triad-1", a, "readable again")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"the leg {spec} is unreadable" not in proc.stderr, proc.stderr
+    assert "of the assembly's legs under" not in proc.stderr, proc.stderr
+    assert "UNREADABLE LEG" not in top_block(b, "triad-1")
+    assert "lifecycle: SWAPPED" in proc.stdout, proc.stdout
+    assert inventory(b, "triad-1") == want
 
 
 # ===================================================== the single repository

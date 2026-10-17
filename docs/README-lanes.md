@@ -3963,7 +3963,13 @@ leg's repository (a paired tree, or one `lane-worktrees add --checkout
 checkout of the tree's own repository keeps it: a dependency nested in a leg
 (`--checkout <assembly>/code/upstream/<dep>`) is no declared leg. Any other tree keeps
 the lane's `dir`, as before. A leg that is not checked out here (never initialized, or
-deinitialized) names no tree. A worktree a leg registers anywhere else is not polled
+deinitialized) names no tree. A leg with a `.git` of its own that git cannot read is
+`unreadable`, the sweep's word: one `- UNREADABLE LEG: …` line in WRITERS and a note on
+stderr, counted, and the lane is not held `SWAPPING` for the leg itself. A polled tree
+it then cannot place (of no readable leg's repository, not of the assembly's own, and
+recorded under no checkout of its own repository) is named and not recorded, so the
+checkout `add` recorded stays, and the lane stays `SWAPPING` for that tree. A worktree
+a leg registers anywhere else is not polled
 as a writer, just as the checkout's own registrations elsewhere are not;
 `lanes-edit.sh lane-reconcile` reports it. The reconciliation reads what the legs hold
 beside what the checkout holds. Every worktree git registers in a checked-out leg that
