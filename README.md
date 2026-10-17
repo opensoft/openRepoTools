@@ -475,11 +475,10 @@ a bare repository in a temporary directory, every `$HOME` is a temporary
 directory, and the fetch path is answered by a fake `gh` with a `curl` that
 refuses.
 
-CI runs the suite on ubuntu, windows and macOS, plus one ubuntu job that checks
-out WITHOUT submodules to prove the skip path exits 0. The macOS job parses
-every bash file this repository ships with `/bin/bash -n` — bash 3.2, the last
-GPLv2 release and what Apple still ships — because that is the claim the suite
-itself cannot make.
+CI runs the suite on ubuntu only (Brett Heap's decision of 2026-10-15), with one
+ubuntu job that checks out WITHOUT submodules to prove the skip path exits 0.
+No job parses the shipped bash files under macOS's bash 3.2 — the last GPLv2
+release and what Apple still ships — so that claim is no longer tested in CI.
 
 ## Licence
 
