@@ -3223,8 +3223,13 @@ register_text() {
   if [ -n "$LANES_REGISTER_CACHE" ]; then printf '%s\n' "$LANES_REGISTER_CACHE"; return 0; fi
   rt_c="${SE_CACHE_FILE:+$SE_CACHE_FILE.register}"
   if [ -n "$rt_c" ] && [ -s "$rt_c" ]; then cat -- "$rt_c"; return 0; fi
+  # A PUBLISHED REGISTER THAT `show` CANNOT READ ANSWERS 1, AND IS NOT CACHED
+  # (#138 item 18). It answered 0 with an empty text, and cached that, so every
+  # reader after it saw a register with no rows. Most callers still read only
+  # the text; the ones that must not take empty for "no row" read the status.
   if have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null; then
-    LANES_REGISTER_CACHE="$(git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null)"
+    LANES_REGISTER_CACHE="$(git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null)" ||
+      { LANES_REGISTER_CACHE=""; return 1; }
   else
     LANES_REGISTER_CACHE="$(cat -- "$LANES_FILE")"
   fi
@@ -4620,6 +4625,10 @@ row_cell() { printf '%s\n' "$1" | awk -F'|' -v i="$2" '{print $i}'; }
 # its triple FIRST and then say what is wrong, in its own shape, so it takes the
 # spellings from here and makes the refusal itself. One parse, three readings,
 # and no second rule about what a lane name is.
+#
+# AND IT RETURNS 1 WHERE THE PUBLISHED REGISTER COULD NOT BE READ (#138 item
+# 18): the pipeline's status is the awk's, so a failed read was "no such row".
+# Both statuses are kept; every caller that does not check them is unchanged.
 rows_named_ci() {   # <typed name>
   register_text | awk -v want="$1" '
     substr($0,1,1) == "|" {
@@ -4628,6 +4637,7 @@ rows_named_ci() {   # <typed name>
       t = substr(rest, 1, p2 - 1)
       if (tolower(t) == tolower(want)) print t
     }'
+  [ "${PIPESTATUS[0]}${PIPESTATUS[1]}" = 00 ]
 }
 
 # ====================================================== AMENDMENT 16 =======
@@ -13767,7 +13777,13 @@ Nothing was written." 2
         die "lane '$lane_new' is RETIRED: its row is in $LANES_ARCH_PATH, spelled $(printf '%s\n' "$ar_arch" | tr '\n' ' ')— and a retired position is NEVER REISSUED (Amendment 19(b)). That lane's object log is $(log_path_for "$lane_new") and it is append-only, so a second lane under this name would write its life into the first one's file and every read of that log would answer for two lanes at once. Take a free position instead — \`lanes --prefix <repo>\` prints the next one and the line that takes it. Nothing was written." 2
       fi
       ar_hits="$(rows_named_ci_local "$lane_new")"
-      ar_pub="$(rows_named_ci "$lane_new" 2>/dev/null || :)"
+      # THE PUBLISHED ROWS ARE READ WITH THEIR STATUS (Copilot round 21 on #93,
+      # #138 item 18). Through `|| :` a register origin has and git could not
+      # read was "no row there", and a row this checkout had not pulled was
+      # appended a second time — and landed, wherever the rebase did not clash.
+      ar_pub=""
+      ar_pub="$(rows_named_ci "$lane_new" 2>/dev/null)" ||
+        die "the published register on origin/$LANES_BRANCH could not be read, so whether '$lane_new' already has a row there is not known — and that is NOT 'it has none' (Amendment 7(d)): a row this checkout has not pulled would be added a second time. Fix the read and re-run; nothing was written." 1
       ar_all="$(printf '%s\n%s\n' "$ar_hits" "$ar_pub" | grep -v '^$' | LC_ALL=C sort -u || :)"
       ar_n="$(printf '%s' "$ar_all" | grep -c . || :)"
       ar_ln="$(printf '%s' "$ar_hits" | grep -c . || :)"

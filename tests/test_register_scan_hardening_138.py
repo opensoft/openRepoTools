@@ -409,3 +409,29 @@ def test_item_11_a_published_log_git_cannot_read_is_never_classed_dormant(reg):
     assert unreadable["repoX-2"] == "none"
     assert unreadable["repoX-3"] == "dormant"
     assert "lanes/log/repoX-2.md" in err
+
+
+# ----------------------------------------------- #138: add-row's published scan
+
+def test_item_18_an_unreadable_published_register_refuses_add_row(reg):
+    """#138 item 18: `rows_named_ci` ended in an awk over `register_text`, which
+    answered 0 with an empty text where `git show` of the published register
+    failed, and `|| :` took what was left — so a row a peer had published and
+    this checkout had not pulled was added a second time, and landed."""
+    peer = reg.tmp / "peer"
+    reg.raw_git("clone", "-q", str(reg.origin), str(peer))
+    lines = (peer / "lanes/LANES.md").read_text(encoding="utf-8").splitlines(True)
+    rule = next(n for n, line in enumerate(lines) if line.startswith("|---"))
+    lines.insert(rule + 1, row("repoX-5", "eeee0138-0005-4000-8000-000000000005", "started on the peer", "2026-10-13"))
+    (peer / "lanes/LANES.md").write_text("".join(lines), encoding="utf-8")
+    reg.raw_git("-C", str(peer), "commit", "-q", "-am", "the peer adds repoX-5")
+    reg.raw_git("-C", str(peer), "push", "-q", "origin", "main")
+    reg.refuse_git("show origin/main:lanes/LANES.md")
+    before = reg.head()
+    result = reg.run("add-row", row("repoX-5", "ffff0138-0006-4000-8000-000000000006", "new here", "2026-10-13").rstrip("\n"),
+                     LANES_LANE="repoX-5")
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert "published register on origin/main could not be read" in result.stderr
+    assert reg.head() == before
+    published = reg.raw_git("-C", str(reg.origin), "show", "main:lanes/LANES.md")
+    assert published.count("| `repoX-5` |") == 1
