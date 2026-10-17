@@ -79,9 +79,14 @@ prog="${0##*/}"
 # code root rather than against where the caller stood. So a relative value is
 # made absolute against the caller's directory first, and nothing else is
 # touched. `OPENREPOTOOLS_COMPOSED` is a mode, not a path, and passes as it is.
-abs_root() {   # <value> - absolute against the caller's directory
+# A QUOTED `~` or `~/…` reaches here unexpanded, and conftest reads it as the
+# home directory (`expanduser`); read here as relative it became `$PWD/~/…`,
+# a directory nobody meant, so it is the home directory here too (#193 item 7).
+abs_root() {   # <value> - absolute against the caller's directory; ~ is $HOME
   case "$1" in
     /*) printf '%s\n' "$1" ;;
+    '~') printf '%s\n' "$HOME" ;;
+    '~/'*) printf '%s/%s\n' "$HOME" "${1#??}" ;;
     *) printf '%s/%s\n' "$PWD" "$1" ;;
   esac
 }
