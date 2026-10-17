@@ -433,8 +433,8 @@
 #      would stage bytecode, a cache or a virtual environment
 #      (`commit_push`, `pathspec-check`), or — #194 — `commit` refusing to
 #      publish local commits that are not register or handoff writes, or a
-#      checkout whose HEAD is off the branch (`cp_publish_fence`), nothing
-#      pushed. EIGHT MEANINGS ON ONE NUMBER, and they
+#      checkout whose HEAD is off the branch (`cp_publish_fence`), which
+#      pushes none of them. EIGHT MEANINGS ON ONE NUMBER, and they
 #      stay readable only because of where each can occur: bad arguments to a
 #      subcommand that predates Amendment 11; `register-row`'s "not lane-shaped";
 #      AN UNKNOWN SUBCOMMAND (the `*)` arm below), which is how a caller detects
