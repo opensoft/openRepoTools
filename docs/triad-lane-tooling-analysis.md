@@ -575,8 +575,9 @@ the leg it made a tree from. On a single repository every output is byte for byt
 main at `f87fd5a` (#190) and changes none of #190's test-root files.
 
 **2026-10-13: the paired root in `lane-handoff`, after the pre-PR review.** (b) above is
-narrower now (the review's M1, option (a), pending lane 1's ruling on #186). The handoff
-polls and records a paired tree only where the lane's inventory names it, its HEAD's own
+narrower now (the review's M1, option (a), then pending lane 1's ruling on #186; ruled
+2026-10-17, §7 item 12). The handoff polls and records a paired tree only where the
+lane's inventory names it, its HEAD's own
 `Lane:` trailer is the lane's on a commit origin's default branch lacks (the sweep's
 rule), or the writers file names it. Every other paired tree is a `PAIRED ROOT, not this
 lane's` line in the top block, outside WRITERS, not counted and not recorded. A paired
@@ -603,6 +604,14 @@ kept only in this lane's scratch directory.
 
 ## 7. Decisions for lane 1 (the migration owner)
 
+**2026-10-17: lane 1's rulings on T018.** Lane openRepoTools-1 ruled in comment
+**6240800023** on opensoft/openRepoTools#186 ("the four T018 rulings", posted
+2026-10-17T20:48Z), answering lane 3's 6240688657, first asked in 6111266988. Each
+ruling is quoted at its item below: item 3 (what goes live), item 11 (parked paired
+trees), and item 12, added here, for the pre-PR review's M1. The same comment gives
+lane 1's word to open the T018 PR once five conditions are met, and lane 1 owns the
+landing.
+
 1. **Bindings (T018):** keep every lane's `dir` at the assembly root and its home at
    `opensoft/openRepoTools`, and spell leg objects in full. The alternative is lanes homed on a
    leg, which changes the Claude project folder, and with it memory and `--resume`.
@@ -610,6 +619,16 @@ kept only in this lane's scratch directory.
    `opensoft/openRepoTools-spec:…` at cutover, by release and claim.
 3. **Worktree visibility (T018):** adopt §4.4 proposal 1 (guidance) now. Rule on proposals 2
    and 3, which change the sweep and the daily report for existing triads too.
+   **Ruled 2026-10-17 (6240800023, item 3).** Proposal 1, the guidance, goes live now.
+   Proposals 2 and 3 go live with the T018 PR, on one condition. They change the sweep,
+   `lane-end`'s gate, the handoff poll, `lane-reconcile`'s TREE rows and the daily report
+   for every triad on this workstation, and those triads belong to other lanes. So the PR
+   body must carry a read-only before/after measurement over each of them (IRRS, IRSS,
+   MedxEHR, MedxGlass, openDox, openXdox, openWallet and the codexFactory copies),
+   comparing main's tools with T018's. For each triad it lists the sweep rows that
+   change, every `lane-end` verdict that changes with the lane that owns it, and the
+   report lines that appear. Any verdict that flips to a refusal is told to its owning
+   lane, on #186 or in the register, before the landing.
 4. **Checkout-copy callers:** opsXfactory-1's handoff and its `land-444.sh` call
    `~/projects/openRepoTools/lanes-edit.sh`. Re-point them before the live checkout pulls the
    split.
@@ -668,3 +687,23 @@ kept only in this lane's scratch directory.
     its HEAD is back below the WIP commits. So decide too whether `resume` records the
     tree it rebuilds in the lane's inventory (`lanes-edit.sh set-lane-tree <lane> <path>
     --checkout <assembly>/<leg>`), which covers both states.
+    **Ruled 2026-10-17 (6240800023, item 2): (ii), and `resume` records the tree.**
+    Park's WIP commit carries a `Lane: <lane>` trailer, so attribution stays on one
+    contract, the trailer, and `lane-worktrees` is not coupled to a workBenches subject
+    format. `resume` records the tree it rebuilds with `lanes-edit.sh set-lane-tree
+    <lane> <path> --checkout <assembly>/<leg>`, which covers both the parked and the
+    resumed state. Both are workBenches changes, to be filed as one workBenches issue
+    that cites this item and is linked from the T018 PR. **workBenches issue: to be
+    linked.** The PR does not wait for it. Until it lands, `docs/README-lanes.md` (T018
+    section) says what to check before `lane-end`.
+12. **The paired root in `lane-handoff` (T018, the pre-PR review's M1).** **Ruled
+    2026-10-17 (6240800023, item 1): (a), as implemented in `4d4957d`, with the two-lane
+    regression test** (`test_t018_a_handoff_takes_no_other_lanes_paired_tree`). The
+    handoff polls and records a paired tree only when one of these holds: this lane's
+    inventory names it, its HEAD's last `Lane:` trailer is this lane's on a commit
+    origin's default branch lacks, or the lane's writers file names it. Every other
+    paired tree is printed as "PAIRED ROOT, not this lane's", and is not counted or
+    recorded. Lane 1's reason: recording everything is the misattribution that
+    `.claude/worktrees` already causes in this checkout's directory, where on 2026-10-11
+    six other lanes' trees went into lane 1's inventory that way. Option (b), recording
+    every paired tree as the running lane's, is not taken.

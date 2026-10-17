@@ -3951,8 +3951,9 @@ outside WRITERS — `- PAIRED ROOT, not this lane's: <path> — branch …`, wit
 commit and its HEAD's own trailer, which is what finds its lane. It is not counted, not
 recorded, and never a writer for the next session to relaunch; its own lane's handoff
 records it. So one lane's `lane-end` never refuses on another lane's paired work, and
-its `sweep --yes` never acts on it. This is option (a) of the pre-PR review's M1,
-pending lane 1's ruling on #186: a handoff that recorded every paired tree made other
+its `sweep --yes` never acts on it. This is option (a) of the pre-PR review's M1, as
+lane 1 ruled on 2026-10-17 (#186, comment 6240800023, item 1; the analysis's §7 item
+12): a handoff that recorded every paired tree made other
 lanes' trees the running lane's inventory, and a tree two lanes' inventories both name
 is `keep`, counted, in both sweeps.
 
@@ -4011,8 +4012,12 @@ output `c45a452`'s tools printed, on a repository laid out to look like a triad:
 submodule's worktree under `worktrees/<feature>/code`, and a tree recorded with the
 submodule as its checkout.
 
-**A parked paired tree is not the lane's to the sweep — a gap, for lane 1's ruling
-(docs/triad-lane-tooling-analysis.md §7, item 11).** The sweep and `lane-end`'s gate
+**A parked paired tree is not the lane's to the sweep — a gap lane 1 has ruled on, and
+not yet closed (docs/triad-lane-tooling-analysis.md §7, item 11).** On 2026-10-17 (#186,
+comment 6240800023, item 2) lane 1 ruled that park's WIP commit carries a `Lane: <lane>`
+trailer and that `resume` records the tree it rebuilds with `lanes-edit.sh
+set-lane-tree`. Both are workBenches changes and neither has landed, so what follows
+holds until they do. The sweep and `lane-end`'s gate
 give a tree under `<assembly>/worktrees` to a lane by its HEAD's own `Lane:` trailer
 and by nothing else, unless the lane's inventory names it. `make park` commits a dirty
 leg tree as `wip: park <UTC time> — lane <lane>`, with no trailer, and `resume`
