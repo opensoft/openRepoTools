@@ -41,6 +41,15 @@ pytestmark = [WINDOWS_SKIP, pytest.mark.skipif(
     shutil.which("bash") is None, reason="the skill's steps are bash")]
 
 BASH = shutil.which("bash") or "bash"
+ZSH = shutil.which("zsh")
+
+#: zsh is a session's own shell and the one its Bash tool runs in, so a block a
+#: session pastes runs under it, and it differs from bash where this file has
+#: tripped before (`BASH_REMATCH` is empty there; zsh fills `$match`). The
+#: blocks are held to the same answers under both wherever zsh is installed.
+NEEDS_ZSH = pytest.mark.skipif(
+    ZSH is None, reason="zsh is not installed, so the skill's blocks are not "
+                        "run under a session's own shell")
 SKILL = REPO / "skills/handoff/SKILL.md"
 RESTART_SKILL = REPO / "skills/restart/SKILL.md"
 UUID = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
@@ -96,6 +105,7 @@ class Estate:
     """A stub helper and a hermetic environment for running a skill block."""
 
     def __init__(self, root: Path) -> None:
+        root.mkdir(parents=True, exist_ok=True)
         self.bin = root / "bin"
         self.bin.mkdir()
         self.log = root / "calls.tsv"
@@ -109,12 +119,13 @@ class Estate:
         self.home = root / "home"
         self.home.mkdir()
 
-    def run(self, script: str, row: str = "",
-            extra: dict | None = None) -> subprocess.CompletedProcess:
+    def run(self, script: str, row: str = "", extra: dict | None = None,
+            shell: str = "bash") -> subprocess.CompletedProcess:
         env = {"HOME": str(self.home), "PATH": f"{self.bin}:/usr/bin:/bin",
                "STUB_LOG": str(self.log), "STUB_ROW": row,
                "TMPDIR": str(self.home), **(extra or {})}
-        return subprocess.run([BASH, "-c", script], env=env, cwd=str(self.home),
+        argv = [BASH, "-c", script] if shell == "bash" else [ZSH, "-f", "-c", script]
+        return subprocess.run(argv, env=env, cwd=str(self.home),
                               capture_output=True, text=True, check=False)
 
     def calls(self) -> list[tuple[str, str, str]]:
@@ -235,12 +246,12 @@ STEP2 = "register-row \"$lane\" 2>/dev/null | grep '^|'"
 
 
 def _step2(estate: Estate, row: str, *, lane: str = "repoHS-1",
-           ws_missing: str = "",
-           extra: dict | None = None) -> subprocess.CompletedProcess:
+           ws_missing: str = "", extra: dict | None = None,
+           shell: str = "bash") -> subprocess.CompletedProcess:
     script = "\n".join([f'L="{estate.helper}"', f"lane={lane}",
                         f'ws_missing="{ws_missing}"', _block(STEP2),
                         'printf "uuid_missing=[%s]\\n" "${uuid_missing:-}"'])
-    proc = estate.run(script, row=row, extra=extra)
+    proc = estate.run(script, row=row, extra=extra, shell=shell)
     assert proc.returncode == 0, proc.stderr
     return proc
 
@@ -398,3 +409,27 @@ def test_the_command_in_the_message_is_filled_in_from_the_lane(estate):
     proc = _step2(estate, _row("none"), lane="odd-lane-name")
     assert "`lane-start --no-launch <repo> <n>`" in proc.stdout, (
         "a lane name that is not <repo>-<n> must not be split into a guess")
+
+
+@NEEDS_ZSH
+@pytest.mark.parametrize("name, row, extra, lane", [
+    ("no-session", _row("none"), {}, "repoHS-17"),
+    ("no-session-odd-name", _row("none"), {}, "odd-lane-name"),
+    ("own-id", _row("none"), {"CLAUDE_CODE_SESSION_ID": UUID}, "repoHS-1"),
+    ("row-id", _row(f"harness `{OLDER_UUID}` / `{UUID}`"), {}, "repoHS-1"),
+    ("failed-read", "", {"STUB_REGISTER_RC": "3"}, "repoHS-1"),
+])
+def test_step_2_says_the_same_under_zsh_as_under_bash(tmp_path, name, row, extra, lane):
+    """The restart command was filled from `BASH_REMATCH`, which zsh does not
+    set: under it the message named a `lane-start --no-launch` with both
+    fields empty, and the tests, which ran bash only, never saw it."""
+    under_bash = _step2(Estate(tmp_path / "b"), row, lane=lane, extra=extra)
+    under_zsh = _step2(Estate(tmp_path / "z"), row, lane=lane, extra=extra,
+                       shell="zsh")
+    assert under_zsh.stdout == under_bash.stdout, (
+        f"zsh and bash disagree:\n--- bash\n{under_bash.stdout}\n--- zsh\n"
+        f"{under_zsh.stdout}")
+    if name == "no-session":
+        assert "`lane-start --no-launch repoHS 17`" in under_zsh.stdout
+    if name == "no-session-odd-name":
+        assert "`lane-start --no-launch <repo> <n>`" in under_zsh.stdout

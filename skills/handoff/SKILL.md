@@ -237,7 +237,8 @@ uuid="$(printf '%s' "$row" | awk -F'|' '{print $3}' \
 # THE SESSION'S OWN ID COMES FIRST AND THE ROW'S SECOND, which is `lane-handoff`'s
 # order (*"THE SHELL'S OWN SESSION BEATS THE RECORD"*) and `R-A11-5`'s premise: *"a
 # swap taken by a running session always has a uuid: `$CLAUDE_CODE_SESSION_ID` is
-# it"*. It is shape-checked, as every environment value this file reads is.
+# it"*. It is shape-checked, as the launcher's window exports and
+# `$CLAUDE_PROFILE_NAME` are in step 4.
 sid_re='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 [[ "${CLAUDE_CODE_SESSION_ID:-}" =~ $sid_re ]] && uuid="$CLAUDE_CODE_SESSION_ID"
 printf 'handoff=%s\nuuid=%s\n' "${handoff:-<none>}" "${uuid:-<none>}"
@@ -254,8 +255,11 @@ printf 'handoff=%s\nuuid=%s\n' "${handoff:-<none>}" "${uuid:-<none>}"
 uuid_missing=""
 if [[ -n "$row" && -z "$uuid" ]]; then
   uuid_missing=1
+  # SPLIT BY PARAMETER EXPANSION, AS STEP 1 DOES: zsh, a session's own shell,
+  # fills `$match` and not `BASH_REMATCH`, so a split read from the match would
+  # print this command with both fields empty.
   uuid_fix='lane-start --no-launch <repo> <n>'
-  [[ "$lane" =~ ^(.+)-([0-9]+)$ ]] && uuid_fix="lane-start --no-launch ${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"
+  [[ "$lane" =~ ^.+-[0-9]+$ ]] && uuid_fix="lane-start --no-launch ${lane%-*} ${lane##*-}"
   uuid_cell="while the row's state cell still is"
   [[ -z "$ws_missing" ]] || uuid_cell="and neither is the row's state cell, for want of a workstation"
   echo "NO SESSION RECORDED: neither \$CLAUDE_CODE_SESSION_ID nor lane $lane's row carries a session uuid, so there is no session to name, and the writer refuses a \`session\` field that is not a transcript uuid (\`R-A11-5\`, clause (e)). Step 4's object-log PAUSED and register-line writes are therefore NOT made — the second would read \`session @<ws>\` — $uuid_cell. The swap itself goes on: the handoff is refreshed and NAMES this gap, and the restart command is still printed. The act that gives the lane a session is Amendment 6(c)'s session-cell append: run \`$uuid_fix\` in this lane's window, then re-run steps 2 and 4."
