@@ -339,3 +339,25 @@ def test_item_7_a_local_archive_that_is_not_a_regular_file_offers_no_position(re
     assert result.returncode == 1, (result.stdout, result.stderr)
     assert result.stdout == ""
     assert "could not be read" in result.stderr
+
+
+@pytest.mark.parametrize("kind", ["zero bytes", "broken symlink"])
+def test_item_5_a_register_path_that_renders_empty_offers_no_position(reg, kind):
+    """#138 item 5: where origin has no register, the working-tree register
+    counted as a source only under `[ -s ]`, so a zero-byte one — what a failed
+    rewrite leaves — or a broken symlink was skipped and `next-free` answered
+    from its stdin rows alone."""
+    reg.git("rm", "-q", "-r", "--cached", "lanes")
+    reg.write("README", "a workspace whose register is not published yet\n")
+    reg.git("add", "README")
+    reg.git("commit", "-q", "-m", "publish no register")
+    reg.git("push", "-q", "origin", "main")
+    register = reg.wip / "lanes/LANES.md"
+    register.unlink()
+    if kind == "zero bytes":
+        register.write_text("")
+    else:
+        register.symlink_to("gone.md")
+    result = next_free(reg)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert result.stdout == ""

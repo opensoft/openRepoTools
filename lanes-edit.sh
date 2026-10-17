@@ -7907,9 +7907,14 @@ lane_position_rows() {   # 0 with the names · 1 where a source exists and could
   # `register_text` ends in a `printf` and answers 0 whatever its `git show` or
   # its `cat` did, so the status says nothing; what cannot happen is a source
   # with bytes in it rendering as nothing.
+  # AND ANY PATH THERE IS A SOURCE (#138 item 5). Under `[ -s ]` a zero-byte
+  # register — what a rewrite that failed leaves — and a broken symlink were
+  # skipped where origin has no register, and `next-free` counted the stdin
+  # rows and the archive alone. Counted as a source, either renders empty, and
+  # the check below refuses it.
   if [ -f "$LANES_FILE" ] && [ ! -r "$LANES_FILE" ]; then return 1; fi
   lpr_have=0
-  if [ -s "$LANES_FILE" ]; then lpr_have=1; fi
+  if [ -e "$LANES_FILE" ] || [ -L "$LANES_FILE" ]; then lpr_have=1; fi
   if have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null; then lpr_have=1; fi
   lpr_reg=""
   if [ "$lpr_have" = 1 ]; then
