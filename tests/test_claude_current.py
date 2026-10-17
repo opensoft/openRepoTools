@@ -363,6 +363,44 @@ def test_a_native_that_failed_is_not_probed_again_in_the_same_launch(box):
         assert probes.count(f"{path} --version") == 1, probes
 
 
+def test_a_native_the_update_repaired_in_place_is_read_again(box):
+    """The failure that is remembered for the run is forgotten when `claude
+    update` has run: it rewrites files, and here it rewrites the very one that
+    failed. npm's version is that file, broken before the update and a working
+    native after it. The install is made to fail, so the only way to a launch
+    is reading the repaired file again."""
+    box.broken_native("2.1.284")
+    older = box.native_version("2.1.283")
+    result = box.run("--porcelain", FAKE_NATIVE_UPDATE_TO="2.1.284",
+                     FAKE_NPM_INSTALL_RC="1")
+    assert result.returncode == 0, result.stderr
+    fields = porcelain(result)
+    assert (fields["path"], fields["status"]) == (str(box.native / "2.1.284"), "verified")
+    assert f"{older} update" in box.claude_log.read_text()
+    assert box.installs() == [], "the repaired native was there to launch"
+
+
+def test_a_native_another_launch_finished_while_this_one_waited_is_read_again(box):
+    """A launch that read a native another launch was still writing, and then
+    waited for that launch's update, must read it again once it has the lock:
+    that read is what lets it say "updated by another launch". The holder
+    completes the file while it holds the lock."""
+    box.broken_native("2.1.284")
+    box.native_version("2.1.283")
+    complete = (f'sed -e "s/@VERSION@/2.1.284/" "{box.template}" > "{box.native / "2.1.284"}"; '
+                f'chmod 755 "{box.native / "2.1.284"}"')
+    holder = _hold_lock(box, 2, then=complete)
+    try:
+        result = box.run("--porcelain", CLAUDE_CURRENT_LOCK_WAIT="30")
+    finally:
+        holder.wait(timeout=30)
+    assert result.returncode == 0, result.stderr
+    fields = porcelain(result)
+    assert (fields["path"], fields["status"]) == (str(box.native / "2.1.284"), "verified")
+    assert "updated by another launch" in result.stderr
+    assert box.installs() == [], "nothing was left to update"
+
+
 def test_every_native_broken_and_nothing_else_is_still_no_runnable_claude(box):
     box.broken_native("2.1.285")
     box.broken_native("2.1.284", "garbled")
