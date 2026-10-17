@@ -42,8 +42,9 @@ absolute path, in this order, and runs each one's `--version`:
    x.y.z name (workBenches #109's ordering), whose `--version` answers. A
    newer file that does not run, or does not answer within
    `$CLAUDE_CURRENT_VERSION_TIMEOUT`, gives way to the next one that does, so
-   a broken download cannot hide a working install, and is not read again in
-   the same run;
+   a broken download cannot hide a working install. A file that failed is not
+   read again in the same run, unless `claude update` has run or this launch
+   has waited for the lock, either of which may have rewritten it;
 2. `<user npm prefix>/bin/claude`. The prefix is `$CLAUDE_CURRENT_NPM_PREFIX`,
    else `$NPM_CONFIG_PREFIX`, else `$npm_config_prefix`, else the `prefix=`
    line of `~/.npmrc`, else `~/.npm-global`. A relative prefix is taken under

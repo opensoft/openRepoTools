@@ -28,7 +28,8 @@
 #        - the newest native version in $CLAUDE_CURRENT_NATIVE_DIR (default
 #          ~/.local/share/claude/versions), by its x.y.z name, whose
 #          `--version` answers: a newer file that does not run gives way to
-#          the next one that does, and is not read again in the same run;
+#          the next one that does, and is not read again in the same run
+#          unless an update or a wait for the lock may have changed it;
 #        - <user npm prefix>/bin/claude. The prefix is $CLAUDE_CURRENT_NPM_PREFIX,
 #          else $NPM_CONFIG_PREFIX, else $npm_config_prefix, else the
 #          `prefix=` line of ~/.npmrc, else ~/.npm-global. A relative one is
@@ -410,7 +411,7 @@ USER_PREFIX="$(npm_user_prefix)"
 cands=""       # one "<path><TAB><version>" line per candidate, in order
 seen=$'\n'     # the physical paths already read
 native_path="" # the native candidate that runs, when there is one
-native_broken=$'\n' # the native files whose version read failed, for the whole run
+native_broken=$'\n' # the native files whose version read failed, until something may have changed them
 
 add_candidate() {
 	local p="$1" real v
@@ -442,8 +443,11 @@ native_names() {
 # another libc, a first start that hangs) must not hide an older one that
 # does, so each is read from the highest down and the first that answers is
 # kept. A working newest file costs one read. A file that failed is
-# remembered for the run: collect runs up to four times, and a hung file would
-# cost its whole bound on each.
+# remembered, because collect runs up to four times and a hung file would cost
+# its whole bound on each, and forgotten wherever something else may have
+# written it: after a wait for the lock, when another launch may have finished
+# a file this one read half written, and after `claude update`, which rewrites
+# files, the failed one among them.
 add_native() {
 	local name f before
 	native_path=""
@@ -563,6 +567,7 @@ OWNER=""
 PLACE=""
 link_lock=""
 lock_why=""
+lock_slept=0 # 1 once this launch has waited for the lock
 
 # lock_place: this launch's <place>, `<host>` or `<host>:<pid namespace inode>`.
 # No `/`, because `ln -s` onto a directory names the link it puts inside after
@@ -644,6 +649,7 @@ take_lock() {
 		fi
 		sleep 1
 		waited=$((waited + 1))
+		lock_slept=1
 	done
 	link_lock="$LOCK"
 	lock_why=""
@@ -769,6 +775,9 @@ locked=0
 if take_lock; then
 	locked=1
 fi
+# Whoever held the lock while this launch waited may have finished or repaired
+# a native it read half written.
+[ "$lock_slept" = 0 ] || native_broken=$'\n'
 collect
 if pick equal "$PUBLISHED"; then
 	release_lock
@@ -784,6 +793,7 @@ fi
 if [ "$locked" = 1 ]; then
 	if [ -n "$native_path" ]; then
 		update_native || :
+		native_broken=$'\n' # the update rewrites files, the failed one among them
 		collect
 	fi
 	if ! pick equal "$PUBLISHED" && ! pick ahead "$PUBLISHED"; then
