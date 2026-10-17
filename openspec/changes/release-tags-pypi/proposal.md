@@ -90,13 +90,20 @@ Each item names what a test or a workflow run checks.
     `src/openrepotools/_release.py`;
   - `requires-python = ">=3.9"` and `dependencies = []`;
   - `license = "Apache-2.0"`, with `license-files = ["LICENSE"]`;
-  - exactly one console script, `openRepoTools`.
+  - exactly one console script, `openRepoTools`;
+  - no `readme`, because README.md goes to the assembly root at the cutover
+    (see "The cutover invariants"). openRepoShape's declares none either.
 
-  A test holds `dependencies` empty and the scripts table to that one entry.
+  A test holds `dependencies` empty, the scripts table to that one entry, and
+  the `readme` key absent.
 - **`src/openrepotools/`** is new. It holds the stamp and an entry module that
-  uses only the standard library. The entry module runs
-  `bash <payload>/openRepoTools` with its arguments unchanged and passes its
-  exit status through. `<payload>` is the wheel's `openrepotools/payload/`.
+  uses only the standard library. The entry module replaces itself with
+  `bash <payload>/openRepoTools` through `os.execvp`, with its arguments
+  unchanged. `<payload>` is the wheel's `openrepotools/payload/`. Because this
+  is an exec and not a subprocess, signals, the `EXIT` trap that removes
+  `"$PLACING"*` (`openRepoTools:240`) and the exit status pass between the
+  person and bash unchanged. A subprocess killed by a signal would instead
+  return a negative code.
   - **Which bash.** It runs the first `bash` on `PATH`, as the payload's
     `#!/usr/bin/env bash` line would. With no `bash` on `PATH`, it refuses,
     naming the missing command, and runs nothing.
@@ -151,6 +158,13 @@ Each item names what a test or a workflow run checks.
     repository.
 
   No other file carries a version number.
+- **The stamp is all or nothing.** The rule is openRepoShape's
+  (`src/openreposhape/standard.py:153-156` at v1.1.0), adapted to this
+  stamp's five fields. With `TAG`, `COMMIT` and `DIGEST` all empty, the
+  package is unstamped, and its `VERSION` is `0.0.0`. Otherwise every field
+  is set, `VERSION` is not `0.0.0`, `COMMIT` is 40 hex digits and `DIGEST`
+  is 64. Any other stamp is a broken build: it is refused, and never read as
+  the part it holds.
 - **The digest code is the pinned standard's.** The build job runs
   `upstream/openRepoShape/scripts/repo_shape.py` at the pin: `tree_digest` on
   the checkout, and `tree_digest_from_gh` on the forge's tree listing. Its
@@ -161,17 +175,22 @@ Each item names what a test or a workflow run checks.
   code leg (`openspec/changes/migrate-to-triad/adoption-plan.yaml:381-382`), so
   `openRepoTools-code` has it.
 - **How the stamp reaches `--version`.** The packaged bash stays the commit's
-  own blob, so the stamp is never written into it. The entry module reads the
-  stamp and passes it to bash in five environment variables:
-  `OPENREPOTOOLS_PACKAGE_VERSION`, `_TAG`, `_COMMIT`, `_DIGEST` and
-  `_REPOSITORY`. Bash's `--version` arm prints the package form when
-  `OPENREPOTOOLS_PACKAGE_VERSION` is set, and today's line when it is not.
-  Bash alone still parses the arguments, so `--help`, `--install --version`
-  and the refusal behave as they do in a checkout. A stamp that sets some of
-  the five values but not all of them is refused by the entry module as a
-  broken build, before bash runs. The model is openRepoShape's
-  `print_version` (`src/openreposhape/cli.py:366-396` at v1.1.0), adapted
-  because this command's parser is bash.
+  own blob, so the stamp is never written into it. Bash reads the stamp
+  itself, from the `_release.py` that sits beside its own payload directory
+  (`openrepotools/_release.py`, next to `openrepotools/payload/`). It reads
+  that file with a fixed grammar, as `pin_parse` reads the pin
+  (`openRepoTools:458`), and never imports or runs it. No environment
+  variable carries the stamp, and bash trusts none for it. So nothing leaks
+  to bash's children, a variable left in an environment cannot make a
+  checkout's `--version` name a release, and the tests have nothing to
+  clear. Bash's `--version` arm prints the package form when it runs from a
+  package's `openrepotools/payload/` with that `_release.py` beside it, and
+  today's line when it does not. Bash alone still parses the arguments, so
+  `--help`, `--install --version` and the refusal behave as they do in a
+  checkout. Bash refuses a stamp that breaks the all-or-nothing rule as a
+  broken build. The model is openRepoShape's `print_version`
+  (`src/openreposhape/cli.py:366-396` at v1.1.0), adapted because this
+  command's parser is bash.
 - **A stamped package's `--version`** prints exactly these five lines:
 
   ```text
@@ -203,18 +222,33 @@ Each item names what a test or a workflow run checks.
   `<dir>/openRepoTools` is pipx's link when all three of these hold:
   - it is a symbolic link;
   - its target, resolved, is a regular file `<venv>/bin/openRepoTools`;
-  - `<venv>/pipx_metadata.json` names `openrepotools` as its
-    `main_package.package`. pipx 1.17.12 writes that field.
+  - that `<venv>` holds a `pipx_metadata.json`, and an
+    `openrepotools/payload/` tree in its `lib/python*/site-packages/`.
+
+  The rule reads paths and asks whether files exist, and nothing more. It
+  needs no `jq`, and bash parses no JSON for it. It resolves the link with a
+  loop of plain `readlink` that runs under bash 3.2, never `readlink -f` or
+  `realpath`. It holds in every mode: the package's own `--install`, a
+  checkout's and the one-line install's. It runs before any link refusal, so
+  the refusal's `rm -f` advice (`openRepoTools:2466`) is never printed for
+  pipx's link.
 
   Nothing reads `PIPX_HOME`, so a venv under `$PIPX_HOME`, `~/.local/pipx` or
   `~/.local/share/pipx` is found the same way. A test runs each of the three.
+  **The pipx versions.** The fixtures mirror the layouts of three pipx
+  releases: 1.11.1 and 1.17.8, which openRepoShape's install check locks for
+  Python below 3.10 and from 3.10 on (`.github/release-pipx-requirements.txt:52-55`
+  at v1.1.0), and 1.18.3, the newest on PyPI on 2026-10-17. 1.17.12 is only
+  the version installed on the bench where this proposal was drafted.
   Then `--install`:
   - skips that one target, and prints exactly
     ``openRepoTools: left to pipx at <dir>/openRepoTools (a link into pipx's openrepotools environment); update it with `pipx upgrade openrepotools`, then run `openRepoTools --install` again``;
   - places every other artifact;
   - prints the count line exactly as
     `openRepoTools: 16 of 17 placed in <dir>, and 1 left to pipx`, in place of
-    today's `$placed of ${#INSTALLABLES[@]}` (`openRepoTools:1921`);
+    today's `$placed of ${#INSTALLABLES[@]}` (`openRepoTools:1921`), when it
+    runs from pipx's own environment. Run from anywhere else, the line names
+    its source too (see "Coexistence with the other installers");
   - writes no receipt row for the link. Today the rows come from the full
     `INSTALLABLES` list (`openRepoTools:1457`), so the receipt has 28 rows
     against a full install's 29 (17 + 6 + 6).
@@ -232,10 +266,8 @@ Each item names what a test or a workflow run checks.
   environment, checks that the 16 files are still there, and checks that a
   checkout's `--install` then places a regular `openRepoTools` at that path.
 - **`pip install --user`.** It places a regular file at `<dir>/openRepoTools`,
-  not a link, so the skip never applies. `--install` treats it as any regular
-  file it can write: it replaces it with the payload's bash `openRepoTools`,
-  and says `updated at <dir>/openRepoTools`. README names pipx as the one
-  package route. A test holds this.
+  not a link, so the skip never applies. `--install` refuses to replace it
+  (see "Coexistence with the other installers").
 - **Every other link is still refused.** Today `plan_install_targets` refuses
   the whole install when any target is a link ("NOTHING was installed"). That
   stays true for every link except pipx's `openRepoTools`.
@@ -245,6 +277,57 @@ Each item names what a test or a workflow run checks.
   `openRepoTools` is the command that runs `--install`, so skipping the link
   is how the two installers coexist. The rule kept from #563 is that a link
   is never a place to copy to.
+
+### Coexistence with the other installers
+
+pipx's command can meet the one-line install, a checkout's `--install`, pip
+and workBenches' `./setup.sh` on one workstation. Each pairing has one
+defined outcome. None of them may leave a person believing they run a release
+while they track `main`, which is the failure the Why exists to prevent.
+
+- **From the one-line install to pipx.** Run
+  `pipx install --force openrepotools`, then `openRepoTools --install`.
+  - A plain `pipx install` meets the regular file the one-line install left
+    at `<dir>/openRepoTools`. It only warns "File exists … Not modifying"
+    (pipx's `commands/common.py`), places no link and exits 0. The bash file
+    stays at that path and keeps running, and its next `--install` finds no
+    payload beside it and fetches `main` (`payload_select`,
+    `openRepoTools:966-997`). README gives `--force` for that reason.
+  - A test covers this order with fake layouts: a one-line install, then
+    pipx's link in its place as `--force` leaves it, then `--install` from
+    the fake venv's payload, which skips the link and replaces the other 16.
+- **A checkout's or the one-line install's `--install` meeting pipx's link.**
+  It skips the link by the same rule, and places the other 16 from its own
+  source. Its count line then says where they came from:
+  `openRepoTools: 16 of 17 placed in <dir>, and 1 left to pipx; the other 16 now come from <repo> @ <ref>, not from openrepotools <version>`.
+  `<version>` is the stamp beside the link's payload, read as `--version`
+  reads it. A test holds this line.
+- **Never replace another installer's command.** In every mode, `--install`
+  refuses to replace a regular file at `<dir>/openRepoTools` that is pip's
+  console script for openrepotools, as `pip install --user` leaves it.
+  Today `--install` would rename the payload's bash file over it in silence.
+  The refusal is made in the planning phase, like every other, so nothing is
+  placed. README names pipx as the one package route. A test holds this.
+- **Never shadow it either.** Once a package-mode `--install` has placed its
+  files, it reports when the first `openRepoTools` on `PATH` is not that
+  package's console script once links are resolved. That covers a
+  `PIPX_BIN_DIR` that differs from `$OPENREPOTOOLS_BIN_DIR`, and an older
+  bash file ahead of pipx's link on `PATH`. A test holds each case.
+- **The workBenches condition.** This bullet is the only place that states
+  it; the rest of the proposal calls it "the workBenches condition".
+  - README's route on a new workstation is workBenches' `./setup.sh`
+    (README.md:208-221). Its `scripts/setup-estate-commands.sh` lists
+    `openRepoTools` in `TOOLS_FILES`. It refuses a symlinked target before it
+    installs anything (`check_target_preflight`). After installing, it
+    requires a regular file identical to its vendored copy
+    (`verify_installed`). These are lines 191, 383-386 and 490-493 at
+    workBenches main `bdab3e2`, and the same checks stand at `b2bed1c` before
+    it. On a workstation with pipx's link, every `./setup.sh` therefore
+    refuses its estate step and names that link.
+  - **Position (c), pending Brett Heap's word:** lane openRepoTools-3 files
+    a workBenches issue for workBenches to accept pipx's link, on his word.
+    README offers pipx only after that fix lands. Until then, README says
+    that a workstation uses one route or the other, never both.
 
 ### The release workflow
 
@@ -270,6 +353,12 @@ Each item names what a test or a workflow run checks.
   - The tree digest computed locally equals the digest computed from the
     forge's tree listing, both by the pinned `repo_shape.py` (see "The digest
     code is the pinned standard's").
+  - The pinned `repo_shape.py`'s `TREE_DIGEST_DEFINITION` equals
+    `sorted-ls-tree-r-v1`, the definition `--version` labels the digest with
+    and `contracts/openreposhape-pin.yaml` names. openRepoShape's build makes
+    the same assertion (`release.yml:438-440` at v1.1.0). A later pin that
+    changes the definition then refuses the build, and never ships a wrong
+    label.
 - **The build:**
   - The release tools are installed from `.github/release-build-requirements.txt`,
     which locks them by hash and installs wheels only. Hatchling is at
@@ -346,7 +435,10 @@ Each item names what a test or a workflow run checks.
   - installs the wheel with pipx;
   - runs the unstamped `--version`;
   - runs an offline `--install` into a temporary home with a pipx link in
-    place.
+    place;
+  - runs the package's tests, the pipx-skip tests among them, and fails if
+    any of them was skipped rather than run. The pipx-skip tests build fake
+    venv layouts, with no real pipx and no wheel.
 - The three existing jobs are unchanged.
 - **The header comment** that says "`push` (main only)" and that the push and
   nightly runs run "those same three jobs" (`tests.yml:34-35`) is rewritten
@@ -369,9 +461,31 @@ Each item names what a test or a workflow run checks.
   rewritten. It says that releases are annotated tags, that the version comes
   only from the tag, and what `--version` prints when stamped and when
   unstamped.
-- **The `pipx install openrepotools` line** is added to the assembly's README
-  by PR, but only once PyPI serves v1.1.0. The README never offers a package
-  that is not published.
+- **Three README passages are corrected by feature 006** for a workstation
+  with pipx's link:
+  - the count (README.md:240, "SEVENTEEN"), which becomes sixteen placed and
+    one left to pipx;
+  - the symlink paragraph (README.md:251-262), which says every symlink is
+    refused, and now names pipx's `openRepoTools` as the one link skipped;
+  - the count invariant (README.md:302, "Thirty-one artifacts, and the count
+    is the invariant"), where such a workstation has thirty placed, one left
+    to pipx, and 28 receipt rows.
+- **The pipx route's text is fixed now:**
+
+  > **The second way, from PyPI:** `pipx install openrepotools`, then
+  > `openRepoTools --install`. pipx owns `~/.local/bin/openRepoTools`. The
+  > install places the other sixteen and says `1 left to pipx`. To update,
+  > run `pipx upgrade openrepotools`, then `--install` again.
+  > `pipx uninstall openrepotools` removes only that command.
+
+  Beside it, README gives the move from the one-line install,
+  `pipx install --force openrepotools` (see "Coexistence with the other
+  installers").
+- **README gains that text only** once PyPI serves v1.1.0 and the workBenches
+  condition holds. After the cutover README sits at the assembly root, so the
+  text goes there by PR. Lane openRepoTools-3 opens that PR, on Brett Heap's
+  word (sequencing step 6). The README never offers a package that is not
+  published.
 - **The README's cap** in `tests/test_repo_hygiene.py` moves only by a dated
   entry, as that test requires.
 
@@ -405,8 +519,8 @@ This mirrors opensoft/openRepoShape#850 (Brett Heap's ruling of
   one decides.
 - **The lanes' side,** as #850 states it:
   - one HOLD at a time on `release/vX.Y`;
-  - the lane that landed a PR back-ports it, unless the release owner
-    fast-forwards;
+  - the lane that landed a PR back-ports it, unless the release owner (see
+    "Release owner") fast-forwards;
   - a LANDED line names both commits.
 - **One upload per version.** A version is uploaded once. A bad upload is
   fixed by the next patch, never by moving a tag or reusing one.
@@ -414,6 +528,21 @@ This mirrors opensoft/openRepoShape#850 (Brett Heap's ruling of
   the release is built. `v1.0.0`, and any `rc` rehearsal tag, stay in
   `opensoft/openRepoTools`, which becomes the assembly. Tags are not carried
   to the legs.
+
+## Release owner
+
+- **Brett Heap decides** every tag, every release-branch cut and every
+  upload, and he approves each deployment to the `testpypi` and `pypi`
+  environments.
+- **Lane openRepoTools-3 carries them out on his word:** the tags, the
+  dispatches, the GitHub Releases, the cut of `release/v1.1` and step 6 of the
+  sequencing below. It is the release owner that #850's lanes' side names.
+- **The code leg's `LICENSE`.** T006's patch `code-0001` is the code leg's
+  first commit, right after `execute` and before any CI, package or release
+  run there, because `license-files = ["LICENSE"]` fails without it. Lane
+  openRepoTools-3 checks that `LICENSE` on `openRepoTools-code` is blob
+  `261eeb9` before the first `package` run. The package never tolerates a
+  missing `LICENSE`.
 
 ## Brett Heap's acts outside the repository
 
@@ -434,15 +563,18 @@ dispatch until the two environments exist with their rules.
     calls it optional.
 - **For the TestPyPI rehearsal.** His word for the `v1.1.0rc1` tag, and his
   approval of the `testpypi` deployment (answer 2).
-- **At the cutover:**
-  - In `opensoft/openRepoTools-code`, the same two environments and the same
-    tag ruleset.
-  - On test.pypi.org, a second trusted publisher on the project, which by then
-    exists, for `openRepoTools-code`.
-  - On pypi.org, a pending publisher for `openrepotools`, naming
-    `openRepoTools-code`, `release.yml` and the environment `pypi`.
+- **In the cutover sequence, after `execute`:**
+  - in `opensoft/openRepoTools-code`, the environments `testpypi` and `pypi`,
+    each naming brettheap as a required reviewer with a deployment limit of
+    exactly the tag pattern `v*`, and the `v*` tag ruleset;
+  - on test.pypi.org, the trusted publisher pointed at `openRepoTools-code`.
+    The project exists by then, from the rc rehearsal;
+  - on pypi.org, a pending publisher for `openrepotools`, naming
+    `openRepoTools-code`, `release.yml` and the environment `pypi`. It is the
+    only pypi.org publisher.
 
-  There is no pypi.org publisher for `opensoft/openRepoTools` at all, on
+  v1.1.0 is published only after both publishers and both environments
+  exist. There is no pypi.org publisher for `opensoft/openRepoTools` at all, on
   Brett Heap's answer 3 of 21:51:50Z. Nothing will ever upload to PyPI from
   that repository, and a pending publisher does not reserve the name. Until
   v1.1.0 is uploaded, nothing reserves `openrepotools` on pypi.org: PyPI's
@@ -470,30 +602,58 @@ dispatch until the two environments exist with their rules.
    The pinned `repo_shape.py` is then v1.1.0's, which digests by the same
    `sorted-ls-tree-r-v1`.
 4. **One fresh migration rehearsal, and the regenerated adoption plan at that
-   pin.** The plan carries the new paths. It belongs to lane openRepoTools-1.
-   - `pyproject.toml` and `src/` are new top-level paths. They must be
-     assigned to `code`, or `check` refuses them as `plan-uncovered`.
+   pin.** It belongs to lane openRepoTools-1, and it depends on step 1:
+   #228's PRs land before lane 1's rehearsal and adoption plan, so the plan
+   is generated on the tree that will be cut over (#186 comment 6242560541,
+   D1, on Brett Heap's decision 1). A plan generated before them would be
+   refused as `plan-uncovered` once they are in the baseline. The plan
+   carries the new paths:
+   - `pyproject.toml` and `src/` are new top-level paths, assigned to `code`.
    - `release.yml` and the two hash locks fall under the existing `.github/`
-     entry, which goes to code (`adoption-plan.yaml:87-88`).
+     entry, which goes to code (`adoption-plan.yaml:87-88`; under
+     `consensus` at openRepoShape v1.1.0, as that comment reads it).
      `docs/release-notes/` falls under the `docs/` entry, which goes to spec
      (`adoption-plan.yaml:183-184`).
    - **The code leg's `LICENSE` comes from T006's patch `code-0001`.** The
-     plan assigns `LICENSE` to the root, and `code-0001` gives the code leg a
-     byte-identical copy, blob `261eeb9`
-     (`specs/004-migrate-to-triad/root-guidance-2026-10-08.md:160`). The
-     wheel's `license-files = ["LICENSE"]` therefore needs `code-0001` to have
-     landed in `openRepoTools-code` before the cutover.
+     plan assigns `LICENSE` to the root (`adoption-plan.yaml:129-130`), and
+     `code-0001` gives the code leg a byte-identical copy, blob `261eeb9`
+     (`specs/004-migrate-to-triad/root-guidance-2026-10-08.md:160`). The code
+     leg does not exist until `execute`, so `code-0001` cannot land before
+     the cutover. It is the code leg's first commit, right after `execute`
+     and before any CI, package or release run there (see "Release owner").
+   - **The cutover invariants,** which this change depends on and the plan
+     carries:
+     - the release gate's required jobs, `guard-launch-mode`, `tests`,
+       `tests-no-submodule` and `package`, keep those ids in the code leg's
+       `tests.yml`. Today they are job ids with no `name:` (`tests.yml:50`,
+       `:70`, `:124`), and the plan's follow-ups change the code leg's CI
+       (`adoption-plan.yaml:414`);
+     - no release step reads across legs: everything `release.yml` reads is
+       in the code leg;
+     - `pyproject.toml` declares no `readme`, because README.md goes to the
+       root (`adoption-plan.yaml:137-138`). A test asserts this.
 
    Lane 1 edits that plan. This change asks for these entries, and does not
    edit `openspec/changes/migrate-to-triad/`.
-5. **The cutover** (#186).
-6. **After the cutover:**
-   - Brett makes his code-side acts.
+5. **The cutover** (#186), through `execute`. `code-0001` is the code leg's
+   first commit, right after it.
+6. **After `execute`, in the cutover sequence.** Brett Heap decides each act,
+   and lane openRepoTools-3 carries out each one on his word (see "Release
+   owner"):
+   - lane 3 checks that the code leg's `LICENSE` is blob `261eeb9` before
+     the first `package` run;
+   - Brett makes his code-side acts (see "Brett Heap's acts outside the
+     repository"): the two environments and the `v*` tag ruleset in
+     `openRepoTools-code`, the test.pypi.org publisher pointed at it, and the
+     pypi.org pending publisher for it. Nothing below runs until both
+     publishers and both environments exist;
    - v1.1.0 is tagged on `openRepoTools-code`'s `main` once that commit's
-     `tests.yml` runs have all finished, and the newest is green.
-   - The release is dispatched and approved.
-   - The GitHub Release is created from `docs/release-notes/v1.1.0.md`.
-   - `release/v1.1` is cut at `v1.1.0`.
+     `tests.yml` runs have all finished, and the newest is green;
+   - the release is dispatched, and Brett approves both deployments;
+   - the GitHub Release is created from `docs/release-notes/v1.1.0.md`;
+   - `release/v1.1` is cut at `v1.1.0`;
+   - lane 3 opens the assembly's README PR with the pipx route's text, once
+     PyPI serves v1.1.0 and the workBenches condition holds.
 
 If the cutover slips, only step 6 waits for it. Nothing is published to PyPI
 in the meantime.
@@ -510,6 +670,10 @@ in the meantime.
 - **No change to the one-line install.** `curl … | bash -s -- --install` and
   its default `$OPENREPOTOOLS_REF=main` stay as they are. So does `wip init`'s
   fetch of the nine openRepoShape template files at the pin.
+- **`--version` names the command's release, not the placed files'.** After
+  `pipx upgrade`, the 16 placed files stay the earlier release's until
+  `--install` runs again (see "The upgrade order"). Checking the placed
+  files against the receipt is left to a later release.
 - **No sdist, no native Windows command, and no second console script.**
 - **No edit** to `upstream/openRepoShape`, to its pin, or to the triad
   change's files. The pin moves to v1.1.0 in lane openRepoTools-1's own PR.
@@ -522,7 +686,10 @@ Heap's answers 2 and 3 of 21:51:50Z settle them (see the addendum).
 - **Where the release notes live.** `docs/release-notes/` can stay with
   `docs/` in the spec leg. This is recommended: it needs no exception in the
   plan, and nothing reads the notes at run time. Or it can move to code,
-  beside the workflow that makes the release.
+  beside the workflow that makes the release. The council left the choice to
+  the design, under the cutover invariant that no release step reads across
+  legs. Lane openRepoTools-1's reading of the plan at openRepoShape v1.1.0
+  already puts `docs/release-notes/` in spec (#186 comment 6242560541).
 
 ## Capabilities
 
@@ -537,6 +704,7 @@ Heap's answers 2 and 3 of 21:51:50Z settle them (see the addendum).
   - the `openrepotools` wheel and its offline payload;
   - the stamp and `--version`;
   - the pipx skip in `--install`;
+  - coexistence with the one-line install, pip and workBenches;
   - the `package` CI job;
   - the release workflow: its gates, its reproducible build, its TestPyPI and
     PyPI uploads, and its install check.
@@ -554,8 +722,9 @@ it.
   `.github/workflows/release.yml`, `.github/release-build-requirements.txt`,
   `.github/release-pipx-requirements.txt` and `docs/release-notes/`.
 - **Changed files:**
-  - `openRepoTools`: how `--install` handles links, and `--version` when
-    stamped;
+  - `openRepoTools`: how `--install` handles links and pip's console
+    script, its count line and its `PATH` report, and `--version` when run
+    from a package;
   - `.github/workflows/tests.yml`: the trigger, the `package` job, and the
     header comment that says "`push` (main only)" (`tests.yml:34-35`);
   - `AGENTS.md`: the CI paragraph (`AGENTS.md:232-239`). AGENTS.md is 314
@@ -572,7 +741,9 @@ it.
   - GitHub environments and rulesets, in two repositories;
   - trusted publishers on test.pypi.org and pypi.org;
   - the openRepoShape pin bump to v1.1.0, and the triad's regenerated
-    adoption plan at that pin (#186).
+    adoption plan at that pin (#186), with the cutover invariants;
+  - opensoft/workBenches, as the workBenches condition states.
 - **Unchanged:** the behaviour of the sixteen commands and `repos.tsv`, except
-  `--install`'s pipx skip and the package's `--version`; the receipt format;
+  `--install`'s handling of pipx's link and pip's console script, its count
+  line and `PATH` report, and the package's `--version`; the receipt format;
   `wip init`'s template fetch, and every lane tool.
