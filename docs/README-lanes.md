@@ -100,11 +100,13 @@ through the same loop, guard and retries (#194). It reads that queue on
 `refs/heads/main`, the branch the push sends, with HEAD required to be on it,
 and pushes exactly the commit it read. It refuses with 2 and pushes nothing
 unless every queued commit is a non-merge commit whose every change is an added
-or modified regular file under `lanes/` or `handoffs/`. That refuses a merge, a
-deletion (a lane rename's included), a type change, a symlink, a gitlink and
-any other path. Only `commit` publishes that queue: any other write with nothing
-to stage leaves it local, and with nothing ahead `commit` is the no-op it always
-was.
+or modified regular file under `lanes/` or `handoffs/`, and never bytecode, a
+cache or an environment. That refuses a merge, a deletion (a lane rename's
+included), a type change, a symlink, a gitlink and any other path. It is a
+path filter, not an ownership check: another lane's register write passes it,
+so read `git cherry -v origin/main HEAD` before you publish a shared queue.
+Only `commit` publishes that queue: any other write with nothing to stage
+leaves it local, and with nothing ahead `commit` is the no-op it always was.
 
 ## THE ONE HAZARD — `sed -i` DESTROYS THE SYMLINK
 
@@ -1182,7 +1184,7 @@ else.
 |---|---|
 | 0 | done |
 | 1 | environment — no register, no writer |
-| 2 | refusal — bad arguments, the object is held, an unknown alias, a checkout that cannot be rebased, or `commit` refusing to publish local commits that are not register or handoff writes, or from a checkout whose HEAD is off the branch (#194; it pushes none of them) |
+| 2 | refusal — bad arguments, the object is held, an unknown alias, a checkout that cannot be rebased, or `commit` refusing to publish local commits that are not register or handoff writes, from a checkout whose HEAD is off the branch, or that it cannot read (#194; it pushes none of them) |
 | 3 | the edit is never a permanent loss, but this attempt cannot confirm whether it also reached origin — a rebase conflict (not pushed by this attempt; a later write from this checkout may already carry it to origin, so look by content before you retry), a network timeout on a push or a pull (a hung one often already landed), or six attempts exhausted because a peer's uncommitted file blocks every rebase |
 | 4 | the mutex could not be taken within 60s |
 | 5 | an edit moved more than one line and was refused |

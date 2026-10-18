@@ -58,7 +58,9 @@
 #                                        (attribution: $LANES_LANE, else the
 #                                         "lane <name>" the text itself names)
 #   lanes-edit.sh [--no-sweep|--sweep] add-row            "<full | row |>"
-#   lanes-edit.sh                      commit             "<message>"         # commit a hand edit
+#   lanes-edit.sh                      commit             "<message>"         # commit a hand edit; with
+#                                         nothing staged, publish the stranded
+#                                         register and handoff commits (#194)
 #   lanes-edit.sh                      migrate-state-cells [--yes]            # Amendment 13(e), once
 #   lanes-edit.sh                      retire-rows        <lane>… [--reason "<why>"] [--writer <lane>]
 #   lanes-edit.sh                      archive-rows       <repo> [--yes]      # Amendment 19(d)
@@ -432,9 +434,9 @@
 #      PROMPT, or — opensoft/openRepoTools#162 — a commit whose pathspec
 #      would stage bytecode, a cache or a virtual environment
 #      (`commit_push`, `pathspec-check`), or — #194 — `commit` refusing to
-#      publish local commits that are not register or handoff writes, or a
-#      checkout whose HEAD is off the branch (`cp_publish_fence`), which
-#      pushes none of them. EIGHT MEANINGS ON ONE NUMBER, and they
+#      publish local commits that are not register or handoff writes, from a
+#      checkout whose HEAD is off the branch, or that it cannot read
+#      (`cp_publish_fence`), and pushes none of them. EIGHT MEANINGS ON ONE NUMBER, and they
 #      stay readable only because of where each can occur: bad arguments to a
 #      subcommand that predates Amendment 11; `register-row`'s "not lane-shaped";
 #      AN UNKNOWN SUBCOMMAND (the `*)` arm below), which is how a caller detects
@@ -1978,8 +1980,12 @@ BRT_EOF
 # ref cannot show the fence one commit while the push sends another. A change
 # passes only as an ADDED or MODIFIED REGULAR FILE under the register's own
 # directory (`$LANES_PREFIX`, derived, as every path of the register's is) or
-# `handoffs/`. A deletion, a type change, a symlink or a gitlink refuses, and so
-# does a path anywhere else. That includes lane tooling's own lane rename,
+# `handoffs/`, and never as bytecode, a cache or an environment (#162's list).
+# A deletion, a type change, a symlink or a gitlink refuses, and so does a path
+# anywhere else. IT IS A PATH AND KIND FILTER: it vouches for where a change
+# lands and what it is, never for whose it is (it reads no subject, author or
+# trailer), so another lane's register write passes it. That includes lane
+# tooling's own lane rename,
 # which deletes a log to re-add it: a deletion is the one change origin cannot
 # get back, and the fence keeps one rule for it. A read or a classification
 # that fails refuses too (2), because it proves nothing.
@@ -1990,7 +1996,7 @@ BRT_EOF
 cp_publish_fence() {
   cpf_ref="refs/heads/$LANES_BRANCH"
   cpf_head="$(git -C "$LANES_REPO" symbolic-ref -q HEAD 2>/dev/null || :)"
-  [ "$cpf_head" = "$cpf_ref" ] || die "refusing to publish: HEAD is ${cpf_head:-detached}, not $cpf_ref, and the push sends $cpf_ref while \`pull --rebase\` moves HEAD, so what would be published is not what HEAD shows. Nothing was pushed (#194). Whoever moved this shared checkout off $LANES_BRANCH puts it back; never reset or check out over their work." 2
+  [ "$cpf_head" = "$cpf_ref" ] || die "refusing to publish: HEAD is ${cpf_head:-detached}, not $cpf_ref, and the push sends $cpf_ref while \`pull --rebase\` moves HEAD, so what would be published is not what HEAD shows, and nothing was pushed (#194). Whoever moved this shared checkout off $LANES_BRANCH puts it back; never reset or check out over their work." 2
   cpf_rc=0
   cpf_base="$(git --no-replace-objects -C "$LANES_REPO" rev-parse -q --verify "refs/remotes/origin/$LANES_BRANCH^{commit}")" || cpf_rc=$?
   cpf_tip="$(git --no-replace-objects -C "$LANES_REPO" rev-parse -q --verify "$cpf_ref^{commit}")" || cpf_rc=$?
@@ -2011,10 +2017,19 @@ cp_publish_fence() {
       return (reg != "" && index(p, reg) == 1) || (logp != "" && index(p, logp) == 1) ||
              index(p, "handoffs/") == 1 || p == reg_path || p == alias_path
     }
+    function bytecode(p,   n, part, i) {
+      if (p ~ /\.py[co]$/) return 1
+      n = split(p, part, "/")
+      for (i = 1; i <= n; i++)
+        if (part[i] == "__pycache__" || part[i] == ".pytest_cache" || part[i] == ".mypy_cache" ||
+            part[i] == ".ruff_cache" || part[i] == "node_modules" || part[i] == ".venv" ||
+            part[i] == "venv" || part[i] == "site-packages") return 1
+      return 0
+    }
     NF == 0 { next }
     NF == 1 && $1 ~ /^[0-9a-f]+$/ { c = substr($1, 1, 12); seen++; next }
     { split($1, f, " "); st = f[5]; mode = f[2]
-      if (!(NF == 2 && (st == "A" || st == "M") && (mode == "100644" || mode == "100755") && inside($2)))
+      if (!(NF == 2 && (st == "A" || st == "M") && (mode == "100644" || mode == "100755") && inside($2) && !bytecode($2)))
         printf "  %s %s %s %s\n", c, st, mode, $2 }
     END { if (seen != want) exit 3 }')" || cpf_rc=$?
   [ "$cpf_rc" = 0 ] || die "git could not read, or this helper could not classify, the local commits on $cpf_ref ahead of refs/remotes/origin/$LANES_BRANCH, so whether they are \`commit\`'s to publish is unknown; nothing was pushed (#194)" 2
@@ -2135,7 +2150,7 @@ commit_push() {
     fi
     cp_n="$(printf '%s\n' "$cp_ahead" | awk 'END { print NR }')"
     if [ "$CP_PUBLISH_AHEAD" != 1 ]; then
-      note "nothing staged for ${CP_PATHS[*]} — no commit made; the $cp_n local commit(s) ahead of origin/$LANES_BRANCH stay local, and only \`lanes-edit.sh commit\` publishes them"
+      note "nothing staged for ${CP_PATHS[*]} — no commit made; the $cp_n local commit(s) ahead of origin/$LANES_BRANCH stay local. \`lanes-edit.sh commit\` would publish all of them, so read \`git -C $LANES_REPO cherry -v origin/$LANES_BRANCH HEAD\` first: another lane's commits are its own to publish"
       return 0
     fi
     cp_publish_fence

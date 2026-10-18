@@ -325,7 +325,8 @@ def test_the_conflict_recovery_warns_that_a_reset_drops_a_peers_commits(box):
     assert count < moved < listing < warning < drops < reset, err
     assert f"cherry origin/main {aborted_at}" in err.splitlines()[count]
     captures = "\n".join(err.splitlines()[listing:drops + 1])
-    assert "LANES(concurrent@" in captures and "LANES(pre-existing@" in captures, captures
+    assert "LANES(concurrent@" in captures, captures
+    assert "LANES(pre-existing@" in captures, captures
     assert "names no lane, so it is NOT yours" in captures, captures
 
     # The listing reads HEAD, which is what the reset acts on: a peer's commit
@@ -354,48 +355,27 @@ def test_the_dirty_checkout_refusal_names_the_act_to_re_run(box):
     assert "then re-run the refused write NOTED" in result.stderr, result.stderr
 
 
-def test_a_no_op_write_never_publishes_what_the_checkout_queued(box):
+@pytest.mark.parametrize("exported", [False, True], ids=["plain", "CP_PUBLISH_AHEAD-exported"])
+def test_a_no_op_write_never_publishes_what_the_checkout_queued(box, exported):
     """THE #214 REVIEW'S BLOCKER. This shared checkout holds another lane's
     unpushed commit that deletes a file outside lane tooling's trees. A write
     whose result is the line already there must stay what it is on `main`:
-    exit 0, no network call, origin untouched. Only `commit` publishes."""
+    exit 0, no network call, origin untouched. Only `commit` publishes, and
+    `CP_PUBLISH_AHEAD=1` EXPORTED changes nothing: the flag is the `commit`
+    arm's alone (lane openRepoShape-2's mutant M01 read it from the
+    environment and survived every other case)."""
     queued = box.queue("another lane's commit: retire the tool", delete=TOOL)
     head, origin = box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")
-    result = box.helper("replace-in-row", LANE, "seeded", "seeded")
+    extra = {"CP_PUBLISH_AHEAD": "1"} if exported else {}
+    result = box.helper("replace-in-row", LANE, "seeded", "seeded", **extra)
     assert result.returncode == 0, result.stderr
     assert box.net_calls() == [], result.stderr
     assert (box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")) == (head, origin)
     assert box.origin_file(TOOL) == "#!/usr/bin/env bash\n"
     assert box.unpublished()[0].startswith(queued)
     assert f"nothing staged for {REGISTER} — no commit made" in result.stderr
-    assert "stay local, and only `lanes-edit.sh commit` publishes them" in result.stderr
-
-
-@pytest.mark.parametrize("queued", [
-    {"delete": TOOL, "status": "D 000000", "path": TOOL},
-    {"write": "workspaces/repoP.yaml", "status": "A 100644", "path": "workspaces/repoP.yaml"},
-    {"delete": PEER_HANDOFF, "status": "D 000000", "path": PEER_HANDOFF},
-], ids=["deletes-a-tool", "outside-lane-tooling", "deletes-a-handoff"])
-def test_commit_refuses_a_queue_that_is_not_lane_toolings_to_publish(box, queued):
-    """`commit` publishes the register and handoff commits lane tooling strands
-    and nothing else: one queued commit that deletes a file, or touches a path
-    outside `lanes/` and `handoffs/`, refuses the WHOLE publish with 2, names
-    the commit and the path, and pushes nothing, not even the stranded edit."""
-    box.set_state(box.wip, LANE, "LIVE · edited by hand")
-    box.wgit("commit", "-q", "-m", f"LANES({LANE}@Eagle): {SUBJECT}", "--", REGISTER)
-    if "write" in queued:
-        (box.wip / queued["write"]).parent.mkdir(parents=True, exist_ok=True)
-    sha = box.queue("a queued commit", write=queued.get("write", ""),
-                    delete=queued.get("delete", ""))
-    head, origin = box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")
-
-    result = box.helper("commit", SUBJECT)
-    assert result.returncode == 2, result.stderr
-    assert f"  {sha[:12]} {queued['status']} {queued['path']}" in result.stderr, result.stderr
-    assert "nothing was pushed" in result.stderr
-    assert "pushing the" not in result.stderr
-    assert box.net_calls() == []
-    assert (box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")) == (head, origin)
+    assert "stay local. `lanes-edit.sh commit` would publish all of them" in result.stderr
+    assert "another lane's commits are its own to publish" in result.stderr
 
 
 def test_the_publish_counts_what_its_list_leaves_out(box):
@@ -409,9 +389,9 @@ def test_the_publish_counts_what_its_list_leaves_out(box):
     assert box.wgit("rev-parse", "HEAD") == box.ogit("rev-parse", "main")
 
 
-# ---- #214's adversarial check: three ordinary checkout states got a deletion
-# past the first fence, and a fourth was a race. Every case below exits 0 and
-# deletes `scripts/link-estates` on origin against the first fence (`fab2cbc`).
+# ---- #214's adversarial check and its two reviews: three ordinary checkout
+# states got a deletion past the first fence (`fab2cbc`), and a fourth was a
+# race. The cases below pin each, and the fence's other rules beside them.
 
 def _stranded_edit(box: Box) -> None:
     box.set_state(box.wip, LANE, "LIVE · edited by hand")
@@ -426,10 +406,50 @@ def _refused_untouched(box: Box, result, head: str, origin: str) -> None:
     assert box.origin_file(TOOL) == "#!/usr/bin/env bash\n"
 
 
-def test_a_merge_commits_own_deletion_is_refused(box):
+# ---- `commit` refuses a queue it cannot vouch for. Each setup leaves the
+# stranded register edit queued with one more commit, or in one more checkout
+# state, and returns the words the refusal must name. The last three are the
+# adversarial check's bypasses, and each published a deletion at `fab2cbc`.
+
+def _deletes_a_tool(box: Box) -> str:
+    _stranded_edit(box)
+    return f"  {box.queue('a queued commit', delete=TOOL)[:12]} D 000000 {TOOL}"
+
+
+def _outside_lane_tooling(box: Box) -> str:
+    _stranded_edit(box)
+    (box.wip / "workspaces").mkdir(exist_ok=True)
+    sha = box.queue("a queued commit", write="workspaces/repoP.yaml")
+    return f"  {sha[:12]} A 100644 workspaces/repoP.yaml"
+
+
+def _deletes_a_handoff(box: Box) -> str:
+    _stranded_edit(box)
+    return f"  {box.queue('a queued commit', delete=PEER_HANDOFF)[:12]} D 000000 {PEER_HANDOFF}"
+
+
+def _type_change(box: Box) -> str:
+    """A handoff turned into a symlink is a `T`, not a modification."""
+    _stranded_edit(box)
+    (box.wip / PEER_HANDOFF).unlink()
+    (box.wip / PEER_HANDOFF).symlink_to(f"../{TOOL}")
+    box.wgit("add", "--", PEER_HANDOFF)
+    box.wgit("commit", "-q", "-m", "peer: the handoff becomes a symlink to the tool")
+    return f"  {box.wgit('rev-parse', 'HEAD').strip()[:12]} T 120000 {PEER_HANDOFF}"
+
+
+def _bytecode_in_handoffs(box: Box) -> str:
+    """#162's list rides out of a publish no more than out of a commit."""
+    _stranded_edit(box)
+    (box.wip / "handoffs" / "__pycache__").mkdir()
+    path = "handoffs/__pycache__/x.cpython-312.pyc"
+    return f"  {box.queue('peer: bytecode beside a handoff', write=path)[:12]} A 100644 {path}"
+
+
+def _merge_in_queue(box: Box) -> str:
     """BYPASS 1. `git log --name-status` prints no diff for a merge, so a
     deletion made while resolving one went out unread, by the straight push a
-    peer's dirty file takes. A merge in the queue refuses."""
+    peer's dirty file takes."""
     _stranded_edit(box)
     box.wgit("checkout", "-q", "-b", "side", "origin/main")
     box.queue(f"handoff({PEER_LANE}@Eagle): a side line", write=PEER_HANDOFF)
@@ -439,55 +459,51 @@ def test_a_merge_commits_own_deletion_is_refused(box):
     box.wgit("commit", "-q", "-m", "Merge branch side")
     merge = box.wgit("rev-parse", "HEAD").strip()
     box.peer_edit_in_wip("a peer mid-write")
-    head, origin = box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")
-
-    result = box.helper("commit", SUBJECT)
-    _refused_untouched(box, result, head, origin)
-    assert f"  {merge[:12]} is a merge commit" in result.stderr, result.stderr
+    return f"  {merge[:12]} is a merge commit"
 
 
-def test_a_checkout_left_on_another_branch_is_refused(box):
+def _head_off_branch(box: Box) -> str:
     """BYPASS 2. The fence read HEAD while the push sent `refs/heads/main`:
     with a deletion queued on local main and HEAD on a scratch branch holding a
-    register edit, the fence saw only the edit. HEAD must be the branch."""
+    register edit, the fence saw only the edit."""
     box.queue("another lane: retire the tool", delete=TOOL)
     box.wgit("checkout", "-q", "-b", "scratch", "origin/main")
     _stranded_edit(box)
-    head, origin = box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")
-
-    result = box.helper("commit", SUBJECT)
-    _refused_untouched(box, result, head, origin)
-    assert "HEAD is refs/heads/scratch, not refs/heads/main" in result.stderr, result.stderr
+    return "HEAD is refs/heads/scratch, not refs/heads/main"
 
 
-def test_a_local_branch_named_origin_main_does_not_shadow_the_tracking_ref(box):
-    """BYPASS 3. A local branch called `origin/main` made `origin/main..HEAD`
-    an empty-looking range for the commits beneath it. The range is spelled in
-    full, so the queued deletion is read and refused."""
+def _shadowing_origin_main(box: Box) -> str:
+    """BYPASS 3. A local branch named `origin/main` shadowed the tracking ref."""
     sha = box.queue("peer: retire the tool", delete=TOOL)
     box.wgit("branch", "origin/main", "HEAD")
     _stranded_edit(box)
-    head, origin = box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")
+    return f"  {sha[:12]} D 000000 {TOOL}"
 
+
+REFUSALS = {
+    "deletes-a-tool": _deletes_a_tool,
+    "outside-lane-tooling": _outside_lane_tooling,
+    "deletes-a-handoff": _deletes_a_handoff,
+    "type-change": _type_change,
+    "bytecode-in-handoffs": _bytecode_in_handoffs,
+    "merge-in-queue": _merge_in_queue,
+    "head-off-branch": _head_off_branch,
+    "shadowing-origin-main": _shadowing_origin_main,
+}
+
+
+@pytest.mark.parametrize("variant", list(REFUSALS))
+def test_commit_refuses_a_queue_that_is_not_lane_toolings_to_publish(box, variant):
+    """`commit` publishes the register and handoff commits lane tooling strands
+    and nothing else. One queued commit, or one checkout state, it cannot vouch
+    for refuses the WHOLE publish with 2, names it, makes no network call and
+    pushes nothing, not even the stranded register edit."""
+    expect = REFUSALS[variant](box)
+    head, origin = box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")
     result = box.helper("commit", SUBJECT)
     _refused_untouched(box, result, head, origin)
-    assert f"  {sha[:12]} D 000000 {TOOL}" in result.stderr, result.stderr
-
-
-def test_a_type_change_is_refused(box):
-    """A handoff turned into a symlink is a `T`, not a modification: the fence
-    passes only regular files, added or modified."""
-    _stranded_edit(box)
-    (box.wip / PEER_HANDOFF).unlink()
-    (box.wip / PEER_HANDOFF).symlink_to(f"../{TOOL}")
-    box.wgit("add", "--", PEER_HANDOFF)
-    box.wgit("commit", "-q", "-m", "peer: the handoff becomes a symlink to the tool")
-    sha = box.wgit("rev-parse", "HEAD").strip()
-    head, origin = box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")
-
-    result = box.helper("commit", SUBJECT)
-    _refused_untouched(box, result, head, origin)
-    assert f"  {sha[:12]} T 120000 {PEER_HANDOFF}" in result.stderr, result.stderr
+    assert expect in result.stderr, result.stderr
+    assert "pushing the" not in result.stderr
 
 
 @pytest.mark.parametrize("path", ["rebase", "straight"])
