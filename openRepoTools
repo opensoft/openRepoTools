@@ -1936,7 +1936,7 @@ install_commands() {
 	# which is the population the marker exists for anyway.
 	receipt_record
 	retire_commands
-	# ONE PATH NOTE for the four of them: the directory is the same one.
+	# ONE PATH NOTE for everything it placed: the directory is the same one.
 	case ":${PATH:-}:" in
 	*":$dir:"*) ;;
 	*)
