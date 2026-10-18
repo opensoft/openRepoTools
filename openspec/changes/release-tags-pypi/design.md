@@ -6,21 +6,23 @@ See proposal.md for the why and the what, and the two delta specs for the
 behaviour contract. This file covers how. It answers the five constraints in
 clarifications.md (N1–N5) and does not reopen D1–D3.
 
-What the design builds on, as the code stands at `aaa7bc8`:
+What the design builds on, as the code stands at `aaa7bc8`. The
+`openRepoTools` line numbers are re-derived at `c1c1c71`, where each fact
+still holds:
 
 - **`openRepoTools` is one bash file**, written for bash 3.2.
-  - `SELF="${BASH_SOURCE[0]:-$0}"` (`openRepoTools:72`).
-  - `die` prints `REFUSED: …` and exits 2 (`:86`).
+  - `SELF="${BASH_SOURCE[0]:-$0}"` (`openRepoTools:74`).
+  - `die` prints `REFUSED: …` and exits 2 (`:88`).
   - `--install` plans everything before it places anything. The order is
     `plan_install_targets`, `payload_select`, the collection, then
-    `plan_hook_merge` and `plan_skill_targets` (`:1848-1866`).
+    `plan_hook_merge` and `plan_skill_targets` (`:2083-2092`).
   - Each file is placed by renaming a temporary file over its path. The
-    `EXIT` trap removes `"$PLACING"*` (`:240`, `:1801`).
-  - `receipt_add` already skips a link (`:1291`).
+    `EXIT` trap removes `"$PLACING"*` (`:251`, `:2027`).
+  - `receipt_add` already skips a link (`:1515-1517`).
   - `payload_select` copies locally when every `payload_names` file sits
-    beside `$SELF` (`:966-997`).
-  - `pin_parse` is the existing fixed-grammar reader (`:458`), with the shape
-    helpers `is_lower_hex` and `is_slug` (`:395-406`).
+    beside `$SELF` (`:1192-1223`).
+  - `pin_parse` is the existing fixed-grammar reader (`:469`), with the shape
+    helpers `is_lower_hex` and `is_slug` (`:406-417`).
 - **The model is openRepoShape v1.1.0 (`190133d`).**
   - Its package is declarative hatchling 1.27.0 under `src/`, with
     force-include and no build hook.
@@ -327,7 +329,7 @@ Otherwise the line adds
   because `package_init` refuses a broken one first.
   - A checkout or a one-line install names the repository and ref it
     collected from. That is the pair `payload_where` names
-    (`openRepoTools:797-803`), written `<repo> @ <ref>` as `--version`
+    (`openRepoTools:1023-1029`), written `<repo> @ <ref>` as `--version`
     writes it.
   - For an adopted source, it is the pinned code repository and revision.
   - One test pins the exact line for each layout.
