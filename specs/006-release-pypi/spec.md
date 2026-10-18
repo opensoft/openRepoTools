@@ -259,8 +259,13 @@ workflow's stamp writer.
    no wheel is uploaded with a wrong label.
 4. **Given** the two builds are not byte-identical, **When** the build ends,
    **Then** nothing is uploaded.
-5. **Given** the index already holds a file of the version, **When** an
-   upload job runs, **Then** it refuses before uploading.
+5. **Given** the index already holds a file of the version other than the
+   verified wheel at its recorded digest, or holds that wheel yanked,
+   **When** an upload job runs, **Then** it refuses before uploading.
+   **Given** the index holds only the verified wheel at its recorded
+   digest, not yanked, as after an upload that went through, **When** the
+   failed upload job is re-run, **Then** it does not refuse, and the upload
+   adds nothing new.
 6. **Given** `1.1.0rc1` dispatched on its annotated tag in
    `opensoft/openRepoTools`, with the `testpypi` deployment approved,
    **When** the run proceeds, **Then** it reaches TestPyPI and the install

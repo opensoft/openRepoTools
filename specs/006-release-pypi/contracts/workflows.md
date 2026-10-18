@@ -246,7 +246,15 @@ this run's approvals, and `contents` for the tag, read again.
 - Download the wheel, and check its sha256 against `build`'s output.
 - Read again the environment's rules, this run's approval of `testpypi`,
   and the tag.
-- TestPyPI's JSON for the version must list no file, or the job refuses.
+- TestPyPI's JSON for the version must list no file but the verified
+  wheel, at the digest `build` recorded, or the job refuses:
+  - a 404, a version with no file yet, passes;
+  - the verified wheel already there at that digest, and not yanked, passes,
+    and the upload (`skip-existing`) adds nothing new. This is a re-run of
+    the job after an upload that went through;
+  - a file of any other name, or the wheel's name at another digest,
+    refuses the job before the upload, and so does the verified wheel when
+    it is yanked.
 - Upload with `pypa/gh-action-pypi-publish@dc37677…` and
   `repository-url: https://test.pypi.org/legacy/`.
 - Then TestPyPI must serve exactly `{wheel: sha256}`. Read it up to 20
