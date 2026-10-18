@@ -117,7 +117,7 @@ The tests use fake venv layouts, with no pipx and no wheel.
     - `restart` retirement, and a later `--install`, both leaving the link.
   - `test_pipx_offline_*`: a package-mode `--install` with `OPENREPOTOOLS_REPO=offline.invalid/sentinel` and a `gh` and a `curl` that fail. It places the same artifacts and receipt rows as a checkout's install, apart from the link.
   - Every test here runs `bash <payload>/openRepoTools` directly, as the entry module's exec would. None runs the console script, which is `test_entry_*`'s job in T005. So these tests need T008 and not T007, and T007 and T008 stay parallel.
-- [ ] T005 [P] [US1] [O] Write `tests/test_package.py`, as detailed below — files: `tests/test_package.py` — verify: `bash tests/run.sh --collect-only -q -k 'test_metadata_ or test_payload_map_ or test_wheel_ or test_entry_'`
+- [X] T005 [P] [US1] [O] Write `tests/test_package.py`, as detailed below — files: `tests/test_package.py` — verify: `bash tests/run.sh --collect-only -q -k 'test_metadata_ or test_payload_map_ or test_wheel_ or test_entry_'`
   - `test_metadata_*`: contracts/wheel.md's `pyproject.toml` rules, read with `tomllib`, falling back to `tomli`, and skipping, naming `tomli`, when neither imports.
   - `test_payload_map_*`: the force-include keys and values against `payload_names` (run from the bash file) plus the pin, in both directions, naming every difference.
   - `test_wheel_*`: read `OPENREPOTOOLS_TEST_WHEEL`, skipping and naming it when it is unset. Run contracts/wheel.md's checks 2, 3, 5 and 6 and the member comparison.
@@ -126,7 +126,7 @@ The tests use fake venv layouts, with no pipx and no wheel.
     - a SIGTERM mid-placement leaves no placement temporary (`placement_temporaries`);
     - with no `bash` on `PATH`, the exact no-bash refusal, exit 2, and nothing run;
     - `wip_shape_ref`, cut out with `installer_function`, reads the packaged pin.
-- [ ] T006 [P] [US1] [S] Add the standard-library test to `tests/test_repo_hygiene.py`, and widen its compile test, as detailed below — files: `tests/test_repo_hygiene.py` — verify: `bash tests/run.sh -k 'standard_library or python_files_compile'`
+- [X] T006 [P] [US1] [S] Add the standard-library test to `tests/test_repo_hygiene.py`, and widen its compile test, as detailed below — files: `tests/test_repo_hygiene.py` — verify: `bash tests/run.sh -k 'standard_library or python_files_compile'`
   - add `test_the_package_imports_only_the_standard_library`. It parses every module under `src/openrepotools/` with `ast`, and holds its imports to an explicit allowlist. Where `sys.stdlib_module_names` exists, the allowlist is itself checked against it, so the test never skips on Python 3.9.
   - extend `test_the_python_files_compile` to compile `src/openrepotools/*.py`.
 
@@ -164,7 +164,7 @@ invocation.
   - `test_package_broken_stamp_*`: exit 2 and the exact refusal for `--help`, `--version` and `--install`, with nothing placed. One fixture is used for each of the three causes of contracts/cli-output.md (`cannot be read`, `is partial:`, `is malformed:`), and each case requires the line to read as that contract gives it.
   - `test_package_no_env_channel_*`: a checkout's, and a piped one-line install's, exact `openRepoTools (<repo> @ <ref>)`, with each `OPENREPOTOOLS_PACKAGE_*` variable of research R4 set.
   - `test_package_parser_*`: `--help`, `--install --version` and an unknown argument behave as in a checkout.
-- [ ] T010 [P] [US2] [S] Rewrite only the docstring of `test_version_names_the_repository_and_the_ref` in `tests/test_openrepotools_command.py`. It now says that a checkout and the one-line install name the repository and ref they fetch from, and that a package names its release (contracts/cli-output.md). Every assertion of the three `test_version_*` tests stays byte for byte — files: `tests/test_openrepotools_command.py` — verify: `! git diff -U0 "$(git merge-base HEAD origin/main)" -- tests/test_openrepotools_command.py | command grep -qE '^[-+][[:space:]]*(assert|result =)' && bash tests/run.sh -k 'test_version_'`
+- [X] T010 [P] [US2] [S] Rewrite only the docstring of `test_version_names_the_repository_and_the_ref` in `tests/test_openrepotools_command.py`. It now says that a checkout and the one-line install name the repository and ref they fetch from, and that a package names its release (contracts/cli-output.md). Every assertion of the three `test_version_*` tests stays byte for byte — files: `tests/test_openrepotools_command.py` — verify: `! git diff -U0 "$(git merge-base HEAD origin/main)" -- tests/test_openrepotools_command.py | command grep -qE '^[-+][[:space:]]*(assert|result =)' && bash tests/run.sh -k 'test_version_'`
 
 ### Implementation for User Story 2
 
