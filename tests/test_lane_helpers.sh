@@ -63,6 +63,8 @@ done
 [ -f "$SRC_DIR/repos.tsv" ] || { echo "missing: $SRC_DIR/repos.tsv" >&2; exit 1; }
 
 SANDBOX="$(mktemp -d)"
+# Set before the traps below, so `cleanup` never reads an inherited value.
+A11T_ROOT=""
 REAL_HOME="$HOME"
 
 # THE GUARDS AT THE FOOT OF THIS FILE, re-pointed (Amendment 9, act 3
@@ -96,6 +98,9 @@ cleanup() {
   [ -n "${RACE_PARENT:-}" ] && kill "$RACE_PARENT" 2>/dev/null
   [ -n "${RACE_CHILD:-}" ] && kill "$RACE_CHILD" 2>/dev/null
   [ -n "${GD_DUP:-}" ] && kill "$GD_DUP" 2>/dev/null
+  # #180's short checkout root for the clause (c) TAIL case, which is outside
+  # `$SANDBOX` wherever the run root is long.
+  [ -n "${A11T_ROOT:-}" ] && [ -d "$A11T_ROOT" ] && rm -rf -- "$A11T_ROOT"
   [ -n "${SANDBOX:-}" ] && [ -d "$SANDBOX" ] && rm -rf -- "$SANDBOX"
   return 0
 }
@@ -5348,12 +5353,40 @@ has  "…keeping the home and estate the line already carried" "$A11B_LOG" "home
 FAKE_TMUX_WINDOW="a11start:@42" FAKE_TMUX_WINDOW_INDEX=3 FAKE_TMUX_WINDOW_NAME=repoA11b-1 \
   CLAUDE_PROFILE_NAME=team-05a run "$START" repoA11b 1 --no-launch
 is   "lane-start exits 0 on a second start of the same lane" "$rc" 0
-has  "the row's stamp states clause (c)'s two facts for a person, in its TAIL" \
-     "$(grep '^| `repoA11b-1`' "$LANES")" "dir $HOME/projects/repoA11b; window a11start:3 @42"
-has  "…and that tail still says what actually happened, so --no-launch never claims a launch" \
+has  "…and its stamp says what actually happened, so --no-launch never claims a launch" \
      "$(grep '^| `repoA11b-1`' "$LANES")" ", no launch"
 has  "…while its HEAD is Amendment 8(d)'s and is untouched" \
      "$(grep '^| `repoA11b-1`' "$LANES")" "(lane repoA11b-1) — lane-start on Eagle: window renamed, no launch; dir "
+# THE TAIL IS READ ON A CHECKOUT AT A SHORT PATH (opensoft/openRepoTools#180).
+# The stamp is ONE line under ratified decision O1's cap (Amendment 13(a)), and
+# `cut_to_line` takes `dir` and `window` first by design — both are this same
+# act's log sub-fields, asserted in full above — so the tail fits only when the
+# CHECKOUT PATH does. Read on `$HOME/projects/repoA11b`, this case's answer was
+# the run root's length: green under plain pytest's `/tmp`, red under
+# `tests/run.sh`'s per-run root (`… no launch; dir ...`, the path cut whole), at
+# the edge on macOS. The checkout goes in this sandbox's own `$TMPDIR` where
+# that is at most 40 characters, as under plain pytest on Linux, and in `/tmp`
+# where it is not, so `$A11T_DIR` is never over 65 characters and the line never
+# over about 210, inside the 230 the cut keeps wherever the root is. `cleanup`
+# removes it; only a SIGKILLed run under a long root leaves one in `/tmp`.
+# `tests/test_lane_start_row_stamp.py` drives the same stamp at three checkout
+# lengths, the two that are cut included.
+a11t_base="$TMPDIR"
+[ "${#a11t_base}" -le 40 ] || a11t_base=/tmp
+A11T_ROOT="$(mktemp -d "$a11t_base/ort-a11t.XXXXXX" 2>/dev/null || :)"
+A11T_DIR="${A11T_ROOT:-$SANDBOX/a11t-no-short-root}/repoA11t"
+is   "the TAIL case has a checkout of at most 65 characters, wherever the run root is" \
+     "$( [ -n "$A11T_ROOT" ] && [ -d "$A11T_ROOT" ] && [ "${#A11T_DIR}" -le 65 ] && echo yes || echo no )" "yes"
+git init -q -b main "$A11T_DIR"
+git -C "$A11T_DIR" remote add origin "https://github.com/opensoft/repoA11t.git"
+FAKE_TMUX_WINDOW="a11tail:@43" FAKE_TMUX_WINDOW_INDEX=5 FAKE_TMUX_WINDOW_NAME=claude \
+  run "$START" --dir "$A11T_DIR" repoA11t 1 --no-launch
+is   "lane-start exits 0 for a lane whose checkout is at that short path" "$rc" 0
+FAKE_TMUX_WINDOW="a11tail:@43" FAKE_TMUX_WINDOW_INDEX=5 FAKE_TMUX_WINDOW_NAME=repoA11t-1 \
+  run "$START" repoA11t 1 --no-launch
+is   "…and on its second start, which reads the checkout back from the lane's log" "$rc" 0
+has  "the row's stamp states clause (c)'s two facts for a person, in its TAIL" \
+     "$(grep '^| `repoA11t-1`' "$LANES")" "dir $A11T_DIR; window a11tail:5 @43"
 # NO PROFILE IS NO SUB-FIELD, never a guessed one (Amendment 7(i)).
 mkdir -p "$HOME/projects/repoA11c"
 git init -q -b main "$HOME/projects/repoA11c"
