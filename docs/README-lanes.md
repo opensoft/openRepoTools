@@ -1185,9 +1185,9 @@ else.
 | 6 | `git add` / `commit` / `push` failed |
 | 7 | another act got there first and this one wrote nothing: `claim`'s `CLAIM-LOST` (another lane's claim landed first), and `set-lane-state` / `set-lane-tree`'s lifecycle fence (openRepoTools#91, below) |
 | 9 | `CLAIM-LOST` — issue #30's own dead-lane verdict could not be reconfirmed before a `--force` takeover's push landed: the source lane resumed, a live session now backs it up, or that could not be read at all (`claim` only). Never 7 — that code is a RIVAL's claim, and this is the same lane the takeover was granted over |
-| 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read (openRepoTools#91, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim`. `lane-trees`: the lane's `trees` directory is there and could not be listed (#157 item 4e) — never the 8 that means it recorded no tree |
+| 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read, or is of this schema and not a whole record, so nothing can be read out of it as a snapshot (openRepoTools#91 and #115, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim`. `lane-trees`: the lane's `trees` directory is there and could not be listed (#157 item 4e) — never the 8 that means it recorded no tree |
 | 8 | no record — and no other meaning |
-| 64 | `swapped`'s own usage error — never the dispatcher's 2 |
+| 64 | `swapped`'s own usage error — never the dispatcher's 2 — and the lifecycle arms' own: `set-lane-tree`'s partial observation, a count that is not one, or a field that is only blanks (below) |
 
 3 to 6 are the codes this helper already used; 7 and 8 were free.
 
@@ -3285,7 +3285,9 @@ Both writers have written exactly these keys since #97 landed. A record that
 fails is taken the way an unknown schema is: every writer refuses it (exit
 **1**, nothing written), `lane-state` answers **10** and `lane-reconcile` reads
 the snapshot as `MALFORMED`, and `lane-trees` carries a tree record as a row of
-its own named by its file, every field empty, under the schema `<malformed>`.
+its own named by its file under the schema `<malformed>`, keeping the path the
+record names — so the tree is still named once, though that path is the record's
+own word and may be relative — and every other field empty.
 The writers ask the same question of their own temporary file before the
 rename, so a record cut short as it was written is removed rather than renamed
 over a whole one.
@@ -3299,8 +3301,10 @@ other. And `set-lane-tree` takes a caller's observation **whole** — `--branch`
 `--head`, `--upstream`, `--dirty` and `--unpushed` together — or reads the tree
 itself; a partial one is refused with **64** and nothing is written, because the
 fields it lacks would be filed as a `dirty 0, unpushed 0` nobody observed. So is
-a `--dirty` that is not a count, or an `--unpushed` that is neither a count nor
-`unknown`: a record carrying one could be neither read nor replaced.
+a `--dirty` that is not a count, an `--unpushed` that is neither a count nor
+`unknown`, or a `--branch`, `--head`, `--upstream`, `--checkout` or `--writer`
+that is only blanks (a reader trims a value, so that field would be empty): a
+record carrying one could be neither read nor replaced.
 
 ### The reconciliation, which resets nothing
 

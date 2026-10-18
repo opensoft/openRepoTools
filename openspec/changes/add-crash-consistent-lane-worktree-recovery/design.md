@@ -515,8 +515,15 @@ writer (1), `lane-state` 10 and `MALFORMED` in the reconciliation (no new exit
 code — 10 already means *there, and nothing could be read out of it*), and a
 `<malformed>` row of `lane-trees` that `lane-reconcile` reports as
 `malformed-sidecar`. `lane_sidecar_put` asks the same of its temporary file
-before the rename, and `set-lane-tree` refuses a count that is not one with 64,
-so no writer files a record its own readers would refuse.
+before the rename, and `set-lane-tree` refuses with 64 a count that is not one
+or a field that is only blanks, so no writer files a record its own readers
+would refuse. Which kind of record a file is comes from where it is filed, and
+the snapshot's `*/lane-state.yaml` is asked first: `*` matches `/`, so a tree's
+`*/trees/*.yaml` would also match a snapshot under any directory named `trees`,
+and no tree file is named `lane-state.yaml` (its id is `c<cksum>-…`). A record's
+`lane:` is required but not compared with the lane it is filed under, because
+`rename-lane` moves the control root and leaves that line naming the old lane
+until the next write (`lane_state_rename`); its readers do not key on it.
 
 ## Risks / Trade-offs
 
