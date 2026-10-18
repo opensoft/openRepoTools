@@ -1201,8 +1201,20 @@ rename_undo() {
   return 0
 }
 
+# `cleanup`'S TEMPORARIES START EMPTY, so none of them is a path the CALLER
+# chose. It runs on every exit and removes each one by name, and a variable
+# exported into the environment used to arrive here already set: `rl_htmp`
+# made a read-only `canon-lane` delete the file it named, and `TMPD` made it
+# `rm -rf` the directory (the reviews of #212 and #213; `pbh_tmp` and `TMPD`
+# had the hole before `rl_htmp` joined them). `SE_CACHE_FILE` is assigned only
+# at the state-event cache below, so a signal before that line removed what it
+# inherited. Every other path `cleanup`, `rename_undo` and `release_lock`
+# remove is set above, before the trap: `RL_*`, `LANES_IDX_DIR`,
+# `LANES_WT_IDX_DIR`, `LOCK` and `LOCK_HELD`.
+TMPD=""; pbh_tmp=""; rl_htmp=""; SE_CACHE_FILE=""
 cleanup() {
   [ -z "${pbh_tmp:-}" ] || rm -f -- "$pbh_tmp"
+  [ -z "${rl_htmp:-}" ] || rm -f -- "$rl_htmp"   # rename-lane's stamp before its replace (#158)
   rename_undo
   if [ "$LOCK_HELD" = 1 ]; then release_lock; fi
   [ -n "${RL_SNAP:-}" ] && [ -d "${RL_SNAP:-}" ] && rm -rf -- "$RL_SNAP"
@@ -7937,6 +7949,16 @@ lane_next_free() {   # <repo> ; rows on stdin
 # swapped_lanes [<workstation>] — one row per swapped lane, tab-separated:
 #   <lane>	<UTC>	<window>	<dir>	<profile>	<agent>	<transcript>
 #
+# THE FIRST FIELD IS THE REGISTER ROW'S SPELLING OF THE LANE (Amendment 15), the
+# way `window-lane`'s answer is. The record is read under the lane's LOG FILE
+# name, and a log written before Amendment 15 is still `lanes/log/<lower>.md`
+# beside a row that spells the lane in mixed case (`lanes/log/openxfactory-4.md`
+# and `openXfactory-4`), so the raw name is the wrong one to print. A caller of
+# this output hands that field to `tmux rename-window`, to `--name`, to
+# `lane <name>` and to a read of the register, and each of them wants the row's
+# spelling. The log's own spelling is kept for the two things that read the LOG
+# — its path and the pickaxe key — and is never printed.
+#
 # THE LAST TWO ARE AMENDMENT 17(b)'s, and they are added at the END for the
 # reason the fourth and fifth were: the FIRST FIELD BEFORE THE FIRST TAB is the
 # contract every reader of this output takes (the launcher, the `handoff`
@@ -8037,8 +8059,15 @@ swapped_candidates() {
         # written, up to and including its object, which is unique to it and
         # which `git log -S` can find without a regex.
         # `nm[l]` AND NEVER `l` (Amendment 15, `8345d2f`): the key is the lane
-        # folded to one case and `nm` is the spelling the register row carries,
-        # which is the one a caller of this output hands back to a read.
+        # folded to one case and `nm` is the lane as the event stream spells
+        # it, which is the base name of the lane LOG FILE (Amendment 16(c) keys
+        # every line to its file). That is NOT the register row spelling
+        # wherever the file does not carry it: a log written before Amendment 15
+        # is still `lanes/log/openxfactory-4.md` beside the row `openXfactory-4`.
+        # It stays the spelling of the log itself, for the pickaxe key below and for
+        # `log_path_for`; the row spelling is for `swapped_lanes` to print as
+        # the first field, and `window-lane` canonicalises its answer the same
+        # way. (No apostrophe in this comment: this awk program is single-quoted.)
         printf "%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s — lane %s, session %s@%s, %s, %s\n",
           nm[l], 31, utc[l], 31, (w == "" ? "unknown" : w), 31,
           (d == "" ? "" : d), 31, (pf == "" ? "" : pf), 31,
@@ -8053,6 +8082,12 @@ swapped_lanes() {
   [ -n "$sw_rows" ] || return 0
   while IFS="$US" read -r sw_l sw_u sw_w sw_d sw_p sw_a sw_t sw_key; do
     [ -n "${sw_l:-}" ] || continue
+    # THE ROW'S SPELLING FOR THE FIRST FIELD, THE LOG'S FOR THE LOG (see above).
+    # `canon_lane` refuses a register holding the 15(d) pair and a table of
+    # former names it cannot read; this read keeps the log's own spelling then,
+    # for `window-lane`'s reason: it is informational and its contract is rows
+    # or 8, and the refusal belongs to the writer the lane leads to.
+    sw_can="$(canon_lane "$sw_l" 2>/dev/null || :)"
     sw_rank=999999999
     if have_remote_ref; then
       sw_sha="$(git -C "$LANES_REPO" log -1 --format=%H -S"$sw_key" "origin/$LANES_BRANCH" -- "$(log_path_for "$sw_l")" 2>/dev/null || :)"
@@ -8061,7 +8096,7 @@ swapped_lanes() {
         case "$sw_c" in ''|*[!0-9]*) : ;; *) sw_rank="$sw_c" ;; esac
       fi
     fi
-    printf '%09d%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' "$sw_rank" "$US" "$sw_l" "$US" "$sw_u" "$US" "$sw_w" \
+    printf '%09d%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' "$sw_rank" "$US" "${sw_can:-$sw_l}" "$US" "$sw_u" "$US" "$sw_w" \
       "$US" "${sw_d:-}" "$US" "${sw_p:-}" "$US" "${sw_a:-}" "$US" "${sw_t:-}"
   done <<EOF
 $sw_rows
@@ -14369,7 +14404,31 @@ EOF
         rm -rf -- "$rl_htmpd"
         die "the handoff at $rl_hfile_new cannot take Rule 3's stamp without rewriting a byte of it, and a handoff written whole from anything but its own bytes is the act that lost two lanes' rows on 2026-09-08. The line it wants under its header block is: $rl_hstamp" 5
       fi
-      cat -- "$rl_htmpd/out" > "$rl_hfile_new" || { rm -rf -- "$rl_htmpd"; die "the handoff at $rl_hfile_new could not be written, so Rule 3's stamp is not there and this rename is not made without it." 5; }
+      # AND THE STAMPED COPY REPLACES THE HANDOFF BY RENAME, NEVER THROUGH A
+      # REDIRECT INTO IT (opensoft/openRepoTools#158). `>` truncated the handoff
+      # before the first stamped byte was written, so a writer killed inside
+      # that `cat` — or a machine that lost power there — left a handoff cut
+      # short, and no undo reached it: `rename_undo` is a trap and SIGKILL runs
+      # none, so every later read took the short file for the handoff. The
+      # bytes now go to an exclusive temporary file BESIDE the handoff, in the
+      # physical directory it resolves to, with its mode (`cp -p` first), and
+      # `mv -f` replaces it in one rename: a reader sees the handoff whole
+      # before the stamp or whole after it. These are `publish-handoff`'s
+      # mechanics, inlined because that verb takes the lock this write already
+      # holds. The leaf is never a link — refused above, before the first byte
+      # — so replacing it rather than writing through it is the same file.
+      # `cleanup` removes the temporary on every handled exit; one a crash
+      # leaves is `<handoff>.rename.XXXXXX`, which no reader of `*.md` takes
+      # for a handoff. THIS MAKES THE STAMP ATOMIC, NOT THE RENAME: a crash
+      # between two of the four moves still leaves them apart.
+      rl_hpub="$( CDPATH=''; cd -P -- "$(dirname -- "$rl_hfile_new")" && pwd -P )" || { rm -rf -- "$rl_htmpd"; die "the directory of the handoff at $rl_hfile_new could not be resolved, so Rule 3's stamp cannot be published beside it and this rename is not made without it." 5; }
+      rl_hpub="$rl_hpub/$(basename -- "$rl_hfile_new")"
+      rl_htmp="$(mktemp "$rl_hpub.rename.XXXXXX")" || { rl_htmp=""; rm -rf -- "$rl_htmpd"; die "no temporary file could be made beside the handoff at $rl_hfile_new, and Rule 3's stamp is not written into a handoff in place. This rename is not made without it." 5; }
+      if ! cp -p -- "$rl_hpub" "$rl_htmp" || ! cat -- "$rl_htmpd/out" > "$rl_htmp" || ! mv -f -- "$rl_htmp" "$rl_hpub"; then
+        rm -f -- "$rl_htmp"; rl_htmp=""; rm -rf -- "$rl_htmpd"
+        die "the handoff at $rl_hfile_new could not be written, so Rule 3's stamp is not there and this rename is not made without it." 5
+      fi
+      rl_htmp=""
       rm -rf -- "$rl_htmpd"
       note "handoff stamped at line $((rl_hat + 1)) of $rl_hpath_new: $rl_hstamp"
     fi

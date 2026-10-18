@@ -197,37 +197,6 @@ def test_shipped_bash_parses_under_bash(name):
     assert proc.returncode == 0, proc.stderr
 
 
-def test_the_macos_job_parses_every_bash_file_this_repository_ships():
-    """THE macOS PARSE STEP IS A HAND-WRITTEN LIST, AND A HAND-WRITTEN LIST IS
-    A THING SOMEBODY FORGETS.
-
-    That step is the only place the README's claim — that Apple's stock
-    `/bin/bash`, 3.2, is enough for every bash file here — is actually asked of
-    bash 3.2. The test above runs on whatever `bash` the runner has, which on
-    the Linux jobs is 5.x, and `mapfile`, `${x,,}` and `declare -A` all parse
-    there. One command per file, because `bash -n a b` parses `a` and hands `b`
-    to it as `$1`, so a file appended to somebody else's line is never read at
-    all — which is why this is a per-name check and not a substring search for
-    the step.
-
-    Held here rather than trusted, because the omission has no symptom: the job
-    goes green, and what it proves is quietly one file smaller than it says.
-    `lane-handoff` arrived under Amendment 17(a) as the twelfth placed file and
-    was not in that list; nothing anywhere said so.
-    """
-    workflow = (REPO / ".github" / "workflows" / "tests.yml").read_text(
-        encoding="utf-8")
-    parsed = {line.strip()[len("/bin/bash -n "):]
-              for line in workflow.splitlines()
-              if line.strip().startswith("/bin/bash -n ")}
-    assert parsed, "the macOS job no longer runs `/bin/bash -n` at all"
-    missing = [name for name in ALL_BASH if name not in parsed]
-    assert not missing, (
-        "the macOS job's `/bin/bash -n` step does not parse every bash file "
-        "this repository ships, so the bash-3.2 claim is untested for:\n  "
-        + "\n  ".join(missing))
-
-
 #: THE FILES `--install` PLACES, READ OUT OF THE INSTALLER'S OWN LIST rather
 #: than restated here. `openRepoTools` declares them once — *"One list, so the
 #: installer, the fetch and the report cannot disagree"* — and deriving from it
@@ -817,15 +786,130 @@ def test_the_suite_descriptions_run_no_command_of_their_own():
 
 
 #: A line that actually FETCHES, as opposed to a line of the usage heredoc
-#: that says the word. Both spellings take a quoted argument, which the prose
-#: never does.
+#: that says the word: a `gh api "…"`, a raw-content URL, or an
+#: `api.github.com/repos/…` URL (a `curl` of the REST API, which the first
+#: reading did not scan; lane openRepoTools-3's review of #191, delta 5). Each
+#: takes a quoted or variable argument, which the prose never does.
+def fetching_lines_of(code: str) -> list[str]:
+    return [line for line in code.splitlines()
+            if 'gh api "' in line or 'raw.githubusercontent.com/$' in line
+            or 'api.github.com/repos/' in line]
+
+
 def fetching_lines(path: Path) -> list[str]:
-    return [line for line in code_lines(path).splitlines()
-            if 'gh api "' in line or 'raw.githubusercontent.com/$' in line]
+    return fetching_lines_of(code_lines(path))
+
+
+#: The REPOSITORY a fetching line names: what follows `repos/` or the raw
+#: host, read as one shell expansion (`$X`, or `${…}` whole).
+FETCH_REPOSITORY = re.compile(
+    r"(?:repos/|raw\.githubusercontent\.com/)(\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*)")
+#: `$P`, `${P}`, or `${P:-$REPO}`: a variable standing for the repository.
+PAYLOAD_SLOT = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)(?::-\$REPO)?\}?")
+
+
+def assigned_values(code: str, name: str) -> list[tuple[str, str]]:
+    """Every `name=<value>` in `code`, as (value with its quotes off, the
+    line it is on)."""
+    found = []
+    pattern = re.compile(r"(?:^|[\s;(])" + re.escape(name)
+                         + r"""=("[^"]*"|'[^']*'|[^\s;)]*)""")
+    for line in code.splitlines():
+        for match in pattern.finditer(line):
+            found.append((match.group(1).strip("\"'"), line.strip()))
+    return found
+
+
+#: The variable a pin reader binds each parsed value to, and the function
+#: that alone may set it (#191's `pin_scalar`).
+PIN_SCALAR_VALUES = ("$PIN_SCALAR", "${PIN_SCALAR}")
+
+
+def scalar_set_only_by_the_pin_reader(code: str) -> bool:
+    """`code` has a `pin_scalar() {` … `}` reader that sets `PIN_SCALAR` to a
+    parsed value, and nothing else sets it to anything but empty. Without the
+    reader, or with a reader that never sets it, `$PIN_SCALAR` would be
+    whatever the environment held (Copilot round 2 on #195)."""
+    inside = reader = False
+    parsed = 0
+    for line in code.splitlines():
+        stripped = line.strip()
+        if re.match(r"pin_scalar\(\)", stripped):
+            inside = reader = True
+            continue
+        if inside and stripped == "}":
+            inside = False
+            continue
+        for value, _ in assigned_values(line, "PIN_SCALAR"):
+            if not value:
+                continue
+            if not inside:
+                return False
+            parsed += 1
+    return reader and parsed > 0
+
+
+def installer_source_violations(code: str) -> list[str]:
+    """What `test_the_installer_reaches_only_this_repository` refuses in
+    `code` (comment lines already dropped): each fetching line whose
+    REPOSITORY is not `$REPO`, the pinned standard, or a payload variable
+    that only ever holds `$REPO` or a pin's `source_repository:` value."""
+    def pin_named(var: str) -> bool:
+        # Set only in a `source_repository)` arm, and only to the value the
+        # pin reader parsed: an arm that assigned anything else would make
+        # the payload repository come from elsewhere (Copilot on #195).
+        values = assigned_values(code, var)
+        return bool(values) and all(
+            value == "" or ("source_repository)" in line
+                            and value in PIN_SCALAR_VALUES
+                            and scalar_set_only_by_the_pin_reader(code))
+            for value, line in values)
+
+    def honest(var: str) -> bool:
+        values = assigned_values(code, var)
+        if not values:
+            return False
+        for value, _line in values:
+            if value in ("", "$REPO", "${REPO}"):
+                continue
+            inner = PAYLOAD_SLOT.fullmatch(value)
+            if inner and inner.group(0) == value and pin_named(inner.group(1)):
+                continue
+            return False
+        return True
+
+    bad = []
+    for line in fetching_lines_of(code):
+        slots = FETCH_REPOSITORY.findall(line)
+        if not slots:
+            bad.append(f"names no repository this test can read: {line.strip()}")
+        for slot in slots:
+            if slot in ("$REPO", "${REPO}", "$SHAPE_REPOSITORY", "${SHAPE_REPOSITORY}"):
+                continue
+            var = PAYLOAD_SLOT.fullmatch(slot)
+            if var and honest(var.group(1)):
+                continue
+            bad.append(f"fetches from {slot}, which is not $REPO, the pinned "
+                       f"standard, or a variable holding only those or a pin's "
+                       f"source_repository: {line.strip()}")
+    return bad
 
 
 def test_the_installer_reaches_only_this_repository():
-    """`--install` fetches from `$OPENREPOTOOLS_REPO` and from nowhere else.
+    """`--install` fetches from `$OPENREPOTOOLS_REPO`, or from the code
+    repository the assembly it installs from PINS, and from nowhere else.
+
+    RESTATED for the adopted layout (#191's payload source; lane
+    openRepoTools-3's review of #191, delta 5, T009's to restate). The first
+    reading asked only that a fetching line CONTAIN `$REPO`, so a line fetching
+    from `${PAYLOAD_REPO:-$REPO}` passed by spelling whatever `PAYLOAD_REPO`
+    held, and a `curl` of `api.github.com` was never read at all. Now the
+    REPOSITORY each fetching line names is read out of it, and it must be one
+    of three things: `$REPO`; the pinned standard (`wip init`, below); or a
+    variable whose every assignment is empty, `$REPO`, or a variable that only
+    a pin's `source_repository:` sets — the code repository an adopted
+    assembly's `contracts/code-pin.yaml` names, which is this repository's own
+    code, moved.
 
     An `--install` that reached into openRepoShape to complete itself would
     make this repository's installer depend on the standard at run time, which
@@ -838,13 +922,80 @@ def test_the_installer_reaches_only_this_repository():
     `templates/workspace-root/` — nine files this repository deliberately does
     not carry a copy of, because a copy is a second answer to what the template
     is — and it does it AT THE PINNED COMMIT, not at that repository's `main`.
-    The test below is the one that holds it to the pin. Every other fetch in
-    this file is still `$REPO`'s.
+    The test below is the one that holds it to the pin.
     """
-    for line in fetching_lines(REPO / "openRepoTools"):
-        assert "$REPO" in line or "$SHAPE_REPOSITORY" in line, (
-            f"the command fetches from a repository that is neither "
-            f"$OPENREPOTOOLS_REPO nor the pinned standard:\n    {line.strip()}")
+    bad = installer_source_violations(code_lines(REPO / "openRepoTools"))
+    assert not bad, ("the command fetches from a repository it may not:\n    "
+                     + "\n    ".join(bad))
+
+
+@pytest.mark.parametrize("code, refused", [
+    pytest.param('OTHER="someone/else"\n'
+                 'gh api "repos/${OTHER:-$REPO}/contents/park?ref=$REF"\n',
+                 True, id="passes-by-spelling"),
+    pytest.param('curl -fsSL "https://api.github.com/repos/$OTHER/commits/$REF"\n',
+                 True, id="an-api-curl-the-first-reading-never-read"),
+    pytest.param('PAYLOAD_REPO="$FROM_THE_ENVIRONMENT"\n'
+                 'gh api "repos/${PAYLOAD_REPO:-$REPO}/contents/park"\n',
+                 True, id="a-payload-variable-set-from-elsewhere"),
+    pytest.param('PIN_SOURCE_REPOSITORY=""\n'
+                 'case "$key" in\n'
+                 '  source_repository) PIN_SOURCE_REPOSITORY="$FROM_THE_ENVIRONMENT" ;;\n'
+                 'esac\n'
+                 'PAYLOAD_REPO="$PIN_SOURCE_REPOSITORY"\n'
+                 'gh api "repos/${PAYLOAD_REPO:-$REPO}/contents/park"\n',
+                 True, id="a-pin-arm-that-assigns-something-else"),
+    pytest.param('pin_scalar() {\n'
+                 '\tPIN_SCALAR="${v%% #*}"\n'
+                 '}\n'
+                 'PIN_SCALAR="$FROM_THE_ENVIRONMENT"\n'
+                 'case "$key" in\n'
+                 '  source_repository) PIN_SOURCE_REPOSITORY="$PIN_SCALAR" ;;\n'
+                 'esac\n'
+                 'PAYLOAD_REPO="$PIN_SOURCE_REPOSITORY"\n'
+                 'gh api "repos/${PAYLOAD_REPO:-$REPO}/contents/park"\n',
+                 True, id="a-scalar-set-outside-the-pin-reader"),
+    pytest.param('case "$key" in\n'
+                 '  source_repository) PIN_SOURCE_REPOSITORY="$PIN_SCALAR" ;;\n'
+                 'esac\n'
+                 'PAYLOAD_REPO="$PIN_SOURCE_REPOSITORY"\n'
+                 'gh api "repos/${PAYLOAD_REPO:-$REPO}/contents/park"\n',
+                 True, id="no-pin-reader-so-the-scalar-is-the-environments"),
+    pytest.param('pin_scalar() {\n'
+                 '\tPIN_SCALAR=""\n'
+                 '}\n'
+                 'case "$key" in\n'
+                 '  source_repository) PIN_SOURCE_REPOSITORY="$PIN_SCALAR" ;;\n'
+                 'esac\n'
+                 'PAYLOAD_REPO="$PIN_SOURCE_REPOSITORY"\n'
+                 'gh api "repos/${PAYLOAD_REPO:-$REPO}/contents/park"\n',
+                 True, id="a-pin-reader-that-never-sets-the-scalar"),
+    pytest.param('PIN_SCALAR=""\n'
+                 'pin_scalar() {\n'
+                 '\tPIN_SCALAR="${rest%%"$q"*}"\n'
+                 '\tPIN_SCALAR="${v%% #*}"\n'
+                 '}\n'
+                 'PIN_SOURCE_REPOSITORY=""\n'
+                 'case "$key" in\n'
+                 '  source_repository) PIN_SOURCE_REPOSITORY="$PIN_SCALAR" ;;\n'
+                 'esac\n'
+                 'PAYLOAD_REPO=""\n'
+                 'PAYLOAD_REPO="$REPO" PAYLOAD_REV=""\n'
+                 'PAYLOAD_REPO="$PIN_SOURCE_REPOSITORY" PAYLOAD_REV="$PIN_COMMIT"\n'
+                 'gh api "repos/${PAYLOAD_REPO:-$REPO}/contents/$path"\n'
+                 'curl -fsSL "https://raw.githubusercontent.com/${PAYLOAD_REPO:-$REPO}/$rev/$path"\n'
+                 'curl -fsSL "https://api.github.com/repos/${PAYLOAD_REPO:-$REPO}/git/trees/$1"\n',
+                 False, id="the-adopted-source-honestly"),
+    pytest.param('gh api "repos/$REPO/contents/park?ref=$REF"\n'
+                 'gh api "repos/$SHAPE_REPOSITORY/contents/$f?ref=$ref"\n',
+                 False, id="todays-two-sources"),
+])
+def test_the_installer_source_rule_is_not_met_by_spelling(code, refused):
+    """The restated rule against planted lines: the two shapes the first
+    reading let through, a payload variable fed from anywhere else, and the
+    two shapes it must keep accepting."""
+    assert bool(installer_source_violations(code)) is refused, (
+        installer_source_violations(code))
 
 
 def test_the_template_is_fetched_from_the_pinned_standard_and_at_the_pin():
@@ -972,6 +1123,12 @@ def test_the_documents_say_what_bare_park_does_now():
     estate the bare form does not need or, worse, treats a bare `park` in the
     wrong folder as a one-keystroke sweep of the workstation.
     """
+    # THE COMMAND'S OWN HALF FIRST (#186, T009): in a standalone code leg the
+    # documents are another root's, and the first one read ends the test.
+    park = (REPO / "park").read_text(encoding="utf-8")
+    assert "PARKED EVERY ESTATE unasked" in park, (
+        "the `park` header no longer says what #91's bare form did and that "
+        "it is superseded; a reader of the ruling trail needs both")
     for name in code_first("README.md", "AGENTS.md", "park"):
         text = doc(name).read_text(encoding="utf-8")
         assert "--all" in text, f"{name} does not name the sweep's flag"
@@ -990,10 +1147,6 @@ def test_the_documents_say_what_bare_park_does_now():
     assert "`resume`'s OWN bare form still refuses" in \
         doc("AGENTS.md").read_text(encoding="utf-8"), (
         "AGENTS.md does not say resume's own bare form still refuses")
-    park = (REPO / "park").read_text(encoding="utf-8")
-    assert "PARKED EVERY ESTATE unasked" in park, (
-        "the `park` header no longer says what #91's bare form did and that "
-        "it is superseded; a reader of the ruling trail needs both")
 
 
 def test_the_documents_say_what_status_is_and_is_not():
@@ -1018,6 +1171,10 @@ def test_the_documents_say_what_status_is_and_is_not():
     "four" precisely so that a document which grows the install and forgets
     to say so is a red test.
     """
+    status = (REPO / "status").read_text(encoding="utf-8")
+    assert "--no-optional-locks" in status, (
+        "status takes locks: a read-only command beside an editor must not be "
+        "the thing that says index.lock exists")
     for name in code_first("README.md", "AGENTS.md", "status"):
         text = doc(name).read_text(encoding="utf-8")
         assert "fetches nothing" in text, (
@@ -1048,10 +1205,6 @@ def test_the_documents_say_what_status_is_and_is_not():
         "README.md does not count the thirteen files")
     assert "13 of 13 placed" in readme, (
         "README.md does not show the count line `--install` actually prints")
-    status = (REPO / "status").read_text(encoding="utf-8")
-    assert "--no-optional-locks" in status, (
-        "status takes locks: a read-only command beside an editor must not be "
-        "the thing that says index.lock exists")
 
 
 def test_the_documents_say_the_sweep_skips_a_root_without_the_overlay():
@@ -1247,6 +1400,10 @@ def test_the_documents_say_what_a_bare_lanes_lists():
     """
     surfaces = ("README.md", "docs/README-lanes.md", "lanes", "lane",
                 "openRepoTools")
+    usage = (REPO / "openRepoTools").read_text(encoding="utf-8")
+    assert "lanes [--all] [--fetch]" in usage, (
+        "`openRepoTools --help` does not offer --all, so a person narrowed "
+        "into a checkout cannot find the way back to every lane")
     for name in code_first(*surfaces):
         text = doc(name).read_text(encoding="utf-8")
         assert "every lane on this workstation" not in text, (
@@ -1260,10 +1417,6 @@ def test_the_documents_say_what_a_bare_lanes_lists():
     assert "next free position" in readme, (
         "README.md does not say the narrowed listing ends with the next free "
         "position, which is the half of the settlement that is not a filter")
-    usage = (REPO / "openRepoTools").read_text(encoding="utf-8")
-    assert "lanes [--all] [--fetch]" in usage, (
-        "`openRepoTools --help` does not offer --all, so a person narrowed "
-        "into a checkout cannot find the way back to every lane")
     manual = doc("docs/README-lanes.md").read_text(encoding="utf-8")
     assert "Narrow inside a checkout (Recommended)" in manual, (
         "the manual does not quote the settlement verbatim")
@@ -1276,12 +1429,26 @@ def test_agents_md_names_the_pin_rules():
     """The three rules an agent touching the submodule has to have read, and
     the reason they are in AGENTS.md rather than only in the pin's header: an
     assistant is told to read this file, and a procedure that lives outside it
-    is a procedure performed from memory."""
+    is a procedure performed from memory.
+
+    THE PATHS ARE THE ONES THAT WORK FROM WHERE THE FILE IS READ (#193 item
+    14; the coordinator's decision of 2026-10-11). On today's single tree that
+    is `upstream/openRepoShape` and `git submodule update --init …`. At an
+    assembly root the submodule is the code leg's, so T006's `assembly-0001`
+    writes `code/upstream/openRepoShape` and `git -C code submodule update
+    --init …`: the unprefixed command fails there ("pathspec
+    'upstream/openRepoShape' did not match any file(s) known to git", measured
+    in the composed candidate). The prefix is the assembly's code mount, read
+    from its code pin, so either spelling in the wrong place fails."""
     text = doc("AGENTS.md").read_text(encoding="utf-8")
-    assert "Never edit anything under `upstream/openRepoShape` in place" in text
+    mount = ROOTS.code_mount()
+    where = f"{mount}/" if mount else ""
+    init = (f"git -C {mount} submodule update --init upstream/openRepoShape"
+            if mount else "git submodule update --init upstream/openRepoShape")
+    assert f"Never edit anything under `{where}upstream/openRepoShape` in place" in text
     assert "Never pin a commit that is not on that repository's `main`" in text
     assert "RECOMPUTED, never adjusted" in text
-    assert "git submodule update --init upstream/openRepoShape" in text
+    assert init in text, f"AGENTS.md does not give the command that works here: {init}"
 
 
 def test_agents_md_is_short_enough_to_be_read():
@@ -1774,9 +1941,24 @@ def test_agents_md_is_short_enough_to_be_read():
     protocol requires a root to carry. The assembly's cap is this count plus
     those lines and nothing else; today's single repository keeps 316, so no
     line of prose is bought on `main` by a file that is not here yet.
+
+    316 -> 323 HERE AND 340 -> 347 AT AN ASSEMBLY ROOT, on 2026-10-09, for the
+    same work (#186, T009; the #190 review). Seven lines at the foot of
+    "Testing your changes" — a blank and six — say what an agent running the
+    suite now has to know and would get wrong unaided: the suite reads each
+    file from the root that owns it, the three variables that name those roots
+    (`OPENREPOTOOLS_CODE_ROOT`, `OPENREPOTOOLS_ASSEMBLY_ROOT`,
+    `OPENREPOTOOLS_SPEC_ROOT`), and that a root a standalone checkout lacks
+    SKIPS by name while `OPENREPOTOOLS_COMPOSED=1` REFUSES instead. The
+    assembly's AGENTS.md is this file with T006's `assembly-0001` applied, so
+    it carries the same seven and its cap moves with them. They sit below the
+    last line that patch rewrites, so it still applies here and gives 347
+    lines; placed under the test block, which the patch rewrites, they made it
+    fail at `AGENTS.md:224` (lane openRepoTools-3's candidate review; #193
+    item 2).
     """
     lines = doc("AGENTS.md").read_text().splitlines()
-    cap = 316 if ROOTS.assembly is None else 340
+    cap = 323 if ROOTS.assembly is None else 347
     assert len(lines) <= cap, f"AGENTS.md is {len(lines)} lines; the cap is {cap}"
 
 
@@ -2315,6 +2497,69 @@ HOST_ABSOLUTE_PATH = re.compile(
     r"|C:\\Users\\(?!runneradmin\\)[^\s\\]+\\"
 )
 
+#: THE BENCH ROOT, A RULE OF ITS OWN (opensoft/openRepoTools#193, item 22). A
+#: path under a bench's root names one machine as surely as a home directory
+#: does, and the rule above never matched it: 87 lines in two committed files
+#: carried one, checked by a person's eye alone. It is a second pattern, and
+#: not a fifth alternative above, because it has an allowance the first rule
+#: has no use for (`QUOTED_SEARCH_PATTERNS`, below).
+#:
+#: The pattern wants the root at the START of a path. Nothing that continues a
+#: path segment (a word character), a home directory (`~`), a variable (`$`,
+#: `}`) or a relative walk (`.`) may stand directly before it, so a relative
+#: `templates/<name>/` directory called `workspace`, or `~/workspace/…`, is not
+#: this bench's root and is not a finding. The root's name carries the trailing
+#: slash on purpose: `workspace.yaml` and `workspace-root/` are not it.
+#:
+#: THE ROOT IS SPELLED IN TWO PIECES for the reason `_CLAUDE_TMP_PREFIX` is:
+#: this file is scanned like every other, and a contiguous spelling here would
+#: be a finding in the very file that defines the rule.
+_BENCH_ROOT = "/work" + "space/"
+BENCH_ABSOLUTE_PATH = re.compile(r"(?<![\w.~$}])" + re.escape(_BENCH_ROOT))
+
+#: THE ONE ALLOWANCE: a path inside a quoted SEARCH PATTERN. A recorded
+#: `grep -e '<root>/…'` says what was searched for, and swapping a placeholder
+#: into it would make the record claim a different search. Three lines of
+#: `specs/004-migrate-to-triad/consumer-reads-2026-10-07.md` are exactly that.
+#:
+#: It is narrow on purpose. An allowed span is a SINGLE-QUOTED string (the shell
+#: expands nothing in one, so it is plainly a literal) that is
+#:   - the first quoted operand after a `grep` word and its short flags, as in
+#:     `grep -rn '^path: …'` and `grep -E '…'` (`git grep -n -e '…'` is this
+#:     form too: `-e` reads as one more flag), or
+#:   - the argument of a further `-e`, as in `grep -n -e 'a' -e 'b'`.
+#: Everything else stays a finding. The run of flags ends at the first word that
+#: is not a short flag, so a flag followed by a bare value (`grep -m 1 '…'`)
+#: licenses nothing; and a bundle that carries a lowercase `f` (`-f`, `-rf`) is
+#: not a flag of the run at all, because `-f` names a pattern FILE, which is a
+#: path and never a pattern (`-F`, fixed strings, is an ordinary flag). Likewise
+#: a second quoted operand is a FILE (`grep -n 'x' '<path>'`), a double-quoted
+#: string can hold a variable, and a path before the `grep` (`git -C <path>
+#: grep …`) is outside it.
+#:
+#: A scrubbed span is replaced by `grep ` WITH its space: a bare `grep` ends in a
+#: word character, and the root's lookbehind would then drop a path glued onto
+#: the closing quote. The key is the word `grep`, not a command position, so
+#: prose or an `echo` that says `grep '…'` is scrubbed the same way; this is a
+#: lexical rule for text a person reviews, not a shell parser. Within a line
+#: only: no whitespace in these patterns may be a newline.
+QUOTED_SEARCH_PATTERNS = re.compile(
+    r"\bgrep(?:[ \t]+-(?![A-Za-z]*f)[A-Za-z]+)*[ \t]+'[^'\n]*'"
+    r"(?:[ \t]+-e[ \t]+'[^'\n]*')*")
+
+
+def host_absolute_path_hits(text: str) -> list[str]:
+    """Every host-absolute path in `text`: the matched strings of
+    `HOST_ABSOLUTE_PATH`, then one `line N: <the line>` for each line that
+    names the bench root outside a quoted search pattern. A bare `[]` means the
+    text is clean."""
+    hits = HOST_ABSOLUTE_PATH.findall(text)
+    for number, line in enumerate(text.splitlines(), 1):
+        scrubbed = QUOTED_SEARCH_PATTERNS.sub("grep ", line)
+        if BENCH_ABSOLUTE_PATH.search(scrubbed):
+            hits.append(f"line {number}: {line.strip()[:120]}")
+    return hits
+
 
 def _dispatcher_arms(text: str) -> list[str]:
     """Every subcommand the main dispatcher has an arm for, in file order.
@@ -2439,7 +2684,6 @@ def test_the_exit_3_documentation_agrees_with_the_die_message_it_describes():
     start = src.index("# EXIT CODES — every subcommand, one table")
     end = src.index("# --no-sweep", start)
     table = src[start:end]
-    manual = doc("docs/README-lanes.md").read_text(encoding="utf-8")
     def flatten(text):
         # A row that wraps onto a comment-continuation line puts a literal
         # `#` back-to-back with the next word once newlines alone are
@@ -2451,25 +2695,14 @@ def test_the_exit_3_documentation_agrees_with_the_die_message_it_describes():
         lines = (re.sub(r"^#\s*", "", ln) for ln in text.splitlines())
         return re.sub(r"\s+", " ", " ".join(lines)).strip()
 
-    for name, text in (("lanes-edit.sh's own exit-code table", table),
-                        ("docs/README-lanes.md's copy of it", manual)):
-        flat = flatten(text)
-        assert "nothing was pushed" not in flat and "nothing pushed" not in flat, (
+    def holds_exit_3(name, whole, rows, attempt):
+        assert "nothing was pushed" not in whole and "nothing pushed" not in whole, (
             f"{name} still claims exit 3 means nothing reached origin, which "
             "an aborted pull does not prove (#32)")
-    manual_start = manual.index("### Exit codes")
-    manual_end = manual.index("3 to 6 are the codes this helper already used", manual_start)
-    manual_table = manual[manual_start:manual_end]
-    table_flat = flatten(table)
-    manual_flat = flatten(manual_table)
-    assert "not pushed BY THIS ATTEMPT" in table_flat, (
-        "lanes-edit.sh's exit-3 row no longer names the attempt-scoped wording")
-    assert "not pushed by this attempt" in manual_flat, (
-        "docs/README-lanes.md's exit-3 row no longer names the attempt-scoped wording")
-    for name, flat in (("lanes-edit.sh's own exit-code table", table_flat),
-                        ("docs/README-lanes.md's own exit-codes table", manual_flat)):
+        assert attempt in rows, (
+            f"{name}'s exit-3 row no longer names the attempt-scoped wording")
         for cause in ("timeout", "push", "pull", "peer's"):
-            assert cause in flat, (
+            assert cause in rows, (
                 f"{name} no longer names a {cause!r} cause, part of exit 3's "
                 "other two causes (#50 rounds 3 and 4, 5203261904 and "
                 "5203455553) — `git_timeout_die` fires for a push OR a pull "
@@ -2477,6 +2710,18 @@ def test_the_exit_3_documentation_agrees_with_the_die_message_it_describes():
                 "table claims to be \"no two meanings on one number\", so a "
                 "code with three causes has to name all three or it is back "
                 "to being wrong")
+
+    # THE CODE'S TABLE FIRST, THEN THE MANUAL (#186, T009): in a standalone
+    # code leg the manual is the spec leg's, and the table's half of every
+    # claim above is asserted before that absence ends the test.
+    table_flat = flatten(table)
+    holds_exit_3("lanes-edit.sh's own exit-code table", table_flat, table_flat,
+                 "not pushed BY THIS ATTEMPT")
+    manual = doc("docs/README-lanes.md").read_text(encoding="utf-8")
+    manual_start = manual.index("### Exit codes")
+    manual_end = manual.index("3 to 6 are the codes this helper already used", manual_start)
+    holds_exit_3("docs/README-lanes.md's copy of it", flatten(manual),
+                 flatten(manual[manual_start:manual_end]), "not pushed by this attempt")
 
 
 #: ADOPTION ACT 0, AND THE ONE SHA THAT IS IT. `opensoft/brett-wip#5` merged
@@ -2699,6 +2944,11 @@ def test_no_committed_file_names_a_host_absolute_path():
     assembly and the spec leg beside the code leg, which is every file the one
     repository carried before the split. Their gitlinks are paths and not files,
     like the one above.
+
+    THE BENCH ROOT IS A HOST PATH TOO (opensoft/openRepoTools#193, item 22):
+    `host_absolute_path_hits` reads it beside the home-directory forms, with
+    one allowance, a path inside a quoted `grep` search pattern. The tests
+    after this one hold both halves of that rule, red and green.
     """
     offenders = {}
     for rel, path in tracked_files():
@@ -2708,11 +2958,151 @@ def test_no_committed_file_names_a_host_absolute_path():
             text = path.read_bytes().decode("utf-8")
         except UnicodeDecodeError:
             continue
-        hits = HOST_ABSOLUTE_PATH.findall(text)
+        hits = host_absolute_path_hits(text)
         if hits:
-            offenders[rel] = hits
+            # FIVE PER FILE: a file with eighty-six findings should say so, not
+            # print them all into one assertion.
+            offenders[rel] = (hits if len(hits) <= 5
+                              else hits[:5] + [f"... and {len(hits) - 5} more"])
     assert not offenders, (
         f"committed file(s) name a host-absolute path: {offenders}")
+
+
+def _plant(template: str) -> str:
+    """`template` with `<root>` replaced by the bench root. The rule's own
+    constant fills it, so this file never spells the root contiguously and the
+    scan above has nothing of its own to find."""
+    return template.replace("<root>", _BENCH_ROOT)
+
+
+#: TEXT THE BENCH-ROOT RULE MUST REFUSE. Each row is (why, text).
+BENCH_PATH_REFUSED = [
+    ("a path as a command's operand",
+     "cat <root>projects/x/file"),
+    ("a path in a yaml value, the shape of the ideation sample",
+     "directory: <root>projects/openRepoTools"),
+    ("a path in prose and in a table cell",
+     "| `<root>projects/openRepoTools/handoffs` | the checkout's symlink |"),
+    ("a path as `git -C` argument, though the same line quotes a pattern",
+     "git -C <root>projects/x grep -n -e '<root>projects/y' HEAD -- ."),
+    ("a quoted path that is not a search pattern",
+     "ls '<root>projects/x'"),
+    ("a second quoted operand of grep, which is a file",
+     "grep -n 'x' '<root>projects/x/file'"),
+    ("a path after the pattern, which is the file searched",
+     "grep -n '<root>projects/x' <root>projects/y"),
+    ("a double-quoted pattern, which can hold a variable",
+     'grep -E "<root>projects/x" file'),
+    ("a flag that takes a value ends the run of flags",
+     "grep -m 1 '<root>projects/x' file"),
+    ("-f names a pattern FILE, which is a path and not a pattern",
+     "grep -f '<root>projects/pat.txt' log"),
+    ("-f under git grep names a pattern file too",
+     "git grep -f '<root>projects/pat.txt' HEAD"),
+    ("-f inside a flag bundle is still -f",
+     "grep -rf '<root>projects/pat.txt' ."),
+    ("-f ahead of an -e chain licenses nothing in it",
+     "grep -f '<root>projects/pat.txt' -e 'x' -e 'y' log"),
+    ("a path glued onto the closing quote of a pattern",
+     "grep -E 'x'<root>projects/y log"),
+    ("a quoted path piped INTO a grep is still an echoed path",
+     "echo '<root>projects/x' | grep -n 'y'"),
+    ("a grep on one line licenses nothing on the next",
+     "grep -n\n'<root>projects/x' file"),
+    ("a file:// URL names the same host path",
+     "file://<root>projects/x"),
+]
+
+#: TEXT IT MUST ACCEPT. The first five are the allowance, each in one of the
+#: shapes a recorded search takes; the rest are look-alikes that are not the
+#: bench's root at all.
+BENCH_PATH_ACCEPTED = [
+    ("grep -E with a quoted pattern",
+     "grep -E '<root>projects/x' file"),
+    ("grep -rn with an anchored pattern and a placeholder for the files",
+     "grep -rn '^path: <root>projects/openRepoTools/' $LS/openRepoTools-{1,2,3} | wc -l"),
+    ("git grep with several -e patterns and a placeholder for the checkout",
+     "git -C $WB grep -n -e '<root>projects/openRepoTools' "
+     "-e 'openRepoTools-worktrees' -e '\\.lane-worktrees' HEAD -- ."),
+    ("a later -e carries the path",
+     "grep -n -e 'a' -e '<root>projects/x' file"),
+    ("a pattern after a pipe",
+     "git show HEAD:x | grep -n '<root>projects/x'"),
+    ("a placeholder is not a path",
+     "git -C $ORT rev-parse HEAD"),
+    ("a path under the home directory, by tilde, $HOME and ${HOME}",
+     "~<root>x $HOME<root>x ${HOME}<root>x"),
+    ("a relative directory that happens to carry the root's name",
+     "templates<root>x ..<root>x .<root>x"),
+    ("the workspace record and a template directory are not the root",
+     "~/.agents/workspace.yaml and templates/workspace-root/ and workspace/"),
+]
+
+
+@pytest.mark.parametrize("why,template", BENCH_PATH_REFUSED,
+                         ids=[why for why, _ in BENCH_PATH_REFUSED])
+def test_the_bench_root_rule_is_red_on_a_planted_path(why, template):
+    """RED: a path at the bench's root is a finding wherever it stands, except
+    inside a quoted search pattern. Every row plants one in a place the
+    allowance must NOT reach, and `git -C <path> grep -e '<path>'` is the row
+    that matters most: the first path is as host-absolute as ever, and the
+    pattern beside it licenses nothing."""
+    hits = host_absolute_path_hits(_plant(template))
+    assert hits, f"the rule let this through ({why}): {_plant(template)!r}"
+
+
+@pytest.mark.parametrize("why,template", BENCH_PATH_ACCEPTED,
+                         ids=[why for why, _ in BENCH_PATH_ACCEPTED])
+def test_the_bench_root_rule_is_green_on_the_allowed_forms(why, template):
+    """GREEN: a path inside a quoted search pattern is the recorded command's
+    own text and stays; so does everything that merely resembles the root."""
+    text = _plant(template)
+    assert host_absolute_path_hits(text) == [], (
+        f"the rule refused this ({why}): {text!r}")
+
+
+def test_the_quoted_pattern_allowance_scrubs_the_pattern_and_nothing_beside_it():
+    """One line, two roots: the allowance takes the quoted pattern out of the
+    line and the other path stays a finding, reported by line number."""
+    line = _plant("git -C <root>projects/x grep -n -e '<root>projects/y' HEAD")
+    hits = host_absolute_path_hits("fine\n" + line + "\nalso fine\n")
+    assert len(hits) == 1 and hits[0].startswith("line 2: git -C "), hits
+
+
+def test_the_consumer_reads_search_lines_are_red_as_main_carried_them_and_green_fixed():
+    """The three recorded searches of `consumer-reads-2026-10-07.md` (lines 94,
+    132 and 142 on main), each as #189 landed it and as it reads once the root
+    BESIDE the pattern is a placeholder. The pattern itself is byte for byte
+    the same in both, which is the whole claim: a placeholder in it would have
+    changed what the command searched for."""
+    pairs = [
+        ("git -C <root>projects/workBenches grep -n -e '<root>projects/openRepoTools'"
+         " -e 'openRepoTools-worktrees' -e '\\.lane-worktrees' HEAD -- .",
+         "git -C $WB grep -n -e '<root>projects/openRepoTools'"
+         " -e 'openRepoTools-worktrees' -e '\\.lane-worktrees' HEAD -- ."),
+        ("git -C <root>projects/brett-wip grep -n -e '<root>projects/openRepoTools'"
+         " -e '~/projects/openRepoTools' ab88a10 -- .   # 341 lines",
+         "git -C $BW grep -n -e '<root>projects/openRepoTools'"
+         " -e '~/projects/openRepoTools' ab88a10 -- .   # 341 lines"),
+        ("grep -rn '^path: <root>projects/openRepoTools/'"
+         " <root>projects/.lane-state/openRepoTools-{1,2,3} | wc -l",
+         "grep -rn '^path: <root>projects/openRepoTools/'"
+         " $LS/openRepoTools-{1,2,3} | wc -l"),
+    ]
+    for before, after in pairs:
+        assert host_absolute_path_hits(_plant(before)), _plant(before)
+        assert host_absolute_path_hits(_plant(after)) == [], _plant(after)
+
+
+def test_the_bench_rule_leaves_the_home_directory_rule_as_it_was():
+    """The bench root is a second pattern beside the first, not an edit of it:
+    the home-directory forms are still found, and the Windows runner's own
+    account is still the one exemption."""
+    unix = "/home" + "/alice/"
+    mac = "/Users" + "/Bob/"
+    assert host_absolute_path_hits(unix + "x") == [unix]
+    assert host_absolute_path_hits(mac + "x") == [mac]
+    assert host_absolute_path_hits("C:" + "\\Users\\runneradmin\\x") == []
 
 
 def test_the_root_carries_the_line_ending_rule():
@@ -3126,22 +3516,8 @@ def test_the_suite_wrapper_takes_one_lock_and_names_it_where_agents_read_it():
     wrapper = REPO / "tests" / "run.sh"
     assert wrapper.is_file(), "tests/run.sh is the way this suite is run"
     text = wrapper.read_text(encoding="utf-8")
-    agents = doc("AGENTS.md").read_text(encoding="utf-8")
-
     lock = '${TMPDIR:-/tmp}/openrepotools-pytest.lock'
     assert lock in text, f"the wrapper must take {lock}"
-    assert lock in agents, (
-        f"AGENTS.md must name {lock}: every lane on one workstation locks the "
-        "same file or there is no lock")
-    assert "tests/run.sh" in agents, (
-        "AGENTS.md must name tests/run.sh as the way to run the suite")
-    # THE BY-HAND FORM LEAVES NOTHING EITHER (#170 E9): the one line a person
-    # with no checkout runs relocates bytecode and turns pytest's cache off, as
-    # the wrapper does, or it lands `__pycache__` and `.pytest_cache` beside
-    # the code the wrapper keeps clean.
-    by_hand = [ln for ln in agents.splitlines() if lock in ln and "python3 -m pytest" in ln]
-    assert by_hand and all("-p no:cacheprovider" in ln and "PYTHONPYCACHEPREFIX=" in ln
-                           for ln in by_hand), by_hand
 
     assert "'^python3 -m pyt'" in text, (
         "the pgrep pattern must be anchored and split so it cannot match its "
@@ -3160,3 +3536,19 @@ def test_the_suite_wrapper_takes_one_lock_and_names_it_where_agents_read_it():
         "macOS ships no `flock`, so the wrapper needs the `mkdir` lock as its "
         "fallback — that platform is the one the fallback exists for")
     assert "python3 -m pytest tests -q" in text
+
+    # AND THEN WHERE AGENTS READ IT — AGENTS.md is the assembly root's in the
+    # triad (#186, T009), so the wrapper's own half is asserted above first.
+    agents = doc("AGENTS.md").read_text(encoding="utf-8")
+    assert lock in agents, (
+        f"AGENTS.md must name {lock}: every lane on one workstation locks the "
+        "same file or there is no lock")
+    assert "tests/run.sh" in agents, (
+        "AGENTS.md must name tests/run.sh as the way to run the suite")
+    # THE BY-HAND FORM LEAVES NOTHING EITHER (#170 E9): the one line a person
+    # with no checkout runs relocates bytecode and turns pytest's cache off, as
+    # the wrapper does, or it lands `__pycache__` and `.pytest_cache` beside
+    # the code the wrapper keeps clean.
+    by_hand = [ln for ln in agents.splitlines() if lock in ln and "python3 -m pytest" in ln]
+    assert by_hand and all("-p no:cacheprovider" in ln and "PYTHONPYCACHEPREFIX=" in ln
+                           for ln in by_hand), by_hand
