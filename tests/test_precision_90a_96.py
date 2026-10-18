@@ -261,8 +261,11 @@ def test_a_line_that_is_not_utf8_cannot_hide_an_open_landing(ended, line):
 def test_a_count_that_cannot_be_made_is_a_line_over_the_cap(ended):
     """A `wc` that fails (the one place the count is read from) leaves the
     cell scanned whole: a valid 240-character line of `—` and `→`, which
-    narrows when its count is made, is read for its LANDING instead. (A UTF-8
-    locale counts a line of 240 characters as 240 and never reaches `wc`.)"""
+    narrows when its count is made, is read for its LANDING instead. It is the
+    `|| cfs_len=241` that does it: without it the count comes back empty, the
+    cell is still read whole, but only because `[ "" -le 240 ]` is an error,
+    which `lane-end` prints. (A UTF-8 locale counts a line of 240 characters as
+    240 and never reaches `wc`.)"""
     if ended.locale != "C":
         pytest.skip("only a byte count past 240 reaches the `wc` recount")
     stub = ended.box.root / "failing-wc"
@@ -272,6 +275,7 @@ def test_a_count_that_cannot_be_made_is_a_line_over_the_cap(ended):
                           env={"PATH": f"{stub}{os.pathsep}{ended.box.env['PATH']}"})
     assert result.returncode == 2, (result.stdout, result.stderr)
     assert READ in result.stderr, result.stderr
+    assert "integer expression" not in result.stderr, result.stderr
 
 
 def test_a_line_over_the_cap_that_holds_nothing_still_ends(ended):
