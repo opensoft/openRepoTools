@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-"""`--install` beside pipx's `openRepoTools`: the link it leaves to pipx, and
-every link it still refuses (opensoft/openRepoTools#228, User Story 1).
+"""`--install` beside pipx's `openRepoTools`: the link it leaves to pipx, every
+link it still refuses, and every other installer it meets
+(opensoft/openRepoTools#228, User Stories 1 and 3).
 
 pipx places ONE command, `<dir>/openRepoTools`, as a symbolic link into its
 own venv. `--install` must leave that link exactly where it is, place every
@@ -15,12 +16,24 @@ lines; this file holds both:
   link left alone by a refusal, a retirement and a later install, and the
   venv-shaped refusal that prints no `rm` for a link;
 - `test_pipx_offline_*`: a package-mode install that reaches no network and
-  places what a checkout's install places, apart from the link.
+  places what a checkout's install places, apart from the link;
+- `test_coexist_*`: pipx's link beside the one-line install, a checkout and a
+  package outside pipx's venv, and the count line that names where the other
+  sixteen now come from and which release is beside the link (research R5);
+- `test_pip_script_*`: pip's console script at `<dir>/openRepoTools`, in both
+  forms pip writes, refused in every mode, and the files that only look like
+  it, placed as today;
+- `test_path_report_*`: the note a package-mode install prints last when the
+  first `openRepoTools` on `PATH` is not its own (research R7);
+- `test_pipx_upgrade_*` and `test_pipx_uninstall_*`: a second wheel in the
+  same venv, and the link and the venv gone.
 
 FAKE VENVS, NO PIPX, NO WHEEL. `tests/package_layout.py` lays each venv out
-of this checkout's own files. EVERY RUN HERE IS `bash <payload>/openRepoTools`,
-as the entry module's `exec` runs it, and never the console script:
-`test_entry_*` in `tests/test_package.py` holds that half.
+of this checkout's own files. EVERY PACKAGE RUN HERE IS
+`bash <payload>/openRepoTools`, as the entry module's `exec` runs it, and never
+the console script: `test_entry_*` in `tests/test_package.py` holds that half.
+A one-line install is `bash -s` fed the installer's text, with a fake `gh`
+serving the payload and a `curl` that refuses, so no run reaches a network.
 
 THE LINES THE CONTRACTS NAME, AND NO OTHERS. Nothing here compares a whole
 `--install` output or reads a hook-entry line, because another change may add
@@ -47,12 +60,13 @@ from pathlib import Path
 import pytest
 
 import package_layout as layout
-from conftest import WINDOWS_SKIP
-from test_openrepotools_command import (ARTIFACTS, COMMAND, HOOK_ENTRIES,
-                                        INSTALLED, NEEDS_JQ, command_env,
-                                        path_without, placed_files,
-                                        placement_temporaries, receipt_path,
-                                        receipt_rows, source_tree)
+from conftest import REPO, WINDOWS_SKIP
+from test_openrepotools_command import (ARTIFACTS, COMMAND, FETCHED,
+                                        HOOK_ENTRIES, INSTALLED, NEEDS_JQ,
+                                        command_env, path_without,
+                                        placed_files, placement_temporaries,
+                                        receipt_path, receipt_rows,
+                                        source_tree)
 
 pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
                                  reason="openRepoTools is a bash script"),
@@ -98,6 +112,71 @@ JQ_REFUSAL = "REFUSED: `--install` needs `jq` to merge its TWO hook entries into
 #: The repository a package-mode install must never need (research R14):
 #: `.invalid` never resolves.
 SENTINEL_REPO = "offline.invalid/sentinel"
+
+#: THE COUNT LINE OF ANY OTHER RUN BESIDE PIPX'S LINK (FR-019): a checkout's,
+#: the one-line install's, or a package's from outside pipx's venv. `{source}`
+#: is where this run's sixteen came from, and `{pipx}` names what is beside
+#: the link. The contract's `the other 16` is the same number as `{placed}`.
+OTHER_SOURCE_COUNT = ("openRepoTools: {placed} of {total} placed in {dir}, "
+                      "and 1 left to pipx; the other {placed} now come from "
+                      "{source}, not from {pipx}")
+
+#: `{pipx}` when the stamp beside pipx's payload passes the reader (`0.0.0`
+#: for an unstamped one), and the clause that takes its place when it fails.
+PIPX_BY_ITS_VERSION = "openrepotools {version}"
+PIPX_STAMP_UNREADABLE = ("the openrepotools beside pipx's link, whose stamp "
+                         "cannot be read")
+#: ...and the words no line may ever say instead (research R5).
+NEVER_SAID = "openrepotools an unreadable stamp"
+
+#: PIP'S CONSOLE SCRIPT AT `<dir>/openRepoTools` (FR-020): design.md Decision
+#: 8's text with `die`'s prefix, the same for both forms pip writes. Its line
+#: breaks and indents are the contract's own.
+PIP_REFUSAL = (
+    "REFUSED: `--install` will not replace {target}: it is pip's console "
+    "script for openrepotools (`pip install --user openrepotools` leaves it "
+    "there), and another installer's command is not this installer's to "
+    "overwrite.\n"
+    "    NOTHING was installed and nothing already installed was replaced.\n"
+    "    pipx is the one package route. To move to it:\n"
+    "        pip uninstall openrepotools\n"
+    "        pipx install openrepotools\n"
+    "        openRepoTools --install")
+
+#: THE PATH REPORT (FR-021), and its form when `type -P` finds nothing, which
+#: is the same up to its last `;`. `{want}` is `<prefix>/bin/openRepoTools`.
+PATH_NOTE = ("openRepoTools: note: the first openRepoTools on your PATH is "
+             "{first}, not this package's {want}, so the release you just "
+             "installed is not the one that runs; put the directory that "
+             "holds pipx's link to it ahead of {first_dir} on PATH")
+PATH_NOTE_NONE = ("openRepoTools: note: the first openRepoTools on your PATH "
+                  "is none, not this package's {want}, so the release you "
+                  "just installed is not the one that runs; put the directory "
+                  "that holds pipx's link to it on PATH")
+NOTE_PREFIX = "openRepoTools: note: "
+
+#: THE TWO RELEASES A COEXISTENCE CAN NAME: the one pipx placed, and another,
+#: which a package outside pipx's venv carries. Two versions, so a line that
+#: names one can never be read as naming the other. Both pass every rule of
+#: contracts/stamp.md.
+PIPX_RELEASE = {"VERSION": "1.1.0", "TAG": "v1.1.0",
+                "COMMIT": "0123456789abcdef0123456789abcdef01234567",
+                "DIGEST": "89abcdef01234567" * 4,
+                "REPOSITORY": "opensoft/openRepoTools-code"}
+OTHER_RELEASE = {"VERSION": "1.2.0rc1", "TAG": "v1.2.0rc1",
+                 "COMMIT": "fedcba98" * 5,
+                 "DIGEST": "0f1e2d3c4b5a6978" * 4,
+                 "REPOSITORY": "opensoft/openRepoTools"}
+
+#: `<repo> @ <ref>` when nothing names them, and a pair that does, with the
+#: variables that name it.
+DEFAULT_SOURCE = ("opensoft/openRepoTools", "main")
+NAMED_SOURCE = ("someone/fork", "v1.2.3")
+SOURCES = {
+    "default-source": (DEFAULT_SOURCE, {}),
+    "named-source": (NAMED_SOURCE, {"OPENREPOTOOLS_REPO": NAMED_SOURCE[0],
+                                    "OPENREPOTOOLS_REF": NAMED_SOURCE[1]}),
+}
 
 # --- the layouts -----------------------------------------------------------
 
@@ -740,3 +819,749 @@ def test_pipx_offline_a_package_install_places_what_a_checkout_does_but_the_link
         "openRepoTools", the_link,
         hashlib.sha256((checkout_home / the_link).read_bytes()).hexdigest())}
     assert len(package_rows) == ROWS_BESIDE_THE_LINK
+
+
+# --- the other installers (User Story 3) -----------------------------------
+
+def stamp_of(payload: Path) -> Path:
+    """The stamp beside a payload: its `openrepotools/_release.py`."""
+    return payload.parent / "_release.py"
+
+
+#: WHAT THE STAMP BESIDE PIPX'S PAYLOAD CAN BE: the committed one, a
+#: release's, and one fixture for each of contracts/cli-output.md's three
+#: causes. The one that cannot be read is a directory, which no account reads
+#: as a file, so that case holds for root too.
+PIPX_SIDES = ("unstamped", "stamped", "cannot-be-read", "is-partial",
+              "is-malformed")
+
+
+def give_pipx_a_stamp(venv: Path, side: str) -> str:
+    """Make the stamp beside `venv`'s payload what `side` names, and return
+    what the count line says after "not from" (FR-019): `openrepotools
+    <VERSION>` for a stamp the reader accepts, `0.0.0` for the unstamped one,
+    and the unreadable-stamp clause for one it refuses. That stamp belongs to
+    another install, so a run beside it goes on either way."""
+    stamp = stamp_of(payload_of(venv))
+    if side == "unstamped":
+        assert stamp.read_bytes() == layout.STAMP_SOURCE.read_bytes(), (
+            "the fixture is wrong: pipx's venv does not hold the committed stamp")
+        return PIPX_BY_ITS_VERSION.format(version="0.0.0")
+    if side == "stamped":
+        stamp.write_bytes(layout.stamp_text(**PIPX_RELEASE).encode("utf-8"))
+        return PIPX_BY_ITS_VERSION.format(version=PIPX_RELEASE["VERSION"])
+    if side == "cannot-be-read":
+        stamp.unlink()
+        stamp.mkdir()
+    elif side == "is-partial":
+        stamp.write_bytes(layout.stamp_text(
+            **{**PIPX_RELEASE, "DIGEST": ""}).encode("utf-8"))
+    elif side == "is-malformed":
+        stamp.write_bytes(layout.stamp_text(
+            **{**PIPX_RELEASE, "TAG": "v1.2.0"}).encode("utf-8"))
+    else:
+        raise ValueError(side)
+    return PIPX_STAMP_UNREADABLE
+
+
+def mark(tree: Path, note: str) -> None:
+    """`# <note>` appended to every payload file under `tree`, so that its
+    bytes are its own and each placement can be traced to the tree it came
+    from. A comment line after everything else, so each file still does what
+    it did: bash never reads past the installer's final `exit 0`."""
+    for rel in FETCHED:
+        path = tree / rel
+        path.write_bytes(path.read_bytes() + f"# {note}\n".encode("utf-8"))
+
+
+def github_serving(root: Path, source: Path) -> Path:
+    """A directory whose `gh` answers as GitHub answers for a single
+    repository: each payload file `<P>` under `contents/<P>?ref=…`, from
+    `source`, and the code pin `contracts/code-pin.yaml` as GitHub's 404
+    (#186). Anything else it is asked, it refuses, and its `curl` refuses
+    everything, so a run reaches no network whatever it asks. Returns the
+    directory, to go first on `PATH`."""
+    fake = root / "fake-github"
+    fake.mkdir(parents=True)
+    routes = "".join(
+        f"*/contents/{rel}\\?*) exec cat {shlex.quote(str(source / rel))} ;;\n"
+        for rel in FETCHED)
+    routes += ("*/contents/contracts/code-pin.yaml\\?*) "
+               "printf 'gh: Not Found (HTTP 404)\\n' >&2; exit 1 ;;\n")
+    (fake / "gh").write_text(
+        "#!/bin/sh\n"
+        'case "$*" in\n' + routes + "esac\n"
+        "printf 'fake gh: unexpected call: %s\\n' \"$*\" >&2\n"
+        "exit 1\n", encoding="utf-8")
+    (fake / "curl").write_text(
+        "#!/bin/sh\n"
+        "printf 'fake curl: no test here may reach the network\\n' >&2\n"
+        "exit 1\n", encoding="utf-8")
+    for tool in ("gh", "curl"):
+        (fake / tool).chmod(0o755)
+    return fake
+
+
+def with_github(env: dict, root: Path, source: Path = REPO) -> dict:
+    """`env`, with `github_serving(root, source)` first on its `PATH`."""
+    fake = github_serving(root, source)
+    return {**env, "PATH": f"{fake}{os.pathsep}{env['PATH']}"}
+
+
+def install_piped(home: Path, env: dict,
+                  script: Path = COMMAND) -> subprocess.CompletedProcess:
+    """The one-line install: `script`'s text piped into `bash -s -- --install`,
+    run in `home`, which holds nothing named `bash`, so `$SELF` is no file and
+    every payload file is fetched."""
+    home.mkdir(parents=True, exist_ok=True)
+    return subprocess.run(["bash", "-s", "--", "--install"],
+                          capture_output=True, text=True, check=False,
+                          input=script.read_text(encoding="utf-8"), env=env,
+                          cwd=str(home))
+
+
+#: THE THREE WAYS AN `--install` RUNS THAT ARE NOT PIPX'S OWN: a checkout's,
+#: the one-line install's, and a package's from outside any pipx venv.
+MODES = ("checkout", "one-line-install", "package")
+
+
+def install_as(how: str, root: Path, home: Path,
+               env: dict) -> subprocess.CompletedProcess:
+    """`--install` into `home`, run as `how` names, from a tree under `root`
+    that holds this checkout's bytes."""
+    if how == "checkout":
+        return install(source_tree(root / "checkout") / "openRepoTools", home,
+                       env)
+    if how == "one-line-install":
+        return install_piped(home, with_github(env, root / "github"))
+    if how == "package":
+        return install(layout.package_tree(root / "pip-prefix")
+                       / "openRepoTools", home, env)
+    raise ValueError(how)
+
+
+def source_of(tree: Path, destination: str, name: str) -> Path:
+    """The file under `tree` that a placed `destination` comes from: a command
+    file, a skill or one of the seventeen, by the name `--install` printed."""
+    if name.startswith("/"):
+        return tree / "commands" / f"{name[1:]}.md"
+    if destination.endswith("/SKILL.md"):
+        return tree / "skills" / name / "SKILL.md"
+    return tree / name
+
+
+def file_state(path: Path) -> tuple:
+    """A file as a test compares it: its type, mode, inode, mtime and bytes."""
+    st = os.lstat(path)
+    return (stat.S_IFMT(st.st_mode), stat.S_IMODE(st.st_mode), st.st_ino,
+            st.st_mtime_ns, path.read_bytes())
+
+
+def assert_placed_from(home: Path, link: Path, tree: Path) -> None:
+    """Every file an install beside `link` places holds `tree`'s bytes: the
+    sixteen as regular files at 755, the skills and command files beside
+    them."""
+    for destination, name in placed_files(home).items():
+        if destination == str(link):
+            continue
+        path = Path(destination)
+        assert path.is_file() and not path.is_symlink(), destination
+        assert path.read_bytes() == source_of(tree, destination,
+                                              name).read_bytes(), (
+            f"{destination} does not hold the bytes of {tree}")
+        if path.parent == link.parent:
+            assert stat.S_IMODE(path.stat().st_mode) == 0o755, destination
+
+
+def assert_beside_the_link(result: subprocess.CompletedProcess, link: Path,
+                           source: str, pipx: str) -> None:
+    """Any run but pipx's own, beside pipx's link (FR-019): exit 0, the exact
+    skip line and the exact other-source count line once each, naming
+    `source` and, after "not from", `pipx`. Not the pipx-own line, not a
+    seventeen-of-seventeen count, no per-file line for `openRepoTools`, and
+    never "openrepotools an unreadable stamp" anywhere."""
+    out = result.stdout.splitlines()
+    total = len(INSTALLED)
+    skip = SKIP_LINE.format(link=link)
+    count = OTHER_SOURCE_COUNT.format(placed=total - 1, total=total,
+                                      dir=link.parent, source=source,
+                                      pipx=pipx)
+    own = PIPX_OWN_COUNT.format(placed=total - 1, total=total, dir=link.parent)
+    assert result.returncode == 0, transcript(result)
+    assert out.count(skip) == 1, f"the skip line, once:\n{skip}\n{transcript(result)}"
+    assert out.count(count) == 1, (
+        f"the count line, once:\n{count}\n{transcript(result)}")
+    assert own not in out, (
+        f"the line of a run from pipx's own environment:\n{transcript(result)}")
+    for verb in ("installed at", "updated at", "already installed at"):
+        assert not [line for line in out
+                    if line.startswith(f"openRepoTools: {verb}")], (
+            f"openRepoTools was placed although it is pipx's:\n{transcript(result)}")
+    assert f"openRepoTools: {total} of {total} placed" not in result.stdout
+    assert NEVER_SAID not in result.stdout + result.stderr, transcript(result)
+
+
+# --- test_coexist_: pipx's link beside the other installers ----------------
+
+@NEEDS_JQ
+def test_coexist_pipx_install_force_over_the_one_line_install_then_install_replaces_the_sixteen(
+        tmp_path):
+    """US3 SCENARIO 1, THE MOVE FROM THE ONE-LINE INSTALL (FR-024). The
+    one-line install places all seventeen from an older release. Then
+    `pipx install --force openrepotools` puts pipx's link where that
+    `openRepoTools` was, which is what `--force` is for, and `--install` runs
+    from the venv's payload. The link is skipped with the exact skip line
+    and the pipx-own count line; each of the other sixteen, and each skill
+    and command file, is UPDATED to the package's bytes; the link and the
+    venv are as they were; and the receipt holds the 28 rows, the one-line
+    install's row for `<dir>/openRepoTools` gone with the file it was about.
+    """
+    root = tmp_path.resolve()
+    home = root / "home"
+    older = source_tree(root / "older-release")
+    mark(older, "an older release, as the one-line install fetched it")
+    env = pipx_env(home)
+    one_line = install_piped(home, with_github(env, root / "github", older),
+                             older / "openRepoTools")
+    assert one_line.returncode == 0, transcript(one_line)
+    link = bin_dir(home) / "openRepoTools"
+    assert not link.is_symlink() and link.read_bytes() == (
+        older / "openRepoTools").read_bytes(), transcript(one_line)
+    assert len(receipt_rows(home)) == ARTIFACTS - HOOK_ENTRIES
+
+    # `pipx install --force openrepotools`: the venv, and its link in place
+    # of the one-line install's file.
+    venv = layout.pipx_venv(home / ".local" / "share" / "pipx", "1.17.8")
+    link.unlink()
+    point(link, venv / "bin" / "openRepoTools")
+    payload = payload_of(venv)
+    before = link_state(link), tree_state(venv)
+
+    result = install(payload / "openRepoTools", home, env)
+    assert_left_to_pipx(result, link)
+    assert (link_state(link), tree_state(venv)) == before, (
+        "the install wrote through pipx's link or into its venv")
+    out = result.stdout.splitlines()
+    for destination, name in placed_files(home).items():
+        if destination != str(link):
+            assert f"{name}: updated at {destination}" in out, transcript(result)
+    assert_placed_from(home, link, payload)
+    assert_rows_beside_the_link(home, link)
+    assert placement_temporaries(home) == []
+
+
+@pytest.mark.parametrize("side", PIPX_SIDES)
+@pytest.mark.parametrize("source", SOURCES)
+@pytest.mark.parametrize("how", ["checkout", "one-line-install"])
+@NEEDS_JQ
+def test_coexist_a_checkout_or_the_one_line_install_names_its_source_and_pipx_s_release(
+        tmp_path, how, source, side):
+    """US3 SCENARIO 2 (FR-019). A checkout's `--install`, and the one-line
+    install's, beside pipx's link: the link is skipped, the other sixteen
+    are placed from the run's own source, and the count line is exactly
+    contracts/cli-output.md's other-source line. It names that source as
+    `<repo> @ <ref>`, `opensoft/openRepoTools @ main` where nothing names
+    them, and the release beside the link by the `VERSION` of the stamp
+    beside pipx's payload: `0.0.0` for an unstamped one, the release's for a
+    stamped one. A stamp there that fails the reader ends the line in
+    `the openrepotools beside pipx's link, whose stamp cannot be read`, for
+    each of the three causes, and the install goes on; no output ever reads
+    "openrepotools an unreadable stamp".
+
+    pipx's payload carries bytes of its own, so the sixteen being the
+    source's bytes shows they came from the run and not from the venv.
+    """
+    root = tmp_path.resolve()
+    home = root / "home"
+    venv, link = pipx_install(home, "1.18.3")
+    clause = give_pipx_a_stamp(venv, side)
+    mark(payload_of(venv), "pipx's release, which this run does not place")
+    before = link_state(link), tree_state(venv)
+    (repo, ref), named = SOURCES[source]
+
+    result = install_as(how, root, home, pipx_env(home, extra=named))
+    assert_beside_the_link(result, link, f"{repo} @ {ref}", clause)
+    assert (link_state(link), tree_state(venv)) == before, (
+        "the install wrote through pipx's link or into its venv")
+    assert_placed_from(home, link, REPO)
+    assert_rows_beside_the_link(home, link)
+
+
+@pytest.mark.parametrize("side", ["unstamped", "stamped", "is-partial"])
+@pytest.mark.parametrize("own", ["unstamped", "stamped"])
+@pytest.mark.parametrize("where", ["a-prefix", "another-pipx-venv"])
+@NEEDS_JQ
+def test_coexist_a_package_outside_pipx_s_venv_names_its_own_release_never_repo_and_ref(
+        tmp_path, where, own, side):
+    """US3 SCENARIO 7 (FR-019, research R5). A package-mode `--install` from a
+    package outside the venv pipx's link resolves into, beside that link: a
+    `package_tree` under a plain prefix, as pip leaves one, and one inside
+    another pipx venv. The link is skipped, the sixteen are this package's
+    bytes, and the count line names the package's own release from its own
+    stamp, `openrepotools <its VERSION>`, as the source. It never names
+    `<repo> @ <ref>`, though `$OPENREPOTOOLS_REPO` and `$OPENREPOTOOLS_REF`
+    are set: a package never fetched from them. After "not from" it names
+    the stamp beside pipx's payload, as every other run beside the link
+    does."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    venv, link = pipx_install(home, "1.17.8")
+    clause = give_pipx_a_stamp(venv, side)
+    text = None if own == "unstamped" else layout.stamp_text(**OTHER_RELEASE)
+    version = "0.0.0" if own == "unstamped" else OTHER_RELEASE["VERSION"]
+    if where == "a-prefix":
+        payload = layout.package_tree(root / "pip-prefix", stamp=text)
+    else:
+        payload = payload_of(layout.pipx_venv(root / "another-pipx-home",
+                                              "1.11.1", stamp=text))
+    mark(payload, "the package this run is")
+    before = link_state(link), tree_state(venv)
+
+    result = install(payload / "openRepoTools", home,
+                     pipx_env(home, extra=SOURCES["named-source"][1]))
+    assert_beside_the_link(result, link, f"openrepotools {version}", clause)
+    for pair in (NAMED_SOURCE, DEFAULT_SOURCE):
+        assert " @ ".join(pair) not in result.stdout, (
+            f"a package named a source it never fetched:\n{transcript(result)}")
+    assert (link_state(link), tree_state(venv)) == before
+    assert_placed_from(home, link, payload)
+    assert_rows_beside_the_link(home, link)
+
+
+# --- test_pip_script_: pip's console script at <dir>/openRepoTools ----------
+
+#: contracts/pipx-link.md's fixtures: the three forms of pip's own script,
+#: refused, and five files that only look like it, placed as today.
+PIP_S_SCRIPTS = ("pip-s-shebang", "pip-s-trampoline-quoted-with-a-space",
+                 "pip-s-trampoline-unquoted-and-long")
+NOT_PIP_S = ("a-bash-shebang", "a-trampoline-to-ruby",
+             "a-sh-file-with-no-exec-line",
+             "a-python-script-importing-another-package", "this-installer")
+
+
+def lines_of(path: Path) -> list:
+    return path.read_text(encoding="utf-8").split("\n")
+
+
+def put_fixture(target: Path, root: Path, which: str) -> None:
+    """`<dir>/openRepoTools` as fixture `which` leaves it, at 0755, each
+    checked to be the shape contracts/pipx-link.md names, so that a case
+    proves what it says. Interpreters are paths under `root`, never run."""
+    python = f"{root}/pyenv/bin/python3.12"
+    if which == "pip-s-shebang":
+        layout.console_script(target, python, form="shebang")
+        assert lines_of(target)[:3] == [
+            f"#!{python}", "import sys", "from openrepotools.cli import main"]
+    elif which == "pip-s-trampoline-quoted-with-a-space":
+        spaced = f"{root}/py env/bin/python3"
+        layout.console_script(target, spaced, form="trampoline")
+        assert lines_of(target)[:3] == [
+            "#!/bin/sh", f"'''exec' \"{spaced}\" \"$0\" \"$@\"", "' '''"]
+    elif which == "pip-s-trampoline-unquoted-and-long":
+        long = f"{root}/{'p' * max(8, 130 - len(str(root)))}/bin/python3"
+        assert len(long) > 127 and " " not in long
+        layout.console_script(target, long, form="trampoline")
+        assert lines_of(target)[:3] == [
+            "#!/bin/sh", f"'''exec' {long} \"$0\" \"$@\"", "' '''"]
+    elif which == "a-bash-shebang":
+        layout.console_script(target, "/bin/bash", form="shebang")
+        assert lines_of(target)[:3] == [
+            "#!/bin/bash", "import sys", "from openrepotools.cli import main"]
+    elif which == "a-trampoline-to-ruby":
+        ruby = f"{root}/x/bin/ruby"
+        layout.console_script(target, f'"{ruby}"', form="trampoline")
+        assert lines_of(target)[:3] == [
+            "#!/bin/sh", f"'''exec' \"{ruby}\" \"$0\" \"$@\"", "' '''"]
+    elif which == "a-sh-file-with-no-exec-line":
+        layout.console_script(target, "/bin/sh", form="shebang")
+        lines = lines_of(target)
+        assert lines[0] == "#!/bin/sh"
+        assert "from openrepotools.cli import main" in lines
+        assert not [line for line in lines if line.startswith("'''exec'")]
+    elif which == "a-python-script-importing-another-package":
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"#!{python}\n" + layout.SCRIPT_TEMPLATE % {
+            "module": "openreposhape.cli", "import_name": "main",
+            "func": "main"}, encoding="utf-8")
+        target.chmod(0o755)
+        assert "from openreposhape.cli import main" in lines_of(target)
+    elif which == "this-installer":
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(COMMAND.read_bytes())
+        target.chmod(0o755)
+    else:
+        raise ValueError(which)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o755
+
+
+def assert_pip_s_refusal(result: subprocess.CompletedProcess, home: Path,
+                         target: Path, before: tuple) -> None:
+    """FR-020's refusal, in the planning phase: exit 2, stderr exactly
+    contracts/cli-output.md's text after `die`'s blank line, nothing placed,
+    and pip's script exactly as it was."""
+    assert_refused_before_placing(result, home, {"openRepoTools"})
+    expected = "\n" + PIP_REFUSAL.format(target=target) + "\n"
+    assert result.stderr == expected, (
+        f"stderr is not exactly the pip refusal:\n{expected}\n"
+        f"{transcript(result)}")
+    assert file_state(target) == before, "pip's console script was touched"
+
+
+def assert_placed_over(result: subprocess.CompletedProcess, home: Path,
+                       target: Path, was: bytes) -> None:
+    """PLACED AS TODAY: exit 0, `<dir>/openRepoTools` replaced by this
+    installer's own bytes at 755 (or left as it was, where it already was
+    them), today's count line, and a row for it among the 29."""
+    total = len(INSTALLED)
+    out = result.stdout.splitlines()
+    assert result.returncode == 0, transcript(result)
+    verb = (f"already installed at {target} (unchanged)"
+            if was == COMMAND.read_bytes() else f"updated at {target}")
+    assert f"openRepoTools: {verb}" in out, transcript(result)
+    assert f"openRepoTools: {total} of {total} placed in {target.parent}" in out
+    assert target.is_file() and not target.is_symlink()
+    assert stat.S_IMODE(target.stat().st_mode) == 0o755
+    assert target.read_bytes() == COMMAND.read_bytes()
+    assert len(receipt_rows(home)) == ARTIFACTS - HOOK_ENTRIES
+    assert str(target) in {row[1] for row in receipt_rows(home)}
+
+
+@pytest.mark.parametrize("how", MODES)
+@pytest.mark.parametrize("which", PIP_S_SCRIPTS)
+def test_pip_script_is_refused_in_every_mode_and_nothing_is_placed(
+        tmp_path, which, how):
+    """US3 SCENARIO 3 (FR-020): pip's console script at `<dir>/openRepoTools`,
+    as `pip install --user openrepotools` writes it, in each form pip writes:
+    a Python shebang; the `/bin/sh` trampoline with a quoted interpreter path
+    that holds a space; and the trampoline with an unquoted interpreter path
+    longer than 127 characters. A checkout's `--install`, the one-line
+    install's and a package's from outside any venv each refuse in the
+    planning phase with the exact refusal, place nothing, and leave pip's
+    script as it was."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    target = bin_dir(home) / "openRepoTools"
+    put_fixture(target, root, which)
+    before = file_state(target)
+
+    result = install_as(how, root, home, pipx_env(home))
+    assert_pip_s_refusal(result, home, target, before)
+
+
+@pytest.mark.parametrize("form", ["shebang", "trampoline"])
+def test_pip_script_a_package_whose_own_command_is_pip_s_script_is_refused(
+        tmp_path, form):
+    """IN EVERY MODE, PIP'S OWN INCLUDED (FR-020). `pip install --user
+    openrepotools` puts the package under the user base, `~/.local`, and its
+    console script at `~/.local/bin/openRepoTools`, which is `<dir>`'s. That
+    script's own run, `bash <payload>/openRepoTools --install` as the entry
+    module execs it, is refused with the exact refusal and places nothing:
+    over its own command as over anyone else's. pip's own choice of form,
+    for an interpreter at a short path and at one that holds a space."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    payload = layout.package_tree(home / ".local", "python3.12")
+    python = ("/usr/bin/python3.12" if form == "shebang"
+              else f"{root}/Python Framework/bin/python3.12")
+    target = bin_dir(home) / "openRepoTools"
+    layout.console_script(target, python)
+    assert (lines_of(target)[0] == "#!/bin/sh") == (form == "trampoline")
+    assert "from openrepotools.cli import main" in lines_of(target)
+    before = file_state(target)
+
+    result = install(payload / "openRepoTools", home, pipx_env(home))
+    assert_pip_s_refusal(result, home, target, before)
+
+
+@pytest.mark.parametrize("how", MODES)
+@pytest.mark.parametrize("which", NOT_PIP_S)
+@NEEDS_JQ
+def test_pip_script_what_only_looks_like_pip_s_script_is_placed_as_today(
+        tmp_path, which, how):
+    """THE RULE IS BOTH HALVES (contracts/pipx-link.md): a Python interpreter,
+    in one of pip's two forms, AND the import of `openrepotools`. So each of
+    these is placed over as today, in every mode: the shebang form with
+    `#!/bin/bash`; a trampoline that `exec`s ruby; a `#!/bin/sh` file with
+    the import and no `'''exec'` line; a Python script that imports another
+    package (pip's own script for `openreposhape`); and this installer's own
+    bash file."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    target = bin_dir(home) / "openRepoTools"
+    put_fixture(target, root, which)
+    was = target.read_bytes()
+
+    result = install_as(how, root, home, pipx_env(home))
+    assert_placed_over(result, home, target, was)
+
+
+@pytest.mark.parametrize("which", ["the-import-on-line-20",
+                                   "the-import-on-line-21",
+                                   "an-indented-import"])
+@NEEDS_JQ
+def test_pip_script_the_import_counts_at_column_0_in_the_first_20_lines(
+        tmp_path, which):
+    """THE IMPORT'S RULE, AT ITS EDGES (contracts/pipx-link.md, rule 2): one of
+    the first 20 lines matches `^from openrepotools(\\.<name>)* import `, at
+    column 0, as pip's template writes it. A Python script whose import is
+    line 20 is pip's and refused; one whose import is line 21 is not, and
+    is placed over; and so is one whose only import is indented, which pip
+    never writes (research R6)."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    target = bin_dir(home) / "openRepoTools"
+    python = f"{root}/pyenv/bin/python3.12"
+    if which == "an-indented-import":
+        lines = [f"#!{python}", "import sys", "if __name__ == '__main__':",
+                 "    from openrepotools.cli import main", "    sys.exit(main())"]
+        refused = False
+    else:
+        at = int(which.rsplit("-", 1)[1])
+        lines = ([f"#!{python}"] + [f"# line {n}" for n in range(2, at)]
+                 + ["from openrepotools.cli import main", "import sys",
+                    "sys.exit(main())"])
+        assert lines[at - 1] == "from openrepotools.cli import main"
+        refused = at <= 20
+    target.parent.mkdir(parents=True)
+    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    target.chmod(0o755)
+    before = file_state(target)
+
+    result = install_as("checkout", root, home, pipx_env(home))
+    if refused:
+        assert_pip_s_refusal(result, home, target, before)
+    else:
+        assert_placed_over(result, home, target, before[-1])
+
+
+# --- test_path_report_: the openRepoTools a shell will run -----------------
+
+def a_path(root: Path, *ahead: Path) -> str:
+    """A `PATH` of `ahead`, in order, then every tool the suite's own `PATH`
+    carries except `openRepoTools`: so the first `openRepoTools` on it is one
+    a case put there, or none at all, whatever the workstation has."""
+    farm = path_without(root, "openRepoTools")
+    return os.pathsep.join([*(str(p) for p in ahead), farm])
+
+
+def notes(result: subprocess.CompletedProcess) -> list:
+    return [line for line in result.stdout.splitlines()
+            if line.startswith(NOTE_PREFIX)]
+
+
+def assert_the_note(result: subprocess.CompletedProcess, note: str) -> None:
+    """FR-021: the exact note, once, on stdout, as the run's last line (it
+    runs last in a package-mode `--install`), with the exit status of an
+    install that succeeded: the report changes nothing."""
+    assert result.returncode == 0, transcript(result)
+    assert "REFUSED:" not in result.stderr, transcript(result)
+    assert notes(result) == [note], (
+        f"the note, once:\n{note}\n{transcript(result)}")
+    assert result.stdout.splitlines()[-1] == note, (
+        f"the PATH report is not the run's last line:\n{transcript(result)}")
+
+
+@NEEDS_JQ
+def test_path_report_names_an_older_openrepotools_ahead_on_path(tmp_path):
+    """US3 SCENARIO 4, THE FIRST FIXTURE: an older bash `openRepoTools`, in a
+    directory ahead of `<dir>` on `PATH`. After a package-mode `--install`
+    from pipx's venv, the note names that file as the first on `PATH`, and
+    `<venv>/bin/openRepoTools` as this package's, and says to put pipx's
+    link's directory ahead of that one. The exit status is the install's."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    venv, link = pipx_install(home, "1.17.8")
+    older = root / "older-bin" / "openRepoTools"
+    older.parent.mkdir()
+    older.write_bytes(COMMAND.read_bytes()
+                      + b"# an older openRepoTools, which a shell runs first\n")
+    older.chmod(0o755)
+    env = pipx_env(home, extra={"PATH": a_path(root, older.parent,
+                                                bin_dir(home))})
+
+    result = install(payload_of(venv) / "openRepoTools", home, env)
+    assert_left_to_pipx(result, link)
+    assert_the_note(result, PATH_NOTE.format(
+        first=older, want=venv / "bin" / "openRepoTools",
+        first_dir=older.parent))
+
+
+@NEEDS_JQ
+def test_path_report_names_this_installer_s_copy_when_pipx_s_bin_dir_is_elsewhere(
+        tmp_path):
+    """THE SECOND FIXTURE: `PIPX_BIN_DIR`'s link is in a directory other than
+    `$OPENREPOTOOLS_BIN_DIR`, and that directory is not on `PATH`. So
+    `<dir>` holds no link, the install places all seventeen there with
+    today's count line, and the first `openRepoTools` on `PATH` is the bash
+    file it just placed in `<dir>`: the note names it, and the package's
+    `<venv>/bin/openRepoTools`. pipx's own link is left as it was."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    venv = layout.pipx_venv(home / ".local" / "share" / "pipx", "1.18.3")
+    pipx_bin = home / "pipx-bin"
+    pipx_link = pipx_bin / "openRepoTools"
+    point(pipx_link, venv / "bin" / "openRepoTools")
+    before = link_state(pipx_link)
+    target_dir = bin_dir(home)
+    target_dir.mkdir(parents=True)
+    env = pipx_env(home, extra={"PATH": a_path(root, target_dir),
+                                "OPENREPOTOOLS_BIN_DIR": str(target_dir)})
+    env["PIPX_BIN_DIR"] = str(pipx_bin)
+
+    result = install(payload_of(venv) / "openRepoTools", home, env)
+    total = len(INSTALLED)
+    placed = target_dir / "openRepoTools"
+    assert (f"openRepoTools: {total} of {total} placed in {target_dir}"
+            in result.stdout.splitlines()), transcript(result)
+    assert placed.is_file() and not placed.is_symlink()
+    assert_the_note(result, PATH_NOTE.format(
+        first=placed, want=venv / "bin" / "openRepoTools",
+        first_dir=target_dir))
+    assert link_state(pipx_link) == before
+
+
+@NEEDS_JQ
+def test_path_report_says_none_when_no_openrepotools_is_on_path(tmp_path):
+    """THE THIRD FIXTURE: no `openRepoTools` on `PATH` at all, `<dir>` among
+    the absent. The note is its `none` form, which cannot name a directory
+    to put ahead of, and it comes after the `export PATH` note, last."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    venv, link = pipx_install(home, "1.11.1")
+    env = pipx_env(home, extra={"PATH": a_path(root)})
+
+    result = install(payload_of(venv) / "openRepoTools", home, env)
+    assert_left_to_pipx(result, link)
+    note = PATH_NOTE_NONE.format(want=venv / "bin" / "openRepoTools")
+    assert_the_note(result, note)
+    out = result.stdout.splitlines()
+    export = f'    export PATH="{link.parent}:$PATH"'
+    assert export in out, transcript(result)
+    assert out.index(export) < out.index(note)
+
+
+@pytest.mark.parametrize("column, form", [("dot-local-share-pipx", "absolute"),
+                                          ("home-with-a-space", "relative")])
+@NEEDS_JQ
+def test_path_report_says_nothing_when_pipx_s_link_is_first_on_path(
+        tmp_path, column, form):
+    """THE FOURTH FIXTURE: pipx's link is the first `openRepoTools` on
+    `PATH`, and it resolves to this package's `<venv>/bin/openRepoTools`, so
+    there is no note. Both sides go through `link_resolve`, so a relative
+    link into a venv under a home whose path holds a space is the same file."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    venv, link = pipx_install(home, "1.18.3", home.joinpath(*PIPX_HOMES[column]),
+                              form)
+    env = pipx_env(home, extra={"PATH": a_path(root, link.parent)})
+
+    result = install(payload_of(venv) / "openRepoTools", home, env)
+    assert_left_to_pipx(result, link)
+    assert notes(result) == [], transcript(result)
+
+
+@NEEDS_JQ
+def test_path_report_is_a_package_s_report_and_a_checkout_prints_none(tmp_path):
+    """THE REPORT BELONGS TO A PACKAGE-MODE `--install` (FR-021). A checkout's
+    `--install`, with no `openRepoTools` on `PATH` before it ran, places its
+    own `openRepoTools` and prints no note, because it has no package
+    whose console script could be the one expected."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    env = pipx_env(home, extra={"PATH": a_path(root)})
+
+    result = install_as("checkout", root, home, env)
+    assert result.returncode == 0, transcript(result)
+    assert notes(result) == [], transcript(result)
+
+
+# --- test_pipx_upgrade_: a second wheel in the same venv --------------------
+
+@NEEDS_JQ
+def test_pipx_upgrade_a_second_wheel_replaces_the_sixteen_and_the_link_is_still_skipped(
+        tmp_path):
+    """US3 SCENARIO 5 (FR-022). One release installed by pipx and placed by
+    `--install`; then `pipx upgrade openrepotools` puts a second package, with
+    payload bytes of its own, in the same venv. Until `--install` runs
+    again, nothing it placed has moved. Then it does: each of the sixteen, the
+    skills and the command files is UPDATED to the second package's bytes,
+    the link is skipped with the same two lines and left as it was, and the
+    28 rows carry the new digests."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    pipx_home = home / ".local" / "share" / "pipx"
+    venv = layout.pipx_venv(pipx_home, "1.17.8",
+                            stamp=layout.stamp_text(**PIPX_RELEASE))
+    link = bin_dir(home) / "openRepoTools"
+    point(link, venv / "bin" / "openRepoTools")
+    env = pipx_env(home)
+    first = install(payload_of(venv) / "openRepoTools", home, env)
+    assert_left_to_pipx(first, link)
+    before = link_state(link)
+    pipx_tree = pipx_home.relative_to(home).as_posix()
+    placed_by_the_first = tree_state(home, (pipx_tree,))
+
+    # `pipx upgrade openrepotools`: the second wheel's package, in this venv.
+    second_release = {**PIPX_RELEASE, "VERSION": "1.2.0", "TAG": "v1.2.0"}
+    assert layout.pipx_venv(pipx_home, "1.17.8", stamp=layout.stamp_text(
+        **second_release)) == venv
+    mark(payload_of(venv), "the second wheel")
+    assert tree_state(home, (pipx_tree,)) == placed_by_the_first, (
+        "something placed changed before `--install` ran again")
+
+    second = install(payload_of(venv) / "openRepoTools", home, env)
+    assert_left_to_pipx(second, link)
+    assert link_state(link) == before
+    out = second.stdout.splitlines()
+    for destination, name in placed_files(home).items():
+        if destination != str(link):
+            assert f"{name}: updated at {destination}" in out, transcript(second)
+    assert_placed_from(home, link, payload_of(venv))
+    assert_rows_beside_the_link(home, link)
+
+
+# --- test_pipx_uninstall_: the link and the venv gone ----------------------
+
+@NEEDS_JQ
+def test_pipx_uninstall_leaves_what_was_placed_and_a_checkout_then_places_a_regular_file(
+        tmp_path):
+    """US3 SCENARIO 6 (FR-023). `pipx uninstall openrepotools` removes its link
+    and its venv, and nothing else: the sixteen, the skills, the command
+    files, `settings.json` and the receipt are as the install left them.
+    A checkout's `--install` then places a regular `openRepoTools` at the
+    freed path, with today's count line and a row for it among the 29."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    venv, link = pipx_install(home, "1.18.3")
+    first = install(payload_of(venv) / "openRepoTools", home, pipx_env(home))
+    assert_left_to_pipx(first, link)
+    pipx_tree = venv.parent.parent.relative_to(home).as_posix()
+    the_link = link.relative_to(home).as_posix()
+    kept = tree_state(home, (pipx_tree, the_link))
+
+    # `pipx uninstall openrepotools`: its link and its venv.
+    link.unlink()
+    shutil.rmtree(venv)
+    assert not os.path.lexists(link) and not venv.exists()
+    assert tree_state(home, (pipx_tree, the_link)) == kept
+    assert_placed_from(home, link, REPO)
+    assert len(receipt_rows(home)) == ROWS_BESIDE_THE_LINK
+
+    result = install_as("checkout", root, home, pipx_env(home))
+    total = len(INSTALLED)
+    out = result.stdout.splitlines()
+    assert result.returncode == 0, transcript(result)
+    assert f"openRepoTools: installed at {link}" in out, transcript(result)
+    assert f"openRepoTools: {total} of {total} placed in {link.parent}" in out
+    assert "left to pipx" not in result.stdout, transcript(result)
+    assert link.is_file() and not link.is_symlink()
+    assert stat.S_IMODE(link.stat().st_mode) == 0o755
+    assert link.read_bytes() == COMMAND.read_bytes()
+    for name in INSTALLED:
+        if name != "openRepoTools":
+            target = link.parent / name
+            assert f"{name}: already installed at {target} (unchanged)" in out
+    rows = receipt_rows(home)
+    assert len(rows) == ARTIFACTS - HOOK_ENTRIES
+    assert ("openRepoTools", str(link), hashlib.sha256(
+        link.read_bytes()).hexdigest()) in {row[:3] for row in rows}
