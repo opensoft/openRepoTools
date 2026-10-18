@@ -1,0 +1,801 @@
+name: release
+
+# ---------------------------------------------------------------------------
+# PUBLISH THE openrepotools WHEEL (#228): TestPyPI, AN INSTALL CHECK, THEN
+# PyPI, IN ONE DISPATCHED RUN. Adapted step for step from openRepoShape
+# v1.1.0's own release.yml (`190133d`, the commit `upstream/openRepoShape`
+# is pinned at), whose checks are taken over as they are (FR-028) except
+# where design.md Decision 10 names a difference: a pre-release `X.Y.ZrcN`
+# is accepted, for TestPyPI alone; the repository guard (FR-048) is new
+# here; the stamp has a fifth field, REPOSITORY; the digest's definition is
+# held to its literal and to the pin; and the payload's blobs and modes are
+# checked under `openrepotools/payload/`.
+# ---------------------------------------------------------------------------
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          The version to publish, X.Y.Z, or a pre-release X.Y.ZrcN for
+          TestPyPI alone. Dispatch on the tag vX.Y.Z (or vX.Y.ZrcN) to
+          publish it; a dispatch on a branch is a rehearsal and uploads
+          nothing.
+        required: true
+        type: string
+
+# Nothing by default. Each job grants itself exactly what it uses.
+permissions: {}
+
+# One release at a time, and a running one is never cancelled halfway.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    # `bash -eo pipefail`, on every runner.
+    shell: bash
+
+env:
+  # The input reaches every script through the environment, never pasted
+  # into one by an expression, so no input can become shell or Python.
+  VERSION: ${{ inputs.version }}
+  PYTHONUTF8: '1'
+
+jobs:
+  build:
+    name: build and verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read  # the checkout and its submodule, the tag, and the forge's compare and tree listing
+      actions: read  # the commit's tests.yml runs and their jobs, and both environments' rules
+    outputs:
+      wheel: ${{ steps.record.outputs.wheel }}
+      wheel-sha256: ${{ steps.record.outputs.wheel-sha256 }}
+      digest: ${{ steps.digest.outputs.digest }}
+      # STEP 1'S RECORD, which uploads this run may make (FR-048): each
+      # upload job's `if:` reads its own, and its first step checks again.
+      to-testpypi: ${{ steps.guard.outputs.to-testpypi }}
+      to-pypi: ${{ steps.guard.outputs.to-pypi }}
+    steps:
+      # The commit, WITH ITS SUBMODULE, because the digest code exists here
+      # only in the pinned openRepoShape (`upstream/openRepoShape`), and with
+      # full history. The token is not left in the checkout's git config,
+      # where the build backend could find it.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          submodules: true
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: '3.12'
+
+      # STEP 1, BEFORE ANYTHING ASKS THE FORGE: THE VERSION, AND THE
+      # REPOSITORY GUARD (FR-048). The model has no guard; this one puts
+      # Brett Heap's answers on where releases come from into code.
+      #
+      # THE VERSION is a final release, X.Y.Z, or a pre-release for
+      # TestPyPI, X.Y.ZrcN, in the form its file is named by: no leading
+      # zero, nothing else after the numbers. Never 0.0.0, the committed
+      # stamp's version, which is a build from a checkout and not a release.
+      # The input is not echoed in a refusal before it is known to be plain.
+      #
+      # THE GUARD decides from `$GITHUB_REPOSITORY`, `$GITHUB_REF` and
+      # `$VERSION` alone, and records which uploads may run:
+      #   opensoft/openRepoTools-code  a tag     X.Y.Z     TestPyPI, then PyPI
+      #   opensoft/openRepoTools-code  a tag     X.Y.ZrcN  TestPyPI alone
+      #   opensoft/openRepoTools       a tag     X.Y.ZrcN  TestPyPI alone
+      #   opensoft/openRepoTools       a tag     X.Y.Z     refused
+      #   any other repository         a tag     any       refused
+      #   any repository               a branch  any       neither: the rehearsal
+      # The two names are compared exactly, as GitHub spells them in
+      # `$GITHUB_REPOSITORY`, so any other spelling is "any other" and fails
+      # closed. A ref that is neither a tag nor a branch is refused here too,
+      # as the ref step below refuses it. A refused run records nothing, and
+      # since the build job asks for no approval, it asks for none.
+      - name: the version is X.Y.Z or X.Y.ZrcN and not the unstamped 0.0.0, and the repository guard (FR-048) says what this run may upload
+        id: guard
+        run: |
+          final='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          pre='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)rc(0|[1-9][0-9]*)$'
+          if [[ "$VERSION" =~ $final ]]; then
+            kind=final
+          elif [[ "$VERSION" =~ $pre ]]; then
+            kind=rc
+          else
+            echo "::error::the version input is not X.Y.Z or X.Y.ZrcN: numbers with no leading zero, and nothing else"
+            printf 'the input, quoted: %q\n' "$VERSION"
+            exit 1
+          fi
+          if [ "$VERSION" = 0.0.0 ]; then
+            echo "::error::0.0.0 is the committed stamp's version, a build from a checkout, never a release"
+            exit 1
+          fi
+          code_leg=opensoft/openRepoTools-code
+          rc_only=opensoft/openRepoTools
+          case "$GITHUB_REF" in
+            refs/heads/*)
+              to_testpypi=false
+              to_pypi=false
+              echo "a rehearsal on the branch ${GITHUB_REF#refs/heads/} of '$GITHUB_REPOSITORY': every check runs, and nothing is uploaded"
+              ;;
+            refs/tags/*)
+              if [ "$GITHUB_REPOSITORY" = "$code_leg" ]; then
+                to_testpypi=true
+                if [ "$kind" = final ]; then to_pypi=true; else to_pypi=false; fi
+              elif [ "$GITHUB_REPOSITORY" = "$rc_only" ] && [ "$kind" = rc ]; then
+                to_testpypi=true
+                to_pypi=false
+              elif [ "$GITHUB_REPOSITORY" = "$rc_only" ]; then
+                echo "::error::$rc_only releases a pre-release X.Y.ZrcN to TestPyPI and nothing else, and $VERSION is a final: a final is tagged and released in $code_leg"
+                exit 1
+              else
+                echo "::error::'$GITHUB_REPOSITORY' is neither $code_leg nor $rc_only, as GitHub spells them, so a tag dispatch here may upload nothing, and the build refuses it"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::a release is dispatched on a tag, or on a branch to rehearse, and this run names '$GITHUB_REF'"
+              exit 1
+              ;;
+          esac
+          {
+            echo "to-testpypi=$to_testpypi"
+            echo "to-pypi=$to_pypi"
+          } >> "$GITHUB_OUTPUT"
+          echo "version $VERSION ($kind), tag v$VERSION, in $GITHUB_REPOSITORY: to TestPyPI $to_testpypi, to PyPI $to_pypi"
+
+      # THE TAG, READ FROM THE FORGE AND FROM GIT. On a tag, the run must be
+      # dispatched on `v<version>` itself, an ANNOTATED tag (a lightweight
+      # one records no tagger and no message), whose object names this
+      # run's commit directly. On a branch the run is the rehearsal (FR-029,
+      # FR-033): this check and the next stand down, every other check below
+      # still runs, and nothing can deploy. Any other ref is refused. The
+      # checkout holds full history, so git's copy of the tag is fetched
+      # again from the forge without `--depth`, which would cut that history
+      # off at this commit.
+      - name: the dispatched ref is the annotated tag v<version> at this commit, or a branch to rehearse on
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v$VERSION"
+          case "$GITHUB_REF" in
+            "refs/tags/$tag") ;;
+            refs/heads/*)
+              echo "::notice::REHEARSAL on the branch $GITHUB_REF_NAME at $GITHUB_SHA: every check runs, the install check installs the build's own wheel, and nothing is uploaded"
+              exit 0
+              ;;
+            *)
+              echo "::error::a release is dispatched on the tag $tag, or on a branch to rehearse, and this run names $GITHUB_REF"
+              exit 1
+              ;;
+          esac
+          object="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" \
+              --jq 'select(.object.type == "tag") | .object.sha')" || object=
+          if [ -z "$object" ]; then
+            echo "::error::the forge holds no annotated tag $tag; a release tag is made with git tag -a"
+            exit 1
+          fi
+          read -r name type commit < <(gh api "repos/$GITHUB_REPOSITORY/git/tags/$object" \
+              --jq '[.tag, .object.type, .object.sha] | @tsv') || true
+          if [ "$name" != "$tag" ] || [ "$type" != commit ] || [ "$commit" != "$GITHUB_SHA" ]; then
+            echo "::error::the tag object $object is named '$name' and points at the $type $commit; a release needs $tag pointing at this run's commit $GITHUB_SHA"
+            exit 1
+          fi
+          git fetch --quiet --no-tags origin "+refs/tags/$tag:refs/tags/$tag"
+          if [ "$(git cat-file -t "refs/tags/$tag")" != tag ] \
+              || [ "$(git rev-parse "refs/tags/$tag")" != "$object" ] \
+              || [ "$(git rev-parse "refs/tags/$tag^{commit}")" != "$GITHUB_SHA" ]; then
+            echo "::error::git's $tag is not the forge's annotated tag $object at $GITHUB_SHA"
+            exit 1
+          fi
+          echo "$tag: annotated, tag object $object, at $GITHUB_SHA"
+
+      # THE COMMIT IS ON main OR ON THE VERSION'S RELEASE BRANCH. A tag can be
+      # pushed at any commit; a release is cut from one that a reviewed branch
+      # holds, as `main` itself or an ancestor of it (`identical` or `ahead`).
+      # `release/v<major>.<minor>` is where a patch on an older line is
+      # tagged (FR-037), and a pre-release's line is its own: `1.1.0rc1`
+      # belongs to `release/v1.1`. The compare names `refs/heads/<branch>`:
+      # a bare name would resolve to a tag of that name first. A rehearsal
+      # on a branch has no release branch to be on.
+      - name: the commit is on main or on the version's release branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "$GITHUB_REF" in
+            refs/heads/*)
+              echo "a rehearsal on the branch $GITHUB_REF_NAME: no release branch to be on"
+              exit 0
+              ;;
+          esac
+          found=
+          for branch in main "release/v${VERSION%.*}"; do
+            status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...refs/heads/$branch" \
+                --jq .status 2>/dev/null)" || status=
+            case "$status" in
+              identical|ahead)
+                found="$branch"
+                echo "$GITHUB_SHA is on $branch ($status)"
+                break
+                ;;
+              *) echo "$GITHUB_SHA is not on $branch (compare: ${status:-no such branch})" ;;
+            esac
+          done
+          if [ -z "$found" ]; then
+            echo "::error::$GITHUB_SHA is on neither main nor release/v${VERSION%.*}; a release is cut from a commit one of them holds"
+            exit 1
+          fi
+
+      # THE CHECKOUT IS THIS COMMIT, AND CLEAN, before anything from it runs.
+      # The digest below is computed by the pinned submodule's own
+      # `scripts/repo_shape.py`, and a file changed or added in the work tree,
+      # or a submodule moved off its pin, would be code nobody reviewed.
+      # Ignored files count too.
+      - name: the checkout is this commit, and clean
+        run: |
+          head="$(git rev-parse HEAD)"
+          if [ "$head" != "$GITHUB_SHA" ]; then
+            echo "::error::the checkout is at $head, and this run is at $GITHUB_SHA"
+            exit 1
+          fi
+          dirty="$(git status --porcelain=v1 --untracked-files=all --ignored=matching)"
+          if [ -n "$dirty" ]; then
+            echo "::error::the checkout is not clean, so the release would not be the commit's own bytes:"
+            printf '%s\n' "$dirty"
+            exit 1
+          fi
+          echo "HEAD is $GITHUB_SHA, and the work tree holds its files and nothing else"
+
+      # BOTH ENVIRONMENTS MUST ASK A REVIEWER AND ADMIT ONLY THE TAGS v*.
+      # GitHub creates an environment a job names if it does not exist yet,
+      # with no protection rule at all, so a dispatch made before Brett Heap
+      # configured them would upload with nobody approving. And a dispatch
+      # runs the dispatched ref's own copy of this file, so an environment
+      # any ref may deploy to would publish whatever a branch carries. Each
+      # environment must name a required reviewer, and its deployment limit
+      # must be exactly one rule, the tag pattern `v*`. Either gap refuses
+      # here, before anything is built.
+      - name: both environments ask a reviewer and admit only the tags v*
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, sys
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+
+
+          def api(path):
+              done = subprocess.run(["gh", "api", path], capture_output=True, text=True)
+              return json.loads(done.stdout) if done.returncode == 0 else None
+
+
+          problems = []
+          for environment in ("testpypi", "pypi"):
+              settings = api(f"repos/{repo}/environments/{environment}")
+              if settings is None:
+                  problems.append(f"the {environment} environment cannot be read: it does not "
+                                  "exist yet. Create it with a required reviewer and a "
+                                  "deployment limit to the tags v* first")
+                  continue
+              reviewers = [entry.get("reviewer", {}).get("login") or entry.get("reviewer", {}).get("slug")
+                           for rule in settings.get("protection_rules") or []
+                           if rule.get("type") == "required_reviewers"
+                           for entry in rule.get("reviewers") or []]
+              policy = settings.get("deployment_branch_policy") or {}
+              limits = api(f"repos/{repo}/environments/{environment}/deployment-branch-policies?per_page=100")
+              rules = sorted((p.get("type"), p.get("name")) for p in (limits or {}).get("branch_policies") or [])
+              if not reviewers:
+                  problems.append(f"the {environment} environment names no required reviewer, "
+                                  "so a deployment to it would not wait for an approval")
+              if policy.get("custom_branch_policies") is not True or rules != [("tag", "v*")]:
+                  problems.append(f"the {environment} environment's deployment limit is {rules} "
+                                  f"({policy!r}), not the one rule ('tag', 'v*'): a dispatch on "
+                                  "a branch runs that branch's own copy of this file")
+              else:
+                  print(f"{environment}: reviewers {reviewers}; only the tags v* can deploy")
+          for problem in problems:
+              print(f"::error::{problem}")
+          sys.exit(1 if problems else 0)
+          PY
+
+      # THE GATE THIS REPOSITORY LANDS BY, ON THIS COMMIT'S OWN TREE (FR-029,
+      # FR-046). `.github/workflows/tests.yml` runs its four jobs,
+      # `guard-launch-mode`, `tests`, `tests-no-submodule` and `package`, on
+      # every trigger, and each must have passed in a run that tested THIS
+      # commit: a `push` or `workflow_dispatch` run whose head is the
+      # commit, so the push run that landed a commit on main counts when it
+      # finished green (a run a later landing cancelled does not; each
+      # refusal names the dispatch that answers it). A `pull_request` run is
+      # not counted, because it reports the PR's head but tests a merge of
+      # it with its base, another tree. The jobs are read from each run
+      # itself (`actions/runs/<id>/jobs`), never from the commit's check
+      # runs, which anything holding an Actions token can create inside that
+      # run's check suite. The gate NAMES the four jobs it requires and never
+      # takes the set from what a run holds: a gate that adapts could not
+      # notice a job gone missing. Skipped jobs are passed over. Of the rest,
+      # none may still be running, and the newest to finish must have
+      # succeeded. The rehearsal is held to it too, so a branch's commit,
+      # which has only `pull_request` runs, needs `tests.yml` dispatched on
+      # that branch first.
+      - name: the commit carries passing guard-launch-mode, tests, tests-no-submodule and package jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, sys
+
+          repo, sha = os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_SHA"]
+          gate = ("guard-launch-mode", "tests", "tests-no-submodule", "package")
+          workflow = ".github/workflows/tests.yml"
+          remedy = (f"dispatch tests.yml on a branch that points at {sha} (`gh workflow run "
+                    "tests.yml --ref <branch>`), or on the tag once it is pushed (`gh workflow "
+                    f"run tests.yml --ref v{os.environ.get('VERSION', '<version>')}`), wait for "
+                    "it, then re-run this run; `--ref main` tests main's current head, not this "
+                    "commit")
+
+
+          def rows(path, key):
+              done = subprocess.run(["gh", "api", "--paginate", path, "--jq", f".{key}[]"],
+                                    capture_output=True, text=True)
+              if done.returncode != 0:
+                  sys.exit(f"::error::`gh api {path}` failed, so the checks on {sha} are "
+                           f"unknown: {done.stderr.strip()}")
+              return [json.loads(line) for line in done.stdout.splitlines() if line.strip()]
+
+
+          runs = [run for run in rows(f"repos/{repo}/actions/runs?head_sha={sha}&per_page=100", "workflow_runs")
+                  if run.get("path") == workflow and run.get("head_sha") == sha
+                  and run.get("event") in ("push", "workflow_dispatch")]
+          checks = [job for run in runs
+                    for job in rows(f"repos/{repo}/actions/runs/{run['id']}/jobs?filter=all&per_page=100", "jobs")]
+          problems = []
+          for name in gate:
+              ran = [c for c in checks if c["name"] == name and c.get("conclusion") != "skipped"]
+              running = [c for c in ran if c["status"] != "completed"]
+              if running:
+                  problems.append(f"`{name}` is {running[0]['status']} on {sha} "
+                                  f"({running[0]['html_url']}); dispatch again once it ends")
+              elif not ran:
+                  problems.append(f"`{name}` has not run on {sha}: {remedy}")
+              else:
+                  newest = max(ran, key=lambda c: c["completed_at"])
+                  if newest["conclusion"] != "success":
+                      problems.append(f"`{name}`'s newest run on {sha} ended "
+                                      f"{newest['conclusion']} ({newest['html_url']}): {remedy}")
+                  else:
+                      print(f"{name}: success at {newest['completed_at']}, {newest['html_url']}")
+          for problem in problems:
+              print(f"::error::{problem}")
+          sys.exit(1 if problems else 0)
+          PY
+
+      # THE DIGEST THE STAMP CARRIES, computed by the PINNED submodule's own
+      # `upstream/openRepoShape/scripts/repo_shape.py` (`tree_digest`), and
+      # required to equal the same definition read from the forge's own tree
+      # listing (`tree_digest_from_gh`). No copy of that code is kept here
+      # (FR-030). Its definition is held, before anything is digested, to
+      # the literal `--version` labels every stamped digest with,
+      # `sorted-ls-tree-r-v1`, and to the definition the pin,
+      # `contracts/openreposhape-pin.yaml`, names (FR-029): a pin bumped to
+      # a standard that digests another way refuses here, rather than ship
+      # a digest under a wrong label. The model compares with its package's
+      # own constant, which this package does not have (Decision 10).
+      - name: the commit's tree digest is the forge's, by the definition the pin and --version name
+        id: digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 -I -B - <<'PY'
+          import os, sys
+          from pathlib import Path
+
+          here = Path.cwd()
+          scripts = here / "upstream" / "openRepoShape" / "scripts"
+          pin = here / "contracts" / "openreposhape-pin.yaml"
+          literal = "sorted-ls-tree-r-v1"
+          sys.path[:0] = [str(scripts)]
+          import repo_shape
+
+          if Path(repo_shape.__file__).resolve() != (scripts / "repo_shape.py").resolve():
+              sys.exit(f"::error::repo_shape was imported from {repo_shape.__file__}, not from "
+                       f"the pinned {scripts / 'repo_shape.py'}")
+          sha, repo = os.environ["GITHUB_SHA"], os.environ["GITHUB_REPOSITORY"]
+          try:
+              manifest = repo_shape.load_yaml(pin)
+          except repo_shape.Refusal as error:
+              sys.exit(f"::error::{error}")
+          pinned = manifest.get("digest_definition") if isinstance(manifest, dict) else None
+          standard = repo_shape.TREE_DIGEST_DEFINITION
+          if standard != literal or pinned != literal:
+              sys.exit(f"::error::the pinned scripts/repo_shape.py digests by {standard!r} and "
+                       f"contracts/openreposhape-pin.yaml names {pinned!r}, and --version labels "
+                       f"every digest {literal}: all three must be {literal}")
+          try:
+              local = repo_shape.tree_digest(here, sha)
+              forge = repo_shape.tree_digest_from_gh(repo, sha)
+          except repo_shape.Refusal as error:
+              sys.exit(f"::error::{error}")
+          if local != forge:
+              sys.exit(f"::error::{sha} digests to {local} here and to {forge} from the forge's "
+                       "tree listing; the release would not be the forge's commit")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"digest={local}\n")
+          print(f"{sha}: {standard} {local}, here and on the forge")
+          PY
+
+      # THE RELEASE TOOLS, FROM THEIR HASH LOCK, IN A VENV OF THEIR OWN:
+      # the `build` frontend, the `hatchling` backend at `pyproject.toml`'s
+      # own pin, and every requirement of either, each by digest, wheels
+      # only (`.github/release-build-requirements.txt` says why).
+      - name: install the release tools from their hash lock
+        run: |
+          python -m venv "$RUNNER_TEMP/tools"
+          "$RUNNER_TEMP/tools/bin/python" -m pip install --disable-pip-version-check \
+              --no-cache-dir --only-binary :all: --require-hashes \
+              -r .github/release-build-requirements.txt
+          "$RUNNER_TEMP/tools/bin/python" -m pip list --disable-pip-version-check
+          python -VV
+
+      # FROM `git archive` OF THE COMMIT, TWICE, into two directories of
+      # different names and depths. The wheel is built from the commit's
+      # own tree, never from the checkout, and two builds that share no
+      # directory are what can show the bytes depend on the commit alone.
+      - name: extract the commit twice, into two directories
+        run: |
+          tree_a="$RUNNER_TEMP/a/openRepoTools"
+          tree_b="$RUNNER_TEMP/b/elsewhere/v$VERSION-src"
+          for tree in "$tree_a" "$tree_b"; do
+            mkdir -p "$tree"
+            git archive --format=tar "$GITHUB_SHA" | tar -x -f - -C "$tree"
+          done
+          {
+            echo "TREE_A=$tree_a"
+            echo "TREE_B=$tree_b"
+          } >> "$GITHUB_ENV"
+          diff -r "$tree_a" "$tree_b"
+          echo "$GITHUB_SHA extracted into $tree_a and $tree_b"
+
+      # THE STAMP, WRITTEN THE PACKAGE'S OWN WAY (FR-009, FR-013): the
+      # committed `src/openrepotools/_release.py`, each of its five
+      # assignment lines replaced exactly once with the release's value, and
+      # every other byte, the SPDX line and the docstring among them, as it
+      # was. A count other than one refuses, so a file already stamped is
+      # refused. VERSION, TAG, COMMIT, DIGEST and REPOSITORY come from the
+      # environment, REPOSITORY from `$GITHUB_REPOSITORY` (Decision 10's
+      # fifth field), and nothing is pasted in by an expression. Each value
+      # must have the shape the command's bash reader (`stamp_read`) gives a
+      # stamped field, and both files are stamped and checked before either
+      # is written, then read again. `pyproject.toml` reads VERSION from the
+      # stamp (hatchling's version source), and `openRepoTools --version`
+      # reads all five. `tests/test_release_workflow.py` runs this very
+      # script against the committed file, and reads its output back with
+      # `--version`.
+      - name: write the stamp into both extractions
+        env:
+          DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          export TAG="v$VERSION" COMMIT="$GITHUB_SHA" REPOSITORY="$GITHUB_REPOSITORY"
+          python3 -I - "$TREE_A/src/openrepotools/_release.py" "$TREE_B/src/openrepotools/_release.py" <<'PY'
+          import ast, os, re, sys
+
+          names = ("VERSION", "TAG", "COMMIT", "DIGEST", "REPOSITORY")
+          number = r"(0|[1-9][0-9]*)"
+          version = rf"{number}\.{number}\.{number}(rc{number})?"
+          shapes = {"VERSION": version, "TAG": rf"v{version}", "COMMIT": r"[0-9a-f]{40}",
+                    "DIGEST": r"[0-9a-f]{64}",
+                    "REPOSITORY": r"([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]*[A-Za-z0-9])"
+                                  r"/(?!\.\.?\Z)[A-Za-z0-9._-]+"}
+          unstamped = {"VERSION": "0.0.0", "TAG": "", "COMMIT": "", "DIGEST": "", "REPOSITORY": ""}
+          release = {name: os.environ.get(name, "") for name in names}
+          for name, value in release.items():
+              if not re.fullmatch(shapes[name], value) or value == unstamped[name]:
+                  sys.exit(f"::error::the stamp's {name} would be {value!r}, which is not a release's")
+          if release["TAG"] != "v" + release["VERSION"]:
+              sys.exit(f"::error::the stamp's TAG would be {release['TAG']!r}, and a release's "
+                       f"tag is v{release['VERSION']}")
+          if len(sys.argv) != 3:
+              sys.exit(f"::error::the stamp is written into the two extractions, and this run "
+                       f"names {sys.argv[1:]}")
+
+
+          def assigned(text):
+              try:
+                  body = ast.parse(text).body
+              except SyntaxError as error:
+                  return f"no assignment at all: it is not Python ({error})"
+              return {node.targets[0].id: node.value.value for node in body
+                      if isinstance(node, ast.Assign) and len(node.targets) == 1
+                      and isinstance(node.targets[0], ast.Name)
+                      and isinstance(node.value, ast.Constant)}
+
+
+          stamped = {}
+          for path in sys.argv[1:]:
+              with open(path, encoding="utf-8", newline="") as handle:
+                  text = handle.read()
+              for name, value in release.items():
+                  line = f'{name} = "{value}"'
+                  text, count = re.subn(rf'^{name} = "{re.escape(unstamped[name])}"$',
+                                        lambda _: line, text, flags=re.M)
+                  if count != 1:
+                      sys.exit(f"::error::{path} assigns {name} = \"{unstamped[name]}\" {count} "
+                               "times, not once: it is not the committed, unstamped stamp")
+              if assigned(text) != release:
+                  sys.exit(f"::error::{path} would assign {assigned(text)} after stamping, not {release}")
+              stamped[path] = text
+          for path, text in stamped.items():
+              with open(path, "w", encoding="utf-8", newline="") as handle:
+                  handle.write(text)
+              with open(path, encoding="utf-8", newline="") as handle:
+                  again = handle.read()
+              if again != text or assigned(again) != release:
+                  sys.exit(f"::error::{path} reads back as {assigned(again)}, not {release}")
+              print(f"{path}: {release}")
+          PY
+
+      # TWICE, AT THE COMMIT'S OWN TIME, AND THE TWO MUST BE ONE FILE: the
+      # bytes depend on the commit and the locked tools, not on the
+      # directory built in. A wheel only: one pure file, its times from
+      # `SOURCE_DATE_EPOCH` (an sdist can come later). `--no-isolation`, so
+      # the backend is the hash-locked one, and `build` refuses a backend
+      # that does not satisfy `[build-system] requires`.
+      - name: build the wheel from each extraction, and the two are one file
+        run: |
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct "$GITHUB_SHA")"
+          export SOURCE_DATE_EPOCH
+          wheel="openrepotools-$VERSION-py3-none-any.whl"
+          for side in a b; do
+            if [ "$side" = a ]; then tree="$TREE_A"; else tree="$TREE_B"; fi
+            (cd "$tree" && "$RUNNER_TEMP/tools/bin/python" -m build --wheel --no-isolation \
+                --outdir "$RUNNER_TEMP/dist-$side" .)
+            found="$(ls -A "$RUNNER_TEMP/dist-$side")"
+            if [ "$found" != "$wheel" ]; then
+              echo "::error::the build from $tree made '$found', and a release is exactly $wheel"
+              exit 1
+            fi
+          done
+          if ! cmp "$RUNNER_TEMP/dist-a/$wheel" "$RUNNER_TEMP/dist-b/$wheel"; then
+            echo "::error::two builds of $GITHUB_SHA, from two extractions in two directories, are not one file: the wheel depends on where it was built, and nothing is uploaded"
+            exit 1
+          fi
+          sha256sum "$RUNNER_TEMP/dist-a/$wheel" "$RUNNER_TEMP/dist-b/$wheel"
+          echo "SOURCE_DATE_EPOCH $SOURCE_DATE_EPOCH: two builds, one file"
+
+      # EVERY FILE IN THE WHEEL BUT THE STAMP AND THE METADATA IS THE
+      # COMMIT'S OWN, read from git (FR-006, FR-030): each module from
+      # `src/openrepotools/`, byte for byte, and each payload file, at
+      # `openrepotools/payload/<P>`, from `<P>` at the commit, byte for byte
+      # and with the commit's mode, `100755` as 0755 and `100644` as 0644,
+      # which is how hatchling 1.27.0's reproducible build writes them.
+      # Every file git tracks under `src/openrepotools/` and every path
+      # `pyproject.toml` force-includes is in it, and nothing else is. The
+      # stamp is the committed one with exactly its five values written. The
+      # metadata names this version, `pyproject.toml`'s dependencies and its
+      # one command, and carries the commit's LICENSE (FR-002: hatchling
+      # builds a wheel with no LICENSE and says nothing, so this check is
+      # what refuses one). A missing member is named, never a traceback.
+      # `tests/test_release_workflow.py` runs this very script on synthetic
+      # wheels made from the commit's blobs.
+      - name: the wheel holds the commit's own files, byte for byte and mode for mode, and the stamp
+        env:
+          DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          export TAG="v$VERSION" COMMIT="$GITHUB_SHA" REPOSITORY="$GITHUB_REPOSITORY"
+          python3 -I - "$RUNNER_TEMP/dist-a/openrepotools-$VERSION-py3-none-any.whl" <<'PY'
+          import ast, configparser, email.parser, os, re, stat, subprocess, sys, tomllib, zipfile
+
+          names = ("VERSION", "TAG", "COMMIT", "DIGEST", "REPOSITORY")
+          release = {name: os.environ.get(name, "") for name in names}
+          unstamped = {"VERSION": "0.0.0", "TAG": "", "COMMIT": "", "DIGEST": "", "REPOSITORY": ""}
+          version, sha = release["VERSION"], os.environ.get("GITHUB_SHA", "")
+          run = {"TAG": f"v{version}", "COMMIT": sha,
+                 "REPOSITORY": os.environ.get("GITHUB_REPOSITORY", "")}
+          if not re.fullmatch(r"[0-9a-f]{40}", sha) or any(release[k] != v for k, v in run.items()):
+              sys.exit(f"::error::the release's values {release} are not this run's {run}")
+          if len(sys.argv) != 2:
+              sys.exit(f"::error::the check reads one wheel, and this run names {sys.argv[1:]}")
+          info, stamp = f"openrepotools-{version}.dist-info/", "openrepotools/_release.py"
+          payload, package = "openrepotools/payload/", "src/openrepotools/"
+          modes = {"100755": 0o755, "100644": 0o644}
+
+          listing = subprocess.run(["git", "ls-tree", "-r", "-z", "--full-tree", sha],
+                                   capture_output=True)
+          if listing.returncode != 0:
+              sys.exit(f"::error::git cannot list {sha}: {listing.stderr.decode().strip()}")
+          tree = {}
+          for record in listing.stdout.split(b"\0"):
+              if record:
+                  meta, _, path = record.partition(b"\t")
+                  mode, kind, oid = meta.decode("ascii").split(" ")
+                  tree[path.decode("utf-8")] = (mode, kind, oid)
+
+
+          def committed(path):
+              entry = tree.get(path)
+              if entry is None or entry[1] != "blob":
+                  return None
+              done = subprocess.run(["git", "cat-file", "blob", entry[2]], capture_output=True)
+              return done.stdout if done.returncode == 0 else None
+
+
+          def assigned(text):
+              try:
+                  body = ast.parse(text).body
+              except SyntaxError:
+                  return None
+              return {n.targets[0].id: n.value.value for n in body
+                      if isinstance(n, ast.Assign) and len(n.targets) == 1
+                      and isinstance(n.targets[0], ast.Name) and isinstance(n.value, ast.Constant)}
+
+
+          problems = []
+          declared_file = committed("pyproject.toml")
+          if declared_file is None:
+              sys.exit(f"::error::{sha} has no pyproject.toml to check the wheel against")
+          try:
+              pyproject = tomllib.loads(declared_file.decode("utf-8"))
+          except (tomllib.TOMLDecodeError, UnicodeDecodeError) as error:
+              sys.exit(f"::error::{sha}'s pyproject.toml cannot be read: {error}")
+          project = pyproject.get("project", {})
+          forced = (pyproject.get("tool", {}).get("hatch", {}).get("build", {}).get("targets", {})
+                    .get("wheel", {}).get("force-include", {}))
+          sources = {}
+          for source, member in forced.items():
+              if member != payload + source:
+                  problems.append(f"pyproject.toml force-includes {source} as {member}, "
+                                  f"not as {payload}{source}")
+              sources[member] = source
+          modules = {"openrepotools/" + path[len(package):]: path for path in tree
+                     if path.startswith(package)}
+          wanted = set(modules) | set(sources)
+
+          try:
+              wheel = zipfile.ZipFile(sys.argv[1])
+          except (OSError, zipfile.BadZipFile) as error:
+              sys.exit(f"::error::{sys.argv[1]} cannot be read as a wheel: {error}")
+          with wheel:
+              entries = [e for e in wheel.infolist() if not e.filename.endswith("/")]
+              listed = [e.filename for e in entries]
+              if len(listed) != len(set(listed)):
+                  problems.append("the wheel names one file twice")
+              members = {e.filename: e for e in entries}
+
+
+              def read(name):
+                  return wheel.read(members[name]) if name in members else None
+
+
+              for name in sorted(members):
+                  if name.startswith(info) or name == stamp:
+                      continue
+                  if name in sources:
+                      source = sources[name]
+                      data, entry = committed(source), tree.get(source)
+                      want = modes.get(entry[0]) if entry else None
+                      got = stat.S_IMODE(members[name].external_attr >> 16)
+                      if data is None or want is None:
+                          problems.append(f"{name} is in the wheel, and {source} is not a regular "
+                                          f"file at {sha}")
+                          continue
+                      fine = True
+                      if read(name) != data:
+                          problems.append(f"{name} in the wheel is not {source} at {sha}, byte for byte")
+                          fine = False
+                      if got != want:
+                          problems.append(f"{name} has mode {got:04o} in the wheel, and {source} is "
+                                          f"{entry[0]} at {sha}, which is {want:04o}")
+                          fine = False
+                      if fine:
+                          print(f"{name} = {sha[:12]}:{source}, mode {got:04o}")
+                  elif name in modules:
+                      source = modules[name]
+                      if read(name) != committed(source):
+                          problems.append(f"{name} in the wheel is not {source} at {sha}")
+                      else:
+                          print(f"{name} = {sha[:12]}:{source}")
+                  else:
+                      problems.append(f"{name} is in the wheel, and neither {package} nor "
+                                      "pyproject.toml's force-include puts it there")
+              for name in sorted(wanted - set(members)):
+                  problems.append(f"{name} is tracked or force-included, and missing from the wheel")
+
+              base, shipped, before = committed(package + "_release.py"), read(stamp), len(problems)
+              if base is None or shipped is None:
+                  problems.append(f"the stamp {stamp} is missing from the wheel or from {sha}")
+              else:
+                  expected = base.decode("utf-8")
+                  for name in names:
+                      line = f'{name} = "{release[name]}"'
+                      expected, count = re.subn(rf'^{name} = "{re.escape(unstamped[name])}"$',
+                                                lambda _: line, expected, flags=re.M)
+                      if count != 1:
+                          problems.append(f"the committed stamp assigns {name} = "
+                                          f"\"{unstamped[name]}\" {count} times, not once")
+                  if shipped != expected.encode("utf-8"):
+                      old, new = expected.split("\n"), shipped.decode("utf-8", "replace").split("\n")
+                      if len(old) != len(new):
+                          problems.append(f"the stamp has {len(new)} lines, and the committed "
+                                          f"_release.py stamped has {len(old)}")
+                      for ours, theirs in zip(old, new):
+                          if ours != theirs:
+                              problems.append(f"the stamp says {theirs!r} where the release's says {ours!r}")
+                      if old == new:
+                          problems.append("the stamp is not the committed _release.py, stamped, byte for byte")
+                  values = assigned(shipped.decode("utf-8", "replace"))
+                  if values != release:
+                      problems.append(f"the stamp assigns {values}, not {release}")
+                  if len(problems) == before:
+                      print(f"{stamp}: the committed file, with {list(names)} written")
+
+              raw = read(info + "METADATA")
+              if raw is None:
+                  problems.append(f"the wheel has no {info}METADATA")
+              else:
+                  meta = email.parser.BytesParser().parsebytes(raw)
+                  shown = {"Name": meta["Name"], "Version": meta["Version"],
+                           "Requires-Python": meta["Requires-Python"],
+                           "Requires-Dist": sorted(meta.get_all("Requires-Dist") or [])}
+                  declared = {"Name": project.get("name"), "Version": version,
+                              "Requires-Python": project.get("requires-python"),
+                              "Requires-Dist": sorted(project.get("dependencies") or [])}
+                  if shown != declared:
+                      problems.append(f"the metadata says {shown}, and pyproject.toml {declared}")
+                  print(f"metadata: {shown}")
+              raw = read(info + "entry_points.txt")
+              if raw is None:
+                  problems.append(f"the wheel has no {info}entry_points.txt")
+              else:
+                  entry_points = configparser.ConfigParser(delimiters=("=",), interpolation=None)
+                  entry_points.optionxform = str
+                  try:
+                      entry_points.read_string(raw.decode("utf-8"))
+                  except (configparser.Error, UnicodeDecodeError) as error:
+                      problems.append(f"the wheel's entry_points.txt cannot be read: {error}")
+                  if entry_points.sections() != ["console_scripts"]:
+                      problems.append(f"the wheel's entry points declare {entry_points.sections()}, "
+                                      "not ['console_scripts'] alone")
+                  scripts = ({k: v.strip() for k, v in entry_points["console_scripts"].items()}
+                             if entry_points.has_section("console_scripts") else {})
+                  if scripts != project.get("scripts"):
+                      problems.append(f"the wheel's commands are {scripts}, not {project.get('scripts')}")
+                  print(f"commands: {sorted(scripts)}")
+              described = sorted(n[len(info):] for n in members if n.startswith(info))
+              if described != sorted(["METADATA", "WHEEL", "RECORD", "entry_points.txt",
+                                      "licenses/LICENSE"]):
+                  problems.append(f"the wheel's {info} holds {described}, not exactly METADATA, "
+                                  "WHEEL, RECORD, entry_points.txt and licenses/LICENSE")
+              licence, commits = read(info + "licenses/LICENSE"), committed("LICENSE")
+              if commits is None:
+                  problems.append(f"{sha} has no LICENSE, and the wheel must carry the commit's")
+              elif licence is None:
+                  problems.append(f"the wheel has no {info}licenses/LICENSE, so the commit's LICENSE "
+                                  "is not in it")
+              elif licence != commits:
+                  problems.append(f"the wheel's {info}licenses/LICENSE is not the commit's LICENSE")
+          for problem in problems:
+              print(f"::error::{problem}")
+          sys.exit(1 if problems else 0)
+          PY
+
+      # THE DIGEST IS RECORDED HERE, and every later job checks the file it
+      # holds against it: before each upload, after each upload against what
+      # the index serves, and before the install check runs anything.
+      - name: record the wheel and its sha256
+        id: record
+        run: |
+          wheel="openrepotools-$VERSION-py3-none-any.whl"
+          {
+            echo "wheel=$wheel"
+            echo "wheel-sha256=$(sha256sum "$RUNNER_TEMP/dist-a/$wheel" | cut -d' ' -f1)"
+          } | tee -a "$GITHUB_OUTPUT" "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: wheel
+          path: ${{ runner.temp }}/dist-a/
+          if-no-files-found: error
