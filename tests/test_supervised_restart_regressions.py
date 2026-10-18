@@ -33,6 +33,15 @@ fi
     return box
 
 
+def sidecar_lock(box):
+    """Amendment 23 S2: the restart intent, the lifecycle records and
+    `publish-handoff`'s fence share the WORKSTATION's sidecar lock, beside W's
+    lane checkouts (ort186 Q3); W's own mutex no longer serialises them."""
+    lock = Path(os.path.realpath(box.ws) + "-lanes") / ".lane-state.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    return lock
+
+
 def helper(box, *args):
     return subprocess.run([str(box.bin / "lanes-edit.sh"), *args],
                           cwd=box.lane_dir, env=box.env, text=True,
@@ -1454,13 +1463,13 @@ def test_handoff_target_is_resolved_after_waiting_for_writer_mutex(restart_box):
     prepared = _write(box.root / "prepared.md", "replacement bytes\n", 0o600)
     digest = hashlib.sha256(original.read_bytes()).hexdigest()
     before = (original.read_bytes(), other.read_bytes())
-    lock = box.wip / "lanes" / ".lanes-edit.lock"
+    lock = sidecar_lock(box)
     lock.mkdir()
     (lock / "pid").write_text(str(os.getpid()) + "\n")
     marker = box.root / "waiting-for-writer"
     real_mkdir = shutil.which("mkdir")
     _write(box.fakebin / "mkdir", f"""#!/usr/bin/env bash
-case "$*" in *.lanes-edit.lock*) touch '{marker}' ;; esac
+case "$*" in *.lane-state.lock*) touch '{marker}' ;; esac
 exec '{real_mkdir}' "$@"
 """)
     proc = subprocess.Popen([str(box.bin / "lanes-edit.sh"), "publish-handoff", LANE,
@@ -1802,7 +1811,7 @@ def test_restart_root_waiting_writer_discovers_new_authority_under_mutex(restart
     box = restart_box
     _, fallback, alternate = restart_root_without_recorded_checkout(box)
     record_nested_restart_checkout(box)
-    lock = box.wip / "lanes" / ".lanes-edit.lock"
+    lock = sidecar_lock(box)
     lock.mkdir()
     (lock / "pid").write_text(str(os.getpid()))
     waited = box.root / "writer.waited"

@@ -168,7 +168,15 @@ def test_the_lane_helper_suite_passes():
     for name in ("LANES_FILE", "LANES_EDIT", "LANES_REPO", "LANES_PATH",
                  "LANES_LANE", "LANES_WORKSPACE_ROOT", "LANES_REPOS_TSV",
                  "LANES_REPOS_TSV_SHIPPED", "AGENT_PROTOCOL_ROOT",
-                 "OPENREPOTOOLS_BIN_DIR", "PROJECTS_ROOT", "CLAUDE_NO_LANE"):
+                 "OPENREPOTOOLS_BIN_DIR", "PROJECTS_ROOT", "CLAUDE_NO_LANE",
+                 "LANES_DIR", "LANES_NO_FETCH", "LANES_NO_GIT", "LANES_GIT",
+                 "LANES_SESSION"):
+        env.pop(name, None)
+    # AND EVERY OTHER `LANES_*` AND `TMUX*` (#193 item 25; ort186 Q9's
+    # condition on Amendment 23's seam): a launched lane exports `LANES_REPO`
+    # and `LANES_WORKSPACE_ROOT` into every shell, and the suite clears these
+    # again itself, so a run from a lane window reads no real register.
+    for name in [n for n in env if n.startswith(("LANES_", "TMUX"))]:
         env.pop(name, None)
     # THE LANE MANUAL IS THE SPEC LEG'S (opensoft/openRepoTools#186, T009):
     # the suite quotes `docs/README-lanes.md` back against the code, and in the

@@ -181,8 +181,18 @@ class Sandbox:
         for step in (("add", "--", *WORKSPACE_SEED), ("commit", "-q", "-m", "seed"),
                      ("push", "-q", "origin", "main")):
             self.git("-C", str(self.wip), *step)
+        # AMENDMENT 23 S5: W, the readers' copy that workspace.yaml names, takes
+        # no write. These cases write through `self.wip` by the explicit seam
+        # (ort186 Q9) — `LANES_REPO`, and `LANES_FILE`, which lane-start derives
+        # from W whenever it is empty — and W is a reader clone outside $HOME.
+        self.ws = self.root / "ro" / "wip"
+        self.git("clone", "-q", str(origin), str(self.ws))
+        for key, value in (("gc.auto", "0"), ("maintenance.auto", "false")):
+            self.git("-C", str(self.ws), "config", key, value)
         (self.home / ".agents" / "workspace.yaml").write_text(
-            f"repository: {origin}\npath: {self.wip}\n", encoding="utf-8")
+            f"repository: {origin}\npath: {self.ws}\n", encoding="utf-8")
+        self.env["LANES_REPO"] = str(self.wip)
+        self.env["LANES_FILE"] = str(self.wip / "lanes" / "LANES.md")
 
     def git(self, *args: str) -> str:
         return subprocess.run(["git", *args], env=self.env, check=True,

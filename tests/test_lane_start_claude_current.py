@@ -208,8 +208,21 @@ class Sandbox:
                  "handoffs/README.md")
         self.git("-C", str(self.wip), "commit", "-q", "-m", "seed")
         self.git("-C", str(self.wip), "push", "-q", "origin", "main")
+        # AMENDMENT 23 S5: W, the readers' copy that workspace.yaml names, takes
+        # no write, and a write that resolves by default goes through the lane's
+        # own checkout beside it. These cases write through `self.wip` by the
+        # explicit seam (ort186 Q9) — `LANES_REPO`, and `LANES_FILE`, which
+        # lane-start and lane-end derive from W whenever it is empty — so every
+        # assertion on `self.wip` reads what the commands wrote. W itself is a
+        # reader clone outside the projects root, so no listing changes.
+        self.ws = root / "ro" / "wip"
+        self.git("clone", "-q", str(self.origin), str(self.ws))
+        self.git("-C", str(self.ws), "config", "gc.auto", "0")
+        self.git("-C", str(self.ws), "config", "maintenance.auto", "false")
         (self.home / ".agents" / "workspace.yaml").write_text(
-            f"repository: {self.origin}\npath: {self.wip}\n", encoding="utf-8")
+            f"repository: {self.origin}\npath: {self.ws}\n", encoding="utf-8")
+        self.env["LANES_REPO"] = str(self.wip)
+        self.env["LANES_FILE"] = str(self.wip / "lanes" / "LANES.md")
 
         self.git("init", "-q", "-b", "main", str(self.lane_dir))
         self.git("-C", str(self.lane_dir), "remote", "add", "origin",

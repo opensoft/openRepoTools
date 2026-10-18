@@ -171,8 +171,25 @@ class Bench:
         self.git("add", "-A", cwd=self.wip)
         self.git("commit", "-q", "-m", "seed", cwd=self.wip)
         self.git("push", "-q", "origin", "main", cwd=self.wip)
+        # AMENDMENT 23 S5: W, the readers' copy that workspace.yaml names, takes
+        # no write, and a write that resolves by default goes through the lane's
+        # own checkout beside it. These cases hold c45a452's single-repository
+        # outputs, so the tools write through `self.wip` by the explicit seam
+        # (ort186 Q9): `LANES_REPO`, and `LANES_FILE`, which lane-start,
+        # lane-end and lane-handoff derive from W whenever it is empty. W is a
+        # VIEW of `self.wip` outside the projects root — its `.git` names
+        # `self.wip`'s, and its `lanes` and `handoffs` are links into it —
+        # because `lane-worktrees` reads W directly and a separate clone would
+        # stay behind every write these cases make.
+        self.ws = self.root / "ro" / "wip"
+        self.ws.mkdir(parents=True)
+        (self.ws / ".git").write_text(f"gitdir: {os.path.realpath(self.wip / '.git')}\n")
+        for name in ("lanes", "handoffs"):
+            (self.ws / name).symlink_to(self.wip / name)
         (self.home / ".agents" / "workspace.yaml").write_text(
-            f"repository: {bare}\npath: {self.wip}\n")
+            f"repository: {bare}\npath: {self.ws}\n")
+        self.env["LANES_REPO"] = str(self.wip)
+        self.env["LANES_FILE"] = str(self.wip / "lanes" / "LANES.md")
 
     def lanes(self, home: str, checkout: Path, *names: str) -> None:
         """A register row, a handoff and a STARTED line naming `checkout` for
@@ -232,8 +249,11 @@ def normalise(text: str, bench: Bench) -> str:
     hashes, ages and byte sizes - and a porcelain row's byte count."""
     # `$HOME` FIRST, and as a word of its own: `tests/test_repo_hygiene.py`
     # rightly refuses a committed `/home/<user>/` path, and the bench's home
-    # sits under its root.
-    for place, word in ((bench.home, "<HOME>"), (bench.root, "<ROOT>")):
+    # sits under its root. W GOES FIRST (Amendment 23 S5): the bench's W is a
+    # view outside the projects root, and a line that names W reads as the
+    # workspace checkout's path did before W stopped taking writes.
+    for place, word in ((bench.ws, "<HOME>/projects/wip"), (bench.home, "<HOME>"),
+                        (bench.root, "<ROOT>")):
         for spelling in sorted({str(place), os.path.realpath(place)}, key=len, reverse=True):
             text = text.replace(spelling, word)
     for rx, sub in _RULES:

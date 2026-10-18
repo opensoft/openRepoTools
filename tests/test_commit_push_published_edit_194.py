@@ -126,8 +126,18 @@ class Box:
         self.git("-C", str(self.wip), "commit", "-q", "-m", "seed")
         self.git("-C", str(self.wip), "push", "-q", "origin", "main")
         self.git("clone", "-q", str(self.origin), str(self.peer))
+        # AMENDMENT 23 S5: W, the readers' copy that workspace.yaml names, takes
+        # no write, and a write that resolves by default goes through the lane's
+        # own checkout beside it. These cases are about `commit_push` in the
+        # checkout a write runs in, so they name `self.wip` by the explicit seam
+        # (`LANES_REPO`, ort186 Q9), and W is a separate reader clone.
+        self.ws = root / "ro" / "wip"
+        self.git("clone", "-q", str(self.origin), str(self.ws))
+        for key, value in (("gc.auto", "0"), ("maintenance.auto", "false")):
+            self.git("-C", str(self.ws), "config", key, value)
         (self.home / ".agents" / "workspace.yaml").write_text(
-            f"repository: {self.origin}\npath: {self.wip}\n", encoding="utf-8")
+            f"repository: {self.origin}\npath: {self.ws}\n", encoding="utf-8")
+        self.env["LANES_REPO"] = str(self.wip)
 
     def git(self, *args: str) -> str:
         return subprocess.run(["git", *args], env=self.env, check=True,
