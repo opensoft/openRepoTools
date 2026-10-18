@@ -1089,8 +1089,8 @@ def test_the_readme_carries_the_two_line_onboarding_chain():
 
 def test_no_document_offers_a_windows_powershell_twin():
     """NATIVE WINDOWS PARKS NOTHING, and saying otherwise is worse than saying
-    nothing. All three files here are bash; there is no `Invoke-WebRequest`
-    two-liner and no PowerShell twin to point at, so on Windows the way in is
+    nothing. No command here has a PowerShell twin, and there is no
+    `Invoke-WebRequest` two-liner to point at, so on Windows the way in is
     WSL2 — which both documents say, once each."""
     for name in ("README.md", "AGENTS.md"):
         text = doc(name).read_text(encoding="utf-8")
@@ -3111,7 +3111,7 @@ def test_the_root_carries_the_line_ending_rule():
     place against the bytes already there with `cmp`, and its own tests compare
     an installed copy to this checkout's file byte for byte. Git for Windows'
     installer default is `core.autocrlf=true`; a checkout made under it turns
-    every `\\n` in these four bash files into `\\r\\n`, and the comparison is
+    every `\\n` in the shipped bash files into `\\r\\n`, and the comparison is
     then about line endings rather than about content. The rule normalises text
     to LF in the object store on check-in and checks it out as LF on every
     platform, whatever `core.autocrlf` says — so nobody has to be told a git
@@ -3174,35 +3174,142 @@ _OPTIONS_WITH_ARGUMENTS = {
 }
 
 
-def _shell_tokens(text: str) -> list[str]:
-    """Split one shell command into tokens, keeping a quoted run together.
+#: THE TOKENS THAT END ONE COMMAND ON A LINE AND BEGIN THE NEXT, as
+#: `_shell_tokens` hands them back: each is a token of its own, cut out of
+#: the line only where the shell reads it as syntax, and never out of a
+#: quoted run.
+_COMMAND_SEPARATORS = frozenset({"|", ";", "&", "(", ")", "$(", "`"})
+
+
+def _shell_tokens(text: str, opened: str = "") -> tuple[list[str], bool]:
+    """Split one line of shell into tokens, keeping a quoted run together and
+    handing every command separator back as a token of its own. Returns the
+    tokens, and whether the line ENDS inside a quoted run.
 
     Deliberately small: it expands nothing and does not care what a token
-    MEANS. All it has to answer is "is this token exactly `--`, and did an
-    operand come before it".
+    MEANS. All it has to answer is "is this token exactly `--`, did an operand
+    come before it, and was that in the same command".
+
+    `opened` starts the line inside a quoted run of that kind, `'` or `"`: the
+    second reading `_commands_on` gives a line that may close a quote an
+    earlier line opened.
+
+    THE LINE IS TOKENIZED BEFORE IT IS CUT, AND NOT THE OTHER WAY ROUND
+    (opensoft/openRepoTools#54). The cut used to be a bare regular-expression
+    split of the raw text at every `|`, `;`, `&`, `(`, `)`, `$(` and backtick,
+    and a pattern is text. `grep -v 'not fetching; reading origin/' -- "$f"`
+    came apart at the `;` inside its own quotes, neither half held both the
+    operand and the `--` after it, and the check called a real BSD failure
+    clean — in a shipped command, the same line #53 had just fixed in a skill.
+    A quoted message that happened to hold `; grep x -- y` was the same cut
+    the other way: a finding in a string nothing runs.
+
+    So a separator is one only OUTSIDE a quoted run, and only where the shell
+    reads it as one: `|`, `;`, `&`, `(` and `)` outside every quote, and the
+    two that open a nested command, `$(` and a backtick, inside a
+    double-quoted run as well — `out="$(sed -n 'p' -- "$f")"` is a command
+    inside an assignment, and its quotes start afresh, so the `$(` and the
+    `)` that closes it are tracked to know where the outer double quote
+    resumes. A single-quoted run holds no syntax at all, and a backslash makes
+    the next character plain text either way.
     """
     tokens: list[str] = []
     current: list[str] = []
-    quote, started = "", False
-    for ch in text:
-        if quote:
+    started = False
+    # What encloses the character being read, innermost last: "'" or '"' for a
+    # quoted run, "$(", "(" or "`" for a command nested inside the line.
+    stack: list[str] = [opened] if opened else []
+
+    def end_token() -> None:
+        nonlocal current, started
+        if started:
+            tokens.append("".join(current))
+        current, started = [], False
+
+    index = 0
+    while index < len(text):
+        ch = text[index]
+        inside = stack[-1] if stack else ""
+        step = 1
+        if inside == "'":
             current.append(ch)
-            if ch == quote:
-                quote = ""
-            continue
-        if ch in "'\"":
-            quote, started = ch, True
+            if ch == "'":
+                stack.pop()
+        elif ch == "\\":
+            current.append(text[index:index + 2])
+            started, step = True, 2
+        elif inside == '"' and ch == '"':
             current.append(ch)
+            stack.pop()
+        elif ch == "`" and inside == "`":
+            end_token()
+            tokens.append(ch)
+            stack.pop()
+        elif ch == "`" or text.startswith("$(", index):
+            opener = "`" if ch == "`" else "$("
+            end_token()
+            tokens.append(opener)
+            stack.append(opener)
+            step = len(opener)
+        elif inside == '"':
+            current.append(ch)
+        elif ch in "'\"":
+            stack.append(ch)
+            current.append(ch)
+            started = True
         elif ch.isspace():
-            if started:
-                tokens.append("".join(current))
-            current, started = [], False
+            end_token()
+        elif ch == "(":
+            end_token()
+            tokens.append(ch)
+            stack.append(ch)
+        elif ch == ")":
+            end_token()
+            tokens.append(ch)
+            if inside in ("$(", "("):
+                stack.pop()
+        elif ch in "|;&":
+            end_token()
+            tokens.append(ch)
         else:
             started = True
             current.append(ch)
-    if started:
-        tokens.append("".join(current))
-    return tokens
+        index += step
+    end_token()
+    return tokens, bool(stack) and stack[-1] in ("'", '"')
+
+
+def _commands_on(line: str) -> list[list[str]]:
+    """The tokens of `line`, cut into one list per command at every separator
+    token — so a quoted pattern stays whole in the command that passes it.
+
+    A QUOTE CAN SPAN LINES, AND THIS READS ONE LINE AT A TIME. A line that
+    ends inside a quoted run is the first line of such a quote or its last,
+    and the line alone cannot say which. Read from outside every quote, a LAST
+    line's closing quote opens one instead, and the command after it goes into
+    a single token — `}' | LC_ALL=C sort | awk -v s="$US" '{ … }')"`, the
+    tail of a multi-line awk program in `lanes-edit.sh`, would lose its second
+    `awk` that way. So such a line is read again from inside a single-quoted
+    run and from inside a double-quoted one, and the commands of every reading
+    are checked; a line that closes every quote it opens is read once.
+    """
+    def cut(tokens: list[str]) -> list[list[str]]:
+        commands: list[list[str]] = [[]]
+        for token in tokens:
+            if token in _COMMAND_SEPARATORS:
+                commands.append([])
+            else:
+                commands[-1].append(token)
+        return commands
+
+    tokens, ends_quoted = _shell_tokens(line)
+    commands = cut(tokens)
+    if ends_quoted:
+        for quote in ("'", '"'):
+            commands += [command
+                         for command in cut(_shell_tokens(line, quote)[0])
+                         if command not in commands]
+    return commands
 
 
 def _end_of_options_after_an_operand(text: str) -> list[str]:
@@ -3225,8 +3332,7 @@ def _end_of_options_after_an_operand(text: str) -> list[str]:
     for line in text.splitlines():
         if line.lstrip().startswith("#"):
             continue
-        for piece in re.split(r"[|;&()]|\$\(|`", line):
-            tokens = _shell_tokens(piece)
+        for tokens in _commands_on(line):
             for start, token in enumerate(tokens):
                 tool = token.rsplit("/", 1)[-1]
                 if tool not in _OPTIONS_WITH_ARGUMENTS:
@@ -3272,6 +3378,74 @@ def test_no_shipped_bash_ends_its_options_after_an_operand(name):
         f"{name} passes `--` AFTER an operand, which BSD's `getopt` reads as a "
         f"FILENAME (macOS: `sed: --: No such file or directory`). Put the "
         f"script behind `-e` instead:\n  " + "\n  ".join(bad))
+
+
+#: LINES THE END-OF-OPTIONS RULE MUST REFUSE, each with a separator inside a
+#: quoted run (opensoft/openRepoTools#54). The cut over the raw text took
+#: every one of them apart at that separator and called it clean. Each row is
+#: (why, line).
+LATE_END_OF_OPTIONS_REFUSED = [
+    ("#54's own line, a semicolon inside the pattern",
+     "grep -v 'not fetching; reading origin/' -- \"$local_err_file\" >&2 || :"),
+    ("a pipe inside an alternation",
+     "grep -E 'PARKED|RESUMED' -- \"$log\""),
+    ("an ampersand inside a sed replacement",
+     "sed -n 's/^lane: /[&]/p' -- \"$file\""),
+    ("parentheses inside a double-quoted pattern",
+     'grep -n "^cut_to_line()" -- "$f"'),
+    ("a semicolon inside an awk program",
+     "awk '{ n++; print n }' -- \"$f\""),
+    ("a backtick inside a single-quoted pattern",
+     "grep -F 'run `lane`' -- \"$f\""),
+    ("a nested command inside double quotes, its pattern quoted afresh",
+     "out=\"$(grep 'a;b' -- \"$f\")\""),
+    ("the last line of a multi-line awk program, then a second call",
+     "}' | LC_ALL=C sort | awk '{ print; }' -- \"$f\")\""),
+]
+
+#: LINES IT MUST ACCEPT: a separator inside a quoted run that the raw cut
+#: turned into a call nothing makes. Each row is (why, line).
+LATE_END_OF_OPTIONS_ACCEPTED = [
+    ("a message that quotes the shape, after a semicolon",
+     "note \"the stderr filter is gone; grep 'pattern' -- file was its shape\""),
+    ("a single-quoted command line, after a double ampersand",
+     "printf '%s\\n' 'cd \"$dir\" && grep pattern -- file'"),
+    ("a single-quoted usage line, after a pipe",
+     "usage='lanes | grep \"x\" -- file'"),
+    ("parentheses inside a double-quoted message",
+     "echo \"(sed 's/x/y/' -- f)\""),
+    ("backticks inside a single-quoted message",
+     "printf '%s\\n' 'run `sed s/a/b/ -- f` by hand'"),
+    ("a correct call whose -e pattern holds a semicolon and a call",
+     "grep -v -e 'x; sed s/a/b/ -- y' -- \"$f\""),
+]
+
+
+@pytest.mark.parametrize("why,line", LATE_END_OF_OPTIONS_REFUSED,
+                         ids=[why for why, _ in LATE_END_OF_OPTIONS_REFUSED])
+def test_the_end_of_options_rule_sees_a_call_whose_quotes_hold_a_separator(
+        why, line):
+    """RED: a quoted pattern, program or nested command keeps its separators
+    to itself (opensoft/openRepoTools#54). `lanes` shipped the first row's
+    line while this rule called it clean — the `;` inside the pattern cut the
+    call in two before the tokenizer saw its `--` — so every row here is one
+    the raw-text cut let through, and the line is tokenized before it is cut.
+    """
+    assert _end_of_options_after_an_operand(line), (
+        f"the rule let this through ({why}): {line!r}")
+
+
+@pytest.mark.parametrize("why,line", LATE_END_OF_OPTIONS_ACCEPTED,
+                         ids=[why for why, _ in LATE_END_OF_OPTIONS_ACCEPTED])
+def test_the_end_of_options_rule_finds_no_call_inside_a_quoted_string(
+        why, line):
+    """GREEN: text inside quotes is a string, not a command, whatever
+    separators it holds. The raw-text cut began a new command at each of them,
+    so the words after one read as a call with its `--` too late — a finding
+    in a line nothing runs, which teaches a reader to stop trusting the rule.
+    """
+    assert _end_of_options_after_an_operand(line) == [], (
+        f"the rule refused this ({why}): {line!r}")
 
 
 @pytest.mark.parametrize("name", ALL_BASH)
