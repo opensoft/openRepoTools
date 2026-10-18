@@ -107,7 +107,7 @@ The tests use fake venv layouts, with no pipx and no wheel.
 
 ### Tests for User Story 1 (write first; they MUST fail before T007 and T008)
 
-- [ ] T004 [P] [US1] [O] Write the US1 tests of `tests/test_install_pipx.py`, reusing `tests/package_layout.py` and `test_openrepotools_command`'s `command_env`, `source_tree` and `NEEDS_JQ`, as detailed below — files: `tests/test_install_pipx.py` — verify: `bash tests/run.sh --collect-only -q -k 'test_pipx_link_ or test_pipx_skip_ or test_pipx_offline_'`
+- [X] T004 [P] [US1] [O] Write the US1 tests of `tests/test_install_pipx.py`, reusing `tests/package_layout.py` and `test_openrepotools_command`'s `command_env`, `source_tree` and `NEEDS_JQ`, as detailed below — files: `tests/test_install_pipx.py` — verify: `bash tests/run.sh --collect-only -q -k 'test_pipx_link_ or test_pipx_skip_ or test_pipx_offline_'`
   - `test_pipx_link_*`: the twelve-case matrix of contracts/pipx-link.md and its five negative cases, with `PIPX_HOME` set only in its own column.
   - `test_pipx_skip_*`:
     - the exact skip line and the pipx-own count line, 28 receipt rows, and the link left unchanged;
