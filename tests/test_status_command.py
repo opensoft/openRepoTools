@@ -583,19 +583,23 @@ def test_a_family_folder_is_read_by_its_repository_name_or_its_display_name(
 
 
 @pytest.mark.parametrize("shape", [
-    ("Elsewhere", "Other", f"{ORG}/Other"),
-    (ORG, "Other", f"{ORG}/Quill/Other"),
-    ("Quill", "Other", None),
+    ("Elsewhere", "Other", f"{ORG}/Other", None),
+    (ORG, "Other", f"{ORG}/Quill/Other", None),
+    ("Quill", "Other", None, None),
+    ("Quill", "Other", None, f"{ORG}/Quill"),
 ], ids=["neither-name-nor-repository",
-        "an-earlier-part-of-the-repository", "no-repository-and-another-name"])
+        "an-earlier-part-of-the-repository", "no-repository-and-another-name",
+        "only-a-members-repository-ends-in-the-folder"])
 def test_a_family_folder_that_is_neither_name_is_still_not_an_estate(home,
                                                                     shape):
     """The repository arm must not widen past the LAST part of `repository:`,
-    and a missing key must not read as a name: those folders are directories
-    called that, exactly as they were before."""
-    folder, name, repository = shape
+    a missing key must not read as a name, and a MEMBER's own `repository:`
+    (indented) is never the holder's: those folders are directories called
+    that, exactly as they were before."""
+    folder, name, repository, member_repository = shape
     probe_family_two_names(home / "projects", folder, name=name,
-                           repository=repository)
+                           repository=repository,
+                           member_repository=member_repository)
     result = run(STATUS, folder, home=home)
     assert result.returncode == 2, result.stdout + result.stderr
     assert f"no estate named '{folder}'" in result.stderr
@@ -610,6 +614,7 @@ def test_a_family_folder_named_for_its_repository_wins_over_a_standalone_root(
                                     repository=f"{ORG}/{QUILL}")
     probe_project(projects, QUILL, at=projects / QUILL)
     result = run(STATUS, QUILL, home=home)
+    assert result.returncode != 2, result.stdout + result.stderr  # 1: findings
     assert "no estate named" not in result.stderr, result.stderr
     assert (f"status: {QUILL} - the family holder at {holder}"
             in result.stdout), result.stdout + result.stderr

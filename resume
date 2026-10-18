@@ -183,7 +183,8 @@ is_safe_folder_name() {
 # One indent-zero scalar out of a small YAML file, with parameter expansion
 # only: no YAML library, no python per line, no forks per line. This is the
 # reader the Speckit extension's `workspace_read_scalar` is, narrowed to the
-# keys these two commands read (`kind`, `name`, `family`, `tracking_branch`).
+# keys these two commands read (`kind`, `name`, `family`, `tracking_branch`,
+# `repository`).
 YAML_VALUE=""
 yaml_scalar() {
     local file="$1" key="$2" line
@@ -635,24 +636,6 @@ manifest_project_field() {
             ;;
         esac
     done <"$file"
-    return 1
-}
-
-# THE `repository:` OF A FAMILY HOLDER THAT IS ALREADY HERE, in the folder
-# `<folder>` (#236): `<projects>/<folder>/<folder>/family.yaml`, read only
-# where `is_family_folder` accepts that folder. The manifest does not carry it,
-# and a folder is the repository's name only under v1.1.0 - before that it was
-# the display `name:`, which can be another word - so where a holder is on
-# disk its own file is the one that knows. Sets `YAML_VALUE` and returns 0, or
-# returns 1 when no holder is here or its file names no repository.
-family_repository_on_disk() {
-    local folder="$1" dir
-    for dir in "${PROJECTS_DIRS[@]}"; do
-        is_family_folder "$dir/$folder" || continue
-        yaml_scalar "$dir/$folder/$folder/family.yaml" repository || continue
-        [ -n "$YAML_VALUE" ] || continue
-        return 0
-    done
     return 1
 }
 
@@ -1213,7 +1196,7 @@ if [ -n "$MANIFEST_FILE" ]; then
         # org and the folder, which is exact under v1.1.0 and is also what a
         # fresh machine, with no `family.yaml` to read yet, has to go on. A
         # holder this machine already has says which repository it is, and
-        # that is read below, once the folder is known to be a name.
+        # that is read below, from the estate this run resolved.
         MANIFEST_DIRNAME="${MANIFEST_ROOT_VALUE%%/*}"
         [ -n "$MANIFEST_ROOT_VALUE" ] &&
             [ "$MANIFEST_DIRNAME" != "$MANIFEST_ROOT_VALUE" ] ||
@@ -1242,10 +1225,6 @@ if [ -n "$MANIFEST_FILE" ]; then
     '$MANIFEST_DIRNAME' is not one: an estate folder is a single name under your
     projects directory, with no slash and no leading dot. Nothing was cloned.
     That file is written by \`park\`; a hand-edited one is fixed by hand."
-    if [ "$MANIFEST_KIND" = "family" ] && family_repository_on_disk "$MANIFEST_DIRNAME"; then
-        ROOT_REPOSITORY="$YAML_VALUE"
-    fi
-    say "  records         a $MANIFEST_KIND estate, root repository $ROOT_REPOSITORY"
 fi
 
 # THE ESTATE ON DISK WINS over the manifest's idea of where it is: the manifest
@@ -1256,6 +1235,23 @@ if [ "$ESTATE_PRESENT" -eq 0 ] && [ -n "$MANIFEST_DIRNAME" ] &&
     if estate_by_name "$MANIFEST_DIRNAME"; then
         ESTATE_PRESENT=1
     fi
+fi
+
+# WHAT THE RECORD SAYS THE ESTATE IS, said once the estate on disk is known,
+# because a holder that is here knows its own repository (#236): the HOLDER
+# THIS RUN RESOLVED, whatever the record's folder is. A record goes stale the
+# moment a person moves the holder to the folder v1.1.0 names (`make
+# siblings`' own `mv`), and a lookup by the record's folder would then miss a
+# holder that is on disk and print a repository that does not exist. Nothing
+# above prints, so the order of the lines a run says is unchanged.
+if [ -n "$MANIFEST_FILE" ]; then
+    if [ "$MANIFEST_KIND" = "family" ] && [ "$ESTATE_PRESENT" -eq 1 ] &&
+        [ "$ESTATE_KIND" = "family" ] &&
+        yaml_scalar "$ESTATE_ROOT/family.yaml" repository &&
+        [ -n "$YAML_VALUE" ]; then
+        ROOT_REPOSITORY="$YAML_VALUE"
+    fi
+    say "  records         a $MANIFEST_KIND estate, root repository $ROOT_REPOSITORY"
 fi
 
 # --- (3) rebuild or refresh the estate --------------------------------------

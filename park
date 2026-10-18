@@ -200,7 +200,8 @@ is_safe_folder_name() {
 # One indent-zero scalar out of a small YAML file, with parameter expansion
 # only: no YAML library, no python per line, no forks per line. This is the
 # reader the Speckit extension's `workspace_read_scalar` is, narrowed to the
-# keys these two commands read (`kind`, `name`, `family`, `tracking_branch`).
+# keys these two commands read (`kind`, `name`, `family`, `tracking_branch`,
+# `repository`).
 YAML_VALUE=""
 yaml_scalar() {
     local file="$1" key="$2" line
