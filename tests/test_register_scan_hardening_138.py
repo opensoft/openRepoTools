@@ -392,6 +392,24 @@ def test_item_4_a_log_directory_that_cannot_be_listed_classes_no_row_dormant(reg
     assert "could not be listed" in err
 
 
+@ROOT_ONLY
+def test_item_4_the_sweep_refuses_rather_than_finding_nothing_to_do(reg):
+    """The review of #230: with the class withheld, `lane-end --retire-dormant`
+    counted zero dormant rows and exited 8, "there is nothing to do", about rows
+    nobody could class. It turns the listing's sentence into a refusal (1)."""
+    logs = reg.wip / "lanes" / "log"
+    logs.chmod(0)
+    try:
+        env = dict(reg.env, LANES_EDIT=str(REPO / "lanes-edit.sh"))
+        result = subprocess.run(["bash", str(REPO / "lane-end"), "--retire-dormant", "repoX"],
+                                cwd=str(reg.wip), env=env, text=True, capture_output=True,
+                                timeout=120, check=False)
+    finally:
+        logs.chmod(0o755)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert "classed none of them DORMANT" in result.stderr
+
+
 def test_item_11_a_published_log_git_cannot_read_is_never_classed_dormant(reg):
     """#138 item 11: DORMANT is read from a lane's absence from the facts pass,
     and a published log whose `git show` failed gave that pass no lines, so an

@@ -720,6 +720,11 @@ if [ -n "$retire_dormant" ]; then
   case "$rd_err" in
     *"session records could not be read"*)
       die "this workstation's session records could not be read (the read says so above), so whether any of $retire_dormant's rows has a LIVE session here was never established — and DORMANT is 'no object log AND no live session here'. The rows are not counted over a fact that was not read (Amendment 7(d)). Fix the read and re-run; nothing was written." 1 ;;
+    # AND WHERE THE READ CLASSED NO ROW AT ALL BECAUSE A LOG READ FAILED (#138
+    # items 4 and 11, the review of #230): counting zero here was this command's
+    # "there is nothing to do", exit 8, about rows nobody could class.
+    *"no row is classed DORMANT here"*)
+      die "the read could not tell which of $retire_dormant's rows have an object log (it says why above), so it classed none of them DORMANT — and that is NOT 'none of them are' (Amendment 7(d)). Fix the read and re-run; nothing was written." 1 ;;
   esac
   case "$rd_rc" in
     0) : ;;
