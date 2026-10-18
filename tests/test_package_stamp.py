@@ -17,7 +17,8 @@ layout"):
   `STAMP_*` constant the installer sets at the top level, so the harness is
   the installer's text and never a restatement of it;
 - `test_stamp_hatch_*` runs hatch's version pattern, copied below with its
-  citation, and `stamp_read` on the same files;
+  citation, and `stamp_read` on the same files, and asks Python's `re` which
+  letters beyond ASCII that pattern's `(?i)` folds onto `version`'s;
 - `test_package_version_*` holds `--version`'s five lines, stamped and
   unstamped, from `package_tree` layouts;
 - `test_package_broken_stamp_*` holds the one refusal a broken stamp gets: for
@@ -609,14 +610,29 @@ def test_stamp_reader_refuses_an_unclosed_docstring(tmp_path):
 
 #: Docstring lines that begin, in any case, with `version` or `__version__`
 #: followed by optional spaces and `=` (rule 3). Hatch would take the first
-#: four as the version; the guard is the rule, and holds for the rest too.
+#: seven as the version; the guard is the rule, and holds for the rest too.
+#: "Any case" is hatch's `(?i)`, so three of the seven spell the word with one
+#: of the letters beyond ASCII that it folds onto one of the word's (`FOLDED`).
 GUARDED_LINES = {
     "version": 'version = "9.9.9"',
     "VERSION": 'VERSION = "9.9.9"',
     "__version__": "__version__ = '9.9.9'",
     "__Version__-without-spaces": '__Version__="9.9.9"',
+    "long-s-U017F": 'ver\u017fion = "9.9.9"',
+    "capital-i-with-a-dot-U0130": 'VERS\u0130ON = "9.9.9"',
+    "dotless-i-U0131": '__vers\u0131on__ = "9.9.9"',
     "unquoted": "Version=9.9.9",
     "spaces-then-nothing": "version   =",
+}
+
+#: THE THREE LETTERS BEYOND ASCII THAT HATCH'S `(?i)` FOLDS onto a letter of
+#: `version`: U+017F `ſ` onto `s`, and U+0130 `İ` and U+0131 `ı` onto `i`.
+#: The installer's `STAMP_FOLD_*` are the same three. Each is keyed by the
+#: `GUARDED_LINES` row that spells the word with it.
+FOLDED = {
+    "long-s-U017F": "\u017f",
+    "capital-i-with-a-dot-U0130": "\u0130",
+    "dotless-i-U0131": "\u0131",
 }
 
 
@@ -819,6 +835,46 @@ def test_stamp_hatch_would_misread_a_guarded_docstring_line_and_stamp_read_refus
         f"the fixture is wrong: hatch's pattern reads {hatch_version(path)}, "
         f"not the docstring's line {number}")
     assert_refused(read_stamp(tmp_path, path), "is malformed:", lines=(number,))
+
+
+@pytest.mark.parametrize("which", FOLDED)
+def test_stamp_hatch_reads_a_letter_it_folds_as_the_version_and_stamp_read_refuses_it(
+        tmp_path, which):
+    """HATCH'S "ANY CASE" IS PYTHON'S, AND SO IS THE GUARD'S. Under `(?i)`,
+    `re` matches U+017F `ſ` to `s`, and U+0130 `İ` and U+0131 `ı` to `i`. So
+    a docstring line that spells `version` or `__version__` with one of them,
+    above the real `VERSION = "1.1.0"`, is the first line hatch's pattern
+    matches, and a wheel built from it would carry 9.9.9. `stamp_read` must
+    refuse the file, naming that line, as it refuses the ASCII spelling. The
+    installer folds the three letters before its `case`, whose `[Ss]` and
+    `[Ii]` match none of them."""
+    line = GUARDED_LINES[which]
+    assert [c for c in line if ord(c) > 0x7F] == [FOLDED[which]], (
+        f"the fixture is wrong: {line!r} does not spell the word with "
+        f"U+{ord(FOLDED[which]):04X} and only that")
+    base = stamp(**RELEASE)
+    text, number = inserted(base, docstring_span(base)[0], line)
+    path = write_stamp(tmp_path / "stamp", text)
+    assert hatch_version(path) == ("9.9.9", number), (
+        f"the fixture is wrong: hatch's pattern reads {hatch_version(path)}, "
+        f"not the docstring's line {number}")
+    assert_refused(read_stamp(tmp_path, path), "is malformed:", lines=(number,))
+
+
+def test_stamp_hatch_folds_exactly_three_letters_beyond_ascii_onto_the_word():
+    """WHY THREE ROWS ARE ENOUGH. Every code point beyond ASCII is put to
+    Python's `re` under `(?i)`, as hatch's pattern is, against the letters of
+    `version` (`_` has no case). Exactly `FOLDED`'s three match, so the three
+    rows the guard must refuse are every spelling hatch reads that ASCII's
+    capitals do not give. A Python whose case table took a fourth would fail
+    here, and the guard would need a fourth fold."""
+    letter = re.compile(r"(?i)[eionrsv]")
+    beyond = {chr(c) for c in range(0x80, 0x110000)
+              if letter.fullmatch(chr(c))}
+    assert beyond == set(FOLDED.values()), (
+        "beyond ASCII, `(?i)` takes "
+        + ", ".join(f"U+{ord(c):04X}" for c in sorted(beyond))
+        + " for a letter of `version`, not FOLDED's three")
 
 
 # --- running the command ----------------------------------------------------
