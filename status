@@ -290,16 +290,49 @@ projects_dir_for_new() {
     printf '%s\n' "${PROJECTS_DIRS[0]}"
 }
 
+# ONE SCALAR'S TEXT, read the way openRepoShape v1.1.0's `parse_yaml` reads
+# it (`scripts/repo_shape.py`: `_strip_comment`, `_quote_end`,
+# `_quoted_scalar`), so a file both of them read gets one answer (#243). A
+# value that OPENS WITH A QUOTE is the text up to the quote that closes it -
+# inside `"..."` a `\` takes the character after it along, and inside `'...'`
+# a doubled `''` is one quote, so neither closes it - and whatever follows
+# the close, a `# comment` included, is not the value: a ` #` inside the
+# quotes is text. Any other value is cut at the first `#` that opens it or
+# follows a space or tab, which is a comment, and trimmed; `a#b` is the text
+# `a#b`. The escapes are honoured to find the close and never unescaped, as
+# this reader never unescaped them: no branch, path, folder or repository
+# name it is asked for carries one. A quote nothing closes is not YAML at
+# all, and the text is kept whole, as before. What is NULL is not said here:
+# `null` and `"null"` are both the text `null`, and `yaml_scalar` says which
+# of the two it was.
 trim_unquote() {
-    local value="$1"
+    local value="$1" quote="" ch="" i=1
     value="${value%$'\r'}"
     value="${value#"${value%%[![:space:]]*}"}"
-    value="${value%"${value##*[![:space:]]}"}"
     case "$value" in
-    '"'*'"') value="${value#\"}"; value="${value%\"}" ;;
-    "'"*"'") value="${value#\'}"; value="${value%\'}" ;;
+    '"'* | "'"*)
+        quote="${value:0:1}"
+        while [ "$i" -lt "${#value}" ]; do
+            ch="${value:$i:1}"
+            if [ "$quote" = '"' ] && [ "$ch" = "\\" ]; then
+                i=$((i + 2))
+            elif [ "$ch" != "$quote" ]; then
+                i=$((i + 1))
+            elif [ "$quote" = "'" ] && [ "${value:$((i + 1)):1}" = "'" ]; then
+                i=$((i + 2))
+            else
+                printf '%s' "${value:1:$((i - 1))}"
+                return 0
+            fi
+        done
+        ;;
+    *)
+        value=" $value"
+        value="${value%%[[:space:]]#*}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        ;;
     esac
-    printf '%s' "$value"
+    printf '%s' "${value%"${value##*[![:space:]]}"}"
 }
 
 # ONE FOLDER NAME, and never a path. A `<Name>` off the command line and a
@@ -319,21 +352,34 @@ is_safe_folder_name() {
 }
 
 # One indent-zero scalar out of a small YAML file, with parameter expansion
-# only: no YAML library, no python per line, no forks per line. This is the
-# reader the Speckit extension's `workspace_read_scalar` is, narrowed to the
-# keys these two commands read (`kind`, `name`, `family`, `tracking_branch`,
-# `repository`).
+# only: no YAML library, no python per line, no forks per line. The line is
+# found the way the Speckit extension's `workspace_read_scalar` finds one, at
+# indent zero by its key; the VALUE is `trim_unquote`'s, above, which is
+# openRepoShape v1.1.0's reading of it and differs from the extension's where
+# a `#` sits inside quotes or with no space in front of it, and on a line that
+# is not YAML at all (#243). The keys the three commands ask for are
+# `family.yaml`'s and `project.yaml`'s, a record's `family:`, the two of
+# `workspace.yaml`, and the shape pin's.
+# `YAML_QUOTED` is 1 when the value was QUOTED: YAML's null is an unquoted
+# `null` or `~`, and a quoted `"null"` is the text, which is a difference
+# `trim_unquote`'s answer alone cannot carry (`named_for_repository`).
 YAML_VALUE=""
+YAML_QUOTED=0
 yaml_scalar() {
-    local file="$1" key="$2" line
+    local file="$1" key="$2" line value
     YAML_VALUE=""
+    YAML_QUOTED=0
     [ -f "$file" ] || return 1
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in
         "$key":*) ;;
         *) continue ;;
         esac
-        YAML_VALUE="$(trim_unquote "${line#"$key":}")"
+        value="${line#"$key":}"
+        case "${value#"${value%%[![:space:]]*}"}" in
+        '"'* | "'"*) YAML_QUOTED=1 ;;
+        esac
+        YAML_VALUE="$(trim_unquote "$value")"
         return 0
     done <"$file"
     return 1
@@ -386,7 +432,9 @@ is_pinned_member() {
 # (opensoft/openRepoShape#543). A family whose two names differ has no layout
 # that works for both unless both are accepted. A directory called Northwind
 # is a directory called Northwind; what makes it a family folder is read,
-# never guessed from a name.
+# never guessed from a name. The repository arm is `named_for_repository`,
+# below, which `status` and `resume` also ask when one family is on disk in
+# both layouts (#243).
 is_family_folder() {
     local dir="$1" name manifest
     name="${dir##*/}"
@@ -397,7 +445,25 @@ is_family_folder() {
     if yaml_scalar "$manifest" name && [ "$YAML_VALUE" = "$name" ]; then
         return 0
     fi
-    yaml_scalar "$manifest" repository || return 1
+    named_for_repository "$dir"
+}
+
+# Is `<dir>` named for its holder's REPOSITORY: the LAST PART of
+# `<dir>/<basename>/family.yaml`'s `repository:`, as v1.1.0's `repo_basename`
+# takes it (`rsplit("/", 1)[-1]`)? That is the folder v1.1.0 prescribes, and
+# where `make siblings` moves a holder that is not in it. AN UNQUOTED `null`
+# OR `~` IS NO REPOSITORY (#243) - nor `Null` or `NULL`, the spellings
+# v1.1.0's `_scalar` reads as null too - so a folder called `null` is not
+# named for one, and `is_family_folder` has only the display `name:` left to
+# go on, which is v1.1.0's own fallback. A QUOTED `"null"` is the text.
+named_for_repository() {
+    local dir="$1" name
+    name="${dir##*/}"
+    [ -n "$name" ] || return 1
+    yaml_scalar "$dir/$name/family.yaml" repository || return 1
+    if [ "$YAML_QUOTED" -eq 0 ]; then
+        case "$YAML_VALUE" in null | Null | NULL | '~') return 1 ;; esac
+    fi
     [ "${YAML_VALUE##*/}" = "$name" ]
 }
 
@@ -487,6 +553,32 @@ estates_or_none() {
     else
         printf '  (none)\n'
     fi
+}
+
+# Every FAMILY FOLDER under the projects directory whose holder's
+# `family.yaml` says `id: <id>`, one per line, in `list_estates`' order, and
+# nothing for an empty <id>. The id is what `park.sh` files a family's record
+# under (`workspace_family_name` reads it), and it is the SAME in every layout
+# of one family: v1.1.0's folder named for the repository and the
+# display-name folder before it are two directories, two estates and ONE
+# record (#243). So this is how `resume` finds a holder its record's folder
+# no longer names, and how `status` sees one family laid out twice.
+#
+# shellcheck disable=SC2329  # `park` never asks: it files the record, and
+# never looks a holder up by it. The block is byte-identical by design.
+family_folders_with_id() {
+    local want="$1" dir child
+    [ -n "$want" ] || return 0
+    for dir in "${PROJECTS_DIRS[@]}"; do
+        [ -d "$dir" ] || continue
+        for child in "$dir"/*; do
+            [ -d "$child" ] || continue
+            is_family_folder "$child" || continue
+            yaml_scalar "$child/${child##*/}/family.yaml" id || continue
+            [ "$YAML_VALUE" = "$want" ] || continue
+            printf '%s\n' "$child"
+        done
+    done
 }
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
@@ -643,10 +735,15 @@ legs_of() {
 # ` #` cannot be inside one). The loader is not matched to the letter: it keeps
 # a QUOTED `"null"` and `'~'` as branches and reads `false` and `0` as no
 # branch, while this does the opposite for both. No real branch is named any
-# of those, so nothing here chases the difference.
+# of those, so nothing here chases the difference. (Since #243 `trim_unquote`
+# cuts that comment as well; the cut here runs first and is kept.)
 #
-# shellcheck disable=SC2329  # `park` never asks where a leg belongs;
-# `resume` and `status` do.
+# WHO ASKS IT: `resume`'s leg guard (`root_legs_ok`), `status`'s
+# `estate_repos` and `read_leg`, and `park`'s not-carried report
+# (`report_repos`, #242, PR #249) - each to know the branch a leg belongs on.
+#
+# shellcheck disable=SC2329  # a `park` from before #249 never calls it;
+# the disable can go once #249 has landed.
 leg_branch_of() {
     local root="$1" want="$2" line role="" path="" branch=""
     [ -n "$want" ] || return 0
@@ -5560,6 +5657,44 @@ read_record() {
     unrecorded_worktrees "$root" "$recorded"
 }
 
+# --- one family laid out twice ----------------------------------------------
+#
+# A FAMILY FOLDER IS NAMED FOR ITS REPOSITORY OR FOR ITS DISPLAY `name:`
+# (#236), so ONE FAMILY CAN BE ON DISK TWICE - `Quill/Quill`, openRepoShape
+# v1.1.0's layout, and `QuillWorks/QuillWorks`, the one before it, which a
+# person has after resuming a record parked from one layout on a machine that
+# has the other. Each is found by its own name, as an estate of its own. They
+# are ONE RECORD: `park.sh` files a family under `family.yaml`'s `id:` and
+# merges each member's block by that member's own id, so a park from either
+# replaces the member blocks a park from the other one wrote (#243).
+# NOTHING DE-DUPLICATES THEM, deliberately: which copy holds the work is not
+# this command's to decide, and it moves nothing. The holder's row says so,
+# naming every folder of that id and the one to keep - the folder named for
+# the repository, v1.1.0's rule and where `make siblings` moves a holder
+# (opensoft/openRepoShape#543). `resume` refuses to choose between two such
+# holders for the same reason.
+read_family_layouts() {
+    local holder="$1" id folder folders="" count=0 keep="" keeps=0
+    yaml_scalar "$holder/family.yaml" id && [ -n "$YAML_VALUE" ] || return 0
+    id="$YAML_VALUE"
+    while IFS= read -r folder; do
+        [ -n "$folder" ] || continue
+        count=$((count + 1))
+        folders="${folders:+$folders and }$folder"
+        if named_for_repository "$folder"; then
+            keep="$folder"
+            keeps=$((keeps + 1))
+        fi
+    done < <(family_folders_with_id "$id")
+    [ "$count" -gt 1 ] || return 0
+    if [ "$keeps" -eq 1 ]; then
+        keep="Keep $keep, the folder named for its repository (openRepoShape v1.1.0's layout, where \`make siblings\` moves a holder)"
+    else
+        keep="Keep the one folder named for its repository's last part (openRepoShape v1.1.0's layout, where \`make siblings\` moves a holder)"
+    fi
+    finding "family \`$id\` is laid out $count times under the projects directory, at $folders: ONE record holds it, so a park from one replaces the member blocks a park from another wrote. $keep, and move the rest aside; nothing here moves either"
+}
+
 ESTATE_FINDINGS=0
 ESTATE_REPOS=0
 #: The footer's last clause, decided once by `--fetch`: what this run changed.
@@ -5616,6 +5751,7 @@ read_one_estate() {
             read_fork "$path" "$branch"
             if [ "$label" = holder ]; then
                 read_shape "$path" family.yaml
+                read_family_layouts "$path"
             elif [ "$ESTATE_KIND" = "family" ]; then
                 read_shape "$path" project.yaml
                 read_record "$path" "root=$ESTATE_NAME/${path##*/}"

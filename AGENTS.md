@@ -55,6 +55,13 @@ current directory — and run its own `make park` / `make resume`. `resume` also
 clones and fast-forwards what is not current. Prefer them to a hand-built
 sequence, and relay their per-repository lines rather than summarising them.
 
+**ONE FAMILY CAN BE ON DISK TWICE**, in a folder named for the holder's
+repository (openRepoShape v1.1.0's rule) and in one named for its display
+`name:` (the layout before it), and both are found, as two estates. Parking
+both writes ONE record key, the family's `id:`, so the later park replaces the
+first one's member blocks. Keep only the folder named for the repository,
+which is where `make siblings` moves a holder; `status` names both as a finding.
+
 1. **`park` CREATES NOTHING and `resume` RESETS NOTHING.** With no `<Name>`,
    `park` parks the estate around the current directory. With no estate
    around it either, it lists every estate under the projects directory and

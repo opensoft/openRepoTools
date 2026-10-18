@@ -1956,9 +1956,27 @@ def test_agents_md_is_short_enough_to_be_read():
     lines; placed under the test block, which the patch rewrites, they made it
     fail at `AGENTS.md:224` (lane openRepoTools-3's candidate review; #193
     item 2).
+
+    323 -> 330 HERE, on 2026-10-18, for #243's decision on item 2 (Brett
+    Heap's word, "fix #242 and #243"): one family laid out twice is NOT
+    de-duplicated, and AGENTS.md says so instead. Seven lines, a blank and six,
+    under the opening paragraph of "Driving `park <Name>`, ...": a family's
+    folder named for its repository and one named for its display `name:` are
+    both found, as two estates; parking both writes ONE record key, the
+    family's `id:`, so the later park replaces the first one's member blocks;
+    keep only the folder named for the repository, where `make siblings` moves
+    a holder. An agent that does not know it parks both and loses one layout's
+    members from the record.
+    THE ASSEMBLY'S 347 DOES NOT MOVE HERE, although the 316 entry makes it this
+    count plus T006's twenty-four. Its file does not exist yet, and
+    `assembly-0001` no longer applies to today's AGENTS.md: hunks 6 and 8 fail
+    on `main` without these lines, and with them the same hunks apply and fail,
+    at offsets seven lines further on. The re-cut that makes the assembly's
+    file again sets its cap, and `tests/test_test_roots.py` holds 347 until
+    then.
     """
     lines = doc("AGENTS.md").read_text().splitlines()
-    cap = 323 if ROOTS.assembly is None else 347
+    cap = 330 if ROOTS.assembly is None else 347
     assert len(lines) <= cap, f"AGENTS.md is {len(lines)} lines; the cap is {cap}"
 
 
