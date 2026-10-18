@@ -402,8 +402,8 @@
 #   writer writes missing or out of shape, or an id that is not its file's
 #   (#115). `set-lane-tree`'s `--generation`/`--operation` are COMPARED with
 #   the lane's own snapshot under the mutex before the record is filed, so a
-#   poll from an operation a recovery has superseded cannot be filed over the
-#   current one.
+#   poll from an operation a recovery has superseded, or from one already
+#   finalized (`SWAPPED`, #114), cannot be filed over the current one.
 #
 # THE SEAM — A MANAGED-OWNED LANE IS NOT THIS TOOLING'S (Brett Heap's ruling of
 # 2026-10-04, verbatim: "managed ledger owns enrolled lanes; #97 owns legacy —
@@ -495,9 +495,10 @@
 #      generation or the operation id moved under this process — so a stale
 #      finalizer cannot overwrite a newer owner (openRepoTools#91).
 #      `set-lane-tree`: the `--generation`/`--operation` this observation was
-#      taken under is no longer the lane's, so a superseded poll cannot be filed
-#      over the current inventory. ONE MEANING ON THE NUMBER, in three places:
-#      you lost the race.
+#      taken under is no longer the lane's — or the lane is `SWAPPED` and the
+#      operation it names is finished (#114) — so a superseded poll cannot be
+#      filed over the current inventory. ONE MEANING ON THE NUMBER, in three
+#      places: you lost the race.
 #   8  no record — `who` found nothing; `lane-objects` has no log file for the
 #      lane; `live-holder` READ this workstation's session records and none of
 #      them holds it; `swapped` found no lane swapped on the workstation;
@@ -16881,7 +16882,9 @@ EOF
   #   2   a refusal of the arguments
   #   7   THE FENCE DID NOT MATCH — another act got there first, which is what
   #       this file already spends 7 on (`claim`'s CLAIM-LOST). Nothing was
-  #       written and the current state is printed.
+  #       written and the current state is printed. `set-lane-tree` spends it
+  #       too where the lane is `SWAPPED`: the operation its fence names is
+  #       finished (#114).
   #   8   there is no such record (no snapshot, no tree)
   #  10   THE RECORD IS THERE AND COULD NOT BE READ, which is never 8 (Copilot
   #       round 6 on #97). 8 tells a launcher *this lane was never migrated, go
@@ -17155,17 +17158,29 @@ EOF
         release_lock
         die "the worktree $slt_path was NOT recorded for lane $lane: its lifecycle snapshot is not a record this helper can read ($LSS_WHY), so the generation and operation this observation names cannot be compared with anything. Nothing was written. Upgrade this workstation's lanes-edit.sh if a newer tooling wrote it, or read the snapshot by hand." 1
       fi
-      slt_ng=""; slt_no=""
+      slt_ng=""; slt_no=""; slt_ns=""
       if [ -r "$slt_root/lane-state.yaml" ]; then
+        slt_ns="$(lane_sidecar_field "$slt_root/lane-state.yaml" state)"
         slt_ng="$(lane_sidecar_field "$slt_root/lane-state.yaml" generation)"
         slt_no="$(lane_sidecar_field "$slt_root/lane-state.yaml" operation)"
       fi
       slt_fence=""
       [ -z "$slt_g" ]  || [ "$slt_g"  = "${slt_ng:-0}" ]    || slt_fence="generation is ${slt_ng:-0} and --generation named $slt_g"
       [ -z "$slt_op" ] || [ "$slt_op" = "${slt_no:-none}" ] || slt_fence="${slt_fence:+$slt_fence; }operation is ${slt_no:-none} and --operation named $slt_op"
+      # AND THE OPERATION MUST STILL BE OPEN (opensoft/openRepoTools#114 item 1).
+      # `SWAPPING -> SWAPPED` keeps the generation AND the operation by design —
+      # it is the same operation reaching its commit point, and a fence that
+      # moved under it would refuse the very finalizer entitled to write — so the
+      # two values alone accepted a poll from that operation AFTER it was
+      # finalized: a reading taken before the commit point, filed over the
+      # inventory the commit point closed, and nothing downstream could tell. Every
+      # other transition advances the generation, so `SWAPPED` is the one state in
+      # which a matching pair names a FINISHED operation. An observation of the
+      # lane's own, under no transition, is an unfenced `set-lane-tree`.
+      [ "$slt_ns" != SWAPPED ] || slt_fence="${slt_fence:+$slt_fence; }the lane is SWAPPED: operation ${slt_no:-none} reached its commit point and its inventory is closed"
       if [ -n "$slt_fence" ]; then
         release_lock
-        die "the worktree $slt_path was NOT recorded for lane $lane: $slt_fence. The lane moved while this observation was being made — a recovery advanced it, or a second handoff did — so filing this poll now would put a superseded reading where the current one belongs, and nothing downstream could tell. Nothing was written and the tree itself was not touched. Re-read the lane (lanes-edit.sh lane-reconcile $lane) before recording anything under this operation." 7
+        die "the worktree $slt_path was NOT recorded for lane $lane: $slt_fence. The lane moved while this observation was being made — a recovery advanced it, a second handoff did, or the operation it names was finalized — so filing this poll now would put a superseded reading where the current one belongs, and nothing downstream could tell. Nothing was written and the tree itself was not touched. Re-read the lane (lanes-edit.sh lane-reconcile $lane) before recording anything under this operation; an observation filed under no transition is set-lane-tree without --generation and --operation." 7
       fi
     fi
     # AND THE SIDECAR THAT IS THERE IS NOT WALKED OVER EITHER, for the same
