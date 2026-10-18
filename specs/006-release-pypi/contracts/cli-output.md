@@ -102,7 +102,11 @@ openRepoTools: 16 of 17 placed in <dir>, and 1 left to pipx; the other 16 now co
     VERSION>`, from its own stamp, whether or not it runs inside a pipx
     venv;
   - a checkout or the one-line install names `<PAYLOAD_REPO> @
-    <PAYLOAD_REV>` for an adopted source, and `<REPO> @ <REF>` otherwise.
+    <PAYLOAD_REV>` for an adopted source, and `<REPO> @ <REF>` otherwise;
+  - a local adopted source, the code mounted in an assembly on disk, fetches
+    nothing and sets neither, so it names the pin's own pair,
+    `<PIN_SOURCE_REPOSITORY> @ <PIN_COMMIT>`, which a remote adopted run
+    reads too.
 - `<version>` is the `VERSION` of the stamp beside pipx's payload, and
   `0.0.0` when that stamp is unstamped.
 - When that stamp fails the reader, the line ends differently, and the

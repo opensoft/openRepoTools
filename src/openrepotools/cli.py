@@ -26,9 +26,11 @@ refusal printed, so the refusal runs exactly as it did before this change.
 
 IT READS NOTHING AND PASSES NOTHING ELSE. Bash finds package mode from its
 own path and reads the stamp, `_release.py`, by its own fixed grammar; no
-Python reads it, so Python and bash can never disagree about a release. This
-module sets no variable and adds no option for bash: the arguments are the
-only thing it hands on.
+Python reads it at run time, so Python and bash can never disagree about a
+release. Hatchling reads its `VERSION` at build time, and the stamp's
+docstring guard keeps that reading and bash's the same (design.md
+Decision 5). This module sets no variable and adds no option for bash: the
+arguments are the only thing it hands on.
 
 ONE NAMED LIMIT, THE C LOCALE. Under a C or POSIX locale, Python's locale
 coercion (PEP 538) sets `LC_CTYPE=C.UTF-8` before `main()` runs, so bash sees
