@@ -619,9 +619,18 @@ legs_of() {
 # Read the way `legs_of` reads the same rows — `role:` before `path:`, the
 # assembly row and a row with no role skipped — except that `branch:` may sit
 # on either side of `path:` in its row, so the answer comes the moment the
-# row has shown both. What the loader would call no branch is none here too:
-# an empty value, a `null` or `~`, and a trailing ` # comment` is cut off the
-# value first. A branch name holds no space, so ` #` cannot be inside one.
+# row has shown both, and a row that does not open with `- role:` clears what
+# the row before it left. A leg is found by its path SPELLED EITHER WAY: the
+# caller may hold `.gitmodules`' `spec` (`status`) or the manifest's own text
+# (`resume`), and `./spec` and `spec/` are one leg, so a leading `./` and a
+# trailing `/` come off both sides before they are compared.
+#
+# WHAT IS NO BRANCH: an empty value, `null`, `Null`, `NULL` or `~`, once a
+# trailing ` # comment` is cut off the value (a branch name holds no space, so
+# ` #` cannot be inside one). The loader is not matched to the letter: it keeps
+# a QUOTED `"null"` and `'~'` as branches and reads `false` and `0` as no
+# branch, while this does the opposite for both. No real branch is named any
+# of those, so nothing here chases the difference.
 #
 # shellcheck disable=SC2329  # `park` never asks where a leg belongs;
 # `resume` and `status` do.
@@ -629,6 +638,8 @@ leg_branch_of() {
     local root="$1" want="$2" line role="" path="" branch=""
     [ -n "$want" ] || return 0
     [ -f "$root/project.yaml" ] || return 0
+    want="${want#./}"
+    want="${want%/}"
     while IFS= read -r line || [ -n "$line" ]; do
         line="${line%$'\r'}"
         case "$line" in
@@ -637,8 +648,11 @@ leg_branch_of() {
             path=""
             branch=""
             ;;
+        '  - '*) role=""; path=""; branch="" ;;
         '    path:'*)
             path="$(trim_unquote "${line#*:}")"
+            path="${path#./}"
+            path="${path%/}"
             [ -n "$role" ] || path=""
             [ "$role" != "assembly" ] || path=""
             ;;
@@ -700,11 +714,13 @@ declared_legs() {
         --get-regexp '^submodule\..*\.path$' 2>/dev/null || true)
 }
 
-# `label<TAB>branch<TAB>path` per repository this estate reads — THE SAME
-# ENUMERATION `park`'s not-carried report makes, with two rows it does not
-# need: `missing`, for a member with no working clone beside the holder, and
-# `unmounted`, for a leg declared and not there. Both are things out of sync
-# with the estate as recorded, which is what this command is for.
+# `label<TAB>branch<TAB>path` per repository this estate reads — `park`'s
+# not-carried report's enumeration, with two rows it does not need: `missing`,
+# for a member with no working clone beside the holder, and `unmounted`, for a
+# leg declared and not there. Both are things out of sync with the estate as
+# recorded, which is what this command is for. A LEG'S BRANCH COLUMN DIFFERS
+# from `park`'s: here it is the branch the leg is placed on (`leg_branch_of`),
+# where `park`'s report gives every leg the root's (#242).
 #
 # `members/<Project>` INSIDE A FAMILY HOLDER IS DELIBERATELY NOT HERE, for
 # park's reason: that copy is pinned and DETACHED, for `bootstrap` and

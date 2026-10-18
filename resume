@@ -98,8 +98,9 @@ With no <Name> the estate around the current directory is refreshed.
 WHAT RESUME NEVER DOES: it resets nothing and it moves nobody's HEAD. A clone
 that is dirty, or on a branch that is not its tracking branch, is REFUSED BY
 NAME and skipped - it is neither fast-forwarded, nor bootstrapped, nor given
-the verb - and so is a root one of whose LEGS is off its tracking branch,
-because that root's own `make bootstrap` would move the leg. The rest of the
+the verb - and so is a root one of whose LEGS is off the branch that root's own
+`make bootstrap` places it on (its row's `branch:`, else the root's
+`tracking_branch`), because bootstrap would move the leg. The rest of the
 estate still comes back.
 USAGE
 }
@@ -481,9 +482,18 @@ legs_of() {
 # Read the way `legs_of` reads the same rows — `role:` before `path:`, the
 # assembly row and a row with no role skipped — except that `branch:` may sit
 # on either side of `path:` in its row, so the answer comes the moment the
-# row has shown both. What the loader would call no branch is none here too:
-# an empty value, a `null` or `~`, and a trailing ` # comment` is cut off the
-# value first. A branch name holds no space, so ` #` cannot be inside one.
+# row has shown both, and a row that does not open with `- role:` clears what
+# the row before it left. A leg is found by its path SPELLED EITHER WAY: the
+# caller may hold `.gitmodules`' `spec` (`status`) or the manifest's own text
+# (`resume`), and `./spec` and `spec/` are one leg, so a leading `./` and a
+# trailing `/` come off both sides before they are compared.
+#
+# WHAT IS NO BRANCH: an empty value, `null`, `Null`, `NULL` or `~`, once a
+# trailing ` # comment` is cut off the value (a branch name holds no space, so
+# ` #` cannot be inside one). The loader is not matched to the letter: it keeps
+# a QUOTED `"null"` and `'~'` as branches and reads `false` and `0` as no
+# branch, while this does the opposite for both. No real branch is named any
+# of those, so nothing here chases the difference.
 #
 # shellcheck disable=SC2329  # `park` never asks where a leg belongs;
 # `resume` and `status` do.
@@ -491,6 +501,8 @@ leg_branch_of() {
     local root="$1" want="$2" line role="" path="" branch=""
     [ -n "$want" ] || return 0
     [ -f "$root/project.yaml" ] || return 0
+    want="${want#./}"
+    want="${want%/}"
     while IFS= read -r line || [ -n "$line" ]; do
         line="${line%$'\r'}"
         case "$line" in
@@ -499,8 +511,11 @@ leg_branch_of() {
             path=""
             branch=""
             ;;
+        '  - '*) role=""; path=""; branch="" ;;
         '    path:'*)
             path="$(trim_unquote "${line#*:}")"
+            path="${path#./}"
+            path="${path%/}"
             [ -n "$role" ] || path=""
             [ "$role" != "assembly" ] || path=""
             ;;
