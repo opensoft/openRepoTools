@@ -7162,6 +7162,8 @@ gd6_log="$(cat "$LOGD/repoGD-6.md" 2>/dev/null || :)"
 has   "…and the destination's log records a RESUMED by the transcript BOUND" \
       "$(printf '%s\n' "$gd6_log" | grep '^RESUMED')" "session $GD_LANE_ID@"
 hasnt "…never by the transcript its row already had, which nobody is in" "$gd6_log" "$GD_ROW6_ID"
+is    "…and that RESUMED is the log's one lane-kind line, so nothing stamped it twice" \
+      "$(printf '%s\n' "$gd6_log" | grep -cE '^(STARTED|RESUMED) ' || :)" 1
 gd6_row="$("$E" register-row repoGD-6 2>/dev/null || :)"
 has   "…the row's stamp names the bound transcript too" "$gd6_row" "RESUMED by $GD_LANE_ID"
 hasnt "…and not the old one" "$gd6_row" "RESUMED by $GD_ROW6_ID"
@@ -7172,6 +7174,48 @@ is    "…and the session cell ENDS on it, which is what the next resume follows
 has   "…keeping the id it had, in front of it, as the cell's history" "$gd6_row" "$GD_ROW6_ID"
 has   "…which the guard reads back and says" "$err" "repoGD-6's session cell now ends on $GD_LANE_ID"
 hasnt "…and the guard-only flag is in no command printed for a person to type" "$err" "--bind $GD_LANE_ID"
+is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
+unset FAKE_TMUX_RENAME_STICKS FAKE_TMUX_NAME_FILE
+export FAKE_TMUX_WINDOW_NAME=repoGD-1
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
+
+# ---- CHOICE 2 INTO A LANE WITH NO ROW (openRepoTools#70).
+#
+# The binding mode's other door. A person who renames their session to a lane
+# the register does not have is offered to CREATE it, so the guard's `yes` runs
+# `lane-start --no-launch --bind` for a lane with no row at all, and the row that
+# run creates is the only record the lane has. Before `--bind`, step 3b's veto 1
+# refused this session's uuid — the row being LEFT still records it — so the new
+# row was born naming an id `lane-start` MINTED for a session nobody would ever
+# launch: its session cell began with that id, its `STARTED by` stamp and the
+# lane's first log line named it, and the guard then appended this session to
+# the cell behind it. In the binding mode the row is created with THIS uuid as
+# the one transcript its cell names, stamped STARTED by it (a lane with no row
+# has nothing to resume, so the verb is STARTED and not RESUMED), and the lane's
+# log opens with one lane-kind line, naming it.
+export FAKE_TMUX_WINDOW_NAME=repoGD-1
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
+gd_rec "$GD_LANE_ID" repoGD-8 user "$GD_NEW_MS"
+export FAKE_TMUX_RENAME_STICKS=1 FAKE_TMUX_NAME_FILE="$SANDBOX/tmux-window-name"
+printf 'repoGD-1\n' > "$FAKE_TMUX_NAME_FILE"
+gd_run "$GD_LANE_ID"
+is    "a rename to a lane with no row is the offer" "$rc" 2
+has   "…offering to create it" "$err" "2) adjust the lane to session repoGD-8 (create or move to this lane)"
+gd_run "$GD_LANE_ID" "2"
+is    "…and \`yes\` moves the window" "$rc" 2
+has   "…saying so" "$err" "MOVED: this window is now lane repoGD-8"
+gd8_row="$("$E" register-row repoGD-8 2>/dev/null || :)"
+has   "…into a row created with the bound transcript in its session cell" \
+      "$(printf '%s\n' "$gd8_row" | awk -F'|' '{print $3}')" "harness $GD_LANE_ID"
+is    "…as the one transcript uuid that cell names, with no id minted for a session nobody runs" \
+      "$(printf '%s\n' "$gd8_row" | awk -F'|' '{print $3}' | grep -oiE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | grep -c . || :)" 1
+has   "…stamped STARTED by the bound transcript, a lane with no row having nothing to resume" "$gd8_row" "STARTED by $GD_LANE_ID"
+gd8_log="$(cat "$LOGD/repoGD-8.md" 2>/dev/null || :)"
+has   "…and the new lane's log records a STARTED by the transcript BOUND" \
+      "$(printf '%s\n' "$gd8_log" | grep '^STARTED')" "session $GD_LANE_ID@"
+is    "…as that log's one lane-kind line" "$(printf '%s\n' "$gd8_log" | grep -cE '^(STARTED|RESUMED) ' || :)" 1
+has   "…which the guard reads back as lane-start's own write" "$err" "repoGD-8's session cell now ends on $GD_LANE_ID, written by lane-start's binding mode"
+hasnt "…and nothing minted an id on the way through" "$err" "minted session id"
 is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
 unset FAKE_TMUX_RENAME_STICKS FAKE_TMUX_NAME_FILE
 export FAKE_TMUX_WINDOW_NAME=repoGD-1
