@@ -302,6 +302,12 @@ cat > "$SANDBOX/fakebin/tmux" <<'FAKE'
 #
 # AND `send-keys` IS LOGGED, exactly as `rename-window` always was: the lock and
 # the offer's `no` are acts on a pane and this is how a case sees them.
+#
+# AND A RENAME CAN BE REFUSED (opensoft/openRepoTools#80 item 11). Under
+# `$FAKE_TMUX_RENAME_FAIL=1` the `rename-window` is still LOGGED — a case reads
+# that it was attempted — and then refused the way tmux refuses one, on stderr
+# with a nonzero exit, and the name does not stick. Unset, nothing changes for
+# any case written before it.
 case "${1-}" in
   list-windows)
     if [ -n "${FAKE_TMUX_WINDOWS:-}" ]; then
@@ -358,6 +364,10 @@ case "${1-}" in
     esac ;;
   rename-window)
     printf 'rename-window %s\n' "${2-}" >> "${FAKE_TMUX_LOG:-/dev/null}"
+    if [ "${FAKE_TMUX_RENAME_FAIL:-0}" = 1 ]; then
+      printf 'no current client\n' >&2
+      exit 1
+    fi
     if [ "${FAKE_TMUX_RENAME_STICKS:-0}" = 1 ] && [ -n "${FAKE_TMUX_NAME_FILE:-}" ]; then
       printf '%s\n' "${2-}" > "$FAKE_TMUX_NAME_FILE"
     fi ;;
@@ -630,6 +640,14 @@ add_seed_row "| \`repoL-3\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026
 add_seed_row "| \`repoL-4\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoL/x.md | ACTIVE |"
 add_seed_row "| \`repoL-5\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoL/x.md | ACTIVE |"
 add_seed_row "| \`repoL-6\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoL/x.md | ACTIVE |"
+# repoChain-1/2/3 — opensoft/openRepoTools#74: CHAINS of takeovers, every link
+# naming the lane it displaced as `← lane:<x>` (the payload issue #30's
+# dead-lane takeover writes), all three lanes dead (RETIRED, no live session).
+# repoChain-4 is the taker that makes the third link of the chain below.
+add_seed_row "| \`repoChain-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoChain/x.md | ACTIVE |"
+add_seed_row "| \`repoChain-2\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoChain/x.md | ACTIVE |"
+add_seed_row "| \`repoChain-3\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoChain/x.md | ACTIVE |"
+add_seed_row "| \`repoChain-4\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoChain/x.md | ACTIVE |"
 add_seed_row "| \`repoM-1\` | harness \`$MLIVE_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoM/x.md | ACTIVE |"
 # repoN-1 / repoN-2 — issue #30's OTHER terminal verb: a plain `lane-end`
 # (no --retire) writes ENDED, never RETIRED, and `holder_is_dead` names both
@@ -940,6 +958,32 @@ NOW_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'TAKEOVER — lane repoL-5, session %s@Eagle, %s, opensoft/repoL#40 ← lane:repoL-0\n' "$DEAD_ID" "$OLD_UTC"
   printf 'RETIRED — lane repoL-5, session %s@Eagle, %s, lane:repoL-5\n' "$DEAD_ID" "$NOW_UTC"
 } > "$WIP/lanes/log/repoL-5.md"
+# repoChain-1/2/3 — opensoft/openRepoTools#74, three objects:
+#   #1  a chain: repoChain-1 claims, repoChain-2 takes it over from repoChain-1,
+#       repoChain-3 from repoChain-2; repoChain-4 makes the third link below.
+#   #2  the race README-lanes.md calls "Known, deliberate": repoChain-2 AND
+#       repoChain-3 each took over repoChain-1's claim, neither naming the other.
+#   #3  two TAKEOVERs naming EACH OTHER, which no file order can put in order.
+{ printf '# lane repoChain-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoChain-1, session %s@Eagle, %s, lane:repoChain-1 → home opensoft/repoChain; estate repoChain\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'CLAIMED — lane repoChain-1, session %s@Eagle, %s, opensoft/repoChain#1\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'CLAIMED — lane repoChain-1, session %s@Eagle, %s, opensoft/repoChain#2\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'RETIRED — lane repoChain-1, session %s@Eagle, %s, lane:repoChain-1\n' "$DEAD_ID" "$NOW_UTC"
+} > "$WIP/lanes/log/repoChain-1.md"
+{ printf '# lane repoChain-2 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoChain-2, session %s@Eagle, %s, lane:repoChain-2 → home opensoft/repoChain; estate repoChain\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'TAKEOVER — lane repoChain-2, session %s@Eagle, %s, opensoft/repoChain#1 ← lane:repoChain-1\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'TAKEOVER — lane repoChain-2, session %s@Eagle, %s, opensoft/repoChain#2 ← lane:repoChain-1\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'TAKEOVER — lane repoChain-2, session %s@Eagle, %s, opensoft/repoChain#3 ← lane:repoChain-3\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'RETIRED — lane repoChain-2, session %s@Eagle, %s, lane:repoChain-2\n' "$DEAD_ID" "$NOW_UTC"
+} > "$WIP/lanes/log/repoChain-2.md"
+{ printf '# lane repoChain-3 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoChain-3, session %s@Eagle, %s, lane:repoChain-3 → home opensoft/repoChain; estate repoChain\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'TAKEOVER — lane repoChain-3, session %s@Eagle, %s, opensoft/repoChain#1 ← lane:repoChain-2\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'TAKEOVER — lane repoChain-3, session %s@Eagle, %s, opensoft/repoChain#2 ← lane:repoChain-1\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'TAKEOVER — lane repoChain-3, session %s@Eagle, %s, opensoft/repoChain#3 ← lane:repoChain-2\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'RETIRED — lane repoChain-3, session %s@Eagle, %s, lane:repoChain-3\n' "$DEAD_ID" "$NOW_UTC"
+} > "$WIP/lanes/log/repoChain-3.md"
 # repoN-1 — issue #30's OTHER dead verdict: ENDED (a plain `lane-end`, no
 # `--retire`), no live session, one CLAIMED issue left open.
 { printf '# lane repoN-1 — object log (lane-collision-protocol Amendment 7)\n'
@@ -1619,25 +1663,63 @@ L6="$(cat "$LOGD/repoL-6.md")"
 has  "…writing a TAKEOVER line" "$L6" "TAKEOVER — lane repoL-6, session "
 has  "…referencing the dead lane with ←, not the lane it had itself taken over from" "$L6" "opensoft/repoL#40 ← lane:repoL-5"
 hasnt "…never the earlier dispossessed lane repoL-5 never held directly" "$L6" "← lane:repoL-0"
-# THE WRITE IS RIGHT; THE DERIVED VIEW IS NOT (filed as opensoft/openRepoTools#74,
-# claimed, not fixed here): `superseded_by`'s own "does some OTHER lane's last
-# line here read TAKEOVER" test does not stop at the CURRENT one — repoL-5's
-# now-stale TAKEOVER (over repoL-0) is still read as proof that repoL-6 is
-# ALSO superseded, so `holders_of` drops BOTH ends of the chain instead of
-# only the one repoL-6 actually displaced. This is a pre-existing gap in
-# `superseded_by` (it has always compared positions across different lanes'
-# own files this way); PR #61's broadening of the open-verb gate to admit a
-# dead lane's own TAKEOVER (issue #30) is what makes a CHAIN of two takeovers
-# reachable from one ordinary `--force`, where before only the pre-existing
-# simultaneous-race shape (`repoG-1`/`repoG-2` above) could produce two lanes
-# each ending on TAKEOVER. Nothing here is corrupted: every line above is
-# correct and in the right order, and this asserts the CURRENT, honest
-# (if wrong) reported count rather than assuming the write's correctness
-# implies the read's.
+# THE WRITE IS RIGHT, AND SINCE opensoft/openRepoTools#74 SO IS THE READ: a
+# chain of takeovers resolves to its LAST LINK. repoL-5's own TAKEOVER (over
+# repoL-0) is displaced by repoL-6's, which names it; repoL-6's is displaced by
+# nothing, because no standing TAKEOVER names repoL-6. Until #74 this block
+# pinned ZERO holders as the known gap: `superseded_by` asked only "does some
+# OTHER lane's last line here read TAKEOVER", read repoL-5's stale TAKEOVER as
+# proof that repoL-6 was superseded too, and `holders_of` dropped BOTH ends of
+# the chain — reachable from one ordinary `--force` since PR #61 (issue #30)
+# let a dead lane's own TAKEOVER be taken over.
 run "$E" who "opensoft/repoL#40"
-is   "…but who reports ZERO holders, not one (opensoft/openRepoTools#74)" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 0
-hasnt "…repoL-5's own dead TAKEOVER is not reported as a live hold either way" "$out" "HOLDS    lane repoL-5"
-hasnt "…and neither, wrongly, is repoL-6's — the gap #74 tracks, not a new one here" "$out" "HOLDS    lane repoL-6"
+is   "…and who reports exactly ONE holder of the chain, not zero (#74)" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 1
+has  "…the chain's last link, repoL-6" "$out" "HOLDS    lane repoL-6"
+hasnt "…repoL-5's own dead TAKEOVER is not reported as a live hold" "$out" "HOLDS    lane repoL-5"
+has  "…repoL-5 reads as superseded by repoL-6, the TAKEOVER that names it" \
+     "$(printf '%s\n' "$out" | grep '^super\.   lane repoL-5 ')" "superseded by TAKEOVER (lane:repoL-6)"
+run "$E" who --lane repoL-6
+is   "who --lane on the chain's last link exits 0" "$rc" 0
+has  "…lists its TAKEOVER" "$out" "opensoft/repoL#40"
+hasnt "…and never tells the holder it was taken over by the lane it took the object from" "$out" "taken over by"
+
+# --------- opensoft/openRepoTools#74: a THREE-link chain, its third link made
+# here by `claim --force`. Read one-hop, repoChain-2 and repoChain-3 displaced
+# EACH OTHER, the object read FREE, and this claim was granted as a plain
+# CLAIMED over a held object — the one outcome Rule 1 exists to prevent.
+# Followed to its last link, repoChain-3 is the one holder, and, dead, it is
+# taken over like any dead lane's hold.
+run env LANES_LANE=repoChain-4 "$E" claim "opensoft/repoChain#1" --no-github --force
+is   "--force takes over the LAST link of a chain of two TAKEOVERs (#74)" "$rc" 0
+LC4="$(cat "$LOGD/repoChain-4.md" 2>/dev/null)"
+has  "…writing a TAKEOVER, not a CLAIMED as if the object were free" "$LC4" "TAKEOVER — lane repoChain-4, session "
+has  "…naming the chain's last link, never an earlier one" "$LC4" "opensoft/repoChain#1 ← lane:repoChain-3"
+run "$E" who "opensoft/repoChain#1"
+is   "…and who reports exactly ONE holder of the three-link chain" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 1
+has  "…the third link, repoChain-4" "$out" "HOLDS    lane repoChain-4"
+has  "…the second link superseded by the third, which names it" \
+     "$(printf '%s\n' "$out" | grep '^super\.   lane repoChain-3 ')" "superseded by TAKEOVER (lane:repoChain-4)"
+has  "…the first link superseded by the second, which names it" \
+     "$(printf '%s\n' "$out" | grep '^super\.   lane repoChain-2 ')" "superseded by TAKEOVER (lane:repoChain-3)"
+has  "…and the CLAIMED the chain began with names the lane that holds it NOW" \
+     "$(printf '%s\n' "$out" | grep '^super\.   lane repoChain-1 ')" "superseded by TAKEOVER (lane:repoChain-4)"
+
+# Two TAKEOVERs of one stale claim, NEITHER naming the other: README-lanes.md's
+# "Known, deliberate" race, BOTH holders and the conflict visible. A TAKEOVER is
+# displaced only by one that names its lane (#74); the one-hop test had each
+# displace the other since PR #61 (issue #30) widened its gate, and `who` called
+# the object FREE — so `claim` granted a third lane a plain CLAIMED over it.
+run "$E" who "opensoft/repoChain#2"
+is   "two takers of one claim, neither naming the other, are BOTH holders" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 2
+has  "…the state is HELD, never FREE" "$out" "state    HELD"
+run env LANES_LANE=repoChain-4 "$E" claim "opensoft/repoChain#2" --no-github --force
+is   "…and --force refuses an object two lanes hold" "$rc" 2
+has  "…saying so" "$err" "is held by 2 lanes"
+hasnt "…writing nothing" "$(cat "$LOGD/repoChain-4.md" 2>/dev/null)" "opensoft/repoChain#2"
+# And two TAKEOVERs that name EACH OTHER: nothing in two files says which was
+# written last, so both hold, visibly, rather than displacing each other.
+run "$E" who "opensoft/repoChain#3"
+is   "two TAKEOVERs naming EACH OTHER are both holders, never zero" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 2
 
 # repoN-1's OWN terminal verb is ENDED, not RETIRED (Copilot round 3, PR #61:
 # `holder_is_dead`'s case accepts both, but only RETIRED was ever seeded).
@@ -1676,6 +1758,97 @@ rm -f "$sessions_dir/$LIVE_PID-repoKg1.json"
 run env LANES_LANE=repoKg-2 LANES_HOST=elsewhere-host LANES_CONTAINER=this-bench "$E" claim "opensoft/repoKg#1" --no-github --force
 is    "…while the same window-gone binding with nothing live here is taken over" "$rc" 0
 has   "…writing a TAKEOVER that says why" "$(cat "$LOGD/repoKg-2.md")" "its binding's window is gone from this host's tmux"
+
+# ---- opensoft/openRepoTools#67: A REGISTER NOBODY COULD READ IS NOT A LANE WITH NO IDS
+#
+# `session_ids_of_lane` and `session_ids_local_of_lane` answered the same EMPTY
+# set for "this lane has no row" and "the register could not be read", and the
+# two callers that read an empty set as a VERDICT were fail-open on it:
+# `holder_is_dead` handed it to `live_holder`, whose 8 then confirmed dead a
+# lane nobody had checked, and `duplicate_holder_pids` answered "no duplicate"
+# without asking the process table anything.
+#
+# ITS OWN WORKSPACE, because the empty set needs BOTH halves of the union to
+# come back empty: the published register unreadable — a `git` that fails the
+# one `show` of it, as the archive's case below does; `chmod 000` is no fixture
+# under root, and a dangling link fails the dispatcher's `[ -f ]` guard before
+# any of this runs — and THIS checkout's own copy without the row, because a
+# peer published it and this clone has not pulled (R19's ordinary case). In the
+# main sandbox every row is in the working tree too, so the local half answers
+# for the published one and the hole never opens there.
+R67_ORIGIN="$SANDBOX/r67-origin.git"; R67_WIP="$SANDBOX/r67wip"; R67_PEER="$SANDBOX/r67peer"
+R67_ID="aaaa0067-6767-4000-8000-aaaa00676767"
+git init -q --bare -b main "$R67_ORIGIN"
+git clone -q "$R67_ORIGIN" "$R67_PEER" 2>/dev/null
+git -C "$R67_PEER" config user.email "test@example.invalid"
+git -C "$R67_PEER" config user.name  "lane helper tests"
+mkdir -p "$R67_PEER/lanes/log"
+{ printf '# LANES.md — the issue #67 sandbox\n\n'
+  printf '| lane | session id | workstation / env / user | started (UTC) | objects owned | handoff path | state |\n'
+  printf '|---|---|---|---|---|---|---|\n'
+  printf '| `repo67-2` | harness `%s` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repo67/2.md | ACTIVE |\n' "$DEAD_ID"
+} > "$R67_PEER/lanes/LANES.md"
+git -C "$R67_PEER" add -A >/dev/null 2>&1
+git -C "$R67_PEER" commit -q -m "seed the #67 register" >/dev/null 2>&1
+git -C "$R67_PEER" push -q origin main 2>/dev/null
+git clone -q "$R67_ORIGIN" "$R67_WIP" 2>/dev/null
+git -C "$R67_WIP" config user.email "test@example.invalid"
+git -C "$R67_WIP" config user.name  "lane helper tests"
+# THE PEER PUBLISHES repo67-1 AFTER THAT CLONE: repoK-3's shape — its log ends
+# RETIRED with an OPENED PR left behind, and a live session on this workstation
+# still carries its id — so the one right answer to `--force` is a refusal.
+printf '| `repo67-1` | harness `%s` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repo67/1.md | ACTIVE |\n' "$R67_ID" >> "$R67_PEER/lanes/LANES.md"
+{ printf '# lane repo67-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repo67-1, session %s@Eagle, %s, lane:repo67-1 → home opensoft/repo67; estate repo67\n' "$R67_ID" "$OLD_UTC"
+  printf 'OPENED — lane repo67-1, session %s@Eagle, %s, opensoft/repo67#5 ← opensoft/repo67#4\n' "$R67_ID" "$OLD_UTC"
+  printf 'RETIRED — lane repo67-1, session %s@Eagle, %s, lane:repo67-1\n' "$R67_ID" "$NOW_UTC"
+} > "$R67_PEER/lanes/log/repo67-1.md"
+git -C "$R67_PEER" add -A >/dev/null 2>&1
+git -C "$R67_PEER" commit -q -m "the peer publishes repo67-1" >/dev/null 2>&1
+git -C "$R67_PEER" push -q origin main 2>/dev/null
+write_record "$sessions_dir/$LIVE_PID-repo671.json" "$R67_ID" "$LIVE_PID" "$live_start" "r67sess:@9.%9" "repo67-1" "idle"
+is    "the #67 fixture: this checkout's own register has no row for repo67-1" \
+      "$(command grep -c '^| `repo67-1`' "$R67_WIP/lanes/LANES.md" || :)" 0
+mkdir -p "$SANDBOX/r67-gitfail"
+cat > "$SANDBOX/r67-gitfail/git" <<'FAKE'
+#!/usr/bin/env bash
+case " $* " in
+  *" show origin/main:lanes/LANES.md "*) exit 128 ;;
+esac
+exec "${REAL_GIT:?}" "$@"
+FAKE
+chmod +x "$SANDBOX/r67-gitfail/git"
+r67()  { env LANES_WORKSPACE_ROOT="$R67_WIP" LANES_LANE=repo67-2 LANES_SESSION="$DEAD_ID" "$@"; }
+r67x() { r67 env PATH="$SANDBOX/r67-gitfail:$PATH" REAL_GIT="$(command -v git)" "$@"; }
+R67_PS="$(printf '%s\t%s\t%s' 900671 1 "claude --session-id $R67_ID --fork-session --resume /nonexistent/projects/$R67_ID.jsonl")"
+
+# `duplicate-holder` FIRST, because it writes nothing. With the register
+# readable and no `--fork-session` process at all, 8 is the honest none — the
+# process table's own answer, read.
+run r67 "$E" duplicate-holder repo67-1
+is    "duplicate-holder over a readable register with no fork-session process: 8, none" "$rc" 8
+# …and over the register nobody could read, with a stray in the table, it is NOT
+# that 8: the ids are the whole search, and none of them was read.
+run r67x env FAKE_PGREP_F_PIDS=900671 FAKE_PS_RECORDS="$R67_PS" "$E" duplicate-holder repo67-1
+is    "duplicate-holder over an UNREADABLE register is 1, never the 8 that means none is live" "$rc" 1
+has   "…naming the read that failed" "$err" "the register (origin/main:lanes/LANES.md"
+has   "…in the words that stop a reader believing there is none" "$err" "That is NOT 'no duplicate holder is live'"
+is    "…and listing nothing" "$out" ""
+
+r67_head="$(git -C "$R67_ORIGIN" rev-parse main)"
+run r67 "$E" claim "opensoft/repo67#5" --no-github --force
+is    "--force over a readable register refuses repo67-1: RETIRED, and a live session still backs it" "$rc" 2
+hasnt "…never as a dead lane's hold" "$err" "takeover of a dead lane's hold"
+run r67x "$E" claim "opensoft/repo67#5" --no-github --force
+is    "--force over an UNREADABLE register refuses too: it never confirms the lane dead" "$rc" 2
+has   "…naming the read that failed" "$err" "the register (origin/main:lanes/LANES.md"
+has   "…and saying what that is not" "$err" "That is NOT 'it has no session ids'"
+hasnt "…never as a dead lane's hold" "$err" "takeover of a dead lane's hold"
+hasnt "…never blaming a live session nobody looked for" "$err" "is not a stale claim"
+is    "…and nothing is written: no TAKEOVER line" \
+      "$(cat "$R67_WIP/lanes/log/repo67-2.md" 2>/dev/null | command grep -c 'opensoft/repo67#5' || :)" 0
+is    "…and no push" "$(git -C "$R67_ORIGIN" rev-parse main)" "$r67_head"
+rm -f "$sessions_dir/$LIVE_PID-repo671.json"
 
 # ------------------------------------------- LANDING, LANDED, who --landing
 
@@ -5999,6 +6172,24 @@ has  "…naming it as one" "$err" "unknown option '-repoA11-1'"
 run env -u TMUX "$LANE" -- "-repoA11-1" </dev/null
 is   "…and past \`--\`, where it can only be a name, the helper's own fence refuses it" "$rc" 2
 has  "…in lanes-edit.sh's words again" "$err" "not opening with . or -"
+# A FLAG WHERE A VALUE BELONGS IS A FLAG (opensoft/openRepoTools#80 item 1,
+# Copilot's review of workBenches#91 at `lane:215`). `lane --dir --all` took
+# `--all` as the checkout, so the listing of every repository a person asked
+# for never ran; `--force --dry-run` was a REAL takeover whose why was the word
+# `--dry-run`. Each spaced value arm refuses a `-`-led value with 64 and names
+# the `=` spelling, which is how a value that really begins with `-` is given.
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX "$LANE" --dir --all </dev/null
+is   "lane --dir --all is refused as a usage error, not run with a checkout called --all" "$rc" 64
+has  "…naming the flag that would have swallowed another" "$err" "--dir needs a value and '--all' is a flag"
+has  "…and the = spelling that gives a dash-led value back" "$err" "--dir=--all"
+run env -u TMUX "$LANE" repoA11-1 --force --dry-run </dev/null
+is   "…and so is --force taking a flag as its WHY" "$rc" 64
+has  "…in the same words" "$err" "--force needs a value and '--dry-run' is a flag"
+run env -u TMUX "$LANE" repoA11-1 --wait --switch </dev/null
+is   "…and --wait taking one as its seconds" "$rc" 64
+has  "…named as the flag it is, not as a number it is not" "$err" "--wait needs a value and '--switch' is a flag"
+is   "…and none of the three launched anything" "$(cat "$FAKE_PCLAUDE_LOG")" ""
 
 # CASE 1 — A FRESH TERMINAL OUTSIDE TMUX. No window, no record of one, nothing
 # to guess from.
@@ -6964,6 +7155,43 @@ is    "…while session-start on the same missing register still exits 0, as it 
 gd_run "$GD_LANE_ID" "do the work" ""
 is    "a payload naming no cwd at all is an indeterminate read, not 'outside the root'" "$rc" 2
 has   "…and says which read did not happen" "$err" "carried no \`cwd\`"
+
+# ---- A REGISTER THAT IS THERE AND WHOSE TEXT COULD NOT BE READ (#60).
+#
+# The file passes the test above, so the guard went on to the table with NO
+# ROWS and refused by its LAST arm — "the harness minted a new transcript",
+# cured by a `lane-start --no-launch` that cannot mend a read. `LANES_DIR` keeps
+# the logs and the alias table where they are, and the file's own name is on no
+# published tree, so `register_text` falls through to the working file.
+# EMPTY IS THE FIXTURE THAT HOLDS ON EVERY HOST AND UID: it renders exactly what
+# a file this checkout cannot open renders. A mode-000 file is the issue's own
+# case, and root reads one, so that case runs only where it means something. A
+# dangling link is no fixture here: `[ -f ]` is false for it, which the refusal
+# above already answers.
+gd_rec "$GD_LANE_ID" repoGD-1 user "$GD_OLD_MS"
+gd_unread_run() {
+  out="$(printf "$gd_hook" "$GD_LANE_ID" "$HOME/projects/repoGD" "do the work" \
+    | LANES_DIR="$WIP/lanes" LANES_FILE="$SANDBOX/register-60.md" "$E" guard 2>"$SANDBOX/stderr")"; rc=$?
+  err="$(cat "$SANDBOX/stderr")"
+}
+: > "$SANDBOX/register-60.md"
+gd_unread_run
+is    "a register whose TEXT comes back empty blocks the prompt with 2" "$rc" 2
+has   "…naming the read, not a row" "$err" "the register's TEXT could not be read"
+has   "…with the window it did read in the triple" "$err" "window   gdsess:@12 'repoGD-1'"
+has   "…and the row as the one half nobody read" "$err" "row      not read"
+hasnt "…and never the table's last arm, whose cure cannot mend a read" "$err" "the harness minted a new transcript"
+has   "…with safe-mode recovery" "$err" "claude --safe-mode"
+if [ "$(id -u)" = 0 ]; then
+  skip "a register file this checkout cannot open is the same refusal" "running as root, which can read a mode-000 file"
+else
+  cp -- "$LANES" "$SANDBOX/register-60.md"; chmod 000 "$SANDBOX/register-60.md"
+  gd_unread_run
+  chmod 644 "$SANDBOX/register-60.md"
+  is    "a register file this checkout cannot open is the same refusal" "$rc" 2
+  has   "…naming the same read" "$err" "the register's TEXT could not be read"
+fi
+rm -f "$SANDBOX/register-60.md"
 
 # ---- (b)'s LAST ROW: NOT INSIDE TMUX AT ALL (ratified decision D2, "Refuse"),
 # AND THE READ THAT DID NOT HAPPEN IS NOT THE SAME STATE.
@@ -8072,6 +8300,27 @@ run env LANES_LANE=repotwo-1 LANES_SESSION="$DEAD_ID" "$E" log PAUSED lane:repot
 is   "…and a WRITE under that name is refused before it appends anything" "$rc" 2
 has  "…naming both files it will not choose between" "$err" "differ only by case"
 is   "…writing no log here" "$(ls "$LOGD" | grep -ci '^repotwo-1\.md$' || :)" 0
+# AND THE `SessionStart` HOOK, WHOSE RENAME TEST READS THIS LOG FOR THE BINDING
+# (#60). The read that failed was folded into "no binding", so a person's
+# rename to another lane — here made a day ago, BEFORE the STARTED the row's own
+# log carries — was called "newer than this window's binding". It names the
+# read now, and still types nothing over the person's own name.
+a15_hook_id="aaaa0060-0000-4000-8000-aaaa00600000"
+a15_save_win="${FAKE_TMUX_WINDOW-}"; a15_save_name="${FAKE_TMUX_WINDOW_NAME-}"; a15_save_wins="${FAKE_TMUX_WINDOWS-}"
+export FAKE_TMUX_WINDOW="gdsess:@12" FAKE_TMUX_WINDOW_NAME=repoTwo-1
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoTwo-1	%12	claude"
+write_record_a12 "$sessions_dir/two.json" "$a15_hook_id" "$LIVE_PID" "$live_start" interactive "gdsess:@12.%12" \
+  repoLate-1 user "$(( gd_now_ms - 86400000 ))"
+gd_before="$(gd_keys)"
+out="$(printf '{"session_id":"%s","source":"resume","cwd":"%s/projects/repoGD"}' "$a15_hook_id" "$HOME" | "$E" session-start 2>/dev/null)"; rc=$?
+is    "the SessionStart hook still exits 0 on a lane whose log cannot be read" "$rc" 0
+has   "…naming that read" "$out" "lane repoTwo-1's object log could not be read"
+hasnt "…never calling a person's rename newer than a binding nobody read" "$out" "newer than this window's binding"
+is    "…and typing nothing over that name" "$(gd_keys)" "$gd_before"
+rm -f "$sessions_dir/two.json"
+if [ -n "$a15_save_wins" ]; then export FAKE_TMUX_WINDOWS="$a15_save_wins"; else unset FAKE_TMUX_WINDOWS; fi
+if [ -n "$a15_save_win" ]; then export FAKE_TMUX_WINDOW="$a15_save_win"; else unset FAKE_TMUX_WINDOW; fi
+if [ -n "$a15_save_name" ]; then export FAKE_TMUX_WINDOW_NAME="$a15_save_name"; else unset FAKE_TMUX_WINDOW_NAME; fi
 a15_unpublish "lanes/log/repoTwo-1.md" "lanes/log/repotwo-1.md"
 
 # ---- THE PAIR IS PUBLISHED AND THIS CHECKOUT HAS ONE ROW ---------------------
@@ -9566,6 +9815,69 @@ is    "…and nothing was written by any of the three" "$(grep -c '^PAUSED' "$LO
 # `PAUSED` lines on purpose: section 3 below is the `--late` rule, and its whole
 # question is what a lane with no paused record does.)
 
+# A ONE-LINE RECORD CANNOT TAKE A NEWLINE, AND IT IS REFUSED BEFORE ANYTHING IS
+# WRITTEN (opensoft/openRepoTools#85, #72 item 6). `append-line` used to append
+# its text and only THEN prove it was one line, so a text carrying a newline
+# left two lines in the register, the checkout dirty, and a refusal (exit 5)
+# that came after the write. And `lane-handoff` put its `why` into four places
+# with only two of them sanitized: a `why` carrying a newline refreshed and
+# committed the handoff, had its PAUSED refused by `write_event`, handed
+# `append-line` two lines — which the row flip after it then committed as a
+# peer's `pre-existing` edit — and exited 0. Every case here is asked on
+# repoHF-7, whose log is kept EMPTY of `PAUSED` lines for section 3: a refusal
+# writes nothing, and that is exactly what these assert.
+a17_nl_head="$(git -C "$WIP" rev-parse HEAD)"
+a17_nl_status="$(git -C "$WIP" status --porcelain)"
+cp -- "$LANES" "$SANDBOX/a17-nl-lanes.md"
+cp -- "$WIP/handoffs/repoHF/repoHF-7.md" "$SANDBOX/a17-nl-handoff.md"
+cp -- "$LOGD/repoHF-7.md" "$SANDBOX/a17-nl-log.md"
+a17_nl_same() {   # <file> <its copy> — `same` where not one byte moved
+  if cmp -s -- "$1" "$2"; then printf same; else printf changed; fi
+}
+run env LANES_LANE=repoHF-7 "$E" append-line \
+    "$(printf 'PAUSED — lane repoHF-7, session %s@Eagle, 2026-09-14T09:30:00Z, clear\nsecond line; handoff refreshed' "$HF4_ID")"
+is    "append-line refuses a text carrying a newline" "$rc" 2
+has   "…saying it appends ONE line" "$err" "append-line appends ONE line"
+is    "…before it writes: the register is byte for byte as it was" \
+      "$(a17_nl_same "$LANES" "$SANDBOX/a17-nl-lanes.md")" same
+is    "…and the checkout is as it was, so the next writer in it is not refused for a dirty register" \
+      "$(git -C "$WIP" status --porcelain)" "$a17_nl_status"
+run env LANES_LANE=repoHF-7 "$E" append-line "$(printf 'LANDING — lane repoHF-7, a carriage\rreturn')"
+is    "…and a carriage return the same way, which the line count after the write never saw" "$rc" 2
+is    "…with nothing written for it either" "$(a17_nl_same "$LANES" "$SANDBOX/a17-nl-lanes.md")" same
+
+# AND THE GATE IS IN `append_text_line` ITSELF, so every caller has it — `add-row`,
+# `log`'s Rule 6 line, a rename's lines — and not only the verb that met it.
+# Lifted out of the helper the way the `cut_to_line` cases below lift theirs,
+# and asked against a file of its own.
+printf 'line one\n' > "$SANDBOX/a17-nl-atl.txt"
+run bash -c 'eval "$(sed -n -e "/^die()/,/^}/p" -e "/^note()/p" -e "/^append_text_line()/,/^}/p" "$1")"; append_text_line "$2" "$3"' \
+    _ "$E" "$(printf 'two\nthree')" "$SANDBOX/a17-nl-atl.txt"
+is    "append_text_line refuses a newline itself, whichever verb called it" "$rc" 2
+is    "…before its copy and its \`>>\`: the file is still its one line" "$(cat "$SANDBOX/a17-nl-atl.txt")" "line one"
+
+run env PATH="$A17PATH" CLAUDE_CODE_SESSION_ID="$HF4_ID" CLAUDE_PROFILE_NAME=team-05a \
+    "$HANDOFF_CMD" --lane repoHF-7 "$(printf 'clear\nsecond line')"
+is    "lane-handoff refuses a why carrying a newline" "$rc" 2
+has   "…at the door, saying the why is one line" "$err" "the why is ONE line"
+is    "…the handoff not refreshed" \
+      "$(a17_nl_same "$WIP/handoffs/repoHF/repoHF-7.md" "$SANDBOX/a17-nl-handoff.md")" same
+is    "…the object log not written" "$(a17_nl_same "$LOGD/repoHF-7.md" "$SANDBOX/a17-nl-log.md")" same
+is    "…the register byte for byte as it was" "$(a17_nl_same "$LANES" "$SANDBOX/a17-nl-lanes.md")" same
+is    "…nothing committed" "$(git -C "$WIP" rev-parse HEAD)" "$a17_nl_head"
+is    "…and the checkout as it was" "$(git -C "$WIP" status --porcelain)" "$a17_nl_status"
+run env PATH="$A17PATH" CLAUDE_CODE_SESSION_ID="$HF4_ID" CLAUDE_PROFILE_NAME=team-05a \
+    "$HANDOFF_CMD" --lane repoHF-7 "$(printf 'clear\r')"
+is    "…and a carriage return is refused the same way" "$rc" 2
+
+# `sanitize` IS THE SECOND LINE OF DEFENCE: a break that reaches it is spelled
+# `; `, one per break whatever its spelling, so the act still happens on one
+# line. Lifted out of `lane-handoff` in a shell of its own, because this file
+# has a `sanitize` of its own (the transcript directory's).
+run bash -c 'eval "$(sed -n "/^sanitize()/,/^}/p" "$1")"; sanitize "$2"' \
+    _ "$HANDOFF_CMD" "$(printf 'a\r\nb\rc\nd — e')"
+is    "lane-handoff's sanitize spells every line break '; ', as it does ' — '" "$out" "a; b; c; d; e"
+
 # `--utc` IS THE LATE `PAUSED`'s SEAM AND HAS NO OTHER CALLER (Amendment 17,
 # adoption act 7). This log is append-only and FILE ORDER is what every state
 # read means by "last", so a STARTED or a RESUMED dated by hand changes what
@@ -9880,6 +10192,119 @@ has   "…and what the log would otherwise say about a lane that is running" "$e
 has   "…with the act that was owed, in order" "$err" "from a SHELL, and only then start the lane"
 is    "…and nothing was written" "$(grep -c '^PAUSED' "$LOGD/repoHF-7.md")" 0
 
+# ------------- 3b. a flag's value: an empty one, and a flag where one belongs
+#
+# opensoft/openRepoTools#80 items 6 and 8 (Copilot's review of workBenches#91 at
+# `lane-handoff:242` and `:248`), and the gap under them. Every `=` spelling
+# took an EMPTY value as no flag at all — `--lane=` handed off the window's own
+# lane in place of the one being named — and the spaced spelling's refusal ran
+# inside `$( )`, so it printed REFUSED and the run then carried on with the
+# value empty. Each is refused with 2 at the parser, once, and writes nothing.
+hfv_fp() { { cat "$LOGD"/*.md; cat "$LANES"; git -C "$WIP" rev-parse HEAD; } 2>/dev/null | cksum; }
+hfv_before="$(hfv_fp)"
+for hfv_f in --operation= --at= --lane= --agent= --transcript= --writers-file= --dir=; do
+  run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
+      CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-4 "$hfv_f" clear
+  is    "lane-handoff $hfv_f, with nothing after the =, is refused" "$rc" 2
+  has   "…as a flag given an empty value" "$err" "${hfv_f%=} needs a value, and '$hfv_f' gives it an empty one"
+done
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
+    CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane --restart clear
+is    "lane-handoff --lane --restart is refused" "$rc" 2
+has   "…as a flag where the lane belongs" "$err" "--lane needs a value and '--restart' is a flag"
+is    "…and it STOPS there: one refusal, nothing after it" \
+      "$(printf '%s\n' "$err" | command grep -c 'REFUSED')" 1
+hasnt "…so no lane was resolved from the window in its place" "$err" "lane-handoff: lane="
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
+    CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-4 --writers-file "" clear
+is    "…and so is a spaced --writers-file given the empty string" "$rc" 2
+has   "…in flag_value's own words" "$err" "--writers-file needs a value"
+hasnt "…which no longer run on into the poll" "$err" "writers polled"
+is    "none of those refusals wrote a byte: the logs, the register, its commit" "$(hfv_fp)" "$hfv_before"
+# AND THE `=` SPELLING STILL TAKES A VALUE THAT BEGINS WITH `-`, which is what
+# it is for: such a value reaches the validation it would always have met.
+run env PATH="$A17PATH" CLAUDE_CODE_SESSION_ID="$HF_ID" "$HANDOFF_CMD" --lane=-repoHF-4 clear
+is    "--lane=<a dash-led value> is still taken, and refused by the lane-name fence" "$rc" 2
+has   "…as the lane name it is not" "$err" "'-repoHF-4' is not a lane name"
+hasnt "…never as a value that was not given" "$err" "needs a value"
+
+# ------------------ 3c. the window: renamed only once nothing can refuse
+#
+# opensoft/openRepoTools#80 items 2, 3, 10 and 11 (Copilot's review of
+# workBenches#91 at `lane-handoff:519`, `:434` and `:351`). Four lanes of their
+# own, so that each case reads one record.
+for hfw_l in repoHF-80 repoHF-81 repoHF-82 repoHF-83; do
+  hf_seed_handoff "$WIP/handoffs/repoHF/$hfw_l.md" "$hfw_l"
+done
+git -C "$WIP" add -- handoffs/repoHF >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the #80 window cases' handoffs"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+for hfw_l in repoHF-80 repoHF-81 repoHF-82 repoHF-83; do
+  hf_row "$hfw_l" "harness \`$HF_ID\`"
+  hf_seed_log "$hfw_l" "2026-09-14T09:00:00Z"
+done
+
+# A REFUSED HANDOFF RENAMES NOTHING (item 2). repoHF-7's relaunch is recorded
+# above, so a late record on it is refused — by a gate that ran AFTER the rename
+# until this fix, and in a window named `claude` (the fake's `#W`).
+hfw_before="$(command grep -c 'rename-window repoHF-7' "$FAKE_TMUX_LOG" || :)"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW_NAME=claude FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF4_ID" \
+    CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-7 --late --at "2026-09-14T12:02:27Z"
+is    "a refused --late is still refused" "$rc" 2
+is    "…and leaves the window as it found it, never named for a lane it did not hand off" \
+      "$(command grep -c 'rename-window repoHF-7' "$FAKE_TMUX_LOG" || :)" "$hfw_before"
+
+# A RENAME TMUX REFUSES IS A REFUSAL, BEFORE THE RECORD (item 11). It was
+# swallowed: the PAUSED record and the row went on as if the window were the
+# lane's.
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW_NAME=claude FAKE_TMUX_WINDOW="hfsess:@21" FAKE_TMUX_RENAME_FAIL=1 \
+    CLAUDE_CODE_SESSION_ID="$HF_ID" CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-80 clear
+is    "a rename tmux refuses is a refusal" "$rc" 2
+has   "…naming the rename, with tmux's own words" "$err" "tmux would not rename this window 'claude' → 'repoHF-80' (tmux: no current client)"
+has   "…and the act that clears it" "$err" "tmux rename-window repoHF-80"
+is    "…having tried the rename once" "$(command grep -c 'rename-window repoHF-80$' "$FAKE_TMUX_LOG" || :)" 1
+is    "…and written no PAUSED record beside it" "$(command grep -c '^PAUSED' "$LOGD/repoHF-80.md")" 0
+hasnt "…nor flipped the row" "$(grep '^| `repoHF-80`' "$LANES")" "| PAUSED "
+has   "…while saying what HAD landed: the handoff's new top block" "$err" "new top block IS written"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW_NAME=claude FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
+    CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-80 clear
+is    "…and the same command, once tmux will rename, is the whole act" "$rc" 0
+has   "…renaming the window" "$err" "window renamed 'claude' → 'repoHF-80'"
+is    "…writing the one PAUSED record" "$(command grep -c '^PAUSED' "$LOGD/repoHF-80.md")" 1
+has   "…and flipping the row" "$(grep '^| `repoHF-80`' "$LANES")" "| PAUSED "
+
+# TMUX IS TOUCHED ONLY FROM INSIDE IT (item 10). The suite exports `$TMUX` for
+# every case; here it is unset, the shape of an ordinary shell on a host where
+# some tmux server runs, and the fake on PATH would answer for that server.
+hfw_before="$(command grep -c 'rename-window repoHF-81' "$FAKE_TMUX_LOG" || :)"
+run env -u TMUX -u WORKBENCHES_CLAUDE_WINDOW_REF -u WORKBENCHES_CLAUDE_WINDOW_ID \
+    PATH="$A17PATH" FAKE_TMUX_WINDOW_NAME=claude FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
+    CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-81 clear
+is    "a handoff from a shell outside tmux exits 0" "$rc" 0
+is    "…renaming no window: a tmux on PATH is not this shell's client" \
+      "$(command grep -c 'rename-window repoHF-81' "$FAKE_TMUX_LOG" || :)" "$hfw_before"
+hasnt "…and recording no window it read from somebody else's" "$(command grep '^PAUSED' "$LOGD/repoHF-81.md")" "; window "
+has   "…while the record itself is written" "$(cat "$LOGD/repoHF-81.md")" "PAUSED — lane repoHF-81"
+
+# THE WINDOW REFS ARE WHOLE STRINGS (item 3): `<session>:<digits>` and
+# `@<digits>`, from tmux and from the launcher's environment alike.
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW_NAME=claude FAKE_TMUX_WINDOW="hfsess:@21junk" FAKE_TMUX_WINDOW_INDEX="1junk" \
+    WORKBENCHES_CLAUDE_WINDOW_REF="hfsess:7" WORKBENCHES_CLAUDE_WINDOW_ID="@77" \
+    CLAUDE_CODE_SESSION_ID="$HF_ID" CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-82 clear
+is    "a handoff whose tmux answers malformed refs exits 0" "$rc" 0
+hfw_log="$(command grep '^PAUSED' "$LOGD/repoHF-82.md")"
+hasnt "…recording no index with a tail" "$hfw_log" "1junk"
+hasnt "…and no @id with one" "$hfw_log" "@21junk"
+has   "…the launcher's well-formed refs standing in for both" "$hfw_log" "; window hfsess:7 @77;"
+run env PATH="$A17PATH" LANE_HANDOFF_NO_TMUX=1 \
+    WORKBENCHES_CLAUDE_WINDOW_REF="hfsess:7junk" WORKBENCHES_CLAUDE_WINDOW_ID="@77junk" \
+    CLAUDE_CODE_SESSION_ID="$HF_ID" CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-83 clear
+is    "a handoff whose launcher refs are malformed exits 0" "$rc" 0
+hfw_log="$(command grep '^PAUSED' "$LOGD/repoHF-83.md")"
+hasnt "…recording neither of them" "$hfw_log" "7junk"
+hasnt "…so the record carries no window at all rather than one nothing resolves" "$hfw_log" "; window "
+
 # ------------------------------------- 4. lane-start --agent: the launcher table
 
 mkdir -p "$WIP/handoffs/repoAG"
@@ -9989,6 +10414,15 @@ has   "…the stamp naming the agent and its own id" \
 has   "…the row's session cell appended in the agent's own spelling" \
       "$(grep '^| `repoAG-1`' "$LANES")" "→ Codex \`$CODEX_ID\`"
 has   "…and the row's stamp says who resumed it" "$(grep '^| `repoAG-1`' "$LANES")" "RESUMED by codex $CODEX_ID (lane repoAG-1)"
+# THE FIRST ACT IT DEFERS KEEPS THE AGENT (opensoft/openRepoTools#72 item 5).
+# `codex` keeps no id this command can pass, so a codex launch ALWAYS defers its
+# log line and its Rule 3 stamp to the session's own `--no-launch` — and the
+# command printed for that act dropped `--agent`, leaving `lane-agent` to choose:
+# the agent of the lane's last PAUSED, not the one now running it.
+ag_deferred() {   # <stderr> — the one command lane-start prints for the deferred records
+  printf '%s\n' "$1" | awk 'f { print; exit } /which is this session.s own:$/ { f = 1 }'
+}
+has   "…and the first act it defers to the session carries --agent codex" "$(ag_deferred "$err")" " --agent codex"
 
 : > "$FAKE_CODEX_LOG"
 export FAKE_CODEX_WATCH="$WIP/handoffs/repoAG/repoAG-2.md"
@@ -10047,6 +10481,19 @@ has   "…saying whose the recorded transcript is, and that this launch does not
       "$err" "names agent claude and this launch is codex"
 hasnt "…and the session cell is NOT appended with a Claude uuid in Codex's spelling" \
       "$(grep '^| `repoAG-4`' "$LANES")" "Codex \`$HF2_ID\`"
+# THE CASE #72 ITEM 5 IS ABOUT: the record names claude and the person named
+# codex, so a deferred act without the flag would be settled by claude.
+is    "…and its deferred first act names codex, which this lane's record would not" \
+      "$(ag_deferred "$err")" "lane-start:   lane-start --no-launch repoAG 4 --agent codex"
+# AND A RUN THAT NAMED NO AGENT, OVER A RECORD THAT NAMES NONE, PRINTS NONE:
+# the flag is written down where this run's agent was explicit and only there,
+# so the deferred act chooses its agent exactly as this run did. repoAG-10 has
+# no row and no log, and with nothing minted its records are deferred too.
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="agsess:@41" CLAUDE_PROFILE_NAME=team-05a LANE_START_SESSION_ID=0 \
+    "$START" --dir "$AG_DIR" repoAG-10 --no-launch
+is    "a default-agent start with no uuid to name exits 0" "$rc" 0
+has   "…deferring its records to the session's own first act" "$(ag_deferred "$err")" "--no-launch repoAG 10"
+hasnt "…and naming no agent in it" "$(ag_deferred "$err")" "--agent"
 
 # A LANE WITH NO ROW IS A `STARTED`, WHATEVER BRANCH LAUNCHED IT. `--agent` and
 # the `/ctx` seam both set the verb to RESUMED because they resume a lane that
@@ -12251,6 +12698,40 @@ run a19 "$E" lanes --prefix repo19b
 is    "a no-log row whose 13(a) cell says PAUSED is still listed" "$rc" 0
 has   "…by name" "$out" "repo19b-1"
 is    "…and it is in neither class" "$(a19_field "$out" repo19b-1 14)" "none"
+# AND ITS STATE IS THAT CELL'S WORD, NOT `NO LOG` (#89, out of the suppressed
+# comments of Copilot's review of #82). The cell is the one column Amendment 13
+# exists to make authoritative, and the STATE column was the one read that never
+# consulted it: a row `migrate-state-cells` left parked listed as `NO LOG`, with
+# its `PAUSED` one field along in column 16. The word carries ` (row)`, because
+# it is SHOWN and never bound — with no lane-kind line there is no directory,
+# profile or binding to resume — so column 10 has no act for it and the pick
+# files it in a group of its own, which `lane` never numbers.
+is    "…and its STATE is the cell's own word, marked as the row's (#89)" \
+      "$(a19_field "$out" repo19b-1 2)" "PAUSED (row)"
+is    "…with no act in column 10, because there is no log to resume it from" \
+      "$(a19_field "$out" repo19b-1 10)" "none"
+is    "…and the pick files it rowonly, in none of the three groups it numbers" \
+      "$(printf '%s\n' "$out" | a19 "$E" lane-groups Eagle | cut -f1)" "rowonly"
+run a19 "$LANES_CMD" --prefix repo19b </dev/null
+has   "…and the listing a person reads says PAUSED" "$out" "PAUSED (row)"
+hasnt "…and no longer NO LOG" "$out" "NO LOG"
+# THE CONSERVATIVE CALL, AND `lane` IS WHERE IT IS MADE: a state read out of a
+# cell is DISPLAYED and is never picked or resumed. Before #89 this row was `NO
+# LOG` on this workstation, which the pick files AVAILABLE on the workstation
+# column alone — so it was numbered, and `lane <name>` handed a directory and a
+# profile LAUNCHED it, on a lane whose log records no binding at all.
+A19B_DIR="$SANDBOX/a19b-checkout"
+git init -q -b main "$A19B_DIR"
+git -C "$A19B_DIR" remote add origin git@github.com:opensoft/repo19b.git
+run a19 env -u TMUX -C "$A19B_DIR" "$LANE" </dev/null
+is    "a bare lane in that repository's checkout has nothing to pick" "$rc" 8
+hasnt "…and never numbers the row whose state is its cell" "$out" "repo19b-1"
+: > "$FAKE_PCLAUDE_LOG"
+run a19 env -u TMUX "$LANE" --dir "$A19B_DIR" repo19b-1 team-05a </dev/null
+is    "lane <name> refuses it, whatever directory and profile it is handed" "$rc" 2
+has   "…saying its log has no lane-kind line to give a state" "$err" "no lane-kind line"
+has   "…and naming the read of the row" "$err" "lanes-edit.sh register-row repo19b-1"
+is    "…and launching nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
 
 # `--lane <name>` IS NEVER FILTERED: its caller has named the lane, and an empty
 # answer would read as "there is no such lane".
@@ -12718,6 +13199,17 @@ run a19 env LANES_LANE=repo19-2 "$E" retire-rows repo19ret-1
 is    "…so the writer retires it rather than refusing the row the listing offered" "$rc" 0
 is    "…writing the first and only RETIRED line of its log" \
       "$(grep -c '^RETIRED — lane repo19ret-1' "$A19_WIP/lanes/log/repo19ret-1.md" 2>/dev/null || :)" 1
+
+# AND `LIVE` IS THE ONE CELL WORD THE STATE COLUMN DOES NOT TAKE (#89). The rung
+# that shows `PAUSED (row)` above is not symmetric: a cell cannot prove a
+# session is running, only a live record can, and this row has none — so its
+# STATE stays `NO LOG`, and column 17 flags the cell for still saying `LIVE`.
+run a19 env LANES_LANE=repo19-2 "$E" add-row "| \`repo19live-1\` | harness \`$A19_OLD\` | Eagle / test / brett | 2026-08-21 | none | none | LIVE · 2026-08-22T00:00:00Z · said to be running |"
+is    "a no-log row whose 13(a) cell says LIVE takes its row" "$rc" 0
+run a19 "$E" lanes --prefix repo19live
+is    "…and its STATE stays NO LOG, never LIVE, with no live record behind it" \
+      "$(a19_field "$out" repo19live-1 2)" "NO LOG"
+is    "…while column 17 flags the cell for still saying it" "$(a19_field "$out" repo19live-1 17)" "LIVE"
 
 echo "== Amendment 18: ONE BINDING PER LANE — host/os/container, the ask, the wait, the force =="
 
@@ -14722,6 +15214,7 @@ mgm_refused "migrate-state-cells --yes over a malformed shorthand" 1 - "$mg_b"
 # (c) THE ROW REWRITTEN IS THIS CHECKOUT'S. Published as a legacy one-word row,
 # and this checkout one unpushed commit ahead with the shorthand in it: the
 # published read alone says legacy, and the row the act would rewrite is not.
+# `managed-projection` reads both copies since #157 item 4a, as the act does.
 mgm_register "PAUSED"
 git -C "$MGM_WIP" commit -q -am "the row goes back to a legacy one-word state"
 git -C "$MGM_WIP" push -q origin main
@@ -14729,7 +15222,10 @@ mgm_register "MANAGED OWNER · ledger-3"
 git -C "$MGM_WIP" commit -q -am "an unpushed marker, in this checkout only"
 mg_b="$(mgm_fp)"
 run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" managed-projection repoMG-2
-is    "the published register reads the row as legacy (8)" "$rc" 8
+is    "the two copies' disagreement reads as unknown (1), never the published row's legacy 8" "$rc" 1
+has   "…naming the register file it read" "$err" "register file, $MGM_WIP/lanes/LANES.md, carries"
+has   "…and both ways the copies can disagree" "$err" "AHEAD of origin"
+has   "…a fast-forward being the other remedy" "$err" "fast-forward it"
 run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" migrate-state-cells --yes
 mgm_refused "migrate-state-cells --yes over a marker only this checkout carries" 1 - "$mg_b"
 has   "…saying the two copies disagree" "$err" "the two copies disagree on"
