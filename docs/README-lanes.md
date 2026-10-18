@@ -1174,7 +1174,7 @@ else.
 | 6 | `git add` / `commit` / `push` failed |
 | 7 | another act got there first and this one wrote nothing: `claim`'s `CLAIM-LOST` (another lane's claim landed first), and `set-lane-state` / `set-lane-tree`'s lifecycle fence (openRepoTools#91, below) |
 | 9 | `CLAIM-LOST` — issue #30's own dead-lane verdict could not be reconfirmed before a `--force` takeover's push landed: the source lane resumed, a live session now backs it up, or that could not be read at all (`claim` only). Never 7 — that code is a RIVAL's claim, and this is the same lane the takeover was granted over |
-| 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read (openRepoTools#91, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim` |
+| 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read (openRepoTools#91, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim`. `lane-trees`: the lane's `trees` directory is there and could not be listed (#157 item 4e) — never the 8 that means it recorded no tree |
 | 8 | no record — and no other meaning |
 | 64 | `swapped`'s own usage error — never the dispatcher's 2 |
 
@@ -3210,7 +3210,9 @@ lanes-edit.sh lane-tree-now <worktree path>
 # <branch> <head> <upstream> <dirty> <unpushed>   — what git says about one tree NOW
 ```
 
-Every lane's records on this workstation, one row per tree, are `lanes
+A `trees` directory that is there and cannot be listed is `lane-trees`' exit
+**10**, never the **8** of a lane that recorded no tree (opensoft/openRepoTools#157
+item 4e). Every lane's records on this workstation, one row per tree, are `lanes
 --worktrees`; the derived index keeps them as its `worktrees` table, which no
 act reads (*The derived index*, below).
 
@@ -3356,8 +3358,8 @@ lanes-edit.sh managed-projection <lane>
 | exit | meaning | what every legacy act does |
 |---|---|---|
 | 0 | a valid marker; the owner is printed | **refuses with 2**, names the owner, writes nothing |
-| 8 | no marker and no managed-owner vocabulary | runs exactly as it always has |
-| 1 | managed-owner vocabulary that does not parse (a `generation=0`, an empty daemon, a `bound-lane` that is not this lane, an empty shorthand token, a `managed:` anywhere in the row), a row that is not seven columns, or a register that could not be read | **refuses with 1**: ownership is UNKNOWN, and an ownership nobody could establish is never read as legacy (Amendment 7(d)) |
+| 8 | no marker and no managed-owner vocabulary, in the published row or this checkout's — whatever the row's shape: a row with none cannot be a marker, and a writer refuses a row it cannot split on its own (2) | runs exactly as it always has |
+| 1 | managed-owner vocabulary that does not parse (a `generation=0`, an empty daemon, a `bound-lane` that is not this lane, an empty shorthand token, a `managed:` anywhere in the row), a row carrying the vocabulary that is not seven columns, vocabulary that only this checkout's register file carries, whether it is ahead of origin (a change committed here and not pushed, or not committed) or behind it (origin dropped the vocabulary after this checkout last moved; the remedy is a fast-forward), or a register that could not be read. The refusal names the file it read, which under a runtime-clone `LANES_REPO` is workspace.yaml's tree, not the clone | **refuses with 1**: ownership is UNKNOWN, and an ownership nobody could establish is never read as legacy (Amendment 7(d)) |
 | 64 | usage | — |
 
 The acts that ask, each before its first write: `lane-start` (at the head of its
@@ -3373,8 +3375,11 @@ row refuses the whole move), `append-session-id`, `add-row` for a lane that
 already has a row, `set-row-state`, `replace-in-row` and `rename-lane`. Each
 reads this checkout's row as well as the published one, because this
 checkout's row is the one a legacy writer rewrites: vocabulary in one copy and
-not the other is UNKNOWN (1). A claim or a release is about the object, not the
-lane, and is not refused. `lane-reconcile` reads nothing of a managed lane and prints
+not the other is UNKNOWN (1). `managed-projection` reads both copies the same
+way (opensoft/openRepoTools#157 item 4a), so the gates of `lane-start`,
+`lane-handoff` and `lane-end`, which ask it, refuse what the writers refuse —
+before a launch moves a transcript rather than after. A claim or a release is
+about the object, not the lane, and is not refused. `lane-reconcile` reads nothing of a managed lane and prints
 `VERDICT managed-owned` (and `indeterminate` where ownership is unknown). And no
 legacy writer — `set-row-state`, `add-row`, `replace-in-row`, `append-line`,
 `append-session-id`, `rename-lane`'s new name, the sweep — may write the

@@ -14767,6 +14767,7 @@ mgm_refused "migrate-state-cells --yes over a malformed shorthand" 1 - "$mg_b"
 # (c) THE ROW REWRITTEN IS THIS CHECKOUT'S. Published as a legacy one-word row,
 # and this checkout one unpushed commit ahead with the shorthand in it: the
 # published read alone says legacy, and the row the act would rewrite is not.
+# `managed-projection` reads both copies since #157 item 4a, as the act does.
 mgm_register "PAUSED"
 git -C "$MGM_WIP" commit -q -am "the row goes back to a legacy one-word state"
 git -C "$MGM_WIP" push -q origin main
@@ -14774,7 +14775,10 @@ mgm_register "MANAGED OWNER · ledger-3"
 git -C "$MGM_WIP" commit -q -am "an unpushed marker, in this checkout only"
 mg_b="$(mgm_fp)"
 run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" managed-projection repoMG-2
-is    "the published register reads the row as legacy (8)" "$rc" 8
+is    "the two copies' disagreement reads as unknown (1), never the published row's legacy 8" "$rc" 1
+has   "…naming the register file it read" "$err" "register file, $MGM_WIP/lanes/LANES.md, carries"
+has   "…and both ways the copies can disagree" "$err" "AHEAD of origin"
+has   "…a fast-forward being the other remedy" "$err" "fast-forward it"
 run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" migrate-state-cells --yes
 mgm_refused "migrate-state-cells --yes over a marker only this checkout carries" 1 - "$mg_b"
 has   "…saying the two copies disagree" "$err" "the two copies disagree on"
