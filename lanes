@@ -522,7 +522,13 @@ else
 	local_err_file="$(mktemp "${TMPDIR:-/tmp}/lanes-local.XXXXXX" 2>/dev/null || printf '')"
 	if [ -n "$local_err_file" ]; then
 		out="$("$LANES_EDIT" lanes ${idx_args[@]+"${idx_args[@]}"} ${args[@]+"${args[@]}"} 2>"$local_err_file")" || rc=$?
-		grep -v 'not fetching; reading origin/' -- "$local_err_file" >&2 || :
+		# `-e` BEFORE THE `--` (#54, the shape #53 fixed at `skills/restart/SKILL.md`):
+		# with the pattern as a bare operand a getopt that does not permute —
+		# BSD's, so every macOS shell, and GNU's under `POSIXLY_CORRECT` — takes
+		# the pattern for the first operand and reads `--` as a second, a FILE it
+		# cannot open. `-e` makes the pattern an option's argument, so `--` ends
+		# the options where it says it does.
+		grep -v -e 'not fetching; reading origin/' -- "$local_err_file" >&2 || :
 		rm -f -- "$local_err_file"
 	else
 		# No capture file, so nothing is filtered and everything reaches the

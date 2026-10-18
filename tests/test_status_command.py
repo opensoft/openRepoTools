@@ -74,6 +74,10 @@ from test_park_resume_commands import (  # noqa: F401  (fixtures by name)
     ORG, MEMBERS, FAMILY, FAKE_SHA, commit_all, estate, family_manifest,
     remotes, run, probe_project,
 )
+from test_park_resume_commands import (  # noqa: F401  (fixtures by name)
+    QUILL, QUILL_DISPLAY, clone_quill_estate, named_apart,
+    probe_family_two_names,
+)
 
 STATUS = REPO / "status"
 
@@ -138,13 +142,17 @@ def home(tmp_path) -> Path:
     return target
 
 
-def seed_root_with_leg(base: Path, name: str) -> dict:
+def seed_root_with_leg(base: Path, name: str,
+                       leg_branch: str | None = None) -> dict:
     """Bare remotes for ONE standalone root that mounts ONE leg.
 
     The leg has two commits so a checkout can be moved one back and be
     genuinely away from its pin; the root pins the leg's tip. No Makefile and
     no overlay: `status` runs nothing, so a root here is a `project.yaml`, a
     `.gitmodules` and git.
+
+    `leg_branch` makes the leg's row declare `branch: <leg_branch>`, its OWN
+    branch (#235), and gives the leg's remote that branch at the pin.
     """
     leg_seed = base / "seed" / f"{name}-spec"
     leg_seed.mkdir(parents=True)
@@ -153,15 +161,18 @@ def seed_root_with_leg(base: Path, name: str) -> dict:
     commit_all(leg_seed, "the leg")
     (leg_seed / "more.md").write_text("more spec\n", encoding="utf-8")
     commit_all(leg_seed, "the leg moved on")
+    if leg_branch is not None:
+        git("branch", leg_branch, cwd=leg_seed)
     leg_bare = base / "remotes" / f"{name}-spec.git"
     leg_bare.parent.mkdir(parents=True, exist_ok=True)
     git("clone", "-q", "--bare", str(leg_seed), str(leg_bare), cwd=base)
 
     seed = base / "seed" / name
     seed.mkdir(parents=True)
+    own_branch = "" if leg_branch is None else f"    branch: {leg_branch}\n"
     (seed / "project.yaml").write_text(
-        ROOT_WITH_LEG_YAML.format(id=name.lower(), name=name, org=ORG),
-        encoding="utf-8")
+        ROOT_WITH_LEG_YAML.format(id=name.lower(), name=name, org=ORG)
+        + own_branch, encoding="utf-8")
     (seed / "README.md").write_text(f"# {name}\n", encoding="utf-8")
     git("init", "-q", "-b", "main", ".", cwd=seed)
     commit_all(seed, "seed")
@@ -470,6 +481,48 @@ def test_a_leg_on_a_feature_branch_at_its_pin_is_a_finding(atlas, home):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_a_leg_off_its_own_declared_branch_is_a_finding_that_names_it(
+        home, tmp_path):
+    """#235: the leg's row declares `branch: develop`, which `make bootstrap`
+    places it on instead of the root's `tracking_branch`, so a leg sitting on
+    `main` — the ROOT's branch, and at its pin — is the leg `resume` refuses.
+    The finding names `develop`, says it is the leg's own, and the row and the
+    reads under it are about `develop`, not `main`."""
+    base = tmp_path / "own-branch-remotes"
+    base.mkdir()
+    root = clone_root(home, seed_root_with_leg(base, "Atlas", "develop"),
+                      "Atlas")
+    leg = root / "spec"
+    git("checkout", "-q", "main", cwd=leg)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert f"  leg    develop {leg}" in result.stdout, (
+        "the leg's row names the branch the leg is read against")
+    assert ("    - on branch main, not develop, the `branch:` this leg's own "
+            "row declares in project.yaml (`resume` refuses a root whose leg "
+            "sits on any other branch, because `make bootstrap` would move "
+            "it)") in result.stdout
+    assert "not main" not in result.stdout
+    assert "1 finding(s) in 2 repositories" in result.stdout
+
+
+def test_a_leg_on_its_own_declared_branch_is_not_a_finding(home, tmp_path):
+    """The other direction of #235: a leg on the `branch:` its row declares is
+    where `make bootstrap` leaves it, not "on branch develop, not main"."""
+    base = tmp_path / "own-branch-remotes"
+    base.mkdir()
+    root = clone_root(home, seed_root_with_leg(base, "Atlas", "develop"),
+                      "Atlas")
+    leg = root / "spec"
+    git("checkout", "-q", "-b", "develop", "origin/develop", cwd=leg)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "on branch" not in result.stdout, result.stdout
+    assert ("    at its pin, which is origin/develop's tip as of the last "
+            "fetch; clean") in result.stdout
+    assert "0 finding(s) in 2 repositories" in result.stdout
+
+
 def test_a_pin_behind_its_legs_origin_after_the_leg_fetched(atlas, home,
                                                              status_remotes):
     leg = atlas / "spec"
@@ -556,6 +609,65 @@ def test_a_family_reads_the_holder_and_each_working_clone_and_names_a_missing_on
     assert (f"    - not here: no working clone beside the holder (`resume "
             f"{FAMILY}` places it)") in result.stdout
     assert "1 finding(s) in 3 repositories" in result.stdout
+
+
+@NEEDS_UPSTREAM
+@pytest.mark.parametrize("folder", [QUILL, QUILL_DISPLAY],
+                         ids=["repository", "name"])
+def test_a_family_folder_is_read_by_its_repository_name_or_its_display_name(
+        named_apart, remotes, home, folder):
+    """#236: one `family.yaml` (`name: "QuillWorks"`, `repository:
+    testorg/Quill`), laid out in the folder openRepoShape v1.1.0 prescribes —
+    its repository's last part, opensoft/openRepoShape#629 — and in the one
+    `status` required before it, the display name. Both are one estate: the
+    holder, then each member's working clone beside it."""
+    quill = clone_quill_estate(named_apart, remotes, home, folder)
+    result = run(STATUS, folder, home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "no estate named" not in result.stderr
+    assert f"holder main   {quill['holder']}" in result.stdout
+    for name in MEMBERS:
+        assert f"root   main   {quill['siblings'][name]}" in result.stdout
+    assert "0 finding(s) in 3 repositories" in result.stdout
+
+
+@pytest.mark.parametrize("shape", [
+    ("Elsewhere", "Other", f"{ORG}/Other", None),
+    (ORG, "Other", f"{ORG}/Quill/Other", None),
+    ("Quill", "Other", None, None),
+    ("Quill", "Other", None, f"{ORG}/Quill"),
+], ids=["neither-name-nor-repository",
+        "an-earlier-part-of-the-repository", "no-repository-and-another-name",
+        "only-a-members-repository-ends-in-the-folder"])
+def test_a_family_folder_that_is_neither_name_is_still_not_an_estate(home,
+                                                                    shape):
+    """The repository arm must not widen past the LAST part of `repository:`,
+    a missing key must not read as a name, and a MEMBER's own `repository:`
+    (indented) is never the holder's: those folders are directories called
+    that, exactly as they were before."""
+    folder, name, repository, member_repository = shape
+    probe_family_two_names(home / "projects", folder, name=name,
+                           repository=repository,
+                           member_repository=member_repository)
+    result = run(STATUS, folder, home=home)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert f"no estate named '{folder}'" in result.stderr
+
+
+def test_a_family_folder_named_for_its_repository_wins_over_a_standalone_root(
+        home):
+    """The holder drives the members, so where a family whose `name:` differs
+    shares its folder with a `project.yaml`, `status` reads the family."""
+    projects = home / "projects"
+    holder = probe_family_two_names(projects, QUILL, name=QUILL_DISPLAY,
+                                    repository=f"{ORG}/{QUILL}")
+    probe_project(projects, QUILL, at=projects / QUILL)
+    result = run(STATUS, QUILL, home=home)
+    assert result.returncode != 2, result.stdout + result.stderr  # 1: findings
+    assert "no estate named" not in result.stderr, result.stderr
+    assert (f"status: {QUILL} - the family holder at {holder}"
+            in result.stdout), result.stdout + result.stderr
+    assert "the assembly root" not in result.stdout
 
 
 # --- every estate ------------------------------------------------------------
