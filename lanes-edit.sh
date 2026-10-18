@@ -10319,85 +10319,66 @@ guard_allow_active() {   # <offer file>
   return 0
 }
 
-# ------------- THE UUID INTO THE NEW LANE'S CELL, WHICH `lane-start` MAY NOT DO
+# ------------ THE UUID IN THE NEW LANE'S CELL, WHICH `lane-start --bind` WRITES
 #
 # CLAUSE (h) RULE 2 NAMES THE END STATE AND RULE 3 REPEATS IT: after choice 2,
 # *"window X, session X, ROW X STAMPED WITH THIS UUID"*. `lane-start --no-launch`
-# performs every other part of that and CANNOT perform this one, by a fence that
-# is right and stays: its step 3b VETO 1 — Amendment 11 clause (d) rule 1 —
-# never takes a uuid that belongs to ANOTHER ROW, and after a rename this uuid
-# belongs to `$ga_from`'s. So it mints a fresh id for the new lane instead and
-# the person's own transcript is left out of the cell the next resume follows.
+# used to perform every other part of that and NOT this one, by a fence that is
+# right and stays: its step 3b VETO 1 — Amendment 11 clause (d) rule 1 — never
+# takes a uuid that belongs to ANOTHER ROW, and after a rename this uuid belongs
+# to `$ga_from`'s.
 #
-# MEASURED, AND IT IS A LOOP AND NOT A BLEMISH. In the suite: choice `2` moved the
-# window to `repoGD-2`, whose row then read `STARTED by 7a01ae69…` while this
-# session was `aaaa0012-1111…`. The NEXT prompt therefore finds a lane window
-# whose row does not name this transcript — the last row of the (b) table — and
-# refuses with `lane-start --no-launch repoGD 2`, which vetoes for the same
-# reason and changes nothing. A blocking hook that refuses for ever, on a state
-# it created by obeying the person, is the worst outcome this surface has.
+# MEASURED, AND IT WAS A LOOP AND NOT A BLEMISH. In the suite: choice `2` moved
+# the window to `repoGD-2`, whose row then read `STARTED by 7a01ae69…` while this
+# session was `aaaa0012-1111…`. The NEXT prompt therefore found a lane window
+# whose row did not name this transcript — the last row of the (b) table — and
+# refused with `lane-start --no-launch repoGD 2`, which vetoed for the same
+# reason and changed nothing. So the guard made that last write itself, after
+# `lane-start` returned — by which time `lane-start` had taken the destination
+# row's ordinary RESUME path and stamped the row, the lane's log and the handoff
+# with the id THE ROW ALREADY HAD, under `--no-launch`, about a conversation
+# nobody was in (openRepoTools#70).
 #
-# SO THE GUARD MAKES THE LAST WRITE ITSELF, and only after the person's `2`.
-# That is not a hole in veto 1: the veto exists for the take nobody asked for —
-# *"`lane-start openXfactory-5` typed from a window named `openRepoProject-1`"*,
-# Evidence 2(b) — and clause (h) rule 4's own limit is that the lock *"never
-# moves a uuid between rows WITHOUT the person's `yes`"*. Here there is one —
-# choice `2` is that yes in the numbered offer — on the record, answered at this
-# very prompt.
+# THE WRITE IS `lane-start`'s NOW, IN ITS BINDING MODE. `--bind <this uuid>` is
+# veto 1 answered by the person's `2` — clause (h) rule 4's limit is that the
+# lock never moves a uuid between rows WITHOUT the person's yes, and this is the
+# yes — so the cell is extended first and every stamp names THIS uuid, in one
+# act, anchored on the PUBLISHED last id as `lane-start` always anchors, and
+# where a cell records no uuid on the `none recorded` or `pending — set by the
+# session's first act` text such a cell carries instead, which is this guard's
+# former anchor rule moved there.
 #
-# THE ANCHOR DISCIPLINE IS `lane-start`'s, unvaried: the anchor is the PUBLISHED
-# last id, so a checkout whose copy of the row is older than the one that landed
-# REFUSES rather than writing a cell that no longer matches; a row whose cell
-# records no uuid at all is anchored on `none recorded`, the one other text a
-# cell this act can meet carries, and anything else prints the act and guesses
-# at nothing.
+# SO THIS IS A READ, AND IT WRITES NOTHING. It says the end state rule 3 names
+# is there, or prints the act that puts it there where `lane-start` could not:
+# a checkout whose copy of the row is older than the published one, or a cell
+# carrying no uuid and neither text. THE OLD WRITE IS NOT KEPT BEHIND IT AS A
+# FALLBACK, because it would rescue neither: its anchor is `lane-start`'s, so a
+# stale copy of the row refuses it exactly as it refused `lane-start` (whose own
+# next write to that same row line has by then met the same difference as a
+# rebase conflict), and a cell with neither text has nothing to anchor on. What
+# it would add is a second append after a write whose push timed out, read
+# against a published ref that never moved — the uuid in the cell twice.
 #
-#   0  the cell now ends on this uuid (it already did, or this appended it)
-#   1  it does not, and the reason has been printed with the act that fixes it
-guard_bind_uuid() {   # <the lane moved to> <the lane moved from>
-  gbu_to="${1-}"; gbu_from="${2-}"
-  # THE CACHED REGISTER IS THE ONE FROM BEFORE `lane-start` RAN, and this act is
-  # the one place in the file that reads it AFTER a writer has moved it: a row
-  # `lane-start` has just CREATED is not in it at all, and the anchor would then
-  # be read as "no cell to append to" on the one path that most needs one. Both
-  # copies are dropped — the variable this shell holds and the file every
-  # subshell reads (A11 Addendum 4 ruling 12) — exactly as `log_sync` drops them
-  # after a fetch, and for the same reason: the ref has moved under them.
+#   0  the cell ends on this uuid
+#   1  it does not, and the act that fixes it has been printed
+guard_bound_check() {   # <the lane moved to>
+  gbc_to="${1-}"
+  # THE CACHED REGISTER IS THE ONE FROM BEFORE `lane-start` RAN, and this is the
+  # one place in the file that reads it AFTER a writer has moved it: a row
+  # `lane-start` has just CREATED is not in it at all, and the answer would then
+  # be "no uuid" on the one path that most needs the true one. Both copies are
+  # dropped — the variable this shell holds and the file every subshell reads
+  # (A11 Addendum 4 ruling 12) — exactly as `log_sync` drops them after a fetch,
+  # and for the same reason: the ref has moved under them.
   LANES_REGISTER_CACHE=""
-  gbu_rc="${SE_CACHE_FILE:+$SE_CACHE_FILE.register}"; [ -n "$gbu_rc" ] && rm -f -- "$gbu_rc"
-  gbu_last="$(last_session_id_of_lane "$gbu_to" 2>/dev/null || :)"
-  [ "$(lc "$gbu_last")" = "$(lc "$G_ID")" ] && return 0
-  gbu_anchor="$gbu_last"
-  if [ -z "$gbu_anchor" ]; then
-    gbu_cell="$(row_cell "$(row_of_lane "$gbu_to" 2>/dev/null || :)" 3 | sed -e 's/^ *//' -e 's/ *$//')"
-    # THE TWO TEXTS A CELL THIS ACT CAN MEET CARRIES INSTEAD OF A UUID, and
-    # both come from `lane-start` itself: `none recorded` for a row a person
-    # wrote by hand, and `pending — set by the session's first act` for a row
-    # `lane-start` has just CREATED with neither a minted uuid nor one it was
-    # allowed to take (`lane-start:1914`). The second is exactly the state a
-    # `2` to a brand-new lane can leave — veto 1 refuses this window's uuid
-    # because the source row still records it, and a run that minted none has
-    # nothing else to write — so anchoring only on the first left the cure for
-    # the loop unreachable in the one case the loop most needs it (Copilot
-    # round 3 on this PR).
-    case "$gbu_cell" in
-      "none recorded") gbu_anchor="none recorded" ;;
-      "pending — set by the session's first act") gbu_anchor="$gbu_cell" ;;
-    esac
-  fi
-  gbu_add="→ harness $G_ID (transcript uuid; profile ${G_PROF:-unknown})"
-  gbu_hint="LANES_LANE=$gbu_to lanes-edit.sh append-session-id $gbu_to \"<the session cell's last id>\" \"$gbu_add\""
-  if [ -z "$gbu_anchor" ]; then
-    note "…but $gbu_to's session cell carries no uuid to append after, and no text this act is willing to anchor on, so THIS TRANSCRIPT IS NOT IN IT. Stamp it as this session's first act, which is Amendment 6(c)'s own remedy:"
-    note "   $gbu_hint"
-    return 1
-  fi
-  if LANES_LANE="$gbu_to" "$RESOLVED" append-session-id "$gbu_to" "$gbu_anchor" "$gbu_add" "session cell: the name guard moved this window from $gbu_from on the person's choice 2 (Amendment 12(h) rule 2)" >&2; then
-    note "…and $gbu_to's session cell now ends on $G_ID, which is what the next \`lane-start $gbu_to\` resumes."
+  gbc_rc="${SE_CACHE_FILE:+$SE_CACHE_FILE.register}"; [ -n "$gbc_rc" ] && rm -f -- "$gbc_rc"
+  gbc_last="$(last_session_id_of_lane "$gbc_to" 2>/dev/null || :)"
+  if [ "$(lc "$gbc_last")" = "$(lc "$G_ID")" ]; then
+    note "…and $gbc_to's session cell now ends on $G_ID, written by lane-start's binding mode — which is what the next \`lane-start $gbc_to\` resumes."
     return 0
   fi
-  note "…but $gbu_to's session cell was NOT extended with $G_ID (this checkout's copy of the row does not carry '$gbu_anchor' exactly once in its SESSION CELL — it may be older than the published one). Its writer's words are above. Stamp it as this session's first act:"
-  note "   $gbu_hint"
+  note "…but $gbc_to's session cell does NOT end on $G_ID (it ends on ${gbc_last:-no transcript uuid at all}; lane-start's own words are above). Stamp it as this session's first act, which is Amendment 6(c)'s own remedy:"
+  note "   LANES_LANE=$gbc_to lanes-edit.sh append-session-id $gbc_to \"<the session cell's last id>\" \"→ harness $G_ID (transcript uuid; profile ${G_PROF:-unknown})\""
   return 1
 }
 
@@ -10474,10 +10455,12 @@ guard_answer() {   # <offer file> <the prompt> <pane>
     # first is undone: its step 3b VETO 2 refuses to take the session live in a
     # window NAMED FOR ANOTHER LANE (Amendment 11 clause (d) rule 1, veto 2,
     # `R-A11-12`), which after choice 2 is exactly what this window is. Without
-    # the rename the lane would be started and stamped and the person's
-    # transcript left OUT of its session cell — the one thing the next resume
-    # follows. The veto is right and stays: what changes is that the person has
-    # just said this window is the other lane.
+    # the rename the binding mode below REFUSES, because `--bind` answers veto 1
+    # and never veto 2 (openRepoTools#70) — and before it existed the lane was
+    # started and stamped with the person's transcript left OUT of its session
+    # cell, the one thing the next resume follows. The veto is right and stays:
+    # what changes is that the person has just said this window is the other
+    # lane.
     if command -v tmux >/dev/null 2>&1; then
       tmux rename-window "$ga_to" 2>/dev/null ||
         note "the window could not be renamed to $ga_to, so lane-start may refuse to take this session as that lane's (its step 3b veto 2)."
@@ -10488,16 +10471,22 @@ guard_answer() {   # <offer file> <the prompt> <pane>
     # the blocking reason is shown.
     # UNQUOTED ON PURPOSE: `lane_start_args` prints TWO words, `<repo> <n>` —
     # or `--dir <path> <lane>` for a lane named before the `<repo>-<n>` rule.
+    # AND IN ITS BINDING MODE (openRepoTools#70): `--bind` names THIS
+    # transcript, so the destination's cell is appended with it and the row's
+    # stamp, its log line and its handoff's Rule 3 stamp all name it — never
+    # the id that row would otherwise have resumed, which nobody is in. The
+    # flag is the guard's alone, so it is in this call and in no command this
+    # file prints for a person to type.
     # shellcheck disable=SC2046
-    "$ga_start" --no-launch $(lane_start_args "$ga_to") >&2 || ga_rc=$?
+    "$ga_start" --no-launch --bind "$G_ID" $(lane_start_args "$ga_to") >&2 || ga_rc=$?
     if [ "$ga_rc" != 0 ]; then
-      guard_refuse "\`lane-start --no-launch $(lane_start_args "$ga_to")\` exited $ga_rc (its own words are above), so this window has NOT moved and $ga_from has NOT been marked MOVED. The offer is KEPT, so answer \`2\` again once that refusal is settled, or choose \`3\` to rename the session back to $ga_from."
+      guard_refuse "\`lane-start --no-launch $(lane_start_args "$ga_to")\`, run in its binding mode for this transcript, exited $ga_rc (its own words are above), so this window has NOT moved and $ga_from has NOT been marked MOVED. The offer is KEPT, so answer \`2\` again once that refusal is settled, or choose \`3\` to rename the session back to $ga_from."
       return 2
     fi
     rm -f -- "$ga_f"
     guard_triple
     note "MOVED: this window is now lane $ga_to — renamed, and stamped. The prompt that answered the question is consumed; send your work again."
-    guard_bind_uuid "$ga_to" "$ga_from" || :
+    guard_bound_check "$ga_to" || :
     if [ -n "$(row_of_lane "$ga_from" 2>/dev/null || :)" ]; then
       # AMENDMENT 13(a) — THE STATE IS SET, NOT APPENDED. This window has just
       # moved to another lane, so the lane it LEFT is not running in it any
