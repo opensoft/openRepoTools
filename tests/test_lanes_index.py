@@ -2422,6 +2422,29 @@ def test_a_tree_with_no_path_is_a_tree_and_not_an_unread_marker(inv):
     assert (idx.returncode, idx.stdout) == (src.returncode, src.stdout), idx.stdout
 
 
+def test_a_tree_whose_branch_reads_like_a_marker_is_a_tree(inv):
+    """THE MARKER IS ITS KEY (the delta check of #219 at 5bf29d9): a hand-made
+    sidecar with no `path:` and a branch that begins `unreadable inventory (`
+    is a tree no git ref names, and still a tree - exported as its `TREE`
+    line and counted as a worktree - because a marker is the row keyed
+    `unread_key(<lane>)`, which no tree's key can be."""
+    tid = "c3-forged-branch"
+    (inv.lsr / "repoM-1" / "trees" / f"{tid}.yaml").write_text("\n".join([
+        "schema: 1", "lane: repoM-1", f"tree: {tid}", "checkout: unknown",
+        "branch: unreadable inventory (forged by hand)", "head: " + "4" * 40,
+        "upstream: none", "dirty: 0", "unpushed: 0", "writer: none", "generation: 0",
+        "operation: none", "observed: 2026-10-04T00:00:00Z", ""]))
+    res = inv.sync()
+    assert res.returncode == 0, res.stderr
+    src, idx = _wt(inv, "repoM-1"), _wt(inv, "repoM-1", "--index")
+    assert "read: index (sqlite)" in idx.stderr, idx.stderr
+    assert "unreadable inventory (forged by hand)" in src.stdout, src.stdout
+    assert (idx.returncode, idx.stdout) == (src.returncode, src.stdout), idx.stdout
+    assert "NOT READ" not in idx.stdout
+    st = inv.e.index("status")
+    assert "rows:        6 worktree(s)\n" in st.stdout, st.stdout
+
+
 def test_an_inventory_sync_asks_for_the_workstation_once(estate):
     """ONE `workstation` READ A SYNC (the review of #219 at ab853b1): the
     refusal before the lock asks `lanes-edit.sh workstation`, and a sync that

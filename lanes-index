@@ -38,8 +38,10 @@ worktree inventory, copied into the `worktrees` table. It is read through
 `lanes-edit.sh worktrees --all` - the sidecars, the lifecycle snapshot,
 `managed-projection`'s owner and the listing's liveness, in the helper that
 wrote them - and never through a parser of this file's own or a walk of the
-disk. Its rows are keyed by (source, `<lane>:<path>`) and versioned by the same
-digest; a tree the inventory no longer names leaves in the same sync. Its
+disk. Its rows are keyed by (source, `<lane>:<path>`) - a second tree of one lane
+with the same path `<lane>:<path><US><n>`, and a lane's unread marker
+`<lane>:<US>unread` - and versioned by the same digest; a tree the inventory no
+longer names leaves in the same sync. Its
 provenance moves only forward PER LANE: a sync that reads a lane's lifecycle
 generation below the one its rows were written at writes nothing for that lane
 (`reconcile` takes the lane as it now stands, and says so); a lane whose
@@ -730,7 +732,9 @@ TABLE_COLUMNS = {
     "job_summaries": ["lane", "job_id", "result_summary", "observed_utc"],
     # opensoft/openRepoTools#161: each lane's #97 worktree inventory under
     # `inventory:<Workstation>`, keyed by (source, lane, path) - the record id
-    # `<lane>:<path>`. Amendment 14(e) left inventories to "a later word's"; #161
+    # `<lane>:<path>`, `<lane>:<path><US><n>` for a second tree of one lane with
+    # the same path, and `<lane>:<US>unread` for a lane's unread marker (#173).
+    # Amendment 14(e) left inventories to "a later word's"; #161
     # is that word's issue. Created by schema 1 with these columns before a row
     # was written into it, so no store needed a new version for it. Written by
     # `run_inventory` and by nothing that reads the register.
@@ -1841,18 +1845,18 @@ def tree_line(row: dict, provenance) -> str:
 
 
 #: THE BRANCH OF A LANE'S UNREAD MARKER (opensoft/openRepoTools#173): a
-#: `worktrees` row with no path AND a branch beginning `unreadable inventory (`,
+#: `worktrees` row with no path and a branch `unreadable inventory (<why>)`,
 #: saying the lane's inventory was there and could not be read at the last
-#: sync, and why. The path alone is not enough (the review of #219): a
-#: current-schema sidecar with no `path:` is a tree whose path is empty. No
-#: tree's branch is this: a git ref carries no space, and the helper's own words
-#: for a branch it could not read are `unreadable sidecar`, `unknown schema <n>`
-#: and `detached <sha>`. Its key is `<lane>:` and a US, which no tree's is.
+#: sync, and why. A MARKER IS ITS KEY, `unread_key(<lane>)` - `<lane>:` and a
+#: US - and nothing else decides it (the review of #219 and its delta check):
+#: no tree's key can carry a US after the colon but its own `<US><n>`, while a
+#: tree's path can be empty (a current-schema sidecar with no `path:`) and a
+#: hand-made sidecar's branch can read like this one.
 UNREAD_BRANCH = "unreadable inventory"
 
 
 def is_unread_marker(row: dict) -> bool:
-    return not row.get("path") and str(row.get("branch") or "").startswith(f"{UNREAD_BRANCH} (")
+    return row.get("record_id") == unread_key(row.get("lane") or "")
 
 
 def unread_key(lane: str) -> str:
@@ -1903,9 +1907,10 @@ def lane_generation(lane: str) -> tuple:
 
 
 def collect_inventory() -> tuple[dict, dict]:
-    """Every tree the inventory names, keyed `<lane>:<path>`, and every lane
-    whose inventory is there and could not be read - whose rows are KEPT, never
-    taken for a lane with no trees (Amendment 7(d))."""
+    """Every tree the inventory names, keyed `<lane>:<path>` (a second tree of
+    one lane with the same path `<lane>:<path><US><n>`), and every lane whose
+    inventory is there and could not be read - whose rows are KEPT, never taken
+    for a lane with no trees (Amendment 7(d))."""
     proc = _helper_run(["worktrees", "--all"], 600, "the worktree inventory")
     if proc.returncode == 8:
         return {}, {}
@@ -1929,8 +1934,10 @@ def collect_inventory() -> tuple[dict, dict]:
         # TWO TREES OF ONE LANE WITH ONE PATH ARE TWO ROWS (the review of #219):
         # a current-schema sidecar with no `path:` is a tree whose path is
         # EMPTY, and a second one replaced the first here. A later one is keyed
-        # with its place among them - the read is sorted, so the place is
-        # stable - after a US, which no path in a US-separated line can carry.
+        # with its place among them, after a US, which no path in a
+        # US-separated line can carry. The read is sorted, so a place holds
+        # while those trees keep their order; a change that reorders them - a
+        # renamed branch, say - moves both keys, and that sync upserts both.
         key = f"{record['lane']}:{record['path']}"
         if key in trees:
             n = 2
@@ -2356,7 +2363,7 @@ def cmd_status() -> int:
                 say(f"  provenance:  inventory@{fp[:12]} (sync {prov.get('generation')}, indexed "
                     f"{prov['indexed_utc']}, schema {prov['schema_version']})")
                 try:
-                    wt_rows = store.rows("worktrees", name, ["path", "branch"])
+                    wt_rows = store.rows("worktrees", name, ["lane"])
                     count = sum(1 for row in wt_rows if not is_unread_marker(row))
                     # A LANE'S UNREAD MARKER IS NOT A WORKTREE (#173), and is said
                     # as what it is.

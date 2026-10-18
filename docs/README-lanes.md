@@ -3564,8 +3564,12 @@ reader, its snapshot through `lane-state`'s and its owner through
 that is `lane-reconcile`'s act. Nothing is recomputed: `dirty` and `unpushed`
 are what the handoff saw, and `LAST SEEN` says when.
 
-**Rows follow the inventory.** Keyed by (source, `<lane>:<path>`) and versioned
-by a digest of the row and its provenance, so a replay writes nothing; a tree
+**Rows follow the inventory.** Keyed by (source, `<lane>:<path>`) — a second
+tree of one lane with the same path (two with no `path:`, say) as
+`<lane>:<path><US><n>`, numbered from 2 in the read's sorted order, and a lane's
+unread marker as `<lane>:<US>unread` — and versioned by a digest of the row and
+its provenance, so a replay writes nothing (a change that reorders two trees of
+one path moves both keys, and that sync upserts both); a tree
 the inventory no longer names — removed at landing, or by a sweep's disposition
 — leaves in the same sync. The provenance moves only forward **per lane**: a
 `sync` that reads a lane's lifecycle generation below the one its rows were
@@ -3573,9 +3577,10 @@ written at (a snapshot moved aside and begun again) writes nothing for that lane
 and says so, and `reconcile --source inventory` is the act that takes the lane
 as it now stands. A lane whose `trees` directory is there and cannot be listed
 keeps its rows — it is not a lane with no worktrees — and gets ONE MARKER ROW,
-with no `path` AND the `branch` `unreadable inventory (<why>)` — a tree's path
-can be empty (a sidecar with no `path:`), and no git ref carries a space — which
-the `--index` read prints as the same `inventory NOT READ` line the sidecars
+keyed `<lane>:<US>unread`, with no `path` and the `branch` `unreadable inventory
+(<why>)` — the key is what makes it one, because a tree's path can be empty (a
+sidecar with no `path:`) and a hand-made sidecar's branch can read the same —
+which the `--index` read prints as the same `inventory NOT READ` line the sidecars
 give (opensoft/openRepoTools#173): a FIRST sync that cannot read a lane has no
 rows to keep and is still not an empty answer, and rows held over from an
 earlier sync are said to be, on that line. The marker leaves with the first
@@ -3583,10 +3588,12 @@ sync that reads the lane, and `lanes-index status` counts it apart from the
 worktrees. The schema stays 1, so an indexer from before #173 sharing a
 Postgres store reads a marker as a tree: its `export --worktrees` prints it as
 a `TREE` line with an empty path and that branch, and its `status` counts it as
-a worktree. The source's own row carries a fingerprint of the whole table as
-its compare-and-swap token and a sync count that only goes up. A container with no `LANES_WORKSTATION` syncs
-nothing (exit 2): a source named for a container's own id is one no restart
-finds again.
+a worktree. An older and a newer indexer syncing ONE store rewrite it on every
+sync, each converging to its own view of the same inventory — no duplicate rows
+and no growth, only the churn. The source's own row carries a fingerprint of the
+whole table as its compare-and-swap token and a sync count that only goes up. A
+container with no `LANES_WORKSTATION` syncs nothing (exit 2): a source named for
+a container's own id is one no restart finds again.
 
 **The nudge.** Every inventory write — `set-lane-state`, `set-lane-tree`, the
 lifecycle follow after a `STARTED`, `RESUMED`, `ENDED` or `RETIRED`, and a
