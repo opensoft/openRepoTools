@@ -1730,9 +1730,11 @@ scrub_cell() {
 # all the same: an open LANDING in that prose closed the lane. That cell is
 # scanned whole, like a diary. The cap is in CHARACTERS and `${#x}` is BYTES in
 # a C locale, where a line of `—` and `→` inside it would read as past it and
-# a lane merely waiting for a LANDING would be held by it: past 240, the count
-# is redone with the UTF-8 continuation bytes taken out, the same number in
-# every locale.
+# a lane merely waiting for a LANDING would be held by it: past 240, a line
+# that is valid UTF-8 is recounted with its continuation bytes taken out, the
+# same number in every locale. Text that is not valid UTF-8 has continuation
+# bytes that follow nothing and are no characters, so it keeps the first count,
+# which can only over-count, and an over-count reads more of the cell.
 cell_for_scan() {   # <state cell> — the part of it that says where the lane is
   cfs="$1"
   case "$cfs" in
@@ -1755,11 +1757,14 @@ cell_for_scan() {   # <state cell> — the part of it that says where the lane i
       case "$cfs_three" in
         *'|'* | *$'\n'* | *$'\r'*) printf '%s' "$cfs"; return 0 ;;
       esac
-      # A count that cannot be made is a long line; BSD `wc` pads, hence the `tr`.
+      # A count that cannot be made is a long line, and so is an `iconv` that
+      # is missing or refuses the text; BSD `wc` pads, hence the `tr`.
       cfs_len="${#cfs_three}"
-      [ "$cfs_len" -le 240 ] ||
+      if [ "$cfs_len" -gt 240 ] &&
+         printf '%s' "$cfs_three" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; then
         cfs_len="$(printf '%s' "$cfs_three" | LC_ALL=C tr -d '\200-\277' | wc -c | tr -d ' ')" ||
-        cfs_len=241
+          cfs_len=241
+      fi
       [ "$cfs_len" -le 240 ] || { printf '%s' "$cfs"; return 0; }
       cfs_ok=0
       case "$cfs_one" in
