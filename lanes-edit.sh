@@ -3247,8 +3247,8 @@ lane_log_exists() {
 # read exactly as it always did, and it is not an answer. `register_text` is the
 # same read with the status thrown away, as it always was, because its callers
 # are pipelines whose `awk` answers for them and rewriting all of them is not
-# this change. The two callers for which an empty register is a VERDICT ask the
-# checked read through `session_ids_checked` below.
+# this change. The three callers for which an empty register is a VERDICT ask
+# the checked read through `session_ids_checked` below.
 #
 # A FAILED READ IS NEVER CACHED, in the variable or in the file. It used to be:
 # the empty render went into both, so the first caller to meet a failed read —
@@ -5133,11 +5133,12 @@ session_ids_local_of_lane() {
 # The pair above answer 1 for "this lane has no row" AND for "the register could
 # not be read" — `row_of_lane` is `register_text | awk`, and `awk` answers 0
 # over an empty render — so a caller that unions them with `|| :` holds an
-# EMPTY id set either way. For most of them that is harmless. For the two that
-# take an empty set as a VERDICT it is fail-open: `holder_is_dead` hands it to
-# `live_holder`, whose 8 then calls a lane dead that nobody could check, and
-# `duplicate_holder_pids` answers "no duplicate" without looking. Those two ask
-# this read instead, and the pair keep their contract for everyone else.
+# EMPTY id set either way. For most of them that is harmless. For the three
+# that take an empty set as a VERDICT it is fail-open: `holder_is_dead` hands it
+# to `live_holder`, whose 8 then calls a lane dead that nobody could check,
+# `duplicate_holder_pids` answers "no duplicate" without looking, and
+# `lane_reconcile` pronounces a crash on that same 8 (#113 item 1). Those three
+# ask this read instead, and the pair keep their contract for everyone else.
 #
 #   0  the published-union-local ids, one per line, published first, deduped
 #   8  BOTH copies were read and neither gives this lane a transcript uuid: no
@@ -13220,35 +13221,6 @@ lane_tree_now() {   # <path>
   return 0
 }
 
-# THE SESSIONS A LANE'S ROW RECORDS, OR A READ THAT FAILED (opensoft/openRepoTools
-# #113 item 1). The published row and THIS checkout's, one id a line, unioned as
-# every liveness read here unions them (an id `origin` has not seen yet is one
-# more reason a holder may be live). 0 with the ids — none at all is an ANSWER:
-# no row, or a row naming no session — and 1 where either copy of the register
-# could not be read. Both reads used to end in `|| :`, so a register nobody
-# could read came out as an EMPTY id set, `live_holder` answered 8 for it — this
-# lane records no session, nothing can be live — and `lane_reconcile` pronounced
-# `ungraceful-stop` or `interrupted-swap` on a liveness question nobody answered.
-# An EMPTY published register is a failed read, as `lane_is_managed_owned` reads
-# it (`register_text` answers empty, not non-zero, where it could not render
-# one); this checkout's copy is a failed read where it is there — a dangling
-# link included — and awk could not open it. A checkout with no register file
-# at all has no row of its own, as `managed_local_hint` reads it.
-lane_session_ids_read() {   # <lane>
-  lsir_l="${1-}"; lsir_txt=""; lsir_loc=""; lsir_lrc=0
-  lsir_txt="$(register_text)"
-  [ -n "$lsir_txt" ] || return 1
-  if [ -e "$LANES_FILE" ] || [ -L "$LANES_FILE" ]; then
-    lsir_loc="$(row_of_lane_local "$lsir_l" 2>/dev/null)" || lsir_lrc=$?
-    [ "$lsir_lrc" = 0 ] || return 1
-  fi
-  { lsir_pub="$(printf '%s\n' "$lsir_txt" | awk -v lane="$lsir_l" "$ROW_AWK")"
-    [ -z "$lsir_pub" ] || row_cell "$lsir_pub" 3 | uuids_in_cell
-    [ -z "$lsir_loc" ] || row_cell "$lsir_loc" 3 | uuids_in_cell
-  } | awk 'NF && !seen[$0]++'
-  return 0
-}
-
 # NO REPOSITORY AT ALL IS AN ABSENCE, and nothing else is: `lane-worktrees`'
 # `no_repository`, the rule #170 G5 settled, so the two readers of one lane's
 # checkout cannot disagree about it. A directory with a `.git` of its own IS a
@@ -13335,12 +13307,17 @@ lane_reconcile() {   # <lane>
   # could not be established fails CLOSED: the verdict is `indeterminate` and
   # no crash is pronounced on a read nobody got.
   # AND THE SAME DISTINCTION ONE READ EARLIER (#113 item 1): the ids the row
-  # records. A register nobody could read is not a row naming no session, so it
-  # never reaches `live_holder` as an empty set, whose answer to one is 8.
+  # records. Both reads ended in `|| :`, so a register nobody could read came
+  # out as an EMPTY id set, `live_holder` answered 8 for it — this lane records
+  # no session, nothing can be live — and a crash was pronounced on a liveness
+  # question nobody answered. `session_ids_checked` is #67's read of the same
+  # published-union-local ids, and it tells the two apart: 8, no row or a row
+  # naming no session, goes on to `live_holder` exactly as before; 1, either
+  # copy of the register unread, never reaches it.
   lrc_ids=""; lrc_irc=0; lrc_hwhy=""
-  lrc_ids="$(lane_session_ids_read "$lrc_lane")" || lrc_irc=$?
+  lrc_ids="$(session_ids_checked "$lrc_lane")" || lrc_irc=$?
   lrc_hold=""; lrc_hrc=0
-  if [ "$lrc_irc" != 0 ]; then
+  if [ "$lrc_irc" != 0 ] && [ "$lrc_irc" != 8 ]; then
     lrc_hrc=1
     lrc_hwhy="lane $lrc_lane's register row could not be read — the published register, or this checkout's copy of it at $LANES_FILE — so which sessions it records is NOT established, and an id set nobody read is never an empty one"
   else

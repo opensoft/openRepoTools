@@ -477,8 +477,8 @@ follow-up this change had filed and deferred:
 ### 26. Every read the reconciliation rests on has a status, and a failed one is never an empty one
 
 #113's three remaining reads, and the one beside its second that 8.12 left:
-the holder ids (`lane_session_ids_read`: an empty published register, or this
-checkout's copy that is there and cannot be opened, is `HOLDER unknown` and so
+the holder ids (#67's `session_ids_checked`: a published register or this
+checkout's copy that could not be read is `HOLDER unknown` and so
 `indeterminate`, never an empty id set `live_holder` answers 8 for);
 `branch.<b>.remote` (the `case` its `merge` sibling already had, so a failed
 read is `lane_tree_now`'s 3, never the local upstream `./<merge>`); `git
