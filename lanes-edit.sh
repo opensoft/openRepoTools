@@ -12955,7 +12955,14 @@ lane_tree_now() {   # <path>
     ltn_cfg="$(git -C "$ltn_p" config --get "branch.$ltn_raw.merge" 2>/dev/null)" || ltn_crc=$?
     case "$ltn_crc" in 0|1) : ;; *) return 3 ;; esac
     if [ -n "$ltn_cfg" ]; then
-      ltn_rem="$(git -C "$ltn_p" config --get "branch.$ltn_raw.remote" 2>/dev/null || :)"
+      # AND THE REMOTE BESIDE IT IS ASKED THE SAME WAY (opensoft/openRepoTools
+      # #113 item 3). It ended in `|| :`, so a read that FAILED became an empty
+      # remote and `${ltn_rem:-.}` then FABRICATED the local upstream
+      # `./<merge>`, which was filed as an observation. Only a remote that is
+      # NOT CONFIGURED (1) keeps the `.` this read has always written for it.
+      ltn_rrc=0
+      ltn_rem="$(git -C "$ltn_p" config --get "branch.$ltn_raw.remote" 2>/dev/null)" || ltn_rrc=$?
+      case "$ltn_rrc" in 0|1) : ;; *) return 3 ;; esac
       ltn_u="${ltn_rem:-.}/${ltn_cfg#refs/heads/}"
       ltn_n=unknown
     fi
@@ -12963,6 +12970,51 @@ lane_tree_now() {   # <path>
   printf '%s%s%s%s%s%s%s%s%s\n' "$ltn_b" "$US" "$ltn_h" "$US" "${ltn_u:-none}" "$US" \
     "${ltn_d:-0}" "$US" "$ltn_n"
   return 0
+}
+
+# THE SESSIONS A LANE'S ROW RECORDS, OR A READ THAT FAILED (opensoft/openRepoTools
+# #113 item 1). The published row and THIS checkout's, one id a line, unioned as
+# every liveness read here unions them (an id `origin` has not seen yet is one
+# more reason a holder may be live). 0 with the ids — none at all is an ANSWER:
+# no row, or a row naming no session — and 1 where either copy of the register
+# could not be read. Both reads used to end in `|| :`, so a register nobody
+# could read came out as an EMPTY id set, `live_holder` answered 8 for it — this
+# lane records no session, nothing can be live — and `lane_reconcile` pronounced
+# `ungraceful-stop` or `interrupted-swap` on a liveness question nobody answered.
+# An EMPTY published register is a failed read, as `lane_is_managed_owned` reads
+# it (`register_text` answers empty, not non-zero, where it could not render
+# one); this checkout's copy is a failed read where it is there — a dangling
+# link included — and awk could not open it. A checkout with no register file
+# at all has no row of its own, as `managed_local_hint` reads it.
+lane_session_ids_read() {   # <lane>
+  lsir_l="${1-}"; lsir_txt=""; lsir_loc=""; lsir_lrc=0
+  lsir_txt="$(register_text)"
+  [ -n "$lsir_txt" ] || return 1
+  if [ -e "$LANES_FILE" ] || [ -L "$LANES_FILE" ]; then
+    lsir_loc="$(row_of_lane_local "$lsir_l" 2>/dev/null)" || lsir_lrc=$?
+    [ "$lsir_lrc" = 0 ] || return 1
+  fi
+  { lsir_pub="$(printf '%s\n' "$lsir_txt" | awk -v lane="$lsir_l" "$ROW_AWK")"
+    [ -z "$lsir_pub" ] || row_cell "$lsir_pub" 3 | uuids_in_cell
+    [ -z "$lsir_loc" ] || row_cell "$lsir_loc" 3 | uuids_in_cell
+  } | awk 'NF && !seen[$0]++'
+  return 0
+}
+
+# NO REPOSITORY AT ALL IS AN ABSENCE, and nothing else is: `lane-worktrees`'
+# `no_repository`, the rule #170 G5 settled, so the two readers of one lane's
+# checkout cannot disagree about it. A directory with a `.git` of its own IS a
+# repository however broken — git answers "not a git repository" for a gitdir
+# it cannot read too — and only git's own "not a git repository" for a
+# directory with none is the answer "there is nothing registered here".
+lane_no_repository() {   # <dir>
+  lnr_d="${1-}"; lnr_err=""
+  if [ -e "$lnr_d/.git" ] || [ -L "$lnr_d/.git" ]; then return 1; fi
+  if lnr_err="$(git -C "$lnr_d" rev-parse --git-dir 2>&1 >/dev/null </dev/null)"; then return 1; fi
+  case "$(printf '%s' "$lnr_err" | tr '[:upper:]' '[:lower:]')" in
+    *"not a git repository"*) return 0 ;;
+  esac
+  return 1
 }
 
 lane_reconcile() {   # <lane>
@@ -13034,14 +13086,22 @@ lane_reconcile() {   # <lane>
   # BE READ — which is never "no holder" (R22, Amendment 7(d)). A holder that
   # could not be established fails CLOSED: the verdict is `indeterminate` and
   # no crash is pronounced on a read nobody got.
-  lrc_ids="$( { session_ids_of_lane "$lrc_lane" 2>/dev/null || :
-                session_ids_local_of_lane "$lrc_lane" 2>/dev/null || :; } | awk 'NF && !seen[$0]++')"
+  # AND THE SAME DISTINCTION ONE READ EARLIER (#113 item 1): the ids the row
+  # records. A register nobody could read is not a row naming no session, so it
+  # never reaches `live_holder` as an empty set, whose answer to one is 8.
+  lrc_ids=""; lrc_irc=0; lrc_hwhy=""
+  lrc_ids="$(lane_session_ids_read "$lrc_lane")" || lrc_irc=$?
   lrc_hold=""; lrc_hrc=0
-  lrc_hold="$(live_holder "$lrc_lane" "$lrc_ids" 2>/dev/null)" || lrc_hrc=$?
+  if [ "$lrc_irc" != 0 ]; then
+    lrc_hrc=1
+    lrc_hwhy="lane $lrc_lane's register row could not be read — the published register, or this checkout's copy of it at $LANES_FILE — so which sessions it records is NOT established, and an id set nobody read is never an empty one"
+  else
+    lrc_hold="$(live_holder "$lrc_lane" "$lrc_ids" 2>/dev/null)" || lrc_hrc=$?
+  fi
   case "$lrc_hrc" in
     0) printf 'HOLDER%slive%s%s\n' "$US" "$US" "$(printf '%s' "$lrc_hold" | tr "$US" ' ')" ;;
     8) printf 'HOLDER%snone\n' "$US" ;;
-    *) printf 'HOLDER%sunknown%s%s\n' "$US" "$US" "${SESSION_FILES_ERR:-the session records of this workstation could not be read}" ;;
+    *) printf 'HOLDER%sunknown%s%s\n' "$US" "$US" "${lrc_hwhy:-${SESSION_FILES_ERR:-the session records of this workstation could not be read}}" ;;
   esac
 
   # 2b. THE BINDING (Amendment 18(b)): *"Liveness is pronounced only from
@@ -13097,6 +13157,19 @@ LRC_BIND
   lrc_dir="$(lane_payload_field "$lrc_lane" dir 2>/dev/null)" || lrc_drc=$?
   [ "$lrc_drc" = 0 ] || lrc_dir=""
   lrc_seen=""; lrc_n=0; lrc_recover=0; lrc_dirty=0
+  # AN INVENTORY NOBODY COULD LIST IS NOT AN EMPTY ONE (#113, the unreadable
+  # sidecar's rule one level up). `lane_trees_list` answers 10 for a `trees`
+  # directory that is there and cannot be listed (#157 item 4e), and this read
+  # ended in `|| :`, so every tree the lane recorded vanished from the report and
+  # its verdict could still be `resumable`. `lrc_unread` gathers what the
+  # inventory and the sweeps below could not read, and the verdict says so.
+  lrc_unread=""; lrc_tl=""; lrc_tlrc=0
+  lrc_tl="$(lane_trees_list "$lrc_lane" 2>/dev/null)" || lrc_tlrc=$?
+  case "$lrc_tlrc" in
+    0|8) : ;;
+    10) lrc_unread="its worktree inventory directory $lrc_root/trees is there and could not be listed" ;;
+    *)  lrc_unread="its worktree inventory could not be read (exit $lrc_tlrc)" ;;
+  esac
   while IFS="$US" read -r lrc_id lrc_p lrc_b lrc_h lrc_u lrc_d lrc_np lrc_w lrc_ob lrc_co lrc_tg lrc_to lrc_sch; do
     [ -n "${lrc_id:-}" ] || continue
     lrc_n=$((lrc_n + 1))
@@ -13200,7 +13273,7 @@ LRC_BIND
       "$lrc_nb" "$lrc_nh" "${lrc_nu:-none}" "${lrc_nd:-0}" "${lrc_nn:-0}" \
       "${lrc_d:-0}/${lrc_np:-0}" "$lrc_ob" "$lrc_moved"
   done <<EOF
-$(lane_trees_list "$lrc_lane" 2>/dev/null || :)
+$lrc_tl
 EOF
 
   # 4. WHAT IS THERE AND IS IN NO SIDECAR — from git's own registrations and
@@ -13216,6 +13289,19 @@ EOF
     # for the reason `lane-start`'s `real_of` gives: `readlink -f` is not in the
     # stock macOS userland.
     lrc_dirp="$(lane_real_path "$lrc_dir")"
+    # THE REGISTRATIONS ARE A READ, AND ITS STATUS IS KEPT (#113 item 4). It
+    # ended in `|| :`, so a checkout whose registrations could not be read was
+    # one with none: every stale registration and every unmanaged tree in it
+    # was omitted, the verdict could still read `resumable`, and the estate's
+    # own `resume` then failed on the registration the report never named. A
+    # directory that is NO repository at all registers nothing, and that alone
+    # is an absence (`lane_no_repository`, `lane-worktrees`' rule).
+    lrc_wlo=""; lrc_wlrc=0
+    lrc_wlo="$(git -C "$lrc_dir" worktree list --porcelain 2>/dev/null </dev/null)" || lrc_wlrc=$?
+    if [ "$lrc_wlrc" != 0 ] && lane_no_repository "$lrc_dir"; then lrc_wlrc=0; lrc_wlo=""; fi
+    if [ "$lrc_wlrc" != 0 ]; then
+      lrc_unread="${lrc_unread:+$lrc_unread; }the worktrees git registers in $lrc_dir could not be listed (git worktree list exited $lrc_wlrc)"
+    fi
     while IFS= read -r lrc_wl; do
       case "$lrc_wl" in worktree\ *) : ;; *) continue ;; esac
       lrc_wp="${lrc_wl#worktree }"
@@ -13239,12 +13325,19 @@ EOF
       lrc_seen="$lrc_seen $lrc_wp $lrc_wpr "
       lrc_unmanaged=$((lrc_unmanaged + 1))
     done <<EOF
-$(git -C "$lrc_dir" worktree list --porcelain 2>/dev/null || :)
+$lrc_wlo
 EOF
   fi
   while IFS= read -r lrc_wr; do
     [ -n "$lrc_wr" ] || continue
     [ -d "$lrc_wr" ] || continue
+    # A ROOT THAT CANNOT BE LISTED hides every tree in it — the glob comes back
+    # as itself and reads as an empty root — so it is a read nobody made (#113
+    # item 4, the on-disk half of the same sweep).
+    if [ ! -r "$lrc_wr" ] || [ ! -x "$lrc_wr" ]; then
+      lrc_unread="${lrc_unread:+$lrc_unread; }the lane's worktree root $lrc_wr could not be listed"
+      continue
+    fi
     for lrc_c in "$lrc_wr"/*; do
       [ -d "$lrc_c" ] || continue
       lrc_cr="$(lane_real_path "$lrc_c")"
@@ -13264,7 +13357,8 @@ EOF
   lrc_v=""; lrc_why=""
   if [ "$lrc_hrc" != 0 ] && [ "$lrc_hrc" != 8 ]; then
     lrc_v=indeterminate
-    lrc_why="this workstation's session records could not be read, so whether a holder is live is NOT established — which is not the same as none"
+    [ -n "$lrc_hwhy" ] || lrc_hwhy="this workstation's session records could not be read"
+    lrc_why="$lrc_hwhy, so whether a holder is live is NOT established — which is not the same as none"
   else
     case "$lrc_state$lrc_hrc" in
       RUNNING8)   lrc_v=ungraceful-stop; lrc_why="the lane is recorded RUNNING and no verified holder is live: the session stopped before any handoff began, so nothing was polled, refreshed or recorded — inspect every tree below before relaunching a writer" ;;
@@ -13298,6 +13392,14 @@ EOF
       lrc_v=indeterminate
       lrc_why="lane $lrc_lane's object log could not be read, so where it is bound is NOT established — and liveness may be pronounced only from inside the binding (Amendment 18(b)). A read that failed is never an answer (Amendment 7(d))" ;;
   esac
+  # AND NO CLEARANCE OVER PATHS NOBODY READ (#113). The inventory, the
+  # registrations or a lane root that could not be read leaves trees this
+  # report never saw — so whatever the snapshot and the holder say, the verdict
+  # is not one a launcher may go past.
+  if [ -n "$lrc_unread" ] && [ "$lrc_v" != indeterminate ]; then
+    lrc_v=indeterminate
+    lrc_why="not all of lane $lrc_lane's worktrees could be read ($lrc_unread), so trees this report never saw may hold work, and no clearance is pronounced over paths nobody read (R22, Amendment 7(d))"
+  fi
   if [ "$lrc_drc" != 0 ] && [ "$lrc_drc" != 8 ] && [ "$lrc_v" != indeterminate ]; then
     lrc_v=indeterminate
     lrc_why="lane $lrc_lane's object log could not be read, so its coordinator directory is NOT established and neither the worktrees git registers there nor the trees on disk under its roots were inspected — no clearance is pronounced over paths nobody read (Amendment 7(d))"
