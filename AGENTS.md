@@ -42,8 +42,8 @@ unreadable workspace with **2**: only 2 blocks a prompt; 1 would let it through.
 Profile-only guard calls carrying exact `CLAUDE_NO_LANE=1` return 0 before input
 or identity probes, even with unreadable configuration; other values enforce.
 Brett Heap directed this exception in `openspec/changes/skip-no-lane-guard/`;
-Shared hooks stay installed. Exit 1 means *registry not found* in lane tooling,
-and *findings were printed* in estate status; identify the command before interpreting it.
+Shared hooks stay installed while `~/projects/xFactory/lanes-edit.sh` answers `guard`; until then they are deferred and our guard entry taken out (#237):
+29 artifacts always, plus those two. Exit 1 means *registry not found* in lane tooling, and *findings were printed* in estate status; identify the command before interpreting it.
 
 ## Driving `park <Name>`, `resume <Name>` and `status <Name>`
 
@@ -77,8 +77,10 @@ sequence, and relay their per-repository lines rather than summarising them.
    clone with `--ff-only` and REFUSES BY NAME one that is dirty or on a feature
    branch, skipping it and leaving it exactly as it is — and not running the
    verb in it either. It also refuses a root whose LEG sits on a feature
-   branch, because that root's own `make bootstrap` would walk the leg back
-   onto its tracking branch; the superproject looks clean in that state, which
+   branch, or anywhere but the branch that root's own `make bootstrap` places
+   it on — its row's own `branch:` in `project.yaml`, else the root's
+   `tracking_branch` — because bootstrap would walk the leg onto that branch;
+   the superproject looks clean in that state, which
    is why the refusal names the leg. Never `git reset`, `git stash` or
    `git checkout -f` — and never `git checkout main` in a leg — to make the
    next run succeed: that is the work the refusal exists to protect.

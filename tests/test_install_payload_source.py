@@ -1708,6 +1708,11 @@ def test_r12_an_adopted_install_keeps_modes_receipts_targets_and_what_is_not_our
     (bin_dir / "mytool").write_text("#!/bin/sh\necho mine\n", encoding="utf-8")
     (bin_dir / "mytool").chmod(0o750)
     claude.mkdir()
+    # THE PAIR NEEDS A TARGET THAT ANSWERS `guard` (#237): the link
+    # `link-estates` makes, to the `lanes-edit.sh` this install places.
+    xfactory = home / "projects" / "xFactory"
+    xfactory.mkdir(parents=True)
+    (xfactory / "lanes-edit.sh").symlink_to(bin_dir / "lanes-edit.sh")
     settings = {"theme": "dark", "hooks": {
         "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "usage-guard check"}]}],
         "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "audit"}]}]}}

@@ -39,7 +39,7 @@ from conftest import REPO, WINDOWS_SKIP
 from test_openrepotools_command import (COMMAND, command_env, run_cmd,
                                         COMMAND_NAMES, COMMAND_PATHS,
                                         INSTALLED, NEEDS_JQ, SKILL_NAMES,
-                                        SKILL_PATH)
+                                        SKILL_PATH, link_xfactory)
 
 pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
                                  reason="openRepoTools is a bash script"),
@@ -397,6 +397,7 @@ def test_the_hook_entry_is_byte_identical_to_the_amendments(tmp_path):
     file and the launcher writes each profile's; the two never write one file,
     and only the shared string keeps an exact-match ensure from treating one as
     absent and adding a second entry that fires the hook twice (R-A9-4)."""
+    link_xfactory(tmp_path)
     result = run_cmd("--install", home=tmp_path)
     assert result.returncode == 0, result.stderr
     data = json.loads(settings_of(tmp_path).read_text(encoding="utf-8"))
@@ -422,6 +423,7 @@ def test_the_merge_keeps_every_other_setting_and_the_mode(tmp_path):
     widened the mode would be silently undone, or would widen it behind that
     script's back.
     """
+    link_xfactory(tmp_path)
     settings = settings_of(tmp_path)
     settings.parent.mkdir(parents=True)
     settings.write_text(json.dumps({
@@ -446,6 +448,7 @@ def test_the_merge_keeps_every_other_setting_and_the_mode(tmp_path):
 
 @NEEDS_JQ
 def test_installing_twice_adds_one_entry_and_not_two(tmp_path):
+    link_xfactory(tmp_path)
     assert run_cmd("--install", home=tmp_path).returncode == 0
     second = run_cmd("--install", home=tmp_path)
     assert second.returncode == 0, second.stderr
@@ -473,6 +476,7 @@ def test_a_present_hook_in_a_widened_settings_file_is_narrowed_to_600(tmp_path):
     THE FILE IS NOT REWRITTEN TO FIX A MODE: a user's settings are not an
     installer's to own, and `chmod` changes no byte of them.
     """
+    link_xfactory(tmp_path)
     assert run_cmd("--install", home=tmp_path).returncode == 0
     settings = settings_of(tmp_path)
     before = settings.read_bytes()
@@ -611,6 +615,7 @@ def test_an_unrelated_session_start_entry_is_kept_and_ours_is_added(tmp_path):
     """Somebody else's SessionStart hook is not ours to remove. Only an entry
     that runs `session-start` with a different string is a conflict — anything
     else is a setting a person meant, and this merges beside it."""
+    link_xfactory(tmp_path)
     other = "~/bin/say-hello.sh"
     settings = settings_of(tmp_path)
     settings.parent.mkdir(parents=True)
@@ -1286,6 +1291,7 @@ def test_an_entry_that_merely_names_the_same_file_is_no_conflict(tmp_path):
     `SessionStart` is somebody's own setting: it writes nothing, it is not this
     hook, and firing it does not fire ours twice. It is kept, and ours is added
     beside it — the same answer any unrelated entry gets."""
+    link_xfactory(tmp_path)
     other = "~/projects/xFactory/lanes-edit.sh who || true"
     settings = settings_of(tmp_path)
     settings.parent.mkdir(parents=True)
@@ -1316,6 +1322,7 @@ def test_the_guard_entry_is_byte_identical_to_amendment_12(tmp_path):
     that copied the `SessionStart` block wholesale would write a key the event
     does not have.
     """
+    link_xfactory(tmp_path)
     result = run_cmd("--install", home=tmp_path)
     assert result.returncode == 0, result.stderr
     data = json.loads(settings_of(tmp_path).read_text(encoding="utf-8"))
@@ -1343,6 +1350,7 @@ def test_the_guard_entry_carries_no_or_true_and_that_is_the_mechanism(tmp_path):
     above because copying the neighbouring string is the obvious way to write
     this and the result would pass every other test in this file.
     """
+    link_xfactory(tmp_path)
     assert run_cmd("--install", home=tmp_path).returncode == 0
     assert user_prompt_commands(tmp_path) == [GUARD_COMMAND]
     assert "|| true" not in GUARD_COMMAND
@@ -1354,6 +1362,7 @@ def test_the_guard_entry_carries_no_or_true_and_that_is_the_mechanism(tmp_path):
 def test_installing_twice_adds_one_guard_entry_and_not_two(tmp_path):
     """Idempotent by EXACT MATCH, the same as the entry beside it — and firing
     this hook twice is two refusals for one prompt."""
+    link_xfactory(tmp_path)
     assert run_cmd("--install", home=tmp_path).returncode == 0
     second = run_cmd("--install", home=tmp_path)
     assert second.returncode == 0, second.stderr
@@ -1440,6 +1449,7 @@ def test_an_entry_that_merely_names_guard_in_a_path_is_no_conflict(tmp_path):
     boundary on both sides it is what it is — somebody's own setting, kept
     exactly where it is, with ours added beside it.
     """
+    link_xfactory(tmp_path)
     other = "~/projects/xFactory/guard.sh"
     settings = settings_of(tmp_path)
     settings.parent.mkdir(parents=True)
@@ -1485,6 +1495,7 @@ def test_one_write_places_both_entries_in_one_file(tmp_path):
     twice would move a person's settings through a state carrying one of the
     pair — which is the half-install the test above refuses, reached by the
     happy path instead of by a conflict."""
+    link_xfactory(tmp_path)
     result = run_cmd("--install", home=tmp_path)
     assert result.returncode == 0, result.stderr
     assert session_start_commands(tmp_path) == [HOOK_COMMAND]
