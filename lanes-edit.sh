@@ -3435,9 +3435,12 @@ lane_objects() {
     # takers, and the one whose last line is a stale CLAIMED could hide the
     # other-s TAKEOVER. `on[]` keeps the spelling of the line that won the
     # position test, so what is PRINTED is still a name somebody wrote.
+    # `ot[]` is the lane a TAKEOVER names as `← lane:<x>`, lower-cased, and
+    # empty for any other line: the link a chain is followed by (#74, below).
     tolower($2) != mel {
       q = pos($10, $11); okey = $6 SUBSEP tolower($2)
-      if (!(okey in op) || q >= op[okey]) { op[okey] = q; ov[okey] = $3; ou[okey] = $1; on[okey] = $2 }
+      if (!(okey in op) || q >= op[okey]) { op[okey] = q; ov[okey] = $3; ou[okey] = $1; on[okey] = $2
+        ot[okey] = ($3 == "TAKEOVER" && $7 == "←" && substr($8, 1, 5) == "lane:") ? tolower(substr($8, 6)) : "" }
     }
     # SUPERSEDED, WITHOUT ORDERING TWO FILES AGAINST EACH OTHER (R14), AND ONLY
     # WHILE THE TAKEOVER STILL STANDS (R18): another lane has a TAKEOVER on the
@@ -3457,9 +3460,26 @@ lane_objects() {
     # test; any later line of this lane is it speaking after the fact and is
     # reported as it stands. The two lines sit in two different lanes, whose
     # files share no clock, and this asks for none.
-    END { for (kk in ov) if (ov[kk] == "TAKEOVER") {
-            split(kk, aa, SUBSEP); oo = aa[1]; ll = on[kk]
-            if (!(oo in tp) || op[kk] >= tp[oo]) { tp[oo] = op[kk]; tlane[oo] = ll; tutc[oo] = ou[kk] } }
+    # A CHAIN IS FOLLOWED TO ITS LAST LINK (opensoft/openRepoTools#74), by the
+    # rule `superseded_by` below argues: when this lane-s own last line is a
+    # TAKEOVER, only another lane-s standing TAKEOVER that NAMES this lane
+    # (`← lane:<this lane>`) displaces it, and not one this lane-s own
+    # TAKEOVER names back; any other open verb is displaced by any standing
+    # TAKEOVER, and the taker NAMED is one no other standing TAKEOVER names
+    # wherever there is one. Without it the true holder at the end of a chain
+    # was told here that it had been "taken over" by the lane it took the
+    # object from, and `lane-end` handed it the release that frees the object.
+    END { for (kk in ov) if (ov[kk] == "TAKEOVER" && ot[kk] != "") {
+            split(kk, aa, SUBSEP); if (ot[kk] != aa[2]) nmd[aa[1], ot[kk]] = 1 }
+          for (kk in ov) if (ov[kk] == "TAKEOVER") {
+            split(kk, aa, SUBSEP); oo = aa[1]; ll = aa[2]
+            if (!(oo in verb)) continue
+            if (verb[oo] == "TAKEOVER") {
+              mt = (ref[oo] == "←" && substr(pay[oo], 1, 5) == "lane:") ? tolower(substr(pay[oo], 6)) : ""
+              if (ot[kk] != mel || mt == ll) continue
+              r = 1
+            } else r = (((oo, ll) in nmd) ? 0 : 1)
+            if (!(oo in tp) || r > tr[oo] || (r == tr[oo] && op[kk] >= tp[oo])) { tp[oo] = op[kk]; tr[oo] = r; tlane[oo] = on[kk]; tutc[oo] = ou[kk] } }
           for (i = 1; i <= n; i++) { o = byn[i]
             supv = ((o in tlane) && (verb[o] == "CLAIMED" || verb[o] == "TAKEOVER" || verb[o] == "OPENED" || verb[o] == "LANDING" || verb[o] == "WITHDRAWN"))
             sup = supv ? tlane[o] "@" tutc[o] : ""
@@ -3488,9 +3508,33 @@ lane_objects() {
 # there is no shared clock to order them by, so the question asked is the one
 # file order can answer — is our own last line still the claim, and is a
 # TAKEOVER still theirs. The UTC printed beside the lane is information for the
-# reader, never a key. When two lanes both end on a TAKEOVER the file-ordered
-# position picks which one is NAMED; both are holders either way, and that
-# conflict is visible in `who` rather than resolved here (see README, "Known").
+# reader, never a key.
+#
+# A CHAIN OF TAKEOVERS RESOLVES TO ITS LAST LINK (opensoft/openRepoTools#74).
+# Issue #30's dead-lane exception lets a TAKEOVER displace an earlier TAKEOVER
+# — A claims, B takes over from A, C takes over from B once B is dead — and
+# every link that displaces a TAKEOVER names the lane it displaced as
+# `← lane:<x>`: `claim --force` writes that payload for every hold that is not
+# a CLAIMED, and only a CLAIMED is ever taken with a comment URL instead. The
+# test used to be "does SOME other lane's last line here read TAKEOVER", and it
+# read B's TAKEOVER — itself displaced by C — as proof that C was displaced
+# too: `who` reported ZERO holders of an object C held. So the question is now
+# asked by what our own last line is:
+#   * a TAKEOVER is displaced ONLY by another lane's standing TAKEOVER that
+#     NAMES our lane. B is displaced by C, which names it; C by nothing, since
+#     no standing TAKEOVER names C. One lane holds the object: the last link.
+#   * any other open verb is displaced by any standing TAKEOVER, as it always
+#     was, and the taker NAMED is one that no other standing TAKEOVER names —
+#     the lane that holds the object now — wherever there is one. A's line
+#     says C, not B. Where every taker is named, the file-ordered position
+#     picks which one is named; A is displaced either way.
+# Two lanes that each end on a TAKEOVER and do not name each other — two takers
+# of one stale claim — are therefore BOTH holders, the visible conflict the
+# README's "Known, deliberate" paragraph has always described; since PR #61
+# (issue #30) widened the gate, the old test had them displace each other and
+# `who` called the object FREE. Two TAKEOVERs that name EACH OTHER (a lane revived and took back
+# what had been taken from it) are both holders too: no file order says which
+# was written last, and a conflict `who` shows is one a person can resolve.
 superseded_by() {   # <object> <lane> <that lane's own last verb on it>
   # ANY OPEN VERB, NOT ONLY CLAIMED (Copilot round 7, PR #61, issue #30): a
   # dead lane's TAKEOVER — decision 8(e)'s stale-CLAIMED case is still the
@@ -3509,12 +3553,24 @@ superseded_by() {   # <object> <lane> <that lane's own last verb on it>
   # reads the same stream: the lane field of a log line carries the spelling
   # that was typed on the day, and one lane's two spellings are one lane. The
   # NAME is still the one the winning line carried, because this is printed.
-  state_events | awk -v sep="$US" -v o="$1" -v me="$2" '
+  # OUR OWN LAST LINE IS READ HERE TOO, not only the other lanes': the TAKEOVER
+  # it may be is what names the lane a chain was taken from (#74, above). `t[]`
+  # is the lane each last line names as `← lane:<x>`, lower-cased, or empty;
+  # a TAKEOVER naming its own lane names nobody.
+  state_events | awk -v sep="$US" -v o="$1" -v me="$2" -v mv="$3" '
     function pos(pf, pn) { return pf "\034" sprintf("%09d", pn) }
     BEGIN { FS = sep; mel = tolower(me) }
-    $6 == o && tolower($2) != mel { p = pos($10, $11); ll = tolower($2)
-      if (!(ll in q) || p >= q[ll]) { q[ll] = p; v[ll] = $3; u[ll] = $1; nm[ll] = $2 } }
-    END { for (l in q) if (v[l] == "TAKEOVER" && (!seen || q[l] >= b)) { seen = 1; b = q[l]; bl = nm[l]; bu = u[l] }
+    $6 == o { p = pos($10, $11); ll = tolower($2)
+      if (!(ll in q) || p >= q[ll]) { q[ll] = p; v[ll] = $3; u[ll] = $1; nm[ll] = $2
+        t[ll] = ($3 == "TAKEOVER" && $7 == "←" && substr($8, 1, 5) == "lane:") ? tolower(substr($8, 6)) : "" } }
+    END { for (l in q) if (v[l] == "TAKEOVER" && t[l] != "" && t[l] != l) named[t[l]] = 1
+          for (l in q) {
+            if (l == mel || v[l] != "TAKEOVER") continue
+            if (mv == "TAKEOVER") {
+              if (t[l] != mel || t[mel] == l) continue
+              r = 1
+            } else r = ((l in named) ? 0 : 1)
+            if (!seen || r > br || (r == br && q[l] >= b)) { seen = 1; br = r; b = q[l]; bl = nm[l]; bu = u[l] } }
           if (seen) print bl "@" bu }'
 }
 
