@@ -145,7 +145,8 @@
 #      rename and before any write, so a No costs nothing;
 #   4. `tmux rename-window <LANE>` — which also turns automatic-rename OFF for
 #      that window (tmux(1) rename-window), so the name survives the next
-#      command the window runs;
+#      command the window runs. A NEW lane's name is read back, and where
+#      another window carries it too the rename is undone and the run refuses;
 #   5. the row: `lanes-edit.sh add-row` when there is none, otherwise
 #      `set-row-state`. Never a hand edit and never a whole-file write.
 #      THE STATE IS AMENDMENT 6(c)'s STAMP, written here rather than owed to
@@ -2208,6 +2209,36 @@ case "$retired_rc" in
   *) die "the lane archive could not be checked for $LANE (exit $retired_rc). Nothing was renamed or written." 1 ;;
 esac
 
+# AND A RETIRED ROW THAT IS STILL IN THE REGISTER (opensoft/openRepoTools#138
+# item 14). The archive holds a retired row only once `archive-rows` has moved
+# it there; until then the row says so itself, and `retired-identity` answers 8
+# about it. So the row is asked too — this checkout's copy and the published
+# one, either of which may be ahead — and so is the lane's own log: a state
+# word of RETIRED, or a last lane-kind line that is RETIRED, is a lane that is
+# not coming back, and resuming it would append a STARTED or RESUMED after its
+# retirement in a log nothing ever rewrites.
+#
+# RETIRED ONLY, AND NOT ENDED. `lane-end` is "the window is closing" and
+# `--retire` is "the lane is not coming back" (docs/README-lanes.md); a binding
+# is released by a PAUSED or an ENDED alike (Amendment 18(b)), `lane` sends a
+# closed lane back here to be reopened, and an ENDED lane resumed by this
+# command is in the real register. Making ENDED terminal is a ruling's to make.
+for retired_row in "$row" "$pub_row"; do
+  retired_word="$(printf '%s\n' "$retired_row" | awk -F'|' 'NF > 2 {
+    split($(NF - 1), w, " "); if (w[1] == "RETIRED") { print w[1]; exit } }')"
+  [ -z "$retired_word" ] ||
+    die "lane $LANE's register row says RETIRED, though the archive does not hold it yet: a retired lane is not coming back (opensoft/openRepoTools#138 item 14). Nothing was renamed or written; choose a free position." 2
+done
+retired_last_rc=0
+retired_last="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-last "$LANE" 2>/dev/null)" || retired_last_rc=$?
+retired_verb="$(printf '%s\n' "$retired_last" | cut -f1)"
+case "$retired_last_rc:$retired_verb" in
+  0:RETIRED)
+    die "lane $LANE's object log ends on its RETIRED line, though the archive does not hold it yet: a retired lane is not coming back (opensoft/openRepoTools#138 item 14). Nothing was renamed or written; choose a free position." 2 ;;
+  0:* | 8:*) : ;;
+  *) die "\`$LANES_EDIT lane-last $LANE\` exited $retired_last_rc, so whether lane $LANE's log ends on RETIRED could NOT be read — and that is not 'it does not' (Amendment 7(d)). Nothing was renamed or written." 1 ;;
+esac
+
 # A lane name is a tmux-window address. tmux itself allows two distinct
 # windows to carry one name, so check the whole server before taking it. A
 # linked window may appear in several sessions with the same @id; that is one
@@ -2221,19 +2252,54 @@ esac
 # lane after a release, or through `--request-handoff`, is the ratified flow.
 # Asked of every lane, this fence refused exactly that takeover.
 if [ "$row_count" = 0 ]; then
-  name_tab="$(printf '\t')"
-  name_rows="$(tmux list-windows -a -F "#{window_id}${name_tab}#{window_name}" 2>/dev/null)" ||
+  window_named_lane ||
     die "tmux could not list window names, so whether $LANE is already in use is unknown. Nothing was renamed or written." 2
-  while IFS="$name_tab" read -r name_id name_value; do
-    [ -n "$name_id" ] || continue
-    if [ "$name_id" != "$this_window_id" ] &&
-       [ "$(printf '%s' "$name_value" | tr 'A-Z' 'a-z')" = "$(printf '%s' "$LANE" | tr 'A-Z' 'a-z')" ]; then
-      die "another tmux window ($name_id) is already named $name_value, and $LANE is a NEW lane, so that window is not its own. Lane window names must be unique in this tmux server; nothing was renamed or written." 2
+  [ -z "$WNL_ID" ] ||
+    die "another tmux window ($WNL_ID) is already named $WNL_NAME, and $LANE is a NEW lane, so that window is not its own. Lane window names must be unique in this tmux server; nothing was renamed or written." 2
+
+  # AND THIS WINDOW'S OWN NAME (opensoft/openRepoTools#138 item 16). The scan
+  # above skips this window, so a NEW lane started from a stale or reused
+  # window still named for ANOTHER registered lane would rename it and take
+  # that lane's tmux address. Only a name no row carries is reusable: `claude`,
+  # a shell, or a string `check_lane_name` refuses, which no row can carry.
+  # Both copies of the register are asked, because a row this checkout has not
+  # pushed already owns its window, and a read that fails refuses.
+  case "$this_window_name" in
+    "" | *[!A-Za-z0-9._-]* | .* | -*) : ;;
+    *)
+      if [ "$(printf '%s' "$this_window_name" | tr 'A-Z' 'a-z')" != "$(printf '%s' "$LANE" | tr 'A-Z' 'a-z')" ]; then
+        for own_read in register-row register-row-local; do
+          own_rc=0
+          LANES_NO_FETCH=1 "$LANES_EDIT" "$own_read" "$this_window_name" >/dev/null 2>&1 || own_rc=$?
+          case "$own_rc" in
+            8) : ;;
+            0) die "this window is named $this_window_name, which is another lane the register has a row for (\`$own_read\`), and $LANE is a NEW lane: renaming the window would take that lane's tmux address (opensoft/openRepoTools#138 item 16). Start $LANE in a window of its own. Nothing was renamed or written." 2 ;;
+            *) die "\`$LANES_EDIT $own_read $this_window_name\` exited $own_rc, so whether this window is another lane's could NOT be read — and that is not 'it is not' (Amendment 7(d)). Nothing was renamed or written." 1 ;;
+          esac
+        done
+      fi ;;
+  esac
+fi
+}
+# The first window OTHER than this one that this tmux server names $LANE, in
+# any case, into WNL_ID and WNL_NAME (both empty where there is none); 1 where
+# tmux could not list the windows. The fence above asks it before the rename,
+# and step 4 asks it again after.
+window_named_lane() {
+  WNL_ID=""; WNL_NAME=""
+  wnl_tab="$(printf '\t')"
+  wnl_rows="$(tmux list-windows -a -F "#{window_id}${wnl_tab}#{window_name}" 2>/dev/null)" || return 1
+  while IFS="$wnl_tab" read -r wnl_id wnl_name; do
+    [ -n "$wnl_id" ] || continue
+    if [ "$wnl_id" != "$this_window_id" ] &&
+       [ "$(printf '%s' "$wnl_name" | tr 'A-Z' 'a-z')" = "$(printf '%s' "$LANE" | tr 'A-Z' 'a-z')" ]; then
+      WNL_ID="$wnl_id"; WNL_NAME="$wnl_name"
+      return 0
     fi
   done <<EOF
-$name_rows
+$wnl_rows
 EOF
-fi
+  return 0
 }
 lane_check_local_fences
 
@@ -2474,8 +2540,48 @@ fi
 if (( dry_run )); then
   plan "tmux rename-window $LANE   (also turns automatic-rename off for this window)"
 else
+  win_auto_was=""
+  [ "$row_count" != 0 ] || win_auto_was="$(tmux show-options -w -v automatic-rename 2>/dev/null || :)"
   tmux rename-window "$LANE"
   step "window renamed to $LANE (automatic-rename is now off for it)"
+fi
+
+# AND A NEW LANE'S NAME IS READ BACK (opensoft/openRepoTools#138 item 3). The
+# fence's scan and the rename above are two tmux commands with nothing reserving
+# the name between them, so two NEW-lane starts in two windows could both find
+# it free and both take it — and the register's lock, which comes after, cannot
+# undo a rename. Nothing here invents a reservation (#84: that is a ruling's to
+# make); the rename is checked instead. tmux runs one command at a time, so of
+# two starts that each rename and then list, the later list always sees the
+# earlier rename: at most one keeps the name, and both refusing is the
+# fail-closed answer. A list that fails is not a name that is free. A refusal
+# gives THIS window back its name and its automatic-rename, so nothing of this
+# run is left behind it.
+if (( ! dry_run )) && [ "$row_count" = 0 ]; then
+  rb_why=""
+  if ! window_named_lane; then
+    rb_why="tmux could not list the windows after the rename, so whether another window took $LANE as well is unknown"
+  elif [ -n "$WNL_ID" ]; then
+    rb_why="after the rename another tmux window ($WNL_ID) is named $WNL_NAME too: a second start took this NEW lane's name between this run's check and its rename"
+  fi
+  if [ -n "$rb_why" ]; then
+    # NO NAME TO GO BACK TO IS NO UNDO: where tmux answered `#W` with nothing,
+    # nothing here can name this window back, and the refusal says so rather
+    # than claiming an undo it did not make.
+    rb_undo="This window's rename could NOT be undone, because its earlier name is not known — rename it yourself: tmux rename-window <its name>"
+    if [ -n "$this_window_name" ]; then
+      if tmux rename-window "$this_window_name" 2>/dev/null; then
+        rb_undo="This window's rename is undone"
+      else
+        rb_undo="This window's rename could NOT be undone — rename it back yourself: tmux rename-window $this_window_name"
+      fi
+    fi
+    case "$win_auto_was" in
+      "") tmux set-option -w -u automatic-rename 2>/dev/null || : ;;
+      on) tmux set-option -w automatic-rename on 2>/dev/null || : ;;
+    esac
+    die "$rb_why (opensoft/openRepoTools#138 item 3). $rb_undo, and nothing has been written or launched. Lane window names are unique in a tmux server; settle which window is $LANE and re-run there." 2
+  fi
 fi
 
 # ------------------------------------------------- 5a. what will be launched
@@ -2576,28 +2682,58 @@ transcript_under() {   # <projects dir> <id>
   return 1
 }
 
-# EVERY LIVE RECORD CARRYING AN ID, ACROSS EVERY PROFILE'S `sessions/`
-# (Amendment 18(h), in force 2026-09-14T13:15:18Z: *"A transcript (one session
-# id) is held by ONE live process"*). A pid is checked with `kill -0`, which is
-# this machine's own answer; a record whose process is gone holds nothing.
-# `<pid><TAB><tmux|bg><TAB><profile>` per holder.
+# EVERY LIVE HOLDER OF AN ID, ACROSS EVERY PROFILE'S `sessions/` (Amendment
+# 18(h), in force 2026-09-14T13:15:18Z: *"A transcript (one session id) is held
+# by ONE live process"*). WHO IS LIVE IS `lanes-edit.sh`'s ONE ANSWER AND NOT A
+# SECOND ONE HERE (opensoft/openRepoTools#56). This function used to read the
+# records itself and test the pid with `kill -0` ALONE — one of the three tests
+# `record_is_live` makes, not three — so a record that had ENDED, or whose pid
+# had been RECYCLED onto some other process, read as a live holder and refused a
+# transcript's follow with *"a LIVE process there holds it"* and the retire act,
+# about a process that is not that session. `lanes-edit.sh transcript-holders`
+# (opensoft/openRepoTools#52) is that read, on `record_is_live` — status not
+# ended, the pid answers, and `procStart` is still the one the record wrote down
+# — across every profile through `session_files`, and `dup_check` above already
+# asks it; this asks it the same way and reads its exits the same way.
+#
+# EVERY ROW IT PRINTS IS A HOLDER HERE, WHATEVER ITS VERDICT. The verdict says
+# what THIS WINDOW's relation to the holder is, which is `dup_check`'s question;
+# the question at this call is narrower and older — *is any live process holding
+# the id this run is about to move out of another profile* — and the move is
+# wrong for a `companion` or a `here` record just as it is for a `duplicate`.
+# The row's format is the contract this reads (`pid US kind US tgt US profile US
+# where US verdict US file`), and the verdict stays the helper's to change.
+#
+# IT SETS `LIVE_HOLDERS` — `<pid><TAB><tmux target, or bg><TAB><profile>` per
+# holder, one to a line — AND PRINTS NOTHING, and it is never called inside
+# `$( )`: a refusal is `FOLLOW_WHY`, and a subshell would keep it to itself (the
+# reason `follow_transcript` states beside its own variables). Returns 0 with
+# the holders read (none is an answer), 2 where they could not be.
+LIVE_HOLDERS=""
 live_holders_of_id() {   # <id>
-  lho_id="$1"
-  for lho_f in "$PROFILES_HOME"/profiles/*/*/*/sessions/*.json \
-               "$PROFILES_HOME"/profiles/*/*/sessions/*.json \
-               "$PROFILES_HOME"/profiles/*/sessions/*.json \
-               "$CLAUDE_HOME"/sessions/*.json; do
-    [ -f "$lho_f" ] || continue
-    lho_blob="$(tr -d '\n' < "$lho_f" 2>/dev/null || :)"
-    case "$lho_blob" in *"\"sessionId\":\"$lho_id\""*) : ;; *) continue ;; esac
-    lho_pid="$(printf '%s' "$lho_blob" | grep -o '"pid":[0-9][0-9]*' | head -n1 | sed 's/.*://')"
-    [ -n "$lho_pid" ] || continue
-    kill -0 "$lho_pid" 2>/dev/null || continue
-    lho_where="$(printf '%s' "$lho_blob" | grep -o '"tmux":"[^"]*"' | head -n1 | sed 's/^"tmux":"//; s/"$//')"
-    [ -n "$lho_where" ] || lho_where=bg
-    lho_prof="${lho_f%/sessions/*}"; lho_prof="${lho_prof##*/}"
-    printf '%s\t%s\t%s\n' "$lho_pid" "$lho_where" "$lho_prof"
-  done
+  lho_id="$1"; LIVE_HOLDERS=""; lho_rc=0; lho_rows=""
+  lho_tab=$'\t'; lho_nl='
+'
+  : > "$LS_TMP"
+  lho_rows="$("$LANES_EDIT" transcript-holders "$lho_id" 2>"$LS_TMP")" || lho_rc=$?
+  case "$lho_rc" in
+    0) : ;;
+    8) return 0 ;;
+    2) [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
+       note "this \`lanes-edit.sh\` has no \`transcript-holders\` (exit 2), so whether a live process already holds transcript $lho_id is NOT known here. Install the one beside this script (\`openRepoTools --install\`); carrying on."
+       return 0 ;;
+    *) [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
+       FOLLOW_WHY="$LANES_EDIT transcript-holders $lho_id exited $lho_rc, so whether a live process holds that transcript could NOT be read — and that is not 'none does'. A transcript is held by ONE live process (Amendment 18(h)): nothing was moved and nothing was launched."
+       return 2 ;;
+  esac
+  while IFS=$'\037' read -r lho_pid lho_kind lho_tgt lho_prof lho_where lho_verdict lho_file; do
+    [ -n "${lho_pid:-}" ] || continue
+    # The raw tmux target, and `bg` where the record names none (`transcript-holders`
+    # writes `none`) — what this said before it asked the helper.
+    case "${lho_tgt:-none}" in none) lho_tgt=bg ;; esac
+    LIVE_HOLDERS="${LIVE_HOLDERS:+$LIVE_HOLDERS$lho_nl}$lho_pid$lho_tab$lho_tgt$lho_tab${lho_prof:-}"
+  done <<<"$lho_rows"
+  return 0
 }
 
 # PUTTING THE MOVE BACK. The transaction below is three writes, and the two
@@ -2648,7 +2784,12 @@ follow_transcript() {   # <id>
     # resuming the same id here, is two live processes on one transcript — the
     # state measured on this lane on 2026-09-14 and the reason that clause
     # exists.
-    ft_holders="$(live_holders_of_id "$ft_id")"
+    # NOT `$( )`: `live_holders_of_id` sets `FOLLOW_WHY` when the holders cannot
+    # be read, and a subshell would keep the refusal to itself.
+    ft_hrc=0
+    live_holders_of_id "$ft_id" || ft_hrc=$?
+    [ "$ft_hrc" = 0 ] || return "$ft_hrc"
+    ft_holders="$LIVE_HOLDERS"
     if [ -n "$ft_holders" ]; then
       FOLLOW_WHY="transcript $ft_id is in profile $ft_prof's projects directory ($ft_d) and a LIVE process there holds it:
 $(printf '%s\n' "$ft_holders" | sed 's/^/      pid /; s/\t/ in /; s/\t/ under profile /')
