@@ -1,6 +1,6 @@
 # Contract: pipx's link, pip's console script and the PATH report
 
-All of this runs in `plan_install_targets` (`openRepoTools:2432`), for the
+All of this runs in `plan_install_targets` (`openRepoTools:3051`), for the
 target `<dir>/openRepoTools` only, before `unplaceable_kind` is asked about
 it. The one exception is the PATH report, which runs after every placement.
 It is the same in every mode: package, checkout and one-line install.
@@ -50,7 +50,7 @@ Nothing reads `PIPX_HOME`, parses `pipx_metadata.json`, or needs `jq`.
   the skip line in its place.
 - `placed` counts 16.
 - The count line takes its pipx form ([cli-output.md](cli-output.md)).
-- `receipt_add` already writes no row for a link (`openRepoTools:1291`).
+- `receipt_add` already writes no row for a link (`openRepoTools:1515-1517`).
 - `retire_commands` never names `PIPX_LINK`, because `RETIRED` does not hold
   `openRepoTools`. A test holds that.
 

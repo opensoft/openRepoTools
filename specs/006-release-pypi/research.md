@@ -96,7 +96,7 @@ were read read-only.
     tests can do the same with `stamp_read` and `link_resolve`.
 - **Alternatives considered**: a helper file beside the bash file. It would
   be an eighteenth installable, and AGENTS.md's one-file-per-command argument
-  (`openRepoTools:244-257`) refuses that.
+  (`openRepoTools:255-268`) refuses that.
 
 ## R4. The `--version` arm reads the stamp `package_init` already read
 
@@ -129,7 +129,7 @@ were read read-only.
     - **in a checkout or the one-line install** it is
       `$PAYLOAD_REPO @ $PAYLOAD_REV` when `SOURCE_LAYOUT` is `adopted`, and
       `$REPO @ $REF` otherwise. That is `payload_where`'s pair
-      (`openRepoTools:797-803`), with `@` in place of `at`;
+      (`openRepoTools:1023-1029`), with `@` in place of `at`;
     - **in a local adopted source**, the code mounted in an assembly on disk
       (`payload_local_adopted`), nothing is fetched, so neither
       `PAYLOAD_REPO` nor `PAYLOAD_REV` is set. `install_source` then names
@@ -190,10 +190,10 @@ were read read-only.
   corrected in the same commit as this file.
 - **Alternatives considered**: a `..`-count computed at run time from the
   path's shape. It is the same answer. The implementation checks that the
-  component names match (`lib`, `python*`, `site-packages`) and skips the
-  report when they do not. The skip is silent: `path_report` prints nothing
-  there, as pipx-link.md's "say nothing more" has it, and cli-output.md
-  defines no line for it.
+  component names match (`openrepotools`, `site-packages`, `python*` and
+  `lib`) and skips the report when they do not. The skip is silent:
+  `path_report` prints nothing there, as pipx-link.md's "say nothing more"
+  and cli-output.md both say.
 
 ## R8. Which tests are "the package's tests", and how they get a wheel
 
