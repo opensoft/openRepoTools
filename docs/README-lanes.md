@@ -3588,9 +3588,14 @@ sync that reads the lane, and `lanes-index status` counts it apart from the
 worktrees. The schema stays 1, so an indexer from before #173 sharing a
 Postgres store reads a marker as a tree: its `export --worktrees` prints it as
 a `TREE` line with an empty path and that branch, and its `status` counts it as
-a worktree. An older and a newer indexer syncing ONE store rewrite it on every
-sync, each converging to its own view of the same inventory — no duplicate rows
-and no growth, only the churn. The source's own row carries a fingerprint of the
+a worktree. An older and a newer indexer syncing ONE store each converge to their
+own view of the same inventory — no duplicate rows and no growth — and they
+rewrite it on every sync only where a lane has two trees with the same path,
+which the older one keys as one; with none, an unreadable lane included, a sync
+after the first writes nothing. A store written by #219's unlanded heads
+(`f00ee58`, `ab853b1`) keeps their marker, keyed `<lane>:`, as a kept row while
+that lane stays unreadable, and it clears at the first sync that reads the lane.
+The source's own row carries a fingerprint of the
 whole table as its compare-and-swap token and a sync count that only goes up. A
 container with no `LANES_WORKSTATION` syncs nothing (exit 2): a source named for
 a container's own id is one no restart finds again.
