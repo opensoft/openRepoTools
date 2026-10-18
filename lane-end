@@ -1757,13 +1757,17 @@ cell_for_scan() {   # <state cell> — the part of it that says where the lane i
       case "$cfs_three" in
         *'|'* | *$'\n'* | *$'\r'*) printf '%s' "$cfs"; return 0 ;;
       esac
-      # A count that cannot be made is a long line, and so is an `iconv` that
-      # is missing or refuses the text; BSD `wc` pads, hence the `tr`.
+      # `iconv -c` drops what is not UTF-8, and its exit status is not to be
+      # trusted (musl's is 0 either way), so the text is UTF-8 when it comes
+      # back unchanged; with no `iconv` it never does. A count that cannot be
+      # made is a long line, and BSD `wc` pads, hence the `tr`.
       cfs_len="${#cfs_three}"
-      if [ "$cfs_len" -gt 240 ] &&
-         printf '%s' "$cfs_three" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; then
-        cfs_len="$(printf '%s' "$cfs_three" | LC_ALL=C tr -d '\200-\277' | wc -c | tr -d ' ')" ||
-          cfs_len=241
+      if [ "$cfs_len" -gt 240 ]; then
+        cfs_utf8="$(printf '%s' "$cfs_three" | iconv -c -f UTF-8 -t UTF-8 2>/dev/null)" || :
+        if [ "$cfs_utf8" = "$cfs_three" ]; then
+          cfs_len="$(printf '%s' "$cfs_three" | LC_ALL=C tr -d '\200-\277' | wc -c | tr -d ' ')" ||
+            cfs_len=241
+        fi
       fi
       [ "$cfs_len" -le 240 ] || { printf '%s' "$cfs"; return 0; }
       cfs_ok=0
