@@ -124,6 +124,24 @@ The console script's function does one thing. It calls
   same status as bash's `die`.
 - It does not read the stamp. Bash is the one reader (Decision 5), so Python
   and bash can never disagree about a stamp.
+- **Amended 2026-10-18 by the lead, on T007's measured report** (task T026):
+  - **The ignored signals are put back first.** Python starts with SIGPIPE
+    and SIGXFSZ ignored, an exec keeps an ignored disposition, and a
+    non-interactive bash cannot reset a signal that was ignored on entry.
+    Measured: bash's `SigIgn` is `0x4` when run directly and `0x1001004`
+    through the exec, and `yes | head -1` gives `141` directly but `1` and
+    a "Broken pipe" line through it. So the function sets both back to
+    `SIG_DFL` before the exec, as `subprocess`'s `restore_signals` does.
+    FR-003 needs it, and the module's allowlist gains `signal`.
+  - **`NotADirectoryError` is the same refusal.** With no bash on `PATH`
+    and a `PATH` whose last entry is a file, `execvp` raises
+    `NotADirectoryError`. The function refuses for it too, with the same
+    message and exit 2 (FR-004).
+  - **A named limit: the C locale.** Under a C or POSIX locale, Python's
+    locale coercion (PEP 538) sets `LC_CTYPE=C.UTF-8` before the function
+    runs, so bash sees it. The function does not undo it, because it cannot
+    tell coercion from a person's own `LC_CTYPE`. `PYTHONCOERCECLOCALE=0`
+    avoids it, and FR-003 names the exception.
 - **Alternative rejected:** a `subprocess` that passes the status back. A
   signal would come back as a negative return code, and the `EXIT` trap would
   run in a child the person's terminal does not own.

@@ -143,6 +143,14 @@ The tests use fake venv layouts, with no pipx and no wheel.
   - print the pipx-own count line when the run is package mode under `PIPX_VENV`, the same line in any other run that skipped the link (T013 adds its suffix), and today's line otherwise;
   - list a venv-shaped link with contracts/cli-output.md's entry and paragraph, and keep it out of the `rm -f` line.
 
+- [ ] T026 [US1] [O] Put back the signals Python ignores before the exec, and refuse a `PATH` that ends in a file, per design.md Decision 3 as amended by the lead on 2026-10-18 on T007's report, as detailed below — files: `src/openrepotools/cli.py`, `tests/test_package.py`, `tests/test_repo_hygiene.py` — verify: `bash tests/run.sh -k 'test_entry_ or standard_library or python_files_compile'`
+  - `cli.py` sets SIGPIPE and SIGXFSZ to `SIG_DFL` before `os.execvp`, and treats `NotADirectoryError` as it treats `FileNotFoundError`;
+  - `tests/test_repo_hygiene.py`'s allowlist gains `signal`, with its reason;
+  - `tests/test_package.py` gains two `test_entry_*` cases:
+    - a payload `bash` that reads its own ignored-signal set finds neither SIGPIPE nor SIGXFSZ ignored. On Linux it reads `/proc/self/status`'s `SigIgn`; elsewhere, a `yes | head -n 1` pipeline under `pipefail` ends in status 141;
+    - with no `bash` on `PATH` and `PATH`'s last entry a file, the exact no-bash refusal, exit 2, and nothing run.
+  - It runs after T007 and before T009. It was added after T025 by the lead's ruling, so its number is out of order.
+
 **Checkpoint**: User Story 1 works and is tested on its own.
 
 ---

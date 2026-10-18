@@ -376,7 +376,12 @@ passages, and the absence of the pipx route.
   person's arguments unchanged. Signals, the exit status and the payload's
   clean-up on exit MUST pass through as if the person had run the payload
   with bash directly. The console script MUST pass bash nothing beyond the
-  arguments, and MUST NOT read the stamp.
+  arguments, and MUST NOT read the stamp. It MUST put back the signals
+  Python ignores at startup, SIGPIPE and SIGXFSZ, before the exec. The one
+  exception it MAY leave is Python's own locale coercion (PEP 538): under a
+  C or POSIX locale bash also sees `LC_CTYPE=C.UTF-8`, which
+  `PYTHONCOERCECLOCALE=0` avoids (design.md Decision 3, amended
+  2026-10-18).
 - **FR-004**: With no `bash` on `PATH`, the console script MUST refuse with
   exit 2 and a message naming `bash`, and MUST run nothing.
 - **FR-005**: The package's Python modules MUST import only the standard
