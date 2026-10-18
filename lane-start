@@ -2682,28 +2682,58 @@ transcript_under() {   # <projects dir> <id>
   return 1
 }
 
-# EVERY LIVE RECORD CARRYING AN ID, ACROSS EVERY PROFILE'S `sessions/`
-# (Amendment 18(h), in force 2026-09-14T13:15:18Z: *"A transcript (one session
-# id) is held by ONE live process"*). A pid is checked with `kill -0`, which is
-# this machine's own answer; a record whose process is gone holds nothing.
-# `<pid><TAB><tmux|bg><TAB><profile>` per holder.
+# EVERY LIVE HOLDER OF AN ID, ACROSS EVERY PROFILE'S `sessions/` (Amendment
+# 18(h), in force 2026-09-14T13:15:18Z: *"A transcript (one session id) is held
+# by ONE live process"*). WHO IS LIVE IS `lanes-edit.sh`'s ONE ANSWER AND NOT A
+# SECOND ONE HERE (opensoft/openRepoTools#56). This function used to read the
+# records itself and test the pid with `kill -0` ALONE — one of the three tests
+# `record_is_live` makes, not three — so a record that had ENDED, or whose pid
+# had been RECYCLED onto some other process, read as a live holder and refused a
+# transcript's follow with *"a LIVE process there holds it"* and the retire act,
+# about a process that is not that session. `lanes-edit.sh transcript-holders`
+# (opensoft/openRepoTools#52) is that read, on `record_is_live` — status not
+# ended, the pid answers, and `procStart` is still the one the record wrote down
+# — across every profile through `session_files`, and `dup_check` above already
+# asks it; this asks it the same way and reads its exits the same way.
+#
+# EVERY ROW IT PRINTS IS A HOLDER HERE, WHATEVER ITS VERDICT. The verdict says
+# what THIS WINDOW's relation to the holder is, which is `dup_check`'s question;
+# the question at this call is narrower and older — *is any live process holding
+# the id this run is about to move out of another profile* — and the move is
+# wrong for a `companion` or a `here` record just as it is for a `duplicate`.
+# The row's format is the contract this reads (`pid US kind US tgt US profile US
+# where US verdict US file`), and the verdict stays the helper's to change.
+#
+# IT SETS `LIVE_HOLDERS` — `<pid><TAB><tmux target, or bg><TAB><profile>` per
+# holder, one to a line — AND PRINTS NOTHING, and it is never called inside
+# `$( )`: a refusal is `FOLLOW_WHY`, and a subshell would keep it to itself (the
+# reason `follow_transcript` states beside its own variables). Returns 0 with
+# the holders read (none is an answer), 2 where they could not be.
+LIVE_HOLDERS=""
 live_holders_of_id() {   # <id>
-  lho_id="$1"
-  for lho_f in "$PROFILES_HOME"/profiles/*/*/*/sessions/*.json \
-               "$PROFILES_HOME"/profiles/*/*/sessions/*.json \
-               "$PROFILES_HOME"/profiles/*/sessions/*.json \
-               "$CLAUDE_HOME"/sessions/*.json; do
-    [ -f "$lho_f" ] || continue
-    lho_blob="$(tr -d '\n' < "$lho_f" 2>/dev/null || :)"
-    case "$lho_blob" in *"\"sessionId\":\"$lho_id\""*) : ;; *) continue ;; esac
-    lho_pid="$(printf '%s' "$lho_blob" | grep -o '"pid":[0-9][0-9]*' | head -n1 | sed 's/.*://')"
-    [ -n "$lho_pid" ] || continue
-    kill -0 "$lho_pid" 2>/dev/null || continue
-    lho_where="$(printf '%s' "$lho_blob" | grep -o '"tmux":"[^"]*"' | head -n1 | sed 's/^"tmux":"//; s/"$//')"
-    [ -n "$lho_where" ] || lho_where=bg
-    lho_prof="${lho_f%/sessions/*}"; lho_prof="${lho_prof##*/}"
-    printf '%s\t%s\t%s\n' "$lho_pid" "$lho_where" "$lho_prof"
-  done
+  lho_id="$1"; LIVE_HOLDERS=""; lho_rc=0; lho_rows=""
+  lho_tab=$'\t'; lho_nl='
+'
+  : > "$LS_TMP"
+  lho_rows="$("$LANES_EDIT" transcript-holders "$lho_id" 2>"$LS_TMP")" || lho_rc=$?
+  case "$lho_rc" in
+    0) : ;;
+    8) return 0 ;;
+    2) [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
+       note "this \`lanes-edit.sh\` has no \`transcript-holders\` (exit 2), so whether a live process already holds transcript $lho_id is NOT known here. Install the one beside this script (\`openRepoTools --install\`); carrying on."
+       return 0 ;;
+    *) [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
+       FOLLOW_WHY="$LANES_EDIT transcript-holders $lho_id exited $lho_rc, so whether a live process holds that transcript could NOT be read — and that is not 'none does'. A transcript is held by ONE live process (Amendment 18(h)): nothing was moved and nothing was launched."
+       return 2 ;;
+  esac
+  while IFS=$'\037' read -r lho_pid lho_kind lho_tgt lho_prof lho_where lho_verdict lho_file; do
+    [ -n "${lho_pid:-}" ] || continue
+    # The raw tmux target, and `bg` where the record names none (`transcript-holders`
+    # writes `none`) — what this said before it asked the helper.
+    case "${lho_tgt:-none}" in none) lho_tgt=bg ;; esac
+    LIVE_HOLDERS="${LIVE_HOLDERS:+$LIVE_HOLDERS$lho_nl}$lho_pid$lho_tab$lho_tgt$lho_tab${lho_prof:-}"
+  done <<<"$lho_rows"
+  return 0
 }
 
 # PUTTING THE MOVE BACK. The transaction below is three writes, and the two
@@ -2754,7 +2784,12 @@ follow_transcript() {   # <id>
     # resuming the same id here, is two live processes on one transcript — the
     # state measured on this lane on 2026-09-14 and the reason that clause
     # exists.
-    ft_holders="$(live_holders_of_id "$ft_id")"
+    # NOT `$( )`: `live_holders_of_id` sets `FOLLOW_WHY` when the holders cannot
+    # be read, and a subshell would keep the refusal to itself.
+    ft_hrc=0
+    live_holders_of_id "$ft_id" || ft_hrc=$?
+    [ "$ft_hrc" = 0 ] || return "$ft_hrc"
+    ft_holders="$LIVE_HOLDERS"
     if [ -n "$ft_holders" ]; then
       FOLLOW_WHY="transcript $ft_id is in profile $ft_prof's projects directory ($ft_d) and a LIVE process there holds it:
 $(printf '%s\n' "$ft_holders" | sed 's/^/      pid /; s/\t/ in /; s/\t/ under profile /')
