@@ -790,22 +790,28 @@ passages, and the absence of the pipx route.
   - This feature asks lane openRepoTools-1's adoption plan to carry these
     invariants, and does not edit `openspec/changes/migrate-to-triad/`.
 
-#### Pending Brett Heap's word (not a blocker)
+#### The workBenches condition, decided by Brett Heap (2026-10-18)
 
-- **FR-047 (pending)**: The workBenches condition.
+- **FR-047 (decided: position (c))**: The workBenches condition.
   - workBenches' `./setup.sh` refuses a symlinked `openRepoTools` before it
     installs anything (`check_target_preflight`).
   - After installing, it requires a regular file identical to its vendored
     copy (`verify_installed`).
   - Both checks stand at workBenches main `bdab3e2`. So on a workstation
     with pipx's link, every `./setup.sh` refuses its estate step.
-  - Brett Heap's choice of (a), (b) or (c) is pending.
-  - Under position (c), lane openRepoTools-3 files a workBenches issue on his
-    word, for workBenches to accept pipx's link. README offers pipx only
-    after that fix lands, and until then says that a workstation uses one
-    route or the other, never both.
-  - This changes only when FR-045's README text may appear. No task in this
-    feature depends on it until his word arrives.
+  - Brett Heap chose position (c) on 2026-10-18, in his words "go with (c)".
+    Lane openRepoTools-3 has filed opensoft/workBenches#165. It asks
+    workBenches' `scripts/setup-estate-commands.sh` to accept pipx's link
+    by [contracts/pipx-link.md](contracts/pipx-link.md)'s rule, and to skip
+    it as `--install` does.
+  - README MUST NOT offer `pipx install openrepotools` until
+    opensoft/workBenches#165 lands. FR-045's other condition still
+    applies: PyPI must serve the version first.
+  - Until opensoft/workBenches#165 lands, README MUST say that a workstation
+    uses one install route or the other, never both, and MUST cite
+    opensoft/workBenches#165.
+  - This changes only when FR-045's README text may appear, and adds that
+    one sentence to README.
 
 ### Key Entities
 

@@ -20,9 +20,13 @@ only when the step it names has actually happened, and with its evidence.
   `openspec validate release-tags-pypi --strict` reports the change valid
   and `openspec status --change release-tags-pypi` shows proposal, specs,
   design and tasks done.
-- [ ] 1.4 Record Brett Heap's word on the workBenches position, (a), (b) or
+- [x] 1.4 Record Brett Heap's word on the workBenches position, (a), (b) or
   (c); verify the proposal's "workBenches condition" bullet states his
-  choice and is the only bullet that changed.
+  choice and is the only bullet that changed. Resolved 2026-10-18: Brett
+  Heap chose (c) ("go with (c)"), and lane openRepoTools-3 filed
+  opensoft/workBenches#165. The proposal's position (c) bullet states
+  that, in the commit that ticks this item, and no other proposal bullet
+  changed in it.
 
 ## 2. The single Speckit feature
 

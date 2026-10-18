@@ -611,14 +611,24 @@ the lead, 2026-10-18.
       Before v1.1.0 that is the next pre-release, `1.1.0rc1` for the first,
       as the model rehearsed v1.1.0 from `l3-rehearsal-v1.1.0`.
 
+### Resolved by Brett Heap, 2026-10-18
+
+12. **The workBenches condition.** Resolved by Brett Heap, 2026-10-18: (c).
+    His words were "go with (c)".
+    - Lane openRepoTools-3 has filed opensoft/workBenches#165, for
+      workBenches' `scripts/setup-estate-commands.sh` to accept pipx's link.
+    - README offers the pipx route only after opensoft/workBenches#165
+      lands. Until then, README says that a workstation uses one route or
+      the other, never both.
+    - The proposal's single bullet that depends on it, position (c), now
+      states his choice.
+    - As this file said while the question was open, the choice changes
+      only that bullet and when the README PR of step 6 can open. It also
+      adds README's one-route sentence, in feature 006's README task. It
+      changes none of the code, delta specs or decisions here.
+
 ### Still open
 
-- **The workBenches condition.** Brett Heap's choice of (a), (b) or (c) is
-  still open, as the lead recorded on 2026-10-17. The proposal's single
-  bullet that depends on it, position (c), stays marked pending his word.
-  Whatever he chooses changes only that bullet in the proposal and when the
-  README PR of step 6 can open. It changes none of the code, specs or
-  decisions here.
 - **The `release/*` ruleset.** #850 leaves the choice to Brett: no
   force-push and no deletion, or a rule requiring PRs. It decides only
   whether a back-port is a fast-forward or a cherry-pick PR, and both are

@@ -326,10 +326,11 @@ while they track `main`, which is the failure the Why exists to prevent.
     workBenches main `bdab3e2`, and the same checks stand at `b2bed1c` before
     it. On a workstation with pipx's link, every `./setup.sh` therefore
     refuses its estate step and names that link.
-  - **Position (c), pending Brett Heap's word:** lane openRepoTools-3 files
-    a workBenches issue for workBenches to accept pipx's link, on his word.
-    README offers pipx only after that fix lands. Until then, README says
-    that a workstation uses one route or the other, never both.
+  - **Position (c), decided by Brett Heap on 2026-10-18** ("go with (c)"):
+    lane openRepoTools-3 has filed opensoft/workBenches#165, for workBenches
+    to accept pipx's link. README offers pipx only after
+    opensoft/workBenches#165 lands. Until then, README says that a
+    workstation uses one route or the other, never both.
 
 ### The release workflow
 
