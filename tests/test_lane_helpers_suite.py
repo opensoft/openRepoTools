@@ -257,10 +257,14 @@ def run_in_own_group(argv, *, timeout, **popen_kwargs):
                     try:
                         stdout, stderr = child.communicate(
                             timeout=max(min(_SIGNAL_POLL, left), 0))
-                    except subprocess.TimeoutExpired:
-                        if left <= _SIGNAL_POLL:
-                            raise
-                        continue
+                    except subprocess.TimeoutExpired as expired:
+                        if left > _SIGNAL_POLL:
+                            continue
+                        # The bound that was passed, not the last slice's: a
+                        # CI log reads "timed out after 5400 seconds".
+                        raise subprocess.TimeoutExpired(
+                            child.args, timeout, output=expired.output,
+                            stderr=expired.stderr) from None
                     break
             except BaseException:
                 stop_group(child)

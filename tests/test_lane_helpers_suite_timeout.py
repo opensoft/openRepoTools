@@ -87,6 +87,15 @@ wait
 '''
 
 
+#: The same, but its TERM trap takes two seconds to finish its cleanup.
+STANDIN_SLOW = '''\
+trap 'sleep 2; echo cleaned > {marker}; exit 143' TERM
+sleep 600 &
+echo $! > {pidfile}
+wait
+'''
+
+
 class Standin(NamedTuple):
     script: Path
     pidfile: Path     # where the stand-in's `sleep` writes its pid
@@ -166,6 +175,21 @@ def test_a_suite_that_times_out_leaves_no_process_behind(standin, monkeypatch):
     assert stand.marker.is_file(), (
         "the group was KILLed with no TERM first, so the suite's own trap, "
         "which removes its sandbox, would never have run")
+
+
+def test_a_timeout_reports_the_bound_it_was_given(standin, monkeypatch):
+    """The wait is made in half-second slices, and the last of them is not the
+    bound: a CI log has to say "timed out after 5400 seconds", and what the suite
+    had printed by then has to come with it."""
+    stand = standin("echo partial-transcript\n" + STANDIN)
+    wire(monkeypatch, stand, timeout=1.3)
+    with pytest.raises(subprocess.TimeoutExpired) as expired:
+        wrapper.test_the_lane_helper_suite_passes()
+    assert expired.value.timeout == 1.3
+    assert "timed out after 1.3 seconds" in str(expired.value)
+    printed = expired.value.stdout
+    printed = printed.decode() if isinstance(printed, bytes) else printed
+    assert "partial-transcript" in (printed or "")
 
 
 def test_a_group_that_ignores_term_is_killed_after_the_grace(standin, monkeypatch):
@@ -312,6 +336,23 @@ def test_a_ctrl_c_during_the_term_grace_does_not_orphan_a_deaf_suite(
             + proc.errors.read_text(encoding="utf-8"))
     else:
         assert code != 0
+    assert_gone_within(pid)
+
+
+def test_a_ctrl_c_during_the_term_grace_lets_a_slow_trap_finish(standin, runner):
+    """The KILL in a `finally` keeps a Ctrl-C from orphaning anything, but it
+    would cut short the cleanup of a suite that DOES answer TERM, only slowly:
+    stop_group ignores Ctrl-C so that the trap, which removes the suite's
+    sandbox, gets its grace."""
+    stand = standin(STANDIN_SLOW)
+    proc = runner(stand, prelude="signal.signal(signal.SIGINT, signal.default_int_handler)")
+    pid = sleep_pid(stand.pidfile)
+    os.killpg(proc.pid, signal.SIGTERM)
+    time.sleep(0.5)   # the trap is two seconds into its cleanup, inside the grace
+    os.killpg(proc.pid, signal.SIGINT)
+    assert proc.wait(timeout=30) == -signal.SIGTERM, proc.errors.read_text(encoding="utf-8")
+    assert stand.marker.is_file(), (
+        "the Ctrl-C ended the stop before the suite's TERM trap had finished")
     assert_gone_within(pid)
 
 
