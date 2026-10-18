@@ -2163,10 +2163,10 @@ install_commands() {
 		say "openRepoTools: $placed of ${#INSTALLABLES[@]} placed in $dir, and 1 left to pipx"
 	else
 		# ANY OTHER RUN BESIDE IT — a checkout's, the one-line install's, a
-		# package outside pipx's venv — says the same for now. The clause that
-		# names where the other sixteen now come from (research R5) comes with
-		# #228's User Story 3, on this line.
-		say "openRepoTools: $placed of ${#INSTALLABLES[@]} placed in $dir, and 1 left to pipx"
+		# package outside pipx's venv — also says where the other sixteen now
+		# come from and which release is beside the link (research R5,
+		# FR-019): `install_source` and `pipx_release` say why each is spelt so.
+		say "openRepoTools: $placed of ${#INSTALLABLES[@]} placed in $dir, and 1 left to pipx; the other $placed now come from $(install_source), not from $(pipx_release)"
 	fi
 	# THE RETIREMENT IS THE LAST ACT OF THE INSTALL, AFTER EVERY PLACEMENT
 	# (Copilot round 7 on #45, `openRepoTools:369`). It is the one DESTRUCTIVE
@@ -2194,6 +2194,9 @@ install_commands() {
 		;;
 	esac
 	venv_note
+	# AND LAST, IN A PACKAGE: whether the `openRepoTools` a shell will run is
+	# this package's (FR-021). It changes nothing and leaves the exit status.
+	path_report
 }
 
 # ONE VIRTUAL ENVIRONMENT PER REPOSITORY, OUTSIDE THE ESTATE
@@ -2899,6 +2902,152 @@ pipx_own_run() {
 	return 1
 }
 
+#: WHERE THE OTHER SIXTEEN NOW COME FROM, for the count line of every run beside
+#: pipx's link but pipx's own (research R5). A PACKAGE names its own release,
+#: from the stamp `package_init` read, in a pipx venv or not: it placed its own
+#: payload and fetched from nothing, so `$REPO @ $REF` would name a source it
+#: never used. A checkout and the one-line install name the source they
+#: collected from, `payload_where`'s pair with `@` in place of `at`. An adopted
+#: source mounted in a local assembly fetches nothing and so sets no
+#: PAYLOAD_REPO or PAYLOAD_REV: the pin its payload was checked against names
+#: that same pair there.
+install_source() {
+	if [ -n "$PACKAGE_DIR" ]; then
+		printf 'openrepotools %s\n' "$STAMP_VERSION"
+	elif [ "$SOURCE_LAYOUT" = adopted ]; then
+		printf '%s @ %s\n' "${PAYLOAD_REPO:-${PIN_SOURCE_REPOSITORY-}}" "${PAYLOAD_REV:-${PIN_COMMIT-}}"
+	else
+		printf '%s @ %s\n' "$REPO" "$REF"
+	fi
+}
+
+#: WHAT IS BESIDE PIPX'S LINK, for the same line: `openrepotools <VERSION>` of
+#: the stamp beside pipx's payload, `0.0.0` where it is unstamped. It is read in
+#: a SUBSHELL, because `stamp_read` sets the STAMP_* values and this run's own
+#: are the ones `install_source` names. A stamp there that fails the reader is
+#: another install's, not this one's, so it refuses nothing: the clause says it
+#: cannot be read, and the install goes on.
+pipx_release() {
+	local version=""
+	if version="$(stamp_read "${PIPX_PAYLOAD%/*}/_release.py" && printf '%s' "$STAMP_VERSION")"; then
+		printf 'openrepotools %s\n' "$version"
+	else
+		printf '%s\n' "the openrepotools beside pipx's link, whose stamp cannot be read"
+	fi
+}
+
+#: `^from openrepotools(\.[A-Za-z_][A-Za-z0-9_]*)* import ` by `case`, the
+#: import pip's console-script template writes for the entry point at column 0.
+#: The name characters are written out, for the reason ORT_ALNUM gives.
+pip_imports_entry() {   # <line>
+	local rest="" name=""
+	case "$1" in "from openrepotools"*) ;; *) return 1 ;; esac
+	rest="${1#from openrepotools}"
+	while :; do
+		case "$rest" in
+		' import '*) return 0 ;;
+		.*) rest="${rest#.}" ;;
+		*) return 1 ;;
+		esac
+		name="${rest%%[!${ORT_ALNUM}_]*}"
+		case "$name" in '' | [0123456789]*) return 1 ;; esac
+		rest="${rest#"$name"}"
+	done
+}
+
+#: PIP'S CONSOLE SCRIPT FOR THIS PACKAGE (FR-020, contracts/pipx-link.md), at a
+#: target that is a regular file and not a link: what `pip install --user
+#: openrepotools` leaves at `~/.local/bin/openRepoTools`. It is another
+#: installer's command, and `--install` refuses to replace it in every mode, its
+#: own run included. Both halves of pip's template must hold:
+#:
+#:   * A PYTHON INTERPRETER, in either form pip writes: a `#!` line whose first
+#:     word's last `/` segment begins with `python`, or the three-line `/bin/sh`
+#:     trampoline pip writes when that path holds a space or is too long for a
+#:     shebang — `#!/bin/sh`, then `'''exec' <python> … "$0" "$@"` with the
+#:     interpreter quoted up to the next `"` or unquoted up to the first space,
+#:     then `' '''`;
+#:   * THE ENTRY POINT'S IMPORT at column 0 in one of the first 20 lines
+#:     (`pip_imports_entry`).
+#:
+#: Read by `IFS= read -r`, `case` and parameter expansion: bash 3.2's.
+pip_script_is() {   # <dir>/openRepoTools — 0 when it is pip's console script for openrepotools
+	local line="" n=0 first="" second="" third="" imports=1 word="" rest=""
+	local exec_word="'''exec' " tail=' "$0" "$@"' close="' '''" dq='"'
+	[ -f "$1" ] && [ ! -L "$1" ] && [ -r "$1" ] || return 1
+	while [ "$n" -lt 20 ] && { IFS= read -r line || [ -n "$line" ]; }; do
+		n=$((n + 1))
+		case "$n" in
+		1) first="$line" ;;
+		2) second="$line" ;;
+		3) third="$line" ;;
+		esac
+		if [ "$imports" -ne 0 ] && pip_imports_entry "$line"; then imports=0; fi
+	done 2>/dev/null <"$1" || return 1
+	[ "$imports" -eq 0 ] || return 1
+	# THE SHEBANG FORM: the first word after `#!` names a Python.
+	case "$first" in '#!'*) ;; *) return 1 ;; esac
+	word="${first#??}"
+	while :; do case "$word" in ' '* | "$ORT_TAB"*) word="${word#?}" ;; *) break ;; esac; done
+	word="${word%%[ $ORT_TAB]*}"
+	case "${word##*/}" in python*) return 0 ;; esac
+	# THE TRAMPOLINE FORM, its three lines exactly as pip writes them.
+	[ "$first" = '#!/bin/sh' ] && [ "$third" = "$close" ] || return 1
+	case "$second" in "$exec_word"*) ;; *) return 1 ;; esac
+	rest="${second#"$exec_word"}"
+	case "$rest" in
+	"$dq"*)
+		rest="${rest#?}"
+		case "$rest" in *"$dq"*) ;; *) return 1 ;; esac
+		word="${rest%%"$dq"*}"
+		rest="${rest#*"$dq"}"
+		;;
+	*)
+		word="${rest%% *}"
+		rest="${rest#"$word"}"
+		;;
+	esac
+	case "$rest" in *"$tail") ;; *) return 1 ;; esac
+	case "${word##*/}" in python*) return 0 ;; esac
+	return 1
+}
+
+#: THE `openRepoTools` A SHELL WILL RUN, asked last in a package-mode
+#: `--install` (FR-021, research R7). `<prefix>` is five levels above the
+#: payload, the parent of its `lib/`, and is named only where the four
+#: directories between are an installed wheel's — `openrepotools`,
+#: `site-packages`, `python*` and `lib` — so a layout that names no prefix gets
+#: no note. The first `openRepoTools` on PATH, as `type -P` finds it, and this
+#: package's console script, `<prefix>/bin/openRepoTools`, are each followed
+#: through `link_resolve`, so pipx's link and the script it points at are one
+#: file. A mismatch, or no `openRepoTools` on PATH at all, is the one note. It
+#: changes nothing, and never fails: the exit status stays the install's.
+path_report() {
+	local up="$PACKAGE_DIR" prefix="" want="" first="" got="" expected=""
+	[ -n "$up" ] || return 0
+	up="${up%/*}"
+	[ "${up##*/}" = openrepotools ] || return 0
+	up="${up%/*}"
+	[ "${up##*/}" = site-packages ] || return 0
+	up="${up%/*}"
+	case "${up##*/}" in python*) ;; *) return 0 ;; esac
+	up="${up%/*}"
+	[ "${up##*/}" = lib ] || return 0
+	prefix="${up%/*}"
+	want="$prefix/bin/openRepoTools"
+	first="$(type -P openRepoTools 2>/dev/null)" || first=""
+	if [ -z "$first" ]; then
+		say "openRepoTools: note: the first openRepoTools on your PATH is none, not this package's $want, so the release you just installed is not the one that runs; put the directory that holds pipx's link to it on PATH"
+		return 0
+	fi
+	got="$(link_resolve "$first")" || got=""
+	expected="$(link_resolve "$want")" || expected=""
+	if [ -n "$got" ] && [ "$got" = "$expected" ]; then
+		return 0
+	fi
+	say "openRepoTools: note: the first openRepoTools on your PATH is $first, not this package's $want, so the release you just installed is not the one that runs; put the directory that holds pipx's link to it ahead of $(dirname -- "$first") on PATH"
+}
+
 plan_install_targets() {
 	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
 	local name target kind bad="" paths="" venv="" leave="" clear=""
@@ -2936,6 +3085,16 @@ plan_install_targets() {
     again, and if this refusal stays, open an issue on opensoft/openRepoTools naming
     the layout under $venv."
 				continue
+			fi
+			# PIP'S CONSOLE SCRIPT IS NOT THIS INSTALLER'S TO REPLACE (FR-020),
+			# in any mode: refused here, before anything is fetched or placed.
+			if pip_script_is "$target"; then
+				die "\`--install\` will not replace $target: it is pip's console script for openrepotools (\`pip install --user openrepotools\` leaves it there), and another installer's command is not this installer's to overwrite.
+    NOTHING was installed and nothing already installed was replaced.
+    pipx is the one package route. To move to it:
+        pip uninstall openrepotools
+        pipx install openrepotools
+        openRepoTools --install"
 			fi
 		fi
 		kind="$(unplaceable_kind "$target")" || continue
