@@ -37,11 +37,26 @@ import pytest
 import test_lane_helpers_suite as wrapper
 from conftest import WINDOWS_SKIP
 
+
+
+def ps_reports_state() -> bool:
+    """`ps -o stat= -p <pid>` is how these tests tell a running process from a
+    zombie, so a `ps` that cannot answer it (busybox's can't) would make every
+    "is gone" assertion check nothing, and the module is skipped instead."""
+    try:
+        reply = subprocess.run(["ps", "-o", "stat=", "-p", str(os.getpid())],
+                               capture_output=True, text=True, check=False)
+    except OSError:
+        return False
+    return bool(reply.stdout.strip())
+
+
 pytestmark = [
     WINDOWS_SKIP,
     pytest.mark.skipif(shutil.which("bash") is None, reason="the suite is bash"),
-    pytest.mark.skipif(shutil.which("ps") is None,
-                       reason="the stand-in's `sleep` is looked for with ps"),
+    pytest.mark.skipif(not ps_reports_state(),
+                       reason="the stand-in's `sleep` is looked for with "
+                              "`ps -o stat= -p`, which this ps does not answer"),
 ]
 
 TESTS = Path(__file__).resolve().parent
@@ -206,7 +221,7 @@ import signal, sys
 sys.path.insert(0, {tests!r})
 {prelude}
 import test_lane_helpers_suite as w
-w.GROUP_TERM_GRACE = 5
+w.GROUP_TERM_GRACE = 3
 w.run_in_own_group(["bash", {script!r}], timeout=120)
 '''
 
@@ -270,6 +285,33 @@ def test_a_hangup_that_was_ignored_stays_ignored(standin, runner):
         + proc.errors.read_text(encoding="utf-8"))
     os.killpg(proc.pid, signal.SIGTERM)
     assert proc.wait(timeout=30) == -signal.SIGTERM
+    assert_gone_within(pid)
+
+
+@pytest.mark.parametrize("first", [signal.SIGTERM, signal.SIGINT],
+                         ids=["TERM-then-INT", "INT-twice"])
+def test_a_ctrl_c_during_the_term_grace_does_not_orphan_a_deaf_suite(
+        first, standin, runner):
+    """The stop waits out a grace for a suite that ignores TERM, and a Ctrl-C
+    in that wait used to leave it with a KeyboardInterrupt before the KILL: the
+    runner ended with the suite's `sleep` still running. The runner is left with
+    Python's own SIGINT handler, as a terminal's run has."""
+    stand = standin(STANDIN_DEAF)
+    proc = runner(stand, prelude="signal.signal(signal.SIGINT, signal.default_int_handler)")
+    pid = sleep_pid(stand.pidfile)
+    os.killpg(proc.pid, first)
+    time.sleep(1)   # inside the runner's three-second grace
+    assert proc.poll() is None, (
+        "the runner left before the grace ran out, so the Ctrl-C below would "
+        "not be inside it:\n" + proc.errors.read_text(encoding="utf-8"))
+    os.killpg(proc.pid, signal.SIGINT)
+    code = proc.wait(timeout=30)
+    if first == signal.SIGTERM:
+        assert code == -signal.SIGTERM, (
+            f"the runner should still end by the TERM it was sent, not {code}:\n"
+            + proc.errors.read_text(encoding="utf-8"))
+    else:
+        assert code != 0
     assert_gone_within(pid)
 
 

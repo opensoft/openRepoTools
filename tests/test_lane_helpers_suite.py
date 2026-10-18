@@ -34,6 +34,7 @@ import shutil
 import signal
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -155,34 +156,44 @@ def test_the_liveness_fixture_outlives_the_suite_timeout():
 
 
 #: How long the suite's process group gets to answer a TERM - its own trap
-#: removes the sandbox it made - before it is KILLed. `tests/run.sh`'s
-#: `stop_group` gives its group the same ten seconds.
-GROUP_TERM_GRACE = 10
+#: removes the sandbox it made - before it is KILLed.
+#:
+#: FIVE, AND NOT THE TEN `tests/run.sh` GIVES ITS OWN GROUP. run.sh's
+#: `stop_group` polls fifty times at 0.2 s and each poll runs `ps`, so it waits
+#: about 10.7 s before it KILLs pytest. This stop is TERM, this wait, KILL and a
+#: reap, and all of it has to finish well inside that: a stop that takes as long
+#: as run.sh's gets pytest killed in the middle of it, with the suite's group
+#: left running - which is the orphan this exists to prevent.
+GROUP_TERM_GRACE = 5
 
-
-class _Signalled(BaseException):
-    """A TERM or HUP reached this process while it waited on the suite."""
-
-    def __init__(self, signum):
-        super().__init__(signum)
-        self.signum = signum
-
-
-def _raise_signalled(signum, _frame):
-    raise _Signalled(signum)
+#: How often `run_in_own_group` looks up from waiting on the suite to see
+#: whether a TERM or a hangup has arrived.
+_SIGNAL_POLL = 0.5
 
 
 def stop_group(child) -> None:
     """Stop the process group `child` leads: TERM, up to GROUP_TERM_GRACE
     seconds for its leader to answer it, then KILL for whatever is left, and
-    reap the leader. A group that is already gone is not an error."""
-    for signum in (signal.SIGTERM, signal.SIGKILL):
+    reap the leader. A group that is already gone is not an error.
+
+    THE KILL IS IN A `finally`, AND CTRL-C IS IGNORED UNTIL IT HAS BEEN SENT.
+    A second Ctrl-C during the grace used to leave the wait with a
+    KeyboardInterrupt, skip the KILL, and orphan a suite that was ignoring
+    TERM. The stop is bounded, so ignoring a person's Ctrl-C for it costs at
+    most GROUP_TERM_GRACE seconds."""
+    on_main = threading.current_thread() is threading.main_thread()
+    held = signal.signal(signal.SIGINT, signal.SIG_IGN) if on_main else None
+    try:
         with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(child.pid, signum)
-        if signum == signal.SIGTERM:
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                child.wait(timeout=GROUP_TERM_GRACE)
-    child.wait()
+            os.killpg(child.pid, signal.SIGTERM)
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            child.wait(timeout=GROUP_TERM_GRACE)
+    finally:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(child.pid, signal.SIGKILL)
+        child.wait()
+        if held is not None:
+            signal.signal(signal.SIGINT, held)
 
 
 def run_in_own_group(argv, *, timeout, **popen_kwargs):
@@ -203,8 +214,13 @@ def run_in_own_group(argv, *, timeout, **popen_kwargs):
     process and no longer reach the suite. pytest has no handler for the first
     two, so one is installed here for as long as this waits - only where the
     disposition is still the default, so a `nohup`'d run goes on ignoring a
-    hangup - and it stops the group and then lets the signal take this
-    process as it would have. The timeout and a KeyboardInterrupt stop it too.
+    hangup. The handler only NOTES the signal, and the wait is made in slices
+    of _SIGNAL_POLL that look for it: a handler that raised would raise inside
+    `Popen()` as well, after the fork and before `child` is bound, and leave
+    the suite with nobody to stop it. A noted signal stops the group, and then
+    the signal is sent to this process again with its default action restored,
+    so it ends as it would have had nothing been handling it. The timeout and
+    a KeyboardInterrupt stop the group too.
 
     WHAT THIS DOES NOT REACH: the pty driver's children (`LANE_PTY` in the
     suite) are session leaders of their own (`pty.fork` runs `setsid`), so they
@@ -218,33 +234,48 @@ def run_in_own_group(argv, *, timeout, **popen_kwargs):
     none at all. Measured: at `dcf1027` one truncated em dash cost the whole
     998-line transcript on the macOS job.
     """
+    pending = []   # the TERM or HUP numbers that arrived, oldest first
     handled = []
+
+    def note(signum, _frame):
+        pending.append(signum)
+
     try:
         if threading.current_thread() is threading.main_thread():
             for signum in (signal.SIGTERM, signal.SIGHUP):
                 if signal.getsignal(signum) == signal.SIG_DFL:
-                    signal.signal(signum, _raise_signalled)
+                    signal.signal(signum, note)
                     handled.append(signum)
         with subprocess.Popen(argv, stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE, encoding="utf-8",
                               errors="replace", start_new_session=True,
                               **popen_kwargs) as child:
             try:
-                stdout, stderr = child.communicate(timeout=timeout)
+                deadline = time.monotonic() + timeout
+                while not pending:
+                    left = deadline - time.monotonic()
+                    try:
+                        stdout, stderr = child.communicate(
+                            timeout=max(min(_SIGNAL_POLL, left), 0))
+                    except subprocess.TimeoutExpired:
+                        if left <= _SIGNAL_POLL:
+                            raise
+                        continue
+                    break
             except BaseException:
-                for signum in handled:   # a second signal must not cut the stop short
-                    signal.signal(signum, signal.SIG_IGN)
                 stop_group(child)
                 raise
+            if pending:   # also a signal that came as the suite finished
+                stop_group(child)
+        if pending:
+            raise SystemExit(128 + pending[0])   # the `finally` sends the signal itself
         return subprocess.CompletedProcess(child.args, child.returncode,
                                            stdout, stderr)
-    except _Signalled as caught:
-        signal.signal(caught.signum, signal.SIG_DFL)
-        os.kill(os.getpid(), caught.signum)
-        raise   # not reached: the signal ends this process
     finally:
         for signum in handled:
             signal.signal(signum, signal.SIG_DFL)
+        if pending:
+            os.kill(os.getpid(), pending[0])
 
 
 @WINDOWS_SKIP
