@@ -16687,9 +16687,10 @@ EOF
 
   # AMENDMENT 15 — THE RESOLVER, EXPOSED, because `lane-start`, `lane-end`,
   # `lanes` and `restart` all take a `<lane>` argument and the amendment gives
-  # all four the SAME resolver. Four implementations of "which row is this
-  # name's" is how the four would come to disagree about it — which is the whole
-  # reason clause (h) turned `window-lane` and `session-lane` into subcommands.
+  # them all the SAME resolver. An implementation of "which row is this name's"
+  # in each command is how they would come to disagree about it — which is the
+  # whole reason clause (h) turned `window-lane` and `session-lane` into
+  # subcommands.
   #
   # Read-only, out of `origin/<branch>` like every other state read (R19).
   #   0   the canonical spelling — the row's own where a row matches ignoring

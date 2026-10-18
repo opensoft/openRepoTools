@@ -860,10 +860,10 @@ if [ -z "${LANES_FILE:-}" ]; then die "$(lanes_workspace_why)" 1; fi
 # ------------------------- AMENDMENT 15: THE ROW'S SPELLING IS THE LANE'S NAME
 #
 # **A lane name is one name under any case** (ratified 2026-09-14T00:07:18Z),
-# and `lanes-edit.sh canon-lane` is the ONE resolver all four commands share —
-# for the reason Amendment 11 clause (h) gives every other read here: four
-# implementations of "which row is this name's" is how the four would come to
-# disagree about it.
+# and `lanes-edit.sh canon-lane` is the ONE resolver the commands share rather
+# than each keeping its own — for the reason Amendment 11 clause (h) gives every
+# other read here: an implementation of "which row is this name's" in each
+# command is how they would come to disagree about it.
 #
 # `2` IS TWO ANSWERS AND ONE OF THEM IS A REFUSAL (Copilot round 4 on
 # openRepoTools#41). It is what a helper predating this amendment spends on an

@@ -1264,9 +1264,9 @@ if [ -n "$name" ]; then
 	# name is one name under any case"* (ratified 2026-09-14T00:07:18Z verbatim
 	# "Ratify as drafted"), and `lanes-edit.sh canon-lane` is the ONE resolver
 	# every command that takes a `<lane>` shares — for the reason clause (h) gives
-	# every other read here: four implementations of *which row is this name's* is
-	# how the four come to disagree about it. This is `restart`'s own call, moved
-	# here with the act under Amendment 18 Addendum 2.
+	# every other read here: an implementation of *which row is this name's* in
+	# each command is how they come to disagree about it. This is `restart`'s own
+	# call, moved here with the act under Amendment 18 Addendum 2.
 	#
 	# `2` IS TWO ANSWERS AND ONE OF THEM IS A REFUSAL. It is what a helper
 	# predating Amendment 15 spends on an unknown subcommand — silent, expected,

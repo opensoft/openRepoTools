@@ -9550,7 +9550,7 @@ rm -f "$sessions_dir/a16i.json"
 # ============ Copilot round 4 on openRepoTools#81 ============================
 
 # ---- THE ALIAS-READ REFUSAL HAS ITS OWN EXIT CODE, because 2 already carries
-# two meanings to the four commands that read `canon-lane`.
+# two meanings to the commands that read `canon-lane`.
 ren_unread3="$WIP/lanes/aliases-unread3.tsv"
 printf 'someLane-1\tsomeLane-2\t2026-09-15T00:00:00Z\n' > "$ren_unread3"
 chmod 0000 "$ren_unread3"
