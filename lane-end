@@ -1221,13 +1221,16 @@ DUPES
     # refused as a later option rather than a directory. A value with a
     # space in it must be one absolute path, starting with `/` and holding no
     # ` /`, or it is refused too (Brett Heap's ruling of 2026-10-18 on PR
-    # #205): a bare session id followed by a prompt naming this transcript,
-    # or a `<uuid>.jsonl.bak` followed by a word naming it, would otherwise be
-    # read as one value ending in `/<uuid>.jsonl` and TERMed here. This is
-    # `lanes-edit.sh`'s `dhp_resume_value`, the rule discovery already
-    # applied to this pid, word for word, and its comment there gives the
-    # known limits of reading a flattened argv at all; the two must stay the
-    # same rule. It sets `dh_rv` in this shell rather than printing it.
+    # #205): a bare session id followed by a prompt naming this transcript, or
+    # a `<uuid>.jsonl.bak` followed by a word that reaches it through ` /`,
+    # would otherwise be read as one value ending in `/<uuid>.jsonl` and TERMed
+    # here. Not every `<uuid>.jsonl.bak` form is refused: one followed by a
+    # later word that does not begin with `/` still reads as that value. This
+    # is `lanes-edit.sh`'s `dhp_resume_value`, the rule discovery already
+    # applied to this pid, word for word, and its comment there gives that
+    # limit and the others of reading a flattened argv at all; the two must
+    # stay the same rule. It sets `dh_rv` in this shell rather than printing
+    # it.
     dh_resume_value() {   # <flattened argv, lowercased> — sets dh_rv
       dh_rv=""
       case "${1-}" in *"--resume "*) : ;; *) return 0 ;; esac

@@ -7049,16 +7049,19 @@ EOF
 # note /q/<id>.jsonl`), and a shell whose `-c` string resumes `$ID` and then
 # tails the transcript. Each of them starts with something other than `/`, or
 # reaches the later path through a space and a `/`, and a transcript path does
-# neither, whatever spaces its home, profile or project directory holds. A
-# value with no space in it is untouched by this, and reads as the cut read it.
+# neither, whatever spaces its home, profile or project directory holds, save
+# a directory whose name ENDS in a space before its `/`, which puts a ` /`
+# inside the path, so it is refused (see the known limits below). A value with
+# no space in it is untouched by this, and reads as the cut read it.
 #
 # KNOWN LIMITS, and they are the flattening's rather than this read's. A
 # directory whose own name holds `.jsonl ` or ` --`, or ends in a space before
 # its `/`, is cut short or refused, which only ever misses. The one shape this
 # read can still mistake is narrower now: a value that starts with `/` but
-# does not itself end in `.jsonl`, followed by a later plain word that names
-# `<id>.jsonl` by a RELATIVE path (`--resume /p/<id>.jsonl.bak note
-# q/<id>.jsonl`), which reaches it through no ` /`. Linux's
+# does not itself end in `.jsonl`, followed by a later word that names
+# `<id>.jsonl` and does not begin with `/` (`--resume /p/<id>.jsonl.bak note
+# q/<id>.jsonl`, and likewise a word opening `~/`, `$HOME/`, `file:///`,
+# `path=/` or `(/`), which reaches it through no ` /`. Linux's
 # `/proc/<pid>/cmdline` keeps the argument boundaries and BSD/macOS has
 # nothing like it, so one portable reading of `ps`, the same on every
 # platform and under the suite's own fake `ps`, is kept over two that could

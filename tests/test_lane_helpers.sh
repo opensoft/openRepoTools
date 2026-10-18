@@ -5444,19 +5444,26 @@ kill -0 "$SP_CHILD" 2>/dev/null || SP_CHILD=""
 # a word naming the transcript, hold no `--` to refuse, so the value ran on to
 # the later `/<id>.jsonl` and matched, where the cut at the first space never
 # had. A value with a space in it must be one absolute path, starting with `/`
-# and holding no ` /`: $SPAN_PARENT_C's starts with the id, and
-# $SPAN_PARENT_D's reaches the later path through ` /`. The SP case above is
-# the spaced path that must still match, and does.
+# and holding no ` /`, and each half needs a row that only IT refuses:
+# $SPAN_PARENT_C's starts with the id AND reaches its path through ` /`,
+# $SPAN_PARENT_D's starts with `/` and reaches the later path through ` /`
+# alone, and $SPAN_PARENT_E's starts with the id and holds no ` /` at all, so
+# only the start-with-`/` half refuses it (deleting that line from
+# `dhp_resume_value` left every row above passing, measured on de0809c, since
+# C and D are both refused by the ` /` half). The SP case above is the spaced
+# path that must still match, and does.
 SPAN_PARENT_A=900201
 SPAN_PARENT_B=900202
 SPAN_PARENT_C=900203
 SPAN_PARENT_D=900204
-FAKE_PS_SPAN="$(printf '%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s' \
+SPAN_PARENT_E=900205
+FAKE_PS_SPAN="$(printf '%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s' \
   "$SPAN_PARENT_A" 1 "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/other.jsonl --label /nonexistent/projects/$MLIVE_ID.jsonl" \
   "$SPAN_PARENT_B" 1 "claude --session-id $MLIVE_ID --fork-session --resume $WRONG_ID --append-system-prompt-file /nonexistent/projects/$MLIVE_ID.jsonl" \
   "$SPAN_PARENT_C" 1 "claude --session-id $MLIVE_ID --fork-session --resume $WRONG_ID read /nonexistent/projects/$MLIVE_ID.jsonl and summarise" \
-  "$SPAN_PARENT_D" 1 "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl.bak note /nonexistent/other-projects/$MLIVE_ID.jsonl")"
-FAKE_PGREP_F_SPAN="$(printf '%s\n%s\n%s\n%s\n%s' "$LIVE_PID" "$SPAN_PARENT_A" "$SPAN_PARENT_B" "$SPAN_PARENT_C" "$SPAN_PARENT_D")"
+  "$SPAN_PARENT_D" 1 "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl.bak note /nonexistent/other-projects/$MLIVE_ID.jsonl" \
+  "$SPAN_PARENT_E" 1 "claude --session-id $MLIVE_ID --fork-session --resume $WRONG_ID summarise nonexistent/projects/$MLIVE_ID.jsonl")"
+FAKE_PGREP_F_SPAN="$(printf '%s\n%s\n%s\n%s\n%s\n%s' "$LIVE_PID" "$SPAN_PARENT_A" "$SPAN_PARENT_B" "$SPAN_PARENT_C" "$SPAN_PARENT_D" "$SPAN_PARENT_E")"
 run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_SPAN" FAKE_PS_RECORDS="$FAKE_PS_SPAN" FAKE_PGREP_CHILDREN="" \
   "$E" duplicate-holder repoM-1
 is    "…and a --resume value is never read across into a LATER argument: 8" "$rc" 8
@@ -5464,6 +5471,41 @@ hasnt "…not round 5's --label shape, which still reads /other.jsonl" "$out" "$
 hasnt "…nor a bare session id followed by an option naming this transcript" "$out" "$SPAN_PARENT_B"
 hasnt "…nor a bare session id followed by a PROMPT naming it, with no -- to refuse (#205 ruling)" "$out" "$SPAN_PARENT_C"
 hasnt "…nor a <id>.jsonl.bak followed by a later word naming it (#205 ruling)" "$out" "$SPAN_PARENT_D"
+hasnt "…nor a bare session id followed by a RELATIVE path naming it, which only the start-with-/ half refuses (#205 ruling)" "$out" "$SPAN_PARENT_E"
+
+# …AND THE TWO COPIES OF THAT READ ARE ONE TEXT. The rows above drive
+# discovery only, so `lane-end`'s own copy, `dh_resume_value` (its pre-kill
+# recheck), could lose its condition and every case here would still pass
+# (measured on de0809c: removing that copy alone left 75 passed). Its comment
+# says the two "must stay the same rule", and a rule held by two copies is held
+# by nothing until a case compares them. Each body is EXTRACTED FROM ITS FILE,
+# like `/restart`'s rung 4 and `cut_to_line` beside it, and not copied here: a
+# copy is what would go on passing after the file drifted. Only the name prefix
+# (`dhp_` in `lanes-edit.sh`, `dh_` in `lane-end`) may differ, and `lane-end`'s
+# copy sits inside a function, so its four-space indent is taken off. The
+# address is awk's own match on the function's line and its closing brace, not
+# `sed -n '/…/,/^}/p'`: `lane-end`'s closing brace is indented, and an
+# unescaped `{` in a BSD `sed` BRE is undefined (the `cut_to_line` note).
+resume_body() {   # <file> <function> <its indent> — the function's own lines, indent off
+  awk -v name="$2" -v ind="$3" '
+    !on && index($0, ind name "() {") == 1 { on = 1 }
+    on { print substr($0, length(ind) + 1) }
+    on && $0 == ind "}" { exit }' "$1"
+}
+resume_body "$E" dhp_resume_value "" | sed 's/dhp_/dh_/g' > "$SANDBOX/resume_body.lanes-edit"
+resume_body "$END" dh_resume_value "    " > "$SANDBOX/resume_body.lane-end"
+resume_body_whole() {   # <extracted file> — "whole" when it opens at the function and ends at its brace
+  local rbw_t
+  rbw_t="$(cat "$1")"
+  case "$rbw_t" in
+    "dh_resume_value() {"*$'\n'"}") printf 'whole' ;;
+    *) printf 'EMPTY-OR-CUT' ;;
+  esac
+}
+is "both copies of the --resume read were found in their files, opening at the function and ending at its closing brace" \
+   "$(resume_body_whole "$SANDBOX/resume_body.lanes-edit") $(resume_body_whole "$SANDBOX/resume_body.lane-end")" "whole whole"
+is "lane-end's dh_resume_value is lanes-edit.sh's dhp_resume_value, word for word, name prefix aside (#205 review)" \
+   "$(diff "$SANDBOX/resume_body.lane-end" "$SANDBOX/resume_body.lanes-edit" 2>&1)" ""
 
 # ------- opensoft/openRepoTools#86: --retire acts on EVERY verified child
 #
