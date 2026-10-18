@@ -187,7 +187,7 @@ register write will be refused by that gate. Better to meet it here than at
 your first `lane-start` — a refused push is exit 2 naming the ruleset, with
 the clone and the commit left where they are, so the re-run after an
 administrator acts has only to push. Last it writes `~/.agents/workspace.yaml`
-and runs `link-estates`.
+and runs `link-estates`, and then merges `--install`'s two hook entries once the link it placed answers `guard` (#237).
 
 **The seed commit is the template and nothing else**: it stages the paths it
 wrote, each by name, and never `git add -A`. A checkout it ADOPTS that carries
@@ -197,9 +197,9 @@ other end of that push is where your unfinished work lives. So is one ahead of
 that repository's `main` by any commit but an earlier run's unpushed seed: it
 names those commits, and pushing or discarding them is yours.
 
-**Idempotent**: a workstation that already has a workspace does nothing at all,
+**Idempotent**: a workstation that already has a workspace does nothing to it but complete that hook pair, running `link-estates` again first where the link does not answer,
 decided by a file test and not a network call. Exit 0 is done or already done;
-exit 2 is a refusal. `--dry-run` rehearses and writes nothing. It scaffolds no
+exit 2 is a refusal. `--dry-run` rehearses, says it would merge the pair, and writes nothing. It scaffolds no
 product repository — that is `openRepoShape`'s, the standard's front door, and
 nothing here touches it.
 
@@ -276,7 +276,7 @@ which is lane-collision-protocol Amendment 12's NAME GUARD: at every prompt it
 checks that the tmux window, the session's own name and the register row are
 one lane, and warns with an explicit repair/allow choice when a readable
 lane/session name mismatch occurs; unsafe or ambiguous identity states still
-refuse the prompt. Those merges need
+refuse the prompt. **Both wait for the path they call** (#237): they are merged only once `~/projects/xFactory/lanes-edit.sh`, the link `link-estates` places, exists, is executable and answers `guard` — the launcher's own rule, so a fresh install never leaves a prompt hook calling a command that is not there. Until then every run says it DEFERRED them, and why; where a file already carries our guard entry it takes that entry alone back out (the `SessionStart` entry ends in `|| true` and stays, and so does every hook of yours, at mode 600); and it names the remedy, `openRepoTools wip init`, which runs `link-estates` and then merges them, or `link-estates` and `--install` again. A rival still refuses while they wait. Those merges need
 `jq`, never write the file whole, write it back at mode 600, and are
 idempotent by exact match on each entry's command string. That path must be a
 REGULAR FILE: a symlink there — into a dotfiles checkout, say — is a refusal in
@@ -299,7 +299,7 @@ own `UserPromptSubmit` hooks are left exactly where they are, which is why that
 arm keys on the VERB and not on the word anywhere in a path. It
 never writes a profile's own `settings.json`: the launcher owns that one.
 
-Thirty-one artifacts, and the count is the invariant. It was sixteen until A11
+Twenty-nine artifacts always, plus the two hook entries once the path they call answers `guard` (#237), and the count is the invariant. It was sixteen until A11
 Addendum 4 ruling 9 gave `--install` a command-file list and `commands/swap.md`
 in it, at the same pair of paths a skill takes — because `opensoft/workBenches#74`
 deletes the launcher's copy and `/swap` would otherwise be installed by nobody;
