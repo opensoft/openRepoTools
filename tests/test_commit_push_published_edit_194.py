@@ -494,9 +494,9 @@ REFUSALS = {
 
 @pytest.mark.parametrize("variant", list(REFUSALS))
 def test_commit_refuses_a_queue_that_is_not_lane_toolings_to_publish(box, variant):
-    """`commit` publishes the register and handoff commits lane tooling strands
-    and nothing else. One queued commit, or one checkout state, it cannot vouch
-    for refuses the WHOLE publish with 2, names it, makes no network call and
+    """`commit` publishes register and handoff writes, by path and kind, and
+    nothing else. One queued commit, or one checkout state, it cannot vouch for
+    refuses the WHOLE publish with 2, names it, makes no network call and
     pushes nothing, not even the stranded register edit."""
     expect = REFUSALS[variant](box)
     head, origin = box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")

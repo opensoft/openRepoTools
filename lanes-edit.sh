@@ -1607,7 +1607,7 @@ replace_line() {
   # `migrate-state-cells`) wanted the file to SAY something rather than to
   # differ from what it said. Nor does it push: a write with nothing staged
   # publishes nothing, whatever this shared checkout has queued ahead of
-  # origin; only `commit` does that, and only lane tooling's own commits (#194).
+  # origin; only `commit` does that, and only what its path filter passes (#194).
   if cmp -s -- "$pre" "$out"; then
     REPLACE_LINE_NOOP=1
     note "line $n of $LANES_FILE is already exactly what this write asked for — nothing rewritten, and nothing to commit"
@@ -2037,7 +2037,7 @@ cp_publish_fence() {
     note "of the local commits on $cpf_ref ahead of origin/$LANES_BRANCH, these are not register or handoff writes (a merge or root commit, or a change that is not an added or modified regular file under ${LANES_PREFIX:-the register directory} or handoffs/):"
     [ -z "$cpf_odd" ] || printf '%s\n' "$cpf_odd" >&2
     [ -z "$cpf_bad" ] || printf '%s\n' "$cpf_bad" >&2
-    die "refusing to publish: \`commit\` pushes only the register and handoff commits lane tooling strands (#194), so nothing was pushed. A lane rename (Amendment 16) deletes and re-adds its log and is refused here too; the next register write from this checkout carries it. Anything else, whoever queued it publishes it; never reset it away. Read them: git -C $LANES_REPO log --stat refs/remotes/origin/$LANES_BRANCH..$cpf_ref" 2
+    die "refusing to publish: \`commit\` pushes only register and handoff writes (#194), so nothing was pushed. A lane rename (Amendment 16) deletes and re-adds its log and is refused here too; the next register write from this checkout carries it. Anything else, whoever queued it publishes it; never reset it away. Read them: git -C $LANES_REPO log --stat refs/remotes/origin/$LANES_BRANCH..$cpf_ref" 2
   fi
   CP_FENCE_TIP="$cpf_tip"
 }
@@ -2136,7 +2136,7 @@ commit_push() {
   # into a push of whatever this SHARED checkout has queued (the #214 review
   # measured exactly that deleting `scripts/link-estates` on origin).
   #
-  # AND `commit` PUBLISHES ONLY WHAT LANE TOOLING STRANDS, and only what it read:
+  # AND `commit` PUBLISHES ONLY REGISTER AND HANDOFF WRITES, and only what it read:
   # `cp_publish_fence` (above) reads the queue on the branch the push sends and
   # refuses the whole publish (2) for anything that is not a register or
   # handoff write. The push is pinned to the commit the fence read, and every
