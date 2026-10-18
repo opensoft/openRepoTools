@@ -301,7 +301,9 @@ while they track `main`, which is the failure the Why exists to prevent.
   source. Its count line then says where they came from:
   `openRepoTools: 16 of 17 placed in <dir>, and 1 left to pipx; the other 16 now come from <repo> @ <ref>, not from openrepotools <version>`.
   `<version>` is the stamp beside the link's payload, read as `--version`
-  reads it. A test holds this line.
+  reads it. A package-mode run from outside pipx's environment names its
+  own release in place of `<repo> @ <ref>`: `openrepotools <its version>`,
+  from its own stamp. A test holds each line.
 - **Never replace another installer's command.** In every mode, `--install`
   refuses to replace a regular file at `<dir>/openRepoTools` that is pip's
   console script for openrepotools, as `pip install --user` leaves it.
@@ -339,9 +341,11 @@ while they track `main`, which is the failure the Why exists to prevent.
 - **The build job refuses unless every check passes:**
   - The version is a final `X.Y.Z`, and not `0.0.0`. A TestPyPI rehearsal may
     instead use `X.Y.ZrcN` (see "Two rehearsals" below).
-  - The dispatched ref is the annotated tag `v<version>`, and the tag object
-    names the run's commit. This is read both from the forge and from git.
-  - That commit is on `main` or on `release/v<X.Y>`.
+  - On a dispatch on a tag, the dispatched ref is the annotated tag
+    `v<version>`, and the tag object names the run's commit. This is read
+    both from the forge and from git.
+  - On a dispatch on a tag, that commit is on `main` or on `release/v<X.Y>`.
+  - The dispatched ref is a tag or a branch, and nothing else.
   - The checkout is that commit, and it is clean.
   - The environments `testpypi` and `pypi` each name a required reviewer, and
     each has a deployment limit of exactly one rule, the tag pattern `v*`.
@@ -359,6 +363,11 @@ while they track `main`, which is the failure the Why exists to prevent.
     the same assertion (`release.yml:438-440` at v1.1.0). A later pin that
     changes the definition then refuses the build, and never ships a wrong
     label.
+
+  A dispatch on a branch is the branch rehearsal (see "Two rehearsals"). The
+  two tag-bound checks above stand down there, because a branch has no tag
+  and no release branch to be on. Every other check still runs. This is
+  openRepoShape's rule (`release.yml:200-249` at v1.1.0).
 - **The build:**
   - The release tools are installed from `.github/release-build-requirements.txt`,
     which locks them by hash and installs wheels only. Hatchling is at
@@ -390,6 +399,19 @@ while they track `main`, which is the failure the Why exists to prevent.
     this run's approval and the tag. The index must hold no other file of
     that version.
   - After it uploads, the index must serve exactly the recorded digest.
+  - **The repository guard,** on the lead's ruling of 2026-10-18, puts Brett
+    Heap's answers 2 and 3 into the workflow's code:
+    - in `opensoft/openRepoTools`, the `testpypi` job takes only a
+      pre-release `X.Y.ZrcN`, and the `pypi` job refuses outright;
+    - in `opensoft/openRepoTools-code`, a pre-release goes to TestPyPI
+      only, and a final `X.Y.Z` goes to TestPyPI and then to PyPI;
+    - in any other repository, both upload jobs refuse.
+
+    The build decides this from the repository and the version, before any
+    approval is asked. Each upload job checks the rule again before it
+    uploads. The absence of a pypi.org publisher for
+    `opensoft/openRepoTools` stays as the second line of defence.
+    openRepoShape's v1.1.0 workflow has no such guard; it is new here.
 - **The install check** runs on `ubuntu-latest` and `macos-latest` with
   Python 3.x, and on `ubuntu-latest` with Python 3.9. Each leg checks that:
   - pipx, installed from its own hash lock
@@ -414,11 +436,14 @@ while they track `main`, which is the failure the Why exists to prevent.
 - **Two rehearsals.**
   - **The branch rehearsal.** A dispatch on a branch runs every build check,
     and runs the install check on the build's own wheel. It uploads nothing.
-    This is openRepoShape's rehearsal.
+    This is openRepoShape's rehearsal. It builds with the version of the tag
+    it rehearses, as the model rehearsed v1.1.0 from its branch
+    `l3-rehearsal-v1.1.0`. Because no rehearsal uses `1.1.0` itself, that is
+    the next pre-release, `1.1.0rc1` for the first.
   - **The TestPyPI rehearsal, which is new.** A pre-release `X.Y.ZrcN`,
     dispatched on its annotated tag, may reach TestPyPI and the install check.
-    The first is `1.1.0rc1`, on the tag `v1.1.0rc1`. The `pypi` job refuses
-    every pre-release. This departs from openRepoShape, which uploads nothing
+    The first is `1.1.0rc1`, on the tag `v1.1.0rc1`. In it, the `pypi` job
+    is skipped, because it never uploads a pre-release. This departs from openRepoShape, which uploads nothing
     before a final release ("Only final releases are published", #563
     decision 4). It is on Brett Heap's answer 2 of 21:51:50Z. The `v1.1.0rc1`
     tag still needs his word, and the `testpypi` deployment his approval.

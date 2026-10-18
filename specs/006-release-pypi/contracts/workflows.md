@@ -133,7 +133,12 @@ jobs: {build, testpypi, install, pypi}
 4. **The two rehearsals.**
    - A branch dispatch builds, checks and installs, and uploads nothing.
    - A `X.Y.ZrcN` dispatched on its annotated tag reaches TestPyPI and the
-     install check, and the `pypi` job refuses it.
+     install check, and the `pypi` job is skipped.
+   - A branch rehearsal builds with the version of the tag it rehearses, as
+     the model rehearsed v1.1.0 from its branch `l3-rehearsal-v1.1.0`.
+     Before v1.1.0 that is the next pre-release, so
+     `gh workflow run release.yml --ref <branch> -f version=1.1.0rc1` comes
+     first.
    - The build's CI gate holds in a rehearsal too, and it counts only push
      and dispatch runs. A feature branch's commit has only `pull_request`
      runs, so dispatch `tests.yml` on that branch first, and wait for it to
@@ -142,8 +147,15 @@ jobs: {build, testpypi, install, pypi}
 5. **Where releases come from.**
    - From v1.1.0 on, tags are made in `openRepoTools-code`.
    - `v1.0.0` and every `rc` tag stay in `opensoft/openRepoTools`.
-   - Nothing ever uploads to PyPI from `opensoft/openRepoTools`, which has
-     no pypi.org publisher.
+   - The repository guard (FR-048) applies:
+     - `opensoft/openRepoTools` sends a pre-release to TestPyPI and nothing
+       to PyPI;
+     - `opensoft/openRepoTools-code` sends a pre-release to TestPyPI only,
+       and a final to TestPyPI and then to PyPI;
+     - every other repository uploads nothing.
+
+     `opensoft/openRepoTools` has no pypi.org publisher, which is the
+     second line of defence.
    - The `testpypi` and `pypi` environments, the `v*` tag ruleset and the
      trusted publishers are Brett Heap's to create.
 6. **What the workflow never reads**: the release notes, and anything
@@ -160,7 +172,26 @@ The checkout:
 
 The steps are the model's, in its order. Each is a refusal on failure:
 
-1. The version is `X.Y.Z`, not `0.0.0`, or `X.Y.ZrcN`.
+1. **The version, and the repository guard (FR-048).**
+   - The version is `X.Y.Z`, not `0.0.0`, or `X.Y.ZrcN`.
+   - The guard is a `bash` `run:` block that the suite runs. It reads
+     `$GITHUB_REPOSITORY`, `$GITHUB_REF` and `$VERSION`, and decides by this
+     table:
+
+     | `$GITHUB_REPOSITORY` | Ref | Version | Build | `to-testpypi` | `to-pypi` |
+     | --- | --- | --- | --- | --- | --- |
+     | `opensoft/openRepoTools-code` | a tag | `X.Y.Z` | passes | `true` | `true` |
+     | `opensoft/openRepoTools-code` | a tag | `X.Y.ZrcN` | passes | `true` | `false` |
+     | `opensoft/openRepoTools` | a tag | `X.Y.ZrcN` | passes | `true` | `false` |
+     | `opensoft/openRepoTools` | a tag | `X.Y.Z` | refuses | none | none |
+     | any other | a tag | any | refuses | none | none |
+     | any | a branch | any | passes, as the rehearsal | `false` | `false` |
+
+   - The two repository names are compared exactly, as GitHub spells them
+     in `$GITHUB_REPOSITORY`. Any other spelling counts as "any other",
+     so the guard fails closed.
+   - The build job asks for no approval, so a refused run asks for none.
+     The model's workflow has no such guard, so this one is new here.
 2. The ref:
    - on a tag, it is the annotated tag `v$VERSION`, whose object names
      `$GITHUB_SHA`, read from the forge and from git;
@@ -198,8 +229,8 @@ The steps are the model's, in its order. Each is a refusal on failure:
     This is a heredoc, which `tests/test_release_workflow.py` extracts and
     runs on synthetic wheels.
 14. Record these as job outputs: the wheel's name, its sha256, the digest,
-    and `final`. `final` is `true` only when `VERSION` is a final `X.Y.Z`,
-    as decided by step 1's own pattern. Keep the wheel as an artifact.
+    and step 1's `to-testpypi` and `to-pypi`. Keep the wheel as an
+    artifact.
 
 ### `testpypi` (`environment: testpypi`; permissions exactly `id-token: write`, `actions: read`, `contents: read`)
 
@@ -207,8 +238,11 @@ These are the model's grants (`release.yml:691-694` at v1.1.0):
 `id-token` for trusted publishing, `actions` for the environment's rules and
 this run's approvals, and `contents` for the tag, read again.
 
-- It runs only when `github.ref` is a `refs/tags/v*` tag and `build`
-  succeeded.
+- It runs only when `github.ref` is a `refs/tags/v*` tag, `build` succeeded,
+  and `needs.build.outputs.to-testpypi == 'true'`.
+- Its first step runs the repository guard again, on its own. It refuses in
+  `opensoft/openRepoTools` unless the version is a pre-release, passes in
+  `opensoft/openRepoTools-code`, and refuses in every other repository.
 - Download the wheel, and check its sha256 against `build`'s output.
 - Read again the environment's rules, this run's approval of `testpypi`,
   and the tag.
@@ -252,10 +286,14 @@ These are the model's grants (`release.yml:1133-1136` at v1.1.0).
 
 - It needs `build`, `testpypi` and `install`.
 - Its job-level `if:` requires a `refs/tags/v*` tag and
-  `needs.build.outputs.final == 'true'`, because an expression cannot test
-  a pattern. So a pre-release never asks for the `pypi` approval.
-- Its first step refuses again any version that is not a final `X.Y.Z`,
-  in case the condition is ever loosened.
+  `needs.build.outputs.to-pypi == 'true'`, which holds only for a final
+  `X.Y.Z` in `opensoft/openRepoTools-code`. An expression cannot test a
+  pattern, so the build's record decides. In an rc rehearsal the job is
+  skipped, and never asks for the `pypi` approval.
+- Its first step refuses unless `$GITHUB_REPOSITORY` is
+  `opensoft/openRepoTools-code` and the version is a final `X.Y.Z`. So in
+  `opensoft/openRepoTools` it refuses outright, in case the condition is
+  ever loosened.
 - Then come the same download, sha256 check, re-reads and empty-index check
   as `testpypi`, against PyPI.
 - The upload uses the same pinned action, with the default index.
@@ -289,8 +327,15 @@ These are the model's grants (`release.yml:1133-1136` at v1.1.0).
   with the pin.
 - The literal equals the label in `openRepoTools`' `--version` arm.
 - The stamp heredoc round-trips through `stamp_read` ([stamp.md](stamp.md)).
-- The `pypi` job refuses a pre-release, at both the job condition and the
-  first step.
+- The repository guard (`test_release_guard_*`). The build's guard block is
+  run under each row of step 1's table, with `GITHUB_REPOSITORY`,
+  `GITHUB_REF`, `VERSION` and `GITHUB_OUTPUT` set. It must pass or refuse,
+  and record `to-testpypi` and `to-pypi`, exactly as the row says.
+- Each upload job's first-step guard is run in the same way. `testpypi`
+  refuses a final in `opensoft/openRepoTools` and any version elsewhere.
+  `pypi` refuses everything but a final in `opensoft/openRepoTools-code`.
+- `testpypi`'s condition reads `to-testpypi`, and `pypi`'s reads `to-pypi`.
+  So in an rc rehearsal `pypi` is skipped.
 - The install matrix is exactly the three legs. The macOS leg reruns under
   `/bin/bash`, and the 3.9 leg compiles the two Python commands.
 - No step reads `docs/`, `openspec/`, `specs/`, `README.md`, `AGENTS.md` or

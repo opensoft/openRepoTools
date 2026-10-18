@@ -257,7 +257,9 @@ The documented move from the one-line install to pipx SHALL be
 checkout's or the one-line install's `--install` that meets pipx's link
 SHALL skip it, and its count line SHALL be exactly
 `openRepoTools: 16 of 17 placed in <dir>, and 1 left to pipx; the other 16 now come from <repo> @ <ref>, not from openrepotools <version>`,
-where `<version>` is the stamp beside the link's payload. In every mode,
+where `<version>` is the stamp beside the link's payload. A package-mode run
+from outside pipx's environment SHALL name `openrepotools <its version>`,
+from its own stamp, in place of `<repo> @ <ref>`. In every mode,
 `--install` SHALL refuse to replace a regular file at `<dir>/openRepoTools`
 that is pip's console script for openrepotools, before anything is placed.
 Once a package-mode `--install` has placed its files, it SHALL report when
@@ -329,9 +331,11 @@ SHALL run one release at a time, never cancelling one in progress. Its build
 SHALL refuse unless all of these hold:
 - the version is a final `X.Y.Z` other than `0.0.0`, or a pre-release
   `X.Y.ZrcN` bound for TestPyPI;
-- the dispatched ref is the annotated tag `v<version>`, and the tag object
-  names the run's commit, read both from the forge and from git;
-- that commit is on `main` or on `release/v<X.Y>`;
+- on a dispatch on a tag, the dispatched ref is the annotated tag
+  `v<version>`, and the tag object names the run's commit, read both from
+  the forge and from git;
+- on a dispatch on a tag, that commit is on `main` or on `release/v<X.Y>`;
+- the dispatched ref is a tag or a branch, and nothing else;
 - the checkout is that commit, and it is clean;
 - the environments `testpypi` and `pypi` each name a required reviewer, and
   each has a deployment limit of exactly one rule, the tag pattern `v*`;
@@ -341,6 +345,16 @@ SHALL refuse unless all of these hold:
 - the tree digest computed locally equals the one computed from the forge's
   tree listing, both by the pinned openRepoShape's own digest code;
 - the pinned standard's digest definition is `sorted-ls-tree-r-v1`.
+
+A dispatch on a branch is the rehearsal. The two tag-bound checks above
+SHALL stand down there, as in openRepoShape's `release.yml:200-249` at
+v1.1.0, and every other check SHALL still run.
+
+#### Scenario: A branch dispatch is a rehearsal, not a refusal
+
+- **WHEN** the release workflow is dispatched on a branch
+- **THEN** the tag check and the release-branch check pass it as a
+  rehearsal, and every other check runs
 
 #### Scenario: A changed digest definition
 
@@ -377,17 +391,36 @@ be granted `id-token: write`. There SHALL be no token and no stored secret.
 Before it uploads, each upload job SHALL read again its environment's rules,
 this run's approval and the tag. The index SHALL hold no other file of that
 version, and after the upload it SHALL serve exactly the recorded digest.
-The `pypi` job SHALL refuse every pre-release. Nothing SHALL be uploaded to
-PyPI from `opensoft/openRepoTools`. v1.1.0 SHALL be published from
+The `pypi` job SHALL never upload a pre-release. Nothing SHALL be uploaded
+to PyPI from `opensoft/openRepoTools`. v1.1.0 SHALL be published from
 `openRepoTools-code`, only once both of its environments and both trusted
 publishers exist.
+
+The uploads SHALL be guarded by repository, in the workflow's code:
+- in `opensoft/openRepoTools`, the `testpypi` job SHALL take only a
+  pre-release `X.Y.ZrcN`, and the `pypi` job SHALL refuse outright;
+- in `opensoft/openRepoTools-code`, a pre-release SHALL go to TestPyPI only,
+  and a final `X.Y.Z` to TestPyPI and then to PyPI;
+- in any other repository, both upload jobs SHALL refuse.
+
+The build SHALL decide this before any approval is asked, and each upload
+job SHALL check it again before it uploads. The absence of a pypi.org
+publisher for `opensoft/openRepoTools` stays as a second line of defence.
 
 #### Scenario: The rc rehearsal
 
 - **WHEN** `1.1.0rc1` is dispatched on its annotated tag in
   `opensoft/openRepoTools`, and the `testpypi` deployment is approved
 - **THEN** it reaches TestPyPI and the install check, and the `pypi` job
-  refuses it
+  is skipped
+
+#### Scenario: A final version in the wrong repository
+
+- **WHEN** a final `X.Y.Z` is dispatched on its tag in
+  `opensoft/openRepoTools`, or any version on a tag in a repository other
+  than the two
+- **THEN** the build refuses before any approval is asked, and both upload
+  jobs refuse if they are ever reached
 
 #### Scenario: The index already holds the version
 
@@ -416,9 +449,10 @@ SHALL run that `--install` again with Apple's `/bin/bash` 3.2 first on
 ### Requirement: Rehearsals never spend the real version
 
 A dispatch on a branch SHALL run every build check and the install check on
-its own wheel, and SHALL upload nothing. A TestPyPI rehearsal SHALL use a
-pre-release `X.Y.ZrcN` on its annotated tag. No rehearsal SHALL use the
-version `1.1.0` itself.
+its own wheel, and SHALL upload nothing. It builds with the version of the
+tag it rehearses; before v1.1.0 that is the next pre-release, `1.1.0rc1` for
+the first. A TestPyPI rehearsal SHALL use a pre-release `X.Y.ZrcN` on its
+annotated tag. No rehearsal SHALL use the version `1.1.0` itself.
 
 #### Scenario: The branch rehearsal
 

@@ -56,11 +56,20 @@ It is printed for every invocation, `--help`, `--version` and `--install`
 included, before any argument is acted on:
 
 ```text
-REFUSED: this package's stamp (openrepotools/_release.py) names part of a release and not all of it: <why>. This build is broken. Reinstall it: pipx reinstall openrepotools
+REFUSED: this package's stamp (openrepotools/_release.py) <why>, so this build is broken and nothing ran. A package's stamp is a release's whole stamp or the unstamped one. Reinstall it: pipx reinstall openrepotools
 ```
 
-`<why>` is `stamp_read`'s `STAMP_WHY`. Each refusal reason has its own text,
-as [stamp.md](stamp.md) lists them.
+`<why>` is `stamp_read`'s `STAMP_WHY`. It begins with one of the three
+causes, and [stamp.md](stamp.md) gives each reason's cause:
+
+- `cannot be read (<detail>)`, for example `cannot be read (it is a
+  directory)`;
+- `is partial: <detail>`, for example `is partial: COMMIT is set and DIGEST
+  is empty`;
+- `is malformed: <detail>`, for example `is malformed: TAG is v1.2.0, not
+  v1.1.0`, or `is malformed: line 4 has a carriage return`.
+
+So the line reads correctly for each of them.
 
 ## No `bash` (the entry module; stderr, exit 2)
 
@@ -88,11 +97,20 @@ openRepoTools: 16 of 17 placed in <dir>, and 1 left to pipx
 openRepoTools: 16 of 17 placed in <dir>, and 1 left to pipx; the other 16 now come from <source>, not from openrepotools <version>
 ```
 
-- `<source>` is `<PAYLOAD_REPO> @ <PAYLOAD_REV>` for an adopted source, and
-  `<REPO> @ <REF>` otherwise (research R5).
-- `<version>` is the `VERSION` of the stamp beside pipx's payload, `0.0.0`
-  when it is unstamped. It is the literal `an unreadable stamp` when that
-  stamp fails the reader, and the install still goes on.
+- `<source>` depends on how the run is installed (research R5):
+  - a package-mode run names its own release, `openrepotools <its
+    VERSION>`, from its own stamp, whether or not it runs inside a pipx
+    venv;
+  - a checkout or the one-line install names `<PAYLOAD_REPO> @
+    <PAYLOAD_REV>` for an adopted source, and `<REPO> @ <REF>` otherwise.
+- `<version>` is the `VERSION` of the stamp beside pipx's payload, and
+  `0.0.0` when that stamp is unstamped.
+- When that stamp fails the reader, the line ends differently, and the
+  install still goes on:
+
+  ```text
+  openRepoTools: 16 of 17 placed in <dir>, and 1 left to pipx; the other 16 now come from <source>, not from the openrepotools beside pipx's link, whose stamp cannot be read
+  ```
 
 ### With no pipx link, the count line is today's
 
@@ -107,7 +125,9 @@ format does not change.
 
 ## pip's console script at `<dir>/openRepoTools` (stderr, exit 2; planning phase)
 
-This is design.md Decision 8's text, with `die`'s prefix:
+This is design.md Decision 8's text, with `die`'s prefix. It is the same for
+both forms pip writes, the Python shebang and the `/bin/sh` trampoline
+([pipx-link.md](pipx-link.md)):
 
 ```text
 REFUSED: `--install` will not replace <dir>/openRepoTools: it is pip's console script for openrepotools (`pip install --user openrepotools` leaves it there), and another installer's command is not this installer's to overwrite.
@@ -136,7 +156,7 @@ openRepoTools: note: the first openRepoTools on your PATH is <first, or "none">,
   ```
 - `<prefix>` is five levels above `payload/` (research R7).
 
-## A venv-looking link that fails the pipx rule (stderr, exit 2; planning phase)
+## A venv-shaped link that fails the pipx rule (stderr, exit 2; planning phase)
 
 The link resolves to `…/bin/openRepoTools` whose parent holds `pyvenv.cfg`,
 but it fails the pipx rule. It is listed in `plan_install_targets`' refusal

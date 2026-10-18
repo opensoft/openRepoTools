@@ -26,18 +26,20 @@ only when the step it names has actually happened, and with its evidence.
 
 ## 2. The single Speckit feature
 
-- [ ] 2.1 Create the one Speckit feature for this change with
+- [x] 2.1 Create the one Speckit feature for this change with
   `/speckit.specify`; verify `specs/006-release-pypi/spec.md` exists on
   branch `006-release-pypi`, and that no other Speckit feature names
-  `release-tags-pypi` or #228.
+  `release-tags-pypi` or #228. Done 2026-10-17 at `eb12177`: `grep -rl` for
+  either name under `specs/` finds only `specs/006-release-pypi/`.
 - [ ] 2.2 Plan and task the feature with `/speckit.plan` and
   `/speckit.tasks`; verify `specs/006-release-pypi/tasks.md` exists, that
   every task carries a tier, a `files:` list and a `verify:` command, and
   that together they cover every requirement of both delta specs and every
   decision in design.md.
-- [ ] 2.3 Fill in the handoff below with the feature's final path; verify
+- [x] 2.3 Fill in the handoff below with the feature's final path; verify
   "Speckit Handoff" names exactly one feature, branch and task path, and is
-  no longer marked pending.
+  no longer marked pending. Done 2026-10-17 at `760281b`; the task path
+  exists since `01ff6d6`.
 
 ## 3. Landing in opensoft/openRepoTools
 
@@ -60,7 +62,7 @@ only when the step it names has actually happened, and with its evidence.
 - [ ] 4.3 On his word for the tag `v1.1.0rc1`, and his approval of the
   `testpypi` deployment, run the TestPyPI rehearsal; verify TestPyPI serves
   exactly the recorded digest, the install check passes, and the `pypi` job
-  refuses the pre-release.
+  is skipped.
 
 ## 5. The cutover's dependencies (#186, lane openRepoTools-1)
 

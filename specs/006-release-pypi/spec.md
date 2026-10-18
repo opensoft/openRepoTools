@@ -169,8 +169,10 @@ checkout, pip's console script, two wheels in turn, a removed venv, and a
    `<repo> @ <ref>`, and the version of the stamp beside the link's payload
    (FR-019).
 3. **Given** `<dir>/openRepoTools` is the regular file that
-   `pip install --user openrepotools` writes, **When** `--install` runs in any
-   mode, pip's own included, **Then** it refuses with the exact refusal, names
+   `pip install --user openrepotools` writes, in either form pip writes
+   (a Python shebang, or the `/bin/sh` trampoline for a long or spaced
+   interpreter path), **When** `--install` runs in any mode, pip's own
+   included, **Then** it refuses with the exact refusal, names
    the file as pip's console script, and places nothing (FR-020).
 4. **Given** a finished package-mode `--install`, **When** the first
    `openRepoTools` on `PATH` is an older bash file in another directory, or
@@ -184,6 +186,10 @@ checkout, pip's console script, two wheels in turn, a removed venv, and a
 6. **Given** pipx's link and its environment are removed, **When** the person
    looks, **Then** the sixteen files are still there. A checkout's
    `--install` then places a regular file at `<dir>/openRepoTools`.
+7. **Given** pipx's link, **When** a package-mode `--install` runs from a
+   package outside pipx's venv, **Then** its count line names
+   `openrepotools <its version>` as the source, never `<repo> @ <ref>`
+   (FR-019).
 
 ---
 
@@ -256,10 +262,15 @@ workflow's stamp writer.
 6. **Given** `1.1.0rc1` dispatched on its annotated tag in
    `opensoft/openRepoTools`, with the `testpypi` deployment approved,
    **When** the run proceeds, **Then** it reaches TestPyPI and the install
-   check, and the `pypi` job refuses it.
+   check, and the `pypi` job is skipped.
 7. **Given** a dispatch on a branch, **When** the run proceeds, **Then** every
    build check and the install check run, and no upload job runs.
-8. **Given** an upload job and no approval for its environment, **When** the
+8. **Given** a final `X.Y.Z` dispatched on its tag in
+   `opensoft/openRepoTools`, or any version dispatched on a tag in a
+   repository other than `opensoft/openRepoTools` and
+   `opensoft/openRepoTools-code`, **When** the build runs, **Then** it
+   refuses before any approval is asked, and nothing is uploaded (FR-048).
+9. **Given** an upload job and no approval for its environment, **When** the
    run reaches it, **Then** the job waits, and nothing is uploaded.
 9. **Given** the macOS leg of the install check, **When** it reruns
    `--install` under `/bin/bash`, **Then** it prints a `BASH_VERSION` of 3.2,
@@ -315,8 +326,9 @@ passages, and the absence of the pipx route.
   with the layout. This keeps the person from deleting the only working
   command.
 - **The stamp beside another install's payload.** When that stamp fails the
-  reader, the checkout's count line names `an unreadable stamp`, and the
-  install goes on: the stamp belongs to another install.
+  reader, the count line says the other 16 do not come from "the openrepotools
+  beside pipx's link, whose stamp cannot be read". The install goes on,
+  because the stamp belongs to another install.
 - **A carriage return, a repeated name or an unclosed docstring in the
   stamp.** Each is refused with its own reason, as a broken build.
 - **A docstring line that the build backend could read as the version.** It
@@ -332,8 +344,9 @@ passages, and the absence of the pipx route.
   of that job and refuses.
 - **A later pin that changes the digest definition.** The build refuses
   rather than ship a wrong label.
-- **The version `0.0.0`, or a pre-release on the `pypi` job.** Both are
-  refused.
+- **The version `0.0.0`, and a pre-release at the `pypi` job.** The version
+  `0.0.0` is refused. A pre-release never reaches the `pypi` job: the job is
+  skipped for one, and its first step refuses one if it ever starts.
 - **A rehearsal that would use `1.1.0`.** It is ruled out: an index never
   takes a file name twice, and v1.1.0 is later built from another commit.
 
@@ -486,7 +499,7 @@ passages, and the absence of the pipx route.
     pipx's link.
 - **FR-017**: Every other link at a target MUST still refuse the whole install
   before anything is placed, and no refusal MUST advise removing pipx's
-  link. A venv-looking link that fails FR-015 MUST be refused in these terms:
+  link. A venv-shaped link that fails FR-015 MUST be refused in these terms:
   - the refusal calls it "a link into a Python environment, perhaps pipx's";
   - it prints no `rm` for that link;
   - it names `pipx reinstall openrepotools`;
@@ -494,22 +507,35 @@ passages, and the absence of the pipx route.
 - **FR-018**: The `jq` check MUST stay where it is, after the targets are
   asked about. With no `jq` and pipx's link in place, the run MUST refuse for
   want of `jq` and print no `rm` for the link.
-- **FR-019**: A checkout's or the one-line install's `--install` that meets
-  pipx's link MUST skip it. Its count line MUST be exactly
-  `openRepoTools: 16 of 17 placed in <dir>, and 1 left to pipx; the other 16 now come from <repo> @ <ref>, not from openrepotools <version>`.
-  - `<repo> @ <ref>` is the source the run collected from.
+- **FR-019**: Any `--install` that meets pipx's link and does not run from
+  pipx's own environment MUST skip the link. That covers a checkout's, the
+  one-line install's, and a package-mode run outside pipx's venv. Its count
+  line MUST be exactly
+  `openRepoTools: 16 of 17 placed in <dir>, and 1 left to pipx; the other 16 now come from <source>, not from openrepotools <version>`.
+  - `<source>` is `<repo> @ <ref>`, the source the run collected from, for
+    a checkout or the one-line install.
+  - A package-mode run names its own release as `<source>`:
+    `openrepotools <its version>`, from its own stamp.
   - `<version>` is the stamp beside the link's payload, read as `--version`
-    reads it: `0.0.0` when that stamp is unstamped, and `an unreadable stamp`
-    when it fails the reader. In that last case the install goes on.
+    reads it, and `0.0.0` when that stamp is unstamped.
+  - When that stamp fails the reader, the clause after "not from" MUST
+    instead be `the openrepotools beside pipx's link, whose stamp cannot be
+    read`, and the install goes on. The line never says "openrepotools an
+    unreadable stamp".
 - **FR-020**: In every mode, `--install` MUST refuse to replace a regular file
   at `<dir>/openRepoTools` that is pip's console script for openrepotools.
   - The refusal MUST come in the planning phase, so nothing is placed.
   - Its text MUST be design.md Decision 8's: it names the file as pip's
     console script, says nothing was installed, and names pipx as the way
     out.
-  - Such a script is recognised by its first line, a `#!` naming a Python,
-    together with the import of the `openrepotools` entry point that pip's
-    console-script template writes.
+  - Such a script is recognised by its interpreter being a Python, together
+    with the import of the `openrepotools` entry point that pip's
+    console-script template writes. The interpreter is recognised in either
+    of the two forms pip writes:
+    - a first line `#!` naming a Python;
+    - pip's `/bin/sh` trampoline, which pip writes when the interpreter's
+      path holds a space or is too long for a shebang: a first line
+      `#!/bin/sh`, whose next line `exec`s a Python.
 - **FR-021**: Once a package-mode `--install` has placed its files, it MUST
   report when the first `openRepoTools` on `PATH`, with its links resolved,
   is not that package's console script, or when there is none.
@@ -614,8 +640,11 @@ passages, and the absence of the pipx route.
     rules, this run's approval and the tag.
   - The index MUST hold no other file of that version before the upload, and
     MUST serve exactly the recorded digest after it.
-  - The `pypi` job MUST refuse every pre-release.
-  - Nothing MUST ever upload to PyPI from `opensoft/openRepoTools`.
+  - The `pypi` job MUST never upload a pre-release. In an rc rehearsal it
+    is skipped, and its first step refuses a pre-release if it ever starts.
+  - Nothing MUST ever upload to PyPI from `opensoft/openRepoTools`. FR-048
+    enforces that in code, and the absence of a pypi.org publisher is the
+    second line of defence.
   - v1.1.0 MUST be published from `openRepoTools-code`, and only once both of
     its environments and both trusted publishers exist.
 - **FR-032**: The install check MUST run on ubuntu and macOS with a current
@@ -630,10 +659,14 @@ passages, and the absence of the pipx route.
 
   The macOS leg MUST run that `--install` again with Apple's `/bin/bash` 3.2
   first on `PATH`, and print its `BASH_VERSION`. The Python 3.9 leg MUST
-  compile `lanes-index` and `lane-worktrees`. There is no Windows leg.
+  compile the installed package's own `lanes-index` and `lane-worktrees`.
+  There is no Windows leg.
 - **FR-033**: Rehearsals MUST never spend the real version.
   - A dispatch on a branch MUST run every build check and the install check
     on its own wheel, and MUST upload nothing.
+  - A branch rehearsal builds with the version of the tag it rehearses, as
+    the model rehearsed v1.1.0 from its branch `l3-rehearsal-v1.1.0`. Before
+    v1.1.0 that is the next pre-release, `1.1.0rc1` for the first.
   - A TestPyPI rehearsal MUST use a pre-release `X.Y.ZrcN`, on its annotated
     tag.
   - No rehearsal MUST use the version `1.1.0` itself.
@@ -653,6 +686,24 @@ passages, and the absence of the pipx route.
     from `.github/release-pipx-requirements.txt`. Each is installed by hash,
     wheels only.
   - These files record pins and digests, so they are governed files.
+- **FR-048**: The uploads MUST be guarded by repository, in the workflow's
+  own code. This is the lead's ruling of 2026-10-18, and it puts Brett Heap's
+  answers 2 and 3 into the workflow:
+  - in `opensoft/openRepoTools`, the `testpypi` job takes only a pre-release
+    `X.Y.ZrcN`, and the `pypi` job refuses outright;
+  - in `opensoft/openRepoTools-code`, a pre-release goes to TestPyPI only,
+    and a final `X.Y.Z` goes to TestPyPI and then to PyPI;
+  - in any other repository, both upload jobs refuse.
+
+  How the guard works:
+  - The build decides this from the repository, the version and the ref,
+    before any approval is asked.
+  - It refuses a tag dispatch whose version this repository may not upload.
+  - It records which upload jobs may run. Each upload job's condition reads
+    that record, and its first step checks the rule again.
+  - A branch dispatch uploads nothing in any repository.
+  - openRepoShape v1.1.0's workflow has no such guard, so this one is new
+    here.
 
 #### Release identity
 
@@ -770,7 +821,7 @@ passages, and the absence of the pipx route.
   exactly five names.
 - **pipx's link**: `<dir>/openRepoTools` as FR-015 defines it, with its venv
   and that venv's payload. Its counterparts are pip's console script (a
-  regular file) and a venv-looking link that is not provably pipx's.
+  regular file) and a venv-shaped link that is not provably pipx's.
 - **An install run's result**: what was placed and counted, what was left to
   pipx, and the receipt rows. Thirty-one artifacts are 17 files, 6 skill
   files, 6 command files and 2 hook entries. With pipx's link, 30 are placed,
@@ -803,10 +854,11 @@ passages, and the absence of the pipx route.
   file equals the commit's blob, and no package test is skipped unnoticed.
 - **SC-005**: No upload happens without Brett Heap's approval in its
   environment. No pre-release reaches PyPI, nothing uploads to pypi.org from
-  `opensoft/openRepoTools`, and no rehearsal uses `1.1.0`.
+  `opensoft/openRepoTools`, nothing uploads from any repository other than
+  the two, and no rehearsal uses `1.1.0`.
 - **SC-006**: A person who follows the advice any refusal prints never
   removes the only command that can run `--install`. No refusal prints an
-  `rm` for pipx's link or for a venv-looking link.
+  `rm` for pipx's link or for a venv-shaped link.
 - **SC-007**: Each of the 12 pipx fixture layouts is recognised: 3 pipx
   releases, each under 4 homes. Each negative layout is refused before
   anything is placed.

@@ -53,7 +53,21 @@
   outcomes of the first, and the second is settled before the tag.
 - **Coverage.** Every one of the delta specs' 25 requirements maps to a
   functional requirement: 17 in `pypi-package` and 8 in
-  `release-tags-and-branches`. Their 47 scenarios are acceptance scenarios,
+  `release-tags-and-branches`. Their 49 scenarios are acceptance scenarios,
   edge cases or the exact text of a requirement. The spec adds no scope the
   proposal, design.md and clarifications.md do not hold.
+- **Revised 2026-10-18** for the lead's rulings on the report at `335d226`.
+  These were applied to the change's documents first, then to the spec:
+  - FR-048, the repository guard;
+  - FR-029's rehearsal rule, which the proposal and delta spec now state
+    too;
+  - pip's `/bin/sh` trampoline in FR-020;
+  - a package-mode run's own release as the count line's source, in FR-019;
+  - the wording of the unreadable-stamp clause and of the broken-stamp line;
+  - the one term "venv-shaped";
+  - "skipped" for the `pypi` job in an rc rehearsal;
+  - the branch rehearsal's version, in FR-033.
+
+  The delta specs gained two scenarios, a branch dispatch as a rehearsal and
+  a final version in the wrong repository. Every item still passes.
 - Items marked incomplete require spec updates before `/speckit.clarify` or `/speckit.plan`

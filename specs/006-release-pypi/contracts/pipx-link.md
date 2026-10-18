@@ -91,8 +91,8 @@ each prints the exact skip and count lines:
 **The negative cases.** Each refuses before anything is placed:
 
 - a link into a venv with no `openrepotools/payload/openRepoTools`. It holds
-  `pyvenv.cfg`, so it is refused as venv-looking, with no `rm` advice;
-- a link into a venv with no `pipx_metadata.json`. This is venv-looking too;
+  `pyvenv.cfg`, so it is refused as venv-shaped, with no `rm` advice;
+- a link into a venv with no `pipx_metadata.json`. This is venv-shaped too;
 - a link whose target is not in a `bin/` directory. It is an ordinary link,
   refused with today's text;
 - a chain of 41 links. It is not pipx's link, and is refused;
@@ -109,30 +109,61 @@ each prints the exact skip and count lines:
 
 ## `pip_script_is <dir>/openRepoTools`
 
-It runs for a regular file that is not a link, and is true when both of
-these hold:
+It runs for a regular file that is not a link. It is true when both of
+these hold.
 
-- the first line begins with `#!`, and the first word after `#!` has a last
-  `/` segment that begins with `python`;
-- one of the first 20 lines matches
-  `^from openrepotools(\.[A-Za-z_][A-Za-z0-9_]*)* import `.
+1. **The interpreter is a Python**, in either of the two forms pip writes.
+   - **The shebang form.** The first line begins with `#!`, and the first
+     word after `#!` has a last `/` segment that begins with `python`.
+   - **The trampoline form.** pip writes this when the interpreter's path
+     holds a space or is too long for a shebang (pip 26.2.1,
+     `pip/_vendor/distlib/scripts.py:180-182`; the lead's ruling of
+     2026-10-18). It is three lines:
+
+     ```text
+     #!/bin/sh
+     '''exec' "<python>" "$0" "$@"
+     ' '''
+     ```
+
+     - Line 1 is exactly `#!/bin/sh`.
+     - Line 2 begins with `'''exec' `. The interpreter follows: quoted, up
+       to the next `"`, when it begins with `"`; otherwise up to the first
+       space. Then comes anything, and line 2 ends with ` "$0" "$@"`. The
+       interpreter's last `/` segment begins with `python`.
+     - Line 3 is exactly `' '''`.
+     - The interpreter is unquoted when its path is long and holds no space.
+2. **It imports the entry point.** One of the first 20 lines matches
+   `^from openrepotools(\.[A-Za-z_][A-Za-z0-9_]*)* import `. pip's own
+   template writes that line at column 0, in both forms
+   (`PipScriptMaker`, `pip/_internal/operations/install/wheel.py:417-424` in
+   pip 26.2.1).
+
+The rule reads lines with `IFS= read -r`, and uses `case` patterns and
+parameter expansion. It holds to bash 3.2.
 
 On true, the install is refused with [cli-output.md](cli-output.md)'s pip
 refusal, in the planning phase, in every mode. That includes a package-mode
 run whose own command is that script.
 
-**The fixtures:**
+**The fixtures.** These are refused:
 
-- pip's template, `#!<abs python>` with `from openrepotools.cli import main`,
-  is refused;
-- the same file with `#!/bin/bash`, which is an ordinary file, is placed as
-  today;
-- a Python script importing something else is placed as today;
-- this installer's own bash file is placed as today.
+- pip's shebang form, `#!<abs python>` followed by
+  `from openrepotools.cli import main`;
+- pip's trampoline form, with a quoted interpreter path that holds a space
+  (`'''exec' "<tmp>/py env/bin/python3" "$0" "$@"`);
+- pip's trampoline form, with an unquoted interpreter path longer than 127
+  characters.
 
-**The known gap** (research R6): distlib's `#!/bin/sh` launcher for a long
-interpreter path, or one with a space, is not recognised, and today's
-behaviour applies to it.
+These are placed as today:
+
+- the shebang form's file with `#!/bin/bash` in place of the Python;
+- a trampoline whose `exec` names a non-Python interpreter, such as
+  `'''exec' "<tmp>/x/bin/ruby" "$0" "$@"`;
+- a `#!/bin/sh` file that is not the trampoline, holding the import line
+  but no `'''exec'` line;
+- a Python script that imports something else;
+- this installer's own bash file.
 
 ## `path_report`
 

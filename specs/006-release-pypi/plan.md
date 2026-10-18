@@ -39,10 +39,13 @@ openRepoTools becomes a release, as well as a checkout.
     two.
   - It uploads by trusted publishing, first to TestPyPI, then through the
     install check, then to PyPI. An `rc` reaches TestPyPI only.
+  - A repository guard in its code limits `opensoft/openRepoTools` to
+    pre-releases on TestPyPI, and every other repository but the code leg
+    to nothing (FR-048).
 - **The documents.** The release notes, and the README and AGENTS.md
   corrections, follow.
 
-[research.md](research.md) R1 to R18 record each choice design.md left to
+[research.md](research.md) R1 to R20 record each choice design.md left to
 this plan.
 
 ## Technical Context
@@ -146,12 +149,12 @@ Phase 0 and again after Phase 1.
 | G4 | Tests skip without the submodule, naming it, and never fail for it (AGENTS.md; `tests-no-submodule`) | PASS | PASS: workflow tests skip like command tests (R9); the `package` job checks out with `submodules: true` and fails on a skip |
 | G5 | AGENTS.md and README caps move only by dated entries (`tests/test_repo_hygiene.py:1748`, `:2253`) | PASS | PASS: R16 |
 | G6 | Governed files (CI workflows, and every file recording a pin or a digest) are `[O]` work (Speckit protocol, Build Tiers) | PASS | PASS: `tests.yml`, `release.yml`, both hash locks, the stamp and every action pin are touched only by `[O]` tasks |
-| G7 | Every refusal is in the planning phase, and a refusal places nothing (design.md Goals) | PASS | PASS: pipx's link, a venv-looking link and pip's script are decided in `plan_install_targets`; a broken stamp in `package_init` before the argument loop |
+| G7 | Every refusal is in the planning phase, and a refusal places nothing (design.md Goals) | PASS | PASS: pipx's link, a venv-shaped link and pip's script are decided in `plan_install_targets`; a broken stamp in `package_init` before the argument loop |
 | G8 | Brett Heap decides every tag, cut and upload; no lane act is a build task (proposal "Release owner") | PASS | PASS: environments, publishers, tags, dispatches, uploads, the Release and the assembly README PR stay in the change's `tasks.md` |
 | G9 | No new runtime dependency, and the package's modules are standard-library only (proposal Non-goals) | PASS | PASS: `dependencies = []`, enforced by a hygiene test |
 | G10 | One list of payload files (design.md Goals) | PASS | PASS: the force-include map and the wheel are held to `payload_names` (R2) |
 | G11 | No host path in any tracked file (`HOST_ABSOLUTE_PATH`) | PASS | PASS: workflows use `$RUNNER_TEMP` and `$HOME` ([contracts/workflows.md](contracts/workflows.md)) |
-| G12 | Nothing uploads to PyPI from `opensoft/openRepoTools`, and no rehearsal uses `1.1.0` (Brett Heap's answers 2 and 3) | PASS | PASS: `pypi` refuses pre-releases twice; no pypi.org publisher exists for this repository; the RELEASING header states it |
+| G12 | Nothing uploads to PyPI from `opensoft/openRepoTools`, and no rehearsal uses `1.1.0` (Brett Heap's answers 2 and 3) | PASS | PASS: the repository guard decides in `build`, before any approval, and again in each upload job's first step (FR-048, R19); `pypi` is skipped for a pre-release and refuses one if it starts; no pypi.org publisher exists for this repository; the RELEASING header states it |
 
 No gate fails, so Complexity Tracking is empty.
 
@@ -165,7 +168,7 @@ specs/006-release-pypi/
 ├── checklists/
 │   └── requirements.md  # /speckit.specify's quality checklist
 ├── plan.md              # this file
-├── research.md          # Phase 0: R1 to R18
+├── research.md          # Phase 0: R1 to R20
 ├── data-model.md        # Phase 1: the stamp, layouts, the install result, releases
 ├── quickstart.md        # Phase 1: validating the feature by hand
 ├── contracts/
@@ -246,7 +249,7 @@ These names are fixed here, so that test and implementation tasks agree.
   | `test_install_pipx.py` | `test_pipx_link_`, `test_pipx_skip_`, `test_pipx_offline_`, `test_coexist_`, `test_pip_script_`, `test_path_report_`, `test_pipx_upgrade_`, `test_pipx_uninstall_` |
   | `test_package.py` | `test_metadata_`, `test_payload_map_`, `test_wheel_`, `test_entry_` |
   | `test_package_stamp.py` | `test_stamp_reader_`, `test_stamp_hatch_`, `test_package_version_`, `test_package_broken_stamp_`, `test_package_no_env_channel_`, `test_package_parser_` |
-  | `test_release_workflow.py` | `test_release_trigger_`, `test_release_build_`, `test_release_stamp_writer_`, `test_release_upload_`, `test_release_install_check_`, `test_release_lock_`, `test_release_header_`, `test_release_reads_` |
+  | `test_release_workflow.py` | `test_release_trigger_`, `test_release_build_`, `test_release_stamp_writer_`, `test_release_upload_`, `test_release_install_check_`, `test_release_lock_`, `test_release_header_`, `test_release_reads_`, `test_release_guard_` |
   | `test_tests_workflow.py` | `test_tests_yml_` |
 
 - **Reuse.** The command helpers come from `tests/test_openrepotools_command.py`:

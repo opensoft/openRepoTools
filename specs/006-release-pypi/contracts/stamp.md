@@ -51,28 +51,31 @@ imports or runs the file.
 
 ## Refusal reasons (`STAMP_WHY`), one fixture each
 
-Each reason's text is the implementer's. Each MUST be distinct, and each
-MUST name the field or the line it is about.
+Each reason begins with its cause, exactly one of `cannot be read`,
+`is partial:` and `is malformed:`, so that the broken-stamp line in
+[cli-output.md](cli-output.md) reads correctly. The rest of each reason's
+text is the implementer's. Each MUST be distinct, and each MUST name the
+field or the line it is about.
 
-| Fixture | Reason names |
-| --- | --- |
-| the file is unreadable (no read permission, or it is a directory) | the file |
-| a carriage return on line N | line N |
-| a name missing (each of the five in turn) | the missing name |
-| a name repeated | the repeated name |
-| an unknown name, such as `Version` or `BUILD` | the unknown name |
-| a line that is not `NAME = "VALUE"` | the line number |
-| an unclosed docstring | the docstring |
-| a docstring line hatch could read as the version | that line |
-| partial: a `COMMIT` and no `DIGEST` | the empty fields |
-| partial: a `TAG` alone | the empty fields |
-| partial: all of `TAG`, `COMMIT` and `DIGEST`, with `VERSION` `0.0.0` | `VERSION` |
-| unstamped-looking with a `REPOSITORY` | `REPOSITORY` |
-| a malformed `VERSION`, such as `1.1`, `01.1.0` or `1.1.0-rc1` | `VERSION` |
-| `TAG` other than `v$VERSION` | `TAG` |
-| `COMMIT` of 39 digits, or with upper case | `COMMIT` |
-| `DIGEST` of 63 digits | `DIGEST` |
-| `REPOSITORY` that is not a slug, such as `openRepoTools` or `a/b/c` | `REPOSITORY` |
+| Fixture | Cause | Reason names |
+| --- | --- | --- |
+| the file is unreadable (no read permission, or it is a directory) | `cannot be read` | the file |
+| a carriage return on line N | `is malformed:` | line N |
+| a name missing (each of the five in turn) | `is malformed:` | the missing name |
+| a name repeated | `is malformed:` | the repeated name |
+| an unknown name, such as `Version` or `BUILD` | `is malformed:` | the unknown name |
+| a line that is not `NAME = "VALUE"` | `is malformed:` | the line number |
+| an unclosed docstring | `is malformed:` | the docstring |
+| a docstring line hatch could read as the version | `is malformed:` | that line |
+| partial: a `COMMIT` and no `DIGEST` | `is partial:` | the empty fields |
+| partial: a `TAG` alone | `is partial:` | the empty fields |
+| unstamped-looking with a `REPOSITORY` | `is partial:` | `REPOSITORY` |
+| all of `TAG`, `COMMIT` and `DIGEST`, with `VERSION` `0.0.0` | `is malformed:` | `VERSION` |
+| a malformed `VERSION`, such as `1.1`, `01.1.0` or `1.1.0-rc1` | `is malformed:` | `VERSION` |
+| `TAG` other than `v$VERSION` | `is malformed:` | `TAG` |
+| `COMMIT` of 39 digits, or with upper case | `is malformed:` | `COMMIT` |
+| `DIGEST` of 63 digits | `is malformed:` | `DIGEST` |
+| `REPOSITORY` that is not a slug, such as `openRepoTools` or `a/b/c` | `is malformed:` | `REPOSITORY` |
 
 ## Agreement with hatch
 

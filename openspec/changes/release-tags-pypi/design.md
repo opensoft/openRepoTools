@@ -145,12 +145,17 @@ parent holds a regular file `_release.py`.
   included, with exit 2:
 
   ```text
-  REFUSED: this package's stamp (openrepotools/_release.py) names part of a release and not all of it: <why>. This build is broken. Reinstall it: pipx reinstall openrepotools
+  REFUSED: this package's stamp (openrepotools/_release.py) <why>, so this build is broken and nothing ran. A package's stamp is a release's whole stamp or the unstamped one. Reinstall it: pipx reinstall openrepotools
   ```
 
-  This is the model's wording, adapted. The refusal names the stamp file and
-  the fix, `pipx reinstall openrepotools` (the lead's ruling 3, Open
-  Questions).
+  `<why>` names one of the three causes:
+  - `cannot be read (<detail>)`;
+  - `is partial: <detail>`;
+  - `is malformed: <detail>`.
+
+  So the one line fits each of them (the lead's ruling 11, Open
+  Questions). This is the model's refusal, adapted. It names the stamp file
+  and the fix, `pipx reinstall openrepotools` (ruling 3).
 - **Alternative rejected:** reading the stamp only for `--version`. A broken
   build would then run `--install` and place files under a release identity
   nobody can name.
@@ -290,28 +295,47 @@ still refused, because it is not provably pipx's. It resolves to
 `openRepoTools: 16 of 17 placed in <dir>, and 1 left to pipx`.
 
 Otherwise the line adds
-`; the other 16 now come from <source>, not from openrepotools <version>`.
+`; the other 16 now come from <source>, not from <pipx's>`.
 
-- `<source>` is the repository and ref the run collected from, the pair
-  `payload_where` names (`openRepoTools:797-803`), written `<repo> @ <ref>`
-  as `--version` writes it. For an adopted source it is the pinned code
-  repository and revision. One test pins the exact line for each layout.
-- `<version>` comes from the reader of Decision 5, run on the `_release.py`
-  beside `PIPX_PAYLOAD`. An unstamped one gives `0.0.0`.
-- A stamp there that fails the reader gives `an unreadable stamp`, and the
-  install goes on. That stamp belongs to another install, and this run's own
-  bytes are not in question.
+- **`<source>`.** A package-mode run names its own release:
+  `openrepotools <version>`, from its own stamp, whether or not it runs
+  inside a pipx venv (the lead's ruling 10). Its stamp is always readable,
+  because `package_init` refuses a broken one first.
+  - A checkout or a one-line install names the repository and ref it
+    collected from. That is the pair `payload_where` names
+    (`openRepoTools:797-803`), written `<repo> @ <ref>` as `--version`
+    writes it.
+  - For an adopted source, it is the pinned code repository and revision.
+  - One test pins the exact line for each layout.
+- **`<pipx's>`** is `openrepotools <version>`, from the reader of Decision 5
+  run on the `_release.py` beside `PIPX_PAYLOAD`. An unstamped one gives
+  `0.0.0`.
+- **An unreadable stamp there.** When that stamp fails the reader,
+  `<pipx's>` is `the openrepotools beside pipx's link, whose stamp cannot be
+  read`, and the install goes on. That stamp belongs to another install, and
+  this run's own bytes are not in question.
 
 ### 8. pip's console script, and the PATH report (N5, VALID 9)
 
 **Recognising it.** A regular file at `<dir>/openRepoTools` is pip's console
 script for openrepotools when:
 
-- its first line is `#!` and names a path whose last segment begins with
-  `python`;
-- and one of its first 20 lines matches
-  `^from openrepotools(\.[A-Za-z_][A-Za-z0-9_]*)* import `, which is the line
-  pip's console-script template writes.
+- **its interpreter is a Python.** This holds in either of the two forms
+  pip writes:
+  - its first line is `#!` and names a path whose last segment begins with
+    `python`;
+  - or it is pip's `/bin/sh` trampoline, which pip writes when the
+    interpreter's path holds a space or is too long for a shebang. That is
+    a first line `#!/bin/sh`, then `'''exec' <python> "$0" "$@"`, then
+    `' '''`. Here `<python>` is quoted when it holds a space, and its last
+    segment begins with `python`. The form is pip 26.2.1's
+    (`pip/_vendor/distlib/scripts.py:180-182`), and the lead's ruling 9 adds
+    it;
+- **and it imports the entry point.** One of its first 20 lines matches
+  `^from openrepotools(\.[A-Za-z_][A-Za-z0-9_]*)* import `. pip's own
+  template writes that line at column 0, after the trampoline as without it
+  (`PipScriptMaker`, `pip/_internal/operations/install/wheel.py:417-424` in
+  pip 26.2.1).
 
 The check runs in `plan_install_targets`, in every mode. That includes a
 package-mode `--install` run from a `pip install --user` of this package, so
@@ -389,8 +413,23 @@ The job runs on `ubuntu-latest` with Python 3.9.
 sha256 record, the upload re-reads and the served-digest check are taken
 over as they are. It differs in these places:
 
-- **The version.** `X.Y.ZrcN` is accepted for TestPyPI, and the `pypi` job
-  refuses every version that is not a final `X.Y.Z`.
+- **The version.** `X.Y.ZrcN` is accepted for TestPyPI. The `pypi` job
+  uploads only a final `X.Y.Z`: it is skipped for a pre-release, and its
+  first step refuses one if it ever starts.
+- **The repository guard** (the lead's ruling 6). The model has none, so it
+  is new here. It puts Brett Heap's answers 2 and 3 into the workflow's
+  code:
+  - in `opensoft/openRepoTools`, `testpypi` takes only a pre-release, and
+    `pypi` refuses outright;
+  - in `opensoft/openRepoTools-code`, a pre-release goes to TestPyPI only,
+    and a final goes to TestPyPI and then to PyPI;
+  - in any other repository, both upload jobs refuse.
+
+  The build decides it from `$GITHUB_REPOSITORY`, the version and the ref,
+  before any approval is asked. It refuses a tag dispatch that this
+  repository may not upload, and records which uploads may run. Each upload
+  job's condition reads that record, and its first step checks the rule
+  again. The absent pypi.org publisher is the second line of defence.
 - **The stamp's fifth field.** `REPOSITORY` is set to `$GITHUB_REPOSITORY`.
 - **The digest-definition assertion.** It compares the pinned
   `repo_shape.TREE_DIGEST_DEFINITION` with the literal `sorted-ls-tree-r-v1`
@@ -540,13 +579,37 @@ raised. Each is marked with the date of the ruling.
 4. **The design's additions are confirmed.** Resolved by the lead,
    2026-10-17.
    - The `jq` check stays where it is (Decision 6).
-   - A venv-looking link that fails the pipx rule is refused, with no `rm`
+   - A venv-shaped link that fails the pipx rule is refused, with no `rm`
      advice (Decision 6).
    - The stamp reader keeps the docstring guard (Decision 5).
    - The fixtures include a pipx home with a space in it (Decision 6).
 5. **The checkout's count line is confirmed.** Resolved by the lead,
    2026-10-17. It is exactly the line the proposal ("Coexistence with the
    other installers") and the `pypi-package` delta spec fix (Decision 7).
+
+### Resolved by the lead, 2026-10-18
+
+The lead ruled on the report at `335d226`. Each item below is resolved by
+the lead, 2026-10-18.
+
+6. **The uploads are guarded by repository**, in code (Decision 10).
+7. **The tag-bound checks stand down on a branch rehearsal**, as in
+   openRepoShape's `release.yml:200-249`, and every other check still runs.
+   The proposal and the `pypi-package` delta spec now say so.
+8. **`main` is not merged into the branch now.** The implementation's first
+   act is that merge, made as a merge commit.
+9. **pip's `/bin/sh` trampoline is recognised** as pip's console script
+   (Decision 8).
+10. **A package-mode run names its own release** as the count line's source
+    (Decision 7).
+11. **Wording.** Each of these is settled:
+    - the count line with an unreadable stamp (Decision 7);
+    - the broken-stamp line, made to fit its three causes (Decision 4);
+    - "venv-shaped" is the one term for that link;
+    - the `pypi` job is "skipped" in an rc rehearsal;
+    - a branch rehearsal builds with the version of the tag it rehearses.
+      Before v1.1.0 that is the next pre-release, `1.1.0rc1` for the first,
+      as the model rehearsed v1.1.0 from `l3-rehearsal-v1.1.0`.
 
 ### Still open
 

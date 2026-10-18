@@ -42,11 +42,13 @@ built and tested on its own.
 
 ## Before Phase 1: bring the branch up to `main`
 
-These are the orchestrator's acts, not tasks. They are recorded here because
-every task below assumes them.
+These are not tasks with a `files:` list, because a merge touches files of
+every kind. They are recorded here because every task below assumes them.
 
-- **Merge `origin/main` into `006-release-pypi` first,** by a merge commit,
-  never a rebase or a force-push. The branch was cut at `aaa7bc8`, and `main`
+- **The implementation's first act is to merge `origin/main` into
+  `006-release-pypi`,** by a merge commit, never a rebase or a force-push.
+  This is the lead's ruling of 2026-10-18, and `main` is not merged before
+  then. The branch was cut at `aaa7bc8`, and `main`
   is at `83d2690` as of 2026-10-18. Since the cut:
   - `tests/conftest.py` gained the four-roots layout;
   - `tests/test_repo_hygiene.py` moved by about 260 lines;
@@ -110,7 +112,7 @@ The tests use fake venv layouts, with no pipx and no wheel.
   - `test_pipx_skip_*`:
     - the exact skip line and the pipx-own count line, 28 receipt rows, and the link left unchanged;
     - a second link at another target, refused with today's `rm -f` advice for that one alone;
-    - the venv-looking refusal: contracts/cli-output.md's entry and paragraph, with no `rm` line naming the link;
+    - the venv-shaped refusal: contracts/cli-output.md's entry and paragraph, with no `rm` line naming the link;
     - no `jq`: ends in the `jq` refusal, with no `rm` for the link;
     - `restart` retirement, and a later `--install`, both leaving the link.
   - `test_pipx_offline_*`: a package-mode `--install` with `OPENREPOTOOLS_REPO=offline.invalid/sentinel` and a `gh` and a `curl` that fail. It places the same artifacts and receipt rows as a checkout's install, apart from the link.
@@ -139,7 +141,7 @@ The tests use fake venv layouts, with no pipx and no wheel.
   - call the pipx match in `plan_install_targets`, for `openRepoTools`, before `unplaceable_kind`;
   - skip that target in `install_commands`' placement loop, printing the exact skip line;
   - print the pipx-own count line when the run is package mode under `PIPX_VENV`, the same line in any other run that skipped the link (T013 adds its suffix), and today's line otherwise;
-  - list a venv-looking link with contracts/cli-output.md's entry and paragraph, and keep it out of the `rm -f` line.
+  - list a venv-shaped link with contracts/cli-output.md's entry and paragraph, and keep it out of the `rm -f` line.
 
 **Checkpoint**: User Story 1 works and is tested on its own.
 
@@ -159,7 +161,7 @@ invocation.
   - `test_stamp_reader_*`: one fixture per row of contracts/stamp.md's refusal table, plus the committed and a stamped file, running `stamp_read` cut out with `installer_function`.
   - `test_stamp_hatch_*`: hatch's version pattern, copied with its citation (`hatchling/version/core.py:6` and `:31` in 1.27.0), against `stamp_read`, on the committed file, a stamped one and a guarded-docstring fixture.
   - `test_package_version_*`: the exact stamped and unstamped five lines, from `package_tree` layouts.
-  - `test_package_broken_stamp_*`: exit 2 and the exact refusal for `--help`, `--version` and `--install`, with nothing placed.
+  - `test_package_broken_stamp_*`: exit 2 and the exact refusal for `--help`, `--version` and `--install`, with nothing placed. One fixture is used for each of the three causes of contracts/cli-output.md (`cannot be read`, `is partial:`, `is malformed:`), and each case requires the line to read as that contract gives it.
   - `test_package_no_env_channel_*`: a checkout's, and a piped one-line install's, exact `openRepoTools (<repo> @ <ref>)`, with each `OPENREPOTOOLS_PACKAGE_*` variable of research R4 set.
   - `test_package_parser_*`: `--help`, `--install --version` and an unknown argument behave as in a checkout.
 - [ ] T010 [P] [US2] [S] Rewrite only the docstring of `test_version_names_the_repository_and_the_ref` in `tests/test_openrepotools_command.py`. It now says that a checkout and the one-line install name the repository and ref they fetch from, and that a package names its release (contracts/cli-output.md). Every assertion of the three `test_version_*` tests stays byte for byte — files: `tests/test_openrepotools_command.py` — verify: `! git diff -U0 "$(git merge-base HEAD origin/main)" -- tests/test_openrepotools_command.py | command grep -qE '^[-+][[:space:]]*(assert|result =)' && bash tests/run.sh -k 'test_version_'`
@@ -189,8 +191,9 @@ upgrade or an uninstall has one defined, honest outcome.
 - [ ] T012 [US3] [O] Add to `tests/test_install_pipx.py`, as detailed below — files: `tests/test_install_pipx.py` — verify: `bash tests/run.sh --collect-only -q -k 'test_coexist_ or test_pip_script_ or test_path_report_ or test_pipx_upgrade_ or test_pipx_uninstall_'`
   - `test_coexist_*`:
     - a one-line install, replaced by pipx's link as `pipx install --force` leaves it, then `--install` from the venv's payload: the link is skipped, and the sixteen are replaced;
-    - a checkout's, and a piped one-line install's, `--install` beside pipx's link, with the exact count line for an unstamped stamp, a stamped one and an unreadable one beside the link's payload.
-  - `test_pip_script_*`: contracts/pipx-link.md's four fixtures, including a package-mode run whose own command is pip's script, with the exact refusal and nothing placed.
+    - a checkout's, and a piped one-line install's, `--install` beside pipx's link, with the exact count line naming `<repo> @ <ref>`, for an unstamped stamp, a stamped one and an unreadable one beside the link's payload. The unreadable case ends in contracts/cli-output.md's `the openrepotools beside pipx's link, whose stamp cannot be read`, and no output contains `openrepotools an unreadable stamp`;
+    - a package-mode `--install` from a `package_tree` outside pipx's venv, beside pipx's link, whose count line names `openrepotools <its VERSION>` as the source, never `<repo> @ <ref>`.
+  - `test_pip_script_*`: contracts/pipx-link.md's three refused fixtures (the shebang form; the trampoline with a quoted, spaced interpreter; the trampoline with an unquoted interpreter over 127 characters) and its five placed fixtures. One case is a package-mode run whose own command is pip's script. The refused cases give the exact refusal, and place nothing.
   - `test_path_report_*`: the four `PATH` fixtures, the exact note, and an unchanged exit status.
   - `test_pipx_upgrade_*`: one `package_tree` installed, then a second with different payload bytes. A second `--install` replaces the sixteen and still skips the link.
   - `test_pipx_uninstall_*`: the link and the venv are removed, the sixteen are still there, and a checkout's `--install` places a regular file.
@@ -198,8 +201,10 @@ upgrade or an uninstall has one defined, honest outcome.
 ### Implementation for User Story 3
 
 - [ ] T013 [US3] [O] Teach `openRepoTools` the coexistence rules, as detailed below — files: `openRepoTools` — verify: `bash tests/run.sh -k 'test_install_pipx or test_package_stamp or test_package or openrepotools_command or install_skill or install_by_rename or install_payload'`
-  - add the other-source count line (research R5). `<source>` is `PAYLOAD_REPO @ PAYLOAD_REV` when the source is adopted, and `REPO @ REF` otherwise. `<version>` comes from `stamp_read` on the stamp beside `PIPX_PAYLOAD`, or is the literal `an unreadable stamp`;
-  - add `pip_script_is`, with contracts/cli-output.md's planning-phase refusal, in every mode;
+  - add the other-source count line (research R5):
+    - `<source>` is `openrepotools $STAMP_VERSION` in any package-mode run. In a checkout or the one-line install, it is `PAYLOAD_REPO @ PAYLOAD_REV` for an adopted source, and `REPO @ REF` otherwise;
+    - `<version>` comes from `stamp_read` on the stamp beside `PIPX_PAYLOAD`. When that stamp fails the reader, the line ends in contracts/cli-output.md's unreadable-stamp clause;
+  - add `pip_script_is`, recognising both of pip's forms, the Python shebang and the `/bin/sh` trampoline (contracts/pipx-link.md), with contracts/cli-output.md's planning-phase refusal, in every mode;
   - add `path_report`, run last in a package-mode `--install`. It uses research R7's `<prefix>` and `link_resolve` on both sides, prints the exact note, and keeps the exit status.
 
 **Checkpoint**: User Stories 1 to 3 are complete. This is pull request 1 of
@@ -263,23 +268,29 @@ environments exist.
   - `test_release_stamp_writer_`: the heredoc, extracted as the model's `heredoc()` does, is run on a copy of the committed stamp and read back by `--version` from a `package_tree`. The step must refuse a file already stamped, and a value no release carries;
   - `test_release_lock_`, for both locks: one version per entry, by sha256; hatchling equal to `pyproject.toml`'s pin; pipx 1.11.1 below Python 3.10 and 1.17.8 from 3.10.
   - `test_release_build_` also runs step 13's wheel-check heredoc on the four synthetic wheels of contracts/workflows.md, with their four outcomes. It also holds the ref step and the branch-membership step to the rehearsal rule: a branch passes as a rehearsal, and any other non-tag ref is refused.
-  - `test_release_upload_` also holds each job's permissions exactly: `testpypi` and `pypi` get `id-token: write`, `actions: read` and `contents: read`; `build` gets `contents: read` and `actions: read`; `install` gets `contents: read`.
+  - `test_release_upload_` also holds each job's permissions exactly: `testpypi` and `pypi` get `id-token: write`, `actions: read` and `contents: read`; `build` gets `contents: read` and `actions: read`; `install` gets `contents: read`. It also holds the two upload conditions: `testpypi` reads `to-testpypi`, and `pypi` reads `to-pypi`, so `pypi` is skipped in an rc rehearsal.
+  - `test_release_guard_` (FR-048) covers the repository guard:
+    - `test_release_guard_build_*`: the build's guard block, run under each row of contracts/workflows.md's table, with `GITHUB_REPOSITORY`, `GITHUB_REF`, `VERSION` and `GITHUB_OUTPUT` set, must pass or refuse, and record `to-testpypi` and `to-pypi`, exactly as the row says;
+    - `test_release_guard_upload_*`: each upload job's first-step guard must refuse what its job may not upload: `testpypi` a final in `opensoft/openRepoTools` and any version elsewhere, and `pypi` everything but a final in `opensoft/openRepoTools-code`.
 
   The tests also hold the digest-label literal equal to `openRepoTools`' `--version` arm and to the pin's `digest_definition`.
 
 ### Implementation for User Story 5
 
-- [ ] T019 [US5] [O] Create `.github/workflows/release.yml`'s shape and its `build` job, adapted from openRepoShape v1.1.0 (`190133d`) step for step, as detailed below — files: `.github/workflows/release.yml` — verify: `actionlint .github/workflows/release.yml && bash tests/run.sh -k 'test_release_trigger_ or test_release_build_ or test_release_stamp_writer_ or test_release_lock_ or test_release_reads_'`
+- [ ] T019 [US5] [O] Create `.github/workflows/release.yml`'s shape and its `build` job, adapted from openRepoShape v1.1.0 (`190133d`) step for step, as detailed below — files: `.github/workflows/release.yml` — verify: `actionlint .github/workflows/release.yml && bash tests/run.sh -k 'test_release_trigger_ or test_release_build_ or test_release_stamp_writer_ or test_release_lock_ or test_release_reads_ or test_release_guard_build_'`
   - the shape: `workflow_dispatch` with `version`, `permissions: {}`, the `release` concurrency group without cancelling, `bash` by default, and `VERSION` and `PYTHONUTF8` in `env`;
-  - contracts/workflows.md's build steps 1 to 14, with design.md Decision 10's differences: `X.Y.ZrcN` accepted; the stamp's `REPOSITORY` from `GITHUB_REPOSITORY`; the digest-definition assertion against the literal and the pin; the payload blob and mode check; and the `final` output;
+  - contracts/workflows.md's build steps 1 to 14, with design.md Decision 10's differences: `X.Y.ZrcN` accepted; the stamp's `REPOSITORY` from `GITHUB_REPOSITORY`; the digest-definition assertion against the literal and the pin; the payload blob and mode check; and the repository guard of step 1 (FR-048), with its `to-testpypi` and `to-pypi` outputs;
   - the model's rehearsal rule in steps 2 and 3 (FR-029): on a branch, the tag and branch-membership checks pass as a rehearsal, and every other step runs;
   - every action pinned by a full commit.
-- [ ] T020 [US5] [O] Add `release.yml`'s `testpypi`, `install` and `pypi` jobs per contracts/workflows.md, as detailed below — files: `.github/workflows/release.yml` — verify: `actionlint .github/workflows/release.yml && bash tests/run.sh -k 'test_release_upload_ or test_release_install_check_ or test_release_reads_'`
+- [ ] T020 [US5] [O] Add `release.yml`'s `testpypi`, `install` and `pypi` jobs per contracts/workflows.md, as detailed below — files: `.github/workflows/release.yml` — verify: `actionlint .github/workflows/release.yml && bash tests/run.sh -k 'test_release_upload_ or test_release_install_check_ or test_release_reads_ or test_release_guard_'`
   - the order: TestPyPI, then the three-leg install check, then PyPI;
   - `id-token: write` on the two upload jobs alone, each in its environment, on a `v*` tag. Each upload job gets exactly `id-token: write`, `actions: read` and `contents: read`, and `install` gets `contents: read`;
   - the re-reads, the empty-index check and the served-digest check, around `pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33`;
   - the install legs: ubuntu 3.x, macOS 3.x and ubuntu 3.9, with no Windows leg. They check the exact skip and count lines; the macOS leg reruns under `/bin/bash`, printing `BASH_VERSION`; the 3.9 leg compiles the installed payload's own `lanes-index` and `lane-worktrees`;
-  - `pypi` refuses a pre-release, at its job condition (`needs.build.outputs.final`) and again at its first step.
+  - the repository guard in the upload jobs (FR-048):
+    - `testpypi` runs only when `needs.build.outputs.to-testpypi == 'true'`, and its first step runs the guard again;
+    - `pypi` runs only when `needs.build.outputs.to-pypi == 'true'`, so it is skipped in an rc rehearsal;
+    - `pypi`'s first step refuses anything but a final in `opensoft/openRepoTools-code`, so in `opensoft/openRepoTools` it refuses outright.
 - [ ] T021 [US5] [O] Write `release.yml`'s header, RELEASING, in contracts/workflows.md's six sections, as detailed below — files: `.github/workflows/release.yml` — verify: `actionlint .github/workflows/release.yml && bash tests/run.sh -k test_release_`
   - the procedure on Brett Heap's word, with the tag message's form, and the `gh release create` step after PyPI serves the version;
   - #850's branch and tag policy:
@@ -289,8 +300,14 @@ environments exist.
     - back-ports by fast-forward, by a merge, or by a PR of `cherry-pick -x`;
     - one HOLD at a time, the landing lane back-porting, and the LANDED line naming both commits;
     - patch tags waiting for the newest run;
-  - the two rehearsals, and never `1.1.0`. A branch rehearsal's commit needs a finished, green push or dispatch run of `tests.yml`, so dispatch `tests.yml` on that branch first;
-  - where releases come from: the code leg's tags from v1.1.0, `v1.0.0` and the `rc` tags staying here, no PyPI upload from `opensoft/openRepoTools`, and Brett Heap's environments, ruleset and publishers;
+  - the two rehearsals, and never `1.1.0`:
+    - a branch rehearsal builds with the version of the tag it rehearses: before v1.1.0, the next pre-release, `1.1.0rc1` for the first (research R20);
+    - its commit needs a finished, green push or dispatch run of `tests.yml`, so dispatch `tests.yml` on that branch first;
+    - in an rc rehearsal the `pypi` job is skipped;
+  - where releases come from:
+    - the code leg's tags from v1.1.0, and `v1.0.0` and the `rc` tags staying here;
+    - the repository guard's table (FR-048), with the missing pypi.org publisher as the second line of defence;
+    - Brett Heap's environments, ruleset and publishers;
   - what the workflow never reads.
 
 **Checkpoint**: User Story 5 is complete. This is pull request 3.
@@ -419,7 +436,7 @@ header (T021), the release notes (T022, T023) and the README (T024).
 | FR-042: each GitHub Release, after PyPI serves the version | lane 3, on his word | 6.3 |
 | FR-045: the pipx route in the assembly's README | lane 3, on his word, once the workBenches condition holds | 6.4 |
 | FR-024: README's copy of the move from the one-line install, beside the pipx route (the v1.1.0 notes carry it already, T023) | lane 3, on his word | 6.4 |
-| FR-031: nothing ever uploads to PyPI from `opensoft/openRepoTools` | the absence of any pypi.org publisher for it (Brett Heap's answer 3), and his word for every tag. The RELEASING header states it (T021). No code guard is specified | 4.1, 6.1 |
+| FR-031 and FR-048, the second line of defence: no pypi.org publisher for `opensoft/openRepoTools` | Brett Heap's answer 3; the code guard itself is T019 and T020 | 4.1, 6.1 |
 | FR-046: the code leg's `LICENSE` blob `261eeb9`; the plan's entries | lane 3's check; lane openRepoTools-1's plan | 5.1, 5.2 |
 | FR-047: the workBenches condition | **pending Brett Heap's choice of (a), (b) or (c)** | 1.4 |
 

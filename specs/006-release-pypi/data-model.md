@@ -106,8 +106,8 @@ planning phase:
 | --- | --- |
 | nothing, or this installer's regular file | placed as today |
 | pipx's link | skipped; the skip line is printed; no receipt row |
-| a venv-looking link (it resolves to `…/bin/openRepoTools` whose parent holds `pyvenv.cfg`, but fails the match) | refused, with no `rm` advice; names `pipx reinstall openrepotools` |
-| pip's console script (a regular file; shebang and import rule) | refused (design.md Decision 8) |
+| a venv-shaped link (it resolves to `…/bin/openRepoTools` whose parent holds `pyvenv.cfg`, but fails the match) | refused, with no `rm` advice; names `pipx reinstall openrepotools` |
+| pip's console script (a regular file, in either form pip writes: a Python shebang, or the `/bin/sh` trampoline, with the import) | refused (design.md Decision 8) |
 | any other link, a directory, or an unwritable file | refused as today, with today's `rm -f` advice |
 
 ## An install run's result
@@ -121,9 +121,21 @@ planning phase:
 | artifacts placed | 31 | 30 |
 | receipt rows (files + skill files + command files) | 29 | 28 |
 
-**The count line** takes one of three forms (see
-[contracts/cli-output.md](contracts/cli-output.md)): today's form, pipx's
-own environment, or another source beside pipx's link.
+**The count line** takes one of three forms, given in full in
+[contracts/cli-output.md](contracts/cli-output.md):
+
+- today's form, with no pipx link;
+- a run from pipx's own environment;
+- another source beside pipx's link.
+
+In the third form, the source is:
+
+- `openrepotools <version>`, from the run's own stamp, for any
+  package-mode run;
+- `<repo> @ <ref>`, for a checkout or the one-line install.
+
+If the stamp beside pipx's link cannot be read, the line names that
+openrepotools by its link instead of by a version.
 
 ## A release
 
@@ -158,14 +170,22 @@ tagged ─▶ built (two builds, one file) ─▶ on TestPyPI ─▶ install-che
 | Job | Granted | Environment | Runs on |
 | --- | --- | --- | --- |
 | `build` | `contents: read`, `actions: read` | none | every dispatch |
-| `testpypi` | exactly `id-token: write`, `actions: read`, `contents: read` | `testpypi` | a `v*` tag only |
-| `install` | `contents: read` | none | every dispatch: on the build's wheel for a branch, from TestPyPI for a tag |
-| `pypi` | exactly `id-token: write`, `actions: read`, `contents: read` | `pypi` | a `v*` tag of a final `X.Y.Z` only |
+| `testpypi` | exactly `id-token: write`, `actions: read`, `contents: read` | `testpypi` | a `v*` tag that the guard sends to TestPyPI |
+| `install` | `contents: read` | none | every dispatch the build passes: on the build's wheel for a branch, from TestPyPI for a tag |
+| `pypi` | exactly `id-token: write`, `actions: read`, `contents: read` | `pypi` | a `v*` tag of a final `X.Y.Z` in `opensoft/openRepoTools-code` only |
 
 **Outputs of `build`**: the wheel's file name, its sha256, the tree digest,
-and `final`. `final` is `true` only for a final `X.Y.Z`, and the `pypi`
-job's condition reads it. The others are what each later job checks
-against.
+and the repository guard's `to-testpypi` and `to-pypi`. The two upload jobs'
+conditions read the guard's two outputs, and every later job checks the
+wheel and the digest against the others.
+
+**The repository guard** (FR-048):
+
+| Repository | On a tag, a pre-release `X.Y.ZrcN` | On a tag, a final `X.Y.Z` | On a branch |
+| --- | --- | --- | --- |
+| `opensoft/openRepoTools` | TestPyPI only; `pypi` is skipped | refused by the build | the rehearsal; no upload |
+| `opensoft/openRepoTools-code` | TestPyPI only; `pypi` is skipped | TestPyPI, then PyPI | the rehearsal; no upload |
+| any other | refused by the build | refused by the build | the rehearsal; no upload |
 
 **The environments**, which Brett Heap creates: each names a required
 reviewer, and each has a deployment limit of exactly one rule, the tag

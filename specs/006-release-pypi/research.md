@@ -74,7 +74,7 @@ were read read-only.
     - Outside package mode it sets nothing.
   - `pipx_link_match <target>`: design.md Decision 6's match. It sets
     `PIPX_LINK`, `PIPX_VENV` and `PIPX_PAYLOAD`.
-  - `venv_shaped_link <target>`: the venv-looking link of Decision 6, for the
+  - `venv_shaped_link <target>`: the venv-shaped link of Decision 6, for the
     refusal.
   - `pip_script_is <file>`: design.md Decision 8's recognition rule.
   - `path_report`: design.md Decision 8's report, run last in a package-mode
@@ -109,38 +109,59 @@ were read read-only.
 
 - **Decision**:
   - "pipx's own environment" is package mode with `PACKAGE_DIR` under
-    `$PIPX_VENV/lib/`, compared after both are canonicalised.
-  - Otherwise `<source>` is `$PAYLOAD_REPO @ $PAYLOAD_REV` when
-    `SOURCE_LAYOUT` is `adopted`, and `$REPO @ $REF` in every other case.
-    That is `payload_where`'s pair (`openRepoTools:797-803`), with `@` in
-    place of `at`.
+    `$PIPX_VENV/lib/`, compared after both are canonicalised. That run
+    prints the short line.
+  - Any other run beside pipx's link adds the suffix, and its `<source>`
+    depends on how the run is installed:
+    - **in package mode** it names the run's own release,
+      `openrepotools $STAMP_VERSION`, from the stamp `package_init` already
+      read. That holds whether or not the run is inside a pipx venv, and the
+      stamp is always readable there, because a broken one refused first;
+    - **in a checkout or the one-line install** it is
+      `$PAYLOAD_REPO @ $PAYLOAD_REV` when `SOURCE_LAYOUT` is `adopted`, and
+      `$REPO @ $REF` otherwise. That is `payload_where`'s pair
+      (`openRepoTools:797-803`), with `@` in place of `at`.
   - `<version>` is `stamp_read`'s `VERSION` for
-    `$(dirname "$PIPX_PAYLOAD")/_release.py`, or the literal
-    `an unreadable stamp` when it returns 1.
-- **Rationale**: this is design.md Decision 7 as written. The lead confirmed
-  the exact line on 2026-10-17.
-- **Edge left as written**: a package-mode run whose payload is not under
-  `$PIPX_VENV`, such as another package install beside pipx's link, also
-  takes the `$REPO @ $REF` form. The design does not distinguish it. It is
-  reported to the lead as a LOW finding and not specified further.
+    `$(dirname "$PIPX_PAYLOAD")/_release.py`.
+  - When that stamp fails the reader, the clause after "not from" is `the
+    openrepotools beside pipx's link, whose stamp cannot be read`. The line
+    never reads "openrepotools an unreadable stamp".
+- **Rationale**: these are the lead's rulings 10 and 11 of 2026-10-18. A
+  package names the bytes it placed by its release. `$REPO @ $REF` would
+  claim a fetch source that a package-mode run never used.
+- **Alternatives considered**: the earlier `$REPO @ $REF` for every run
+  outside pipx's venv. That was the open LOW finding R5, now closed by the
+  ruling.
 
-## R6. pip's console script: the rule as design.md Decision 8 writes it
+## R6. pip's console script, in both forms pip writes
 
-- **Decision**: `pip_script_is` reads the first line with `IFS= read -r`. It
-  requires `#!`, and takes the first word after `#!`. Its last `/` segment
-  must begin with `python`. Then one of the first 20 lines must match the
-  import pattern. The check runs inside `plan_install_targets`, for a regular
-  file (not a link) at `<dir>/openRepoTools`, in every mode.
-- **Rationale**: design.md Decision 8, under N5.
-- **Known gap, recorded and not widened**:
-  - distlib, which pip uses, writes a `#!/bin/sh` launcher when the
-    interpreter's path holds a space or is too long for a shebang. The
-    following `'''exec' "<python>" "$0" "$@"` line carries the
-    interpreter.
-  - Such a script fails the first-line rule. It is then an ordinary regular
-    file, and today's behaviour applies: it is replaced.
-  - The plan does not extend the rule on its own authority. The gap is
-    reported to the lead, LOW.
+- **Decision**: `pip_script_is` reads the first lines with `IFS= read -r`.
+  The interpreter must be a Python, in either form:
+  - **a shebang**: line 1 is `#!`, and the first word after it has a last
+    `/` segment beginning with `python`;
+  - **the `/bin/sh` trampoline**: line 1 is exactly `#!/bin/sh`, and line 2
+    is `'''exec' <python>` followed by `"$0" "$@"`. `<python>` is quoted up
+    to the next `"`, or is unquoted up to the first space, and its last
+    segment begins with `python`. Line 3 is exactly `' '''`.
+
+  Then one of the first 20 lines must match the import pattern, at column 0.
+  The check runs inside `plan_install_targets`, for a regular file (not a
+  link) at `<dir>/openRepoTools`, in every mode.
+- **Facts, read in pip 26.2.1 on 2026-10-18**:
+  - `pip/_vendor/distlib/scripts.py:180-182` writes the trampoline when the
+    interpreter's path holds a space or is longer than the shebang limit
+    (127 bytes, or 512 on macOS). `enquote_executable` quotes a spaced path.
+  - pip renders console scripts with its own `PipScriptMaker`
+    (`pip/_internal/operations/install/wheel.py:417-424`). Its template
+    writes `from <module> import <name>` at column 0, in both forms.
+    distlib's own default template indents that import, but pip does not
+    use that template.
+- **Rationale**: the lead's ruling 9 of 2026-10-18. Without the trampoline,
+  VALID 9's "never replace pip's command" misses pip's script on any
+  workstation whose Python lives on a spaced or long path.
+- **Alternatives considered**: matching an indented import as well. It is
+  not needed for pip, and it would widen the rule to other installers'
+  templates, so it was not adopted.
 
 ## R7. The PATH report's `<prefix>`: five levels above `payload/`
 
@@ -367,3 +388,49 @@ were read read-only.
   does hold itself to.
 - **Alternatives considered**: writing a constitution. That is
   `/speckit.constitution`'s act, and outside this feature.
+
+## R19. The repository guard on the uploads
+
+- **Decision**: the build's first step decides which indexes this run may
+  reach. It reads `$GITHUB_REPOSITORY`, `$GITHUB_REF` and `$VERSION`, and
+  follows contracts/workflows.md's table:
+  - in `opensoft/openRepoTools`, a pre-release goes to TestPyPI, and a final
+    is refused;
+  - in `opensoft/openRepoTools-code`, a pre-release goes to TestPyPI and a
+    final to both indexes;
+  - in any other repository, a tag dispatch is refused;
+  - a branch dispatch is the rehearsal everywhere, and uploads nothing.
+
+  It records `to-testpypi` and `to-pypi`, and each upload job's `if:` reads
+  them. Each upload job's first step runs its own half of the rule again.
+- **Rationale**:
+  - This is the lead's ruling of 2026-10-18, which puts Brett Heap's
+    answers 2 and 3 into code.
+  - Deciding in `build`, which has no environment, means a run that may not
+    upload is refused before anyone is asked to approve a deployment.
+  - The checks in the jobs' own steps hold if a condition is ever loosened.
+  - The missing pypi.org publisher for `opensoft/openRepoTools` stays as the
+    second line of defence.
+- **Model**: openRepoShape v1.1.0's `release.yml` carries no repository
+  comparison, and neither does any of its workflows on its `main` as of
+  2026-10-18. Its uploads rest on the environments' tag limits and on the
+  publishers. This guard is new here, specified on the lead's ruling, not
+  copied.
+- **Alternatives considered**: guarding only inside the upload jobs. That
+  would ask Brett Heap to approve a deployment that then refuses, so it was
+  rejected as the only guard, and kept as the second check.
+
+## R20. The version a branch rehearsal builds with
+
+- **Decision**: a branch rehearsal is dispatched with the version of the tag
+  it rehearses. Before v1.1.0 that is the next pre-release, `1.1.0rc1` for
+  the first.
+- **Rationale**:
+  - The model rehearsed v1.1.0 from its branch `l3-rehearsal-v1.1.0`. Its
+    branch rehearsals build the version about to be tagged.
+  - FR-033 forbids `1.1.0` for any rehearsal, so the rc stands in for it.
+  - A branch rehearsal uploads nothing, so reusing an rc number spends
+    nothing.
+- **Alternatives considered**: a fixed throwaway version, such as `0.0.1`.
+  It would not rehearse the stamp and `--version` of the release to come.
+
