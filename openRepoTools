@@ -217,8 +217,9 @@ Everything else is derived: your login from `gh api user`, the organisation
 from this toolset's own default, the team from `gh api /user/teams` where
 exactly one matches. Idempotent: a workstation that already has a workspace
 does nothing to it, and only completes the hook pair — running `link-estates`
-again first where that path does not answer. Exits 0 (done, or already done)
-or 2 (refused).
+again first where that path does not answer and ~/projects/xFactory exists.
+Exits 0 (done, or already done) or 2 (refused); a hook reconcile it cannot
+make is printed, and the exit stays 0.
 
 `park --help`, `resume --help`, `status --help`, `lane-start --help` and
 `lane-end --help` say the rest, and each command's exit codes are its own. The
@@ -2148,7 +2149,7 @@ hook_target_answers() {   # 0 when the pair may be merged; 1 with $HOOK_TARGET_W
 	HOOK_TARGET_WHY=""
 	if [ ! -e "$target" ]; then
 		if [ -L "$target" ]; then
-			HOOK_TARGET_WHY="${target} is a symlink to $(readlink -- "$target" 2>/dev/null || :), which is not there"
+			HOOK_TARGET_WHY="${target} is a symlink to $(readlink -- "$target" 2>/dev/null || :), which does not resolve (it is not there, or the links loop)"
 		elif [ -d "$HOME/projects/xFactory" ]; then
 			HOOK_TARGET_WHY="${target} is not there"
 		else
@@ -2164,6 +2165,12 @@ hook_target_answers() {   # 0 when the pair may be merged; 1 with $HOOK_TARGET_W
 		HOOK_TARGET_WHY="${target} is not executable"
 		return 1
 	fi
+	# A SCRIPT THAT CANNOT BE READ CANNOT BE RUN, and the probe below cannot
+	# read it either: without this, mode 111 read as "no `guard` subcommand".
+	if [ ! -r "$target" ]; then
+		HOOK_TARGET_WHY="${target} is not readable"
+		return 1
+	fi
 	if ! awk '
 		/^[[:space:]]*#/ { next }
 		/^[[:space:]]*([A-Za-z0-9_-]+\|)*guard(\|[A-Za-z0-9_-]+)*\)/ { found=1; exit }
@@ -2177,6 +2184,12 @@ hook_target_answers() {   # 0 when the pair may be merged; 1 with $HOOK_TARGET_W
 
 #: The remedy every deferral and every removal prints, in one place.
 hook_pair_remedy() {
+	# WITH NO `~/projects/xFactory` THE REMEDY BELOW LOOPS: `link-estates` links
+	# into that directory only where it exists, so a re-run alone changes
+	# nothing. That is said first, where it is the case.
+	if [ ! -d "$HOME/projects/xFactory" ]; then
+		say "  ~/projects/xFactory has to exist first: \`link-estates\` links that path only into it."
+	fi
 	say "  The pair is merged once that path answers \`guard\`: \`openRepoTools wip init\` runs"
 	say "  \`link-estates\`, which links it where ~/projects/xFactory exists, and then merges"
 	say "  the pair; or run \`link-estates\` yourself and \`openRepoTools --install\` again."
@@ -2827,6 +2840,36 @@ $(guard_block_text)"
 			HOOK_STRIP_WHY="its \`UserPromptSubmit\`, or the entry carrying the guard, is not the array of entries this command takes apart"
 		fi
 	fi
+
+	# A GUARD ENTRY THIS COMMAND CANNOT TAKE OUT, AGAINST A TARGET THAT WILL NOT
+	# ANSWER, IS A REFUSAL — AND IT IS DECIDED HERE, BEFORE ANYTHING IS PLACED
+	# (the #237 review, M2), like every other file this merge cannot handle. The
+	# one target the bin loop can still repair is let through to placement: a
+	# link to the bin directory's own `lanes-edit.sh`, which that loop puts back
+	# and which then answers, so the run merges instead. `hook_pair_defer` keeps
+	# the same refusal for the case this read got wrong.
+	if [ -n "$HOOK_STRIP_WHY" ] && ! hook_target_answers && ! hook_target_is_ours_to_place; then
+		die "$(hook_strip_refusal "NOTHING was installed and nothing already installed was replaced.")"
+	fi
+}
+
+# THE ONE TARGET A RUN OF `--install` CAN STILL MAKE ANSWER: a symlink spelled
+# the way `link-estates` spells it, to the bin directory's own `lanes-edit.sh`,
+# which the bin loop places. A bench recreate that emptied that directory
+# leaves exactly this link dangling.
+hook_target_is_ours_to_place() {
+	local target
+	target="$(hook_target)"
+	[ -L "$target" ] &&
+		[ "$(readlink -- "$target" 2>/dev/null || :)" = "${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}/lanes-edit.sh" ]
+}
+
+hook_strip_refusal() {   # <what was and was not placed>
+	printf '%s' "$(claude_home)/settings.json carries the UserPromptSubmit name guard, and ${HOOK_TARGET_WHY},
+    so that entry would fail every prompt — but ${HOOK_STRIP_WHY}, and a file this
+    command does not understand is not one it rewrites. Nothing in that file was
+    changed. $1 Remove the entry below by hand, then re-run:
+$(guard_block_text)"
 }
 
 # The fourteen artifacts that are not bin-directory files, in thirteen writes
@@ -3035,11 +3078,8 @@ hook_pair_merge() {   # <settings>
 hook_pair_defer() {   # <settings>
 	local settings="$1" wrote=0
 	if [ "$GUARD_PLAN" = present ]; then
-		[ -z "$HOOK_STRIP_WHY" ] || die "$settings carries the UserPromptSubmit name guard, and ${HOOK_TARGET_WHY},
-    so that entry would fail every prompt — but ${HOOK_STRIP_WHY}, and a file this
-    command does not understand is not one it rewrites. Nothing in that file was
-    changed; the lines above are placed. Remove the entry below by hand, then re-run:
-$(guard_block_text)"
+		[ -z "$HOOK_STRIP_WHY" ] ||
+			die "$(hook_strip_refusal "Whatever the lines above report is placed.")"
 		hook_write_settings "$HOOK_DEFERRED" "$settings"
 		wrote=1
 	fi
@@ -3611,9 +3651,13 @@ wip_run_link_estates() {
 # `--install` would have refused with and exits 2 — the subshell, not this run.
 # The workspace this command exists to make is made by then, so the refusal is a
 # note beside it and the exit stays 0, the way a `link-estates` that refused is
-# (step 10). `set -e` is put back on INSIDE the subshell: the `set +e` that lets
-# this read the subshell's status would otherwise reach everything the two
-# functions run, and they are written for `--install`'s `set -e`.
+# (step 10). ONE RULE ON BOTH PATHS: on step 1's the reconcile is the only act,
+# and the exit is still 0 — a 2 there would tell a caller the workspace failed,
+# which it did not — so the usage and the README say so where the exit codes
+# are (the #237 review, S1). `set -e` is put back on INSIDE the subshell: the
+# `set +e` that lets this read the subshell's status would otherwise reach
+# everything the two functions run, and they are written for `--install`'s
+# `set -e`.
 wip_hook_pair() {
 	local rc
 	say ""

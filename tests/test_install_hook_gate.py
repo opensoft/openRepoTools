@@ -165,6 +165,8 @@ def test_fresh_install_defers_the_hook_pair_and_says_so(tmp_path):
            f"{target} is not there" in result.stdout, result.stdout
     for words in REMEDY:
         assert words in result.stdout, f"the remedy lost {words!r}:\n{result.stdout}"
+    assert "~/projects/xFactory has to exist first" in result.stdout, (
+        "with no ~/projects/xFactory the remedy alone loops (the #237 review, N6)")
     assert "REMOVED" not in result.stdout, "there was nothing of ours to remove"
 
 
@@ -195,7 +197,9 @@ def test_interrupted_setup_leaves_no_hook_naming_a_missing_path(tmp_path, state)
     it (`link-estates` never ran); and a settings file of the person's own.
     In none of them is there a hook that calls the missing path — so there is
     no prompt hook to fail, and the person's own hooks are exactly as they
-    were."""
+    were — and so is that file's MODE: a deferred run with nothing of ours to
+    add or take out writes nothing, so the 644 it found is the 644 it leaves
+    (the #237 review, M1)."""
     own = {"hooks": {"UserPromptSubmit": [
         {"hooks": [{"type": "command", "command": "~/projects/xFactory/guard.sh"}]}]}}
     if state == "the estate directory":
@@ -203,12 +207,15 @@ def test_interrupted_setup_leaves_no_hook_naming_a_missing_path(tmp_path, state)
     if state == "settings of the person's own":
         settings_of(tmp_path).parent.mkdir(parents=True)
         settings_of(tmp_path).write_text(json.dumps(own), encoding="utf-8")
+        os.chmod(settings_of(tmp_path), 0o644)
     result = install(tmp_path)
     assert result.returncode == 0, result.stdout + result.stderr
     assert naming_the_target(tmp_path) == [], (
         "a hook calls a path that does not exist:\n" + result.stdout)
     if state == "settings of the person's own":
         assert json.loads(settings_of(tmp_path).read_text(encoding="utf-8")) == own
+        assert stat.S_IMODE(settings_of(tmp_path).stat().st_mode) == 0o644, (
+            "a run that wrote nothing into the file changed its mode")
     assert not (tmp_path / "projects" / "xFactory" / "lanes-edit.sh").exists()
 
 
@@ -237,7 +244,7 @@ def test_dangling_link_strips_only_our_guard_entry_keeps_session_start_foreign_h
     after = json.loads(settings.read_text(encoding="utf-8"))
     target = tmp_path / "projects" / "xFactory" / "lanes-edit.sh"
     assert f"UserPromptSubmit guard: REMOVED from {settings}, because {target} " \
-           f"is a symlink to {far}, which is not there" in result.stdout, result.stdout
+           f"is a symlink to {far}, which does not resolve" in result.stdout, result.stdout
     assert f"SessionStart hook: left in {settings} as an earlier run placed it" \
         in result.stdout, result.stdout
     for words in REMEDY:
@@ -268,7 +275,9 @@ def test_a_guard_entry_in_a_shape_it_cannot_take_apart_is_refused_not_rewritten(
     """A `UserPromptSubmit` that is not an array, carrying our command, against
     a target that does not answer: the entry would fail every prompt, and the
     file is not one this command understands well enough to rewrite. So it
-    refuses, names the entry, and leaves the file exactly as it was."""
+    refuses, names the entry, and leaves the file exactly as it was — IN THE
+    PLANNING PHASE, with nothing placed, like every other file this merge
+    cannot handle (the #237 review, M2: it used to refuse after placing 29)."""
     settings = settings_of(tmp_path)
     settings.parent.mkdir(parents=True)
     odd = json.dumps({"hooks": {"UserPromptSubmit": {"ours": {"hooks": [
@@ -278,17 +287,43 @@ def test_a_guard_entry_in_a_shape_it_cannot_take_apart_is_refused_not_rewritten(
     assert result.returncode == 2, result.stdout + result.stderr
     assert "is not the array of entries this command takes apart" in result.stderr
     assert GUARD_COMMAND in result.stderr, "the refusal names the entry"
+    assert "NOTHING was installed" in result.stderr, result.stderr
     assert settings.read_text(encoding="utf-8") == odd
+    assert not (tmp_path / ".local" / "bin").exists(), (
+        "the refusal came after the commands were placed")
+    assert not (tmp_path / ".claude" / "skills").exists()
 
 
-@pytest.mark.parametrize("why", ["no guard verb", "not executable"])
+def test_an_odd_guard_entry_beside_a_link_the_bin_loop_repairs_is_not_refused(tmp_path):
+    """THE ONE TARGET A RUN CAN STILL MAKE ANSWER is let through planning: a
+    `link-estates` link to the bin directory's own `lanes-edit.sh`, dangling
+    until this run's bin loop puts the far end back. After that loop the target
+    answers, so the guard entry — whatever shape it is in — is ours and stays,
+    and the run completes instead of refusing."""
+    link_xfactory(tmp_path)
+    settings = settings_of(tmp_path)
+    settings.parent.mkdir(parents=True)
+    odd = {"hooks": {"UserPromptSubmit": {"ours": {"hooks": [
+        {"type": "command", "command": GUARD_COMMAND, "timeout": 5}]}}}}
+    settings.write_text(json.dumps(odd), encoding="utf-8")
+    result = install(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    after = json.loads(settings.read_text(encoding="utf-8"))
+    assert after["hooks"]["UserPromptSubmit"] == odd["hooks"]["UserPromptSubmit"]
+    assert session_start_commands(tmp_path) == [HOOK_COMMAND]
+
+
+@pytest.mark.parametrize("why", ["no guard verb", "not executable", "not readable"])
 def test_lanes_edit_without_guard_verb_defers(tmp_path, why):
     """A `lanes-edit.sh` THAT IS THERE AND DOES NOT ANSWER `guard`: one that
     predates the verb, or one that is not executable. The probe is the
     launcher's — comment lines dropped, the case arm anchored where a line
     begins — so neither the word `guard` in a comment nor an arm that merely
     starts with it (`guards)`) passes for the verb. The pair is deferred, and a
-    guard entry already there is taken out, with the reason named."""
+    guard entry already there is taken out, with the reason named — an
+    executable that cannot be READ by its own name, not as a missing verb."""
+    if why == "not readable" and hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root reads a file whose mode says otherwise")
     old = tmp_path / "old" / "lanes-edit.sh"
     old.parent.mkdir()
     old.write_text(
@@ -305,8 +340,8 @@ def test_lanes_edit_without_guard_verb_defers(tmp_path, why):
     else:
         old.write_text(old.read_text(encoding="utf-8") + "# guard)\n  guard) exit 0 ;;\n",
                        encoding="utf-8")
-        old.chmod(0o644)
-        reason = "is not executable"
+        old.chmod(0o644 if why == "not executable" else 0o111)
+        reason = "is " + why
     link_xfactory(tmp_path, old)
     settings = our_pair(tmp_path, mode=0o600)
     result = install(tmp_path)
@@ -466,6 +501,61 @@ def test_wip_init_rerun_links_and_completes_a_pair_a_cut_run_left_unlinked(tmp_p
     assert (home / "projects" / "xFactory" / "lanes-edit.sh").is_symlink()
     assert user_prompt_commands(home) == [GUARD_COMMAND]
     assert session_start_commands(home) == [HOOK_COMMAND]
+
+
+@NEEDS_TEMPLATE
+@pytest.mark.parametrize("state", ["the target answers", "no ~/projects/xFactory"])
+def test_wip_init_nothing_to_do_reruns_link_estates_only_where_ruling_9_says(
+        tmp_path, state):
+    """RULING 9's OTHER HALF: step 1 runs `link-estates` again ONLY where the
+    target does not answer AND `~/projects/xFactory` is there for the link. A
+    healthy workstation's re-run does not relink, and neither does one with no
+    `~/projects/xFactory`, where a relink could change nothing."""
+    home, env = wip_world(tmp_path)
+    if state == "the target answers":
+        (home / "projects" / "xFactory").mkdir()
+    assert run_with(env, "--install").returncode == 0
+    assert run_with(env, "wip", "init").returncode == 0
+    rerun = run_with(env, "wip", "init")
+    assert rerun.returncode == 0, rerun.stdout + rerun.stderr
+    assert "nothing to do" in rerun.stdout
+    for marker in ("link-estates runs again", "link-estates:",
+                   "link-estates is not installed"):
+        assert marker not in rerun.stdout, f"{marker!r} on a re-run:\n{rerun.stdout}"
+
+
+@NEEDS_TEMPLATE
+def test_a_hook_reconcile_wip_init_cannot_make_is_a_note_and_the_exit_stays_0(tmp_path):
+    """ONE RULE ON BOTH PATHS (the #237 review, S1). A second writer of the
+    guard, added after `--install`, makes the reconcile refuse — with
+    `--install`'s own refusal, naming the rival. On step 10's path the
+    workspace is made all the same, so the refusal is a note, `Done.` is
+    printed and the exit is 0; on step 1's path, where the reconcile is the
+    only act, the exit is 0 too, and the note says so. The file is left
+    exactly as it was both times."""
+    home, env = wip_world(tmp_path)
+    (home / "projects" / "xFactory").mkdir()
+    assert run_with(env, "--install").returncode == 0
+    rival = "~/bin/other.sh guard"
+    settings = settings_of(home)
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    before = json.dumps({"hooks": {"UserPromptSubmit": [
+        {"hooks": [{"type": "command", "command": rival, "timeout": 5}]}]}})
+    settings.write_text(before, encoding="utf-8")
+
+    fresh = run_with(env, "wip", "init")
+    assert fresh.returncode == 0, fresh.stdout + fresh.stderr
+    assert "(not reconciled:" in fresh.stdout, fresh.stdout
+    assert rival in fresh.stderr, "the refusal names the rival"
+    assert "Done." in fresh.stdout, "the workspace step did not finish"
+    assert settings.read_text(encoding="utf-8") == before
+
+    again = run_with(env, "wip", "init")
+    assert again.returncode == 0, again.stdout + again.stderr
+    assert "nothing to do" in again.stdout
+    assert "(not reconciled:" in again.stdout, again.stdout
+    assert rival in again.stderr
+    assert settings.read_text(encoding="utf-8") == before
 
 
 @NEEDS_TEMPLATE
