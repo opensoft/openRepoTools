@@ -592,7 +592,7 @@ def required_dependency():
 #: but `park`, `resume` and `openRepoTools` are bash scripts that run `make` in
 #: a root which execs a shebang script, and a shebang means nothing to
 #: CreateProcess. Skipping is honest because there is no Windows twin to run
-#: instead: these three files are bash, and on Windows the way in is WSL2,
+#: instead for any shipped bash file, and on Windows the way in is WSL2,
 #: exactly as it is for openRepoShape's own `setup.sh`. What the Windows job
 #: still proves is the checkout and the hygiene tests, which need no shell.
 #: A shared `skipif` object rather than a named marker because there is no
