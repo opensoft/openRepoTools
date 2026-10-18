@@ -256,15 +256,17 @@ Each item names what a test or a workflow run checks.
   No later install, and no retirement of `restart`, ever removes the link,
   replaces it or writes through it.
 - **The upgrade order.** After `pipx upgrade openrepotools`, the other 16
-  files, the skills, the command files and the hook entries stay the earlier
-  release's until `openRepoTools --install` runs again, which the skip line
-  says. A test installs one wheel, upgrades to a second, and checks that the
-  second `--install` replaces the 16 files and still skips the link.
+  files, the skills, the command files and any merged hook entries stay the
+  earlier release's until `openRepoTools --install` runs again, which the
+  skip line says. A test installs one wheel, upgrades to a second, and checks
+  that the second `--install` replaces the 16 files and still skips the
+  link.
 - **Uninstall.** `pipx uninstall openrepotools` removes only the link and its
-  environment. The 16 files, the skills, the command files, the hook entries
-  and the receipt stay, and README says so. A test removes the link and the
-  environment, checks that the 16 files are still there, and checks that a
-  checkout's `--install` then places a regular `openRepoTools` at that path.
+  environment. The 16 files, the skills, the command files, any merged hook
+  entries and the receipt stay, and README says so. A test removes the link
+  and the environment, checks that the 16 files are still there, and checks
+  that a checkout's `--install` then places a regular `openRepoTools` at that
+  path.
 - **`pip install --user`.** It places a regular file at `<dir>/openRepoTools`,
   not a link, so the skip never applies. `--install` refuses to replace it
   (see "Coexistence with the other installers").
@@ -503,9 +505,11 @@ while they track `main`, which is the failure the Why exists to prevent.
     one left to pipx;
   - the symlink paragraph (README.md:251-262), which says every symlink is
     refused, and now names pipx's `openRepoTools` as the one link skipped;
-  - the count invariant (README.md:302, "Thirty-one artifacts, and the count
-    is the invariant"), where such a workstation has thirty placed, one left
-    to pipx, and 28 receipt rows.
+  - the count invariant (README.md:302, "Twenty-nine artifacts always, plus
+    the two hook entries once the path they call answers `guard`" since
+    #237), where such a workstation has twenty-eight placed always, one left
+    to pipx and 28 receipt rows, with the two hook entries on top once that
+    path answers.
 - **The pipx route's text is fixed now:**
 
   > **The second way, from PyPI:** `pipx install openrepotools`, then

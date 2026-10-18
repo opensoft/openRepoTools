@@ -21,7 +21,8 @@ openRepoTools becomes a release, as well as a checkout.
     `openrepotools/payload/`, together with the openRepoShape pin.
   - A standard-library entry module `exec`s `bash <payload>/openRepoTools`
     with the person's arguments unchanged.
-- **The installer.** Bash stays the only reader and the only parser.
+- **The installer.** Bash stays the only reader at run time, and the only
+  parser.
   - It recognises package mode from its own path.
   - It reads the five-field stamp beside its payload, with a fixed grammar.
   - It prints the release in `--version`.
@@ -125,8 +126,10 @@ goal: two builds of one commit are one file.
 
 **Scale/Scope**:
 
-- 24 payload files in the wheel. 31 artifacts per install, of which 30 are
-  placed and 1 is left to pipx when pipx's link is present.
+- 24 payload files in the wheel. 29 artifacts placed by every install, or 28
+  and 1 left to pipx when pipx's link is present. The two hook entries are
+  added on top once `~/projects/xFactory/lanes-edit.sh` answers `guard`
+  (#237).
 - 1 console script.
 - 4 CI jobs in `tests.yml`. 4 jobs in `release.yml`, with 3 install-check
   legs.
@@ -185,7 +188,7 @@ specs/006-release-pypi/
 ```text
 pyproject.toml                               # NEW: contracts/wheel.md
 src/openrepotools/
-├── __init__.py                              # NEW: a docstring only (R1)
+├── __init__.py                              # NEW: the SPDX line and a docstring, no code (R1)
 ├── cli.py                                   # NEW: main(), which execs bash (design.md Decision 3)
 └── _release.py                              # NEW: the committed, unstamped stamp (contracts/stamp.md)
 openRepoTools                                # CHANGED: link_resolve, package_payload_dir, stamp_read,
@@ -233,14 +236,22 @@ These names are fixed here, so that test and implementation tasks agree.
     `<prefix>/lib/<python>/site-packages/openrepotools/` from the working
     tree: `__init__.py`, `cli.py`, `_release.py` (or the `stamp` text given)
     and `payload/` with the 24 files. It returns the payload directory.
-  - `pipx_venv(pipx_home, release, python) -> Path` builds
+  - `pipx_venv(pipx_home, release, python=None, stamp=None) -> Path` builds
     `<pipx_home>/venvs/openrepotools/` around `package_tree`, with
     `bin/openRepoTools`, `pipx_metadata.json` and `pyvenv.cfg`. It returns
     the venv. `release` is one of `"1.11.1"`, `"1.17.8"` and `"1.18.3"`.
-  - `console_script(path, python)` writes pip's console-script template for
-    `openrepotools.cli:main`, with `#!<python>`.
+    `python` defaults to that release's interpreter, and `stamp` is passed
+    on to `package_tree`.
+  - `console_script(path, python, form=None) -> Path` writes pip's
+    console-script template for `openrepotools.cli:main`. `form` is
+    `"shebang"` (`#!<python>`), `"trampoline"` (pip's `/bin/sh`
+    trampoline), or `None` for the form pip itself would choose.
   - `stamp_text(**fields) -> str` gives the committed file's text with the
     given values.
+
+  It also exports `payload_paths() -> tuple[str, ...]`, the force-include
+  table's payload paths in its order, and `LayoutError`, which a builder
+  raises when the checkout does not hold what a layout is built from.
 - **Test-name prefixes**, so that each task's `verify:` can select exactly
   its tests with `-k`:
 

@@ -71,8 +71,10 @@ fake venv layouts, with no pipx and no wheel.
    `$OPENREPOTOOLS_REPO`, no `gh` and a `curl` that fails, **Then** it
    succeeds, and:
    - it prints the skip line exactly (FR-016);
-   - it places the other sixteen files, the three skills, the three command
-     files and the two hook entries;
+   - it places the other sixteen files, the three skills and the three
+     command files;
+   - it adds the two hook entries once `~/projects/xFactory/lanes-edit.sh`
+     answers `guard`, and until then defers them and says so (#237);
    - it prints `openRepoTools: 16 of 17 placed in <dir>, and 1 left to pipx`;
    - it writes 28 receipt rows;
    - it leaves the link as it was.
@@ -305,8 +307,9 @@ passages, and the absence of the pipx route.
 4. **Given** a workstation with pipx's link, **When** README's file count,
    symlink paragraph and artifact-count invariant are read, **Then** they say
    what that workstation sees: sixteen placed and one left to pipx, pipx's
-   `openRepoTools` the one link skipped, and thirty placed with 28 receipt
-   rows.
+   `openRepoTools` the one link skipped, and twenty-eight artifacts placed
+   always, one left to pipx and 28 receipt rows, with the two hook entries
+   on top once the path they call answers `guard` (#237).
 5. **Given** a later release is tagged, **When** `v1.0.0` is read, **Then** it
    still names tag object `6a826f8` on commit `aaa7bc8`.
 6. **Given** a fix lands on `main` after work for the next minor version,
@@ -548,13 +551,13 @@ passages, and the absence of the pipx route.
     `openRepoTools` that `PATH` finds and the one expected.
   - It MUST change nothing, and MUST leave the exit status as it was.
 - **FR-022**: After `pipx upgrade openrepotools`, the placed files, skills,
-  command files and hook entries MUST stay the earlier release's until
-  `--install` runs again. That `--install` MUST replace them and still skip
-  the link.
+  command files and any merged hook entries MUST stay the earlier release's
+  until `--install` runs again. That `--install` MUST replace them and still
+  skip the link.
 - **FR-023**: `pipx uninstall openrepotools` removes only the link and its
   environment.
-  - The placed files, the skills, the command files, the hook entries and
-    the receipt MUST stay.
+  - The placed files, the skills, the command files, any merged hook
+    entries and the receipt MUST stay.
   - A later checkout's `--install` MUST place a regular `openRepoTools` at
     the freed path.
 - **FR-024**: The documented move from the one-line install to pipx MUST be
@@ -768,8 +771,9 @@ passages, and the absence of the pipx route.
   pipx's link:
   - the count of seventeen files: sixteen placed and one left to pipx;
   - the symlink paragraph: pipx's `openRepoTools` is the one link skipped;
-  - the artifact-count invariant: thirty placed, one left to pipx, and 28
-    receipt rows.
+  - the artifact-count invariant: twenty-eight placed always, one left to
+    pipx, and 28 receipt rows, with the two hook entries on top once the
+    path they call answers `guard` (#237).
 - **FR-045**: README MUST NOT offer the pipx route until PyPI serves the
   version it installs, and the workBenches condition holds.
   - This feature MUST NOT add the pipx route's text.
@@ -834,9 +838,12 @@ passages, and the absence of the pipx route.
   and that venv's payload. Its counterparts are pip's console script (a
   regular file) and a venv-shaped link that is not provably pipx's.
 - **An install run's result**: what was placed and counted, what was left to
-  pipx, and the receipt rows. Thirty-one artifacts are 17 files, 6 skill
-  files, 6 command files and 2 hook entries. With pipx's link, 30 are placed,
-  1 is left to pipx, and there are 28 receipt rows.
+  pipx, and the receipt rows. Twenty-nine artifacts are placed always: 17
+  files, 6 skill files and 6 command files. The 2 hook entries are added on
+  top once `~/projects/xFactory/lanes-edit.sh` answers `guard`. Until then
+  they are deferred, and `wip init` adds them (#237). With pipx's link, 28
+  are placed always, 1 is left to pipx, and there are 28 receipt rows. The
+  receipt holds no hook rows.
 - **A release**: an annotated tag `vX.Y.Z`, with its tag message, its commit,
   its tree digest, its notes file and its GitHub Release. A pre-release
   `vX.Y.ZrcN` reaches TestPyPI only.
@@ -851,9 +858,13 @@ passages, and the absence of the pipx route.
 ### Measurable Outcomes
 
 - **SC-001**: A workstation with no network gets a complete install from the
-  package in one `--install` run: 30 of 31 artifacts placed, 1 left to pipx,
-  and 28 receipt rows. The `package` job and every install-check leg show
-  it.
+  package in one `--install` run: of the 29 artifacts placed always, 28 are
+  placed and 1 is left to pipx, with 28 receipt rows. Where
+  `~/projects/xFactory/lanes-edit.sh` answers `guard`, the same run also
+  merges the two hook entries. Where it does not, the run defers them and
+  says so, and `wip init` adds them later (#237). The `package` job and
+  every install-check leg show it, in a temporary home where the pair is
+  deferred.
 - **SC-002**: Every `--version` from a stamped package names all five facts:
   the version, tag, commit, digest and repository. No `--version` from a
   checkout or a one-line install prints a version number, whatever is in the

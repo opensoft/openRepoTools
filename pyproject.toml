@@ -36,6 +36,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openrepotools"
+description = "The commands for the estates openRepoShape scaffolds, the lane tooling that records the work in them, and the installer that places all of it"
 # THE TAG IS THE ONE SOURCE OF THE VERSION: the release build writes it into
 # the stamp, `src/openrepotools/_release.py`, with the tag, the commit, the
 # digest and the repository, and `[tool.hatch.version]` below reads it from

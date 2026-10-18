@@ -758,8 +758,8 @@ def test_stamp_reader_gives_each_row_its_own_reason(tmp_path):
 # the pattern, and `:32`, the search, read on 2026-10-18 from the published
 # wheel `hatchling-1.27.0-py3-none-any.whl` (sha256
 # d3a2f3567c4f926ea39849cdf924c7e99e6686c9c8e288ae1037c8fa2a5d937b), whose
-# RECORD carries that file's own digest. contracts/stamp.md cites the search
-# as `:31`, which in that file is the blank line above it.
+# RECORD carries that file's own digest. contracts/stamp.md cites the same
+# two lines; the `:31` it cited before is the blank line above the search.
 
 #: hatchling/version/core.py:6 in hatchling 1.27.0, exactly:
 DEFAULT_PATTERN = r'(?i)^(__version__|VERSION) *= *([\'"])v?(?P<version>.+?)\2'

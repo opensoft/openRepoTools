@@ -15,12 +15,12 @@ them, its states.
 | `DIGEST` | empty | 64 lowercase hex digits (`is_lower_hex 64`), that commit's `sorted-ls-tree-r-v1` tree digest |
 | `REPOSITORY` | empty | an owner/name slug (`is_slug`), the release run's `$GITHUB_REPOSITORY` |
 
-**The file's shape**: the repository's SPDX line,
+**The committed file's shape**: the repository's SPDX line,
 `# SPDX-License-Identifier: Apache-2.0`, then one module docstring, then the
 five assignment lines in the order above (the lead's ruling of 2026-10-18).
 [contracts/stamp.md](contracts/stamp.md) gives the grammar, whose reader
 skips the SPDX line as it skips any `#` comment or blank line before the
-docstring.
+docstring. The grammar allows the docstring, and does not require it.
 
 **States**:
 
@@ -121,9 +121,12 @@ planning phase:
 | files placed in `<dir>` | 17 | 16 (1 left to pipx) |
 | skill files (3 skills × 2 paths) | 6 | 6 |
 | command files (3 × 2 paths) | 6 | 6 |
-| hook entries | 2 | 2 |
-| artifacts placed | 31 | 30 |
+| artifacts placed always | 29 | 28 (1 left to pipx) |
+| hook entries, on top, once `~/projects/xFactory/lanes-edit.sh` answers `guard` (#237) | 2 | 2 |
 | receipt rows (files + skill files + command files) | 29 | 28 |
+
+Until that target answers, the run defers the hook pair and says so, and
+`wip init` adds it. The receipt holds no hook rows.
 
 **The count line** takes one of three forms, given in full in
 [contracts/cli-output.md](contracts/cli-output.md):

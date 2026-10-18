@@ -230,12 +230,12 @@ anything is placed.
 ### Requirement: Upgrade and uninstall
 
 After `pipx upgrade openrepotools`, the placed files, skills, command files
-and hook entries SHALL stay the earlier release's until `--install` runs
-again. That `--install` SHALL replace them and still skip the link.
-`pipx uninstall openrepotools` removes only the link and its environment.
-The placed files, the skills, the command files, the hook entries and the
-receipt SHALL stay, and a later checkout's `--install` SHALL place a regular
-`openRepoTools` at the freed path.
+and any merged hook entries SHALL stay the earlier release's until
+`--install` runs again. That `--install` SHALL replace them and still skip
+the link. `pipx uninstall openrepotools` removes only the link and its
+environment. The placed files, the skills, the command files, any merged
+hook entries and the receipt SHALL stay, and a later checkout's `--install`
+SHALL place a regular `openRepoTools` at the freed path.
 
 #### Scenario: Upgrade
 

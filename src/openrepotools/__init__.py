@@ -7,8 +7,10 @@ The wheel carries the installer's whole payload byte for byte under
 console script, `openRepoTools`, runs `cli.main`, which replaces its own
 process with the first `bash` on PATH, running the packaged installer with
 the person's arguments unchanged. `_release.py` is the stamp that names the
-release; bash reads it, and no Python does.
+release. At run time bash reads it, and no Python does; hatchling reads its
+`VERSION` at build time.
 
-This file holds this docstring and nothing else, so that loading the
-package, as every console script and every build does, runs no code.
+This file holds the SPDX line and this docstring, and no code, so that
+loading the package, as every console script and every build does, runs no
+code.
 """
