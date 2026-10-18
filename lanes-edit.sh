@@ -3249,29 +3249,48 @@ lane_log_exists() {
 # variable cache was rebuilt — a `git show` of 1.1 MB — by all four of the
 # per-lane reads the listing makes, for every lane. The file survives the
 # subshell that wrote it, so the megabyte is rendered once per process.
+#
+# AND THE READ SAYS WHETHER IT HAPPENED (opensoft/openRepoTools#67).
+# `register_text_checked` is the read itself: 0 with the register on stdout, and
+# 1 where the published `git show` or the working tree's `cat` FAILED — what it
+# prints then is whatever that read printed, so `register_text` renders a failed
+# read exactly as it always did, and it is not an answer. `register_text` is the
+# same read with the status thrown away, as it always was, because its callers
+# are pipelines whose `awk` answers for them and rewriting all of them is not
+# this change. The two callers for which an empty register is a VERDICT ask the
+# checked read through `session_ids_checked` below.
+#
+# A FAILED READ IS NEVER CACHED, in the variable or in the file. It used to be:
+# the empty render went into both, so the first caller to meet a failed read —
+# `canon_lane`, which `claim` and `duplicate-holder` both run first — left every
+# later read in the process an empty register with no failure left to report,
+# and a checked read behind it would have been reading that cache instead of the
+# register. The next read asks again, and gets the same failure or the register.
 LANES_REGISTER_CACHE=""
-register_text() {
+register_text_checked() {
   # AMENDMENT 14 — under `--index`, the register's rows and its Rule 6 and
   # Amendment 10 lines as the index holds them, in register order. Not cached:
   # it is one local file, and the cache below belongs to the published read.
-  if [ -n "$LANES_IDX_DIR" ]; then cat -- "$LANES_IDX_DIR/register"; return 0; fi
+  if [ -n "$LANES_IDX_DIR" ]; then cat -- "$LANES_IDX_DIR/register"; return; fi
   if [ -n "$LANES_REGISTER_CACHE" ]; then printf '%s\n' "$LANES_REGISTER_CACHE"; return 0; fi
   rt_c="${SE_CACHE_FILE:+$SE_CACHE_FILE.register}"
-  if [ -n "$rt_c" ] && [ -s "$rt_c" ]; then cat -- "$rt_c"; return 0; fi
-  # A PUBLISHED REGISTER THAT `show` CANNOT READ ANSWERS 1, AND IS NOT CACHED
-  # (#138 item 18). It answered 0 with an empty text, and cached that, so every
-  # reader after it saw a register with no rows. Most callers still read only
-  # the text; the ones that must not take empty for "no row" read the status.
-  # AND WHETHER IT IS PUBLISHED IS `register_published`'s answer, the tree's:
-  # asked with `cat-file -e`, a missing or corrupt blob was "not published" and
-  # this checkout's copy was read in its place.
+  if [ -n "$rt_c" ] && [ -s "$rt_c" ]; then cat -- "$rt_c"; return; fi
+  rt_txt=""; rt_rc=0
+  # WHETHER THE REGISTER IS PUBLISHED IS `register_published`'s answer, the
+  # tree's (#138 item 18, the review of #230): asked with `cat-file -e`, a
+  # missing or corrupt blob was "not published" and this checkout's copy was
+  # read in its place — an answer, where #67's rule above makes it a 1.
   rt_prc=0; register_published || rt_prc=$?
   case "$rt_prc" in
-    0) LANES_REGISTER_CACHE="$(git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null)" ||
-         { LANES_REGISTER_CACHE=""; return 1; } ;;
-    8) LANES_REGISTER_CACHE="$(cat -- "$LANES_FILE")" ;;
-    *) return 1 ;;
+    0) rt_txt="$(git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null)" || rt_rc=$? ;;
+    8) rt_txt="$(cat -- "$LANES_FILE")" || rt_rc=$? ;;
+    *) rt_rc=1 ;;
   esac
+  if [ "$rt_rc" != 0 ]; then
+    printf '%s\n' "$rt_txt"
+    return 1
+  fi
+  LANES_REGISTER_CACHE="$rt_txt"
   if [ -n "$rt_c" ]; then
     printf '%s\n' "$LANES_REGISTER_CACHE" > "$rt_c.${BASHPID:-$$}" 2>/dev/null &&
       mv -f -- "$rt_c.${BASHPID:-$$}" "$rt_c" 2>/dev/null ||
@@ -3279,6 +3298,7 @@ register_text() {
   fi
   printf '%s\n' "$LANES_REGISTER_CACHE"
 }
+register_text() { register_text_checked || :; }
 
 # IS THE REGISTER PUBLISHED? 0 yes, 8 no (or there is no `origin/<branch>`), 1
 # the tree could not be listed. THE TREE ANSWERS AND NEVER THE BLOB (#138 item
@@ -3902,11 +3922,22 @@ claim_is_stale() {   # <lane> <object> <utc-of-the-claim> <its file> <its line>
 # `HOLDER_BOUND_ELSEWHERE` (the binding's `host/container`), and refused like
 # every other verdict this workstation could not establish. A log with no
 # binding line at all keeps the local read, which is all there is to ask.
+#
+# AND THE IDS THE LOCAL READ IS ASKED ABOUT MUST HAVE BEEN READ
+# (opensoft/openRepoTools#67). They are the row's, published-union-local, and
+# an unreadable register used to yield the same EMPTY set as a lane with no
+# row — which `live_holder` answers 8, so a terminal log on a register nobody
+# could read was "confirmed dead" and its holds went to `--force`, even with a
+# live session on this workstation still carrying the lane's id. That is
+# `HOLDER_REGISTER_UNREADABLE` now, with `HOLDER_TERMINAL_UNKNOWN` beside it so
+# every reader that already refuses a liveness read that failed refuses this one
+# too; `claim` names it in its own words.
 HOLDER_DEAD_VERB=""
 HOLDER_LIVE_TERMINAL=""
 HOLDER_TERMINAL_UNKNOWN=""
 HOLDER_NO_VERDICT=""
 HOLDER_BOUND_ELSEWHERE=""
+HOLDER_REGISTER_UNREADABLE=""
 HOLDER_DEAD_WHY=""
 HOLDER_TERMINAL_SEEN=""
 holder_is_dead() {   # <lane>
@@ -3916,6 +3947,7 @@ holder_is_dead() {   # <lane>
   HOLDER_TERMINAL_UNKNOWN=""
   HOLDER_NO_VERDICT=""
   HOLDER_BOUND_ELSEWHERE=""
+  HOLDER_REGISTER_UNREADABLE=""
   HOLDER_DEAD_WHY="no live session on this workstation"
   HOLDER_TERMINAL_SEEN=""
   hid_rc=0
@@ -3963,8 +3995,15 @@ holder_is_dead() {   # <lane>
       HOLDER_DEAD_WHY="its binding's window is gone from this host's tmux, Amendment 18(b), and no live session on this workstation"
     fi
   fi
-  hid_ids="$( { session_ids_of_lane "$hid_l" 2>/dev/null || :
-                session_ids_local_of_lane "$hid_l" 2>/dev/null || :; } | awk 'NF && !seen[$0]++')"
+  # 8 IS AN ANSWER AND 1 IS NOT (#67, the paragraph above `HOLDER_DEAD_VERB`):
+  # a lane the register gives no transcript uuid goes on to `live_holder` with
+  # an empty set exactly as before; a register that could not be read stops here.
+  hid_ids=""; hid_irc=0
+  hid_ids="$(session_ids_checked "$hid_l")" || hid_irc=$?
+  case "$hid_irc" in
+    0|8) : ;;
+    *) HOLDER_REGISTER_UNREADABLE=1; HOLDER_TERMINAL_UNKNOWN="$hid_verb"; return 1 ;;
+  esac
   # THREE ANSWERS, NEVER TWO CONFLATED (Copilot round 1, opensoft/openRepoTools#61):
   # `live_holder` is 0 live, 8 read-and-confirmed-nothing, or any other code a
   # records tree this workstation could not read at all — and THAT is not
@@ -4749,9 +4788,10 @@ row_cell() { printf '%s\n' "$1" | awk -F'|' -v i="$2" '{print $i}'; }
 #
 # AND IT RETURNS 1 WHERE THE PUBLISHED REGISTER COULD NOT BE READ (#138 item
 # 18): the pipeline's status is the awk's, so a failed read was "no such row".
-# Both statuses are kept; every caller that does not check them is unchanged.
+# It reads `register_text_checked` (#67), whose status `register_text` drops,
+# and keeps both statuses; every caller that does not check them is unchanged.
 rows_named_ci() {   # <typed name>
-  register_text | awk -v want="$1" '
+  register_text_checked | awk -v want="$1" '
     substr($0,1,1) == "|" {
       p1 = index($0, "`"); if (p1 == 0) next
       rest = substr($0, p1 + 1); p2 = index(rest, "`"); if (p2 == 0) next
@@ -5146,6 +5186,31 @@ session_ids_local_of_lane() {
   sl_row="$(row_of_lane_local "$1")"
   [ -n "$sl_row" ] || return 1
   row_cell "$sl_row" 3 | uuids_in_cell
+}
+# THE SAME UNION, AND IT SAYS WHETHER IT COULD READ IT (opensoft/openRepoTools#67).
+# The pair above answer 1 for "this lane has no row" AND for "the register could
+# not be read" — `row_of_lane` is `register_text | awk`, and `awk` answers 0
+# over an empty render — so a caller that unions them with `|| :` holds an
+# EMPTY id set either way. For most of them that is harmless. For the two that
+# take an empty set as a VERDICT it is fail-open: `holder_is_dead` hands it to
+# `live_holder`, whose 8 then calls a lane dead that nobody could check, and
+# `duplicate_holder_pids` answers "no duplicate" without looking. Those two ask
+# this read instead, and the pair keep their contract for everyone else.
+#
+#   0  the published-union-local ids, one per line, published first, deduped
+#   8  BOTH copies were read and neither gives this lane a transcript uuid: no
+#      row, or a row whose session cell holds none — an answer either way, the
+#      same one `live_holder` already gives an empty cell
+#   1  the published register (or, with none published, the working tree's) or
+#      the working tree's own copy could not be read: NOT an empty set
+session_ids_checked() {   # <lane>
+  sc_pub=""; sc_loc=""
+  sc_pub="$(register_text_checked 2>/dev/null)" || return 1
+  sc_loc="$(row_of_lane_local "$1" 2>/dev/null)" || return 1
+  sc_ids="$(row_cell "$(printf '%s\n' "$sc_pub" | awk -v lane="$1" "$ROW_AWK")
+$sc_loc" 3 | uuids_in_cell | awk 'NF && !seen[$0]++')"
+  [ -n "$sc_ids" ] || return 8
+  printf '%s\n' "$sc_ids"
 }
 last_session_id_of_lane() { session_ids_of_lane "$1" 2>/dev/null | tail -n1; }
 # The handoff path is the row's SIXTH column — awk field 7, because $1 is the
@@ -6889,16 +6954,25 @@ EOF
 # not IFS whitespace, so `read` never merges it with itself; both consumers in
 # `lane-end` read this format with `IFS=$'\037'` for the same reason
 # `live-holder`'s own multi-field line already does.
-# 0 with rows, 8 with none, 1 where `pgrep` is missing or
+# 0 with rows, 8 with none, 1 where `pgrep` is missing, the register or
 # this workstation's session records could not be read — a read that failed is
 # never "nothing is a duplicate".
 duplicate_holder_pids() {   # <lane>
   dhp_l="${1-}"; [ -n "$dhp_l" ] || return 64
   command -v pgrep >/dev/null 2>&1 || return 1
   command -v ps    >/dev/null 2>&1 || return 1
-  dhp_ids="$( { session_ids_of_lane "$dhp_l" 2>/dev/null || :
-                session_ids_local_of_lane "$dhp_l" 2>/dev/null || :; } | awk 'NF && !seen[$0]++')"
-  [ -n "$dhp_ids" ] || return 8
+  # THE IDS ARE THE WHOLE SEARCH, SO A REGISTER THAT COULD NOT BE READ IS 1
+  # (opensoft/openRepoTools#67). Its empty render used to be the same empty set
+  # as a lane with no row, and this returned 8 — "no duplicate holder is live" —
+  # without asking the process table anything at all.
+  dhp_ids=""; dhp_irc=0
+  dhp_ids="$(session_ids_checked "$dhp_l")" || dhp_irc=$?
+  case "$dhp_irc" in
+    0) : ;;
+    8) return 8 ;;
+    *) SESSION_FILES_ERR="the register (origin/$LANES_BRANCH:$LANES_PATH, or $LANES_FILE) could not be read, so lane $dhp_l's session ids are not known and no process could be matched against them"
+       return 1 ;;
+  esac
   dhp_legit=""
   # NOT `$( … )` (Copilot round 2, PR #61): `live_holder` communicates a read
   # failure by setting `SESSION_FILES_ERR` in ITS CALLER's shell, exactly as
@@ -7480,13 +7554,14 @@ lanes_rows() {
   [ "$lr_unread_ok" = 1 ] ||
     note "no temporary file could be made for the read's warnings, so whether any published log failed to read is not known, and no row is classed DORMANT here."
   # AND A REGISTER THAT COULD NOT BE READ IS SAID, ONCE (the re-review of #230).
-  # Every row above came out of `register_text` with its status thrown away, and
-  # since it answers 1 with no text for a published register git cannot read,
-  # those rows simply vanished — and the sweep counted none of them. The class
-  # is withheld, which `lane-end` refuses on. A read that succeeds fills the
-  # cache every later read here takes, so the check costs one render.
+  # Every row above came out of `register_text`, which drops the status
+  # `register_text_checked` keeps (#67), and a published register git cannot
+  # read renders as no text, so those rows simply vanished — and the sweep
+  # counted none of them. The class is withheld, which `lane-end` refuses on. A
+  # read that succeeds fills the cache every later read here takes, so the
+  # check costs one render.
   lr_reg_ok=1
-  register_text >/dev/null 2>&1 || lr_reg_ok=0
+  register_text_checked >/dev/null 2>&1 || lr_reg_ok=0
   [ "$lr_reg_ok" = 1 ] ||
     note "the register ($LANES_PATH, published or this checkout's) could not be read, so its rows are not in this listing, and no row is classed DORMANT here."
   # THE REGISTER AND THE LIVE RECORDS, EACH READ ONCE FOR THE WHOLE LISTING
@@ -8156,7 +8231,7 @@ lane_position_rows() {   # 0 with the names · 1 where a source exists and could
   esac
   lpr_reg=""
   if [ "$lpr_have" = 1 ]; then
-    lpr_reg="$(register_text 2>/dev/null)" || return 1
+    lpr_reg="$(register_text_checked 2>/dev/null)" || return 1
     [ -n "$lpr_reg" ] || return 1
   fi
   lpr_arc=""
@@ -15187,6 +15262,15 @@ EOF
         if [ -n "$HOLDER_BOUND_ELSEWHERE" ]; then
           die "--force refused: lane $h_lane's own log ends $HOLDER_TERMINAL_SEEN, but its last binding is on $HOLDER_BOUND_ELSEWHERE (host/container), and liveness is pronounced only from inside a binding's own host and container — from here it is UNKNOWN, never dead (Amendment 18(b)). Run this takeover from that host and container, or have the lane's holds released there. Rule 1: the lane stops and reports; it does not author a successor." 2
         fi
+        # OPENSOFT/OPENREPOTOOLS#67 — AND A REGISTER THAT COULD NOT BE READ IS
+        # REFUSED HERE TOO, ahead of the verb test, in its own words: the verb
+        # refusal below would blame a live session nobody looked for, and the
+        # `HOLDER_TERMINAL_UNKNOWN` one would put the failure on this
+        # workstation's session records, when what could not be read was the
+        # register — the row naming the ids to look for.
+        if [ -n "$HOLDER_REGISTER_UNREADABLE" ]; then
+          die "--force refused: lane $h_lane's own log ends $HOLDER_TERMINAL_SEEN, but the register (origin/$LANES_BRANCH:$LANES_PATH, or $LANES_FILE) could not be read, so the session ids lane $h_lane holds are not known and whether a live session on this workstation still backs it up was never checked. That is NOT 'it has no session ids' — an unreadable register never confirms a lane dead (issue #67). Fix the read and re-run. Rule 1: the lane stops and reports; it does not author a successor." 2
+        fi
         if [ "$h_verb" != CLAIMED ]; then
           # NAMES ITS OWN VERB, NOT ONLY THE THREE THAT USED TO BE POSSIBLE
           # HERE (Copilot round 8, PR #61): before issue #30, `$h_verb` could
@@ -16307,8 +16391,8 @@ EOF
   # `sessionId` field (which is exactly why `forks` cannot see it once the id
   # is bound to the row: `lane-end <lane> --retire <pid>` is the caller, for a
   # duplicate `lane_forks` was designed to stay silent about).
-  # 0 with rows, 8 with none, 1 where `pgrep` is missing or the records could
-  # not be read.
+  # 0 with rows, 8 with none, 1 where `pgrep` is missing, or the register or
+  # the records could not be read.
   duplicate-holder)
     lane="${1-}"; [ -n "$lane" ] || die "usage: duplicate-holder <lane>" 64
     [ "$#" -le 1 ] || die "duplicate-holder takes one lane: duplicate-holder <lane>" 64
@@ -16320,7 +16404,7 @@ EOF
       0)  : ;;
       8)  exit 8 ;;
       64) die "usage: duplicate-holder <lane>" 64 ;;
-      *)  die "could not read this workstation's process table or session records for lane $lane: ${SESSION_FILES_ERR:-unknown error}. That is NOT 'no duplicate holder is live'." 1 ;;
+      *)  die "could not read the register, this workstation's process table or its session records for lane $lane: ${SESSION_FILES_ERR:-unknown error}. That is NOT 'no duplicate holder is live'." 1 ;;
     esac
     ;;
 
