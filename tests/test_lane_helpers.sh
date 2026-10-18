@@ -1759,6 +1759,97 @@ run env LANES_LANE=repoKg-2 LANES_HOST=elsewhere-host LANES_CONTAINER=this-bench
 is    "…while the same window-gone binding with nothing live here is taken over" "$rc" 0
 has   "…writing a TAKEOVER that says why" "$(cat "$LOGD/repoKg-2.md")" "its binding's window is gone from this host's tmux"
 
+# ---- opensoft/openRepoTools#67: A REGISTER NOBODY COULD READ IS NOT A LANE WITH NO IDS
+#
+# `session_ids_of_lane` and `session_ids_local_of_lane` answered the same EMPTY
+# set for "this lane has no row" and "the register could not be read", and the
+# two callers that read an empty set as a VERDICT were fail-open on it:
+# `holder_is_dead` handed it to `live_holder`, whose 8 then confirmed dead a
+# lane nobody had checked, and `duplicate_holder_pids` answered "no duplicate"
+# without asking the process table anything.
+#
+# ITS OWN WORKSPACE, because the empty set needs BOTH halves of the union to
+# come back empty: the published register unreadable — a `git` that fails the
+# one `show` of it, as the archive's case below does; `chmod 000` is no fixture
+# under root, and a dangling link fails the dispatcher's `[ -f ]` guard before
+# any of this runs — and THIS checkout's own copy without the row, because a
+# peer published it and this clone has not pulled (R19's ordinary case). In the
+# main sandbox every row is in the working tree too, so the local half answers
+# for the published one and the hole never opens there.
+R67_ORIGIN="$SANDBOX/r67-origin.git"; R67_WIP="$SANDBOX/r67wip"; R67_PEER="$SANDBOX/r67peer"
+R67_ID="aaaa0067-6767-4000-8000-aaaa00676767"
+git init -q --bare -b main "$R67_ORIGIN"
+git clone -q "$R67_ORIGIN" "$R67_PEER" 2>/dev/null
+git -C "$R67_PEER" config user.email "test@example.invalid"
+git -C "$R67_PEER" config user.name  "lane helper tests"
+mkdir -p "$R67_PEER/lanes/log"
+{ printf '# LANES.md — the issue #67 sandbox\n\n'
+  printf '| lane | session id | workstation / env / user | started (UTC) | objects owned | handoff path | state |\n'
+  printf '|---|---|---|---|---|---|---|\n'
+  printf '| `repo67-2` | harness `%s` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repo67/2.md | ACTIVE |\n' "$DEAD_ID"
+} > "$R67_PEER/lanes/LANES.md"
+git -C "$R67_PEER" add -A >/dev/null 2>&1
+git -C "$R67_PEER" commit -q -m "seed the #67 register" >/dev/null 2>&1
+git -C "$R67_PEER" push -q origin main 2>/dev/null
+git clone -q "$R67_ORIGIN" "$R67_WIP" 2>/dev/null
+git -C "$R67_WIP" config user.email "test@example.invalid"
+git -C "$R67_WIP" config user.name  "lane helper tests"
+# THE PEER PUBLISHES repo67-1 AFTER THAT CLONE: repoK-3's shape — its log ends
+# RETIRED with an OPENED PR left behind, and a live session on this workstation
+# still carries its id — so the one right answer to `--force` is a refusal.
+printf '| `repo67-1` | harness `%s` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repo67/1.md | ACTIVE |\n' "$R67_ID" >> "$R67_PEER/lanes/LANES.md"
+{ printf '# lane repo67-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repo67-1, session %s@Eagle, %s, lane:repo67-1 → home opensoft/repo67; estate repo67\n' "$R67_ID" "$OLD_UTC"
+  printf 'OPENED — lane repo67-1, session %s@Eagle, %s, opensoft/repo67#5 ← opensoft/repo67#4\n' "$R67_ID" "$OLD_UTC"
+  printf 'RETIRED — lane repo67-1, session %s@Eagle, %s, lane:repo67-1\n' "$R67_ID" "$NOW_UTC"
+} > "$R67_PEER/lanes/log/repo67-1.md"
+git -C "$R67_PEER" add -A >/dev/null 2>&1
+git -C "$R67_PEER" commit -q -m "the peer publishes repo67-1" >/dev/null 2>&1
+git -C "$R67_PEER" push -q origin main 2>/dev/null
+write_record "$sessions_dir/$LIVE_PID-repo671.json" "$R67_ID" "$LIVE_PID" "$live_start" "r67sess:@9.%9" "repo67-1" "idle"
+is    "the #67 fixture: this checkout's own register has no row for repo67-1" \
+      "$(command grep -c '^| `repo67-1`' "$R67_WIP/lanes/LANES.md" || :)" 0
+mkdir -p "$SANDBOX/r67-gitfail"
+cat > "$SANDBOX/r67-gitfail/git" <<'FAKE'
+#!/usr/bin/env bash
+case " $* " in
+  *" show origin/main:lanes/LANES.md "*) exit 128 ;;
+esac
+exec "${REAL_GIT:?}" "$@"
+FAKE
+chmod +x "$SANDBOX/r67-gitfail/git"
+r67()  { env LANES_WORKSPACE_ROOT="$R67_WIP" LANES_LANE=repo67-2 LANES_SESSION="$DEAD_ID" "$@"; }
+r67x() { r67 env PATH="$SANDBOX/r67-gitfail:$PATH" REAL_GIT="$(command -v git)" "$@"; }
+R67_PS="$(printf '%s\t%s\t%s' 900671 1 "claude --session-id $R67_ID --fork-session --resume /nonexistent/projects/$R67_ID.jsonl")"
+
+# `duplicate-holder` FIRST, because it writes nothing. With the register
+# readable and no `--fork-session` process at all, 8 is the honest none — the
+# process table's own answer, read.
+run r67 "$E" duplicate-holder repo67-1
+is    "duplicate-holder over a readable register with no fork-session process: 8, none" "$rc" 8
+# …and over the register nobody could read, with a stray in the table, it is NOT
+# that 8: the ids are the whole search, and none of them was read.
+run r67x env FAKE_PGREP_F_PIDS=900671 FAKE_PS_RECORDS="$R67_PS" "$E" duplicate-holder repo67-1
+is    "duplicate-holder over an UNREADABLE register is 1, never the 8 that means none is live" "$rc" 1
+has   "…naming the read that failed" "$err" "the register (origin/main:lanes/LANES.md"
+has   "…in the words that stop a reader believing there is none" "$err" "That is NOT 'no duplicate holder is live'"
+is    "…and listing nothing" "$out" ""
+
+r67_head="$(git -C "$R67_ORIGIN" rev-parse main)"
+run r67 "$E" claim "opensoft/repo67#5" --no-github --force
+is    "--force over a readable register refuses repo67-1: RETIRED, and a live session still backs it" "$rc" 2
+hasnt "…never as a dead lane's hold" "$err" "takeover of a dead lane's hold"
+run r67x "$E" claim "opensoft/repo67#5" --no-github --force
+is    "--force over an UNREADABLE register refuses too: it never confirms the lane dead" "$rc" 2
+has   "…naming the read that failed" "$err" "the register (origin/main:lanes/LANES.md"
+has   "…and saying what that is not" "$err" "That is NOT 'it has no session ids'"
+hasnt "…never as a dead lane's hold" "$err" "takeover of a dead lane's hold"
+hasnt "…never blaming a live session nobody looked for" "$err" "is not a stale claim"
+is    "…and nothing is written: no TAKEOVER line" \
+      "$(cat "$R67_WIP/lanes/log/repo67-2.md" 2>/dev/null | command grep -c 'opensoft/repo67#5' || :)" 0
+is    "…and no push" "$(git -C "$R67_ORIGIN" rev-parse main)" "$r67_head"
+rm -f "$sessions_dir/$LIVE_PID-repo671.json"
+
 # ------------------------------------------- LANDING, LANDED, who --landing
 
 before_lanes="$(grep -c . "$LANES")"
