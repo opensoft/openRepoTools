@@ -13525,7 +13525,7 @@ EOF
     lrc_wlo="$(git -C "$lrc_dir" worktree list --porcelain 2>/dev/null </dev/null)" || lrc_wlrc=$?
     if [ "$lrc_wlrc" != 0 ] && lane_no_repository "$lrc_dir"; then lrc_wlrc=0; lrc_wlo=""; fi
     if [ "$lrc_wlrc" != 0 ]; then
-      lrc_unread="${lrc_unread:+$lrc_unread; }the worktrees git registers in $lrc_dir could not be listed (git worktree list exited $lrc_wlrc)"
+      lrc_unread="${lrc_unread:+$lrc_unread; }the worktree registrations of $lrc_dir could not be read (git worktree list exited $lrc_wlrc)"
     fi
     while IFS= read -r lrc_wl; do
       case "$lrc_wl" in worktree\ *) : ;; *) continue ;; esac

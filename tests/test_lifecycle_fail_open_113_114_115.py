@@ -210,7 +210,7 @@ def test_113_4_registrations_nobody_could_list_are_never_a_clearance(box):
     out = reconcile(box, FAKE_GIT_FAIL="worktree list --porcelain")
     assert verdict(out) == "indeterminate", out
     why = rows(out, "VERDICT")[0][2]
-    assert f"the worktrees git registers in {box.lane_dir} could not be listed" in why, why
+    assert f"the worktree registrations of {box.lane_dir} could not be read" in why, why
     assert "git worktree list exited 128" in why
     # A recorded directory that is NO repository registers nothing, and that
     # alone is an absence: the lane is resumable over it, as `lane-worktrees`
