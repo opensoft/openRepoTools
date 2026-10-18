@@ -52,11 +52,12 @@ def pin_scalars() -> dict:
     """Every `key: value` in the pin file, at any indent, comments stripped.
 
     A ~15-line reader rather than a YAML dependency: this repository ships
-    three bash files and installs nothing, and the file it reads is a flat map
-    with one nested key written by hand. The nesting is flattened onto the leaf
-    name (`tree_sha256`), which is unambiguous here because no leaf name
-    repeats — asserted below, so a second `tree_sha256` under some other block
-    would fail rather than shadow this one.
+    bash and standard-library `python3` commands and installs no package, and
+    the file it reads is a flat map with one nested key written by hand. The
+    nesting is flattened onto the leaf name (`tree_sha256`), which is
+    unambiguous here because no leaf name repeats — asserted below, so a
+    second `tree_sha256` under some other block would fail rather than shadow
+    this one.
     """
     values: dict = {}
     for raw in PIN.read_text(encoding="utf-8").splitlines():

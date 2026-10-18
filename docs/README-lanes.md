@@ -275,6 +275,11 @@ repository, grouped.
 | **LIVE HERE** | **attaches, and never starts a second process** (clause (h)). Inside tmux: `tmux move-window -a -s <session>:<@id>` then `tmux select-window -t <session>:<@id>` — the `@id` on both, so tmux resolves the window inside the session the record named or not at all — and where the window is already in this session, only the select. With `--switch`: the same select first, and `tmux switch-client` only after it worked. Outside tmux: `tmux attach -t <session>:<@id>` — the window named in the attach itself, which tmux resolves in that session or refuses — with that window selected first |
 | **bound elsewhere** | clause (c)'s question, the **handoff request**. That request is `brettheap/new-workstation#38`'s act 4 and does not exist yet, so until it does `lane` **refuses and names where the lane is bound**. It never offers a launch: a second session on a lane another workstation holds is the collision |
 
+A row whose `STATE` is read from its own state cell — `PAUSED (row)`, because
+its log has no lane-kind line — is in **none** of the three: `lane` does not
+number it, and `lane <name>` refuses it, because there is no log to resume it
+from (`openRepoTools#89`; Amendment 19 below).
+
 **The window is matched by its id AND its session name.** tmux reissues `@` ids
 from `@0` when its server is replaced — measured here on 2026-09-13, where 0 of
 5 recorded windows resolved — so an id alone would attach to whatever pane has
@@ -619,7 +624,7 @@ under, and it is the COUNT and never `pgrep`'s exit status that decides.
 `tests/run.sh` is the canonical implementation of this guard — the lines above
 are it in one place, for a person with no checkout in front of them.
 
-The suite copies the four commands and the shipped alias table into a sandbox
+The suite copies the lane commands and the shipped alias table into a sandbox
 BIN DIRECTORY, seeds a workspace repository with nothing but data in it, and
 writes that sandbox's own `workspace.yaml` to join the two — which is the
 world after Amendment 9, exactly. It unsets every `LANES_*` seam first, so
@@ -780,22 +785,30 @@ exists to prevent — and `who --lane` and `lane-end` disagreed about the same
 object. No clock and no cross-file order is needed to ask this: both halves are
 "what is this lane's last line", read off two append-only files.
 
-*Known, deliberate.* Two lanes that each end on a `TAKEOVER` of one object are
-**both** reported as holders. That is a visible conflict rather than a silent
+**A chain of takeovers resolves to its last link** (opensoft/openRepoTools#74).
+The dead-lane exception below lets a `TAKEOVER` displace an earlier `TAKEOVER`
+— `A` claims; `B` takes over from `A`; `C` takes over from `B` once `B` is
+dead — and every link that displaces a `TAKEOVER` names the lane it displaced
+as `TAKEOVER ← lane:<x>` (a stale claim's comment URL is only ever the payload
+for a `CLAIMED` taken over). So a lane whose own last line is a `TAKEOVER` is
+displaced only by another lane's standing `TAKEOVER` that **names it**: `B` by
+`C`, and `C` by nothing, so `C` alone holds the object. Any other open verb is
+displaced by any standing `TAKEOVER`, as above, and the taker named is one no
+other standing `TAKEOVER` names: `A`'s line reads `superseded by TAKEOVER
+(lane:C)`. Read one hop at a time — "does some other lane's last line here
+read `TAKEOVER`" — `B`'s own stale `TAKEOVER` was proof that `C` was displaced
+too: `who` reported **zero** holders, `who --lane C` told `C` to release an
+object it held, and `claim` granted the next lane a plain `CLAIMED` over it.
+
+*Known, deliberate.* Two lanes that each end on a `TAKEOVER` of one object,
+**neither naming the other** (two takers of one stale claim), are **both**
+reported as holders; so are two whose `TAKEOVER`s name *each other*, which no
+file order can put in order. That is a visible conflict rather than a silent
 one, and it is not reachable through the helpers in the ordinary case — a live
 lane's `claim --force` takes over a stale `CLAIMED` and nothing else (or, per
 the dead-lane exception below, a **dead** lane's hold of any verb, an earlier
 `TAKEOVER` included), and refuses outright when more than one lane holds the
 object.
-
-*Known, NOT deliberate — opensoft/openRepoTools#74.* A CHAIN of two takeovers
-on one object (`A` claims; `B` takes over from `A`; `C` later takes over from
-`B` — the dead-lane exception's own `TAKEOVER`-of-a-`TAKEOVER` shape) makes
-`who` report **zero** holders, neither `B` nor `C`: `superseded_by`'s "does
-some other lane's last line here read `TAKEOVER`" test does not distinguish
-the CURRENT taker from an earlier, already-superseded one, so `B`'s own
-stale `TAKEOVER` is misread as proof that `C` is superseded too. Every log
-line involved is correct and in order; only this derived view is wrong.
 
 **State is read in FILE ORDER, never by comparing timestamps.** A lane's log is
 append-only and single-writer, so its line order *is* that lane's write order,
@@ -970,7 +983,10 @@ from inside the lane's last binding** (Amendment 18(b)): the `host` and
 this place's — a line from before Amendment 18(a) is matched on its own
 workstation — or the binding's window must be gone from a tmux server this
 host shares with it. A lane last bound anywhere else is UNKNOWN, never dead,
-and `--force` refuses it, naming that binding. Before this the only path
+and `--force` refuses it, naming that binding. The session ids that check asks
+about are the row's, published and this checkout's own, so a register that
+could not be read is refused as well: it never confirms a lane dead
+(opensoft/openRepoTools#67). Before this the only path
 was a `release` of the dead lane's held objects by hand, one at a time, run
 under its own name on the taker's word.
 
@@ -1194,7 +1210,7 @@ else.
 | 6 | `git add` / `commit` / `push` failed |
 | 7 | another act got there first and this one wrote nothing: `claim`'s `CLAIM-LOST` (another lane's claim landed first), and `set-lane-state` / `set-lane-tree`'s lifecycle fence (openRepoTools#91, below) |
 | 9 | `CLAIM-LOST` — issue #30's own dead-lane verdict could not be reconfirmed before a `--force` takeover's push landed: the source lane resumed, a live session now backs it up, or that could not be read at all (`claim` only). Never 7 — that code is a RIVAL's claim, and this is the same lane the takeover was granted over |
-| 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read (openRepoTools#91, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim` |
+| 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read (openRepoTools#91, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim`. `lane-trees`: the lane's `trees` directory is there and could not be listed (#157 item 4e) — never the 8 that means it recorded no tree |
 | 8 | no record — and no other meaning |
 | 64 | `swapped`'s own usage error — never the dispatcher's 2 |
 
@@ -1367,9 +1383,15 @@ still the lane**, which is the contract both readers of this output take, and
 it is what makes a fourth and a fifth field safe to add at all.
 
 `<lane>`, `<UTC>`, `<window>` — the window being the `window <s>:<i>` the
-`/swap` recorded, which is where that lane was. **Exit 0** with rows, **8** with
-none (and the reason on stderr, so stdout is only ever rows). A launcher takes
-the first row's lane as its default and hands it to `lane-start --confirm`.
+`/swap` recorded, which is where that lane was. **The lane is the register
+row's spelling** (Amendment 15), as `window-lane`'s answer is, and not the
+spelling of the lane's log file: a log written before that amendment is still
+`lanes/log/openxfactory-4.md` beside the row `openXfactory-4`, and `swapped`
+lists that lane as `openXfactory-4`, so a reader may hand the field straight to
+`tmux rename-window` or to a read of the register. **Exit 0** with
+rows, **8** with none (and the reason on stderr, so stdout is only ever rows). A
+launcher takes the first row's lane as its default and hands it to
+`lane-start --confirm`.
 
 **The rows are in LANDING ORDER — most recently landed first — and not in UTC
 order.** Amendment 7's file-order rule orders one lane's own lines and does not
@@ -1765,7 +1787,9 @@ Amendment 8 ruling (g)'s `kind: bg` record carrying the same id in the same
 profile as an interactive record of it, which is one session and not a rival
 holder, together with any wrapper whose child is that companion. A records
 tree that cannot be read for that test is a read that failed, never "no
-companion". `lane-end <lane> --retire <pid>` tries `forks`
+companion", and a register that cannot be read is never "no duplicate": the
+row's ids are the whole search, so it exits 1 and names the read
+(opensoft/openRepoTools#67). `lane-end <lane> --retire <pid>` tries `forks`
 first and this second, and on a match here it TERMs the pair — the
 `bg-pty-host` parent and its child — and reports the pids it signalled; it
 refuses, naming the reason, when the pid given is the lane's own live session
@@ -2986,6 +3010,18 @@ or the migration's `MIGRATED`. The row says the lane is somewhere — `PAUSED`,
 `LANDING #<n>`, `HANDED OFF` — and hiding it would hide a lane a person can
 still pick up.
 
+**Its `STATE` is that word with `(row)` after it** — `PAUSED (row)`, `LANDING
+#12 (row)` — and not `NO LOG` (`openRepoTools#89`): the cell is the lane's
+current state, and a listing that printed `NO LOG` over it was not reading the
+one column Amendment 13 made authoritative. The mark keeps it a **read**. A row
+whose log has no lane-kind line records no directory, no profile and no
+binding, so there is nothing to resume: column 10 offers no act, `lane-groups`
+files the row `rowonly`, `lane` never numbers it and refuses it by name, and
+the lane is picked up by hand in its own checkout — `pclaude --lane <lane>
+<profile>` — where `lane-start` records its first lane-kind line. A cell saying
+**`LIVE`** stays `NO LOG`: a cell cannot prove a session is running, only a
+live record can, and the row is flagged for still saying it.
+
 ### The listing
 
 ```console
@@ -3212,7 +3248,9 @@ lanes-edit.sh lane-tree-now <worktree path>
 # <branch> <head> <upstream> <dirty> <unpushed>   — what git says about one tree NOW
 ```
 
-Every lane's records on this workstation, one row per tree, are `lanes
+A `trees` directory that is there and cannot be listed is `lane-trees`' exit
+**10**, never the **8** of a lane that recorded no tree (opensoft/openRepoTools#157
+item 4e). Every lane's records on this workstation, one row per tree, are `lanes
 --worktrees`; the derived index keeps them as its `worktrees` table, which no
 act reads (*The derived index*, below).
 
@@ -3358,8 +3396,8 @@ lanes-edit.sh managed-projection <lane>
 | exit | meaning | what every legacy act does |
 |---|---|---|
 | 0 | a valid marker; the owner is printed | **refuses with 2**, names the owner, writes nothing |
-| 8 | no marker and no managed-owner vocabulary | runs exactly as it always has |
-| 1 | managed-owner vocabulary that does not parse (a `generation=0`, an empty daemon, a `bound-lane` that is not this lane, an empty shorthand token, a `managed:` anywhere in the row), a row that is not seven columns, or a register that could not be read | **refuses with 1**: ownership is UNKNOWN, and an ownership nobody could establish is never read as legacy (Amendment 7(d)) |
+| 8 | no marker and no managed-owner vocabulary, in the published row or this checkout's — whatever the row's shape: a row with none cannot be a marker, and a writer refuses a row it cannot split on its own (2) | runs exactly as it always has |
+| 1 | managed-owner vocabulary that does not parse (a `generation=0`, an empty daemon, a `bound-lane` that is not this lane, an empty shorthand token, a `managed:` anywhere in the row), a row carrying the vocabulary that is not seven columns, vocabulary that only this checkout's register file carries, whether it is ahead of origin (a change committed here and not pushed, or not committed) or behind it (origin dropped the vocabulary after this checkout last moved; the remedy is a fast-forward), or a register that could not be read. The refusal names the file it read, which under a runtime-clone `LANES_REPO` is workspace.yaml's tree, not the clone | **refuses with 1**: ownership is UNKNOWN, and an ownership nobody could establish is never read as legacy (Amendment 7(d)) |
 | 64 | usage | — |
 
 The acts that ask, each before its first write: `lane-start` (at the head of its
@@ -3375,8 +3413,11 @@ row refuses the whole move), `append-session-id`, `add-row` for a lane that
 already has a row, `set-row-state`, `replace-in-row` and `rename-lane`. Each
 reads this checkout's row as well as the published one, because this
 checkout's row is the one a legacy writer rewrites: vocabulary in one copy and
-not the other is UNKNOWN (1). A claim or a release is about the object, not the
-lane, and is not refused. `lane-reconcile` reads nothing of a managed lane and prints
+not the other is UNKNOWN (1). `managed-projection` reads both copies the same
+way (opensoft/openRepoTools#157 item 4a), so the gates of `lane-start`,
+`lane-handoff` and `lane-end`, which ask it, refuse what the writers refuse —
+before a launch moves a transcript rather than after. A claim or a release is
+about the object, not the lane, and is not refused. `lane-reconcile` reads nothing of a managed lane and prints
 `VERDICT managed-owned` (and `indeterminate` where ownership is unknown). And no
 legacy writer — `set-row-state`, `add-row`, `replace-in-row`, `append-line`,
 `append-session-id`, `rename-lane`'s new name, the sweep — may write the
@@ -3535,7 +3576,7 @@ One versioned schema (`schema_version`); every row carries its `provenance`
 | `lane_aliases` | alias-table line | `old_name`, `new_name`, UTC |
 | `transcript_pointers` | pointer | a row's session-cell ids and each `transcript` a `PAUSED` names, with its `agent` — pointers only |
 | `source_files` | file of the source | kind, blob, line counts — what the read flags need to answer as `origin` would |
-| `holds` (a VIEW) | open hold | `holders_of`'s answer, which is `who`'s: per lane (case-insensitively), its last line on each object **in file order**, never by UTC, where its verb is open — and not while another lane's own last line there is a `TAKEOVER`. The object is keyed AS WRITTEN: a line naming a repository by a spelling `lanes/repos.tsv` has since renamed (R20) is its own key here, where `who` folds its argument into the canonical one. Computed, never stored |
+| `holds` (a VIEW) | open hold | `holders_of`'s answer, which is `who`'s: per lane (case-insensitively), its last line on each object **in file order**, never by UTC, where its verb is open — and not while another lane's own last line there is a `TAKEOVER`. **Not yet where one `TAKEOVER` displaced another**: `holders_of` displaces a `TAKEOVER` only by one that names its lane (`← lane:<x>`, opensoft/openRepoTools#74), and this view still reads any other lane's `TAKEOVER` as displacing it, so for a chain of takeovers it holds no row where `who` names the last link, and for two takers neither naming the other no row where `who` names both. The object is keyed AS WRITTEN: a line naming a repository by a spelling `lanes/repos.tsv` has since renamed (R20) is its own key here, where `who` folds its argument into the canonical one. Computed, never stored |
 | `provenance` | source | the indexed commit (or generation), UTC, schema version |
 
 **Created empty and written by nothing here**: `swap_states` and
@@ -4097,7 +4138,7 @@ machine whose repository already exists it clones it, adds nothing to a seeded
 repository, writes the pointer file and runs `link-estates`:
 
 ```sh
-openRepoTools --install     # the thirteen commands, the three skills, the three command files and the hook entry
+openRepoTools --install     # the commands, the three skills, the three command files and the hook entry
 openRepoTools wip init      # create or adopt the workspace, and link it
 ```
 

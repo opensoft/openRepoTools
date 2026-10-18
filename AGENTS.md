@@ -42,8 +42,8 @@ unreadable workspace with **2**: only 2 blocks a prompt; 1 would let it through.
 Profile-only guard calls carrying exact `CLAUDE_NO_LANE=1` return 0 before input
 or identity probes, even with unreadable configuration; other values enforce.
 Brett Heap directed this exception in `openspec/changes/skip-no-lane-guard/`;
-Shared hooks stay installed. Exit 1 means *registry not found* in lane tooling,
-and *findings were printed* in estate status; identify the command before interpreting it.
+Shared hooks stay installed while `~/projects/xFactory/lanes-edit.sh` answers `guard`; until then they are deferred and our guard entry taken out (#237):
+29 artifacts always, plus those two. Exit 1 means *registry not found* in lane tooling, and *findings were printed* in estate status; identify the command before interpreting it.
 
 ## Driving `park <Name>`, `resume <Name>` and `status <Name>`
 
@@ -77,8 +77,10 @@ sequence, and relay their per-repository lines rather than summarising them.
    clone with `--ff-only` and REFUSES BY NAME one that is dirty or on a feature
    branch, skipping it and leaving it exactly as it is — and not running the
    verb in it either. It also refuses a root whose LEG sits on a feature
-   branch, because that root's own `make bootstrap` would walk the leg back
-   onto its tracking branch; the superproject looks clean in that state, which
+   branch, or anywhere but the branch that root's own `make bootstrap` places
+   it on — its row's own `branch:` in `project.yaml`, else the root's
+   `tracking_branch` — because bootstrap would walk the leg onto that branch;
+   the superproject looks clean in that state, which
    is why the refusal names the leg. Never `git reset`, `git stash` or
    `git checkout -f` — and never `git checkout main` in a leg — to make the
    next run succeed: that is the work the refusal exists to protect.
@@ -229,17 +231,14 @@ proposals — measured: `tests-macos` running 49-54 minutes per push against
 Linux's 17-22, pull requests drawing 6-12 Copilot review rounds, and this
 suite queuing up to 1h20 behind the workstation lock described below):
 
-1. **`TESTS-MACOS` LEAVES THE PER-PUSH GATE.** On `pull_request`
-   (`.github/workflows/tests.yml`) this workflow runs `tests`,
-   `tests-no-submodule` and `tests-windows` only; `tests-macos` itself runs
-   there only once the coordinator has put the `ready` label on the PR — the
-   landing gate, applied once, right before the squash — and otherwise on
-   push to main, nightly at 04:17Z, and on `workflow_dispatch`. A red nightly
-   or main `tests-macos` is a follow-up issue, never a revert. `parse-macos`
-   is the one piece of the old per-push job that never left: it runs the
-   bash-3.2 parse below on every `pull_request` push and every push to main
-   — the same two triggers as the three jobs above it, never gated on the
-   label — because that parse is worthless on Linux's bash 5.
+1. **`TESTS-MACOS` LEFT THE PER-PUSH GATE, AND THEN LEFT CI.** This ruling
+   moved `tests-macos` behind the `ready` label and split `parse-macos` off
+   it. Both are superseded by Brett Heap's decision of 2026-10-15, for the
+   whole estate, to run the suite on Linux only: `tests-windows`, `parse-macos`
+   and `tests-macos` are gone, and `.github/workflows/tests.yml` runs
+   `guard-launch-mode`, `tests` and `tests-no-submodule`, all on ubuntu — on
+   `pull_request`, push to main, nightly at 04:17Z and `workflow_dispatch`.
+   Nothing in CI parses a file under macOS's bash 3.2 now.
 2. **COPILOT REVIEW IS CAPPED AT TWO ROUNDS PER PULL REQUEST.** Rounds one
    and two are taken; a finding after that is filed as an issue and the PR
    lands regardless.
@@ -290,9 +289,10 @@ a person with no checkout in front of them.
 
 `tests/test_lane_helpers.sh` is 122 KB of bash that arrived with the move;
 `tests/test_lane_helpers_suite.py` is what makes `pytest` run it, so it is one
-slow test rather than no test at all. Everything shipped here is parsed under
-macOS **bash 3.2** in CI, where `${x,,}`, `mapfile`, `declare -A` and
-`local -n` are syntax errors — write `tr '[:upper:]' '[:lower:]'` and a loop.
+slow test rather than no test at all. Everything shipped here is written for
+macOS **bash 3.2**, where `${x,,}`, `mapfile`, `declare -A` and `local -n` are
+syntax errors — write `tr '[:upper:]' '[:lower:]'` and a loop. No CI job checks
+this since 2026-10-15, so nothing but your own care holds it.
 
 **`awk -v name=value` CARRIES ONE LINE.** The value is processed as a string
 literal and one cannot span lines: macOS's `awk` is the one-true-awk, which
@@ -314,3 +314,10 @@ repository and reaches no network — every remote is a bare repository in a
 temporary directory, every `$HOME` is a temporary directory, and the one test
 that exercises a fetch answers it with a fake `gh` and a `curl` that refuses.
 Never test by creating a real GitHub repository.
+
+**FOUR ROOTS, NOT ONE TREE** (#186, T009): the suite reads each file from the
+tree that owns it — the code leg, the assembly root (`README.md`, `AGENTS.md`,
+`CLAUDE.md`) and the spec leg (`docs/`), with `upstream/openRepoShape` nested in
+the code leg — found from the layout or named by `OPENREPOTOOLS_CODE_ROOT`,
+`OPENREPOTOOLS_ASSEMBLY_ROOT` and `OPENREPOTOOLS_SPEC_ROOT`. Standalone, a root a
+checkout lacks is SKIPPED by name; `OPENREPOTOOLS_COMPOSED=1` REFUSES instead.

@@ -186,8 +186,8 @@ PR-only ruleset until an administrator excludes it, and until it is, every
 register write will be refused by that gate. Better to meet it here than at
 your first `lane-start` — a refused push is exit 2 naming the ruleset, with
 the clone and the commit left where they are, so the re-run after an
-administrator acts has only to push. Last it writes `~/.agents/workspace.yaml`
-and runs `link-estates`.
+administrator acts has only to push. Last it writes `~/.agents/workspace.yaml`,
+runs `link-estates`, and merges `--install`'s hook pair once that link answers `guard` (#237).
 
 **The seed commit is the template and nothing else**: it stages the paths it
 wrote, each by name, and never `git add -A`. A checkout it ADOPTS that carries
@@ -197,11 +197,11 @@ other end of that push is where your unfinished work lives. So is one ahead of
 that repository's `main` by any commit but an earlier run's unpushed seed: it
 names those commits, and pushing or discarding them is yours.
 
-**Idempotent**: a workstation that already has a workspace does nothing at all,
-decided by a file test and not a network call. Exit 0 is done or already done;
-exit 2 is a refusal. `--dry-run` rehearses and writes nothing. It scaffolds no
-product repository — that is `openRepoShape`'s, the standard's front door, and
-nothing here touches it.
+**Idempotent**: a workstation that already has a workspace (a file test, not a network call) has nothing
+done to it but the hook pair completed, re-running `link-estates` first where the link does not answer and
+`~/projects/xFactory` exists. Exit 0 is done or already done; exit 2 is a refusal — but a hook reconcile it
+cannot make is printed, and the exit stays 0. `--dry-run` rehearses, says it would merge the pair, and writes
+nothing. It scaffolds no product repository — that is `openRepoShape`'s, the standard's front door, and nothing here touches it.
 
 ## Install
 
@@ -276,14 +276,14 @@ which is lane-collision-protocol Amendment 12's NAME GUARD: at every prompt it
 checks that the tmux window, the session's own name and the register row are
 one lane, and warns with an explicit repair/allow choice when a readable
 lane/session name mismatch occurs; unsafe or ambiguous identity states still
-refuse the prompt. Those merges need
+refuse the prompt. **Both wait for the path they call** (#237): they are merged only once `~/projects/xFactory/lanes-edit.sh`, which `link-estates` links, exists, is executable and answers `guard` (the launcher's probe, plus an execute bit), so a fresh install never leaves a prompt hook calling a command that is not there. Until then each run says it DEFERRED them, why, and the remedy (`openRepoTools wip init`, or `link-estates` and `--install` again), and takes our guard entry alone back out of a file that carries it; our `SessionStart` entry (it ends in `|| true`) and every hook of yours stay. A rival still refuses while they wait. Those merges need
 `jq`, never write the file whole, write it back at mode 600, and are
 idempotent by exact match on each entry's command string. That path must be a
 REGULAR FILE: a symlink there — into a dotfiles checkout, say — is a refusal in
 the same planning phase, because `chmod` follows a link and the merge replaces
-what is at that path. The skills and the command files are 644 and that file 600
-on every run — including the run that finds both entries already there and
-changes no byte of them. An entry that runs
+what is at that path. The skills and the command files are 644 on every run; that file is 600 on every
+run that writes it or finds an entry of ours in it, even one that changes no byte of it, and a deferred
+run with nothing of ours to add or take out leaves it, and its mode, as they were. An entry that runs
 `session-start`, or one that runs `guard` as a whole argument, with a DIFFERENT
 string — a second writer of one of these hooks — a
 file it cannot parse, or a `hooks` that is not an object → it **refuses, prints
@@ -299,7 +299,7 @@ own `UserPromptSubmit` hooks are left exactly where they are, which is why that
 arm keys on the VERB and not on the word anywhere in a path. It
 never writes a profile's own `settings.json`: the launcher owns that one.
 
-Thirty-one artifacts, and the count is the invariant. It was sixteen until A11
+Twenty-nine artifacts always, plus the two hook entries once the path they call answers `guard` (#237), and the count is the invariant. It was sixteen until A11
 Addendum 4 ruling 9 gave `--install` a command-file list and `commands/swap.md`
 in it, at the same pair of paths a skill takes — because `opensoft/workBenches#74`
 deletes the launcher's copy and `/swap` would otherwise be installed by nobody;
@@ -407,8 +407,8 @@ https credential prompt fails and is reported; an ssh host-key or passphrase
 prompt is ssh's own and still blocks, so run `--fetch` where ssh is already
 non-interactive.
 
-Windows: all four files are bash, and there is no PowerShell twin. On Windows
-the way in is WSL2, exactly as it is for openRepoShape's `setup.sh`.
+Windows: no command here has a PowerShell twin. On Windows the way in is WSL2,
+exactly as it is for openRepoShape's `setup.sh`.
 
 ## The dependency direction
 
@@ -475,11 +475,10 @@ a bare repository in a temporary directory, every `$HOME` is a temporary
 directory, and the fetch path is answered by a fake `gh` with a `curl` that
 refuses.
 
-CI runs the suite on ubuntu, windows and macOS, plus one ubuntu job that checks
-out WITHOUT submodules to prove the skip path exits 0. The macOS job parses
-each of the four bash files with `/bin/bash -n` — bash 3.2, the last GPLv2
-release and what Apple still ships — because that is the claim the suite itself
-cannot make.
+CI runs the suite on ubuntu only (Brett Heap's decision of 2026-10-15), with one
+ubuntu job that checks out WITHOUT submodules to prove the skip path exits 0.
+No job parses the shipped bash files under macOS's bash 3.2 — the last GPLv2
+release and what Apple still ships — so that claim is no longer tested in CI.
 
 ## Licence
 

@@ -132,6 +132,31 @@ legs:
     path: "."
 """
 
+#: A FAMILY WHOSE DISPLAY `name:` IS NOT ITS REPOSITORY'S NAME (#236).
+#: `family.py init --family Quill --name QuillWorks` writes exactly this:
+#: `name: "QuillWorks"` beside `repository: testorg/Quill`. `FAMILY_YAML`
+#: above always writes `repository: {org}/{name}`, so no test built on it can
+#: tell the two names apart. The holder is NAMED AFTER THE REPOSITORY under
+#: openRepoShape v1.1.0 (opensoft/openRepoShape#629) and `make siblings` stops
+#: before cloning when it is not (opensoft/openRepoShape#543).
+FAMILY_TWO_NAMES_YAML = """\
+schema_version: 1
+kind: family-manifest
+id: {id}
+name: "{name}"
+org: {org}
+repository: {repository}
+tracking_branch: main
+members_dir: members
+members:{members}
+"""
+
+#: The two names of that one family: the folder v1.1.0 prescribes, which is
+#: its repository's last part, and the display name the commands used to
+#: require instead.
+QUILL = "Quill"
+QUILL_DISPLAY = "QuillWorks"
+
 
 # --- the environment every run gets ----------------------------------------
 
@@ -197,6 +222,32 @@ def probe_family(projects: Path, name: str) -> Path:
     (holder / "family.yaml").write_text(
         FAMILY_YAML.format(id=name.lower(), name=name, org=ORG,
                            members=" []"), encoding="utf-8")
+    (holder / "Makefile").write_text(PROBE_MAKEFILE, encoding="utf-8")
+    return holder
+
+
+def probe_family_two_names(projects: Path, folder: str, *, name: str,
+                           repository: str | None,
+                           member_repository: str | None = None) -> Path:
+    """A family folder like `probe_family`'s, but `family.yaml` carries a
+    display `name:` and a `repository:` of their own (#236), so the folder can
+    equal one, the other, neither. `repository=None` leaves the key out, and
+    `member_repository` adds one member whose own, INDENTED `repository:` is
+    that: a key that is never the holder's."""
+    holder = projects / folder / folder
+    holder.mkdir(parents=True)
+    rows = " []"
+    if member_repository is not None:
+        rows = (f"\n  - project: Alpha\n    id: alpha\n"
+                f"    repository: {member_repository}\n"
+                f"    path: members/Alpha\n")
+    text = FAMILY_TWO_NAMES_YAML.format(
+        id=folder.lower(), name=name, org=ORG, repository=repository,
+        members=rows)
+    if repository is None:
+        text = "".join(line for line in text.splitlines(keepends=True)
+                       if not line.startswith("repository:"))
+    (holder / "family.yaml").write_text(text, encoding="utf-8")
     (holder / "Makefile").write_text(PROBE_MAKEFILE, encoding="utf-8")
     return holder
 
@@ -402,7 +453,9 @@ projects:
 LEG_MEMBER = "Charlie"
 
 
-def seed_leg_member(base: Path) -> tuple[Path, Path]:
+def seed_leg_member(base: Path, member: str = LEG_MEMBER,
+                    leg_branch: str | None = None, code_leg: bool = False,
+                    spec_path: str = "spec") -> tuple[Path, Path]:
     """A bare project WITH A LEG, carrying the REAL `scripts/bootstrap.py`.
 
     THE GUARD MUST GUARD THE REAL THING (F3 of the review on #83). The other
@@ -411,26 +464,49 @@ def seed_leg_member(base: Path) -> tuple[Path, Path]:
     This one ships `templates/assembly-root/scripts/bootstrap.py` itself — the
     file whose `checkout_tracking_branch` runs `git checkout <tracking>` in a
     leg whose branch tip equals the pin — so the test is about that code.
+
+    `leg_branch` makes the spec leg's row declare `branch: <leg_branch>`, the
+    leg's OWN branch (#235), which `bootstrap.py` places the leg on instead of
+    the root's `tracking_branch`. The leg's remote then has that branch too,
+    at the pin, so a leg can sit on it and `bootstrap.py` can check it out.
+    `code_leg` adds a second leg, `code`, whose row declares no branch of its
+    own, so one root holds a leg that does and one that does not. `spec_path`
+    is the TEXT of the spec row's `path:`, for a manifest that spells it
+    `"./spec"` or `spec/` over a `.gitmodules` that says `spec`.
     """
-    leg_seed = base / "seed" / f"{LEG_MEMBER}-spec"
+    leg_seed = base / "seed" / f"{member}-spec"
     leg_seed.mkdir(parents=True)
     (leg_seed / "spec.md").write_text("# the spec leg\n", encoding="utf-8")
     git("init", "-q", "-b", "main", ".", cwd=leg_seed)
     commit_all(leg_seed, "the leg")
-    leg_bare = base / "remotes" / f"{LEG_MEMBER}-spec.git"
+    if leg_branch is not None:
+        git("branch", leg_branch, cwd=leg_seed)
+    leg_bare = base / "remotes" / f"{member}-spec.git"
     leg_bare.parent.mkdir(exist_ok=True)
     git("clone", "-q", "--bare", str(leg_seed), str(leg_bare), cwd=base)
+    code_bare = base / "remotes" / f"{member}-code.git"
+    code_row = ""
+    if code_leg:
+        code_seed = base / "seed" / f"{member}-code"
+        code_seed.mkdir(parents=True)
+        (code_seed / "code.md").write_text("# the code leg\n", encoding="utf-8")
+        git("init", "-q", "-b", "main", ".", cwd=code_seed)
+        commit_all(code_seed, "the code leg")
+        git("clone", "-q", "--bare", str(code_seed), str(code_bare), cwd=base)
+        code_row = (f"  - role: code\n    repository: {ORG}/{member}-code\n"
+                    "    path: code\n")
 
-    seed = base / "seed" / LEG_MEMBER
+    seed = base / "seed" / member
     (seed / "scripts").mkdir(parents=True)
+    own_branch = "" if leg_branch is None else f"    branch: {leg_branch}\n"
     (seed / "project.yaml").write_text(
         "schema_version: 1\nkind: project-manifest\n"
-        f"id: {LEG_MEMBER.lower()}\nname: \"{LEG_MEMBER}\"\n"
+        f"id: {member.lower()}\nname: \"{member}\"\n"
         "tracking_branch: main\nlegs:\n"
-        f"  - role: assembly\n    repository: {ORG}/{LEG_MEMBER}\n"
+        f"  - role: assembly\n    repository: {ORG}/{member}\n"
         '    path: "."\n'
-        f"  - role: spec\n    repository: {ORG}/{LEG_MEMBER}-spec\n"
-        "    path: spec\n", encoding="utf-8")
+        f"  - role: spec\n    repository: {ORG}/{member}-spec\n"
+        f"    path: {spec_path}\n{own_branch}{code_row}", encoding="utf-8")
     shutil.copy2(UPSTREAM / "templates" / "assembly-root" / "Makefile",
                  seed / "Makefile")
     shutil.copy2(UPSTREAM / "templates" / "assembly-root" / ".gitignore",
@@ -440,13 +516,16 @@ def seed_leg_member(base: Path) -> tuple[Path, Path]:
     shutil.copy2(UPSTREAM / "scripts" / "repo_shape.py",
                  seed / "scripts" / "repo_shape.py")
     for verb in ("park", "resume"):
-        write_stub(seed, verb, label=LEG_MEMBER)
+        write_stub(seed, verb, label=member)
     git("init", "-q", "-b", "main", ".", cwd=seed)
     commit_all(seed, "seed")
     git("-c", "protocol.file.allow=always", "submodule", "add", "-q",
         str(leg_bare), "spec", cwd=seed)
+    if code_leg:
+        git("-c", "protocol.file.allow=always", "submodule", "add", "-q",
+            str(code_bare), "code", cwd=seed)
     commit_all(seed, "the leg, pinned")
-    bare = base / "remotes" / f"{LEG_MEMBER}.git"
+    bare = base / "remotes" / f"{member}.git"
     git("clone", "-q", "--bare", str(seed), str(bare), cwd=base)
     return bare, leg_bare
 
@@ -529,6 +608,87 @@ def estate(remotes, home) -> dict:
             "siblings": siblings}
 
 
+@pytest.fixture(scope="session")
+def named_apart(tmp_path_factory, remotes) -> dict:
+    """The family of #236, whose display name is not its repository's name,
+    as bare repositories: the holder `Quill.git` and a workspace `wip.git`.
+
+    The holder is `remotes["holder"]` with ONLY `family.yaml` rewritten — `id:
+    quill`, `name: "QuillWorks"`, `repository: testorg/Quill` — so it still
+    carries the template bytes and the pinned members every other holder here
+    does. The bare is called `Quill.git` because that is what `resume` asks
+    for: `clone_url_for testorg/Quill`.
+
+    The workspace carries TWO records of it, one per folder a person might
+    have laid it out in. Each is `family_manifest`'s own, so `root:` is
+    `<folder>/<member>` and the record says nothing about the holder's
+    repository: `family:` is the id, and the org is the directory it is filed
+    under.
+    """
+    base = tmp_path_factory.mktemp("namedapart")
+    seed = base / "seed" / QUILL
+    seed.parent.mkdir(parents=True)
+    git("-c", "protocol.file.allow=always", "clone", "-q",
+        "--recurse-submodules", str(remotes["holder"]), str(seed), cwd=base)
+    family_yaml = seed / "family.yaml"
+    text = family_yaml.read_text(encoding="utf-8")
+    rewritten = (text
+                 .replace(f"id: {FAMILY.lower()}\n", f"id: {QUILL.lower()}\n")
+                 .replace(f'name: "{FAMILY}"\n', f'name: "{QUILL_DISPLAY}"\n')
+                 .replace(f"repository: {ORG}/{FAMILY}\n",
+                          f"repository: {ORG}/{QUILL}\n"))
+    # A rewrite that matched nothing would leave `TestFam` in a fixture that
+    # claims not to be it, and every test below would be about the wrong file.
+    assert FAMILY not in rewritten, rewritten
+    assert (f'name: "{QUILL_DISPLAY}"\n' in rewritten
+            and f"repository: {ORG}/{QUILL}\n" in rewritten), rewritten
+    family_yaml.write_text(rewritten, encoding="utf-8")
+    commit_all(seed, "the family's display name is not its repository's")
+    holder = base / "remotes" / f"{QUILL}.git"
+    holder.parent.mkdir(exist_ok=True)
+    git("clone", "-q", "--bare", str(seed), str(holder), cwd=base)
+    workspace = seed_workspace(
+        base, "wip",
+        {f"workspaces/{ORG}/{QUILL.lower()}.yaml": family_manifest(QUILL),
+         f"workspaces/{ORG}/{QUILL_DISPLAY.lower()}.yaml":
+             family_manifest(QUILL_DISPLAY)})
+    return {"dir": base / "remotes", "holder": holder, "workspace": workspace}
+
+
+def clone_quill_estate(named_apart: dict, remotes: dict, home: Path,
+                       folder: str) -> dict:
+    """`estate`'s own shape, for the family of #236 laid out in `folder`:
+    the holder at `<folder>/<folder>` and each member's working clone beside
+    it. `folder` is `QUILL` (v1.1.0's rule) or `QUILL_DISPLAY` (the rule
+    before it); the holder's own `family.yaml` is the same in both."""
+    projects = home / "projects"
+    where = projects / folder
+    where.mkdir(parents=True, exist_ok=True)
+    git("-c", "protocol.file.allow=always", "clone", "-q",
+        "--recurse-submodules", str(named_apart["holder"]),
+        str(where / folder), cwd=projects)
+    siblings = {}
+    for name in MEMBERS:
+        git("clone", "-q", str(remotes["members"][name]),
+            str(where / name), cwd=projects)
+        siblings[name] = where / name
+    return {"projects": projects, "folder": where, "holder": where / folder,
+            "siblings": siblings}
+
+
+def place_quill_workspace(named_apart: dict, home: Path,
+                          bare: Path | None = None) -> None:
+    """The configured workspace, already cloned: what `resume` reads a record
+    out of on a machine that has resumed before (`behind`'s own setup).
+    `bare` is another workspace than `named_apart`'s own."""
+    config = home / ".agents" / "workspace.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text(f"repository: {WORKSPACE_SLUG}\npath: ~/projects/wip\n",
+                      encoding="utf-8")
+    git("clone", "-q", str(bare or named_apart["workspace"]),
+        str(home / "projects" / "wip"), cwd=home)
+
+
 # ===========================================================================
 # estate resolution — the half both commands share
 # ===========================================================================
@@ -567,6 +727,88 @@ def test_a_family_folder_wins_over_a_standalone_root_of_the_same_name(home):
     assert result.returncode == 0, result.stderr + result.stdout
     assert f"PROBE park in {holder}" in result.stdout
     assert f"PROBE park in {projects / 'Dual'} " not in result.stdout
+
+
+# --- a family folder is named for its repository OR its display name (#236) --
+#
+# `is_family_folder` required `family.yaml`'s display `name:` to equal the
+# folder, and openRepoShape v1.1.0 names the folder after the holder's
+# REPOSITORY instead (opensoft/openRepoShape#629), stopping `make siblings`
+# before it clones when it is not (opensoft/openRepoShape#543). A family whose
+# two names differ had no layout both could use. Either name now finds it.
+
+@pytest.mark.parametrize("command", [PARK, RESUME], ids=["park", "resume"])
+@pytest.mark.parametrize("folder", [QUILL, QUILL_DISPLAY],
+                         ids=["repository", "name"])
+def test_a_family_folder_is_found_by_its_repository_name_or_its_display_name(
+        named_apart, remotes, home, command, folder):
+    """`Quill/Quill` is v1.1.0's layout and `QuillWorks/QuillWorks` the one the
+    commands required before it; one `family.yaml` (`name: "QuillWorks"`,
+    `repository: testorg/Quill`) is found in both, by the folder's own name."""
+    quill = clone_quill_estate(named_apart, remotes, home, folder)
+    place_quill_workspace(named_apart, home)
+    result = run(command, folder, "--dry-run", home=home,
+                 env=offline(named_apart))
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "no estate named" not in result.stderr
+    assert f"{quill['holder']}" in result.stdout
+    if command == PARK:
+        assert (f"park: {folder} - the family holder at {quill['holder']}"
+                in result.stdout)
+        for name in MEMBERS:
+            assert f"--- {name}: make park ---" in result.stdout
+    else:
+        assert f"present         {quill['folder']} (family)" in result.stdout
+
+
+@pytest.mark.parametrize("command", [PARK, RESUME], ids=["park", "resume"])
+@pytest.mark.parametrize("shape", [
+    ("Elsewhere", "Other", f"{ORG}/Other", None),
+    (ORG, "Other", f"{ORG}/Quill/Other", None),
+    ("Quill", "Other", None, None),
+    ("Quill", "Other", None, f"{ORG}/Quill"),
+], ids=["neither-name-nor-repository",
+        "an-earlier-part-of-the-repository", "no-repository-and-another-name",
+        "only-a-members-repository-ends-in-the-folder"])
+def test_a_family_folder_that_is_neither_name_still_refuses(
+        remotes, home, command, shape):
+    """What the second arm must NOT widen into. The folder has to equal the
+    LAST part of `repository:` — not any part, not the org, not whatever a
+    missing key reads as, and not a MEMBER's own `repository:` (indented, so
+    never the holder's) — or `name:`; anything else is a directory called
+    that, as it always was."""
+    folder, name, repository, member_repository = shape
+    projects = home / "projects"
+    probe_family_two_names(projects, folder, name=name, repository=repository,
+                           member_repository=member_repository)
+    config = home / ".agents" / "workspace.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text(f"repository: {WORKSPACE_SLUG}\npath: ~/projects/wip\n",
+                      encoding="utf-8")
+    result = run(command, folder, home=home, env=offline(remotes))
+    assert result.returncode == 2, result.stdout + result.stderr
+    if command == PARK:
+        assert f"no estate named '{folder}'" in result.stderr
+        assert f"PROBE park in {projects / folder / folder}" not in result.stdout
+    else:
+        assert f"no workspace manifest records '{folder}'" in result.stderr
+        assert f"present         {projects / folder}" not in result.stdout
+
+
+def test_a_family_folder_named_for_its_repository_wins_over_a_standalone_root(
+        home):
+    """The same rule as above, for a family whose `name:` differs: the holder
+    drives the members, so it is still the answer where a standalone
+    `project.yaml` sits in the same folder."""
+    projects = home / "projects"
+    holder = probe_family_two_names(projects, QUILL, name=QUILL_DISPLAY,
+                                    repository=f"{ORG}/{QUILL}")
+    probe_project(projects, QUILL, at=projects / QUILL)
+    result = run(PARK, QUILL, home=home)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"park: {QUILL} - the family holder at {holder}" in result.stdout
+    assert f"PROBE park in {holder}" in result.stdout
+    assert f"PROBE park in {projects / QUILL} " not in result.stdout
 
 
 def test_with_no_name_the_estate_around_the_cwd_is_used(home):
@@ -1145,6 +1387,158 @@ def test_park_says_when_it_left_nothing_behind(estate, home):
     assert "0 thing(s) above are not park's to carry" in result.stdout
 
 
+def clone_leg_member(dest: Path, base: Path, member: str,
+                     **seed) -> dict[str, Path]:
+    """`seed_leg_member`'s root, cloned into `dest` with its legs mounted.
+
+    Built per test under `base` rather than into the session's `remotes`, so a
+    leg has a `develop` to sit on only where a test asks for one (`seed` goes
+    to `seed_leg_member`). The legs arrive DETACHED at their pins, as every
+    fresh clone's do.
+    """
+    base.mkdir()
+    bare, _ = seed_leg_member(base, member, **seed)
+    root = dest / member
+    git("-c", "protocol.file.allow=always", "clone", "-q",
+        "--recurse-submodules", str(bare), str(root), cwd=dest)
+    return {"root": root, "spec": root / "spec", "code": root / "code"}
+
+
+def commits_on(leg: Path, branch: str, count: int) -> None:
+    """`count` commits on `leg`'s local `branch` that origin has not seen."""
+    git("checkout", "-q", "-B", branch, f"origin/{branch}", cwd=leg)
+    for number in range(count):
+        (leg / f"{branch}-{number}.md").write_text("never pushed\n",
+                                                   encoding="utf-8")
+        commit_all(leg, f"commit {number} on {branch}, not pushed")
+
+
+def family_folder_naming_delta(home: Path) -> Path:
+    """A family folder whose holder (a probe Makefile) names ONE member,
+    `Delta`, and whose working clone `clone_leg_member` puts beside it."""
+    folder = home / "projects" / FAMILY
+    holder = folder / FAMILY
+    holder.mkdir(parents=True)
+    (holder / "family.yaml").write_text(
+        FAMILY_YAML.format(
+            id=FAMILY.lower(), name=FAMILY, org=ORG,
+            members=(f"\n  - project: Delta\n    id: delta\n"
+                     f"    repository: {ORG}/Delta\n"
+                     f"    path: members/Delta\n")), encoding="utf-8")
+    (holder / "Makefile").write_text(PROBE_MAKEFILE, encoding="utf-8")
+    return folder
+
+
+def test_park_reports_a_leg_on_the_branch_its_own_row_declares(home, tmp_path):
+    """#242. `scripts/bootstrap.py` places a leg on `str(leg.get("branch") or
+    branch)`, so a leg whose row in `project.yaml` declares `branch: develop`
+    keeps its work on `develop`. The report asked about the ROOT's
+    `tracking_branch` for every leg, found nothing ahead on `main`, and ended
+    without naming the leg: work `park` did not carry, missed silently."""
+    root = clone_leg_member(home / "projects", tmp_path / "remotes",
+                            "Delta", leg_branch="develop")
+    commits_on(root["spec"], "develop", 3)
+
+    result = run(PARK, "Delta", home=home)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"unpushed develop leg     {root['spec']}" in result.stdout, (
+        "a leg's unpushed commits on its own `branch:` were not reported:\n"
+        + result.stdout)
+    assert "3 commit(s) on develop that origin has not seen" in result.stdout
+    assert "A leg goes up as a pull request too" in result.stdout
+    assert f"unpushed main   leg     {root['spec']}" not in result.stdout, (
+        "the leg was asked about the root's branch")
+
+
+def test_park_reports_a_family_members_leg_on_its_own_declared_branch(
+        home, tmp_path):
+    """#242, in a family: the holder's report reads the member's working clone
+    beside it, and that member's legs, which are built by a second loop. Its
+    leg rows carried the member's `tracking_branch` too."""
+    folder = family_folder_naming_delta(home)
+    member = clone_leg_member(folder, tmp_path / "remotes", "Delta",
+                              leg_branch="develop", code_leg=True)
+    commits_on(member["spec"], "develop", 2)
+    commits_on(member["code"], "main", 1)
+
+    result = run(PARK, FAMILY, home=home)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"unpushed develop leg     {member['spec']}" in result.stdout, (
+        "a member's leg on its own `branch:` was not reported:\n"
+        + result.stdout)
+    assert "2 commit(s) on develop that origin has not seen" in result.stdout
+    assert f"unpushed main   leg     {member['spec']}" not in result.stdout
+    # The leg that declares none is the member's `tracking_branch`'s: the
+    # family loop's fallback, which nothing else here reaches.
+    assert f"unpushed main   leg     {member['code']}" in result.stdout, (
+        result.stdout)
+    assert "1 commit(s) on main that origin has not seen" in result.stdout
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                    reason="mode 000 does not bind root, so the manifest "
+                           "stays readable and there is nothing to survive")
+def test_park_reports_a_leg_when_its_members_manifest_cannot_be_read(
+        home, tmp_path):
+    """#242, the review of #249: `leg_branch_of` fails when `project.yaml`
+    exists and cannot be read, and `report_repos` runs under `set -e`, so an
+    unguarded `legbranch="$(leg_branch_of ...)"` ended the report's subshell:
+    that leg's row and every row after it were dropped, `make park`'s exit
+    code was untouched and `park` said nothing. The leg is reported against
+    the member's own branch instead (main's `park` did, because it never read
+    the file for a leg)."""
+    folder = family_folder_naming_delta(home)
+    member = clone_leg_member(folder, tmp_path / "remotes", "Delta")
+    commits_on(member["spec"], "main", 2)
+    manifest = member["root"] / "project.yaml"
+    manifest.chmod(0o000)
+    try:
+        result = run(PARK, FAMILY, home=home)
+    finally:
+        manifest.chmod(0o644)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"unpushed main   leg     {member['spec']}" in result.stdout, (
+        "an unreadable manifest dropped the leg's row from the report:\n"
+        + result.stdout)
+    assert "2 commit(s) on main that origin has not seen" in result.stdout
+
+
+def test_park_still_reports_a_leg_with_no_branch_of_its_own_on_the_roots(
+        home, tmp_path):
+    """UNCHANGED for a row with no `branch:`: bootstrap places that leg on the
+    root's `tracking_branch`, so that is the branch its unpushed commits are
+    counted on. Green before the fix of #242 and after it."""
+    root = clone_leg_member(home / "projects", tmp_path / "remotes", "Echo")
+    commits_on(root["spec"], "main", 1)
+
+    result = run(PARK, "Echo", home=home)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"unpushed main   leg     {root['spec']}" in result.stdout
+    assert "1 commit(s) on main that origin has not seen" in result.stdout
+
+
+def test_park_asks_each_leg_of_one_root_about_its_own_branch(home, tmp_path):
+    """One root, two legs: `spec` declares `branch: develop` and `code`
+    declares none. Each is read against the branch bootstrap puts it on, so
+    the report names `spec` on `develop` and `code` on `main`, with their own
+    counts and neither leg's branch lent to the other."""
+    root = clone_leg_member(home / "projects", tmp_path / "remotes", "Foxtrot",
+                            leg_branch="develop", code_leg=True)
+    commits_on(root["spec"], "develop", 3)
+    commits_on(root["code"], "main", 1)
+
+    result = run(PARK, "Foxtrot", home=home)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"unpushed develop leg     {root['spec']}" in result.stdout, (
+        result.stdout)
+    assert f"unpushed main   leg     {root['code']}" in result.stdout, (
+        result.stdout)
+    assert "3 commit(s) on develop that origin has not seen" in result.stdout
+    assert "1 commit(s) on main that origin has not seen" in result.stdout
+    assert f"unpushed main   leg     {root['spec']}" not in result.stdout
+    assert f"unpushed develop leg     {root['code']}" not in result.stdout
+
+
 def test_park_never_reads_the_pinned_copy(estate, home):
     """`members/<Project>` is pinned and DETACHED; nobody's work is there, and
     a report that named it would be reporting on the wrong copy."""
@@ -1248,6 +1642,81 @@ def test_resume_on_a_fresh_machine_builds_the_whole_estate(remotes, home):
     assert f"holder    {FAMILY}" in result.stdout
     assert "`make resume` exited 0" in result.stdout
     assert "0 refusal(s)" in result.stdout
+
+
+def test_resume_clones_the_holder_under_its_repositorys_name_when_the_display_name_differs(
+        named_apart, remotes, home):
+    """#236, the fresh machine. The record says `family: quill` and each
+    member's `root: Quill/Alpha`, and it is filed under `workspaces/testorg/`:
+    it NEVER carries the holder's repository, so `resume` derives it from the
+    org and the family folder — and under v1.1.0 the folder IS the
+    repository's last part (opensoft/openRepoShape#629). The clone then has to
+    be recognised as an estate although its `name:` is "QuillWorks"; before,
+    `resume` cloned the right repository and refused it as 'not an estate'."""
+    result = run(RESUME, QUILL, "--workspace", WORKSPACE_SLUG, home=home,
+                 env=offline(named_apart))
+    assert result.returncode == 0, result.stderr + result.stdout
+    folder = home / "projects" / QUILL
+    holder = folder / QUILL
+    assert f"root repository {ORG}/{QUILL}" in result.stdout
+    assert f"absent          cloning {ORG}/{QUILL} -> {holder}" in result.stdout
+    assert f"{ORG}/{QUILL_DISPLAY}" not in result.stdout
+    assert 'name: "QuillWorks"' in (holder / "family.yaml").read_text(
+        encoding="utf-8"), "the holder is the one whose display name differs"
+    assert not (home / "projects" / QUILL_DISPLAY).exists()
+    for name in MEMBERS:
+        assert (folder / name / ".git").is_dir(), f"{name} is not beside it"
+        assert f"{name}.sh ran with:" in result.stdout
+    assert f"holder    {QUILL}" in result.stdout
+    assert "0 refusal(s)" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "on_disk, asked", [(QUILL, QUILL), (QUILL_DISPLAY, "quill")],
+    ids=["the-holder-was-moved-to-the-repositorys-name",
+         "the-holder-is-still-in-the-display-names-folder"])
+def test_resume_names_the_repository_of_the_holder_it_resolved_not_the_records_folder(
+        named_apart, remotes, home, tmp_path, on_disk, asked):
+    """The review of #240 (5561239588), finding 1. The record is filed as park
+    files it: ONE per family, named for the id (`quill.yaml`, `family: quill`),
+    parked from the layout before v1.1.0 so its `root:` is `QuillWorks/Alpha`.
+    Then `make siblings`' own advice is followed, `mv QuillWorks/QuillWorks
+    Quill/Quill`, and the record is stale until the next park. The holder IS
+    on disk, found by the name typed; asking for the repository by the
+    record's folder missed it and printed `testorg/QuillWorks`, which is no
+    repository. The second case is the same record against the holder still
+    where the record says, typed as the id."""
+    clone_quill_estate(named_apart, remotes, home, on_disk)
+    record = family_manifest(QUILL_DISPLAY).replace(
+        f"family: {QUILL_DISPLAY.lower()}\n", f"family: {QUILL.lower()}\n")
+    assert "root: QuillWorks/Alpha" in record and "family: quill\n" in record
+    place_quill_workspace(named_apart, home, seed_workspace(
+        tmp_path / "stale", "wip",
+        {f"workspaces/{ORG}/{QUILL.lower()}.yaml": record}))
+    result = run(RESUME, asked, "--dry-run", home=home,
+                 env=offline(named_apart))
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert (f"records         a family estate, root repository "
+            f"{ORG}/{QUILL}") in result.stdout
+    assert f"{ORG}/{QUILL_DISPLAY}" not in result.stdout
+    assert f"present         {home / 'projects' / on_disk} (family)" \
+        in result.stdout
+
+
+def test_resume_names_the_repository_the_holders_family_yaml_gives(
+        named_apart, remotes, home):
+    """#236, the estate already here, laid out before v1.1.0: the folder is the
+    display name, so it is NOT the repository's name, and a repository derived
+    from it (`testorg/QuillWorks`) is a repository that does not exist. The
+    holder's own `family.yaml` says which one it is, and it can be read."""
+    clone_quill_estate(named_apart, remotes, home, QUILL_DISPLAY)
+    place_quill_workspace(named_apart, home)
+    result = run(RESUME, QUILL_DISPLAY, "--dry-run", home=home,
+                 env=offline(named_apart))
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert (f"records         a family estate, root repository "
+            f"{ORG}/{QUILL}") in result.stdout
+    assert f"{ORG}/{QUILL_DISPLAY}" not in result.stdout
 
 
 def test_resume_writes_the_config_only_when_asked_by_name(remotes, home):
@@ -1849,6 +2318,303 @@ def test_a_leg_detached_at_the_pin_is_not_a_refusal(legged, home, remotes):
     assert "not its tracking branch" not in result.stdout, (
         result.stdout + result.stderr)
     assert f"{LEG_MEMBER}.sh ran with:" in result.stdout
+
+
+# --- F3, again (#235): the branch a leg is held to is the LEG's own --------
+
+#: A member like `Charlie`, except that its spec leg's row declares
+#: `branch: develop`.
+OWN_BRANCH_MEMBER = "Delta"
+
+
+def clone_own_branch_member(home, tmp_path, **seed) -> dict:
+    """`legged`, for a root whose spec leg declares `branch: develop`.
+
+    Built per test under `tmp_path` rather than into the session's `remotes`,
+    so the leg has a `develop` to sit on only where a test asks for one. The
+    leg arrives DETACHED at the pin, as every fresh clone's does, and `main`
+    and `develop` are both the pin. `seed` goes to `seed_leg_member`.
+    """
+    base = tmp_path / "own-branch-remotes"
+    base.mkdir()
+    seed.setdefault("leg_branch", "develop")
+    bare, leg_bare = seed_leg_member(base, OWN_BRANCH_MEMBER, **seed)
+    workspace = seed_workspace(
+        base, "legged",
+        {f"workspaces/{ORG}/{OWN_BRANCH_MEMBER.lower()}.yaml":
+            standalone_manifest(OWN_BRANCH_MEMBER)})
+    config = home / ".agents" / "workspace.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text("repository: tester/legged\npath: ~/projects/legged\n",
+                      encoding="utf-8")
+    git("clone", "-q", str(workspace), str(home / "projects" / "legged"),
+        cwd=home)
+    root = home / "projects" / OWN_BRANCH_MEMBER
+    git("-c", "protocol.file.allow=always", "clone", "-q",
+        "--recurse-submodules", str(bare), str(root), cwd=home / "projects")
+    return {"root": root, "leg": root / "spec", "code": root / "code",
+            "dir": base / "remotes", "bare": bare, "leg_bare": leg_bare}
+
+
+@pytest.fixture
+def legged_own_branch(home, tmp_path) -> dict:
+    return clone_own_branch_member(home, tmp_path)
+
+
+def test_a_leg_on_its_own_declared_branch_is_not_refused(legged_own_branch,
+                                                         home):
+    """The guard compared every leg with the ROOT's `tracking_branch`, so a
+    leg sitting on the `branch:` its own row declares was refused as "not its
+    tracking branch 'main'" — where it belongs, and where `make bootstrap`
+    leaves it.
+    """
+    leg = legged_own_branch["leg"]
+    git("checkout", "-q", "-b", "develop", cwd=leg)
+    head = git("rev-parse", "HEAD", cwd=leg).stdout.strip()
+    assert git("status", "--porcelain", cwd=legged_own_branch["root"]
+               ).stdout == "", "fixture: the superproject is clean"
+
+    result = run(RESUME, OWN_BRANCH_MEMBER, home=home,
+                 env=offline(legged_own_branch))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "REFUSED" not in result.stdout, result.stdout
+    assert "not its tracking branch" not in result.stdout
+    assert f"{OWN_BRANCH_MEMBER}.sh ran with:" in result.stdout, (
+        "a root whose leg is where it belongs is given the verb")
+    assert git("rev-parse", "--abbrev-ref",
+               "HEAD", cwd=leg).stdout.strip() == "develop"
+    assert git("rev-parse", "HEAD", cwd=leg).stdout.strip() == head
+
+
+def test_a_leg_off_its_own_declared_branch_refuses_the_root_and_is_not_moved(
+        legged_own_branch, home):
+    """THE MOVE THE GUARD EXISTS TO REFUSE, for a leg the old guard let
+    through. The leg sits on `main`, the ROOT's `tracking_branch`, while its
+    row declares `branch: develop` and a local `develop` is AT the pin — so
+    the root's own `make bootstrap` checks `develop` out, and `resume` used to
+    report that as success (exit 0) with the leg's HEAD moved.
+    """
+    root, leg = legged_own_branch["root"], legged_own_branch["leg"]
+    git("branch", "-q", "develop", cwd=leg)
+    git("checkout", "-q", "main", cwd=leg)
+    head = git("rev-parse", "HEAD", cwd=leg).stdout.strip()
+    assert git("status", "--porcelain", cwd=root).stdout == "", (
+        "fixture: the superproject is clean, which is the whole point")
+
+    result = run(RESUME, OWN_BRANCH_MEMBER, home=home,
+                 env=offline(legged_own_branch))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"REFUSED root {OWN_BRANCH_MEMBER}: leg spec is on 'main', "
+            "not its own branch 'develop' "
+            "(the `branch:` of its row in project.yaml);") in result.stdout
+    assert "`make bootstrap` would move it - nothing was touched." \
+        in result.stdout
+    assert "put it back on develop, and re-run." in result.stdout
+    assert git("rev-parse", "--abbrev-ref",
+               "HEAD", cwd=leg).stdout.strip() == "main", (
+        "the leg was walked onto its own branch")
+    assert git("rev-parse", "HEAD", cwd=leg).stdout.strip() == head
+    assert f"{OWN_BRANCH_MEMBER}.sh ran with:" not in result.stdout, (
+        "a refused root does not get the verb either")
+
+    # The premise, so the refusal is not theatre: the root's REAL bootstrap,
+    # run by hand over what `resume` refused, is what moves the leg.
+    proc = subprocess.run([sys.executable, "scripts/bootstrap.py"],
+                          cwd=str(root), capture_output=True, text=True,
+                          check=False)
+    assert git("rev-parse", "--abbrev-ref",
+               "HEAD", cwd=leg).stdout.strip() == "develop", (
+        "the premise of the guard is gone: bootstrap no longer places a leg "
+        "on its own branch\n" + proc.stdout + proc.stderr)
+
+
+def test_a_leg_with_no_branch_of_its_own_is_held_to_the_roots_and_says_so(
+        legged, home, remotes):
+    """UNCHANGED for a row with no `branch:`: the root's `tracking_branch` is
+    where bootstrap puts that leg, so a leg off it is refused exactly as
+    before — and the refusal now says WHICH branch the one it names is.
+    """
+    leg = legged["leg"]
+    git("checkout", "-q", "-b", "001-my-feature", cwd=leg)
+    head = git("rev-parse", "HEAD", cwd=leg).stdout.strip()
+
+    result = run(RESUME, LEG_MEMBER, home=home, env=offline(remotes))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"REFUSED root {LEG_MEMBER}: leg spec is on '001-my-feature', "
+            "not its tracking branch 'main' "
+            "(the root's `tracking_branch`);") in result.stdout
+    assert "put it back on main, and re-run." in result.stdout
+    assert git("rev-parse", "--abbrev-ref",
+               "HEAD", cwd=leg).stdout.strip() == "001-my-feature"
+    assert git("rev-parse", "HEAD", cwd=leg).stdout.strip() == head
+    assert f"{LEG_MEMBER}.sh ran with:" not in result.stdout
+
+
+#: `leg_branch_of`'s own ground, which the tests above only meet at
+#: `branch: develop` on the line after `path: spec` (the review of #238, 1).
+#: The rows after `legs:` of a manifest, the leg asked about, and the branch
+#: `bootstrap.py`'s `leg.get("branch") or branch` would find in that row.
+LEG_ASSEMBLY_ROW = ('  - role: assembly\n    repository: o/R\n'
+                    '    path: "."\n')
+LEG_BRANCH_CASES = [
+    ("after-path",
+     "  - role: spec\n    path: spec\n    branch: develop\n", "spec", "develop"),
+    ("before-path",
+     "  - role: spec\n    branch: develop\n    path: spec\n", "spec", "develop"),
+    ("double-quoted",
+     '  - role: spec\n    path: spec\n    branch: "develop"\n', "spec", "develop"),
+    ("single-quoted",
+     "  - role: spec\n    path: spec\n    branch: 'develop'\n", "spec", "develop"),
+    ("a-trailing-comment-is-cut",
+     "  - role: spec\n    path: spec\n    branch: develop # own\n", "spec",
+     "develop"),
+    ("a-trailing-comment-after-quotes-is-cut",
+     '  - role: spec\n    path: spec\n    branch: "develop"   # own\n', "spec",
+     "develop"),
+    ("an-empty-value-is-no-branch",
+     "  - role: spec\n    path: spec\n    branch:\n", "spec", ""),
+    ("only-a-comment-is-no-branch",
+     "  - role: spec\n    path: spec\n    branch:   # none\n", "spec", ""),
+    ("null-is-no-branch",
+     "  - role: spec\n    path: spec\n    branch: null\n", "spec", ""),
+    ("Null-is-no-branch",
+     "  - role: spec\n    path: spec\n    branch: Null\n", "spec", ""),
+    ("tilde-is-no-branch",
+     "  - role: spec\n    path: spec\n    branch: ~\n", "spec", ""),
+    ("a-row-with-none-of-its-own",
+     "  - role: spec\n    path: spec\n  - role: code\n    path: code\n"
+     "    branch: elsewhere\n", "spec", ""),
+    ("another-rows-branch-is-not-this-rows",
+     "  - role: spec\n    path: spec\n  - role: code\n    path: code\n"
+     "    branch: elsewhere\n", "code", "elsewhere"),
+    ("a-branch-before-the-next-row-is-not-the-next-rows",
+     "  - role: spec\n    branch: develop\n    path: spec\n"
+     "  - role: code\n    path: code\n", "code", ""),
+    ("the-assembly-row-has-no-leg-branch",
+     LEG_ASSEMBLY_ROW + "    branch: leak\n"
+     "  - role: spec\n    path: spec\n", "spec", ""),
+    ("paths-sharing-a-prefix-ask-the-exact-row",
+     "  - role: spec\n    path: spec\n    branch: a\n"
+     "  - role: other\n    path: spec-extra\n    branch: b\n", "spec", "a"),
+    ("paths-sharing-a-prefix-ask-the-exact-row-the-other-way",
+     "  - role: other\n    path: spec-extra\n    branch: b\n"
+     "  - role: spec\n    path: spec\n    branch: a\n", "spec", "a"),
+    ("a-longer-path-declaring-one-is-not-the-shorter",
+     "  - role: spec\n    path: spec\n"
+     "  - role: other\n    path: spec-extra\n    branch: b\n", "spec", ""),
+    ("a-dot-slash-path-is-the-same-leg",
+     '  - role: spec\n    path: "./spec"\n    branch: develop\n', "spec",
+     "develop"),
+    ("a-trailing-slash-path-is-the-same-leg",
+     "  - role: spec\n    path: spec/\n    branch: develop\n", "spec", "develop"),
+    ("a-dot-slash-leg-asked-for-is-the-same-leg",
+     "  - role: spec\n    path: spec\n    branch: develop\n", "./spec",
+     "develop"),
+    ("a-row-that-does-not-open-with-a-role-leaks-nothing",
+     "  - role: spec\n    path: spec\n  - path: other\n    branch: leak\n",
+     "spec", ""),
+]
+
+
+def shared_function(script: Path, name: str) -> str:
+    """One top-level function of the shared resolver, as written in `script`."""
+    text = script.read_text(encoding="utf-8")
+    start = text.index(f"\n{name}() {{\n") + 1
+    return text[start:text.index("\n}\n", start) + 3]
+
+
+@pytest.mark.parametrize("rows,want,expected",
+                         [case[1:] for case in LEG_BRANCH_CASES],
+                         ids=[case[0] for case in LEG_BRANCH_CASES])
+def test_leg_branch_of_reads_a_rows_own_branch_the_way_bootstrap_does(
+        tmp_path, rows, want, expected):
+    """`leg_branch_of` is what `resume` and `status` ask where a leg belongs,
+    and `scripts/bootstrap.py` is what it has to agree with: a leg goes on
+    `str(leg.get("branch") or branch)`, so the answer is the row's own
+    `branch:` or NOTHING. The code is the real one, `trim_unquote` and
+    `leg_branch_of` cut out of `resume` and run in `bash`; the byte-for-byte
+    tests keep the other two copies the same."""
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "project.yaml").write_text(
+        "schema_version: 1\nkind: project-manifest\ntracking_branch: main\n"
+        "legs:\n" + (rows if LEG_ASSEMBLY_ROW in rows else LEG_ASSEMBLY_ROW + rows),
+        encoding="utf-8")
+    functions = tmp_path / "functions.sh"
+    functions.write_text(shared_function(RESUME, "trim_unquote")
+                         + shared_function(RESUME, "leg_branch_of"),
+                         encoding="utf-8")
+    proc = subprocess.run(
+        ["bash", "-c", 'source "$1"; leg_branch_of "$2" "$3"', "_",
+         str(functions), str(root), want],
+        capture_output=True, text=True, check=False, input="")
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == (f"{expected}\n" if expected else ""), (
+        f"asked for {want!r}, answered {proc.stdout!r}")
+
+
+def test_each_leg_of_one_root_is_held_to_its_own_branch(home, tmp_path):
+    """A root with a leg that declares `branch: develop` and one that does
+    not: the first is where it belongs on `develop` and the second on the
+    ROOT's `main`, and `resume` refuses neither. Put the second on `develop`
+    and it is the one refused, by name, while the first is left alone."""
+    estate = clone_own_branch_member(home, tmp_path, code_leg=True)
+    root, spec, code = estate["root"], estate["leg"], estate["code"]
+    git("checkout", "-q", "-b", "develop", cwd=spec)
+
+    result = run(RESUME, OWN_BRANCH_MEMBER, home=home, env=offline(estate))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "REFUSED" not in result.stdout, result.stdout
+    assert f"{OWN_BRANCH_MEMBER}.sh ran with:" in result.stdout
+    assert git("rev-parse", "--abbrev-ref", "HEAD",
+               cwd=spec).stdout.strip() == "develop"
+    assert git("rev-parse", "--abbrev-ref", "HEAD",
+               cwd=code).stdout.strip() == "main", "bootstrap placed it"
+
+    git("checkout", "-q", "-b", "develop", cwd=code)
+    heads = {leg: git("rev-parse", "HEAD", cwd=leg).stdout.strip()
+             for leg in (spec, code)}
+    assert git("status", "--porcelain", cwd=root).stdout == ""
+    result = run(RESUME, OWN_BRANCH_MEMBER, home=home, env=offline(estate))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"REFUSED root {OWN_BRANCH_MEMBER}: leg code is on 'develop', "
+            "not its tracking branch 'main' "
+            "(the root's `tracking_branch`);") in result.stdout
+    assert "leg spec is on" not in result.stdout, (
+        "the leg on its own declared branch was refused too")
+    for leg, head in heads.items():
+        assert git("rev-parse", "HEAD", cwd=leg).stdout.strip() == head
+        assert git("rev-parse", "--abbrev-ref", "HEAD",
+                   cwd=leg).stdout.strip() == "develop"
+
+
+@pytest.mark.parametrize("spelled", ['"./spec"', "spec/"],
+                         ids=["dot-slash", "trailing-slash"])
+def test_a_leg_spelled_dot_slash_or_with_a_slash_is_one_leg_to_status_and_resume(
+        home, tmp_path, spelled):
+    """`status` finds a leg by `.gitmodules`' path and `resume` by the
+    manifest's own text, and `./spec` and `spec/` are `spec` to validate-
+    manifest. A leg on `main` whose row declares `branch: develop` is the one
+    both must name, whichever way the row spells its path (the review of
+    #238, 2) — `status` read it as a leg on its tracking branch."""
+    estate = clone_own_branch_member(home, tmp_path, spec_path=spelled)
+    leg = estate["leg"]
+    git("checkout", "-q", "main", cwd=leg)
+    head = git("rev-parse", "HEAD", cwd=leg).stdout.strip()
+
+    status = run(STATUS, OWN_BRANCH_MEMBER, home=home)
+    assert status.returncode == 1, status.stdout + status.stderr
+    assert f"  leg    develop {leg}" in status.stdout, status.stdout
+    assert ("    - on branch main, not develop, the `branch:` this leg's own "
+            "row declares in project.yaml") in status.stdout
+
+    resume = run(RESUME, OWN_BRANCH_MEMBER, home=home, env=offline(estate))
+    assert resume.returncode == 1, resume.stdout + resume.stderr
+    assert (f"REFUSED root {OWN_BRANCH_MEMBER}: leg {spelled.strip(chr(34))} "
+            "is on 'main', not its own branch 'develop'") in resume.stdout
+    assert git("rev-parse", "HEAD", cwd=leg).stdout.strip() == head
+    assert git("rev-parse", "--abbrev-ref", "HEAD",
+               cwd=leg).stdout.strip() == "main"
 
 
 # --- F4: two checkouts of one workspace are not two orgs -------------------
