@@ -351,17 +351,13 @@ def test_sweep_leaves_no_capture_file_when_its_note_cannot_be_relayed(box):
     assert list(box.tmpdir.glob("lane-end-sweep.*")) == []
 
 
-@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
-def test_sweep_does_not_resume_after_a_signal_during_the_read(box, sig):
-    # A signal that reaches the lane-end shell ALONE (not its process group)
-    # while the read runs. `cleanup` used to be the whole trap, so the script
-    # resumed after it: with the capture file gone the unread-records refusal
-    # read an empty note, and `--yes` went on to write.
+def signalled_sweep(box: Box, sig: signal.Signals) -> subprocess.Popen:
+    """`lane-end --retire-dormant repoD --yes`, sent `sig` ALONE (not its process
+    group) once `$FAKE_READY` appears, which the fake read or the slow `mktemp`
+    shim touches, and reaped. The caller has set `FAKE_READY`."""
     if sig == signal.SIGINT and signal.getsignal(signal.SIGINT) is signal.SIG_IGN:
         pytest.skip("SIGINT is ignored at entry, so no script can trap it")
-    sweep_box(box, unread=True)
-    ready = box.root / "ready"
-    box.env["FAKE_READY"] = str(ready)
+    ready = Path(box.env["FAKE_READY"])
     proc = subprocess.Popen(["bash", str(REPO / "lane-end"), "--retire-dormant", "repoD", "--yes"],
                             env=box.env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True)
@@ -369,13 +365,40 @@ def test_sweep_does_not_resume_after_a_signal_during_the_read(box, sig):
         deadline = time.monotonic() + 30
         while not ready.exists() and time.monotonic() < deadline:
             time.sleep(0.02)
-        assert ready.exists(), "the read never started"
+        assert ready.exists(), "the sweep never reached the read"
         proc.send_signal(sig)
         proc.communicate(timeout=60)
     finally:
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+    return proc
+
+
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
+def test_sweep_does_not_resume_after_a_signal_during_the_read(box, sig):
+    # A signal that reaches the lane-end shell ALONE (not its process group)
+    # while the read runs. `cleanup` used to be the whole trap, so the script
+    # resumed after it: with the capture file gone the unread-records refusal
+    # read an empty note, and `--yes` went on to write.
+    sweep_box(box, unread=True)
+    box.env["FAKE_READY"] = str(box.root / "ready")
+    proc = signalled_sweep(box, sig)
+    assert proc.returncode == 128 + sig, proc.returncode
+    assert "retire-rows" not in box.calls()
+    assert list(box.tmpdir.glob("lane-end-sweep.*")) == []
+
+
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
+def test_sweep_leaves_no_capture_file_when_a_signal_lands_as_it_is_made(box, sig):
+    # The window between `mktemp` creating the file and `cleanup` knowing its
+    # name: a `mktemp` that takes a moment after it has made the file.
+    sweep_box(box)
+    box.env["FAKE_READY"] = str(box.root / "ready")
+    _script(box.bin / "mktemp",
+            f'f="$({shutil.which("mktemp")} "$@")" || exit $?\n'
+            ': > "$FAKE_READY"\nsleep 2\nprintf \'%s\\n\' "$f"\n')
+    proc = signalled_sweep(box, sig)
     assert proc.returncode == 128 + sig, proc.returncode
     assert "retire-rows" not in box.calls()
     assert list(box.tmpdir.glob("lane-end-sweep.*")) == []
