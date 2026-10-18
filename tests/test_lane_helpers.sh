@@ -1862,7 +1862,7 @@ esac
 exec "${REAL_GIT:?}" "$@"
 FAKE
 chmod +x "$SANDBOX/r67-gitfail/git"
-r67()  { env LANES_WORKSPACE_ROOT="$R67_WIP" LANES_LANE=repo67-2 LANES_SESSION="$DEAD_ID" "$@"; }
+r67()  { env LANES_REPO="$R67_WIP" LANES_FILE="$R67_WIP/lanes/LANES.md" LANES_LANE=repo67-2 LANES_SESSION="$DEAD_ID" "$@"; }
 r67x() { r67 env PATH="$SANDBOX/r67-gitfail:$PATH" REAL_GIT="$(command -v git)" "$@"; }
 R67_PS="$(printf '%s\t%s\t%s' 900671 1 "claude --session-id $R67_ID --fork-session --resume /nonexistent/projects/$R67_ID.jsonl")"
 
