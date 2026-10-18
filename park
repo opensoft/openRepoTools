@@ -612,7 +612,11 @@ report_repos() {
                 # the ROOT's `tracking_branch:` — what `scripts/bootstrap.py`
                 # places it on (#235, #238; #242 here). Its unpushed commits
                 # are on THAT branch, so that is the one the report counts.
-                legbranch="$(leg_branch_of "$ESTATE_DIR/$member" "$leg")"
+                # `|| true`: a `project.yaml` that cannot be read fails
+                # `leg_branch_of`, and under `set -e` that would end this
+                # subshell and drop this leg's row and every row after it,
+                # silently; the root's branch is the answer then.
+                legbranch="$(leg_branch_of "$ESTATE_DIR/$member" "$leg" || true)"
                 printf 'leg\t%s\t%s\n' "${legbranch:-$branch}" "$ESTATE_DIR/$member/$leg"
             done < <(submodule_paths "$ESTATE_DIR/$member")
         done < <(family_members "$ESTATE_ROOT/family.yaml")
@@ -621,8 +625,9 @@ report_repos() {
     branch="$(tracking_branch_of "$ESTATE_ROOT")"
     printf 'root\t%s\t%s\n' "$branch" "$ESTATE_ROOT"
     while IFS= read -r leg; do
-        # The leg's own `branch:`, else the root's: see the family loop above.
-        legbranch="$(leg_branch_of "$ESTATE_ROOT" "$leg")"
+        # The leg's own `branch:`, else the root's, and `|| true` for the
+        # reason the family loop gives.
+        legbranch="$(leg_branch_of "$ESTATE_ROOT" "$leg" || true)"
         printf 'leg\t%s\t%s\n' "${legbranch:-$branch}" "$ESTATE_ROOT/$leg"
     done < <(submodule_paths "$ESTATE_ROOT")
 }

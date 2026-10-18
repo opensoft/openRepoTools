@@ -1413,6 +1413,22 @@ def commits_on(leg: Path, branch: str, count: int) -> None:
         commit_all(leg, f"commit {number} on {branch}, not pushed")
 
 
+def family_folder_naming_delta(home: Path) -> Path:
+    """A family folder whose holder (a probe Makefile) names ONE member,
+    `Delta`, and whose working clone `clone_leg_member` puts beside it."""
+    folder = home / "projects" / FAMILY
+    holder = folder / FAMILY
+    holder.mkdir(parents=True)
+    (holder / "family.yaml").write_text(
+        FAMILY_YAML.format(
+            id=FAMILY.lower(), name=FAMILY, org=ORG,
+            members=(f"\n  - project: Delta\n    id: delta\n"
+                     f"    repository: {ORG}/Delta\n"
+                     f"    path: members/Delta\n")), encoding="utf-8")
+    (holder / "Makefile").write_text(PROBE_MAKEFILE, encoding="utf-8")
+    return folder
+
+
 def test_park_reports_a_leg_on_the_branch_its_own_row_declares(home, tmp_path):
     """#242. `scripts/bootstrap.py` places a leg on `str(leg.get("branch") or
     branch)`, so a leg whose row in `project.yaml` declares `branch: develop`
@@ -1439,19 +1455,11 @@ def test_park_reports_a_family_members_leg_on_its_own_declared_branch(
     """#242, in a family: the holder's report reads the member's working clone
     beside it, and that member's legs, which are built by a second loop. Its
     leg rows carried the member's `tracking_branch` too."""
-    folder = home / "projects" / FAMILY
-    holder = folder / FAMILY
-    holder.mkdir(parents=True)
-    (holder / "family.yaml").write_text(
-        FAMILY_YAML.format(
-            id=FAMILY.lower(), name=FAMILY, org=ORG,
-            members=(f"\n  - project: Delta\n    id: delta\n"
-                     f"    repository: {ORG}/Delta\n"
-                     f"    path: members/Delta\n")), encoding="utf-8")
-    (holder / "Makefile").write_text(PROBE_MAKEFILE, encoding="utf-8")
+    folder = family_folder_naming_delta(home)
     member = clone_leg_member(folder, tmp_path / "remotes", "Delta",
-                              leg_branch="develop")
+                              leg_branch="develop", code_leg=True)
     commits_on(member["spec"], "develop", 2)
+    commits_on(member["code"], "main", 1)
 
     result = run(PARK, FAMILY, home=home)
     assert result.returncode == 0, result.stderr + result.stdout
@@ -1460,6 +1468,39 @@ def test_park_reports_a_family_members_leg_on_its_own_declared_branch(
         + result.stdout)
     assert "2 commit(s) on develop that origin has not seen" in result.stdout
     assert f"unpushed main   leg     {member['spec']}" not in result.stdout
+    # The leg that declares none is the member's `tracking_branch`'s: the
+    # family loop's fallback, which nothing else here reaches.
+    assert f"unpushed main   leg     {member['code']}" in result.stdout, (
+        result.stdout)
+    assert "1 commit(s) on main that origin has not seen" in result.stdout
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                    reason="mode 000 does not bind root, so the manifest "
+                           "stays readable and there is nothing to survive")
+def test_park_reports_a_leg_when_its_members_manifest_cannot_be_read(
+        home, tmp_path):
+    """#242, the review of #249: `leg_branch_of` fails when `project.yaml`
+    exists and cannot be read, and `report_repos` runs under `set -e`, so an
+    unguarded `legbranch="$(leg_branch_of ...)"` ended the report's subshell:
+    that leg's row and every row after it were dropped, `make park`'s exit
+    code was untouched and `park` said nothing. The leg is reported against
+    the member's own branch instead (main's `park` did, because it never read
+    the file for a leg)."""
+    folder = family_folder_naming_delta(home)
+    member = clone_leg_member(folder, tmp_path / "remotes", "Delta")
+    commits_on(member["spec"], "main", 2)
+    manifest = member["root"] / "project.yaml"
+    manifest.chmod(0o000)
+    try:
+        result = run(PARK, FAMILY, home=home)
+    finally:
+        manifest.chmod(0o644)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"unpushed main   leg     {member['spec']}" in result.stdout, (
+        "an unreadable manifest dropped the leg's row from the report:\n"
+        + result.stdout)
+    assert "2 commit(s) on main that origin has not seen" in result.stdout
 
 
 def test_park_still_reports_a_leg_with_no_branch_of_its_own_on_the_roots(
