@@ -52,8 +52,10 @@
 # Addendum 4 ruling 9; Amendment 17(a) and (f)), and merges TWO hook entries into
 # `~/.claude/settings.json` — the `SessionStart` one (Amendment 9(b), A8
 # Addendum 2 R-A8-5) and, since lane-collision-protocol Amendment 12 adoption
-# act 3, the `UserPromptSubmit` NAME GUARD beside it: THIRTY-ONE
-# artifacts, and the count is the invariant.
+# act 3, the `UserPromptSubmit` NAME GUARD beside it — both of them only once
+# `~/projects/xFactory/lanes-edit.sh`, the path they call, answers `guard`
+# (opensoft/openRepoTools#237): TWENTY-NINE artifacts always, plus the two hook
+# entries once that path answers, and the count is the invariant.
 #
 # One install line for the whole toolset, so a second engineer gets the estate
 # commands from the README's one line and nothing depends on anyone's dotfiles.
@@ -92,7 +94,9 @@ openRepoTools --install            install (or update) the seventeen estate and
                                    /handoff, /lane-swap and /restart skills, the
                                    /handoff, /ctx and /swap command files, the
                                    SessionStart hook entry and the
-                                   UserPromptSubmit name guard
+                                   UserPromptSubmit name guard, once
+                                   ~/projects/xFactory/lanes-edit.sh
+                                   answers `guard`
 openRepoTools wip init             create your workspace repository, clone it,
                                    seed it, and point this workstation at it
 openRepoTools --help | --version
@@ -177,8 +181,12 @@ and each adds nothing to the skill it names. It merges TWO entries into
 lane-collision-protocol Amendment 12, the `UserPromptSubmit` NAME GUARD, which
 refuses a prompt whose window, session name and register row are not one lane
 (needs `jq`, refuses rather than rewriting a file it cannot parse, and leaves
-every `UserPromptSubmit` hook of your own exactly where it is). It never writes
-a profile's own settings.json: the launcher owns that one.
+every `UserPromptSubmit` hook of your own exactly where it is). It merges the
+two only once `~/projects/xFactory/lanes-edit.sh`, the path both call, exists,
+is executable and answers `guard` — the launcher's own rule (#237). Until then
+it says it DEFERRED them, and takes its own guard entry back out of a file that
+already carries it; `wip init` merges them after `link-estates` links that
+path. It never writes a profile's own settings.json: the launcher owns that one.
 
 It then writes a RECEIPT of the files it placed — one row of
 `<name> <destination> <sha256> <UTC>` each — at
@@ -208,7 +216,9 @@ the repository for you — then it prints the exact commands, already filled in.
 Everything else is derived: your login from `gh api user`, the organisation
 from this toolset's own default, the team from `gh api /user/teams` where
 exactly one matches. Idempotent: a workstation that already has a workspace
-does nothing at all. Exits 0 (done, or already done) or 2 (refused).
+does nothing to it, and only completes the hook pair — running `link-estates`
+again first where that path does not answer. Exits 0 (done, or already done)
+or 2 (refused).
 
 `park --help`, `resume --help`, `status --help`, `lane-start --help` and
 `lane-end --help` say the rest, and each command's exit codes are its own. The
@@ -1846,7 +1856,10 @@ install_commands() {
 	# that cannot be computed refuses having placed nothing. That last one is
 	# the same rule `--install` already had, extended to cover a merge: an
 	# installer that got half way through a person's settings is worse than one
-	# that did not start.
+	# that did not start. BOTH OUTCOMES OF THAT MERGE ARE IN HAND (#237) — the
+	# pair added, and the pair deferred with our guard entry taken out — and
+	# which one is written is asked only after the bin loop, because the path
+	# the two entries call is a link to the `lanes-edit.sh` that loop places.
 	#
 	# THE TARGETS ARE ASKED ABOUT FIRST, before even the fetch: a target that
 	# cannot be written THROUGH is a refusal that costs nothing at all here,
@@ -1986,9 +1999,12 @@ venv_note() {
 #     run and preserves hook keys. This command never writes a profile's
 #     settings.json at all. One path, one writer, in both halves.
 #
-# THIRTY-ONE ARTIFACTS, AND THE COUNT IS THE INVARIANT: seventeen files in the bin
+# TWENTY-NINE ARTIFACTS ALWAYS, PLUS THE TWO HOOK ENTRIES ONCE THEIR TARGET
+# ANSWERS, AND THE COUNT IS THE INVARIANT: seventeen files in the bin
 # directory, three skills in the shared skills directory, their three bare-run
-# copies, THREE COMMAND FILES at those same two paths, and TWO merged entries in
+# copies, THREE COMMAND FILES at those same two paths, and — once
+# `~/projects/xFactory/lanes-edit.sh` exists, is executable and answers `guard`
+# (opensoft/openRepoTools#237, the launcher's own rule) — TWO merged entries in
 # `~/.claude/settings.json`. It was twelve before Amendment 11 added a SECOND
 # WORD ON PATH — `restart` then, `lane` since Amendment 18 Addendum 2 retired
 # that one — `lanes` and the `/restart` skill, sixteen before ruling 9 added
@@ -1999,8 +2015,9 @@ venv_note() {
 # `lane-rename`, twenty-seven before opensoft/workBenches#119 added
 # `claude-current` and `claude-restart-check`, twenty-nine before
 # opensoft/openRepoTools#160 added `lanes-index`, and thirty before
-# opensoft/openRepoTools#162 added `lane-worktrees`; the count moves
-# with the lists rather than being restated from memory.
+# opensoft/openRepoTools#162 added `lane-worktrees`; #237 then held the last
+# two back until the path they call answers, which moves no list. The count
+# moves with the lists rather than being restated from memory.
 #
 # WHY A COMMAND FILE IS HERE AT ALL, WHEN ADOPTION ACT 6 SAYS THE LAUNCHER
 # VENDORS THEM (F-X28, A11 Addendum 4 ruling 9, ratified "a11 addendum 4 yes").
@@ -2097,6 +2114,74 @@ guard_block_text() {
 BLOCK
 }
 
+#: THE GATE ON THE PAIR (opensoft/openRepoTools#237, opensoft/workBenches#107).
+#: Both entries call `~/projects/xFactory/lanes-edit.sh`, a symlink `link-estates`
+#: places — and on a fresh workstation only `openRepoTools wip init` runs that,
+#: AFTER this install. Merged before the link exists, the guard is a command that
+#: is not there at every prompt: exit 127, a hook error per prompt, and never the
+#: refusal (exit 2) it is for. So the pair is merged only once that path EXISTS,
+#: IS EXECUTABLE AND ANSWERS `guard`, by the probe opensoft/workBenches'
+#: `claude-profile` launcher puts to the same path before it ensures the same two
+#: strings in each profile: the `awk` below is that probe byte for byte — comment
+#: lines dropped, the case arm anchored where a line begins, one process and no
+#: pipe. The `-x` is the one test it adds, because a file that is there and not
+#: executable fails the hook the same way (exit 126).
+#:
+#: UNTIL THEN THE PAIR IS DEFERRED, AND EVERY RUN SAYS SO, with the remedy.
+#: Nothing is added, and OUR EXACT GUARD ENTRY, in a file that already carries
+#: it, is taken out — the launcher's own downgrade (workBenches#90), filtered on
+#: each entry's NESTED array (workBenches#89), so every other hook, grouped with
+#: ours or not, stays where it is, and the file is written back at 600. The
+#: `SessionStart` entry is LEFT where it is: it ends in `|| true` and cannot fail
+#: a session, which is the launcher's rule too. The strings, their exact-match
+#: identity, the rival refusal and the receipt do not move; the count does —
+#: twenty-nine artifacts always, plus these two once the path answers.
+#:
+#: `$HOME/projects`, and not `$PROJECTS_DIR`: the `~` in both strings is the
+#: harness's to expand, so that is the one directory the hooks ever run from.
+hook_target() { printf '%s\n' "$HOME/projects/xFactory/lanes-edit.sh"; }
+
+HOOK_TARGET_WHY=""
+hook_target_answers() {   # 0 when the pair may be merged; 1 with $HOOK_TARGET_WHY set
+	local target
+	target="$(hook_target)"
+	HOOK_TARGET_WHY=""
+	if [ ! -e "$target" ]; then
+		if [ -L "$target" ]; then
+			HOOK_TARGET_WHY="${target} is a symlink to $(readlink -- "$target" 2>/dev/null || :), which is not there"
+		elif [ -d "$HOME/projects/xFactory" ]; then
+			HOOK_TARGET_WHY="${target} is not there"
+		else
+			HOOK_TARGET_WHY="${target} is not there (nor is $HOME/projects/xFactory, which \`link-estates\` links it into)"
+		fi
+		return 1
+	fi
+	if [ ! -f "$target" ]; then
+		HOOK_TARGET_WHY="${target} is not a regular file"
+		return 1
+	fi
+	if [ ! -x "$target" ]; then
+		HOOK_TARGET_WHY="${target} is not executable"
+		return 1
+	fi
+	if ! awk '
+		/^[[:space:]]*#/ { next }
+		/^[[:space:]]*([A-Za-z0-9_-]+\|)*guard(\|[A-Za-z0-9_-]+)*\)/ { found=1; exit }
+		END { exit !found }
+	' "$target" 2>/dev/null; then
+		HOOK_TARGET_WHY="${target} has no \`guard\` subcommand"
+		return 1
+	fi
+	return 0
+}
+
+#: The remedy every deferral and every removal prints, in one place.
+hook_pair_remedy() {
+	say "  The pair is merged once that path answers \`guard\`: \`openRepoTools wip init\` runs"
+	say "  \`link-estates\`, which links it where ~/projects/xFactory exists, and then merges"
+	say "  the pair; or run \`link-estates\` yourself and \`openRepoTools --install\` again."
+}
+
 # EVERY SKILL'S BYTES, by `--install`'s own rule: from the checkout beside this
 # file when run from one, else fetched at this same ref. ALL OF THEM IN HAND
 # BEFORE ANY IS PLACED, which is the same all-or-nothing rule the seventeen files
@@ -2166,6 +2251,8 @@ collect_skills() {
 HOOK_PLAN=""      # "absent" | "present" | "nofile"
 GUARD_PLAN=""     # the same three, for Amendment 12's UserPromptSubmit entry
 HOOK_MERGED=""    # a staged whole file, ready to move into place
+HOOK_DEFERRED=""  # the same file with OUR guard entry taken out, or "" (#237)
+HOOK_STRIP_WHY="" # why that entry could not be taken out, or ""
 
 # THE DESTINATIONS, PROVED WRITABLE BEFORE ANY OF THE SEVENTEEN IS PLACED — every
 # directory the artifacts that are not one of the seventeen files go into, derived
@@ -2539,6 +2626,8 @@ $(guard_block_text)"
 
 	workdir
 	HOOK_MERGED="$WORKDIR/settings.json"
+	HOOK_DEFERRED=""
+	HOOK_STRIP_WHY=""
 	local staged="$WORKDIR/settings.stage.json"
 
 	if [ ! -e "$settings" ]; then
@@ -2705,14 +2794,47 @@ $(guard_block_text)"
 		mv -f -- "$staged" "$HOOK_MERGED" ||
 			die "could not stage the merged $settings; nothing was installed."
 	fi
+
+	# THE OTHER OUTCOME, STAGED BESIDE THAT ONE (#237): this same file with OUR
+	# EXACT GUARD ENTRY taken out, for a run whose target does not answer
+	# `guard`. Only where the file carries it — with nothing of ours to take out,
+	# a deferred run has nothing to write, and writes nothing.
+	#
+	# THE NESTED ARRAY IS FILTERED, NOT THE OUTER ENTRY (workBenches#89): an
+	# entry that grouped our command with somebody else's keeps the other
+	# command and every other key it has; an entry we took nothing from passes
+	# through untouched; and an outer entry goes only when our command was the
+	# last thing in it. A shape this does not take apart — a `UserPromptSubmit`
+	# or an entry's `hooks` that is not an array — is left exactly as it is, and
+	# the read below, the same one `existing_guard` asks, says so.
+	if [ "$GUARD_PLAN" = present ]; then
+		HOOK_DEFERRED="$WORKDIR/settings.deferred.json"
+		jq --arg g "$GUARD_COMMAND" '
+			if (.hooks.UserPromptSubmit | type) == "array" then
+			  .hooks.UserPromptSubmit = [ .hooks.UserPromptSubmit[]
+			    | if type == "object" and ((.hooks | type) == "array") then
+			        .hooks as $inner
+			        | ($inner | map(select((type == "object" and .command == $g) | not))) as $kept
+			        | if ($kept | length) == ($inner | length) then .
+			          elif ($kept | length) > 0 then .hooks = $kept
+			          else empty end
+			      else . end ]
+			else . end' "$settings" >"$HOOK_DEFERRED" ||
+			die "could not compute $settings without its UserPromptSubmit name guard; nothing was installed."
+		if jq -e --arg g "$GUARD_COMMAND" '
+			[ (.hooks.UserPromptSubmit // [])[]? | (.hooks // [])[]? | .command // empty ]
+			| index($g)' "$HOOK_DEFERRED" >/dev/null 2>&1; then
+			HOOK_STRIP_WHY="its \`UserPromptSubmit\`, or the entry carrying the guard, is not the array of entries this command takes apart"
+		fi
+	fi
 }
 
 # The fourteen artifacts that are not bin-directory files, in thirteen writes
 # (the two hook entries go into settings.json in one), AFTER the seventeen files
-# and the merge are all in hand.
+# and the merge are all in hand. The last two only once their target answers
+# (#237): `place_hook_pair` asks, and says which.
 place_skill_and_hook() {
-	local shared_dir bare_dir settings target verb hook_tmp name
-	settings="$(claude_home)/settings.json"
+	local shared_dir bare_dir target verb name
 	for name in "${SKILLS[@]}"; do
 	shared_dir="$(skills_home)/shared/skills/$name"
 	bare_dir="$(claude_home)/skills/$name"
@@ -2796,6 +2918,54 @@ place_skill_and_hook() {
 		done
 	done
 
+	place_hook_pair
+}
+
+# THE PAIR, BY ONE OF THE TWO OUTCOMES `plan_hook_merge` STAGED (#237), and the
+# question that picks it is asked HERE, after the bin loop: the path both entries
+# call is a link to the `lanes-edit.sh` that loop has just placed, so a link a
+# bench recreate left dangling over an emptied `~/.local/bin` answers again by
+# now, and the pair goes in on this same run. Asked earlier, it would defer the
+# pair on the one run that put the link's far end back.
+#
+# `wip init` places the pair through this same function (`wip_hook_pair`), after
+# `link-estates`, so the two writers of this file cannot come to two rules.
+place_hook_pair() {
+	local settings
+	settings="$(claude_home)/settings.json"
+	if hook_target_answers; then
+		hook_pair_merge "$settings"
+	else
+		hook_pair_defer "$settings"
+	fi
+}
+
+# WRITTEN THROUGH A TEMPORARY IN THE SAME DIRECTORY, then moved into place:
+# `mktemp` + `chmod 600` + `mv -f`, which is what workBenches'
+# `scripts/setup-claude-profiles.sh:167-194` does to this very file on every
+# `./setup.sh` and what Amendment 9(b) cites approvingly. A plain `cp` that fails
+# half way leaves a person's settings TRUNCATED, and this is the one file in this
+# installer that is not ours to own. 600, the mode workBenches' own writer of this
+# file uses: an installer that widened it would be silently undone, or would widen
+# it behind that script's back. Stamped on the TEMPORARY, so the file never
+# exists at a wider mode for even an instant. One writer for both outcomes.
+hook_write_settings() {   # <the staged whole file> <settings>
+	local staged="$1" settings="$2" hook_tmp
+	mkdir -p -- "$(dirname -- "$settings")" ||
+		die "could not create $(dirname -- "$settings") for the hook entries."
+	hook_tmp="$(mktemp -- "$(dirname -- "$settings")/settings.json.openrepotools.XXXXXX")" ||
+		die "could not create a temporary file beside $settings."
+	cp -- "$staged" "$hook_tmp" ||
+		{ rm -f -- "$hook_tmp"; die "could not stage the merged $settings."; }
+	chmod 600 "$hook_tmp" ||
+		{ rm -f -- "$hook_tmp"; die "could not set mode 600 on the merged $settings."; }
+	mv -f -- "$hook_tmp" "$settings" ||
+		{ rm -f -- "$hook_tmp"; die "could not move the merged settings into $settings."; }
+}
+
+# THE TARGET ANSWERS: the pair, merged exactly as it was before #237.
+hook_pair_merge() {   # <settings>
+	local settings="$1"
 	case "$HOOK_PLAN" in
 	present)
 		# THE ENTRY BEING THERE SAYS NOTHING ABOUT THE MODE (#40, finding 3).
@@ -2841,26 +3011,7 @@ place_skill_and_hook() {
 	# ONE WRITE FOR THE TWO ENTRIES: they live in one file, and writing it twice
 	# would move a person's settings through a state carrying one of the pair.
 	if [ "$HOOK_PLAN" != present ] || [ "$GUARD_PLAN" != present ]; then
-		mkdir -p -- "$(dirname -- "$settings")" ||
-			die "could not create $(dirname -- "$settings") for the hook entries."
-		# WRITTEN THROUGH A TEMPORARY IN THE SAME DIRECTORY, then moved into
-		# place: `mktemp` + `chmod 600` + `mv -f`, which is what workBenches'
-		# `scripts/setup-claude-profiles.sh:167-194` does to this very file on
-		# every `./setup.sh` and what Amendment 9(b) cites approvingly. A plain
-		# `cp` that fails half way leaves a person's settings TRUNCATED, and
-		# this is the one file in this installer that is not ours to own.
-		hook_tmp="$(mktemp -- "$(dirname -- "$settings")/settings.json.openrepotools.XXXXXX")" ||
-			die "could not create a temporary file beside $settings."
-		cp -- "$HOOK_MERGED" "$hook_tmp" ||
-			{ rm -f -- "$hook_tmp"; die "could not stage the merged $settings."; }
-		# 600, the mode workBenches' own writer of this file uses. An installer
-		# that widened it would be silently undone, or would widen it behind
-		# that script's back. Stamped on the TEMPORARY, so the file never exists
-		# at a wider mode for even an instant.
-		chmod 600 "$hook_tmp" ||
-			{ rm -f -- "$hook_tmp"; die "could not set mode 600 on the merged $settings."; }
-		mv -f -- "$hook_tmp" "$settings" ||
-			{ rm -f -- "$hook_tmp"; die "could not move the merged settings into $settings."; }
+		hook_write_settings "$HOOK_MERGED" "$settings"
 		case "$HOOK_PLAN" in
 		nofile) say "SessionStart hook: installed in $settings (the file was created, mode 600)" ;;
 		absent) say "SessionStart hook: merged into $settings (one entry added; written back at mode 600)" ;;
@@ -2870,6 +3021,52 @@ place_skill_and_hook() {
 		absent) say "UserPromptSubmit guard: merged into $settings (one entry added; written back at mode 600)" ;;
 		esac
 	fi
+}
+
+# THE TARGET DOES NOT ANSWER: the pair is DEFERRED, and each entry's line says
+# what this run did about it. Nothing is added. OUR GUARD ENTRY, where the file
+# carries it, is taken out — an entry calling a path that does not answer
+# `guard` fails every prompt, by exit 127, by exit 126 or by `unknown
+# subcommand`'s 2 — and the file is written back at 600 with every other hook
+# where it was. Our `SessionStart` entry, where it is there, is LEFT: its
+# `|| true` keeps it from failing a session, and the file that carries it keeps
+# the mode this installer stamps on it. No line here says `unchanged` or
+# `installed`, so a deferred run's count is the twenty-nine it placed.
+hook_pair_defer() {   # <settings>
+	local settings="$1" wrote=0
+	if [ "$GUARD_PLAN" = present ]; then
+		[ -z "$HOOK_STRIP_WHY" ] || die "$settings carries the UserPromptSubmit name guard, and ${HOOK_TARGET_WHY},
+    so that entry would fail every prompt — but ${HOOK_STRIP_WHY}, and a file this
+    command does not understand is not one it rewrites. Nothing in that file was
+    changed; the lines above are placed. Remove the entry below by hand, then re-run:
+$(guard_block_text)"
+		hook_write_settings "$HOOK_DEFERRED" "$settings"
+		wrote=1
+	fi
+	case "$HOOK_PLAN" in
+	present)
+		if [ "$wrote" -eq 1 ] || mode_is 600 "$settings"; then
+			say "SessionStart hook: left in $settings as an earlier run placed it (it ends in \`|| true\`, so it cannot fail a session while the pair is deferred)"
+		else
+			chmod 600 "$settings" ||
+				die "could not set mode 600 on $settings, which already carries the SessionStart entry.
+    Nothing in that file was changed."
+			say "SessionStart hook: left in $settings as an earlier run placed it (it ends in \`|| true\`, so it cannot fail a session while the pair is deferred; mode restored to 600)"
+		fi
+		;;
+	*)
+		say "SessionStart hook: deferred, not added to $settings, because ${HOOK_TARGET_WHY}"
+		;;
+	esac
+	case "$GUARD_PLAN" in
+	present)
+		say "UserPromptSubmit guard: REMOVED from $settings, because ${HOOK_TARGET_WHY}, and left there it would fail every prompt. Only that entry was taken out: every other hook is where it was, and the file was written back at mode 600"
+		;;
+	*)
+		say "UserPromptSubmit guard: deferred, not added to $settings, because ${HOOK_TARGET_WHY}"
+		;;
+	esac
+	hook_pair_remedy
 }
 # =========================================================================
 # `wip init` — THE ONE ACT THAT CREATES THE WORKSPACE THOSE COMMANDS READ
@@ -3376,6 +3573,69 @@ EOF
 	return 0
 }
 
+# --- step 10's two acts: the links, then the hook pair (#237) ---------------
+#
+# `link-estates` places the symlinks and reports the ones it skipped. One of
+# them is `~/projects/xFactory/lanes-edit.sh`, the path both of `--install`'s
+# hook entries call — which is why the pair is completed here, after it, and
+# why step 1 runs this again on a workstation whose link is missing.
+wip_run_link_estates() {
+	local linker="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}/link-estates"
+	[ -x "$linker" ] || linker="$(command -v link-estates 2>/dev/null || :)"
+	if [ -n "$linker" ] && [ -x "$linker" ]; then
+		say ""
+		say "  link-estates:"
+		# ONE PROJECTS TREE ACROSS THE SEAM. This toolset spells that directory
+		# `$PROJECTS_DIR` (`park:131`, `resume:114`, and `wip_init`'s step 6); the lane
+		# protocol's commands, which arrived from the workspace repository,
+		# spell it `$PROJECTS_ROOT` (`link-estates:200`, `lane-start:427`).
+		# Amendment 9(g) keeps every mechanic of Amendments 6 to 8, so the
+		# helpers keep their name — but step 10 must run the linker against the
+		# tree step 6 actually cloned into, or a host with `$PROJECTS_DIR` set
+		# to anything but the default gets a clone in one tree and its symlinks
+		# looked for in another. Passed only where the person has not set
+		# `$PROJECTS_ROOT` themselves: their answer wins over our inference.
+		PROJECTS_ROOT="${PROJECTS_ROOT:-$(wip_projects_dir)}" "$linker" ||
+			say "  (link-estates reported the above and changed nothing else)"
+	else
+		say ""
+		say "  link-estates is not installed, so no symlinks were placed."
+		say "  \`openRepoTools --install\` places it; then run \`link-estates\`."
+	fi
+}
+
+# THE HOOK PAIR, BY `--install`'s OWN READ AND ITS OWN WRITE (#237): the rival
+# refusal, the two staged outcomes and the gate are `plan_hook_merge` and
+# `place_hook_pair`, word for word, so `wip init` and `--install` are one rule
+# for one file. In a SUBSHELL, because a refusal there is `die`: it prints what
+# `--install` would have refused with and exits 2 — the subshell, not this run.
+# The workspace this command exists to make is made by then, so the refusal is a
+# note beside it and the exit stays 0, the way a `link-estates` that refused is
+# (step 10). `set -e` is put back on INSIDE the subshell: the `set +e` that lets
+# this read the subshell's status would otherwise reach everything the two
+# functions run, and they are written for `--install`'s `set -e`.
+wip_hook_pair() {
+	local rc
+	say ""
+	say "  hook entries in $(claude_home)/settings.json:"
+	workdir
+	set +e
+	( set -e; plan_hook_merge; place_hook_pair )
+	rc=$?
+	set -e
+	if [ "$rc" -ne 0 ]; then
+		say "  (not reconciled: the refusal above is the one \`openRepoTools --install\` makes, and"
+		say "   nothing in that file was changed. Fix what it names, then run \`openRepoTools wip init\` again.)"
+	fi
+	return 0
+}
+
+wip_hook_pair_would() {
+	say "  would merge   the SessionStart and UserPromptSubmit hook entries into"
+	say "                $(claude_home)/settings.json, once ~/projects/xFactory/lanes-edit.sh"
+	say "                answers \`guard\` (until then each run says it deferred them)"
+}
+
 # --- the command itself -----------------------------------------------------
 wip_init() {
 	local config target checkout ref rel dest seeded=0 owed=0 kind
@@ -3408,7 +3668,29 @@ wip_init() {
 			say "workspace repository: $existing_repo"
 			say "  checked out at      $existing_path"
 			say "  named by            $config"
-			say "openRepoTools wip init: nothing to do."
+			say "openRepoTools wip init: nothing to do for the workspace itself."
+			# THE HOOK PAIR IS THE ONE THING A RE-RUN STILL OWES (#237). A run cut
+			# off between step 9 and step 10 — or one whose `link-estates` could
+			# not link yet — left a workspace this file test accepts and no link
+			# for `--install`'s two entries to call, and nothing else would ever
+			# heal it: every later run returned here. So, only where that path
+			# does not answer `guard` and `~/projects/xFactory` is there for the
+			# link to go into, `link-estates` runs again; then the pair is
+			# reconciled, which on a healthy workstation writes nothing.
+			if [ "$WIP_DRY_RUN" -eq 1 ]; then
+				say ""
+				say "--dry-run, so nothing below was done:"
+				if ! hook_target_answers && [ -d "$HOME/projects/xFactory" ]; then
+					say "  would run     link-estates (${HOOK_TARGET_WHY})"
+				fi
+				wip_hook_pair_would
+				return 0
+			fi
+			if ! hook_target_answers && [ -d "$HOME/projects/xFactory" ]; then
+				say "  ${HOOK_TARGET_WHY}, so link-estates runs again:"
+				wip_run_link_estates
+			fi
+			wip_hook_pair
 			return 0
 		fi
 		# A file that names a repository the path is NOT a checkout of is a
@@ -3454,6 +3736,7 @@ wip_init() {
 		say "  would push    one commit to main (which is also the ruleset probe)"
 		say "  would write   $config (repository:, path:)"
 		say "  would run     link-estates"
+		wip_hook_pair_would
 		return 0
 	fi
 
@@ -4234,29 +4517,10 @@ $WIP_LAST_ERR"
 	say "        path: $written"
 
 	# ---- step 10: LINK-ESTATES, which places the symlinks and reports the ones
-	# it skipped.
-	local linker="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}/link-estates"
-	[ -x "$linker" ] || linker="$(command -v link-estates 2>/dev/null || :)"
-	if [ -n "$linker" ] && [ -x "$linker" ]; then
-		say ""
-		say "  link-estates:"
-		# ONE PROJECTS TREE ACROSS THE SEAM. This toolset spells that directory
-		# `$PROJECTS_DIR` (`park:131`, `resume:114`, and step 6 above); the lane
-		# protocol's commands, which arrived from the workspace repository,
-		# spell it `$PROJECTS_ROOT` (`link-estates:200`, `lane-start:427`).
-		# Amendment 9(g) keeps every mechanic of Amendments 6 to 8, so the
-		# helpers keep their name — but step 10 must run the linker against the
-		# tree step 6 actually cloned into, or a host with `$PROJECTS_DIR` set
-		# to anything but the default gets a clone in one tree and its symlinks
-		# looked for in another. Passed only where the person has not set
-		# `$PROJECTS_ROOT` themselves: their answer wins over our inference.
-		PROJECTS_ROOT="${PROJECTS_ROOT:-$(wip_projects_dir)}" "$linker" ||
-			say "  (link-estates reported the above and changed nothing else)"
-	else
-		say ""
-		say "  link-estates is not installed, so no symlinks were placed."
-		say "  \`openRepoTools --install\` places it; then run \`link-estates\`."
-	fi
+	# it skipped — and then THE HOOK PAIR (#237), which `--install` deferred on a
+	# workstation that had no link yet for its two entries to call.
+	wip_run_link_estates
+	wip_hook_pair
 
 	# ---- step 11: THE NEXT STEP, which is one line. `<profile>` is the one
 	# value a person supplies and the one this command cannot derive: it is not
