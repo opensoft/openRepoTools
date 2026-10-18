@@ -165,7 +165,7 @@ invocation.
 
 ### Tests for User Story 2 (write first; they MUST fail before T011)
 
-- [ ] T009 [P] [US2] [O] Write `tests/test_package_stamp.py`, as detailed below — files: `tests/test_package_stamp.py` — verify: `bash tests/run.sh --collect-only -q -k 'test_stamp_reader_ or test_stamp_hatch_ or test_package_version_ or test_package_broken_stamp_ or test_package_no_env_channel_ or test_package_parser_'`
+- [X] T009 [P] [US2] [O] Write `tests/test_package_stamp.py`, as detailed below — files: `tests/test_package_stamp.py` — verify: `bash tests/run.sh --collect-only -q -k 'test_stamp_reader_ or test_stamp_hatch_ or test_package_version_ or test_package_broken_stamp_ or test_package_no_env_channel_ or test_package_parser_'`
   - `test_stamp_reader_*`: one fixture per row of contracts/stamp.md's refusal table, plus the committed and a stamped file, running `stamp_read` cut out with `installer_function`.
   - `test_stamp_hatch_*`: hatch's version pattern, copied with its citation (`hatchling/version/core.py:6` and `:31` in 1.27.0), against `stamp_read`, on the committed file, a stamped one and a guarded-docstring fixture.
   - `test_package_version_*`: the exact stamped and unstamped five lines, from `package_tree` layouts.
