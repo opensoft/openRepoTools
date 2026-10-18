@@ -2675,11 +2675,12 @@ def test_the_exit_code_table_carries_every_code_the_file_exits_with():
 #:   * `marker`: else the cause owns a `die … 3` that follows its marker
 #:     nearer than any other cause's marker, inside the same function — the
 #:     `dirty_elsewhere` guard that skips the pull and pushes straight out
-#:     (a peer's uncommitted file), and the `git_net … pull` that fails into
-#:     the rebase conflict. Neither is the function's name, so renaming
-#:     `commit_push` leaves the rule standing; and the marker is a CALL, not a
-#:     word, because the peer branch's own `note` says "skipping 'pull
-#:     --rebase'" a few lines above its die.
+#:     (a peer's uncommitted file), and the `git_net … pull` call, after which
+#:     the rebase conflict's die sits (its `else` arm, reached when that call
+#:     fails). Neither is the function's name, so renaming `commit_push` leaves
+#:     the rule standing; and the marker is a CALL, not a word, because the
+#:     peer branch's own `note` says "skipping 'pull --rebase'" a few lines
+#:     above its die.
 #:
 #: What a die and each row that documents its cause must keep saying is
 #: `concept`: one word-group per cause, loose enough that rewording keeps
@@ -2708,10 +2709,14 @@ _EXIT_3_CAUSES = (
 #: A `die` whose message is one quoted literal and whose last word is `3`; a
 #: `\"` inside the message is read whole. A message that holds a command
 #: substitution with quotes of its own is NOT read by this, so `_exit_3_dies`
-#: also counts every line that ends `… 3` and compares: a `die` this cannot
-#: read is a finding, never a hole.
-_DIE_EXIT_3 = re.compile(r'\bdie "((?:[^"\\]|\\.)*)" 3\b', re.S)
-_ENDS_IN_EXIT_3 = re.compile(r'''["'] 3(?=\s*(?:$|;|\|\||&&|\)|\}|#))''', re.M)
+#: also counts every line that ends `… 3` after a closing quote and compares:
+#: a `die` of that shape this cannot read is a finding. What stays out of its
+#: reach is a `die` whose exit code is not a literal `3` on the line that closes
+#: the message: the code held in a variable, or a `3` on a backslash-continued
+#: line of its own.
+_DIE_EXIT_3 = re.compile(r'\bdie "((?:[^"\\]|\\.)*)"[ \t]+3\b', re.S)
+_ENDS_IN_EXIT_3 = re.compile(
+    r'''["'][ \t]+3(?=\s*(?:$|;|\|\||&&|\)|\}|#))''', re.M)
 
 #: A SENTENCE THAT CLAIMS THE EDIT NEVER REACHED ORIGIN. Exit 3 is the code for
 #: "this attempt cannot confirm whether it also reached origin" (#32): a hung
@@ -2760,26 +2765,58 @@ def _exit_3_cause_of(code: str, at: int):
     return nearest
 
 
+#: Every mention of `git_timeout_die` but its definition (`git_timeout_die() {`),
+#: each read as a call; and what may stand before a command on its line.
+_GIT_TIMEOUT_MENTION = re.compile(r"\bgit_timeout_die\b(?!\s*\()")
+_AT_COMMAND_START = re.compile(r"(?:^|&&|\|\||[;|({]|\b(?:then|do|else))\s*$")
+
+
 def _timeout_operations(code: str):
     """`(operations, findings)`: the network operations every call of
-    `git_timeout_die` names (`push`, `pull`, ...), read from the command each
-    call hands it "for the reader". A timeout row that names a push and a pull
-    is right until a call site names a fetch."""
+    `git_timeout_die` names (`push`, `pull`, ...), read off the words that
+    follow the call on its line: a quoted command "for the reader"
+    (`git_timeout_die "git push origin $B"`), a bare or quoted operation word
+    (`git_timeout_die push "git push origin $B"`), or both. A timeout row that
+    names a push and a pull is right until a call names a fetch.
+
+    EVERY MENTION OF THE NAME BUT ITS DEFINITION IS READ AS A CALL, and a call
+    whose shape this cannot read is a finding that says exactly that. It is
+    never "nothing calls it", which would be false of a call spelled in a shape
+    the reader did not expect (#68 item 3 may hand it the operation as a word
+    of its own)."""
     operations, findings = set(), []
-    calls = list(re.finditer(r'\bgit_timeout_die "((?:[^"\\]|\\.)*)"', code))
-    if not calls:
+    mentions = list(_GIT_TIMEOUT_MENTION.finditer(code))
+    if not mentions:
         findings.append(
-            "nothing calls `git_timeout_die`, so the timeout cause both rows "
-            "document can never fire")
-    for call in calls:
-        line = code.count("\n", 0, call.start()) + 1
-        named = set(re.findall(r"\b(push|pull|fetch|clone)\w*", call.group(1)))
+            "lanes-edit.sh has no call of `git_timeout_die` (every mention of "
+            "it but its definition is read as one), so the timeout cause both "
+            "rows document can never fire")
+    for mention in mentions:
+        line = code.count("\n", 0, mention.start()) + 1
+        head = code.rfind("\n", 0, mention.start()) + 1
+        tail = code.find("\n", mention.end())
+        rest = code[mention.end():tail if tail != -1 else len(code)]
+        if not _AT_COMMAND_START.search(code[head:mention.start()]):
+            findings.append(
+                f"lanes-edit.sh:{line} mentions `git_timeout_die` somewhere "
+                "other than the start of a command, a shape this rule cannot "
+                "read as a call, so it cannot tell which network operation it "
+                "is called for. Make it the first word of a command; if it is "
+                "only a mention in a string, leave the name out of the string")
+            continue
+        words = []
+        for token in (_commands_on(rest) or [[]])[0]:
+            if token.startswith("#"):
+                break
+            words.append(token)
+        text = " ".join(words)
+        named = set(re.findall(r"\b(push|pull|fetch|clone)\w*", text))
         if not named:
             findings.append(
-                f"lanes-edit.sh:{line} calls "
-                f"`git_timeout_die` with {call.group(1)!r}, which names no "
-                "network operation (push, pull, fetch or clone) for the rows "
-                "to be held to")
+                f"lanes-edit.sh:{line} calls `git_timeout_die` with {text!r}, "
+                "which names no network operation (push, pull, fetch or clone) "
+                "as a bare word or in a quoted command, so the rows cannot be "
+                "held to it")
         operations |= named
     return operations, findings
 
@@ -2978,22 +3015,12 @@ def test_the_exit_3_documentation_agrees_with_the_die_message_it_describes():
     the code's whole table text, not even in its exit-3 row. So either of the
     other two dies could say anything, "nothing was pushed" included, where a
     push may already have landed, and this test stayed green. It now reads
-    EVERY `die … 3` and holds each to both rows:
-
-      * each die is tied to its cause by WHERE IT SITS (the function
-        `git_timeout_die`; the branch after the `dirty_elsewhere` guard; the
-        branch after a failed `pull --rebase`) and never by what it says, so
-        rewording a message that keeps its meaning (#68 item 3 will; the act 2
-        `commit_publish` will) cannot blind the rule;
-      * a `die … 3` no cause explains, or one the extractor cannot read, is a
-        finding: a fourth cause needs a clause in BOTH rows before it ships;
-      * each die, and the exit-3 ROW of the table and of the manual (the row
-        itself, not the whole document), must name the cause, and none may
-        claim that nothing reached origin — the one true form of that claim
-        is "not pushed by this attempt";
-      * the network operations `git_timeout_die` is called for (today a push
-        and a pull) are read off its call sites, so a call for a fetch that
-        the rows never mention is a finding too.
+    EVERY `die … 3` and holds each to both rows. What ties a die to its cause
+    (where it sits, so that a rewording that keeps the meaning cannot blind the
+    rule: #68 item 3 will reword, and so will the act 2 `commit_publish`) and
+    what each die and row must keep saying are written at `_EXIT_3_CAUSES`
+    above. A `die … 3` no cause explains is a finding: a fourth cause needs a
+    clause in BOTH rows before it ships.
 
     The rule is `_exit_3_findings`; its own regression cases, one red per
     mutation and one green per rewording that keeps the meaning, are the
@@ -3134,6 +3161,14 @@ EXIT_3_REFUSED = [
      'git_timeout_die "git pull --rebase origin $BRANCH"',
      'git_timeout_die "the network call"',
      "names no network operation"),
+    ("a call hands git_timeout_die a bare operation word no row names", "code",
+     'git_timeout_die "git pull --rebase origin $BRANCH"',
+     'git_timeout_die fetch "the network call"',
+     "never names a fetch"),
+    ("a mention of git_timeout_die the reader cannot place as a call", "code",
+     "  release_lock\n",
+     "  release_lock\n  note \"git_timeout_die has released the lock\"\n",
+     "cannot read as a call"),
     ("the table's row loses the timeout cause", "code",
      "#      a network timeout on a push OR a pull (a hung one often landed);\n",
      "#      a network failure on a push OR a pull (a hung one often landed);\n",
@@ -3159,14 +3194,6 @@ EXIT_3_REFUSED = [
      "#   0  done\n",
      "#   0  done, and on a refusal nothing was pushed\n",
      "still claims that nothing reached origin"),
-    ("the manual's row loses the pull", "manual",
-     "a network timeout on a push or a pull",
-     "a network timeout on a push",
-     "never names a pull"),
-    ("the manual's row loses the peer's-file cause", "manual",
-     ", or six attempts exhausted because a peer's uncommitted file blocks every rebase",
-     "",
-     "no longer names six attempts blocked by a peer's uncommitted file"),
     ("the manual's row says nothing was pushed", "manual",
      "cannot confirm whether it also reached origin",
      "cannot confirm — nothing was pushed",
@@ -3191,6 +3218,11 @@ EXIT_3_ACCEPTED = [
      "so look before you retry: a later write from this checkout may already carry it"),
     ("the function that holds the push loop is renamed", "code",
      "commit_push() {", "commit_publish() {"),
+    ("a call hands git_timeout_die the operation as a bare word", "code",
+     'git_timeout_die "git pull --rebase origin $BRANCH"',
+     'git_timeout_die pull "the rebase on origin/$BRANCH"'),
+    ("two spaces stand before the exit code", "code",
+     "nothing was lost.\" 3\n}", "nothing was lost.\"  3\n}"),
     ("a comment trails the exit code", "code",
      "nothing was lost.\" 3\n}", "nothing was lost.\" 3   # the mutex is already released\n}"),
     ("the table wraps the attempt-scoped phrase onto a continuation line", "code",
