@@ -1667,6 +1667,22 @@ def stale_quill_workspace(tmp_path: Path) -> Path:
                           {f"workspaces/{ORG}/{QUILL.lower()}.yaml": record})
 
 
+def second_projects_spelling(home: Path) -> Path:
+    """`~/Projects` as a directory of its own beside the fixture's
+    `~/projects`, which is what a person who spells it both ways has, and the
+    second place `PROJECTS_DIRS` looks. On a filesystem that folds case — a
+    stock Mac — the two names are ONE directory, so there is no second
+    spelling to make: the test is SKIPPED there, saying why, instead of
+    failing on a `mkdir` that finds the directory already there."""
+    other = home / "Projects"
+    if other.exists() and other.samefile(home / "projects"):
+        pytest.skip("case-insensitive filesystem: ~/Projects is ~/projects "
+                    "here, so there is no second spelling of the projects "
+                    "directory to put a holder in")
+    other.mkdir()
+    return other
+
+
 def test_resume_finds_the_holder_by_its_id_when_the_record_names_another_folder(
         named_apart, remotes, home, tmp_path):
     """#243, item 3, the issue's own case. `make siblings`' advice was
@@ -1710,7 +1726,7 @@ def test_resume_refuses_two_holders_of_one_id_and_clones_over_neither(
     first = probe_family_two_names(projects, QUILL, name=QUILL_DISPLAY,
                                    repository=f"{ORG}/{QUILL}")
     if second == "Projects":
-        other = probe_family_two_names(home / "Projects", QUILL,
+        other = probe_family_two_names(second_projects_spelling(home), QUILL,
                                        name=QUILL_DISPLAY,
                                        repository=f"{ORG}/{QUILL}")
     else:
@@ -1733,6 +1749,37 @@ def test_resume_refuses_two_holders_of_one_id_and_clones_over_neither(
     assert "PROBE" not in result.stdout, "a holder's make ran"
     assert not (projects / QUILL_DISPLAY).exists(), "the record's folder"
     assert not (home / "Projects" / QUILL_DISPLAY).exists()
+
+
+def test_one_holder_reached_under_both_spellings_is_one_holder_not_two(
+        named_apart, remotes, home, tmp_path):
+    """The review of #251, finding 1. `~/Projects` is a real directory whose
+    `Quill` is a LINK to `~/projects/Quill`: one folder, reached under both
+    spellings of the projects directory. `PROJECTS_DIRS` dedupes the two
+    directories by inode, but nothing compared the folders INSIDE them, so
+    `family_folders_with_id` listed one holder twice: `resume quill` refused
+    "2 family folders" with nothing to choose between, and `status` reported
+    one family "laid out 2 times" — and its remedy, "move the rest aside",
+    would have taken the link away. A folder that is `-ef` one already
+    listed is the same holder, so it is listed once: `resume` resumes it and
+    `status` has no finding to make. Two REAL holders still refuse (above)."""
+    quill = clone_quill_estate(named_apart, remotes, home, QUILL)
+    (second_projects_spelling(home) / QUILL).symlink_to(quill["folder"])
+
+    status = run(STATUS, QUILL, home=home)
+    assert status.returncode == 0, status.stdout + status.stderr
+    assert "laid out" not in status.stdout, status.stdout
+    assert "0 finding(s) in 3 repositories" in status.stdout
+
+    place_quill_workspace(named_apart, home, stale_quill_workspace(tmp_path))
+    result = run(RESUME, QUILL.lower(), "--dry-run", home=home,
+                 env=offline(named_apart))
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "family folders under your projects" not in result.stderr
+    assert f"present         {quill['folder']} (family)" in result.stdout
+    assert "found by its family.yaml id 'quill'" in result.stdout
+    assert "absent          cloning" not in result.stdout
+    assert not (home / "projects" / QUILL_DISPLAY).exists()
 
 
 def test_resume_holds_a_holder_found_by_its_id_to_an_estate_folders_name(

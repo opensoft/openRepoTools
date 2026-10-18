@@ -443,10 +443,19 @@ estates_or_none() {
 # record (#243). So this is how `resume` finds a holder its record's folder
 # no longer names, and how `status` sees one family laid out twice.
 #
+# ONE FOLDER IS LISTED ONCE, however many spellings reach it. `PROJECTS_DIRS`
+# is deduped by inode, but the folders inside two distinct directories are
+# not: a `~/Projects/Quill` that is a LINK to `~/projects/Quill` is one
+# holder, and listing it twice made `resume` refuse "2 family folders" and
+# `status` report one family "laid out 2 times" (the review of #251, finding
+# 1). So a folder that is `-ef` one already listed is skipped, and the first
+# spelling, in `PROJECTS_DIRS`' order, is the one named.
+#
 # shellcheck disable=SC2329  # `park` never asks: it files the record, and
 # never looks a holder up by it. The block is byte-identical by design.
 family_folders_with_id() {
-    local want="$1" dir child
+    local want="$1" dir child prior dup
+    local -a found=()
     [ -n "$want" ] || return 0
     for dir in "${PROJECTS_DIRS[@]}"; do
         [ -d "$dir" ] || continue
@@ -455,6 +464,12 @@ family_folders_with_id() {
             is_family_folder "$child" || continue
             yaml_scalar "$child/${child##*/}/family.yaml" id || continue
             [ "$YAML_VALUE" = "$want" ] || continue
+            dup=0
+            for prior in ${found[@]+"${found[@]}"}; do
+                if [ "$child" -ef "$prior" ]; then dup=1; fi
+            done
+            [ "$dup" -eq 0 ] || continue
+            found+=("$child")
             printf '%s\n' "$child"
         done
     done
