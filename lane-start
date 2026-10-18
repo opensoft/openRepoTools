@@ -590,11 +590,18 @@ lanes_workspace_why() {
 # — so `$SCRIPT_DIR` answers both without a second rule. `$OPENREPOTOOLS_BIN_DIR`
 # and `$PATH` are the fallbacks for a command copied somewhere on its own.
 LANES_WS_ROOT=""
+# AMENDMENT 23 (act 2, slice 1a). With neither variable set, every write of a
+# lane goes through that lane's own register checkout, and the register this
+# command READS follows it there once the lane's name is known
+# (`lane_register_follow`, below). A caller's `LANES_REPO` without `LANES_FILE`
+# is the checkout the helper now writes in, so its own register is the one read.
+LANES_REG_DEFAULT=0
+[ -n "${LANES_FILE:-}" ] || [ -n "${LANES_REPO:-}" ] || LANES_REG_DEFAULT=1
 if [ -z "${LANES_FILE:-}" ] || [ -z "${LANES_REPO:-}" ]; then
   LANES_WS_ROOT="$(lanes_workspace_root || :)"
 fi
 : "${LANES_REPO:=$LANES_WS_ROOT}"
-LANES_FILE="${LANES_FILE:-${LANES_WS_ROOT:+$LANES_WS_ROOT/lanes/LANES.md}}"
+LANES_FILE="${LANES_FILE:-${LANES_REPO:+$LANES_REPO/lanes/LANES.md}}"
 
 lanes_edit_default() {
   local d
@@ -1113,6 +1120,46 @@ esac
 
 repo="${repo:-$LANE}"          # the verbatim form has no <repo> of its own
 estate="${estate:-$repo}"
+
+# AMENDMENT 23 S1, S2 — THE REGISTER THIS COMMAND READS IS THE ONE ITS WRITES GO
+# THROUGH. Under the default resolution every write of this lane goes through
+# its own checkout, `<W>-lanes/<lane>/`, and W, the readers' copy, moves only by
+# `lanes-edit.sh refresh-workspace`. So W's working tree does not carry the
+# lane's own rows once they are written: a lane started through its checkout
+# read as a lane with no row, and a second start refused to add a duplicate
+# that W could not see. The row this command counts and acts on is therefore
+# read from that checkout. The helper makes the checkout here if it is not
+# there yet, exactly as this command's first write would; a dry run makes
+# nothing and reads W where there is no checkout. ONLY THE READ MOVES: the
+# handoff this command publishes is still W's until Amendment 23's later slices.
+# A helper that predates the verb writes W itself, so W is what is read.
+lane_register_follow() {
+  [ "$LANES_REG_DEFAULT" = 1 ] && [ -n "${LANE:-}" ] || return 0
+  lrf_args=(lane-checkout "$LANE")
+  [ "${dry_run:-0}" = 1 ] || lrf_args+=(--create)
+  lrf_errf="$(mktemp "${TMPDIR:-/tmp}/${prog}-register.XXXXXX" 2>/dev/null || printf '')"
+  lrf_out=""; lrf_rc=0
+  lrf_out="$("$LANES_EDIT" "${lrf_args[@]}" 2>"${lrf_errf:-/dev/null}")" || lrf_rc=$?
+  lrf_err=""
+  if [ -n "$lrf_errf" ]; then lrf_err="$(cat -- "$lrf_errf" 2>/dev/null || :)"; rm -f -- "$lrf_errf"; fi
+  case "$lrf_rc" in
+    0)
+      [ -z "$lrf_err" ] || printf '%s\n' "$lrf_err" >&2
+      [ -f "$lrf_out/lanes/LANES.md" ] ||
+        die "lane $LANE's register checkout $lrf_out carries no lanes/LANES.md, so the lane's row cannot be read (Amendment 23 S1). Nothing was launched, renamed or written." 1
+      LANES_FILE="$lrf_out/lanes/LANES.md" ;;
+    8) : ;;                        # a dry run, and no checkout yet: W is what there is
+    2)
+      case "$lrf_err" in *"unknown subcommand 'lane-checkout'"*) return 0 ;; esac
+      [ -z "$lrf_err" ] || printf '%s\n' "$lrf_err" >&2
+      die "lane $LANE's own register checkout could not be made (\`$LANES_EDIT lane-checkout $LANE\` exited 2, above), so the row this command acts on cannot be read where its writes go (Amendment 23 S1). Nothing was launched, renamed or written." 2 ;;
+    *)
+      [ -z "$lrf_err" ] || printf '%s\n' "$lrf_err" >&2
+      die "lane $LANE's own register checkout could not be read (\`$LANES_EDIT lane-checkout $LANE\` exited $lrf_rc, above), so the row this command acts on cannot be read where its writes go (Amendment 23 S1). Nothing was launched, renamed or written." 1 ;;
+  esac
+  return 0
+}
+lane_register_follow
 
 # ----------------------------------------- 1b. THE LANE'S DIRECTORY
 #
