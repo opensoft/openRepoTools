@@ -77,8 +77,10 @@ sequence, and relay their per-repository lines rather than summarising them.
    clone with `--ff-only` and REFUSES BY NAME one that is dirty or on a feature
    branch, skipping it and leaving it exactly as it is — and not running the
    verb in it either. It also refuses a root whose LEG sits on a feature
-   branch, because that root's own `make bootstrap` would walk the leg back
-   onto its tracking branch; the superproject looks clean in that state, which
+   branch, or anywhere but the branch that root's own `make bootstrap` places
+   it on — its row's own `branch:` in `project.yaml`, else the root's
+   `tracking_branch` — because bootstrap would walk the leg onto that branch;
+   the superproject looks clean in that state, which
    is why the refusal names the leg. Never `git reset`, `git stash` or
    `git checkout -f` — and never `git checkout main` in a leg — to make the
    next run succeed: that is the work the refusal exists to protect.
