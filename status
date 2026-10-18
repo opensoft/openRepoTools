@@ -843,9 +843,9 @@ declared_legs() {
 # not-carried report's enumeration, with two rows it does not need: `missing`,
 # for a member with no working clone beside the holder, and `unmounted`, for a
 # leg declared and not there. Both are things out of sync with the estate as
-# recorded, which is what this command is for. A LEG'S BRANCH COLUMN DIFFERS
-# from `park`'s: here it is the branch the leg is placed on (`leg_branch_of`),
-# where `park`'s report gives every leg the root's (#242).
+# recorded, which is what this command is for. A LEG'S BRANCH COLUMN IS THE
+# SAME as `park`'s: the `branch:` the leg's own row declares, else the root's
+# `tracking_branch:` (`leg_branch_of`; #235, #242).
 #
 # `members/<Project>` INSIDE A FAMILY HOLDER IS DELIBERATELY NOT HERE, for
 # park's reason: that copy is pinned and DETACHED, for `bootstrap` and

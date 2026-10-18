@@ -711,7 +711,7 @@ submodule_paths() {
 # working clone BESIDE the holder is where a person works, so it is what is
 # read - the same reason the holder's own `park` target dispatches there (#80).
 report_repos() {
-    local leg member branch
+    local leg member branch legbranch
     if [ "$ESTATE_KIND" = "family" ]; then
         printf 'holder\t%s\t%s\n' "$(tracking_branch_of "$ESTATE_ROOT")" \
             "$ESTATE_ROOT"
@@ -720,12 +720,16 @@ report_repos() {
             branch="$(tracking_branch_of "$ESTATE_DIR/$member")"
             printf 'root\t%s\t%s\n' "$branch" "$ESTATE_DIR/$member"
             while IFS= read -r leg; do
-                # A LEG'S branch here is the ROOT's `tracking_branch:`, which
-                # is NOT what `scripts/bootstrap.py` places a leg on when its
-                # row declares its own `branch:` (`leg_branch_of`): such a
-                # leg's unpushed commits are counted against the wrong
-                # branch (#242).
-                printf 'leg\t%s\t%s\n' "$branch" "$ESTATE_DIR/$member/$leg"
+                # A LEG'S branch is the `branch:` its own row declares, else
+                # the ROOT's `tracking_branch:` — what `scripts/bootstrap.py`
+                # places it on (#235, #238; #242 here). Its unpushed commits
+                # are on THAT branch, so that is the one the report counts.
+                # `|| true`: a `project.yaml` that cannot be read fails
+                # `leg_branch_of`, and under `set -e` that would end this
+                # subshell and drop this leg's row and every row after it,
+                # silently; the root's branch is the answer then.
+                legbranch="$(leg_branch_of "$ESTATE_DIR/$member" "$leg" || true)"
+                printf 'leg\t%s\t%s\n' "${legbranch:-$branch}" "$ESTATE_DIR/$member/$leg"
             done < <(submodule_paths "$ESTATE_DIR/$member")
         done < <(family_members "$ESTATE_ROOT/family.yaml")
         return 0
@@ -733,12 +737,16 @@ report_repos() {
     branch="$(tracking_branch_of "$ESTATE_ROOT")"
     printf 'root\t%s\t%s\n' "$branch" "$ESTATE_ROOT"
     while IFS= read -r leg; do
-        printf 'leg\t%s\t%s\n' "$branch" "$ESTATE_ROOT/$leg"
+        # The leg's own `branch:`, else the root's, and `|| true` for the
+        # reason the family loop gives.
+        legbranch="$(leg_branch_of "$ESTATE_ROOT" "$leg" || true)"
+        printf 'leg\t%s\t%s\n' "${legbranch:-$branch}" "$ESTATE_ROOT/$leg"
     done < <(submodule_paths "$ESTATE_ROOT")
 }
 
 # Commits on the TRACKING BRANCH that origin has never seen. The branch is
-# the root's own `tracking_branch:` and not a hard-coded `main`: a project
+# the root's own `tracking_branch:` — or, for a leg, the `branch:` its own row
+# declares (`report_repos`, #242) — and not a hard-coded `main`: a project
 # that ships from `trunk` would otherwise have been asked a question about a
 # branch it does not have and answered "nothing", which is worse than not
 # asking. BOTH refs must exist locally or there is no question to ask — a
