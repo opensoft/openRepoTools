@@ -16,6 +16,7 @@ trips over the gate.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -119,32 +120,41 @@ def ended(tmp_path: Path, request):
     (box.bin / "lane-end").chmod(0o755)
     stub = _write(box.bin / "lane-worktrees", "#!/usr/bin/env bash\nexit 0\n")
     register = box.wip / "lanes" / "LANES.md"
-    seed = register.read_text(encoding="utf-8")
+    seed = register.read_bytes()
 
-    def row(cell: str) -> str:
+    def row(cell: str | bytes) -> bytes:
+        """A register row; a `bytes` cell is how a hand-edited row that is not
+        UTF-8 gets in."""
+        cell = cell.encode("utf-8") if isinstance(cell, str) else cell
         return (f"| `{LANE}` | harness `{UUID}` | Eagle / test / brett | "
-                f"2026-10-11T00:00Z | none | handoffs/repoZ/x.md | {cell} |\n")
+                f"2026-10-11T00:00Z | none | handoffs/repoZ/x.md | ".encode()
+                + cell + b" |\n")
 
-    def run(cell: str, published: str | None = None):
+    def run(cell: str | bytes, published: str | bytes | None = None,
+            env: dict[str, str] | None = None):
         """`published` is the cell origin/main carries when it is not this
-        checkout's own: pushed first, then this checkout's row put back."""
+        checkout's own: pushed first, then this checkout's row put back.
+        `env` is added to the environment `lane-end` runs in."""
         if published is not None:
-            register.write_text(seed + row(published), encoding="utf-8")
+            register.write_bytes(seed + row(published))
             box.git("-C", str(box.wip), "commit", "-q", "-am", "the published row")
             box.git("-C", str(box.wip), "push", "-q", "origin", "main")
-        register.write_text(seed + row(cell), encoding="utf-8")
+        register.write_bytes(seed + row(cell))
         if published is None:
             box.git("-C", str(box.wip), "commit", "-q", "-am", "the row")
             box.git("-C", str(box.wip), "push", "-q", "origin", "main")
-        env = dict(box.env, LANE_WORKTREES=str(stub), LC_ALL=request.param)
-        result = subprocess.run([str(box.bin / "lane-end"), LANE], env=env,
+        full = dict(box.env, LANE_WORKTREES=str(stub), LC_ALL=request.param,
+                    **(env or {}))
+        result = subprocess.run([str(box.bin / "lane-end"), LANE], env=full,
                                 cwd=str(box.lane_dir), capture_output=True,
                                 encoding="utf-8", errors="replace",
                                 timeout=120, check=False)
-        after = next(l for l in register.read_text(encoding="utf-8").splitlines()
-                     if l.startswith(f"| `{LANE}`"))
+        after = next(l for l in register.read_bytes().decode(
+            "utf-8", errors="replace").splitlines()
+            if l.startswith(f"| `{LANE}`"))
         return result, after
 
+    run.box, run.locale = box, request.param
     return run
 
 
@@ -218,6 +228,50 @@ def test_a_wide_line_one_past_the_cap_cannot_hide_an_open_landing(ended):
     assert result.returncode == 2, (result.stdout, result.stderr)
     assert READ in result.stderr, result.stderr
     assert "lane-end on" not in after, after
+
+
+def _lines_that_are_not_utf8() -> list:
+    """Three lines past the cap by BYTES whose characters cannot be counted,
+    each naming a LANDING: a stray continuation byte is no character, and
+    taking continuation bytes out undercounts them."""
+    hold = b" " + HOLD.encode()
+    return [
+        pytest.param(b"\x80" * 241 + hold, id="241 stray continuation bytes"),
+        pytest.param(b"x" * (240 - len(hold)) + "°".encode("latin-1") + hold,
+                     id="Latin-1 with one degree sign"),
+        pytest.param(_wide_line(240, hold.decode()).encode() + b"\x80",
+                     id="a valid 240-character line and one stray byte"),
+    ]
+
+
+@pytest.mark.parametrize("line", _lines_that_are_not_utf8())
+def test_a_line_that_is_not_utf8_cannot_hide_an_open_landing(ended, line):
+    """THE COUNT IS ONLY EXACT FOR VALID UTF-8. Past 240 bytes the characters
+    are counted by taking the continuation bytes out, and text that is not
+    UTF-8 has continuation bytes that follow nothing: a hand-edited cell of
+    them was counted short, narrowed, and its LANDING closed the lane. It
+    falls back to the byte count, which can only over-count (#90, part (a))."""
+    assert len(line) > 240
+    result, after = ended(f"LIVE · {UTC} · ".encode() + line)
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert READ in result.stderr, result.stderr
+    assert "lane-end on" not in after, after
+
+
+def test_a_count_that_cannot_be_made_is_a_line_over_the_cap(ended):
+    """A `wc` that fails (the one place the count is read from) leaves the
+    cell scanned whole: a valid 240-character line of `—` and `→`, which
+    narrows when its count is made, is read for its LANDING instead. (A UTF-8
+    locale counts a line of 240 characters as 240 and never reaches `wc`.)"""
+    if ended.locale != "C":
+        pytest.skip("only a byte count past 240 reaches the `wc` recount")
+    stub = ended.box.root / "failing-wc"
+    _write(stub / "wc", f'#!/bin/sh\n[ "$*" = -c ] && exit 1\nexec {shutil.which("wc")} "$@"\n')
+    line = _wide_line(240, " waiting for " + HOLD)
+    result, after = ended(f"LIVE · {UTC} · {line}",
+                          env={"PATH": f"{stub}{os.pathsep}{ended.box.env['PATH']}"})
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert READ in result.stderr, result.stderr
 
 
 def test_a_line_over_the_cap_that_holds_nothing_still_ends(ended):
