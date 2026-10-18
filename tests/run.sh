@@ -40,7 +40,10 @@
 #
 # `flock` IS LINUX-ONLY. macOS ships none, so the fallback is `mkdir`, whose
 # atomicity POSIX guarantees; the holder's pid is left inside it so a lock a
-# killed run left behind is taken over rather than waited on for ever.
+# killed run left behind is taken over rather than waited on for ever. That
+# pid is the holder's whole claim (#72), so a run that cannot leave it there
+# does not start, and a run's exit removes the lock only while its pid is
+# still the one inside.
 #
 # NOTHING NEW LANDS BESIDE THE CODE (opensoft/openRepoTools#162, causes 3 and
 # 4). A suite run used to leave `tests/__pycache__`, `.pytest_cache` and a
@@ -79,9 +82,14 @@ prog="${0##*/}"
 # code root rather than against where the caller stood. So a relative value is
 # made absolute against the caller's directory first, and nothing else is
 # touched. `OPENREPOTOOLS_COMPOSED` is a mode, not a path, and passes as it is.
-abs_root() {   # <value> - absolute against the caller's directory
+# A QUOTED `~` or `~/…` reaches here unexpanded, and conftest reads it as the
+# home directory (`expanduser`); read here as relative it became `$PWD/~/…`,
+# a directory nobody meant, so it is the home directory here too (#193 item 7).
+abs_root() {   # <value> - absolute against the caller's directory; ~ is $HOME
   case "$1" in
     /*) printf '%s\n' "$1" ;;
+    '~') printf '%s\n' "$HOME" ;;
+    '~/'*) printf '%s/%s\n' "$HOME" "${1#??}" ;;
     *) printf '%s/%s\n' "$PWD" "$1" ;;
   esac
 }
@@ -140,9 +148,10 @@ wait_for_pytest() {   # <where> — block while any other suite is running
 
 # THE RUN ROOT AND ITS CLEANUP. `cleanup` is the EXIT trap: it stops whatever
 # is left of the suite's PROCESS GROUP, then removes the run root and, on the
-# `mkdir` path, the lock it holds. The INT and TERM handlers stop the suite and
-# EXIT, so the EXIT trap runs - a handler that only cleaned up and returned
-# would release the lock while the suite carried on.
+# `mkdir` path, the lock it holds - while it still holds it (`release_lock`,
+# below). The INT and TERM handlers stop the suite and EXIT, so the EXIT trap
+# runs - a handler that only cleaned up and returned would release the lock
+# while the suite carried on.
 #
 # THE GROUP, NOT THE PID: pytest is waiting on a shell suite, a `git`, a
 # fixture's `sleep` when the signal comes, and a TERM to pytest alone leaves
@@ -231,10 +240,48 @@ stop_strays() {
   [ -z "$SS_PIDS" ] || kill -KILL $SS_PIDS 2>/dev/null || :
   return 0
 }
+# THE `mkdir` LOCK IS REMOVED ONLY WHILE IT IS STILL THIS RUN'S (#72 item 2).
+# A waiter that reads a live holder as gone - a pid `kill -0` cannot signal
+# (another user's), or one not yet written - claims the directory and makes
+# it again with its own pid inside, and an EXIT trap that removed the PATH
+# then deleted that new holder's lock, leaving its suite running under no lock
+# at all. So the lock is read before anything is done:
+#
+#   * A LOCK THAT CARRIES ANOTHER PID IS NOT TOUCHED - not even renamed, since
+#     a rename leaves the name free for an instant, and a waiter that polled in
+#     that instant would start beside its holder.
+#   * ONE THAT CARRIES THIS RUN'S IS RENAMED to a name only this run uses, read
+#     again THERE, and only that copy is removed. A read and then an `rm` of
+#     the path removes whatever is behind the path at the `rm`, which may have
+#     been claimed and made again since the read; once it is renamed, nothing
+#     another run does can change what is removed.
+#   * A COPY THAT IS NOT THIS RUN'S AFTER ALL - claimed and made again in the
+#     instant between the read and the rename - is put straight back.
+#
+# That instant, and the one before a copy is put back, are as close as bash 3.2
+# gets: it has no rename that refuses an existing target (`mv` onto a directory
+# moves INTO it), and the lock is a directory because `mkdir` is the atomic act
+# a shell has. A leftover under this run's private name can only be a killed
+# run's whose pid this one now has, and it goes first, so the rename cannot
+# land inside it.
+release_lock() {   # <lock directory> <the pid this run left in it, or '' for none>
+  rl_pid="$(cat "$1/pid" 2>/dev/null || printf '')"
+  [ "$rl_pid" = "$2" ] || return 0
+  rl_mine="$LOCK.released.$$"
+  rm -rf -- "$rl_mine"
+  mv -- "$1" "$rl_mine" 2>/dev/null || return 0
+  rl_pid="$(cat "$rl_mine/pid" 2>/dev/null || printf '')"
+  if [ "$rl_pid" = "$2" ]; then
+    rm -rf -- "$rl_mine"
+  else
+    mv -- "$rl_mine" "$1" 2>/dev/null || :
+  fi
+  return 0
+}
 cleanup() {
   stop_group
   [ -n "$RUN_ROOT" ] && rm -rf -- "$RUN_ROOT"
-  [ -n "$LOCKDIR_HELD" ] && rm -rf -- "$LOCKDIR_HELD"
+  [ -n "$LOCKDIR_HELD" ] && release_lock "$LOCKDIR_HELD" "$$"
   return 0
 }
 on_signal() {   # <exit code>
@@ -382,7 +429,22 @@ while ! mkdir "$LOCKDIR" 2>/dev/null; do
   printf '%s: waiting for the suite holding %s\n' "$prog" "$LOCKDIR" >&2
   sleep 20
 done
-printf '%s\n' "$$" > "$LOCKDIR/pid" 2>/dev/null || :
+# THE PID IS THE HOLDER'S WHOLE CLAIM, SO A RUN THAT CANNOT LEAVE IT DOES NOT
+# START (#72 item 1). The write was `|| :`, and a run whose pid did not get in -
+# a full disk, a quota, a directory it cannot write - went on into the suite
+# holding a lock every waiter reads as stale, claims after three polls and runs
+# beside. So the pid is read back the way a waiter reads it, with the same
+# `cat`, and where it is not there this run releases the directory it made and
+# exits before anything starts. Nothing hides the write's own error: the
+# shell's line saying why, where it gives one, comes just before the refusal.
+# A holder that is only SLOW to write is the waiters' rule above, unchanged.
+printf '%s\n' "$$" > "$LOCKDIR/pid"
+if [ "$(cat "$LOCKDIR/pid" 2>/dev/null || printf '')" != "$$" ]; then
+  release_lock "$LOCKDIR" ""
+  printf '%s: cannot record this run'"'"'s pid in %s, so a waiter would take the lock over while the suite ran — released, and the suite not started\n' \
+    "$prog" "$LOCKDIR/pid" >&2
+  exit 1
+fi
 # THE SIGNAL HANDLERS EXIT, and that is the whole point of writing them out
 # separately: a handler that only cleans up and RETURNS releases the lock while
 # this suite carries on running, which is the collision the lock exists for.
