@@ -132,7 +132,7 @@ The tests use fake venv layouts, with no pipx and no wheel.
 
 ### Implementation for User Story 1
 
-- [ ] T007 [P] [US1] [O] Create `src/openrepotools/cli.py` with `main()` per design.md Decision 3, as detailed below — files: `src/openrepotools/cli.py` — verify: `bash tests/run.sh -k 'test_entry_ or test_metadata_ or test_payload_map_ or standard_library or python_files_compile'`
+- [X] T007 [P] [US1] [O] Create `src/openrepotools/cli.py` with `main()` per design.md Decision 3, as detailed below — files: `src/openrepotools/cli.py` — verify: `bash tests/run.sh -k 'test_entry_ or test_metadata_ or test_payload_map_ or standard_library or python_files_compile'`
   - it calls `os.execvp("bash", ["bash", <payload>/openRepoTools, *sys.argv[1:]])`, where `<payload>` is the `payload` directory beside the module's own file;
   - on `FileNotFoundError`, it prints contracts/cli-output.md's no-bash refusal to stderr and returns 2;
   - it reads no stamp, and passes nothing else.
