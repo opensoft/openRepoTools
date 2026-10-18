@@ -129,7 +129,12 @@ were read read-only.
     - **in a checkout or the one-line install** it is
       `$PAYLOAD_REPO @ $PAYLOAD_REV` when `SOURCE_LAYOUT` is `adopted`, and
       `$REPO @ $REF` otherwise. That is `payload_where`'s pair
-      (`openRepoTools:797-803`), with `@` in place of `at`.
+      (`openRepoTools:797-803`), with `@` in place of `at`;
+    - **in a local adopted source**, the code mounted in an assembly on disk
+      (`payload_local_adopted`), nothing is fetched, so neither
+      `PAYLOAD_REPO` nor `PAYLOAD_REV` is set. `install_source` then names
+      the pin's own pair, `$PIN_SOURCE_REPOSITORY @ $PIN_COMMIT`, which a
+      remote adopted run reads too, because it sets both from the pin.
   - `<version>` is `stamp_read`'s `VERSION` for
     `$(dirname "$PIPX_PAYLOAD")/_release.py`.
   - When that stamp fails the reader, the clause after "not from" is `the
@@ -186,7 +191,9 @@ were read read-only.
 - **Alternatives considered**: a `..`-count computed at run time from the
   path's shape. It is the same answer. The implementation checks that the
   component names match (`lib`, `python*`, `site-packages`) and skips the
-  report, saying so, when they do not.
+  report when they do not. The skip is silent: `path_report` prints nothing
+  there, as pipx-link.md's "say nothing more" has it, and cli-output.md
+  defines no line for it.
 
 ## R8. Which tests are "the package's tests", and how they get a wheel
 

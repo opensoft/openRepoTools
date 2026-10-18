@@ -644,6 +644,16 @@ Ruled after #237 merged, so numbered after item 12 below:
       and 28 receipt rows; and the two hook entries on top of either, once
       `~/projects/xFactory/lanes-edit.sh` answers `guard`.
 
+Ruled on T013's report, so numbered after item 13:
+
+14. **T013's two points.**
+    - A local adopted source sets no `PAYLOAD_REPO` or `PAYLOAD_REV`, so the
+      count line's `<source>` is the pin's own pair,
+      `<PIN_SOURCE_REPOSITORY> @ <PIN_COMMIT>`, the one a remote adopted run
+      reads.
+    - The PATH report's skip case is silent: where the directory names
+      above the payload do not match, it prints nothing (research R7).
+
 ### Resolved by Brett Heap, 2026-10-18
 
 12. **The workBenches condition.** Resolved by Brett Heap, 2026-10-18: (c).

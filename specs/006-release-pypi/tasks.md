@@ -447,11 +447,12 @@ header (T021), the release notes (T022, T023) and the README (T024).
 | FR-024: README's copy of the move from the one-line install, beside the pipx route (the v1.1.0 notes carry it already, T023) | lane 3, on his word | 6.4 |
 | FR-031 and FR-048, the second line of defence: no pypi.org publisher for `opensoft/openRepoTools` | Brett Heap's answer 3; the code guard itself is T019 and T020 | 4.1, 6.1 |
 | FR-046: the code leg's `LICENSE` blob `261eeb9`; the plan's entries | lane 3's check; lane openRepoTools-1's plan | 5.1, 5.2 |
-| FR-047: the workBenches condition | **pending Brett Heap's choice of (a), (b) or (c)** | 1.4 |
+| FR-047: the workBenches condition | decided: Brett Heap chose position (c) on 2026-10-18; lane 3 filed opensoft/workBenches#165 | 1.4 |
 
-No task depends on FR-047 until his word arrives. If he chooses position
-(c), and the README is to say "one route or the other, never both" before
-the workBenches fix, that one sentence becomes a task then.
+Brett Heap chose position (c) on 2026-10-18 ("go with (c)": spec.md's FR-047
+and design.md's open question 12). The one sentence the README says until
+opensoft/workBenches#165 lands, "one route or the other, never both", is
+already a task: T024. No other task depends on FR-047.
 
 ## Notes
 

@@ -54,7 +54,8 @@ dependencies = []
 # THE ONE COMMAND, the name a checkout's `--install` places.
 # `openrepotools.cli:main` replaces its own process with the first `bash` on
 # PATH, running the packaged `openRepoTools` with the person's arguments
-# unchanged, and reads no stamp: bash is the one reader.
+# unchanged, and reads no stamp: bash is the one reader at run time, and
+# hatch reads `VERSION` at build time (`[tool.hatch.version]` below).
 [project.scripts]
 openRepoTools = "openrepotools.cli:main"
 

@@ -12,11 +12,11 @@ so.
 
 Bash is the one reader at run time. The packaged `openRepoTools` reads this
 file by a fixed grammar (`stamp_read`), and never sources, imports or runs
-it; no Python reads it. Hatchling reads the first field at build time, by a
-pattern that takes the first line beginning, in any case, with that field's
-name or with __version__, then an equals sign. So no line of this docstring
-may begin that way, or the build and the command would disagree. Keep the
-file LF only, with each assignment on one line.
+it; no Python reads it at run time. Hatchling reads `VERSION` from it at
+build time, by a pattern that takes the first line beginning, in any case,
+with that field's name or with __version__, then an equals sign. So no line
+of this docstring may begin that way, or the build and the command would
+disagree. Keep the file LF only, with each assignment on one line.
 """
 VERSION = "0.0.0"
 TAG = ""
