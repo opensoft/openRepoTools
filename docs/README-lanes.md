@@ -1,7 +1,7 @@
 # `lanes/LANES.md` — how the estate lane register is stored, and the commands that write it
 
 **THE TOOLING LIVES HERE; THE DATA LIVES IN YOUR WORKSPACE REPOSITORY.**
-Amendment 9, 2026-09-13. This manual and the four commands it describes —
+Amendment 9, 2026-09-13. This manual and the commands it then described —
 `lanes-edit.sh`, `lane-start`, `lane-end` and `link-estates` — came to
 `opensoft/openRepoTools` from `opensoft/brett-wip` with their history, because
 a `<user>-wip` is a person's DATA and its own rules file says so: "No secrets
@@ -73,7 +73,7 @@ workstation**.
 | the object logs | `<the checkout>/lanes/log/<lane>.md` — one per lane (Amendment 7) |
 | the alias table | two layers: `repos.tsv` shipped by openRepoTools and installed beside the commands, then `<the checkout>/lanes/repos.tsv` where you keep an override (Amendment 9(b)) |
 | who places the symlinks | `link-estates`, an installed command. It places the handoffs links, the register link and the `lanes-edit.sh` link — **and no longer the two `~/.local/bin` ones**, which `--install` owns |
-| who installs all of it | `openRepoTools --install` (thirteen files, idempotent, all-or-nothing) |
+| who installs all of it | `openRepoTools --install` (every command and the alias table, idempotent, all-or-nothing) |
 | the lane alias table | `<the checkout>/lanes/aliases.tsv` — `<old><TAB><new><TAB><UTC>`, written by `lane-rename` and by nothing else, resolved by every reader that takes a lane name (Amendment 16(e)) |
 
 Why `main` of the workspace repository and not the aggregation's: the
@@ -286,7 +286,7 @@ a row exists.
 canonical** (Amendment 15, in force 2026-09-14T00:07:18Z). `lane-start
 openxfactory 2` and `lane-start openXfactory 2` are the same lane: every lookup
 of a name — the row, the object log, the tmux window, the session name,
-`LANES_LANE`, and every `<lane>` argument of the four commands — compares
+`LANES_LANE`, and every `<lane>` argument of the commands here — compares
 case-insensitively, and the row's own spelling is what the window is renamed to,
 what the launch is `--name`d with, what the log file is called, and what every
 line and stamp writes. A name typed in another case RESOLVES to it and is never
@@ -298,9 +298,10 @@ register already holds two rows differing only by case, **every writer refuses,
 naming both**, until they are merged by hand — 15(d): the newer row's session
 id(s) appended to the older row's session cell, in order, and the newer row
 removed in the SAME commit, whose message names both spellings. `lanes-edit.sh
-canon-lane <name>` is that resolver as a read, and the one all four commands
-share: **0** with the canonical spelling (the typed one where no row matches, so
-`add-row` can still create a lane), **2** for the pair, **64** usage — and that
+canon-lane <name>` is that resolver as a read, and the one the commands share
+rather than each keeping its own: **0** with the canonical spelling (the typed
+one where no row matches, so `add-row` can still create a lane), **2** for the
+pair, **64** usage — and that
 2 is RELAYED by `lane-start`, `lane-end` and `lane` rather than carried past,
 because the pair may be on `origin/<branch>` while this checkout still holds one
 row. `add-row` asks the published register as well as this copy of it for the
@@ -2789,7 +2790,7 @@ Historical `ready` intents do not control an ordinary resume.
 The pane is respawned with `lane-handoff --supervise --lane <lane> --operation
 <id>`, **by absolute path**, because a respawned pane's `PATH` is whatever the
 person's shell profile makes of it. It is a MODE of a command that is already
-installed and not a thirteenth word: Amendment 18 Addendum 2 (i-8) is explicit
+installed and not one more word: Amendment 18 Addendum 2 (i-8) is explicit
 that *"no word is kept on `PATH` for it alone"*, which is the ground on which
 `restart` was taken off `PATH` in the first place.
 
@@ -4123,8 +4124,8 @@ link-estates                                          # repoints ~/projects/xFac
 ```
 
 **You are not asked to remember it: `--install` refuses** (A9 Addendum 4,
-R-A9-12). In its planning phase, before any of the twenty-seven artifacts is placed,
-it walks all thirteen targets and dies naming every one that is not a regular file,
+R-A9-12). In its planning phase, before any of its artifacts is placed, it walks
+every target in the bin directory and dies naming every one that is not a regular file,
 what it is, and the one `rm` that clears them. `cp` FOLLOWS A SYMLINK, so an
 install over these would leave the two commands UNINSTALLED — the targets stay
 links — and would write the post-move bytes into `opensoft/brett-wip`'s working
