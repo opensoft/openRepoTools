@@ -70,10 +70,12 @@
 #                           process under an id the row DOES record, found in
 #                           the PROCESS TABLE (opensoft/openRepoTools#39) — is
 #                           a background wrapper nobody is answering a prompt
-#                           in, so this act TERMs the pair (the bg-pty-host
-#                           parent and its child, never the lane's own live
-#                           session, which it refuses to touch) and reports
-#                           the pids it signalled. Named by the PARENT or
+#                           in, so this act TERMs the bg-pty-host parent and
+#                           EVERY child of it that resumes this transcript
+#                           (opensoft/openRepoTools#86; never the lane's own
+#                           live session, which it refuses to touch), reports
+#                           each pid it signalled, and says RETIRED only once
+#                           every one is gone. Named by the PARENT or any
 #                           CHILD PID and never by the transcript uuid
 #                           (Copilot round 9, PR #61) — the same reason a
 #                           DUPLICATE below never is: the uuid IS the row's
@@ -1102,14 +1104,14 @@ LIVE
     esac
   fi
 
-  dh_parent=""; dh_child=""; dh_uuid=""
+  dh_parent=""; dh_children=""; dh_uuid=""
   if [ -z "$fk_sid" ] && [ "$dh_rc" = 0 ]; then
     # `IFS=$'\037'`, NEVER A TAB: `duplicate-holder`'s child field is
     # DOCUMENTED empty for a parent with no confirmable fork-session child
     # (lanes-edit.sh's own `duplicate_holder_pids`, "the child slot stays
     # empty"), and a bare tab is IFS-whitespace to `read` — two adjacent tabs
     # either side of that empty field collapse into one delimiter exactly as
-    # repeated spaces do, shifting the uuid into `dr_child` and leaving
+    # repeated spaces do, shifting the uuid into the child field and leaving
     # `dr_uuid` empty. Measured on e4f9054's CI (`tests-no-submodule`): a
     # partly-retired duplicate's still-alive child was reported as
     # `pid <uuid> (child): gone` and its genuinely-killed parent as
@@ -1127,11 +1129,20 @@ LIVE
     # The uuid form stays reserved for a title-based FORK above, whose id is
     # one the row does NOT record and so cannot repeat across rows the way a
     # duplicate holder's row-recorded id can.
-    while IFS=$'\037' read -r dr_parent dr_child dr_uuid; do
+    #
+    # THE CHILD FIELD IS A LIST (opensoft/openRepoTools#86): every child
+    # `duplicate_holder_pids` verified, space-separated, where it used to name
+    # only the first. The target is compared with EACH pid in it, by equality,
+    # never by a substring of the list, so `--retire=<two pids>` names none.
+    while IFS=$'\037' read -r dr_parent dr_children dr_uuid; do
       [ -n "${dr_parent:-}" ] || continue
-      if [ "$dr_parent" = "$retire_target" ] \
-         || { [ -n "$dr_child" ] && [ "$dr_child" = "$retire_target" ]; }; then
-        dh_parent="$dr_parent"; dh_child="$dr_child"; dh_uuid="$dr_uuid"
+      dr_hit=0
+      if [ "$dr_parent" = "$retire_target" ]; then dr_hit=1; fi
+      for dr_c in $dr_children; do
+        if [ "$dr_c" = "$retire_target" ]; then dr_hit=1; fi
+      done
+      if [ "$dr_hit" = 1 ]; then
+        dh_parent="$dr_parent"; dh_children="$dr_children"; dh_uuid="$dr_uuid"
         break
       fi
     done <<DUPES
@@ -1149,9 +1160,14 @@ DUPES
     # `duplicate-holder`'s own exclusion already keeps a live `dh_parent` from
     # ever equalling `lh_pid`, so this is the residual, cheap check for the
     # child slot alone (a `pgrep -P` result coinciding with the lane's own
-    # pid would be bizarre, but the fence costs nothing to keep).
-    if [ -n "$lh_pid" ] && { [ "$lh_pid" = "$dh_parent" ] || [ "$lh_pid" = "$dh_child" ]; }; then
-      die "pid $lh_pid is lane $LANE's own live session (session $lh_sid, ${lh_verdict:-here}) — Amendment 18(h) refuses to retire the one process a lane's binding actually is. Retire the OTHER pid of the pair ($prog $LANE --retire <pid>), or end the lane itself." 2
+    # pid would be bizarre, but the fence costs nothing to keep). Every child
+    # in the slot is asked, not only the first (opensoft/openRepoTools#86).
+    if [ -n "$lh_pid" ]; then
+      for dh_c in $dh_parent $dh_children; do
+        if [ "$lh_pid" = "$dh_c" ]; then
+          die "pid $lh_pid is lane $LANE's own live session (session $lh_sid, ${lh_verdict:-here}) — Amendment 18(h) refuses to retire the one process a lane's binding actually is. Retire the OTHER pid of the pair ($prog $LANE --retire <pid>), or end the lane itself." 2
+        fi
+      done
     fi
 
     # AMENDMENT 18(h) — A DUPLICATE HOLDER IS TERMED, NOT ONLY NAMED. Unlike
@@ -1167,7 +1183,9 @@ DUPES
     # scoped to this lane's own ids), and never the pid just proved above to
     # be the lane's own.
     if (( dry_run )); then
-      note "--dry-run: would send TERM to pid $dh_parent (bg-pty-host)${dh_child:+ and pid $dh_child (child)} — lane $LANE's duplicate holder of transcript $dh_uuid. Nothing sent."
+      dh_c_said=""
+      for dh_c in $dh_children; do dh_c_said="$dh_c_said and pid $dh_c (child)"; done
+      note "--dry-run: would send TERM to pid $dh_parent (bg-pty-host)$dh_c_said — lane $LANE's duplicate holder of transcript $dh_uuid. Nothing sent."
       exit 0
     fi
     # RE-VALIDATED IMMEDIATELY BEFORE EACH SIGNAL, not trusted from the read
@@ -1188,9 +1206,48 @@ DUPES
     # THE ACTUAL `--resume` VALUE, NOT A GLOB THAT CAN SPAN OTHER ARGUMENTS
     # (Copilot round 5, PR #61): `*"--resume"*"/$uuid.jsonl"*` matches
     # `--resume /other.jsonl --label /<uuid>.jsonl` too, since `*` between
-    # them freely crosses argument boundaries. The token immediately after
-    # `--resume ` — up to the next space or the end of argv — is what the
-    # harness actually resumed, and that is the only thing compared now.
+    # them freely crosses argument boundaries. The value right after
+    # `--resume ` is what the harness actually resumed, and that is the only
+    # thing compared.
+    #
+    # READ WHOLE, SPACES AND ALL (opensoft/openRepoTools#76). `ps -o args=`
+    # joins the argv with spaces and quotes nothing, so the cut this used to
+    # make at the first space (`${v%% *}`) turned `--resume /home/Jane
+    # Doe/…/<uuid>.jsonl` into `/home/jane`, read a still-matching duplicate
+    # as "argv no longer matched", and withheld its TERM. The value now ends
+    # at the first `.jsonl` that ends an argument (followed by a space or by
+    # the end of the line), which keeps round 5's case above reading
+    # `/other.jsonl`, and a value with a word opening `--` inside it is
+    # refused as a later option rather than a directory. A value with a
+    # space in it must be one absolute path, starting with `/` and holding no
+    # ` /`, or it is refused too (Brett Heap's ruling of 2026-10-18 on PR
+    # #205): a bare session id followed by a prompt naming this transcript, or
+    # a `<uuid>.jsonl.bak` followed by a word that reaches it through ` /`,
+    # would otherwise be read as one value ending in `/<uuid>.jsonl` and TERMed
+    # here. Not every `<uuid>.jsonl.bak` form is refused: one followed by a
+    # later word that does not begin with `/` still reads as that value. This
+    # is `lanes-edit.sh`'s `dhp_resume_value`, the rule discovery already
+    # applied to this pid, word for word, and its comment there gives that
+    # limit and the others of reading a flattened argv at all; the two must
+    # stay the same rule. It sets `dh_rv` in this shell rather than printing
+    # it.
+    dh_resume_value() {   # <flattened argv, lowercased> — sets dh_rv
+      dh_rv=""
+      case "${1-}" in *"--resume "*) : ;; *) return 0 ;; esac
+      dh_rv_rest="${1#*--resume }"
+      while :; do
+        case "$dh_rv_rest" in *.jsonl*) : ;; *) dh_rv=""; return 0 ;; esac
+        dh_rv="${dh_rv}${dh_rv_rest%%.jsonl*}.jsonl"
+        dh_rv_rest="${dh_rv_rest#*.jsonl}"
+        case "$dh_rv_rest" in "" | " "*) break ;; esac
+      done
+      case "$dh_rv" in *" --"*) dh_rv="" ;; esac
+      case "$dh_rv" in *" "*)
+        case "$dh_rv" in /*) : ;; *) dh_rv="" ;; esac
+        case "$dh_rv" in *" /"*) dh_rv="" ;; esac
+      esac
+      return 0
+    }
     dh_uuid_lc="$(printf '%s' "$dh_uuid" | tr 'A-F' 'a-f')"
     dh_p_match=0
     dh_p_args="$(ps -o args= -p "$dh_parent" 2>/dev/null | tr 'A-F' 'a-f')" || dh_p_args=""
@@ -1202,8 +1259,8 @@ DUPES
     # false one out the same way `--resume ` already rules out
     # `--resume-file` beside it.
     case "$dh_p_args" in *"--fork-session "*"--resume "*)
-      dh_p_resume="${dh_p_args#*--resume }"; dh_p_resume="${dh_p_resume%% *}"
-      case "$dh_p_resume" in */"$dh_uuid_lc.jsonl") dh_p_match=1 ;; esac
+      dh_resume_value "$dh_p_args"
+      case "$dh_rv" in */"$dh_uuid_lc.jsonl") dh_p_match=1 ;; esac
     esac
     # THE SIGNAL'S OWN EXIT STATUS, KEPT APART FROM "DID ARGV MATCH" (Copilot
     # round 11, PR #61): folding both into one `dh_p_sent` flag and
@@ -1217,20 +1274,24 @@ DUPES
     if [ "$dh_p_match" = 1 ]; then
       kill -TERM "$dh_parent" 2>/dev/null && dh_p_killed=1
     fi
-    dh_c_match=1
-    dh_c_killed=1
-    if [ -n "$dh_child" ]; then
+    # EVERY CHILD IN THE SLOT, NOT ONLY THE FIRST (opensoft/openRepoTools#86):
+    # each is rechecked and signalled on its own, and its two bits are kept
+    # beside its pid as `<pid>:<match><killed>` for the report below, so one
+    # child's verdict is never read as another's.
+    dh_c_state=""
+    for dh_c in $dh_children; do
       dh_c_match=0
       dh_c_killed=0
-      dh_c_args="$(ps -o args= -p "$dh_child" 2>/dev/null | tr 'A-F' 'a-f')" || dh_c_args=""
+      dh_c_args="$(ps -o args= -p "$dh_c" 2>/dev/null | tr 'A-F' 'a-f')" || dh_c_args=""
       case "$dh_c_args" in *"--fork-session "*"--resume "*)
-        dh_c_resume="${dh_c_args#*--resume }"; dh_c_resume="${dh_c_resume%% *}"
-        case "$dh_c_resume" in */"$dh_uuid_lc.jsonl") dh_c_match=1 ;; esac
+        dh_resume_value "$dh_c_args"
+        case "$dh_rv" in */"$dh_uuid_lc.jsonl") dh_c_match=1 ;; esac
       esac
       if [ "$dh_c_match" = 1 ]; then
-        kill -TERM "$dh_child" 2>/dev/null && dh_c_killed=1
+        kill -TERM "$dh_c" 2>/dev/null && dh_c_killed=1
       fi
-    fi
+      dh_c_state="$dh_c_state $dh_c:$dh_c_match$dh_c_killed"
+    done
     # VERIFIED GONE, NOT ASSUMED FROM `kill`'S OWN STATUS (Copilot round 4, PR
     # #61): that status conflates "already gone" (fine — the goal was never
     # the signal, it was the duplicate not existing) with "no permission"
@@ -1283,23 +1344,28 @@ DUPES
       return 1
     }
     dh_p_gone=1; dh_settle_gone "$dh_parent" || dh_p_gone=0
-    dh_c_gone=1
-    if [ -n "$dh_child" ]; then
-      dh_c_gone=1; dh_settle_gone "$dh_child" || dh_c_gone=0
-    fi
     dh_p_msg="gone"
     [ "$dh_p_gone" = 1 ] || dh_p_msg="STILL ALIVE, TERM withheld: argv no longer matched"
     [ "$dh_p_gone" = 1 ] || [ "$dh_p_match" = 0 ] || [ "$dh_p_killed" = 1 ] || dh_p_msg="STILL ALIVE, TERM NOT SENT: the signal itself failed (check ownership/permissions) — this is not the process ignoring TERM, it never received one"
     [ "$dh_p_gone" = 1 ] || [ "$dh_p_match" = 0 ] || [ "$dh_p_killed" = 0 ] || dh_p_msg="STILL ALIVE despite TERM delivered"
     note "pid $dh_parent (bg-pty-host): $dh_p_msg"
-    if [ -n "$dh_child" ]; then
+    # EVERY CHILD MUST BE GONE FOR THIS TO SAY RETIRED (opensoft/openRepoTools#86):
+    # one child still alive, whichever it is, makes this a partial retirement
+    # and the refusal below, never a RETIRED over a process still holding the
+    # transcript.
+    dh_c_all_gone=1
+    for dh_c_tok in $dh_c_state; do
+      dh_c="${dh_c_tok%%:*}"; dh_c_bits="${dh_c_tok#*:}"
+      dh_c_match="${dh_c_bits%?}"; dh_c_killed="${dh_c_bits#?}"
+      dh_c_gone=1; dh_settle_gone "$dh_c" || dh_c_gone=0
+      [ "$dh_c_gone" = 1 ] || dh_c_all_gone=0
       dh_c_msg="gone"
       [ "$dh_c_gone" = 1 ] || dh_c_msg="STILL ALIVE, TERM withheld: argv no longer matched"
       [ "$dh_c_gone" = 1 ] || [ "$dh_c_match" = 0 ] || [ "$dh_c_killed" = 1 ] || dh_c_msg="STILL ALIVE, TERM NOT SENT: the signal itself failed (check ownership/permissions) — this is not the process ignoring TERM, it never received one"
       [ "$dh_c_gone" = 1 ] || [ "$dh_c_match" = 0 ] || [ "$dh_c_killed" = 0 ] || dh_c_msg="STILL ALIVE despite TERM delivered"
-      note "pid $dh_child (child): $dh_c_msg"
-    fi
-    if [ "$dh_p_gone" = 1 ] && [ "$dh_c_gone" = 1 ]; then
+      note "pid $dh_c (child): $dh_c_msg"
+    done
+    if [ "$dh_p_gone" = 1 ] && [ "$dh_c_all_gone" = 1 ]; then
       step "RETIRED lane $LANE's duplicate holder of transcript $dh_uuid (Amendment 18(h))"
       note "The lane itself is untouched: its row, and its own live session if it has one, are unaffected."
       exit 0
@@ -1517,9 +1583,12 @@ DUPES
     fi
     if [ -n "${dh_rows:-}" ]; then
       note "the live duplicate holders of lane $LANE's transcript, by PROCESS TABLE, are:"
-      printf '%s\n' "$dh_rows" | while IFS=$'\037' read -r dr_parent dr_child dr_uuid; do
+      printf '%s\n' "$dh_rows" | while IFS=$'\037' read -r dr_parent dr_children dr_uuid; do
         [ -n "${dr_parent:-}" ] || continue
-        note "  pid $dr_parent (bg-pty-host)${dr_child:+, pid $dr_child (child)}  transcript $dr_uuid"
+        # Every child in the slot, each named on its own (#86).
+        dr_c_said=""
+        for dr_c in $dr_children; do dr_c_said="$dr_c_said, pid $dr_c (child)"; done
+        note "  pid $dr_parent (bg-pty-host)$dr_c_said  transcript $dr_uuid"
       done
     else
       note "no live duplicate holder of lane $LANE's transcript is in the process table either (Amendment 18(h), opensoft/openRepoTools#39); \`$LANES_EDIT duplicate-holder $LANE\` is the read that names them."
