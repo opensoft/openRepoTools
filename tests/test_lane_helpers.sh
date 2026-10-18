@@ -5437,17 +5437,33 @@ kill -0 "$SP_CHILD" 2>/dev/null || SP_CHILD=""
 # so the value would run across that option; a value holding a word that
 # opens with `--` is refused rather than read across it. Discovery only, so
 # fixed numbers, as the AMBIG case above says.
+#
+# …NOR ACROSS A LATER PLAIN WORD THAT NAMES THIS TRANSCRIPT (Brett Heap's
+# ruling of 2026-10-18 on PR #205, "Add the condition first (Recommended)").
+# A bare session id followed by a prompt, and a `<id>.jsonl.bak` followed by
+# a word naming the transcript, hold no `--` to refuse, so the value ran on to
+# the later `/<id>.jsonl` and matched, where the cut at the first space never
+# had. A value with a space in it must be one absolute path, starting with `/`
+# and holding no ` /`: $SPAN_PARENT_C's starts with the id, and
+# $SPAN_PARENT_D's reaches the later path through ` /`. The SP case above is
+# the spaced path that must still match, and does.
 SPAN_PARENT_A=900201
 SPAN_PARENT_B=900202
-FAKE_PS_SPAN="$(printf '%s\t%s\t%s\n%s\t%s\t%s' \
+SPAN_PARENT_C=900203
+SPAN_PARENT_D=900204
+FAKE_PS_SPAN="$(printf '%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s' \
   "$SPAN_PARENT_A" 1 "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/other.jsonl --label /nonexistent/projects/$MLIVE_ID.jsonl" \
-  "$SPAN_PARENT_B" 1 "claude --session-id $MLIVE_ID --fork-session --resume $WRONG_ID --append-system-prompt-file /nonexistent/projects/$MLIVE_ID.jsonl")"
-FAKE_PGREP_F_SPAN="$(printf '%s\n%s\n%s' "$LIVE_PID" "$SPAN_PARENT_A" "$SPAN_PARENT_B")"
+  "$SPAN_PARENT_B" 1 "claude --session-id $MLIVE_ID --fork-session --resume $WRONG_ID --append-system-prompt-file /nonexistent/projects/$MLIVE_ID.jsonl" \
+  "$SPAN_PARENT_C" 1 "claude --session-id $MLIVE_ID --fork-session --resume $WRONG_ID read /nonexistent/projects/$MLIVE_ID.jsonl and summarise" \
+  "$SPAN_PARENT_D" 1 "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl.bak note /nonexistent/other-projects/$MLIVE_ID.jsonl")"
+FAKE_PGREP_F_SPAN="$(printf '%s\n%s\n%s\n%s\n%s' "$LIVE_PID" "$SPAN_PARENT_A" "$SPAN_PARENT_B" "$SPAN_PARENT_C" "$SPAN_PARENT_D")"
 run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_SPAN" FAKE_PS_RECORDS="$FAKE_PS_SPAN" FAKE_PGREP_CHILDREN="" \
   "$E" duplicate-holder repoM-1
 is    "…and a --resume value is never read across into a LATER argument: 8" "$rc" 8
 hasnt "…not round 5's --label shape, which still reads /other.jsonl" "$out" "$SPAN_PARENT_A"
 hasnt "…nor a bare session id followed by an option naming this transcript" "$out" "$SPAN_PARENT_B"
+hasnt "…nor a bare session id followed by a PROMPT naming it, with no -- to refuse (#205 ruling)" "$out" "$SPAN_PARENT_C"
+hasnt "…nor a <id>.jsonl.bak followed by a later word naming it (#205 ruling)" "$out" "$SPAN_PARENT_D"
 
 # ------- opensoft/openRepoTools#86: --retire acts on EVERY verified child
 #

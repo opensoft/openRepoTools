@@ -7035,15 +7035,34 @@ EOF
 # would hand `lane-end --retire` a TERM for something that resumed another
 # session.
 #
+# A VALUE WITH A SPACE IN IT MUST BE ONE ABSOLUTE PATH, starting with `/` and
+# holding no ` /`, or it is EMPTY (Brett Heap's ruling of 2026-10-18 on PR
+# #205, "Add the condition first (Recommended)"). A value that does not itself
+# end in `.jsonl` runs on to the next `.jsonl` that ends an argument, so a
+# later plain word ending in `/<id>.jsonl` was read as its tail, where the cut
+# at the first space never read it at all. Five shapes did that: a bare
+# session id followed by a prompt that names the transcript (`--resume <id>
+# read /p/<id>.jsonl and summarise`, and `claude -p … --resume <id> summarise
+# /p/<id>.jsonl`), an empty argument before the path (`--resume ''
+# /p/<id>.jsonl`, which `ps` prints with two spaces), a `<id>.jsonl.bak`
+# followed by a word that names the transcript (`--resume /p/<id>.jsonl.bak
+# note /q/<id>.jsonl`), and a shell whose `-c` string resumes `$ID` and then
+# tails the transcript. Each of them starts with something other than `/`, or
+# reaches the later path through a space and a `/`, and a transcript path does
+# neither, whatever spaces its home, profile or project directory holds. A
+# value with no space in it is untouched by this, and reads as the cut read it.
+#
 # KNOWN LIMITS, and they are the flattening's rather than this read's. A
-# directory whose own name holds `.jsonl ` or ` --` is cut short or refused,
-# which only ever misses. A value that does not itself end in `.jsonl`,
-# followed by a later plain word (no `--`) ending in `/<id>.jsonl`, reads as
-# one value with a space in it; that is the one shape this read can still
-# mistake. Linux's `/proc/<pid>/cmdline` keeps the argument boundaries and
-# BSD/macOS has nothing like it, so one portable reading of `ps`, the same on
-# every platform and under the suite's own fake `ps`, is kept over two that
-# could disagree. `lane-end` carries the same rule for its pre-kill recheck
+# directory whose own name holds `.jsonl ` or ` --`, or ends in a space before
+# its `/`, is cut short or refused, which only ever misses. The one shape this
+# read can still mistake is narrower now: a value that starts with `/` but
+# does not itself end in `.jsonl`, followed by a later plain word that names
+# `<id>.jsonl` by a RELATIVE path (`--resume /p/<id>.jsonl.bak note
+# q/<id>.jsonl`), which reaches it through no ` /`. Linux's
+# `/proc/<pid>/cmdline` keeps the argument boundaries and BSD/macOS has
+# nothing like it, so one portable reading of `ps`, the same on every
+# platform and under the suite's own fake `ps`, is kept over two that could
+# disagree. `lane-end` carries the same rule for its pre-kill recheck
 # (`dh_resume_value`), and the two must stay the same rule.
 dhp_resume_value() {   # <flattened argv, lowercased> — sets dhp_rv
   dhp_rv=""
@@ -7056,6 +7075,10 @@ dhp_resume_value() {   # <flattened argv, lowercased> — sets dhp_rv
     case "$dhp_rv_rest" in "" | " "*) break ;; esac
   done
   case "$dhp_rv" in *" --"*) dhp_rv="" ;; esac
+  case "$dhp_rv" in *" "*)
+    case "$dhp_rv" in /*) : ;; *) dhp_rv="" ;; esac
+    case "$dhp_rv" in *" /"*) dhp_rv="" ;; esac
+  esac
   return 0
 }
 

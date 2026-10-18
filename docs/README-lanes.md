@@ -1742,7 +1742,9 @@ then `ps -o pid=,ppid=,args= -p` per candidate — portable across GNU and
 BSD/macOS), matched against every id this lane's row has ever carried by the
 `--resume` value read whole, a directory with a space in it included
 (opensoft/openRepoTools#76: `ps` joins the argv with spaces and quotes nothing,
-so the value runs to the first `.jsonl` that ends an argument), and
+so the value runs to the first `.jsonl` that ends an argument, and a value with
+a space in it counts only as one absolute path, starting with `/` and holding
+no ` /`, by Brett Heap's ruling of 2026-10-18 on PR #205), and
 excludes the lane's own live holder (`live_holder`, the same implementation
 `live-holder` already calls) **and the harness's own companion of it** —
 Amendment 8 ruling (g)'s `kind: bg` record carrying the same id in the same

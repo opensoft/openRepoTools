@@ -1218,7 +1218,12 @@ DUPES
     # at the first `.jsonl` that ends an argument (followed by a space or by
     # the end of the line), which keeps round 5's case above reading
     # `/other.jsonl`, and a value with a word opening `--` inside it is
-    # refused as a later option rather than a directory. This is
+    # refused as a later option rather than a directory. A value with a
+    # space in it must be one absolute path, starting with `/` and holding no
+    # ` /`, or it is refused too (Brett Heap's ruling of 2026-10-18 on PR
+    # #205): a bare session id followed by a prompt naming this transcript,
+    # or a `<uuid>.jsonl.bak` followed by a word naming it, would otherwise be
+    # read as one value ending in `/<uuid>.jsonl` and TERMed here. This is
     # `lanes-edit.sh`'s `dhp_resume_value`, the rule discovery already
     # applied to this pid, word for word, and its comment there gives the
     # known limits of reading a flattened argv at all; the two must stay the
@@ -1234,6 +1239,10 @@ DUPES
         case "$dh_rv_rest" in "" | " "*) break ;; esac
       done
       case "$dh_rv" in *" --"*) dh_rv="" ;; esac
+      case "$dh_rv" in *" "*)
+        case "$dh_rv" in /*) : ;; *) dh_rv="" ;; esac
+        case "$dh_rv" in *" /"*) dh_rv="" ;; esac
+      esac
       return 0
     }
     dh_uuid_lc="$(printf '%s' "$dh_uuid" | tr 'A-F' 'a-f')"
