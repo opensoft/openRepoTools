@@ -27,10 +27,10 @@
 #               stops the call.
 #
 # WHERE THE FILES ARE, after lane-collision-protocol Amendment 9's move. The
-# four commands and the shipped alias table live at the ROOT of
+# lane commands and the shipped alias table live at the ROOT of
 # `opensoft/openRepoTools` and are INSTALLED into a bin directory; the person's
 # workspace repository holds data and no code at all. This suite reproduces
-# exactly that: it copies the five files into a sandbox bin directory, seeds a
+# exactly that: it copies those files into a sandbox bin directory, seeds a
 # workspace repository with nothing but data in it, and writes the sandbox's own
 # `$AGENT_PROTOCOL_ROOT/workspace.yaml` to join the two — which is the default
 # resolution under test, since `:55` unsets every LANES_* seam so that the
@@ -63,6 +63,8 @@ done
 [ -f "$SRC_DIR/repos.tsv" ] || { echo "missing: $SRC_DIR/repos.tsv" >&2; exit 1; }
 
 SANDBOX="$(mktemp -d)"
+# Set before the traps below, so `cleanup` never reads an inherited value.
+A11T_ROOT=""
 REAL_HOME="$HOME"
 
 # THE GUARDS AT THE FOOT OF THIS FILE, re-pointed (Amendment 9, act 3
@@ -96,6 +98,9 @@ cleanup() {
   [ -n "${RACE_PARENT:-}" ] && kill "$RACE_PARENT" 2>/dev/null
   [ -n "${RACE_CHILD:-}" ] && kill "$RACE_CHILD" 2>/dev/null
   [ -n "${GD_DUP:-}" ] && kill "$GD_DUP" 2>/dev/null
+  # #180's short checkout root for the clause (c) TAIL case, which is outside
+  # `$SANDBOX` wherever the run root is long.
+  [ -n "${A11T_ROOT:-}" ] && [ -d "$A11T_ROOT" ] && rm -rf -- "$A11T_ROOT"
   [ -n "${SANDBOX:-}" ] && [ -d "$SANDBOX" ] && rm -rf -- "$SANDBOX"
   return 0
 }
@@ -490,7 +495,7 @@ STALE_H=4                      # lanes-edit.sh's default, Rule 1's four hours
 
 # ------------------------------------------------------------- the register
 
-# THE BIN DIRECTORY — the post-move world, where `--install` places the four
+# THE BIN DIRECTORY — the post-move world, where `--install` places the lane
 # commands and the shipped alias table as regular files at 755. The workspace
 # repository below gets NONE of them: Amendment 9(a), data only.
 export OPENREPOTOOLS_BIN_DIR="$SANDBOX/bin"
@@ -1546,7 +1551,13 @@ is   "--force on a stale claim takes it over" "$rc" 0
 G2="$(cat "$LOGD/repoG-2.md")"
 has  "…writing a TAKEOVER line" "$G2" "TAKEOVER — lane repoG-2, session "
 has  "…referencing the claim it supersedes with ←" "$G2" "opensoft/repoG#8 ← lane:repoG-1"
-hasnt "…and no separate CLAIMED line: TAKEOVER is itself an open verb" "$G2" "CLAIMED — lane repoG-2, session .*opensoft/repoG#8"
+# A REAL PATTERN, NOT `hasnt`'S FIXED STRING (issue #66): `hasnt` is a `case`
+# containment test, so the `.*` this line used to carry to skip the session uuid
+# was the two literal characters, never a wildcard — and a log that DID hold a
+# separate CLAIMED line for repoG#8 passed it all the same. `grep -cE` over the
+# log is the real thing, and it counts the lines, so it can be 1.
+is   "…and no separate CLAIMED line: TAKEOVER is itself an open verb" \
+     "$(printf '%s\n' "$G2" | grep -cE '^CLAIMED — lane repoG-2,.*opensoft/repoG#8')" 0
 
 run "$E" who "opensoft/repoG#8"
 has  "…so the taker now holds it" "$out" "HOLDS    lane repoG-2"
@@ -4972,6 +4983,39 @@ is   "…the other line reaches the person UNPREFIXED, exactly as the helper wro
 hasnt "…and grep itself never errors on \`--\` as though it were a missing file" \
      "$(cat "$SANDBOX/fence3b.err")" "No such file or directory"
 
+# #54 part a — `lanes`' OWN LOCAL READ HAD THE SAME LINE (#53 fixed the one in
+# the file above, and `lane`'s copy already carries the `-e`; this was the last
+# one without it). Its stderr is kept minus the one no-fetch sentence, through
+# `grep -v 'pattern' -- file`, and with the pattern a bare operand a
+# non-permuting getopt reads `--` as a second FILE. The stub says the notice
+# AND another line, the way the helper does when this workstation's session
+# records are unreadable, and exits 8 — "no lane" — which is the shortest way
+# through the command that still reaches the filter. `POSIXLY_CORRECT=1` is the
+# same stand-in for BSD's `grep` the case above uses: measured against the
+# unfixed line, this case printed `grep: --: No such file or directory` and put
+# the temp file's own name in front of the real line.
+cat > "$SANDBOX/lanesfence" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  lanes)
+    printf 'LANES_NO_FETCH=1 — not fetching; reading origin/main as the ref already stands here\n' >&2
+    printf 'session records for this workstation could not be read: permission denied\n' >&2
+    exit 8 ;;
+esac
+exit 0
+WRAP
+chmod +x "$SANDBOX/lanesfence"
+lanes_fence_rc=0
+( cd -- "$SANDBOX" && POSIXLY_CORRECT=1 LANES_EDIT="$SANDBOX/lanesfence" \
+    "$OPENREPOTOOLS_BIN_DIR/lanes" </dev/null >/dev/null 2>"$SANDBOX/lanesfence.err" ) || lanes_fence_rc=$?
+is    "lanes under a NON-PERMUTING getopt (BSD's shape) still answers, \"no lane\" being its 8" "$lanes_fence_rc" 8
+is    "…and the other stderr line reaches the person UNPREFIXED, exactly as the helper wrote it" \
+      "$(cat "$SANDBOX/lanesfence.err")" "session records for this workstation could not be read: permission denied"
+hasnt "…grep itself never errors on \`--\` as though it were a missing file" \
+      "$(cat "$SANDBOX/lanesfence.err")" "grep: --:"
+hasnt "…and the known no-fetch notice is still dropped from it" \
+      "$(cat "$SANDBOX/lanesfence.err")" "not fetching"
+
 # AND WITH NO CAPTURE FILE AT ALL, NOTHING IS FILTERED — silence in place of a
 # stream this fence could not open would be the same defect the notice fix
 # exists to correct, only quieter.
@@ -5420,12 +5464,40 @@ has  "…keeping the home and estate the line already carried" "$A11B_LOG" "home
 FAKE_TMUX_WINDOW="a11start:@42" FAKE_TMUX_WINDOW_INDEX=3 FAKE_TMUX_WINDOW_NAME=repoA11b-1 \
   CLAUDE_PROFILE_NAME=team-05a run "$START" repoA11b 1 --no-launch
 is   "lane-start exits 0 on a second start of the same lane" "$rc" 0
-has  "the row's stamp states clause (c)'s two facts for a person, in its TAIL" \
-     "$(grep '^| `repoA11b-1`' "$LANES")" "dir $HOME/projects/repoA11b; window a11start:3 @42"
-has  "…and that tail still says what actually happened, so --no-launch never claims a launch" \
+has  "…and its stamp says what actually happened, so --no-launch never claims a launch" \
      "$(grep '^| `repoA11b-1`' "$LANES")" ", no launch"
 has  "…while its HEAD is Amendment 8(d)'s and is untouched" \
      "$(grep '^| `repoA11b-1`' "$LANES")" "(lane repoA11b-1) — lane-start on Eagle: window renamed, no launch; dir "
+# THE TAIL IS READ ON A CHECKOUT AT A SHORT PATH (opensoft/openRepoTools#180).
+# The stamp is ONE line under ratified decision O1's cap (Amendment 13(a)), and
+# `cut_to_line` takes `dir` and `window` first by design — both are this same
+# act's log sub-fields, asserted in full above — so the tail fits only when the
+# CHECKOUT PATH does. Read on `$HOME/projects/repoA11b`, this case's answer was
+# the run root's length: green under plain pytest's `/tmp`, red under
+# `tests/run.sh`'s per-run root (`… no launch; dir ...`, the path cut whole), at
+# the edge on macOS. The checkout goes in this sandbox's own `$TMPDIR` where
+# that is at most 40 characters, as under plain pytest on Linux, and in `/tmp`
+# where it is not, so `$A11T_DIR` is never over 65 characters and the line never
+# over about 210, inside the 230 the cut keeps wherever the root is. `cleanup`
+# removes it; only a SIGKILLed run under a long root leaves one in `/tmp`.
+# `tests/test_lane_start_row_stamp.py` drives the same stamp at three checkout
+# lengths, the two that are cut included.
+a11t_base="$TMPDIR"
+[ "${#a11t_base}" -le 40 ] || a11t_base=/tmp
+A11T_ROOT="$(mktemp -d "$a11t_base/ort-a11t.XXXXXX" 2>/dev/null || :)"
+A11T_DIR="${A11T_ROOT:-$SANDBOX/a11t-no-short-root}/repoA11t"
+is   "the TAIL case has a checkout of at most 65 characters, wherever the run root is" \
+     "$( [ -n "$A11T_ROOT" ] && [ -d "$A11T_ROOT" ] && [ "${#A11T_DIR}" -le 65 ] && echo yes || echo no )" "yes"
+git init -q -b main "$A11T_DIR"
+git -C "$A11T_DIR" remote add origin "https://github.com/opensoft/repoA11t.git"
+FAKE_TMUX_WINDOW="a11tail:@43" FAKE_TMUX_WINDOW_INDEX=5 FAKE_TMUX_WINDOW_NAME=claude \
+  run "$START" --dir "$A11T_DIR" repoA11t 1 --no-launch
+is   "lane-start exits 0 for a lane whose checkout is at that short path" "$rc" 0
+FAKE_TMUX_WINDOW="a11tail:@43" FAKE_TMUX_WINDOW_INDEX=5 FAKE_TMUX_WINDOW_NAME=repoA11t-1 \
+  run "$START" repoA11t 1 --no-launch
+is   "…and on its second start, which reads the checkout back from the lane's log" "$rc" 0
+has  "the row's stamp states clause (c)'s two facts for a person, in its TAIL" \
+     "$(grep '^| `repoA11t-1`' "$LANES")" "dir $A11T_DIR; window a11tail:5 @43"
 # NO PROFILE IS NO SUB-FIELD, never a guessed one (Amendment 7(i)).
 mkdir -p "$HOME/projects/repoA11c"
 git init -q -b main "$HOME/projects/repoA11c"
@@ -7590,6 +7662,13 @@ add_seed_row "| \`repoSwap-1\` | harness \`$DEAD_ID\` | Raven / test / brett | 2
   printf 'PAUSED — lane reposwap-1, session %s@Raven, 2026-09-12T09:00:00Z, lane:reposwap-1 → swap; window swapwin:4; workstation Raven\n' "$DEAD_ID"
   printf 'RESUMED — lane repoSwap-1, session %s@Raven, 2026-09-12T10:00:00Z, lane:repoSwap-1 → home opensoft/repoSwap\n' "$DEAD_ID"
 } > "$LOGD/repoSwap-1.md"
+# A SWAPPED LANE WHOSE ONLY LOG FILE IS LOWERCASE, which is every lane that
+# predates Amendment 15: `lanes/log/openxfactory-4.md` beside the row
+# `openXfactory-4`. `swapped` read the lane under the file's name and printed it.
+add_seed_row "| \`repoSwLow-1\` | harness \`$DEAD_ID\` | Raven / test / brett | 2026-09-11T00:00Z | none | handoffs/repoSwLow/x.md | ACTIVE |"
+{ printf '# lane reposwlow-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'PAUSED — lane reposwlow-1, session %s@Raven, 2026-09-12T09:30:00Z, lane:reposwlow-1 → swap; window lowwin:5; workstation Raven\n' "$DEAD_ID"
+} > "$LOGD/reposwlow-1.md"
 # THE PAIR THE AMENDMENT MAKES IMPOSSIBLE, seeded as it existed: two rows whose
 # lane names differ only by case. Every writer refuses on it until 15(d)'s merge.
 add_seed_row "| \`repoPair-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoPair/x.md | ACTIVE |"
@@ -7900,6 +7979,22 @@ is   "…so column 10 is the line that binds it, which needs both halves at once
 run "$E" window-lane Raven casewin:3
 is   "window-lane finds the lane from a record that spells it in another case" "$rc" 0
 is   "…and answers with the register row's spelling" "$out" "repoWin-1"
+# `swapped` READS THE SAME RECORD AND HAS TO ANSWER WITH THE SAME SPELLING (#55).
+# Its first field is what a caller hands to `tmux rename-window`, to `--name` and
+# to a read of the register, so it is the ROW's spelling. The raw name the record
+# is read under is the log FILE's base name (Amendment 16(c)), and a log written
+# before Amendment 15 is lowercase beside a mixed-case row: `repoSwLow-1`, whose
+# only log is `reposwlow-1.md`. Each lane is picked by its window, because Raven
+# holds other swapped lanes too.
+run "$E" swapped Raven
+is   "swapped lists the lanes a swap paused on that workstation" "$rc" 0
+is   "…naming a lane whose log FILE is lowercase by the register row's spelling" \
+     "$(printf '%s\n' "$out" | awk -F'\t' '$3 == "lowwin:5" { print $1 }')" "repoSwLow-1"
+# THE `repoWin-1` ROW PASSES WITH OR WITHOUT THE FIX: its log file already
+# carries the row's spelling, only its PAUSED line is lowercase, and every line
+# is keyed to its file. It stays as the other shape of the same two spellings.
+is   "…and a lane whose log file carries the row's spelling by that spelling" \
+     "$(printf '%s\n' "$out" | awk -F'\t' '$3 == "casewin:3" { print $1 }')" "repoWin-1"
 
 # `--all` CLEARS `--lane`, SO IT MUST NOT REFUSE FOR ONE EITHER. The register
 # here holds the 15(d) pair; `--all` is the every-lane listing and a `--lane`
@@ -10171,6 +10266,95 @@ has   "…and the rule it would have broken" "$err" "held by ONE live process"
 has   "…with the retire act" "$err" "lane-end repoLV-1 --retire"
 is    "…and the transcript was NOT moved" \
       "$( [ -f "$t2_projects/$lv_slug/$LV_ID.jsonl" ] && echo yes || echo no )" yes
+
+# A HOLDER IS COUNTED BY THE ESTATE'S ONE LIVENESS CONTRACT, NOT BY `kill -0`
+# (opensoft/openRepoTools#56). `follow_transcript` used to test the pid alone, so
+# a record that had ENDED, or whose pid had been RECYCLED onto some other
+# process, read as a live holder and refused a lane that nothing held. It now
+# asks `lanes-edit.sh transcript-holders`, which is `record_is_live` — status not
+# ended, pid answers `kill -0`, `procStart` still the one the record wrote — and
+# every case below is a lane whose transcript sits in another profile and whose
+# one record the old scan counted.
+seed_follow_lane() {   # <repo> <id>: the repository, its transcript in t2's projects, its row
+  SFL_DIR="$HOME/projects/$1"
+  mkdir -p "$SFL_DIR"
+  git init -q -b main "$SFL_DIR"
+  git -C "$SFL_DIR" remote add origin "https://github.com/opensoft/$1.git"
+  SFL_SLUG="$(sanitize "$SFL_DIR")"
+  mkdir -p "$t2_projects/$SFL_SLUG"
+  printf '{"type":"user"}\n' > "$t2_projects/$SFL_SLUG/$2.jsonl"
+  mkdir -p "$WIP/handoffs/$1"
+  printf 'Lane: %s-1 — resume prompt\n\nx\n' "$1" > "$WIP/handoffs/$1/$1-1.md"
+  git -C "$WIP" add -- "handoffs/$1" >/dev/null 2>&1
+  git -C "$WIP" commit -q -m "seed the $1 handoff"
+  git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+  git -C "$WIP" push -q origin main
+  "$E" add-row "| \`$1-1\` | harness \`$2\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/$1/$1-1.md | ACTIVE |" >/dev/null 2>&1
+}
+
+# STATUS `ended`, AND A PID THAT STILL ANSWERS. Named for another lane by a
+# person, as the live fixture above is, so the lane's own liveness read skips it.
+EN_ID="a17a0056-5656-4000-8000-a17a00565656"
+seed_follow_lane repoEN "$EN_ID"; EN_DIR="$SFL_DIR"; en_slug="$SFL_SLUG"
+write_record_ns "$HOME/.claude-profiles/profiles/opensoft/team/t2/sessions/ended-en.json" \
+  "$EN_ID" "$LIVE_PID" "$live_start" "othersess:@98.%98" "somewhere-else-9" "user" "ended"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="ensess:@72" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$EN_DIR" repoEN-1 --no-launch
+is    "a record whose status is ENDED is not a holder, whatever its pid answers" "$rc" 0
+has   "…and the transcript is followed" "$err" "moved into $HOME/.claude/projects/$en_slug"
+hasnt "…without a refusal naming a live process" "$err" "a LIVE process there holds it"
+is    "…it is HERE now" \
+      "$( [ -f "$HOME/.claude/projects/$en_slug/$EN_ID.jsonl" ] && echo yes || echo no )" yes
+
+# A `procStart` THAT IS NOT THE PID'S OWN: the pid was recycled onto another
+# process, which is the case the contract's third test exists for. That test
+# reads `/proc/<pid>/stat`, and `pid_alive` skips it where that file cannot be
+# read (macOS), so the case can only be set up where it can.
+PS_ID="a17a0057-5757-4000-8000-a17a00575757"
+if [ -r "/proc/$LIVE_PID/stat" ]; then
+  seed_follow_lane repoPS "$PS_ID"; PS_DIR="$SFL_DIR"; ps_slug="$SFL_SLUG"
+  write_record_ns "$HOME/.claude-profiles/profiles/opensoft/team/t2/sessions/recycled-ps.json" \
+    "$PS_ID" "$LIVE_PID" "999999999999" "othersess:@97.%97" "somewhere-else-9" "user" "idle"
+  run env PATH="$A17PATH" FAKE_TMUX_WINDOW="pssess:@73" CLAUDE_PROFILE_NAME=team-05a \
+      "$START" --dir "$PS_DIR" repoPS-1 --no-launch
+  is    "a record whose procStart is not the pid's own (a recycled pid) is not a holder" "$rc" 0
+  has   "…and the transcript is followed" "$err" "moved into $HOME/.claude/projects/$ps_slug"
+  hasnt "…without a refusal naming a live process" "$err" "a LIVE process there holds it"
+  is    "…it is HERE now" \
+        "$( [ -f "$HOME/.claude/projects/$ps_slug/$PS_ID.jsonl" ] && echo yes || echo no )" yes
+else
+  skip "a record whose procStart is not the pid's own is not a holder" "no readable /proc/<pid>/stat on this host: the contract's third test cannot run here, so no recycled pid can be told apart"
+fi
+
+# THE HELPER'S OWN EXITS, as `dup_check` reads them: 0 and 8 are answers, 2 is a
+# helper that predates the read, and anything else is a read that FAILED —
+# which is not "nothing holds it", and must not move a transcript out from under
+# a process that might.
+cat > "$SANDBOX/thfail" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  transcript-holders) printf 'lanes-edit: simulated failure\n' >&2; exit "${TH_RC:-3}" ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/thfail"
+TF_ID="a17a0058-5858-4000-8000-a17a00585858"
+seed_follow_lane repoTF "$TF_ID"; TF_DIR="$SFL_DIR"; tf_slug="$SFL_SLUG"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="tfsess:@74" CLAUDE_PROFILE_NAME=team-05a \
+    REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/thfail" TH_RC=3 \
+    "$START" --dir "$TF_DIR" repoTF-1 --no-launch
+is    "a transcript-holders that FAILS refuses the follow, rather than reading as no holder" "$rc" 2
+has   "…naming the helper and its exit code" "$err" "transcript-holders $TF_ID exited 3"
+has   "…passing the helper's own stderr through" "$err" "lanes-edit: simulated failure"
+has   "…saying nothing was moved" "$err" "nothing was moved"
+is    "…and the transcript was NOT moved" \
+      "$( [ -f "$t2_projects/$tf_slug/$TF_ID.jsonl" ] && echo yes || echo no )" yes
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="tfsess:@74" CLAUDE_PROFILE_NAME=team-05a \
+    REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/thfail" TH_RC=2 \
+    "$START" --dir "$TF_DIR" repoTF-1 --no-launch
+is    "a helper that predates transcript-holders (exit 2) carries on, as dup_check does" "$rc" 0
+has   "…saying the read is not known here" "$err" "has no \`transcript-holders\` (exit 2)"
+has   "…and the transcript is followed" "$err" "moved into $HOME/.claude/projects/$tf_slug"
 
 # `--dry-run` MOVES NOTHING (Copilot round 1 on openRepoTools#47). This search
 # runs long before the dry-run exit at the foot of the command, and a run whose
