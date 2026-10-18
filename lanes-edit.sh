@@ -398,9 +398,11 @@
 #   THE TWO WRITERS REFUSE A SIDECAR THEY CANNOT READ. A snapshot or a tree
 #   record carrying a schema this helper does not write is never replaced — a
 #   reader that fails closed and a writer that walks past it protect nothing —
-#   and `set-lane-tree`'s `--generation`/`--operation` are COMPARED with the
-#   lane's own snapshot under the mutex before the record is filed, so a poll
-#   from an operation a recovery has superseded cannot be filed over the
+#   and neither is one of THIS schema that is not a whole record: a key its
+#   writer writes missing or out of shape, or an id that is not its file's
+#   (#115). `set-lane-tree`'s `--generation`/`--operation` are COMPARED with
+#   the lane's own snapshot under the mutex before the record is filed, so a
+#   poll from an operation a recovery has superseded cannot be filed over the
 #   current one.
 #
 # THE SEAM — A MANAGED-OWNED LANE IS NOT THIS TOOLING'S (Brett Heap's ruling of
@@ -523,7 +525,10 @@
 #      takeover; each PR had taken 9 as unused, and the later one moved.
 #      `lane-trees` spends it for an inventory directory that EXISTS and
 #      cannot be listed, which is never "this lane recorded no tree" (#157
-#      item 4e).
+#      item 4e). And `lane-state` spends it for a snapshot of this schema that
+#      opens and is not a WHOLE record — cut short, or a key missing or out of
+#      shape (#115): nothing can be read out of it as a snapshot, so it is
+#      the same answer, and the message says which of the two it is.
 #
 # --no-sweep (DEFAULT, added 2026-09-09 after 0d84d34/a1f2438 swept another
 #   lane's uncommitted hand edit into an unrelated commit): every mutating
@@ -12310,10 +12315,82 @@ lane_sidecar_field() {   # <file> <key>
 # false for one, so this guard used to wave every writer through to rename its
 # own file over a record `lane_state_read` itself calls present-and-unreadable.
 # `[ -L ]` beside `[ -e ]`, exactly as the reader asks it.
-lane_sidecar_schema_ok() {   # <file>
+#
+# AND THE RECORD, NOT ONLY ITS VERSION LINE (opensoft/openRepoTools#115). This
+# asked one question, so a file whose first line is `schema: 1` and which holds
+# nothing else passed it — a record of the current version that is not valid at
+# that version — and both sides took it for one: the readers emitted empty
+# fields for it and the writers renamed their own file over it, the act this
+# guard exists to refuse. A file cut short is not exotic: `lane_sidecar_put`'s
+# `cat` can be, and the rename makes a COMPLETE file atomic, not an incomplete
+# one impossible. So a record of the current schema passes only when it is
+# WHOLE: every key its writer writes is there and is not empty, the keys a
+# reader decides with have their shapes, and a tree record claims the id its
+# file name gives it. Both writers have written exactly these keys since #97
+# landed (`lane_state_put`, `lane_tree_put`), so no record a released helper
+# wrote fails it. A malformed record of the KNOWN schema takes the refusal an
+# unknown schema takes: every writer refuses it (1), the snapshot's reader
+# answers 10, and the inventory's names it `<malformed>`.
+#
+# WHICH KIND OF RECORD IT IS COMES FROM WHERE IT IS FILED — `<root>/lane-state.yaml`
+# for the snapshot, `<root>/trees/<id>.yaml` for a tree — and the second argument
+# names that place for a file that is not there yet (`lane_sidecar_put`'s
+# temporary file). `LSS_WHY` says why a record failed, in words a caller puts
+# in its own message; it is set in the caller's shell, so call this directly
+# and never inside `$( )`. The awk reads the id through the ENVIRONMENT, because
+# `awk -v` processes escapes in a value.
+lane_sidecar_schema_ok() {   # <file> [<the path it is filed as>]
+  LSS_WHY=""
   [ -e "${1-}" ] || [ -L "${1-}" ] || return 0
+  if [ ! -r "$1" ]; then
+    LSS_WHY="it is there and could not be read"
+    return 1
+  fi
   lss_v="$(lane_sidecar_field "$1" schema 2>/dev/null || :)"
-  [ "$lss_v" = "$LANE_STATE_SCHEMA" ]
+  if [ "$lss_v" != "$LANE_STATE_SCHEMA" ]; then
+    LSS_WHY="it is of a schema this helper does not write (it writes schema $LANE_STATE_SCHEMA)"
+    return 1
+  fi
+  lss_as="${2:-$1}"; lss_kind=""; lss_id=""
+  case "$lss_as" in
+    */trees/*.yaml)    lss_kind=tree; lss_id="${lss_as##*/}"; lss_id="${lss_id%.yaml}" ;;
+    */lane-state.yaml) lss_kind=snapshot ;;
+  esac
+  [ -n "$lss_kind" ] || return 0
+  lss_rc=0
+  LSS_WHY="$(LSS_KIND="$lss_kind" LSS_ID="$lss_id" awk '
+    { i = index($0, ": ")
+      if (i > 1) { k = substr($0, 1, i - 1); v = substr($0, i + 2)
+        sub(/^[ \t]+/, "", v); sub(/[ \t]+$/, "", v)
+        if (!(k in val)) val[k] = v } }
+    END {
+      kind = ENVIRON["LSS_KIND"]
+      if (kind == "snapshot")
+        n = split("lane state generation operation owner agent profile workstation kind updated", req, " ")
+      else
+        n = split("lane tree path checkout branch head upstream dirty unpushed writer generation operation observed", req, " ")
+      miss = ""
+      for (j = 1; j <= n; j++)
+        if (!(req[j] in val) || val[req[j]] == "") miss = miss (miss == "" ? "" : ", ") req[j]
+      if (miss != "") { print "it is not a whole record: it carries no " miss; exit }
+      if (val["generation"] !~ /^[0-9]+$/) { print "its generation \"" val["generation"] "\" is not a number"; exit }
+      if (kind == "snapshot") {
+        if (val["state"] !~ /^(RUNNING|SWAPPING|SWAPPED|CLOSED)$/) {
+          print "its state \"" val["state"] "\" is none of RUNNING, SWAPPING, SWAPPED and CLOSED"; exit }
+      } else {
+        if (val["tree"] != ENVIRON["LSS_ID"]) {
+          print "it claims to be tree " val["tree"] " and is filed as " ENVIRON["LSS_ID"]; exit }
+        if (substr(val["path"], 1, 1) != "/") { print "its path \"" val["path"] "\" is not absolute"; exit }
+        if (val["dirty"] !~ /^[0-9]+$/) { print "its dirty count \"" val["dirty"] "\" is not a number"; exit }
+        if (val["unpushed"] !~ /^([0-9]+|unknown)$/) {
+          print "its unpushed count \"" val["unpushed"] "\" is neither a number nor unknown"; exit }
+      }
+    }' "$1" 2>/dev/null)" || lss_rc=$?
+  if [ "$lss_rc" != 0 ]; then
+    LSS_WHY="it could not be read through (awk exited $lss_rc)"
+    return 1
+  fi
+  [ -z "$LSS_WHY" ]
 }
 
 # THE SNAPSHOT AS IT STOOD, IN ONE STRING — the pre-image a fenced write
@@ -12341,12 +12418,24 @@ lane_sidecar_value() {   # <value>
 
 # THE ATOMIC REPLACE. Written beside the target and renamed over it, so a
 # reader never sees half a snapshot and a full disk leaves the old one intact.
+#
+# AND ONLY A WHOLE RECORD IS RENAMED INTO PLACE (opensoft/openRepoTools#115).
+# The rename makes a complete file atomic and nothing more: a `cat` whose input
+# was cut short — the writer killed between two of its lines — still exits 0,
+# and the half record it wrote was renamed over the whole one. The temporary
+# file is asked the question every reader and writer of the record asks, under
+# the name it is about to take, and a record that fails it is removed instead.
 lane_sidecar_put() {   # <file> ; the whole body on stdin
   lsp_f="${1-}"; lsp_d="${lsp_f%/*}"
   [ -n "$lsp_f" ] || return 1
   mkdir -p -- "$lsp_d" 2>/dev/null || return 1
   lsp_t="$lsp_f.tmp.$$"
   cat > "$lsp_t" 2>/dev/null || { rm -f -- "$lsp_t" 2>/dev/null; return 1; }
+  if ! lane_sidecar_schema_ok "$lsp_t" "$lsp_f"; then
+    rm -f -- "$lsp_t" 2>/dev/null
+    note "the record for $lsp_f was NOT written: what was about to replace it is not a whole record ($LSS_WHY), and a half record is never renamed over a whole one."
+    return 1
+  fi
   mv -- "$lsp_t" "$lsp_f" 2>/dev/null || { rm -f -- "$lsp_t" 2>/dev/null; return 1; }
   return 0
 }
@@ -12364,7 +12453,8 @@ lane_op_id() {
 # THE SNAPSHOT, READ. `<key><TAB><value>` lines, which is what every caller
 # here parses with one `awk`. 0 with the fields, 8 where the lane has no
 # snapshot at all (the pre-cutover lane, and not a failure), 10 where a snapshot
-# IS there and could not be read, 1 where the control root could not be derived.
+# IS there and could not be read — or is of this schema and not a whole record
+# (#115) — 1 where the control root could not be derived.
 #
 # THE 10 IS THE POINT OF THIS ROUND (Copilot round 6 on openRepoTools#97, where
 # it was 9 — main's #61 has since spent 9 on `claim`, so this one moved). A bare
@@ -12394,8 +12484,13 @@ lane_state_read() {   # <lane>
   # files takes too. A newer tooling's snapshot read by an older reader must not
   # be reported as a lane in a state this reader knows — and must not be
   # replaced by one either, which is what `lane_sidecar_schema_ok` is for.
+  # A RECORD OF THIS SCHEMA THAT IS NOT A WHOLE ONE is 10 (#115): it is there
+  # and nothing can be read out of it as a snapshot, which is what 10 says. Its
+  # fields used to come out EMPTY, and an empty state reached the verdict table
+  # as a word nobody wrote.
   if ! lane_sidecar_schema_ok "$lsr_f"; then
     lsr_schema="$(lane_sidecar_field "$lsr_f" schema 2>/dev/null || :)"
+    [ "$lsr_schema" != "$LANE_STATE_SCHEMA" ] || return 10
     printf 'state\tUNKNOWN-SCHEMA\n'; printf 'schema\t%s\n' "${lsr_schema:-<none>}"
     printf 'file\t%s\n' "$lsr_f"; return 0
   fi
@@ -12512,7 +12607,7 @@ lane_state_follow() {   # <lane> <verb> <payload> <uuid> <pre-image> <seam verdi
   # A SNAPSHOT THIS HELPER CANNOT READ IS ONE IT MUST NOT REPLACE.
   if ! lane_sidecar_schema_ok "$lsf_f"; then
     if [ "$lsf_own" = 1 ]; then release_lock; fi
-    note "the lane lifecycle snapshot at $lsf_f records a schema this helper does not write, so the $lsf_verb line landed and NOTHING was written over that file: a record an older helper cannot read is one it cannot safely replace. Upgrade this workstation's lanes-edit.sh, or read the file by hand."
+    note "the lane lifecycle snapshot at $lsf_f is not a record this helper can read ($LSS_WHY), so the $lsf_verb line landed and NOTHING was written over that file: a record this helper cannot read is one it cannot safely replace. Upgrade this workstation's lanes-edit.sh if a newer tooling wrote it, or read the file by hand."
     return 0
   fi
   lsf_seen="$(lane_state_fingerprint "$lsf_f")"
@@ -12683,7 +12778,9 @@ lane_tree_put() {   # <root> <lane> <path> <checkout> <branch> <head> <upstream>
 # fields this reader was guessing at. Its id, its path and its schema are
 # printed — the three a person needs to find it — and every other field is
 # EMPTY, which `lane_reconcile` reports as `unknown-schema` rather than
-# recomputing against.
+# recomputing against. A record of THIS schema that is not a whole one is the
+# same row with the schema `<malformed>` (#115), and `lane_reconcile` reports
+# it as `malformed-sidecar`.
 lane_trees_list() {   # <lane>
   ltl_root=""; ltl_rc=0; ltl_n=0
   ltl_root="$(lane_control_root "${1-}")" || ltl_rc=$?
@@ -12713,6 +12810,19 @@ lane_trees_list() {   # <lane>
       # nobody can account for is the opposite of what this round is about.
       [ -n "$ltl_id" ] || { ltl_id="${ltl_f##*/}"; ltl_id="${ltl_id%.yaml}"; }
       printf '%s\n' "$ltl_id$US$ltl_p$US$US$US$US$US$US$US$US$US$US$US${ltl_s:-<none>}"
+      continue
+    fi
+    # AND A RECORD OF THIS SCHEMA THAT IS NOT A WHOLE ONE IS SAID, NEVER READ
+    # (#115). A truncated `schema: 1` file came out as a row of empty fields —
+    # an EMPTY ID, which `lane_reconcile` skipped outright, and an empty dirty
+    # and unpushed, which it read as 0 and 0: a vanished tree that held work
+    # reported `missing`, clean and published. Its id is its FILE NAME, because
+    # the one it claims is not to be trusted, the path it records is kept so
+    # the tree is still named once, and every other field is empty under the
+    # schema `<malformed>`.
+    if ! lane_sidecar_schema_ok "$ltl_f"; then
+      ltl_id="${ltl_f##*/}"; ltl_id="${ltl_id%.yaml}"
+      printf '%s\n' "$ltl_id$US$ltl_p$US$US$US$US$US$US$US$US$US$US$US<malformed>"
       continue
     fi
     printf '%s\n' "$ltl_id$US$ltl_p\
@@ -12903,6 +13013,15 @@ lane_reconcile() {   # <lane>
     # pronouncement, the one class this capability exists to close. A read
     # nobody got is `indeterminate` below, exactly as an unreadable HOLDER is.
     lrc_state=UNREADABLE
+    # AND ONE THAT OPENS AND IS NOT A WHOLE RECORD IS SAID AS SUCH (#115). It
+    # used to come out as fields that were EMPTY, and its empty state word was
+    # `unknown-state` by the `*)` arm below — failing safe by accident rather
+    # than by a check. The 10 is the same; the word says which of the two.
+    lrc_swhy=""
+    if [ "$lrc_srrc" = 10 ] && [ -r "$lrc_root/lane-state.yaml" ] \
+       && ! lane_sidecar_schema_ok "$lrc_root/lane-state.yaml"; then
+      lrc_state=MALFORMED; lrc_swhy="$LSS_WHY"
+    fi
   fi
   printf 'ROOT%s%s\n' "$US" "$lrc_root"
   printf 'STATE%s%s%sgeneration %s%soperation %s%sowner %s%supdated %s\n' \
@@ -12994,6 +13113,17 @@ LRC_BIND
     if [ "${lrc_sch:-}" = "<unreadable>" ]; then
       printf 'TREE%s%s%sunreadable-sidecar%s%s%sits sidecar is there and could not be read, so the tree it records — where it is, and whether it held uncommitted or unpublished work — is NOT known, and nothing is assumed about it; read %s/trees/%s.yaml by hand before relaunching a writer\n' \
         "$US" "$lrc_id" "$US" "$US" "<no path read>" "$US" "$lrc_root" "$lrc_id"
+      lrc_recover=$((lrc_recover + 1))
+      continue
+    fi
+    # A RECORD OF THIS SCHEMA THAT IS NOT A WHOLE ONE (#115) is reported as the
+    # unreadable one is: nothing is read out of it, it counts toward recovery,
+    # and the line says what is missing from it and names the file.
+    if [ "${lrc_sch:-}" = "<malformed>" ]; then
+      lrc_mwhy="the record could not be read again to say why"
+      if lane_sidecar_schema_ok "$lrc_root/trees/$lrc_id.yaml"; then :; else lrc_mwhy="$LSS_WHY"; fi
+      printf 'TREE%s%s%smalformed-sidecar%s%s%sits sidecar is of this schema and %s, so the tree it records — where it is, and whether it held uncommitted or unpublished work — is NOT known, nothing is assumed about it, and no writer replaces it; read %s/trees/%s.yaml by hand before relaunching a writer\n' \
+        "$US" "$lrc_id" "$US" "$US" "${lrc_p:-<no path read>}" "$US" "$lrc_mwhy" "$lrc_root" "$lrc_id"
       lrc_recover=$((lrc_recover + 1))
       continue
     fi
@@ -13145,6 +13275,7 @@ EOF
       CLOSED8)    lrc_v=closed;          lrc_why="the lane is closed" ;;
       CLOSED0)    lrc_v=inconsistent;    lrc_why="the lane is recorded CLOSED and a holder is LIVE" ;;
       UNREADABLE*) lrc_v=indeterminate;  lrc_why="this lane's lifecycle snapshot at $lrc_root/lane-state.yaml IS THERE and could not be read, so where its session stopped is NOT established — which is not the same as a lane that has none, and is no clearance to relaunch anything (R22, Amendment 7(d): a read that failed is never an answer). Read that file by hand; if you know what wrote it, move it aside and this lane's next transition writes a fresh one" ;;
+      MALFORMED*) lrc_v=indeterminate;   lrc_why="this lane's lifecycle snapshot at $lrc_root/lane-state.yaml is of this schema and ${lrc_swhy:-is not a whole record} — truncated, or edited by hand — so where its session stopped is NOT established, and no writer replaces it, exactly as none replaces a schema it does not write (#115). Read that file by hand; if you know what wrote it, move it aside and this lane's next transition writes a fresh one" ;;
       NONE*)      lrc_v=no-state;        lrc_why="this lane has no lifecycle snapshot: it has not started or handed off under this capability, so its crash kind cannot be told from its record (Amendment 7(i)'s cutover rule — nothing is backfilled)" ;;
       *)          lrc_v=unknown-state;   lrc_why="the snapshot holds the state word '$lrc_state', which this reader does not know; nothing is assumed about it" ;;
     esac
@@ -13308,6 +13439,9 @@ worktree_rows() {   # [<canonical lane>]
       t_base=""; t_last=""
       if [ "${t_s:-}" = "<unreadable>" ]; then
         t_branch="unreadable sidecar"; [ -n "${t_p:-}" ] || t_p="$t_id"
+        t_d=""; t_n=""; t_g=""; t_ob=""
+      elif [ "${t_s:-}" = "<malformed>" ]; then
+        t_branch="malformed sidecar"; [ -n "${t_p:-}" ] || t_p="$t_id"
         t_d=""; t_n=""; t_g=""; t_ob=""
       elif [ "${t_s:-}" != "$LANE_STATE_SCHEMA" ]; then
         t_branch="unknown schema ${t_s:-<none>}"; [ -n "${t_p:-}" ] || t_p="$t_id"
@@ -16740,7 +16874,10 @@ EOF
   # a launch exactly as those do.
   #
   #   0   done
-  #   1   no control root could be derived, or it could not be written
+  #   1   no control root could be derived, or it could not be written; or a
+  #       WRITER met a record there it cannot read — of a schema it does not
+  #       write, or of its own and not a whole record (#115) — and replaced
+  #       nothing; or `lane-tree-now` met a git read that failed
   #   2   a refusal of the arguments
   #   7   THE FENCE DID NOT MATCH — another act got there first, which is what
   #       this file already spends 7 on (`claim`'s CLAIM-LOST). Nothing was
@@ -16750,7 +16887,11 @@ EOF
   #       round 6 on #97). 8 tells a launcher *this lane was never migrated, go
   #       on*; 10 tells it *this lane may be mid-crash and nobody could look*.
   #       (It was 9 until main's #61 spent 9 on `claim`'s abandoned takeover.)
-  #  64   a usage error of this subcommand's own
+  #       A snapshot of this schema that is not a whole record is 10 as well
+  #       (#115): nothing can be read out of it as a snapshot.
+  #  64   a usage error of this subcommand's own — for `set-lane-tree`, a
+  #       partial observation, or a `--dirty`/`--unpushed` that is not a count
+  #       (`unknown` is one for `--unpushed`)
 
   lane-state)
     lane="${1-}"; [ -n "$lane" ] || die "usage: lane-state <lane>" 64
@@ -16763,7 +16904,13 @@ EOF
     case "$lst_rc" in
       0) : ;;
       8) exit 8 ;;
-      10) die "lane $lane HAS a lifecycle snapshot at its control root and it could not be read. That is NOT 'this lane has no snapshot' — 8 says that, and a launcher answers an 8 by going on, which over an unreadable record would be a launch made in ignorance of a crash nobody could look at (R22, Amendment 7(d)). Read it by hand: $(lane_control_root "$lane" 2>/dev/null || printf '<no control root>')/lane-state.yaml" 10 ;;
+      10)
+        # WHICH OF THE TWO 10s (#115): a record that opens and is not a whole
+        # one of this schema is said as that, for the person who reads it.
+        lst_f="$(lane_control_root "$lane" 2>/dev/null || printf '<no control root>')/lane-state.yaml"
+        lst_what="it could not be read"
+        if [ -r "$lst_f" ] && ! lane_sidecar_schema_ok "$lst_f"; then lst_what="it is of this schema and $LSS_WHY, so nothing can be read out of it as a snapshot"; fi
+        die "lane $lane HAS a lifecycle snapshot at its control root and $lst_what. That is NOT 'this lane has no snapshot' — 8 says that, and a launcher answers an 8 by going on, which over an unreadable record would be a launch made in ignorance of a crash nobody could look at (R22, Amendment 7(d)). Read it by hand: $lst_f" 10 ;;
       *) die "lane $lane has no lifecycle control root: its record names no directory (Amendment 11(c)) and \$PROJECTS_ROOT is not a directory here. That is NOT 'this lane is in no state' — a read that could not be made is never an answer (Amendment 7(d))." 1 ;;
     esac
     printf '%s\n' "$lst_out"
@@ -16826,7 +16973,7 @@ EOF
     if ! lane_sidecar_schema_ok "$sls_root/lane-state.yaml"; then
       sls_sch="$(lane_sidecar_field "$sls_root/lane-state.yaml" schema 2>/dev/null || :)"
       release_lock
-      die "lane $lane's lifecycle snapshot at $sls_root/lane-state.yaml records schema ${sls_sch:-<none>} and this helper writes schema $LANE_STATE_SCHEMA. NOTHING was read out of it and nothing was written over it: a record this helper cannot read is one it cannot safely replace. Upgrade this workstation's lanes-edit.sh; if you know what wrote that file, move it aside by hand and re-run." 1
+      die "lane $lane's lifecycle snapshot at $sls_root/lane-state.yaml records schema ${sls_sch:-<none>} and is not a record this helper can read: $LSS_WHY. NOTHING was read out of it and nothing was written over it: a record this helper cannot read is one it cannot safely replace, whether its schema is one this helper does not write or its own and the record is not whole (#115). Upgrade this workstation's lanes-edit.sh if a newer tooling wrote it; if you know what wrote that file, move it aside by hand and re-run." 1
     fi
     sls_now=""; sls_nowg=""; sls_nowo=""
     if [ -r "$sls_root/lane-state.yaml" ]; then
@@ -16963,6 +17110,17 @@ EOF
     elif [ -z "$slt_b" ] || [ -z "$slt_h" ] || [ -z "$slt_u" ] || [ -z "$slt_d" ] || [ -z "$slt_n" ]; then
       die "set-lane-tree takes the caller's observation WHOLE — --branch, --head, --upstream, --dirty and --unpushed together — or none of them, when the tree is read here. A partial one would be filed with values nobody observed, and 'dirty 0, unpushed 0' is the record a later reconciliation reads as clean and published. Nothing was written." 64
     fi
+    # AND IN THE SHAPES A RECORD IS READ BACK IN (#115). The two counts are what
+    # a reconciliation decides with, and a record carrying one that is neither a
+    # count nor `unknown` is one no reader may use and no writer may replace —
+    # so it is refused here, before anything is written, rather than filed.
+    case "$slt_d" in
+      ''|*[!0-9]*) die "set-lane-tree's --dirty takes a count of the tree's dirty paths, and '$slt_d' is not one: a record carrying it could be neither read nor replaced. Nothing was written." 64 ;;
+    esac
+    case "$slt_n" in
+      unknown) : ;;
+      ''|*[!0-9]*) die "set-lane-tree's --unpushed takes a count of commits, or 'unknown' where the upstream is configured and its remote-tracking ref is not here; '$slt_n' is neither, and a record carrying it could be neither read nor replaced. Nothing was written." 64 ;;
+    esac
     # THE FENCE, AND IT IS THE LANE'S OWN (Copilot round 5 on #97). A caller
     # that names the generation and the operation it is recording under is
     # saying *this observation belongs to that transition* — and until this
@@ -16995,7 +17153,7 @@ EOF
     if [ -n "$slt_g" ] || [ -n "$slt_op" ]; then
       if ! lane_sidecar_schema_ok "$slt_root/lane-state.yaml"; then
         release_lock
-        die "the worktree $slt_path was NOT recorded for lane $lane: its lifecycle snapshot records a schema this helper does not write, so the generation and operation this observation names cannot be compared with anything. Nothing was written. Upgrade this workstation's lanes-edit.sh." 1
+        die "the worktree $slt_path was NOT recorded for lane $lane: its lifecycle snapshot is not a record this helper can read ($LSS_WHY), so the generation and operation this observation names cannot be compared with anything. Nothing was written. Upgrade this workstation's lanes-edit.sh if a newer tooling wrote it, or read the snapshot by hand." 1
       fi
       slt_ng=""; slt_no=""
       if [ -r "$slt_root/lane-state.yaml" ]; then
@@ -17015,7 +17173,7 @@ EOF
     # this helper cannot read, so it is not one this helper may replace.
     if ! lane_sidecar_schema_ok "$slt_root/trees/$(tree_id_for "$slt_path").yaml"; then
       release_lock
-      die "the worktree $slt_path was NOT recorded for lane $lane: its sidecar under $slt_root/trees records a schema this helper does not write, and a record it cannot read is one it cannot safely replace. Nothing was written. Upgrade this workstation's lanes-edit.sh." 1
+      die "the worktree $slt_path was NOT recorded for lane $lane: its sidecar under $slt_root/trees is not a record this helper can read ($LSS_WHY), and a record it cannot read is one it cannot safely replace. Nothing was written. Upgrade this workstation's lanes-edit.sh if a newer tooling wrote it; if you know what wrote that file, move it aside by hand and re-run." 1
     fi
     if lane_tree_put "$slt_root" "$lane" "$slt_path" "$slt_co" "$slt_b" "$slt_h" \
          "$slt_u" "$slt_d" "$slt_n" "$slt_w" "$slt_g" "$slt_op"; then
