@@ -411,7 +411,8 @@
 #   0 with the owner on stdout where the lane's register row carries a valid
 #   managed-owner marker, 8 where it carries none (a LEGACY lane, which is
 #   every lane today), 1 where it carries managed-owner vocabulary that does
-#   not parse as a marker or the register could not be read (ownership
+#   not parse as a marker, where only THIS checkout's row carries the
+#   vocabulary (#157 item 4a), or the register could not be read (ownership
 #   UNKNOWN), 64 usage. Every legacy act that would write for a lane asks this
 #   first and refuses a managed lane with 2 and an unknown one with 1, before
 #   a byte is written: the lane-kind lines `log` writes (STARTED, RESUMED,
@@ -520,6 +521,9 @@
 #      both, and the one that was carrying both was 8 (R22, Amendment 7(d)).
 #      IT WAS 9 until main's #61 landed with 9 as `claim --force`'s abandoned
 #      takeover; each PR had taken 9 as unused, and the later one moved.
+#      `lane-trees` spends it for an inventory directory that EXISTS and
+#      cannot be listed, which is never "this lane recorded no tree" (#157
+#      item 4e).
 #
 # --no-sweep (DEFAULT, added 2026-09-09 after 0d84d34/a1f2438 swept another
 #   lane's uncommitted hand edit into an unrelated commit): every mutating
@@ -12148,15 +12152,40 @@ managed_seam_refuse() {   # <canonical lane> <the act>
     8) : ;;
     *) die "whether the managed ledger owns lane $msr_lane is UNKNOWN: its register row carries managed-owner vocabulary that does not parse as a marker, or the register could not be read — and an ownership nobody could establish is never read as 'legacy' (Amendment 7(d)). $msr_act was refused and nothing was written. Read it: lanes-edit.sh managed-projection $msr_lane" 1 ;;
   esac
-  [ -f "$LANES_FILE" ] || return 0
-  msr_hint=8; msr_loc=""
-  msr_loc="$(row_of_lane_local "$msr_lane" 2>/dev/null)" || msr_hint=1
-  if [ "$msr_hint" = 8 ] && [ -n "$msr_loc" ]; then
-    msr_hint=0; managed_projection_hint "$msr_loc" || msr_hint=$?
-  fi
-  [ "$msr_hint" = 8 ] ||
-    die "whether the managed ledger owns lane $msr_lane is UNKNOWN: this checkout's row for it carries managed-owner vocabulary (or could not be read) where the published register's does not, and a legacy act rewrites THIS checkout's row — an ownership the two copies disagree on is never read as 'legacy' (Amendment 7(d)). $msr_act was refused and nothing was written. Publish or undo this checkout's change to that row first: git -C $LANES_REPO log origin/$LANES_BRANCH..HEAD -- $LANES_PATH" 1
+  managed_local_hint "$msr_lane" ||
+    die "whether the managed ledger owns lane $msr_lane is UNKNOWN: its row in this checkout's register file, $LANES_FILE, carries managed-owner vocabulary (or could not be read) where the published register's, origin/$LANES_BRANCH, does not, and a legacy act rewrites THAT file's row — an ownership the two copies disagree on is never read as 'legacy' (Amendment 7(d)). $msr_act was refused and nothing was written. $(managed_local_remedy)" 1
   return 0
+}
+
+# THIS CHECKOUT'S HALF OF THAT READ, which `managed-projection` asks too
+# (opensoft/openRepoTools#157 item 4a): the gates of `lane-start`, `lane-handoff`
+# and `lane-end` ask that read, and a gate that passed a marker only this copy
+# carries let a launch go on until a later writer refused. 0 where this
+# checkout's row carries no managed-owner vocabulary, or there is no register
+# file here; 1 where it carries some or could not be read. VOCABULARY ONLY, and
+# not the row's shape (item 4d): a row with none cannot be a marker, so it is
+# legacy in either copy, and the writer that rewrites it refuses a shape it
+# cannot split on its own.
+managed_local_hint() {   # <canonical lane>
+  mlh_hint=8; mlh_loc=""
+  [ -f "$LANES_FILE" ] || return 0
+  mlh_loc="$(row_of_lane_local "${1-}" 2>/dev/null)" || mlh_hint=1
+  if [ "$mlh_hint" = 8 ] && [ -n "$mlh_loc" ]; then
+    mlh_hint=0; managed_projection_hint "$mlh_loc" || mlh_hint=$?
+  fi
+  [ "$mlh_hint" = 8 ]
+}
+
+# WHAT A PERSON DOES ABOUT IT, in the words both refusals above print. The file
+# named is the one `managed_local_hint` READ, which is not always in
+# `$LANES_REPO`: a caller that points `LANES_REPO` at a runtime clone and sets
+# no `LANES_WORKSPACE_ROOT` reads the published register in that clone and this
+# file in workspace.yaml's tree. And the two copies can disagree in either
+# direction: a change here that origin has not got, or a change on origin
+# (the ledger removing its marker) that this checkout has not pulled.
+managed_local_remedy() {
+  printf 'That file is AHEAD of origin — the row changed there and not pushed, or not committed at all: publish that change or undo it — or BEHIND it — origin has dropped the vocabulary since that checkout last moved: fast-forward it. Which one: git -C %s fetch && git -C %s status --short --branch -- %s' \
+    "${LANES_FILE%/*}" "${LANES_FILE%/*}" "${LANES_FILE##*/}"
 }
 
 # ============================================================================
@@ -12650,7 +12679,13 @@ lane_tree_put() {   # <root> <lane> <path> <checkout> <branch> <head> <upstream>
 
 # EVERY RECORDED TREE, ONE PER LINE, US-separated:
 #   <id><US><path><US><branch><US><head><US><upstream><US><dirty><US><unpushed><US><writer><US><observed><US><checkout><US><generation><US><operation><US><schema>
-# 0 with rows, 8 with none, 1 where no control root could be derived.
+# 0 with rows, 8 with none, 1 where no control root could be derived, 10 where
+# the `trees` directory is there and cannot be listed.
+#
+# THAT 10 IS NOT AN 8 (#157 item 4e). A directory this process may not read or
+# search yields an empty glob, which read as a lane that recorded no tree — the
+# unreadable sidecar's rule above, one level up. `worktree_rows` already tells
+# the two apart before it asks; `lane-trees` and its callers now can too.
 #
 # THE LAST THREE ARE NEW AND THEY ARE AT THE END (Copilot round 5 on
 # openRepoTools#97): the fence the observation was RECORDED UNDER, and the
@@ -12673,6 +12708,7 @@ lane_trees_list() {   # <lane>
   ltl_root="$(lane_control_root "${1-}")" || ltl_rc=$?
   [ "$ltl_rc" = 0 ] || return 1
   [ -d "$ltl_root/trees" ] || return 8
+  [ -r "$ltl_root/trees" ] && [ -x "$ltl_root/trees" ] || return 10
   for ltl_f in "$ltl_root"/trees/*.yaml; do
     [ -e "$ltl_f" ] || [ -L "$ltl_f" ] || continue
     ltl_n=$((ltl_n + 1))
@@ -16698,9 +16734,12 @@ EOF
   # ---------- THE SEAM: is this lane the managed ledger's? (ruling 2026-10-04)
   #
   #   0  a valid managed-owner marker: the owner is printed
-  #   8  no marker and no managed-owner vocabulary: a legacy lane
-  #   1  vocabulary that does not parse, or a register that could not be read:
-  #      ownership UNKNOWN, which a caller refuses on exactly as it refuses 0
+  #   8  no marker and no managed-owner vocabulary, in the published row or
+  #      this checkout's: a legacy lane
+  #   1  vocabulary that does not parse, vocabulary only this checkout's row
+  #      carries (#157 item 4a, as `managed_seam_refuse` reads it), or a
+  #      register that could not be read: ownership UNKNOWN, which a caller
+  #      refuses on exactly as it refuses 0
   #  64  usage
   managed-projection)
     lane="${1-}"; [ -n "$lane" ] || die "usage: managed-projection <lane>" 64
@@ -16712,7 +16751,10 @@ EOF
     mpj_out="$(lane_is_managed_owned "$lane")" || mpj_rc=$?
     case "$mpj_rc" in
       0) printf '%s\n' "$mpj_out" ;;
-      8) exit 8 ;;
+      8)
+        managed_local_hint "$lane" ||
+          die "lane $lane's row in this checkout's register file, $LANES_FILE, carries managed-owner vocabulary (or could not be read) where the published register's, origin/$LANES_BRANCH, does not: the two copies disagree on whether the managed ledger owns it, so that is UNKNOWN, and it is never read as 'legacy' (Amendment 7(d)) — every legacy writer refuses it for the same reason. $(managed_local_remedy)" 1
+        exit 8 ;;
       *) die "lane $lane's register row carries managed-owner vocabulary that does not parse as a marker, or the register could not be read: whether the managed ledger owns it is UNKNOWN, and that is never read as 'legacy' (Amendment 7(d))." 1 ;;
     esac
     ;;
@@ -16872,6 +16914,7 @@ EOF
     case "$ltr_rc" in
       0) : ;;
       8) exit 8 ;;
+      10) die "lane $lane's worktree inventory directory $(lane_control_root "$lane" 2>/dev/null || printf '<no control root>')/trees is there and could not be listed. That is NOT 'this lane recorded no tree' — 8 says that, and a reader that goes on over it relaunches writers onto trees nobody looked at (R22, Amendment 7(d)). Read it by hand." 10 ;;
       *) die "lane $lane has no lifecycle control root, so its worktree inventory could not be read. That is NOT 'this lane owns no worktree' (Amendment 7(d))." 1 ;;
     esac
     printf '%s\n' "$ltr_out"
