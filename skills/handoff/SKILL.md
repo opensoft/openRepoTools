@@ -216,8 +216,8 @@ another operation. Do not edit or redirect into the canonical handoff directly;
 perform the existing explicit-pathspec commit/push after successful publication.
 Legacy `rename-lane` is a separate four-file transaction under the same mutex;
 it refuses unfinished/failed restart ownership and uses EXIT rollback. Its
-existing direct stamp writer is an explicit exception to this atomic publication
-contract, not a crash-atomic rename guarantee.
+stamp now atomically replaces the handoff through a temporary file beside it
+(#158), but the four-file rename itself is still not crash-atomic (#224).
 
 
 The handoff path is the row's own handoff column. Derive it; do not guess it — and read the row FETCHED,
@@ -342,17 +342,58 @@ Write `session unknown` where the top block's first line carries `<uuid>`, as `l
 in a container with no `LANES_WORKSTATION`, that step 4's register and object-log writes were therefore NOT
 made, and that the row still reads as it did — so the next session knows the register is behind its own
 handoff rather than believing the lane never paused. This commit is in the LANE'S OWN repository and is not
-one of the writes that stop. Commit with an explicit pathspec
-and the Rule 5 `Lane:` trailer, then pull-rebase and push:
+one of the writes that stop.
+
+**COMMIT IN THE CHECKOUT THE HANDOFF WAS PUBLISHED IN, BY ITS OWN PATH, AND NOTHING ELSE** (Amendment 4(d):
+*"with explicit pathspecs — never `git add -A`, never a bare `git commit`"*; Amendment 5(c) and (d)). The
+checkout is RESOLVED, never spelled: `$LANES_REPO` first, then the helper's own `workspace-root`, which is the
+order `lane-handoff` uses — a lane window exports `LANES_REPO` to the lane's own clone, and step 4's writes go
+there. Step 2's publication target `$handoff_file` is the same file (`$LANES_REPO/$handoff` where that exists,
+else the workspace root's), so the file published is the file committed. A STAGED ENTRY THIS HANDOFF DID NOT
+MAKE IS A REFUSAL, read before the `git add`: a bare commit would publish it, and with a pathspec the pull would
+refuse on it. So is a rebase, merge, cherry-pick or revert in progress. Then the Rule 5 `Lane:` trailer,
+pull-rebase and push:
 
 ```sh
-cd ~/projects/brett-wip
-git add "$handoff"
-git commit -m "handoff(<lane>@<ws>): PAUSED, <one-line state>" -m "Lane: <lane>"
-git pull --rebase && git push
+# THE CHECKOUT IS RESOLVED, NEVER SPELLED: `$LANES_REPO` first, then the
+# helper's own `workspace-root`, the order `lane-handoff` uses. Lane windows
+# export `LANES_REPO` to the lane's own clone, and step 4's writes go there.
+hc_root=""; hc_why=""; hc_staged=""
+for hc_base in "${LANES_REPO:-}" "$("$L" workspace-root 2>/dev/null)"; do
+  if [ -n "$hc_base" ] && [ -f "$hc_base/$handoff" ]; then hc_root="$hc_base"; break; fi
+done
+if [ -z "$hc_root" ]; then
+  hc_why="$handoff is under neither \$LANES_REPO nor the workspace root"
+else
+  hc_git="$(git -C "$hc_root" rev-parse --absolute-git-dir)"
+  for hc_op in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD; do
+    [ ! -e "$hc_git/$hc_op" ] || hc_why="$hc_root has an operation in progress ($hc_op)"
+  done
+  # A STAGED ENTRY THIS HANDOFF DID NOT MAKE, read BEFORE the add: a bare
+  # commit would publish it, and with a pathspec the pull would refuse on it.
+  hc_staged="$(git -C "$hc_root" diff --cached --name-only | grep -vxF -- "$handoff")"
+  [ -z "$hc_staged" ] || hc_why="${hc_why:+$hc_why; }the index of $hc_root holds $(printf '%s\n' "$hc_staged" | wc -l | tr -d ' ') staged path(s) this handoff did not make"
+fi
+if [ -n "$hc_why" ]; then
+  printf 'HANDOFF NOT COMMITTED: %s. The file is written; nothing was committed or pushed. Never commit staged entries you did not make.\n' "$hc_why"
+  [ -z "$hc_staged" ] || printf '%s\n' "$hc_staged" | head -n 20 | sed 's/^/  staged: /'
+elif ! { git -C "$hc_root" add -- "$handoff" &&
+         git -C "$hc_root" commit -m "handoff(<lane>@<ws>): PAUSED, <one-line state>" -m "Lane: <lane>" -- "$handoff"; }; then
+  printf 'HANDOFF NOT COMMITTED: git refused the add or the commit in %s (its words are above).\n' "$hc_root"
+elif git -C "$hc_root" pull --rebase origin "${LANES_BRANCH:-main}" &&
+     git -C "$hc_root" push origin "${LANES_BRANCH:-main}"; then
+  echo "handoff pushed from $hc_root"
+else
+  git -C "$hc_root" rebase --abort 2>/dev/null || :
+  printf 'HANDOFF NOT PUSHED: it is a local commit in %s, any rebase is aborted, and git said why above. Never force; look first:\n  git -C %s fetch origin && git -C %s cherry -v origin/%s HEAD\n' \
+    "$hc_root" "$hc_root" "$hc_root" "${LANES_BRANCH:-main}"
+fi
 ```
 
-On a rebase conflict: abort, leave the tree clean, report it, and never force.
+A refusal, a conflict or a rejected push does not stop the swap (`R-A11-11`, *a swap is never left
+unwritten*): the handoff file is written, the block prints what it did NOT do, and the report carries that
+line. On a rebase conflict the block aborts and leaves the tree clean. Never force, and never commit staged
+entries you did not make.
 
 ## 3. Subagents and worktrees — the one question, and the sweep that fills WRITERS
 
@@ -696,8 +737,13 @@ lane-start --help 2>/dev/null | grep -q -- '--confirm' \
 # WHICH ACT REMOVES THIS LINE: none is scheduled, and that is why it is printed
 # CONDITIONALLY rather than always — it is fenced on *if its name is not the
 # lane*, and that test is the whole of it. There is no API to rename a running
-# session from inside, so wherever a session comes up outside `lane-start` the
-# operator's `/rename <lane>` is the only act there is.
+# session from inside, but a keystroke is not an API, and Amendment 12's name
+# guard sends it: the `SessionStart` hook (`lanes-edit.sh session-start`) and the
+# `UserPromptSubmit` guard (`lanes-edit.sh guard`) TYPE `/rename <lane>` into the
+# session's own tmux pane. So the session that comes up outside `lane-start` is
+# usually renamed for the person, and the operator's `/rename <lane>` is the
+# FALLBACK for where the guard has not run or could not type — hooks not
+# installed, a pane that is not running `claude`, tmux not answering.
 echo 'then, in the session that comes up: if its name is not the lane, type /rename <lane> (lane-start names every session it launches, the resume branches included, since adoption act 0 landed as opensoft/brett-wip#5 @3719d97; a session that came up WITHOUT it — a missing or refusing lane-start, a bare claude, or a workstation whose lane-start predates that commit — carries the name the harness derived, and no API renames one from inside)'
 ```
 
@@ -805,5 +851,5 @@ honest record of the state that session holds is its own next `/handoff`.
 
 ```sh
 lane-handoff --late --at 2026-09-14T12:02:27Z "late; usage limit hit before the swap"
-lclaude <profile>      # and only then; use pclaude --lane <lane> if lclaude is unavailable
+lclaude "${CLAUDE_PROFILE_NAME:-<profile>}"      # and only then; use pclaude --lane <lane> if lclaude is unavailable
 ```

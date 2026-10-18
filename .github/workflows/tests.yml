@@ -4,38 +4,36 @@ name: tests
 # and clones them over the filesystem. It never calls `gh`, never touches the
 # network, and must never create a real repository.
 #
-# EVERY CHECKOUT THAT RUNS THE SUITE TAKES `submodules: true`, `parse-macos`
-# excepted: it runs no pytest, reads no estate fixture, and checks out
-# `submodules: false` on purpose, so it is not one more job the claim below
-# has to be quietly true of. The estate tests read eight of openRepoShape's
-# own files out of `upstream/openRepoShape`, and `wip init`'s tests read the
-# nine of `templates/workspace-root/`, all pinned by
-# `contracts/openreposhape-pin.yaml`. Without them those tests SKIP rather than
-# fail — which is what the `tests-no-submodule` job below proves on purpose,
-# and what every suite job besides it must not be quietly doing.
+# THE SUITE RUNS ON LINUX ONLY. Brett Heap decided on 2026-10-15, for the
+# whole estate, to take the macOS and Windows test jobs out of CI: `tests-macos`,
+# `tests-windows` and the macOS bash-3.2 parse (`parse-macos`) are gone from this
+# file, and what they checked is not checked anywhere in it now.
+#
+# EVERY CHECKOUT THAT RUNS THE SUITE TAKES `submodules: true`, `tests-no-submodule`
+# excepted: it checks out `submodules: false` on purpose, to prove the skip path.
+# The estate tests read eight of openRepoShape's own files out of
+# `upstream/openRepoShape`, and `wip init`'s tests read the nine of
+# `templates/workspace-root/`, all pinned by `contracts/openreposhape-pin.yaml`.
+# Without them those tests SKIP rather than fail — which is what the
+# `tests-no-submodule` job below proves on purpose, and what every suite job
+# besides it must not be quietly doing.
 #
 # THE LANE HELPERS' OWN SUITE RUNS IN THESE JOBS TOO, and it runs because
 # `tests/test_lane_helpers_suite.py` calls it: this repository's CI is
 # pytest-only, so 196 KB of bash arriving at `tests/test_lane_helpers.sh` under
 # lane-collision-protocol Amendment 9's move would otherwise have run in NO
-# job. A suite nothing runs is not a suite (act 3, obligation 6). It is bash
-# and it skips on Windows, like every other bash claim here; the macOS
-# `/bin/bash -n` step below parses it under bash 3.2 whatever it does.
+# job. A suite nothing runs is not a suite (act 3, obligation 6). It is bash,
+# and with macOS out of CI it runs under Linux's bash 5 only: no job here parses
+# it under Apple's bash 3.2 any more.
 
 # `pull_request` names `labeled` beside GitHub's own three defaults
-# (`opened`, `synchronize`, `reopened`): the coordinator applying `ready` to
-# an already-open PR is a `pull_request` event only under `labeled`, and
-# `tests-macos`'s `if:` below has to see that event to react to it. `push`
-# (main only) and the nightly `schedule` are `tests-macos`'s other two homes
-# now that it has left the per-push gate — see the comment on that job
-# (Brett Heap's RULING of 2026-09-16, "do all three"). The cron is UTC.
-#
-# Adding `labeled` to `pull_request` means EVERY job in this file — not only
-# `tests-macos` — now also runs when ANY label lands on a PR, `ready` or
-# not: `on:` is shared by the whole workflow, and only `tests-macos` carries
-# a job-level `if:`. `tests`, `tests-no-submodule`, `tests-windows` and
-# `parse-macos` stay exactly as they were — cheap enough that one more
-# trigger on a stray label is not worth a second condition to prevent.
+# (`opened`, `synchronize`, `reopened`). It was put there so that the
+# coordinator applying `ready` to an already-open PR would reach `tests-macos`'s
+# `if:`; that job is gone, so no job here reads a label any more, and `labeled`
+# stays as it was because this change touches no trigger. `on:` is shared by the
+# whole workflow, so ANY label landing on a PR re-runs `guard-launch-mode`,
+# `tests` and `tests-no-submodule`. `push` (main only) and the nightly
+# `schedule` run those same three jobs. The cron is UTC.
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
@@ -89,8 +87,10 @@ jobs:
           python-version: '3.x'
 
       # pytest is the TEST RUNNER and is the only thing installed here.
-      # Nothing this repository ships is Python at all — three bash files —
-      # and the suite itself imports only the standard library.
+      # Nothing this repository ships needs a Python package: its commands are
+      # bash, or `python3` (`lanes-index`, `lane-worktrees`) importing only the
+      # standard library, and the suite itself imports only the standard
+      # library.
       # PINNED. A CI job that resolves "latest" on every run is a job whose
       # result depends on the day it ran, which is the same objection this
       # family makes to pinning a tag instead of a commit.
@@ -147,221 +147,3 @@ jobs:
 
       - name: the suite skips rather than fails
         run: python3 -m pytest tests -q -rs
-
-  # THE SAME SUITE ON WINDOWS, because a person on Windows still CLONES this
-  # repository and reads it. What this job proves is the checkout — that the
-  # `.gitattributes` rule holds and the three bash files are LF in the index —
-  # and the hygiene tests, which need no shell. The estate and installer tests
-  # carry `WINDOWS_SKIP` in `tests/conftest.py`: these files are bash, there is
-  # no PowerShell twin to run instead, and on Windows the way in is WSL2.
-  tests-windows:
-    runs-on: windows-latest
-    env:
-      # PER-INVOCATION GIT CONFIG, never `git config --global` — the same rule
-      # the identity step follows, and the reason a lane mirroring these steps
-      # on a workstation cannot rewrite the operator's ~/.gitconfig.
-      #
-      # core.autocrlf=false: this repository's whole claim about its own bytes
-      # is that an installed copy is byte-identical to the checkout's file and
-      # that `park` and `resume` carry the shared resolver byte for byte.
-      # Line-ending translation on checkout makes both false on this platform
-      # and only this platform.
-      #
-      # core.longpaths=true: MAX_PATH is 260 characters, and the suite nests a
-      # temp directory, a clone, a submodule and that submodule's own git dir.
-      #
-      # PYTHONUTF8=1 (PEP 540): the `read_text()` calls in this suite pass no
-      # `encoding=`, so they take the locale's — cp1252 here — and the files
-      # they read are full of the arrows and em dashes this family is written
-      # in. UTF-8 mode is one variable instead of many edits.
-      PYTHONUTF8: '1'
-      GIT_CONFIG_COUNT: '2'
-      GIT_CONFIG_KEY_0: core.autocrlf
-      GIT_CONFIG_VALUE_0: 'false'
-      GIT_CONFIG_KEY_1: core.longpaths
-      GIT_CONFIG_VALUE_1: 'true'
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
-        with:
-          submodules: true
-          fetch-depth: 1
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
-        with:
-          python-version: '3.x'
-
-      # `python`, not `python3`. There is no `python3` on a Windows install.
-      - name: install the test runner
-        run: python -m pip install --disable-pip-version-check pytest==8.3.4
-
-      # Per-invocation identity, never `git config --global`. PowerShell is the
-      # default shell on this runner, so the append is `>> $env:GITHUB_ENV`
-      # rather than the `{ echo ... } >> "$GITHUB_ENV"` block above.
-      - name: git identity for the fixture commits (env, not global config)
-        run: |
-          "GIT_AUTHOR_NAME=openRepoTools CI" >> $env:GITHUB_ENV
-          "GIT_AUTHOR_EMAIL=ci@openrepotools.invalid" >> $env:GITHUB_ENV
-          "GIT_COMMITTER_NAME=openRepoTools CI" >> $env:GITHUB_ENV
-          "GIT_COMMITTER_EMAIL=ci@openrepotools.invalid" >> $env:GITHUB_ENV
-
-      # THE WHOLE SUITE, not a Windows-shaped subset. A subset is a claim about
-      # which tests are platform-dependent, made by whoever wrote the subset;
-      # the suite itself already carries that claim, as the `WINDOWS_SKIP`
-      # marks in `tests/conftest.py`, next to the code they are about. Running
-      # everything is what keeps those marks honest.
-      #
-      # `--basetemp` puts pytest's temp root as near the drive root as a path
-      # the runner guarantees allows. The default (a profile path under
-      # `C:\Users\runneradmin\AppData\Local\Temp\`) is ~50 characters before
-      # the suite's own nesting starts, and MAX_PATH is 260. `runner.temp` is
-      # short — `D:\a\_temp` or `C:\a\_temp`, depending on the image — and it
-      # already exists; a bare drive letter is an assumption about which drives
-      # a future image has, made by a workflow that cannot check.
-      - name: tests
-        run: python -m pytest tests -q --basetemp=${{ runner.temp }}\t
-
-  # THE BASH-3.2 SYNTAX GATE, split out of `tests-macos` so it can stay on
-  # every push while the suite it used to open moves to the `ready` label
-  # (Brett Heap's RULING of 2026-09-16, "do all three"). It has to run on
-  # `macos-latest` and nowhere else: the whole point is parsing under the
-  # stock `/bin/bash` — 3.2, the last GPLv2 release, and what Apple still
-  # ships — and Linux's `tests` job runs bash 5, which accepts bash-4-only
-  # GRAMMAR (`${x,,}`, `${x^^}`, `|&`, `;;&`, `coproc`) without complaint;
-  # running this same `-n` there would parse nothing this repository needs
-  # parsed. No submodule and no Python: this job reads only files this
-  # repository ships, and it is meant to answer in well under a minute.
-  parse-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
-        with:
-          submodules: false
-          fetch-depth: 1
-
-      # THE ONE CLAIM THE SUITE CANNOT MAKE. The suite runs these files under
-      # whatever `bash` PATH resolves to on this runner, which is not
-      # necessarily `/bin/bash`, so name that one explicitly and PARSE each
-      # file with it: `-n` reads the whole file and executes none of it, so
-      # bash-4-only GRAMMAR (`${x,,}`, `${x^^}`, `|&`, `;;&`, `coproc`) is a
-      # syntax error here, and the README's sentence — which claims SYNTAX and
-      # nothing wider — stays true. A bash-4 BUILTIN is a different thing and
-      # `-n` does NOT catch it: `mapfile`, `declare -A` and `local -n` parse
-      # cleanly under any bash and fail only when run, which is what the
-      # suite's own runs of these files are for. ONE COMMAND PER FILE:
-      # `bash -n a b` parses `a` and hands `b` to it as $1, so a second file
-      # named on the same line is never read at all. `--version` prints what
-      # answered, because this job cannot assert on its own which bash
-      # `/bin/bash` is.
-      - name: /bin/bash parses every bash file this repository ships
-        run: |
-          /bin/bash --version
-          /bin/bash -n openRepoTools
-          /bin/bash -n park
-          /bin/bash -n resume
-          /bin/bash -n status
-          /bin/bash -n lane
-          /bin/bash -n lanes
-          /bin/bash -n lane-handoff
-          /bin/bash -n lane-rename
-          /bin/bash -n lanes-edit.sh
-          /bin/bash -n lane-start
-          /bin/bash -n lane-end
-          /bin/bash -n link-estates
-          /bin/bash -n claude-current
-          /bin/bash -n claude-restart-check
-          /bin/bash -n tests/test_lane_helpers.sh
-          /bin/bash -n tests/run.sh
-
-  # THE SAME SUITE ON macOS, because these four files are what a Mac runs.
-  # This is the job openRepoShape's own macOS `/bin/bash -n` step existed for
-  # before the split above, and it moved here with the files. Measured at
-  # 49-54 minutes against Linux's 17-22, it no longer runs on every push:
-  # the `if:` below only lets a `pull_request` event through once the
-  # coordinator has put the `ready` label on the PR — the landing gate,
-  # applied once, right before the squash — while `push` (to main),
-  # `schedule` (nightly) and `workflow_dispatch` all pass it unconditionally,
-  # because none of those three is a `pull_request` event (Brett Heap's
-  # RULING of 2026-09-16, "do all three"). A red nightly or main run here is
-  # a follow-up issue, never a revert; the label is what protects the squash.
-  tests-macos:
-    runs-on: macos-latest
-    if: >-
-      github.event_name != 'pull_request' ||
-      contains(github.event.pull_request.labels.*.name, 'ready')
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
-        with:
-          submodules: true
-          fetch-depth: 1
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
-        with:
-          python-version: '3.x'
-
-      - name: install the test runner
-        run: python3 -m pip install --disable-pip-version-check pytest==8.3.4
-
-      - name: git identity for the fixture commits (env, not global config)
-        run: |
-          {
-            echo "GIT_AUTHOR_NAME=openRepoTools CI"
-            echo "GIT_AUTHOR_EMAIL=ci@openrepotools.invalid"
-            echo "GIT_COMMITTER_NAME=openRepoTools CI"
-            echo "GIT_COMMITTER_EMAIL=ci@openrepotools.invalid"
-          } >> "$GITHUB_ENV"
-
-      # THE FACTS THE LAST THREE ROUNDS WERE SPENT GUESSING AT, printed once,
-      # in seconds, in the job that is the only place they can be read (A9
-      # Addendum 4, R-A9-11). Every macOS defect this branch fixed was a
-      # difference between two `bash`es or two userlands that no Linux runner
-      # and no hand-written shim reproduced, and each cost a ~20-minute round
-      # to find. `continue-on-error` because a diagnostic must never be the
-      # thing that reddens a job: what it prints is evidence, not an assertion.
-      #
-      # The `wc` line is not decoration. BSD `wc` right-aligns its counts and
-      # GNU's does not, and one unstripped count in `lanes-edit.sh` was the
-      # largest single cause of the 438 failures at `d3d59b5` — the brackets
-      # are there so the padding is VISIBLE rather than swallowed by the log.
-      # It printed `[       2]` on its first run, which is the whole defect in
-      # nine characters. That run also made the point twice over: the line
-      # after it was `cat -A`, which is GNU, and macOS answered `cat: illegal
-      # option -- A` and, under `bash -e`, took the rest of this step with it.
-      # Every command here is POSIX now.
-      #
-      # The two `awk` lines are the last round's answer, kept where the next
-      # round can read it without asking again. This runner's awk is
-      # one-true-awk, and a `-v name=value` there is processed AS A STRING
-      # LITERAL: a literal newline in one is fatal — `awk: newline in string
-      # ... at source line 1`, exit 2, no output at all. gawk and mawk take it
-      # without a word, which is why fourteen `who --landing` assertions were
-      # red on this job alone and green everywhere else. `TAKEN` here means
-      # this runner's awk is the permissive kind; the refusal message means it
-      # is not, and `lanes-edit.sh` must keep handing that table through
-      # `ENVIRON`.
-      - name: what this runner actually is
-        continue-on-error: true
-        run: |
-          sw_vers || :
-          echo "bash on PATH : $(command -v bash)"; bash --version | head -n1
-          echo "/bin/bash    : $(/bin/bash --version | head -n1)"
-          echo "LANG=[${LANG-}] LC_ALL=[${LC_ALL-}] LC_CTYPE=[${LC_CTYPE-}]"
-          locale || :
-          printf 'wc -l pads?  : ['; printf 'a\nb\n' | wc -l | tr -d '\n'; printf ']\n'
-          echo "/proc exists : $( [ -d /proc ] && echo yes || echo no )"
-          for t in timeout gtimeout tmux realpath greadlink gsed shasum sha256sum; do
-            echo "  $t -> $(command -v "$t" || echo '(absent)')"
-          done
-          echo "cmp -n taken : $(printf x > /tmp/.a; printf x > /tmp/.b; \
-            cmp -s -n 1 /tmp/.a /tmp/.b >/dev/null 2>&1 && echo yes || echo no)"
-          echo "head -c 0 ok : $(head -c 0 /tmp/.a >/dev/null 2>&1 && echo yes || echo no)"
-          printf 'awk          : '; awk --version 2>&1 | head -n1 \
-            || awk -Wversion 2>&1 | head -n1 || :
-          printf 'awk -v \\n    : '; awk -v t="$(printf 'a\nb')" \
-            'BEGIN { print "TAKEN" }' 2>&1 | head -n1
-          git --version; python3 --version
-
-      # Exercise tty teardown before the long suite so a macOS-only fixture
-      # regression fails promptly; the full suite remains the landing gate.
-      - name: restart terminal and control-root checks
-        run: python3 -m pytest tests/test_supervised_restart_regressions.py -q -k "interactive_retry_rechecks_holder_absence_before_launch or restart_root"
-
-      - name: tests
-        run: python3 -m pytest tests -q

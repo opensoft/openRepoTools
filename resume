@@ -113,7 +113,8 @@ USAGE
 # first time somebody copied only one of them. The rules themselves are NOT
 # new: `<dir>/<Name>/family.yaml` carrying `kind: family-manifest` and naming
 # `<Name>` is `setup-project.py`'s `family_folder_here`, doubled-name layout
-# and all (#76, RULING ruling 3).
+# and all (#76, RULING ruling 3). What "naming" accepts is widened by #236,
+# at `is_family_folder` below: the display `name:` or the repository's name.
 
 # `$PROJECTS_DIR` names ONE directory when it is set. Otherwise both
 # spellings, in that order, because people really do use both - and DEDUPED by
@@ -182,7 +183,8 @@ is_safe_folder_name() {
 # One indent-zero scalar out of a small YAML file, with parameter expansion
 # only: no YAML library, no python per line, no forks per line. This is the
 # reader the Speckit extension's `workspace_read_scalar` is, narrowed to the
-# keys these two commands read (`kind`, `name`, `family`, `tracking_branch`).
+# keys these two commands read (`kind`, `name`, `family`, `tracking_branch`,
+# `repository`).
 YAML_VALUE=""
 yaml_scalar() {
     local file="$1" key="$2" line
@@ -234,11 +236,19 @@ is_pinned_member() {
     [ "$YAML_VALUE" = "family-manifest" ]
 }
 
-# Is `<dir>` a FAMILY FOLDER? All three facts have to agree, exactly as
-# `family_folder_here` requires them to: the holder clone sits at
-# `<dir>/<basename>`, its `family.yaml` says `kind: family-manifest`, and it
-# names that same family. A directory called Northwind is a directory called
-# Northwind; what makes it a family folder is read, never guessed from a name.
+# Is `<dir>` a FAMILY FOLDER? All three facts have to agree: the holder clone
+# sits at `<dir>/<basename>`, its `family.yaml` says `kind: family-manifest`,
+# and the folder is named for the family. A family has TWO names and either
+# one is the folder's (#236): its display `name:`, which is the rule this
+# block began with and what an estate laid out before openRepoShape v1.1.0
+# has, or the LAST PART of its `repository:`, which is v1.1.0's rule - the
+# holder, and the folder around it, are named for the REPOSITORY, `name:`
+# being only a title (opensoft/openRepoShape#629), and the holder's `make
+# siblings` stops before cloning when the folder is not that name
+# (opensoft/openRepoShape#543). A family whose two names differ has no layout
+# that works for both unless both are accepted. A directory called Northwind
+# is a directory called Northwind; what makes it a family folder is read,
+# never guessed from a name.
 is_family_folder() {
     local dir="$1" name manifest
     name="${dir##*/}"
@@ -246,8 +256,11 @@ is_family_folder() {
     manifest="$dir/$name/family.yaml"
     yaml_scalar "$manifest" kind || return 1
     [ "$YAML_VALUE" = "family-manifest" ] || return 1
-    yaml_scalar "$manifest" name || return 1
-    [ "$YAML_VALUE" = "$name" ]
+    if yaml_scalar "$manifest" name && [ "$YAML_VALUE" = "$name" ]; then
+        return 0
+    fi
+    yaml_scalar "$manifest" repository || return 1
+    [ "${YAML_VALUE##*/}" = "$name" ]
 }
 
 is_project_root() {
@@ -1161,8 +1174,9 @@ if [ -n "$MANIFEST_FILE" ]; then
         # from `family.yaml`'s `id:` — `workspace_family_name` reads that key
         # — and an id is LOWERCASE by construction (`family.py`'s
         # `--id ... or family.lower()`, checked against
-        # `PROJECT_ID_RE = ^[a-z0-9][a-z0-9-]*$`). The FOLDER is the family's
-        # `name:`, CamelCase, which is what `is_family_folder` requires to
+        # `PROJECT_ID_RE = ^[a-z0-9][a-z0-9-]*$`). The FOLDER is one of the
+        # family's CamelCase names - its repository's last part, or its
+        # display `name:` - which is what `is_family_folder` requires to
         # match the directory. Deriving the folder from `family:` therefore
         # produced `~/projects/inkrouter/inkrouter`, a clone of
         # `<org>/inkrouter` that 404s on any case-sensitive remote, and then a
@@ -1171,9 +1185,18 @@ if [ -n "$MANIFEST_FILE" ]; then
         # `workspace_manifest_root_value` writes each MEMBER's `root:` as
         # `<family folder>/<project folder>` with the real casing, so the
         # first segment is the family folder and — the holder repository being
-        # the family's own name in its org, #76 ruling 3's doubled-name layout
-        # — it is the holder repository's name too. `family:` stays what it is
-        # good for: the flag that says this file is a family's at all.
+        # the family's own name in its org, #76 ruling 3's doubled-name layout,
+        # and v1.1.0's rule (opensoft/openRepoShape#629) — it is the holder
+        # repository's name too. `family:` stays what it is good for: the flag
+        # that says this file is a family's at all.
+        #
+        # THE RECORD NEVER CARRIES THE HOLDER'S REPOSITORY (#236): it has the
+        # id in `family:`, each member's OWN `repository:` and `root:`, and is
+        # filed under the holder's org. So the repository is derived from that
+        # org and the folder, which is exact under v1.1.0 and is also what a
+        # fresh machine, with no `family.yaml` to read yet, has to go on. A
+        # holder this machine already has says which repository it is, and
+        # that is read below, from the estate this run resolved.
         MANIFEST_DIRNAME="${MANIFEST_ROOT_VALUE%%/*}"
         [ -n "$MANIFEST_ROOT_VALUE" ] &&
             [ "$MANIFEST_DIRNAME" != "$MANIFEST_ROOT_VALUE" ] ||
@@ -1202,7 +1225,6 @@ if [ -n "$MANIFEST_FILE" ]; then
     '$MANIFEST_DIRNAME' is not one: an estate folder is a single name under your
     projects directory, with no slash and no leading dot. Nothing was cloned.
     That file is written by \`park\`; a hand-edited one is fixed by hand."
-    say "  records         a $MANIFEST_KIND estate, root repository $ROOT_REPOSITORY"
 fi
 
 # THE ESTATE ON DISK WINS over the manifest's idea of where it is: the manifest
@@ -1213,6 +1235,23 @@ if [ "$ESTATE_PRESENT" -eq 0 ] && [ -n "$MANIFEST_DIRNAME" ] &&
     if estate_by_name "$MANIFEST_DIRNAME"; then
         ESTATE_PRESENT=1
     fi
+fi
+
+# WHAT THE RECORD SAYS THE ESTATE IS, said once the estate on disk is known,
+# because a holder that is here knows its own repository (#236): the HOLDER
+# THIS RUN RESOLVED, whatever the record's folder is. A record goes stale the
+# moment a person moves the holder to the folder v1.1.0 names (`make
+# siblings`' own `mv`), and a lookup by the record's folder would then miss a
+# holder that is on disk and print a repository that does not exist. Nothing
+# above prints, so the order of the lines a run says is unchanged.
+if [ -n "$MANIFEST_FILE" ]; then
+    if [ "$MANIFEST_KIND" = "family" ] && [ "$ESTATE_PRESENT" -eq 1 ] &&
+        [ "$ESTATE_KIND" = "family" ] &&
+        yaml_scalar "$ESTATE_ROOT/family.yaml" repository &&
+        [ -n "$YAML_VALUE" ]; then
+        ROOT_REPOSITORY="$YAML_VALUE"
+    fi
+    say "  records         a $MANIFEST_KIND estate, root repository $ROOT_REPOSITORY"
 fi
 
 # --- (3) rebuild or refresh the estate --------------------------------------
