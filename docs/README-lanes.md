@@ -107,6 +107,9 @@ path filter, not an ownership check: another lane's register write passes it,
 so read `git cherry -v origin/main HEAD` before you publish a shared queue.
 Only `commit` publishes that queue: any other write with nothing to stage
 leaves it local, and with nothing ahead `commit` is the no-op it always was.
+When `pull --rebase` finds every queued commit on origin already, by content
+under other shas, it drops them all. The publish then says so and exits 0
+without a push.
 
 ## THE ONE HAZARD — `sed -i` DESTROYS THE SYMLINK
 
@@ -1182,7 +1185,7 @@ else.
 
 | code | meaning |
 |---|---|
-| 0 | done |
+| 0 | done, including `commit`'s publish of a queue that `pull --rebase` emptied because origin already held every commit in it by content (#194; it says so, and sends no push) |
 | 1 | environment — no register, no writer |
 | 2 | refusal — bad arguments, the object is held, an unknown alias, a checkout that cannot be rebased, or `commit` refusing to publish local commits that are not register or handoff writes, from a checkout whose HEAD is off the branch, or that it cannot read (#194; it pushes none of them) |
 | 3 | the edit is never a permanent loss, but this attempt cannot confirm whether it also reached origin — a rebase conflict (not pushed by this attempt; a later write from this checkout may already carry it to origin, so look by content before you retry), a network timeout on a push or a pull (a hung one often already landed), or six attempts exhausted because a peer's uncommitted file blocks every rebase |

@@ -328,6 +328,12 @@ def test_the_conflict_recovery_warns_that_a_reset_drops_a_peers_commits(box):
     assert "LANES(concurrent@" in captures, captures
     assert "LANES(pre-existing@" in captures, captures
     assert "names no lane, so it is NOT yours" in captures, captures
+    # NIT 5 (lane openRepoShape-2, 6243280936): the two lines that stop a
+    # reader from resetting a peer's commit away, word for word, because
+    # lane openRepoTools-5's #68 waits on these words.
+    stop = _line_of(err, "if any '+' line is not your own write, STOP and take it to the lane its subject names")
+    assert listing < stop < warning, err
+    assert "# only if every '+' line is yours" in err.splitlines()[reset], err
 
     # The listing reads HEAD, which is what the reset acts on: a peer's commit
     # made AFTER the abort is in it too, and the moved-checkout STOP fires.
@@ -480,6 +486,30 @@ def _shadowing_origin_main(box: Box) -> str:
     return f"  {sha[:12]} D 000000 {TOOL}"
 
 
+def _renames_out_of_lanes(box: Box) -> str:
+    """SHOULD 4 (lane openRepoShape-2, 6243280936), THE RENAME GUARD. A log
+    moved out of `lanes/` is a deletion there, and `--no-renames` names it so.
+    Read with rename detection it would be one `R100` line instead."""
+    log = f"lanes/log/{PEER_LANE}.md"
+    box.write(box.wip, log, f"# {PEER_LANE}'s log\n")
+    box.wgit("add", "--", log)
+    box.wgit("commit", "-q", "-m", f"LANES({PEER_LANE}@Eagle): its log")
+    box.wgit("push", "-q", "origin", "main")
+    _stranded_edit(box)
+    box.wgit("mv", log, f"scripts/{PEER_LANE}.md")
+    box.wgit("commit", "-q", "-m", "peer: move a log out of lanes/")
+    return f"  {box.wgit('rev-parse', 'HEAD').strip()[:12]} D 000000 {log}"
+
+
+def _beside_the_register_directory(box: Box) -> str:
+    """SHOULD 4, THE PREFIX GUARD. `lanes/` is a directory: `lanes-archive/`
+    beside it is not the register's, though its name starts the same way."""
+    _stranded_edit(box)
+    (box.wip / "lanes-archive").mkdir()
+    path = "lanes-archive/notes.md"
+    return f"  {box.queue('peer: notes beside the register', write=path)[:12]} A 100644 {path}"
+
+
 REFUSALS = {
     "deletes-a-tool": _deletes_a_tool,
     "outside-lane-tooling": _outside_lane_tooling,
@@ -489,6 +519,8 @@ REFUSALS = {
     "merge-in-queue": _merge_in_queue,
     "head-off-branch": _head_off_branch,
     "shadowing-origin-main": _shadowing_origin_main,
+    "renames-out-of-lanes": _renames_out_of_lanes,
+    "beside-the-register-directory": _beside_the_register_directory,
 }
 
 
@@ -523,6 +555,32 @@ def test_the_push_sends_the_commit_the_fence_read(box, path):
     late = box.wgit("log", "-1", "--format=%s", "HEAD").strip()
     assert late == "another lane, racing: retire the tool", late
     assert box.wgit("rev-parse", "HEAD~1") == box.ogit("rev-parse", "main")
+
+
+def test_a_publish_the_pull_empties_says_so_and_sends_no_push(box):
+    """Lane openRepoShape-2's trap (6243280936). The queue `commit` read can
+    already be on origin by content, under other shas: here another workstation
+    made the same edit. `pull --rebase` drops it, and the push that followed
+    sent origin its own tip and printed "pushed". The re-read after the pull
+    finds nothing left, says so, sends no push and exits 0."""
+    _stranded_edit(box)
+    box.set_state(box.peer, LANE, "LIVE · edited by hand")
+    box.git("-C", str(box.peer), "commit", "-q", "-am", "the same edit, made elsewhere")
+    box.git("-C", str(box.peer), "push", "-q", "origin", "main")
+    origin = box.ogit("rev-parse", "main")
+
+    result = box.helper("commit", SUBJECT)
+    assert result.returncode == 0, result.stderr
+    assert "pushing the 1 local commit(s) origin/main does not have" in result.stderr
+    assert ("origin/main already holds every commit this publish listed: `pull --rebase` "
+            "found each one there by content and dropped it") in result.stderr, result.stderr
+    assert "pushed origin/" not in result.stderr, result.stderr
+    calls = [f" {c} " for c in box.net_calls()]
+    assert any(" pull " in c for c in calls), calls
+    assert not any(" push " in c for c in calls), calls
+    assert box.ogit("rev-parse", "main") == origin
+    assert box.wgit("rev-parse", "HEAD") == origin
+    assert box.origin_subjects().count("the same edit, made elsewhere") == 1
 
 
 def test_a_lane_rename_is_refused_and_told_what_carries_it(box):

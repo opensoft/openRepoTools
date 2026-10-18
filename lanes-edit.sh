@@ -425,7 +425,7 @@
 #   may write the marker's vocabulary into a row at all.
 #
 # EXIT CODES — every subcommand, one table, no two meanings on one number
-#   0  done
+#   0  done (and #194's publish whose queue `pull --rebase` emptied)
 #   1  environment (no register, no writer)
 #   2  refusal: bad arguments, the object is held, an unknown alias, a
 #      checkout that cannot be rebased, — Amendment 15 — a register holding
@@ -1111,6 +1111,7 @@ CP_PUBLISH_AHEAD=0
 # empty, every push sends the branch as it stands, as it always has (#194).
 CP_PUSH_SPEC=""
 CP_FENCE_TIP=""
+CP_FENCE_AHEAD=0
 
 # die "<message>" [<exit code>] — the MESSAGE is $1 alone. It used to be "$*",
 # which joined the exit code on to the end of every refusal that passed one:
@@ -1990,9 +1991,16 @@ BRT_EOF
 # get back, and the fence keeps one rule for it. A read or a classification
 # that fails refuses too (2), because it proves nothing.
 #
-# It leaves CP_FENCE_TIP at the commit it read, and the publish pushes exactly
-# that commit (`<sha>:refs/heads/<b>`). A commit another lane makes in this
-# shared checkout between the read and the push stays local.
+# Two guards have a test each (lane openRepoShape-2's SHOULD 4). `--no-renames`
+# reads a rename as the deletion it is: read as an `R` line, the refusal would
+# name a rename and not the path origin loses. And the register's directories
+# are matched with their trailing `/`, so `lanes-archive/` beside `lanes/` is
+# not inside it.
+#
+# It leaves CP_FENCE_TIP at the commit it read and CP_FENCE_AHEAD at how many
+# it read, and the publish pushes exactly that commit (`<sha>:refs/heads/<b>`).
+# A commit another lane makes in this shared checkout between the read and the
+# push stays local.
 cp_publish_fence() {
   cpf_ref="refs/heads/$LANES_BRANCH"
   cpf_head="$(git -C "$LANES_REPO" symbolic-ref -q HEAD 2>/dev/null || :)"
@@ -2011,7 +2019,8 @@ cp_publish_fence() {
     cpf_n="$(printf '%s\n' "$cpf_pairs" | awk 'END { print NR }')" || cpf_rc=$?
     cpf_raw="$(printf '%s\n' "$cpf_pairs" | git --no-replace-objects -C "$LANES_REPO" -c core.quotePath=false diff-tree --stdin --always -r --no-renames --raw --ignore-submodules=none)" || cpf_rc=$?
   fi
-  cpf_bad="$(printf '%s\n' "$cpf_raw" | awk -F '\t' -v want="$cpf_n" -v reg="$LANES_PREFIX" -v logp="$LANES_LOG_PREFIX" \
+  cpf_reg="${LANES_PREFIX:+${LANES_PREFIX%/}/}"; cpf_logp="${LANES_LOG_PREFIX:+${LANES_LOG_PREFIX%/}/}"
+  cpf_bad="$(printf '%s\n' "$cpf_raw" | awk -F '\t' -v want="$cpf_n" -v reg="$cpf_reg" -v logp="$cpf_logp" \
       -v reg_path="$LANES_PATH" -v alias_path="$LANES_ALIASES_PATH" '
     function inside(p) {
       return (reg != "" && index(p, reg) == 1) || (logp != "" && index(p, logp) == 1) ||
@@ -2040,13 +2049,25 @@ cp_publish_fence() {
     die "refusing to publish: \`commit\` pushes only register and handoff writes (#194), so nothing was pushed. A lane rename (Amendment 16) deletes and re-adds its log and is refused here too; the next register write from this checkout carries it. Anything else, whoever queued it publishes it; never reset it away. Read them: git -C $LANES_REPO log --stat refs/remotes/origin/$LANES_BRANCH..$cpf_ref" 2
   fi
   CP_FENCE_TIP="$cpf_tip"
+  CP_FENCE_AHEAD="$cpf_n"
 }
 
 # The publish's CP_AFTER_REBASE: `pull --rebase` has rewritten the queue onto
 # what origin holds now, and may have taken in a commit made since the first
 # read, so the fence reads it again and the push is pinned to what it read.
+# THE PULL CAN EMPTY THE QUEUE (lane openRepoShape-2, #214 6243280936): origin
+# may hold every queued commit already, by content under other shas, because
+# another workstation made the same edit or a peer's write carried it. The
+# rebase drops each one, and a push would send origin its own tip and print
+# "pushed". So the publish ends here, exit 0, as the no-op it now is, and it
+# says so. Only `commit` installs this hook, and this commit_push is its last
+# act, so the exit is that return.
 cp_publish_refence() {
   cp_publish_fence
+  if [ "$CP_FENCE_AHEAD" = 0 ]; then
+    note "origin/${LANES_BRANCH} already holds every commit this publish listed: \`pull --rebase\` found each one there by content and dropped it, so none is left to push and no push was sent (#194)"
+    exit 0
+  fi
   CP_PUSH_SPEC="$CP_FENCE_TIP:refs/heads/$LANES_BRANCH"
 }
 
