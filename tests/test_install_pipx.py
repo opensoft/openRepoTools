@@ -19,12 +19,16 @@ lines; this file holds both:
   places what a checkout's install places, apart from the link;
 - `test_coexist_*`: pipx's link beside the one-line install, a checkout and a
   package outside pipx's venv, and the count line that names where the other
-  sixteen now come from and which release is beside the link (research R5);
+  sixteen now come from and which release is beside the link (research R5),
+  for a single repository and for each layout an assembly gives: the one-line
+  install from an adopted assembly, the code mounted in one, and a code
+  feature worktree;
 - `test_pip_script_*`: pip's console script at `<dir>/openRepoTools`, in both
   forms pip writes, refused in every mode, and the files that only look like
   it, placed as today;
 - `test_path_report_*`: the note a package-mode install prints last when the
-  first `openRepoTools` on `PATH` is not its own (research R7);
+  first `openRepoTools` on `PATH` is not its own, and its silence where the
+  package's layout names no `<prefix>` (research R7);
 - `test_pipx_upgrade_*` and `test_pipx_uninstall_*`: a second wheel in the
   same venv, and the link and the venv gone.
 
@@ -34,6 +38,9 @@ of this checkout's own files. EVERY PACKAGE RUN HERE IS
 the console script: `test_entry_*` in `tests/test_package.py` holds that half.
 A one-line install is `bash -s` fed the installer's text, with a fake `gh`
 serving the payload and a `curl` that refuses, so no run reaches a network.
+An assembly's layouts take `World` from `tests/test_install_payload_source.py`,
+whose `gh` and `curl` answer from bare repositories under the test's own
+directory, and that file's `PATH` with no real `gh` or `curl` on it.
 
 THE LINES THE CONTRACTS NAME, AND NO OTHERS. Nothing here compares a whole
 `--install` output or reads a hook-entry line, because another change may add
@@ -61,6 +68,8 @@ import pytest
 
 import package_layout as layout
 from conftest import REPO, WINDOWS_SKIP
+from test_install_payload_source import (World, git, local_assembly, network,
+                                         variant)
 from test_openrepotools_command import (ARTIFACTS, COMMAND, FETCHED,
                                         HOOK_ENTRIES, INSTALLED, NEEDS_JQ,
                                         command_env, path_without,
@@ -1128,6 +1137,99 @@ def test_coexist_a_package_outside_pipx_s_venv_names_its_own_release_never_repo_
     assert_rows_beside_the_link(home, link)
 
 
+#: THE CODE LEG an assembly's `contracts/code-pin.yaml` names, as
+#: `tests/test_install_payload_source.py` builds both: the repository the
+#: sixteen come from once `opensoft/openRepoTools` is the assembly.
+CODE_LEG = "opensoft/openRepoTools-code"
+
+
+@NEEDS_JQ
+def test_coexist_the_one_line_install_from_an_adopted_assembly_names_the_pinned_code(
+        tmp_path):
+    """US3 SCENARIO 2 AFTER THE CUTOVER (FR-019, research R5). The one-line
+    install, beside pipx's link, from `opensoft/openRepoTools` at `main`,
+    which is an assembly whose `contracts/code-pin.yaml` pins the code leg.
+    The sixteen are fetched from `opensoft/openRepoTools-code` at the pinned
+    commit, so the count line names that pair, `<PAYLOAD_REPO> @
+    <PAYLOAD_REV>`, and never `opensoft/openRepoTools @ main`, the source
+    the run was given."""
+    root = tmp_path.resolve()
+    world = World(root / "github-world")
+    code = world.code()
+    world.assembly(code)
+    home = root / "home"
+    venv, link = pipx_install(home, "1.18.3")
+    clause = give_pipx_a_stamp(venv, "stamped")
+    before = link_state(link), tree_state(venv)
+
+    result = install_piped(home, pipx_env(home, extra={"PATH": network(world)}))
+    assert_beside_the_link(result, link, f"{CODE_LEG} @ {code}", clause)
+    assert " @ ".join(DEFAULT_SOURCE) not in result.stdout, transcript(result)
+    assert (bin_dir(home) / "park").read_bytes() == variant("park", "pinned"), (
+        f"the sixteen are not the pinned code's bytes:\n{transcript(result)}")
+    assert (link_state(link), tree_state(venv)) == before, (
+        "the install wrote through pipx's link or into its venv")
+
+
+@NEEDS_JQ
+def test_coexist_the_code_mounted_in_an_assembly_names_the_pin_s_own_pair(
+        tmp_path):
+    """THE CODE LEG MOUNTED IN AN ASSEMBLY CHECKOUT, `<assembly>/code`, run
+    by its own `openRepoTools` beside pipx's link. Its payload is checked
+    against the pin and fetched from nowhere, so nothing sets `PAYLOAD_REPO`
+    or `PAYLOAD_REV`, and the count line names the pin's own pair,
+    `<PIN_SOURCE_REPOSITORY> @ <PIN_COMMIT>` (contracts/cli-output.md's
+    `<source>`): `opensoft/openRepoTools-code` at the commit the assembly
+    pins, the pair a remote adopted run names."""
+    root = tmp_path.resolve()
+    world = World(root / "github-world")
+    _assembly, code, pinned = local_assembly(world)
+    home = root / "home"
+    venv, link = pipx_install(home, "1.18.3")
+    clause = give_pipx_a_stamp(venv, "stamped")
+    before = link_state(link), tree_state(venv)
+
+    result = install(code / "openRepoTools", home,
+                     pipx_env(home, extra={"PATH": network(world)}))
+    assert_beside_the_link(result, link, f"{CODE_LEG} @ {pinned}", clause)
+    assert world.requests() == [], (
+        f"the mounted code asked the fake GitHub: {world.requests()}")
+    assert (bin_dir(home) / "park").read_bytes() == variant("park", "local"), (
+        f"the sixteen are not the mounted code's bytes:\n{transcript(result)}")
+    assert (link_state(link), tree_state(venv)) == before, (
+        "the install wrote through pipx's link or into its venv")
+
+
+@NEEDS_JQ
+def test_coexist_a_code_feature_worktree_names_repo_and_ref_never_the_pin(
+        tmp_path):
+    """A PAIRED FEATURE WORKTREE, `<assembly>/worktrees/<NNN>/code`, run by
+    its own `openRepoTools` beside pipx's link. It installs its own bytes and
+    is not an adopted source, so the count line names `<REPO> @ <REF>` as
+    any other checkout does, `opensoft/openRepoTools @ main` where nothing
+    names them (contracts/cli-output.md's `<source>`). It never names the
+    pin's pair, `opensoft/openRepoTools-code @ <PIN_COMMIT>`: that is the
+    code the assembly pins, which this run did not install."""
+    root = tmp_path.resolve()
+    world = World(root / "github-world")
+    assembly, code, pinned = local_assembly(world)
+    feature = assembly / "worktrees" / "001-x" / "code"
+    git("clone", "-q", str(code), str(feature))
+    home = root / "home"
+    venv, link = pipx_install(home, "1.18.3")
+    clause = give_pipx_a_stamp(venv, "stamped")
+    before = link_state(link), tree_state(venv)
+
+    result = install(feature / "openRepoTools", home,
+                     pipx_env(home, extra={"PATH": network(world)}))
+    assert_beside_the_link(result, link, " @ ".join(DEFAULT_SOURCE), clause)
+    assert f"{CODE_LEG} @ {pinned}" not in result.stdout, transcript(result)
+    assert world.requests() == [], (
+        f"the feature worktree asked the fake GitHub: {world.requests()}")
+    assert (link_state(link), tree_state(venv)) == before, (
+        "the install wrote through pipx's link or into its venv")
+
+
 # --- test_pip_script_: pip's console script at <dir>/openRepoTools ----------
 
 #: contracts/pipx-link.md's fixtures: the three forms of pip's own script,
@@ -1457,6 +1559,61 @@ def test_path_report_says_nothing_when_pipx_s_link_is_first_on_path(
 
     result = install(payload_of(venv) / "openRepoTools", home, env)
     assert_left_to_pipx(result, link)
+    assert notes(result) == [], transcript(result)
+
+
+#: LAYOUTS THAT NAME NO `<prefix>` (research R7): a package's own
+#: `openrepotools/` under directories that are not `lib/python*/site-packages`,
+#: each wrong in one of the names `path_report` reads above it. The fourth
+#: name, `openrepotools`, is one package mode itself requires (design.md
+#: Decision 4), so no package-mode run reaches the skip that reads it.
+NO_PREFIX = {
+    "dist-packages": ("lib", "python3.12", "dist-packages"),
+    "a-pypy-directory": ("lib", "pypy3.10", "site-packages"),
+    "lib64": ("lib64", "python3.12", "site-packages"),
+}
+
+
+def package_under(prefix: Path, *between: str) -> Path:
+    """A `package_tree`'s `openrepotools/`, every byte and mode kept, moved to
+    `<prefix>/<between…>/openrepotools/`. Returns its `payload/`."""
+    built = layout.package_tree(prefix.parent / f"{prefix.name}-built")
+    package = prefix.joinpath(*between, "openrepotools")
+    package.parent.mkdir(parents=True)
+    built.parent.rename(package)
+    return package / "payload"
+
+
+@pytest.mark.parametrize("shape", NO_PREFIX)
+@NEEDS_JQ
+def test_path_report_says_nothing_where_the_layout_names_no_prefix(tmp_path,
+                                                                  shape):
+    """THE SILENT SKIP (research R7, contracts/cli-output.md). A package whose
+    directories above `openrepotools/` are not `lib/python*/site-packages`
+    names no `<prefix>`, so there is no `<prefix>/bin/openRepoTools` to
+    compare the first `openRepoTools` on `PATH` with, and the report prints
+    nothing. No `openRepoTools` is on `PATH`, which in R7's shape is the
+    `none` note (`test_path_report_says_none_when_no_openrepotools_is_on_path`).
+    The run is in package mode, as its `--version` shows, and the install
+    exits 0 with today's count line: the skip changes nothing else."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    payload = package_under(root / "prefix", *NO_PREFIX[shape])
+    env = pipx_env(home, extra={"PATH": a_path(root)})
+    home.mkdir()
+    version = subprocess.run(["bash", str(payload / "openRepoTools"),
+                              "--version"], capture_output=True, text=True,
+                             check=False, input="", env=env, cwd=str(home))
+    assert (version.returncode, version.stdout.splitlines()[:1]) == (
+        0, ["openRepoTools 0.0.0 (an unstamped package)"]), (
+        f"the fixture is wrong: not a package-mode run:\n{transcript(version)}")
+
+    result = install(payload / "openRepoTools", home, env)
+    total = len(INSTALLED)
+    assert result.returncode == 0, transcript(result)
+    assert "REFUSED:" not in result.stderr, transcript(result)
+    assert (f"openRepoTools: {total} of {total} placed in {bin_dir(home)}"
+            in result.stdout.splitlines()), transcript(result)
     assert notes(result) == [], transcript(result)
 
 
