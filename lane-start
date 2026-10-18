@@ -4032,9 +4032,23 @@ fi
 # writes this line and the handoff's stamp, both carrying the real uuid.
 # (`lane_sid_known` is computed with the launch decision above, which is where
 # `lane_sid` is decided and where the row's own stamp first reads it.)
+#
+# AND THE COMMAND IT PRINTS CARRIES THE AGENT THIS RUN WAS GIVEN
+# (opensoft/openRepoTools#72 item 5). `$self_args` is the lane and nothing
+# else, so a lane started `--agent codex` — which never has a uuid here, so it
+# ALWAYS reaches this line — was handed a first act that dropped the flag, and
+# the person who ran it had `lane-agent` choose instead: the agent of the lane's
+# last PAUSED, which is whichever agent paused it and not the one now running
+# it. `AGENT_EXPLICIT` is 1 for an agent named on the command line and for one
+# the record named that is not the default; either way the run that settles
+# this one is the same agent's, so it is written down, quoted like every other
+# command this file prints. It goes AFTER the lane's own arguments, so the
+# `--no-launch <repo> <n>` a reader looks for is still one run of words.
+ls_defer_agent=""
+if (( AGENT_EXPLICIT )); then ls_defer_agent=" $(quoted --agent "$AGENT")"; fi
 if (( ! lane_sid_known )); then
   note "no transcript uuid is knowable at this instant (the row's stamp says '${lane_sid:-unknown}'), so the lane's $lane_verb log line is NOT written: Amendment 7(b) makes that field a transcript uuid and only that, and the log is append-only. Nor is the handoff's Rule 3 stamp. BOTH are written by the first act that knows the uuid, which is this session's own:"
-  note "  $prog --no-launch $self_args"
+  note "  $prog --no-launch $self_args$ls_defer_agent"
 elif (( dry_run )); then
   plan "lanes-edit.sh log $lane_verb lane:$LANE → \"$lane_payload\""
 else
