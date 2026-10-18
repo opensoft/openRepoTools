@@ -527,6 +527,47 @@ def test_item_18_an_unreadable_register_withholds_the_class_and_the_sweep_refuse
     assert "classed none of them DORMANT" in result.stderr
 
 
+def peer_archives_repo_x_4(reg: Register, mode: str) -> None:
+    """A peer publishes the archive, retiring repoX-4; this checkout fetches it
+    and does not pull. Then git cannot read the archive's blob: refused by a
+    `git` on PATH, or deleted from this clone's object store."""
+    peer = reg.tmp / "peer"
+    reg.raw_git("clone", "-q", str(reg.origin), str(peer))
+    (peer / "lanes/archive").mkdir()
+    (peer / "lanes/archive/LANES-retired.md").write_text("# archive\n\n" + HEADER + row(
+        "repoX-4", OLD_ID, "RETIRED \u00b7 2026-08-02T00:00:00Z \u00b7 moved", "2026-08-01"), encoding="utf-8")
+    reg.raw_git("-C", str(peer), "add", "-A")
+    reg.raw_git("-C", str(peer), "commit", "-q", "-m", "the peer archives repoX-4")
+    reg.raw_git("-C", str(peer), "push", "-q", "origin", "main")
+    reg.git("config", "fetch.unpackLimit", "100000")
+    reg.git("fetch", "-q")
+    if mode == "the blob is gone":
+        blob = reg.git("rev-parse", "origin/main:lanes/archive/LANES-retired.md").strip()
+        loose = reg.wip / ".git" / "objects" / blob[:2] / blob[2:]
+        assert loose.is_file(), "the archive blob is not a loose object here"
+        loose.unlink()
+    else:
+        reg.refuse_git("origin/main:lanes/archive/LANES-retired.md")
+
+
+@pytest.mark.parametrize("mode", ["git refuses cat-file and show", "the blob is gone"])
+def test_item_18_a_published_archive_git_cannot_read_reissues_no_position(reg, mode):
+    """The re-review of #230: `archive_text` asked `cat-file -e` too, so a
+    published archive git could not read was "not published", this checkout's
+    (absent) copy answered, `next-free` offered retired repoX-4 and add-row
+    committed it. The tree answers now, and both refuse (1) before writing."""
+    peer_archives_repo_x_4(reg, mode)
+    offered = next_free(reg)
+    assert offered.returncode == 1, (offered.stdout, offered.stderr)
+    assert offered.stdout == ""
+    before = reg.head()
+    result = reg.run("add-row", row("repoX-4", "ffff0138-0006-4000-8000-000000000006", "new here",
+                                    "2026-10-18").rstrip("\n"), LANES_LANE="repoX-4")
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert reg.head() == before
+    assert "`repoX-4`" not in reg.raw_git("-C", str(reg.origin), "show", "main:lanes/LANES.md")
+
+
 def test_item_18_an_unreadable_published_register_refuses_add_row(reg):
     """#138 item 18: `rows_named_ci` ended in an awk over `register_text`, which
     answered 0 with an empty text where `git show` of the published register

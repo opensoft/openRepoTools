@@ -3264,10 +3264,12 @@ register_text() {
 # and git could not read was "not published", and `register_text` answered with
 # this checkout's copy — the seam, `next-free` and `add-row` all read that as
 # the published register. `retire_rows` asks a lane's log the same way (item 17).
-register_published() {
+# THE PATH IS AN ARGUMENT, the register's by default: `archive_text` asks it of
+# the archive, which had the same `cat-file -e` and the same fallback.
+register_published() {   # [<path relative to LANES_REPO>]
   have_remote_ref || return 8
   rp_tree=""
-  rp_tree="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_PATH" 2>/dev/null)" || return 1
+  rp_tree="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "${1:-$LANES_PATH}" 2>/dev/null)" || return 1
   [ -n "$rp_tree" ] || return 8
   return 0
 }
@@ -3291,12 +3293,21 @@ archive_text() {
   # AMENDMENT 14 — under `--index`, the archive's rows where the indexed commit
   # carried an archive; where it carried none, the same local fallback below.
   if [ -n "$LANES_IDX_DIR" ] && [ -f "$LANES_IDX_DIR/archive" ]; then cat -- "$LANES_IDX_DIR/archive"; return 0; fi
-  if [ -z "$LANES_IDX_DIR" ] && have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_ARCH_PATH" 2>/dev/null; then
-    # A published archive that cannot be rendered cannot be replaced with a
-    # possibly stale local copy: that copy may omit a retired position.
-    if git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_ARCH_PATH" 2>/dev/null; then return 0; fi
-    note "the published $LANES_ARCH_PATH exists but could not be read — a local copy cannot prove it contains every published retired position"
-    return 1
+  # A published archive that cannot be rendered cannot be replaced with a
+  # possibly stale local copy: that copy may omit a retired position. WHETHER
+  # IT IS PUBLISHED IS THE TREE'S ANSWER (the re-review of #230): asked with
+  # `cat-file -e`, an archive blob git could not read was "not published", the
+  # local copy answered, and a retired position was offered and reissued.
+  if [ -z "$LANES_IDX_DIR" ]; then
+    at_prc=0; register_published "$LANES_ARCH_PATH" || at_prc=$?
+    case "$at_prc" in
+      0) if git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_ARCH_PATH" 2>/dev/null; then return 0; fi
+         note "the published $LANES_ARCH_PATH exists but could not be read — a local copy cannot prove it contains every published retired position"
+         return 1 ;;
+      8) : ;;
+      *) note "the tree of origin/$LANES_BRANCH could not be listed, so whether $LANES_ARCH_PATH is published is not known — and a local copy cannot stand in for it"
+         return 1 ;;
+    esac
   fi
   # AND THE LOCAL COPY IS THE SAME RULE ONE RUNG DOWN: a file that is THERE and
   # will not open is a read that FAILED, and its rows hold positions. Saying
