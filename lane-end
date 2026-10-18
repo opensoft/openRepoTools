@@ -235,8 +235,9 @@
 #   2  refusal — bad arguments, no row (or two), something still in flight, or
 #      the close-out gate: the lane's trees, branches, scratch, caches or
 #      residue still on disk, or the sweep refusing the lane
-#   8  `--retire-dormant` only: nothing to sweep — no lane of that repository
-#      is recorded, or none of its rows is DORMANT
+#   8  nothing there. `--retire-dormant`: no lane of that repository is
+#      recorded, or none of its rows is DORMANT. `--retire <pid|uuid>`: nothing
+#      of any kind is live for the lane
 #   130, 143  stopped by INT or TERM (128 plus the signal): the run ends where
 #      the signal found it and removes its temporary file, never resumes
 #
