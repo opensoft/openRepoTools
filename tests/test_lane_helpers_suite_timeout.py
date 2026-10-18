@@ -87,9 +87,9 @@ wait
 '''
 
 
-#: The same, but its TERM trap takes two seconds to finish its cleanup.
+#: The same, but its TERM trap takes a second to finish its cleanup.
 STANDIN_SLOW = '''\
-trap 'sleep 2; echo cleaned > {marker}; exit 143' TERM
+trap 'sleep 1; echo cleaned > {marker}; exit 143' TERM
 sleep 600 &
 echo $! > {pidfile}
 wait
@@ -348,7 +348,7 @@ def test_a_ctrl_c_during_the_term_grace_lets_a_slow_trap_finish(standin, runner)
     proc = runner(stand, prelude="signal.signal(signal.SIGINT, signal.default_int_handler)")
     pid = sleep_pid(stand.pidfile)
     os.killpg(proc.pid, signal.SIGTERM)
-    time.sleep(0.5)   # the trap is two seconds into its cleanup, inside the grace
+    time.sleep(0.5)   # the Ctrl-C lands about half a second into the trap's second of cleanup
     os.killpg(proc.pid, signal.SIGINT)
     assert proc.wait(timeout=30) == -signal.SIGTERM, proc.errors.read_text(encoding="utf-8")
     assert stand.marker.is_file(), (
