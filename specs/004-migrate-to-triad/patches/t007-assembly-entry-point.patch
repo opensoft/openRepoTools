@@ -1,0 +1,441 @@
+From 6acc147f751e5a2ca57b4814395769b7b75b339e Mon Sep 17 00:00:00 2001
+From: Brett Heap <1513478+brettheap@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 20:33:03 +0000
+Subject: [PATCH] Add the assembly's openRepoTools front door, which runs the
+ implementation the code pin names and nothing else.
+
+T007 of specs/004-migrate-to-triad/tasks.md (opensoft/openRepoTools#186). The
+documented one-liners fetch openRepoTools from this repository's root, and
+after the split the installer is the code leg's. This file keeps that line
+working and adds no installer mechanics.
+
+In a checkout it requires the pin, the gitlink and the implementation's
+bytes to name one commit, and then execs code/openRepoTools with every
+argument. That is the same process, so the exit status and signals are the
+implementation's.
+
+Anywhere else it resolves the ref once and reads contracts/code-pin.yaml at
+that commit. It checks that the gitlink at the pin's submodule_path in that
+commit is the pinned commit, so the lockstep rule is enforced here and not
+left to whichever code a stale pin selects. Only then does it fetch
+openRepoTools from the pinned repository at the pinned commit, and run it
+from stdin with OPENREPOTOOLS_REF set to that commit, so the implementation
+reads the same pin.
+
+The pin reader is a deliberate copy of the implementation's, guarded by the
+code leg's tests/test_install_payload_source.py.
+
+Lane: openRepoTools-1
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ openRepoTools | 398 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 398 insertions(+)
+ create mode 100755 openRepoTools
+
+diff --git a/openRepoTools b/openRepoTools
+new file mode 100755
+index 0000000..ff432c6
+--- /dev/null
++++ b/openRepoTools
+@@ -0,0 +1,398 @@
++#!/usr/bin/env bash
++# SPDX-License-Identifier: Apache-2.0
++#
++# openRepoTools — THE ASSEMBLY'S FRONT DOOR, and nothing else.
++#
++# The installer is the CODE leg's `openRepoTools`. This file is the one the
++# documented one-liners still fetch from this repository's root:
++#
++#   curl -fsSL https://raw.githubusercontent.com/opensoft/openRepoTools/main/openRepoTools | bash -s -- --install
++#   gh api repos/opensoft/openRepoTools/contents/openRepoTools \
++#       -H 'Accept: application/vnd.github.raw' | bash -s -- --install
++#
++# and the one `./openRepoTools` runs in a checkout of this repository. It
++# SELECTS the implementation `contracts/code-pin.yaml` pins and hands it every
++# argument. It places nothing, merges nothing, writes no receipt and retires
++# nothing — every one of those is the implementation's, which is also what
++# `--install` puts on a PATH, so an installed `openRepoTools` never needs this
++# file or a checkout of this repository again (opensoft/openRepoTools#186,
++# T007; `specs/004-migrate-to-triad/installer-design.md`).
++#
++#   * IN A CHECKOUT (this file beside `contracts/code-pin.yaml`): the pin, the
++#     gitlink at its `submodule_path` and the implementation's bytes must name
++#     ONE commit, and then this EXECs `<submodule_path>/openRepoTools` with
++#     every argument — the same process, so its exit status and every signal
++#     are the implementation's own. That implementation then checks the rest
++#     of the payload against the same pin before it copies a byte.
++#   * ANYWHERE ELSE (stdin, or a copy of this file on its own): `$OPENREPOTOOLS_REF`
++#     is resolved ONCE to a commit of `$OPENREPOTOOLS_REPO`, the code pin is
++#     read AT that commit, and the gitlink at its `submodule_path` in that
++#     commit must name the pinned commit too — the lockstep rule, checked HERE,
++#     before any implementation is fetched or run, so a stale or rolled-back pin
++#     is named as what it is rather than left to whichever code it selects.
++#     Then the implementation is fetched from the pinned repository AT the
++#     pinned commit and run from stdin — the way the one-liners always ran it —
++#     with `$OPENREPOTOOLS_REF` set to that commit, so the implementation reads
++#     the same pin and no branch that moves in between can give it another.
++#     Reading the gitlink is one level of the assembly's tree: `gh api --jq`,
++#     or `curl` with `jq` (an adopted assembly's one-liner needs api.github.com).
++#
++# NOTHING HERE ASSUMES A FILE THE LEGS MAY NOT CARRY: no `.gitattributes`, no
++# README, no AGENTS.md. Bytes are compared raw (`hash-object --no-filters`).
++#
++# bash 3.2 (macOS's /bin/bash): no `${x,,}`, `mapfile`, `declare -A` or
++# `local -n`, as everywhere in this project.
++
++set -euo pipefail
++
++REPO="${OPENREPOTOOLS_REPO:-opensoft/openRepoTools}"
++REF="${OPENREPOTOOLS_REF:-main}"
++SELF="${BASH_SOURCE[0]:-$0}"
++PIN_FILE="contracts/code-pin.yaml"
++
++die() { printf '\nREFUSED: %s\n' "$1" >&2; exit "${2:-2}"; }
++
++# ---------------------------------------------------------------------------
++# THE CODE PIN'S GRAMMAR — A DELIBERATE COPY of the implementation's own
++# reader (`pin_parse` and the five helpers above it in the code leg's
++# `openRepoTools`), byte for byte, because this file has to read the pin
++# BEFORE there is an implementation to ask. The code leg's
++# `tests/test_install_payload_source.py` fails when the two copies differ.
++# ---------------------------------------------------------------------------
++
++ORT_ALNUM='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
++ORT_TAB="$(printf '\t')"
++ORT_CR="$(printf '\r')"
++
++is_lower_hex() {   # <length> <value>
++	case "$2" in '' | *[!0123456789abcdef]*) return 1 ;; esac
++	[ "${#2}" -eq "$1" ]
++}
++
++is_slug() {   # <owner/name> — a repository as GitHub spells one, and nothing else
++	local owner="${1%%/*}" name="${1#*/}"
++	[ "$owner" != "$1" ] || return 1
++	case "$owner" in '' | -* | *- | *[!${ORT_ALNUM}-]*) return 1 ;; esac
++	case "$name" in '' | . | .. | */* | *[!${ORT_ALNUM}._-]*) return 1 ;; esac
++	return 0
++}
++
++is_segment() {   # <path> — exactly one path segment
++	case "$1" in '' | . | .. | *[!${ORT_ALNUM}._-]*) return 1 ;; esac
++	return 0
++}
++
++PIN_SCALAR=""
++pin_scalar() {   # <text after the colon> — PIN_SCALAR, or 1 for a quote that does not close
++	local v="$1" q rest
++	while :; do case "$v" in ' '* | "$ORT_TAB"*) v="${v#?}" ;; *) break ;; esac; done
++	case "$v" in
++	'"'* | "'"*)
++		q="${v:0:1}"
++		rest="${v#?}"
++		case "$rest" in *"$q"*) ;; *) return 1 ;; esac
++		PIN_SCALAR="${rest%%"$q"*}"
++		rest="${rest#*"$q"}"
++		while :; do case "$rest" in ' '* | "$ORT_TAB"*) rest="${rest#?}" ;; *) break ;; esac; done
++		case "$rest" in '' | '#'*) ;; *) return 1 ;; esac
++		# No escapes in this grammar: a backslash is a value nobody wrote.
++		case "$PIN_SCALAR" in *\\*) return 1 ;; esac
++		;;
++	'#'*) PIN_SCALAR="" ;;
++	*)
++		PIN_SCALAR="${v%% #*}"
++		while :; do
++			case "$PIN_SCALAR" in *' ' | *"$ORT_TAB") PIN_SCALAR="${PIN_SCALAR%?}" ;; *) break ;; esac
++		done
++		;;
++	esac
++	return 0
++}
++
++pin_bad() {   # <field> <value> <what it must be> — PIN_WHY, and 1
++	if [ -z "$2" ]; then
++		PIN_WHY="\`$1\` is missing"
++	else
++		PIN_WHY="\`$1\` is '$2', $3"
++	fi
++	return 1
++}
++
++pin_parse() {   # <file> — the PIN_* fields and 0, or PIN_WHY and 1
++	local line body key n=0 seen=" " block="" tree_seen=0
++	PIN_SCHEMA="" PIN_KIND="" PIN_LEG_ROLE="" PIN_SOURCE_REPOSITORY=""
++	PIN_SUBMODULE_PATH="" PIN_COMMIT="" PIN_REVISION_KIND=""
++	PIN_DIGEST_ALGORITHM="" PIN_DIGEST_DEFINITION="" PIN_TREE_SHA256=""
++	PIN_VERIFY="" PIN_RUNBOOK="" PIN_WHY=""
++	[ -s "$1" ] || { PIN_WHY="it is empty"; return 1; }
++	while IFS= read -r line || [ -n "$line" ]; do
++		n=$((n + 1))
++		case "$line" in
++		*"$ORT_CR"*) PIN_WHY="line $n ends in a carriage return, and the grammar is LF-only"; return 1 ;;
++		'' | '#'*) continue ;;
++		' '* | "$ORT_TAB"*)
++			body="$line"
++			while :; do case "$body" in ' '* | "$ORT_TAB"*) body="${body#?}" ;; *) break ;; esac; done
++			case "$body" in '' | '#'*) continue ;; esac
++			# AN INDENTED LINE BELONGS TO THE KEY ABOVE IT, and the only one
++			# this reads into is `digests:`.
++			[ "$block" = digests ] || continue
++			key="${body%%:*}"
++			[ "$key" != "$body" ] || { PIN_WHY="line $n is not \`key: value\`"; return 1; }
++			pin_scalar "${body#*:}" || { PIN_WHY="line $n has a quoted value that does not close cleanly"; return 1; }
++			if [ "$key" = tree_sha256 ]; then
++				[ "$tree_seen" -eq 0 ] || { PIN_WHY="\`digests.tree_sha256\` appears twice"; return 1; }
++				tree_seen=1
++				PIN_TREE_SHA256="$PIN_SCALAR"
++			fi
++			continue ;;
++		esac
++		block=""
++		key="${line%%:*}"
++		[ "$key" != "$line" ] || { PIN_WHY="line $n is not \`key: value\`"; return 1; }
++		case "$key" in
++		'' | *[!abcdefghijklmnopqrstuvwxyz0123456789_]*)
++			PIN_WHY="line $n's key '$key' is not a key this grammar has"; return 1 ;;
++		esac
++		case "$seen" in *" $key "*) PIN_WHY="\`$key\` appears twice"; return 1 ;; esac
++		seen="$seen$key "
++		pin_scalar "${line#*:}" || { PIN_WHY="line $n has a quoted value that does not close cleanly"; return 1; }
++		case "$key" in
++		schema_version) PIN_SCHEMA="$PIN_SCALAR" ;;
++		kind) PIN_KIND="$PIN_SCALAR" ;;
++		leg_role) PIN_LEG_ROLE="$PIN_SCALAR" ;;
++		source_repository) PIN_SOURCE_REPOSITORY="$PIN_SCALAR" ;;
++		submodule_path) PIN_SUBMODULE_PATH="$PIN_SCALAR" ;;
++		commit) PIN_COMMIT="$PIN_SCALAR" ;;
++		revision_kind) PIN_REVISION_KIND="$PIN_SCALAR" ;;
++		digest_algorithm) PIN_DIGEST_ALGORITHM="$PIN_SCALAR" ;;
++		digest_definition) PIN_DIGEST_DEFINITION="$PIN_SCALAR" ;;
++		verify_pin) PIN_VERIFY="$PIN_SCALAR" ;;
++		resync_runbook) PIN_RUNBOOK="$PIN_SCALAR" ;;
++		digests)
++			[ -z "$PIN_SCALAR" ] || { PIN_WHY="\`digests\` is '$PIN_SCALAR', not a mapping"; return 1; }
++			block=digests ;;
++		esac
++	done <"$1"
++	[ "$PIN_SCHEMA" = 1 ] || { pin_bad schema_version "$PIN_SCHEMA" "not 1"; return 1; }
++	[ "$PIN_KIND" = pinned_contract_manifest ] ||
++		{ pin_bad kind "$PIN_KIND" "not pinned_contract_manifest"; return 1; }
++	[ "$PIN_LEG_ROLE" = code ] || { pin_bad leg_role "$PIN_LEG_ROLE" "not code"; return 1; }
++	is_slug "$PIN_SOURCE_REPOSITORY" ||
++		{ pin_bad source_repository "$PIN_SOURCE_REPOSITORY" "not an owner/name repository"; return 1; }
++	is_segment "$PIN_SUBMODULE_PATH" ||
++		{ pin_bad submodule_path "$PIN_SUBMODULE_PATH" "not one path segment"; return 1; }
++	is_lower_hex 40 "$PIN_COMMIT" ||
++		{ pin_bad commit "$PIN_COMMIT" "not 40 lowercase hex — a branch, a tag or an abbreviated commit is a moving reference"; return 1; }
++	[ "$PIN_REVISION_KIND" = commit ] || { pin_bad revision_kind "$PIN_REVISION_KIND" "not commit"; return 1; }
++	[ "$PIN_DIGEST_ALGORITHM" = sha256 ] ||
++		{ pin_bad digest_algorithm "$PIN_DIGEST_ALGORITHM" "not sha256"; return 1; }
++	[ "$PIN_DIGEST_DEFINITION" = sorted-ls-tree-r-v1 ] ||
++		{ pin_bad digest_definition "$PIN_DIGEST_DEFINITION" "not sorted-ls-tree-r-v1"; return 1; }
++	is_lower_hex 64 "$PIN_TREE_SHA256" ||
++		{ pin_bad digests.tree_sha256 "$PIN_TREE_SHA256" "not 64 lowercase hex"; return 1; }
++	[ -n "$PIN_VERIFY" ] || { pin_bad verify_pin "" ""; return 1; }
++	[ -n "$PIN_RUNBOOK" ] || { pin_bad resync_runbook "" ""; return 1; }
++	return 0
++}
++
++# ---------------------------------------------------------------------------
++# IN A CHECKOUT: three facts, one commit, then the implementation itself.
++# ---------------------------------------------------------------------------
++
++#: THE COMMIT A SUPERPROJECT RECORDS AT <path>: the index first and HEAD
++#: second, the order openRepoShape's `recorded_gitlink` asks them in.
++recorded_gitlink() {   # <superproject> <path>
++	# `read`, not `awk`: the offline path needs nothing a minimal PATH lacks.
++	local listed mode oid stage kind path
++	listed="$(git -C "$1" ls-files -s -- "$2" 2>/dev/null)" || listed=""
++	read -r mode oid stage path <<<"$listed" || :
++	if [ "$mode" != 160000 ] || [ "$stage" != 0 ] || [ "$path" != "$2" ]; then
++		listed="$(git -C "$1" ls-tree HEAD -- "$2" 2>/dev/null)" || listed=""
++		read -r mode kind oid path <<<"$listed" || :
++		[ "$mode" = 160000 ] && [ "$kind" = commit ] && [ "$path" = "$2" ] || return 1
++	fi
++	is_lower_hex 40 "$oid" || return 1
++	printf '%s\n' "$oid"
++}
++
++delegate_local() {   # <assembly root> <args…>
++	local root="$1" link code blob
++	shift
++	pin_parse "$root/$PIN_FILE" || die "$root/$PIN_FILE is not a code pin this can follow: $PIN_WHY.
++    A pin that is present and wrong is refused rather than read around; nothing ran."
++	link="$(recorded_gitlink "$root" "$PIN_SUBMODULE_PATH")" ||
++		die "$root records no gitlink at $PIN_SUBMODULE_PATH, where $PIN_FILE mounts the code
++    leg, so which implementation it pins cannot be checked; nothing ran."
++	[ "$link" = "$PIN_COMMIT" ] || die "$root records $link at $PIN_SUBMODULE_PATH and $PIN_FILE says
++    $PIN_COMMIT. The gitlink and the pin move in ONE commit (the lockstep rule), so
++    this checkout does not say which implementation it means; nothing ran. Make
++    them agree — \`make validate\` names the drift — then re-run."
++	code="$root/$PIN_SUBMODULE_PATH"
++	[ -f "$code/openRepoTools" ] || die "the code leg is not checked out at $code, so there is no
++    implementation to run; nothing ran. Mount it, then re-run:
++        git -C \"$root\" submodule update --init --recursive    (or: make bootstrap)"
++	git -C "$code" cat-file -e "$PIN_COMMIT^{commit}" 2>/dev/null ||
++		die "the pinned commit $PIN_COMMIT is not in $code's object store, so the
++    implementation there cannot be checked against it; nothing ran. Run
++    \`make bootstrap\` at $root, then re-run."
++	blob="$(git -C "$code" rev-parse --verify --quiet "$PIN_COMMIT:openRepoTools" 2>/dev/null)" ||
++		die "the pinned commit $PIN_COMMIT has no openRepoTools at its root; nothing ran."
++	[ "$(git -C "$code" hash-object --no-filters -- openRepoTools 2>/dev/null)" = "$blob" ] ||
++		die "$code/openRepoTools is not the implementation $root pins ($PIN_SOURCE_REPOSITORY
++    at $PIN_COMMIT), so this front door does not run it; nothing ran. Put the code
++    leg back at its pin (git -C \"$code\" checkout $PIN_COMMIT, or make bootstrap),
++    or run a code checkout's own openRepoTools ON PURPOSE, which says what it installs."
++	exec "${BASH:-bash}" "$code/openRepoTools" ${1+"$@"}
++}
++
++# ---------------------------------------------------------------------------
++# ANYWHERE ELSE: resolve once, read the pin there, run the pinned implementation.
++# ---------------------------------------------------------------------------
++
++TMP=""
++
++said() {   # <tool> <its stderr file> — its first line, as one clause
++	local first=""
++	IFS= read -r first <"$2" 2>/dev/null || :
++	case "$first" in
++	'') printf '%s failed and said nothing\n' "$1" ;;
++	"$1:"*) printf '%s\n' "$first" ;;
++	*) printf '%s: %s\n' "$1" "$first" ;;
++	esac
++}
++
++#: `gh api` first and the raw URL second, the implementation's own order, into
++#: a file that is checked before it is used. WHY holds what both said.
++fetch_at() {   # <owner/name> <commit> <path> <dest>
++	WHY=""
++	if command -v gh >/dev/null 2>&1; then
++		if gh api "repos/$1/contents/$3?ref=$2" -H 'Accept: application/vnd.github.raw' \
++			>"$4" 2>"$TMP/err" && [ -s "$4" ]; then
++			return 0
++		fi
++		WHY="$(said gh "$TMP/err")"
++	else
++		WHY="gh: not installed"
++	fi
++	if command -v curl >/dev/null 2>&1; then
++		if curl -fsSL "https://raw.githubusercontent.com/$1/$2/$3" >"$4" 2>"$TMP/err" &&
++			[ -s "$4" ]; then
++			return 0
++		fi
++		WHY="$WHY; $(said curl "$TMP/err")"
++	else
++		WHY="$WHY; curl: not installed"
++	fi
++	return 1
++}
++
++#: THE GITLINK `$REPO` RECORDS AT <path> IN <commit>, from one level of its tree:
++#: `gh --jq` first, `curl` + `jq` second. 0 with GITLINK — empty when the tree
++#: holds no gitlink there, which is an answer — or 1 with WHY when neither
++#: transport answered. <path> is a pin's `submodule_path`, which `pin_parse`
++#: has already held to one segment of letters, digits, `.`, `_` and `-`.
++gitlink_at() {   # <commit> <path>
++	local filter=".tree[] | select(.type == \"commit\" and .path == \"$2\") | .sha"
++	GITLINK="" WHY=""
++	if command -v gh >/dev/null 2>&1; then
++		if gh api "repos/$REPO/git/trees/$1" --jq "$filter" >"$TMP/link" 2>"$TMP/err"; then
++			IFS= read -r GITLINK <"$TMP/link" || :
++			return 0
++		fi
++		WHY="$(said gh "$TMP/err")"
++	else
++		WHY="gh: not installed"
++	fi
++	if ! command -v curl >/dev/null 2>&1; then
++		WHY="$WHY; curl: not installed"
++	elif ! command -v jq >/dev/null 2>&1; then
++		WHY="$WHY; curl: not asked, because reading api.github.com's JSON needs \`jq\` and there is none"
++	elif ! curl -fsSL "https://api.github.com/repos/$REPO/git/trees/$1" >"$TMP/tree.json" 2>"$TMP/err"; then
++		WHY="$WHY; $(said curl "$TMP/err")"
++	elif jq -er '.tree | arrays | length >= 0' "$TMP/tree.json" >/dev/null 2>&1 &&
++		jq -r "$filter" "$TMP/tree.json" >"$TMP/link" 2>/dev/null; then
++		IFS= read -r GITLINK <"$TMP/link" || :
++		return 0
++	else
++		WHY="$WHY; curl: an answer that is not a tree listing"
++	fi
++	return 1
++}
++
++delegate_remote() {   # <args…>
++	local sha="" ref="" impl
++	is_slug "$REPO" || die "\$OPENREPOTOOLS_REPO is '$REPO', which is not an owner/name repository; nothing ran."
++	TMP="$(mktemp -d)"
++	trap 'rm -rf -- "$TMP"' EXIT
++	# `%` and `#` mean something else in a URL path; nothing else a ref may hold does.
++	ref="$(printf '%s' "$REF" | sed -e 's/%/%25/g' -e 's/#/%23/g')"
++	WHY=""
++	if command -v gh >/dev/null 2>&1; then
++		if gh api "repos/$REPO/commits/$ref" -H 'Accept: application/vnd.github.sha' \
++			>"$TMP/sha" 2>"$TMP/err"; then
++			IFS= read -r sha <"$TMP/sha" || :
++			is_lower_hex 40 "$sha" || { sha=""; WHY="gh: an answer that is not a commit"; }
++		else
++			WHY="$(said gh "$TMP/err")"
++		fi
++	else
++		WHY="gh: not installed"
++	fi
++	if [ -z "$sha" ]; then
++		if command -v curl >/dev/null 2>&1 &&
++			curl -fsSL -H 'Accept: application/vnd.github.sha' \
++				"https://api.github.com/repos/$REPO/commits/$ref" >"$TMP/sha" 2>"$TMP/err"; then
++			IFS= read -r sha <"$TMP/sha" || :
++			is_lower_hex 40 "$sha" || { sha=""; WHY="$WHY; curl: an answer that is not a commit"; }
++		elif command -v curl >/dev/null 2>&1; then
++			WHY="$WHY; $(said curl "$TMP/err")"
++		else
++			WHY="$WHY; curl: not installed"
++		fi
++	fi
++	[ -n "$sha" ] || die "could not resolve $REPO at $REF to a commit, so no implementation was
++    selected and nothing ran. What answered:
++        $WHY"
++	fetch_at "$REPO" "$sha" "$PIN_FILE" "$TMP/pin" || die "could not read $PIN_FILE from $REPO at
++    $sha ($REF), so which implementation it pins is not known and nothing ran.
++    What answered:
++        $WHY
++    This is the assembly's front door. A single repository is installed by its own
++    root openRepoTools: gh api repos/$REPO/contents/openRepoTools?ref=$REF ..."
++	pin_parse "$TMP/pin" || die "$PIN_FILE in $REPO at $sha ($REF) is not a code pin this can
++    follow: $PIN_WHY. A pin that is present and wrong is refused rather than read
++    around; nothing ran."
++	# THE LOCKSTEP RULE, BEFORE ANYTHING IS FETCHED TO RUN: the gitlink at the
++	# pinned path in this same commit names the pinned commit, or nothing runs.
++	gitlink_at "$sha" "$PIN_SUBMODULE_PATH" || die "could not list $REPO at $sha ($REF), so the gitlink its $PIN_FILE
++    must agree with cannot be read, and nothing ran. What answered:
++        $WHY"
++	[ "$GITLINK" = "$PIN_COMMIT" ] || die "$REPO at $sha ($REF) records ${GITLINK:-no gitlink} at $PIN_SUBMODULE_PATH and
++    its $PIN_FILE says $PIN_COMMIT. The gitlink and the pin move in ONE commit
++    (the lockstep rule), so this assembly does not say which code it means, and
++    nothing ran."
++	fetch_at "$PIN_SOURCE_REPOSITORY" "$PIN_COMMIT" openRepoTools "$TMP/impl" ||
++		die "could not fetch openRepoTools from $PIN_SOURCE_REPOSITORY at $PIN_COMMIT, the
++    implementation $REPO at $sha ($REF) pins, so nothing ran. What answered:
++        $WHY"
++	case "$(head -n 1 "$TMP/impl")" in
++	'#!'*) ;;
++	*) die "what came back for openRepoTools from $PIN_SOURCE_REPOSITORY at $PIN_COMMIT is not a
++    script, so nothing ran." ;;
++	esac
++	impl="$(cat "$TMP/impl")"
++	rm -rf -- "$TMP"
++	trap - EXIT
++	# THE REF THE IMPLEMENTATION RESOLVES IS THE COMMIT THIS ONE READ, so the
++	# pin it reads is this pin; it runs from stdin, as the one-liners run it.
++	OPENREPOTOOLS_REPO="$REPO"
++	OPENREPOTOOLS_REF="$sha"
++	export OPENREPOTOOLS_REPO OPENREPOTOOLS_REF
++	exec bash -s -- ${1+"$@"} <<<"$impl"
++}
++
++if [ -f "$SELF" ] && [ -f "$(cd -- "$(dirname -- "$SELF")" && pwd)/$PIN_FILE" ]; then
++	delegate_local "$(cd -- "$(dirname -- "$SELF")" && pwd)" ${1+"$@"}
++fi
++delegate_remote ${1+"$@"}
+-- 
+2.43.0
+
