@@ -631,6 +631,39 @@ def test_a_family_folder_is_read_by_its_repository_name_or_its_display_name(
     assert "0 finding(s) in 3 repositories" in result.stdout
 
 
+@NEEDS_UPSTREAM
+def test_one_family_laid_out_twice_is_a_finding_that_names_the_folder_to_keep(
+        named_apart, remotes, home):
+    """#243, item 2. `Quill/Quill` and `QuillWorks/QuillWorks` are two
+    directories, so each is found by its own name and both are estates —
+    and they are ONE record, because `park.sh` files a family under its
+    `family.yaml` `id:` and each member's block under the member's id, so a
+    park from either replaces the member blocks the other parked. Nothing
+    de-duplicates them; `status` says so on the holder's row, read-only,
+    naming both folders and the one to keep: the folder named for the
+    repository, v1.1.0's layout. One layout is no finding at all."""
+    quill = clone_quill_estate(named_apart, remotes, home, QUILL)
+    result = run(STATUS, QUILL, home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "laid out" not in result.stdout
+    assert "0 finding(s) in 3 repositories" in result.stdout
+
+    works = clone_quill_estate(named_apart, remotes, home, QUILL_DISPLAY)
+    finding = (f"    - family `quill` is laid out 2 times under the projects "
+               f"directory, at {quill['folder']} and {works['folder']}: ONE "
+               "record holds it")
+    keep = (f"Keep {quill['folder']}, the folder named for its repository "
+            "(openRepoShape v1.1.0's layout")
+    for folder, holder in ((QUILL, quill["holder"]),
+                           (QUILL_DISPLAY, works["holder"])):
+        result = run(STATUS, folder, home=home)
+        assert result.returncode == 1, result.stdout + result.stderr
+        holder_row = f"  holder main   {holder}\n"
+        assert holder_row + finding in result.stdout, result.stdout
+        assert keep in result.stdout
+        assert "1 finding(s) in 3 repositories" in result.stdout
+
+
 @pytest.mark.parametrize("shape", [
     ("Elsewhere", "Other", f"{ORG}/Other", None),
     (ORG, "Other", f"{ORG}/Quill/Other", None),
