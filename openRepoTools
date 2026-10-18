@@ -1871,6 +1871,13 @@ install_commands() {
 	for name in "${INSTALLABLES[@]}"; do
 		source="$STAGED/$name"
 		target="$dir/$name"
+		# PIPX'S LINK IS LEFT TO PIPX (#228, FR-016), as `plan_install_targets`
+		# decided: nothing is placed over it or through it, it is not counted,
+		# and its line says what updates it.
+		if [ -n "$PIPX_LINK" ] && [ "$target" = "$PIPX_LINK" ]; then
+			say "openRepoTools: left to pipx at $PIPX_LINK (a link into pipx's openrepotools environment); update it with \`pipx upgrade openrepotools\`, then run \`openRepoTools --install\` again"
+			continue
+		fi
 		if [ -e "$target" ] && cmp -s "$source" "$target"; then
 			# THE BYTES WERE RIGHT, WHICH IS NOT THE SAME AS NOTHING TO DO
 			# (#40, finding 2). The `chmod` below has always run on this arm
@@ -1918,7 +1925,20 @@ install_commands() {
 	done
 	# THE COUNT, out loud: a person reading eight lines cannot tell whether a
 	# ninth was meant to be there.
-	say "openRepoTools: $placed of ${#INSTALLABLES[@]} placed in $dir"
+	if [ -z "$PIPX_LINK" ]; then
+		say "openRepoTools: $placed of ${#INSTALLABLES[@]} placed in $dir"
+	elif pipx_own_run; then
+		# BESIDE PIPX'S LINK the count says where the missing one is
+		# (contracts/cli-output.md), and from pipx's own environment that is
+		# all it says.
+		say "openRepoTools: $placed of ${#INSTALLABLES[@]} placed in $dir, and 1 left to pipx"
+	else
+		# ANY OTHER RUN BESIDE IT — a checkout's, the one-line install's, a
+		# package outside pipx's venv — says the same for now. The clause that
+		# names where the other sixteen now come from (research R5) comes with
+		# #228's User Story 3, on this line.
+		say "openRepoTools: $placed of ${#INSTALLABLES[@]} placed in $dir, and 1 left to pipx"
+	fi
 	# THE RETIREMENT IS THE LAST ACT OF THE INSTALL, AFTER EVERY PLACEMENT
 	# (Copilot round 7 on #45, `openRepoTools:369`). It is the one DESTRUCTIVE
 	# step here, and it ran before `place_skill_and_hook` — so a skill directory
@@ -2429,9 +2449,141 @@ unusable_dir_kind() {   # <directory>
 	return 1
 }
 
+# ------------------------------------------------------------- PIPX'S LINK
+#
+# opensoft/openRepoTools#228, User Story 1: `specs/006-release-pypi/contracts/
+# pipx-link.md` is the rule and `contracts/cli-output.md` the exact lines (the
+# change's design.md Decision 6). `pipx install openrepotools` places ONE
+# command, `<dir>/openRepoTools`, as a symbolic link into its own venv, and that
+# link may be the only `openRepoTools` on the workstation that can run
+# `--install` at all. So it is the one link `--install` LEAVES WHERE IT IS: it
+# is skipped, said out loud, counted as left to pipx, and given no receipt row
+# (`receipt_add` writes none for a link); no refusal lists it and no line ever
+# advises its `rm`. `retire_commands` never meets it, because `RETIRED` does not
+# hold `openRepoTools`.
+#
+# IT IS DECIDED FROM PATHS AND THE EXISTENCE OF FILES, AND FROM NOTHING ELSE. No
+# JSON is parsed, so it needs no `jq` and is decided before the `jq` check,
+# which stays where it is (FR-018); `PIPX_HOME` is never read, so it holds under
+# every home pipx uses — `$PIPX_HOME`, `~/.local/pipx`, `~/.local/share/pipx`
+# and macOS's `~/Library/Application Support/pipx`, whose SPACE is why every
+# expansion here is quoted. And it holds in every mode: the package's own
+# `--install`, a checkout's and the one-line install's.
+#
+# A LINK THAT LOOKS LIKE A VENV AND FAILS THE RULE — a later pipx layout, or a
+# `pip install` into a plain venv — is still refused, because it is not provably
+# pipx's. It is named for what it is, and NO `rm` IS PRINTED FOR IT: removing it
+# may remove the only command that can run `--install` (ADV3, SC-006).
+
+PIPX_LINK=""      # <dir>/openRepoTools, once it is known to be pipx's link
+PIPX_VENV=""      # the canonical venv that link resolves into
+PIPX_PAYLOAD=""   # that venv's canonical lib/python*/site-packages/openrepotools/payload
+
+#: EVERY LINK FOLLOWED, BY PLAIN `readlink`, which prints a link's own value on
+#: Linux, macOS and BSD alike: `readlink -f` is not in a stock macOS userland and
+#: neither is `realpath`. A relative value is joined to the LINK'S OWN directory,
+#: as the kernel reads it. Past 40 hops — a longer chain, or a cycle — it fails,
+#: and such a path is not pipx's link, whatever it ends at. Then the last path's
+#: DIRECTORY is canonicalised with `cd -P` and `pwd -P`, its own name kept, so
+#: the answer is one spelling of one file. `CDPATH` is emptied, because a `cd`
+#: through one prints where it went. Nothing outside it is read, because the PATH
+#: report reuses it and the suite cuts it out to run alone (`installer_function`).
+link_resolve() {   # <path> — its canonical path with every link followed; 1 past 40 hops
+	local p="$1" v="" dir="" hops=0
+	while [ -L "$p" ]; do
+		hops=$((hops + 1))
+		[ "$hops" -le 40 ] || return 1
+		v="$(readlink -- "$p")" || return 1
+		case "$v" in
+		/*) ;;
+		*) v="$(dirname -- "$p")/$v" ;;
+		esac
+		p="$v"
+	done
+	dir="$(CDPATH= cd -P -- "$(dirname -- "$p")" 2>/dev/null && pwd -P)" || return 1
+	printf '%s/%s\n' "${dir%/}" "${p##*/}"
+}
+
+#: PACKAGE MODE, FROM PATHS (design.md Decision 4): this file's directory,
+#: resolved with `cd -P` and `pwd -P`, is named `payload`, its parent is named
+#: `openrepotools`, and that parent holds a regular `_release.py` — the layout an
+#: installed wheel of this package has, and no other. A checkout's directory is
+#: its root, and the one-line install runs from a pipe or from a placed file in
+#: `<dir>`, so neither ever matches. Prints that directory, or returns 1.
+package_payload_dir() {
+	local here="" parent=""
+	[ -f "$SELF" ] || return 1
+	here="$(CDPATH= cd -P -- "$(dirname -- "$SELF")" 2>/dev/null && pwd -P)" || return 1
+	[ "${here##*/}" = payload ] || return 1
+	parent="${here%/*}"
+	[ "${parent##*/}" = openrepotools ] && [ -f "$parent/_release.py" ] || return 1
+	printf '%s\n' "$here"
+}
+
+#: STEPS 1 TO 3 OF THE RULE, which the match and the venv-shaped refusal share:
+#: <target> is a symbolic link, it resolves, and what it resolves to is a regular
+#: file named `openRepoTools` in a directory named `bin`. Prints that `bin`'s
+#: parent — the venv, as far as a path can say — which is canonical because the
+#: resolution is.
+link_venv() {   # <target> — the venv it links into, or 1
+	local resolved="" bin="" venv=""
+	[ -L "$1" ] || return 1
+	resolved="$(link_resolve "$1")" || return 1
+	[ -f "$resolved" ] && [ "${resolved##*/}" = openRepoTools ] || return 1
+	bin="${resolved%/*}"
+	[ "${bin##*/}" = bin ] || return 1
+	venv="${bin%/*}"
+	printf '%s\n' "${venv:-/}"
+}
+
+#: PIPX'S LINK (FR-015): steps 1 to 3, then the two things only pipx's venv of
+#: this package holds — a regular `pipx_metadata.json` beside its `bin/`, of
+#: which nothing but its EXISTENCE is read, and a regular `openRepoTools` in some
+#: `lib/python*/site-packages/openrepotools/payload` under it. The glob is looped
+#: over with a `-f` test, because bash leaves a glob that matches nothing as its
+#: own text. A match records the three values the run reads, and nothing else.
+pipx_link_match() {   # <dir>/openRepoTools — 0 with PIPX_LINK, PIPX_VENV and PIPX_PAYLOAD set, else 1
+	local venv="" payload="" canonical=""
+	venv="$(link_venv "$1")" || return 1
+	[ -f "${venv%/}/pipx_metadata.json" ] || return 1
+	for payload in "${venv%/}"/lib/python*/site-packages/openrepotools/payload; do
+		[ -f "$payload/openRepoTools" ] || continue
+		canonical="$(CDPATH= cd -P -- "$payload" 2>/dev/null && pwd -P)" || continue
+		PIPX_LINK="$1" PIPX_VENV="$venv" PIPX_PAYLOAD="$canonical"
+		return 0
+	done
+	return 1
+}
+
+#: A LINK INTO A PYTHON ENVIRONMENT THAT FAILS THE RULE: steps 1 to 3 hold, the
+#: venv holds a regular `pyvenv.cfg`, as every venv does, and the whole match
+#: does not hold. Prints the venv, for the refusal to name. The match is asked in
+#: a subshell, so that asking it here records nothing.
+venv_shaped_link() {   # <dir>/openRepoTools — the venv, or 1
+	local venv=""
+	venv="$(link_venv "$1")" || return 1
+	[ -f "${venv%/}/pyvenv.cfg" ] || return 1
+	if (pipx_link_match "$1"); then return 1; fi
+	printf '%s\n' "$venv"
+}
+
+#: PIPX'S OWN ENVIRONMENT (research R5): a package-mode run whose payload is under
+#: the venv pipx's link resolves into. Both paths are canonical, so this compares
+#: one spelling of each.
+pipx_own_run() {
+	local here=""
+	[ -n "$PIPX_VENV" ] || return 1
+	here="$(package_payload_dir)" || return 1
+	case "$here/" in
+	"${PIPX_VENV%/}"/lib/*) return 0 ;;
+	esac
+	return 1
+}
+
 plan_install_targets() {
 	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
-	local name target kind bad="" paths=""
+	local name target kind bad="" paths="" venv="" leave="" clear=""
+	PIPX_LINK="" PIPX_VENV="" PIPX_PAYLOAD=""
 	# THE DIRECTORY FIRST, which is the `-w` question for every target that is
 	# not there yet: an absent file is placeable exactly where the directory it
 	# would be created in takes a write. `plan_skill_targets` asks this of the
@@ -2448,19 +2600,34 @@ plan_install_targets() {
 	fi
 	for name in "${INSTALLABLES[@]}"; do
 		target="$dir/$name"
+		# PIPX'S LINK IS ASKED ABOUT BEFORE ANY LINK IS REFUSED (FR-015), at the
+		# one command pipx places. It is no bad target: the placement loop skips
+		# it. A venv-shaped link IS one, listed for what it is, with the
+		# paragraph that says to leave it, and kept out of the `rm -f` line.
+		if [ "$name" = openRepoTools ]; then
+			if pipx_link_match "$target"; then
+				continue
+			fi
+			if venv="$(venv_shaped_link "$target")"; then
+				bad="${bad:+$bad
+}    $target — a link into a Python environment, perhaps pipx's ($venv), in a layout this installer does not recognise"
+				leave="
+    Leave $target where it is: it may be the only openRepoTools that can
+    run \`--install\`. Run \`pipx reinstall openrepotools\`, then \`openRepoTools --install\`
+    again, and if this refusal stays, open an issue on opensoft/openRepoTools naming
+    the layout under $venv."
+				continue
+			fi
+		fi
 		kind="$(unplaceable_kind "$target")" || continue
 		bad="${bad:+$bad
 }    $target — $kind"
 		paths="${paths:+$paths }\"$target\""
 	done
-	[ -z "$bad" ] || die "\`--install\` places a REGULAR FILE IT CAN WRITE at each of these, and these are
-    not that:
-$bad
-    Each command is placed by renaming a new copy over its path, so installing
-    over a symlink would replace somebody's link with a regular file, over a
-    directory would put the file inside it, and over a file this user cannot
-    write would replace a file somebody made read-only — none of it asked for.
-    NOTHING was installed and nothing already installed was replaced.
+	[ -n "$bad" ] || return 0
+	# THE `rm -f` LINE NAMES ONLY WHAT IT IS SAFE TO REMOVE, so with a
+	# venv-shaped link the only bad target there is no "Clear them" at all.
+	[ -z "$paths" ] || clear="
     Clear them, then re-run — \`rm -f\` takes a read-only file, because what a
     removal needs is the DIRECTORY's write bit and not the file's:
         rm -f -- $paths
@@ -2469,6 +2636,14 @@ $bad
     lane writes. Amendment 9's adoption act 6 removes them per host before the
     first \`--install\` that carries this, and act 5 strips that repository to
     data.)"
+	die "\`--install\` places a REGULAR FILE IT CAN WRITE at each of these, and these are
+    not that:
+$bad$leave
+    Each command is placed by renaming a new copy over its path, so installing
+    over a symlink would replace somebody's link with a regular file, over a
+    directory would put the file inside it, and over a file this user cannot
+    write would replace a file somebody made read-only — none of it asked for.
+    NOTHING was installed and nothing already installed was replaced.$clear"
 }
 
 # THE RIVALS THEMSELVES, FOR A REFUSAL TO NAME (#59). It is the conflict half of
