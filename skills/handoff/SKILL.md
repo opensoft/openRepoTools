@@ -59,14 +59,14 @@ L=~/projects/xFactory/lanes-edit.sh
 
 # EVERY READ IN STEP 1 GOES THROUGH THIS ONE FENCE, and Amendment 7(d) is the
 # whole of it: `0` an answer · `8` NO ANSWER · `2` a helper predating the read —
-# both of those fall to the next rung — and ANYTHING ELSE is a read that FAILED,
-# which is neither of them (#26, the review of `c3ebcfe`, this file's `:28` and
-# `:72`). All three of step 1's reads collapsed every code into the ordinary
-# case, and what is beneath them is not a refusal: it is THE NEXT RUNG, and the
-# last rung is the workstation's NEWEST SWAP — a different lane. A register that
-# could not be read is not "this window is not a lane", and step 4 would then
-# write a PAUSED record, a stamp and a restart command for a lane this window
-# is not.
+# both of those fall to the next rung, save the one `2` that is a REFUSAL (the
+# last paragraph below) — and ANYTHING ELSE is a read that FAILED, which is
+# neither of them (#26, the review of `c3ebcfe`, this file's `:28` and `:72`).
+# All three of step 1's reads collapsed every code into the ordinary case, and
+# what is beneath them is not a refusal: it is THE NEXT RUNG, and the last rung
+# is the workstation's NEWEST SWAP — a different lane. A register that could
+# not be read is not "this window is not a lane", and step 4 would then write a
+# PAUSED record, a stamp and a restart command for a lane this window is not.
 #
 # IT IS `/restart`'s `lread` WITH ONE DIFFERENCE, STATED RATHER THAN LEFT TO BE
 # FOUND: step 4's `dir` read does NOT come through here, because this fence
@@ -76,13 +76,36 @@ L=~/projects/xFactory/lanes-edit.sh
 # IT SETS A VARIABLE RATHER THAN PRINTING ITS ANSWER, and that is load-bearing:
 # a refusal inside `$( )` kills only the substitution's subshell and the skill
 # would carry on with an empty answer.
+#
+# AND `2` IS TWO ANSWERS (#72 item 8; `lane-handoff`'s own fence took it in
+# Copilot round 2 on openRepoTools#47, and this is that fence's rule). It is
+# what a helper predating a subcommand spends on an unknown one — the rung this
+# fence falls through for — and it is ALSO `canon_lane`'s refusal of a register
+# holding two rows that differ only by case (Amendment 15(d)), which every read
+# that takes a lane name now carries. Falling through THAT is binding this
+# window to whichever lane the next rung happens to answer with, and then
+# renaming the window and writing a PAUSED record and a restart command for it.
+# So the refusal is asked for BY ITS OWN WORDS — no old helper emits them from
+# an unknown subcommand, which is how `lane-handoff`, `lane-start`, `lane-end`
+# and `lane` tell the two apart — and relayed, with the fall-through for a
+# genuinely old helper left as it was. The words come from asking the same read
+# a second time with only its stderr kept, as `lane-handoff` does: the first
+# answer's stderr is discarded, and asking a read twice changes nothing.
 sread() {                      # sread <var> "<what the failure is NOT>" <verb> [args…]
   sr_var="$1"; sr_not="$2"; shift 2
   sr_out=""; sr_rc=0
   sr_out="$(LANES_NO_FETCH=1 "$L" "$@" 2>/dev/null)" || sr_rc=$?
   case "$sr_rc" in
     0)   : ;;
-    8|2) sr_out="" ;;
+    2)   sr_why="$(LANES_NO_FETCH=1 "$L" "$@" 2>&1 >/dev/null || :)"
+         case "$sr_why" in
+           *"Amendment 15(d)"*)
+             printf 'REFUSED: `%s %s` says the register holds two rows for this lane that differ only by case, so no read of it is unambiguous and this skill will not pick one (Amendment 15(d)). It will not bind a lane, rename the window, write a PAUSED record or print a restart command; merge the two rows by hand first. The helper said:\n%s\n' \
+               "$L" "$1" "$sr_why" >&2
+             exit 2 ;;
+         esac
+         sr_out="" ;;
+    8)   sr_out="" ;;
     *)   printf 'REFUSED: `%s %s` failed (exit %s). That is NOT %s — a read that failed is never an answer (Amendment 7(d)), and this skill will not bind a lane, write a PAUSED record or print a restart command on one. Run it by hand to see what it says.\n' \
            "$L" "$1" "$sr_rc" "$sr_not" >&2
          exit 1 ;;
@@ -491,10 +514,18 @@ fi
 # costs the record a `window` sub-field it already had in hand. Each is SHAPE
 # CHECKED before it is taken, by the same two tests the live reads get, because
 # an environment variable is no more trustworthy than a shim.
+# A `<session>:<index>` IS CHECKED AS A WHOLE STRING (#80 item 4, the same
+# finding `lane-handoff`'s `window_ref_ok` took as item 3). `*:[0-9]*` was a
+# prefix glob, so `s:1junk` passed — from a shim and from the launcher's export
+# alike — and went into the append-only `window` sub-field, where `window-lane`
+# can never resolve it: a live `#S:#I` always ends in an index, which is digits.
+# So the value is held to `^.+:[0-9]+$`, the same form as the `<@id>` test
+# below — a session part that is not empty, then digits and nothing else after
+# the last `:`.
 win="$(tmux display-message -p '#S:#I' 2>/dev/null)"
-case "$win" in *:[0-9]*) : ;; *) win="" ;; esac
+[[ "$win" =~ ^.+:[0-9]+$ ]] || win=""
 [[ -n "$win" ]] || win="${WORKBENCHES_CLAUDE_WINDOW_REF:-}"
-case "$win" in *:[0-9]*) : ;; *) win="" ;; esac
+[[ "$win" =~ ^.+:[0-9]+$ ]] || win=""
 wid="$(tmux display-message -p '#{window_id}' 2>/dev/null)"
 [[ "$wid" =~ ^@[0-9]+$ ]] || wid="${WORKBENCHES_CLAUDE_WINDOW_ID:-}"
 # AN `<@id>` IS `@<digits>` AND NOTHING ELSE (F-X13(a), A11 Addendum 4 ruling 10).
