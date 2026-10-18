@@ -238,14 +238,14 @@ proposals — measured: `tests-macos` running 49-54 minutes per push against
 Linux's 17-22, pull requests drawing 6-12 Copilot review rounds, and this
 suite queuing up to 1h20 behind the workstation lock described below):
 
-1. **`TESTS-MACOS` LEFT THE PER-PUSH GATE, AND THEN LEFT CI.** This ruling
-   moved `tests-macos` behind the `ready` label and split `parse-macos` off
-   it. Both are superseded by Brett Heap's decision of 2026-10-15, for the
-   whole estate, to run the suite on Linux only: `tests-windows`, `parse-macos`
-   and `tests-macos` are gone, and `.github/workflows/tests.yml` runs
-   `guard-launch-mode`, `tests` and `tests-no-submodule`, all on ubuntu — on
-   `pull_request`, push to main, nightly at 04:17Z and `workflow_dispatch`.
-   Nothing in CI parses a file under macOS's bash 3.2 now.
+1. **`TESTS-MACOS` LEFT THE PER-PUSH GATE, AND THEN LEFT CI.** This ruling moved
+   `tests-macos` behind the `ready` label; Brett Heap's decision of 2026-10-15,
+   for the whole estate, to run the suite on Linux only, removed `tests-macos`,
+   `tests-windows` and `parse-macos`. `.github/workflows/tests.yml` runs
+   `guard-launch-mode`, `tests`, `tests-no-submodule` and `package`, all on
+   ubuntu — on `pull_request`, push to `main` and `release/v*`, nightly at
+   04:17Z and `workflow_dispatch`. The release workflow's macOS install leg, on
+   dispatch only, is the one place the payload runs under bash 3.2.
 2. **COPILOT REVIEW IS CAPPED AT TWO ROUNDS PER PULL REQUEST.** Rounds one
    and two are taken; a finding after that is filed as an issue and the PR
    lands regardless.
@@ -298,8 +298,8 @@ a person with no checkout in front of them.
 `tests/test_lane_helpers_suite.py` is what makes `pytest` run it, so it is one
 slow test rather than no test at all. Everything shipped here is written for
 macOS **bash 3.2**, where `${x,,}`, `mapfile`, `declare -A` and `local -n` are
-syntax errors — write `tr '[:upper:]' '[:lower:]'` and a loop. No CI job checks
-this since 2026-10-15, so nothing but your own care holds it.
+syntax errors — write `tr '[:upper:]' '[:lower:]'` and a loop. No `tests.yml`
+job checks this since 2026-10-15, so little but your own care holds it.
 
 **`awk -v name=value` CARRIES ONE LINE.** The value is processed as a string
 literal and one cannot span lines: macOS's `awk` is the one-true-awk, which
