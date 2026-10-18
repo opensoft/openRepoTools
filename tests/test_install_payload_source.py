@@ -919,7 +919,7 @@ def test_r01_a_single_repository_by_gh_asks_for_files_and_nothing_else(tmp_path)
 @pytest.mark.parametrize("line", ["openRepoShape", "gh"])
 def test_r01_composed_the_documented_one_liners_resolve_through_the_root_entry_point(
         tmp_path, line):
-    """openRepoShape's own `--install` pointer (openRepoShape:280 at 7f84ca4)
+    """openRepoShape's own `--install` pointer (openRepoShape:547 at 190133d)
     and README's `gh api` line, BYTE FOR BYTE, against an assembly whose root
     carries the real entry point: the root resolves `main` ONCE, reads the code
     pin there and hands every argument to the pinned implementation, which
