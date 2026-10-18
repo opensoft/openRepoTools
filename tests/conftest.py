@@ -67,6 +67,10 @@ ENV_COMPOSED = "OPENREPOTOOLS_COMPOSED"
 #: submodule's attributes from the submodule's own tree, so the line-ending
 #: rule protects the bash files only where the bash files are. Reading it from
 #: the assembly would pass while the code leg's checkout went unprotected.
+#: `LICENSE` and `.gitignore` are the code root's for the same kind of reason:
+#: the placement table puts them at the assembly, but T006's `code-0001` gives
+#: the code leg its own copy of each, and the leg's copy is the one that governs
+#: the leg's files (#193 item 7). No test reads either today.
 GUIDANCE_DOCUMENTS = ("README.md", "AGENTS.md", "CLAUDE.md")
 SPEC_TREES = ("docs", "openspec", "specs", "ideation")
 
@@ -88,6 +92,13 @@ ASSEMBLY_MARKERS = ("contracts/code-pin.yaml", "project.yaml")
 #: `templates/workspace-root/README.md` is `test_wip_init_command.py`'s. A
 #: composed run needs both, because either one missing is a skip.
 DEPENDENCY_PATH = "upstream/openRepoShape"
+
+#: THE PAIRED LAYOUT. A feature is worked in `<assembly>/worktrees/<feature>/`,
+#: a worktree of each leg named like that leg's mount (`code/`, `spec/`) and
+#: never committed in the assembly (T006's root guidance and the code leg's own
+#: AGENTS.md). A code root there belongs to that assembly as surely as the
+#: mounted one does, so it is found there too (#193 item 5).
+PAIRED_WORKTREES = "worktrees"
 DEPENDENCY_PROBE = "scripts/repo_shape.py"
 DEPENDENCY_PROBES = (DEPENDENCY_PROBE, "templates/workspace-root/README.md")
 
@@ -143,7 +154,12 @@ def _scalar(path: Path, key: str) -> Optional[str]:
 
 
 def _carries(root: Path, names) -> bool:
-    return all((root / name).exists() for name in names)
+    """Every marker is a REGULAR FILE under `root`. Each marker is one (a
+    command, a pin, a manifest), so a directory spelled like one is not it:
+    with `exists()`, a tree holding a directory named `openRepoTools` or
+    `project.yaml` passed for a root and failed later in unrelated tests
+    (Copilot on #190, #193 item 4)."""
+    return all((root / name).is_file() for name in names)
 
 
 def _carries_a_spec_tree(root: Path) -> bool:
@@ -156,19 +172,51 @@ def _mount(assembly: Path, role: str) -> str:
                    "submodule_path") or role
 
 
+def _own_repository_holding(root: Path, commit: str) -> bool:
+    """`root` is a repository's own top level, and its object store holds
+    `commit`: a worktree or clone of the leg the assembly pins, not a
+    directory that merely sits where one would."""
+    top = _git_out(root, "rev-parse", "--show-toplevel")
+    return bool(top and _same(Path(top), root)) and _git_out(
+        root, "cat-file", "-e", f"{commit}^{{commit}}") is not None
+
+
+def _paired_with(assembly: Path, code: Path, recorded: str) -> bool:
+    """Whether `code` is a paired feature worktree of `assembly`'s code leg:
+    `<assembly>/worktrees/<feature>/<the code mount's own name>`, a repository
+    of its own, whose object store holds the commit the assembly pins. That
+    last check is what keeps a checkout that merely sits there from being
+    taken for the leg."""
+    mount = _mount(assembly, "code")
+    return (_same(code.parent.parent, assembly / PAIRED_WORKTREES)
+            and code.name == Path(mount).name
+            and _own_repository_holding(code, recorded))
+
+
 def discover_assembly(code: Path) -> Optional[Path]:
     """The nearest directory above `code` that carries the assembly's pins and
-    manifest AND records `code` as the gitlink its code pin names — or None,
-    which is today's layout and a standalone code clone alike."""
-    for candidate in code.resolve().parents:
+    manifest, is its repository's top level, records a gitlink where its code
+    pin names, AND holds `code` in one of the two designed places: mounted at
+    that gitlink, or as a paired feature worktree
+    (`<assembly>/worktrees/<feature>/code`). Anything else is None, which is
+    today's layout and a standalone code clone alike.
+
+    An ancestor that carries the markers but fails the rest is SKIPPED, not
+    the end of the search: a stale `project.yaml` and `contracts/code-pin.yaml`
+    under a feature directory must not hide the assembly above it (Copilot
+    round 2 on #195). Skipping cannot borrow an unrelated tree, because
+    acceptance is still one of the two exact placements."""
+    code = code.resolve()
+    for candidate in code.parents:
         if not _carries(candidate, ASSEMBLY_MARKERS):
             continue
         mount = _mount(candidate, "code")
         top = _git_out(candidate, "rev-parse", "--show-toplevel")
-        if (top and _same(Path(top), candidate) and _same(candidate / mount, code)
-                and _gitlink(candidate, mount)):
+        recorded = _gitlink(candidate, mount)
+        if not (top and _same(Path(top), candidate) and recorded):
+            continue
+        if _same(candidate / mount, code) or _paired_with(candidate, code, recorded):
             return candidate
-        return None
     return None
 
 
@@ -177,7 +225,8 @@ class Roots:
 
     def __init__(self, code: Path, assembly: Optional[Path],
                  spec: Optional[Path], composed: bool,
-                 how: Dict[str, str], problems: List[str]) -> None:
+                 how: Dict[str, str], problems: List[str],
+                 rejected: Optional[Dict[str, str]] = None) -> None:
         self.code = code
         self.assembly = assembly
         self.spec = spec
@@ -185,6 +234,10 @@ class Roots:
         self.composed = composed
         self.how = how
         self.problems = problems
+        #: A root a variable NAMED and this run refused, by role, with the
+        #: value as it was given: an absent root that was named is absent for
+        #: that reason, never because its variable "is unset" (#193 item 15).
+        self.rejected = dict(rejected or {})
         #: `single` — today's one tree; `leg` — a code leg, standalone or
         #: mounted. Decided by the code root alone; the assembly and spec
         #: roots are found, or named, independently of it.
@@ -222,6 +275,11 @@ class Roots:
         return root / rel
 
     def why_absent(self, role: str) -> str:
+        if role in self.rejected:
+            variable = ENV_ASSEMBLY_ROOT if role == "assembly" else ENV_SPEC_ROOT
+            kind = "an assembly root" if role == "assembly" else "a spec root"
+            return (f"{variable} names {self.rejected[role]}, which is not "
+                    f"{kind}, and a named root is never replaced by a found one")
         if role == "assembly":
             return (f"no {ENV_ASSEMBLY_ROOT}, and no directory above {self.code} "
                     f"carries {' and '.join(ASSEMBLY_MARKERS)} mounting it")
@@ -239,6 +297,13 @@ class Roots:
         pytest.skip(f"{rel} is the {role} root's, and this standalone code "
                     f"checkout has none ({why}); the composed run "
                     f"({ENV_COMPOSED}=1 from the assembly root) reads it")
+
+    def code_mount(self) -> Optional[str]:
+        """Where this run's assembly mounts the code leg (its code pin's
+        `submodule_path:`), or None where there is no assembly root: the
+        prefix a path in the assembly's documents carries to reach the code
+        leg (#193 item 14)."""
+        return None if self.assembly is None else _mount(self.assembly, "code")
 
     def tracked_roots(self) -> List[Tuple[str, Path]]:
         """Every distinct repository this run can read, code first."""
@@ -263,6 +328,21 @@ class Roots:
         if recorded is None:
             return [f"the assembly root {self.assembly} records no gitlink at "
                     f"{mount!r}, which contracts/{role}-pin.yaml names"]
+        # THE PIN AND THE GITLINK ARE ONE INVARIANT (the lockstep rule
+        # `scripts/validate-pins.py` holds). A pin naming another commit than
+        # the gitlink is drift even where the gitlink and the leg's HEAD agree,
+        # so it is refused here too and not only by the validator the assembly
+        # job runs first (Copilot on #190, #193 item 4). The tree digest stays
+        # the validator's: it needs the leg's object store, not this check.
+        pinned = (_scalar(self.assembly / "contracts" / f"{role}-pin.yaml",
+                          "commit") or "").lower()
+        if pinned != recorded:
+            return [f"contracts/{role}-pin.yaml pins {pinned or 'no commit'}, "
+                    f"and the assembly root {self.assembly} records {recorded} "
+                    f"at {mount!r}: the pin and the gitlink are one invariant "
+                    f"(scripts/validate-pins.py calls this pin-gitlink-mismatch), "
+                    f"and composed acceptance refuses a pin that names another "
+                    f"commit"]
         head = _git_out(root, "rev-parse", "HEAD")
         if head != recorded:
             return [f"the {role} root {root} is at {head or 'no commit'}, and the "
@@ -312,6 +392,12 @@ class Roots:
                 f"never skips its way to acceptance: ")
         return head + "; ".join(lines)
 
+    def redirected(self) -> bool:
+        """Whether this run's roots are anything but today's one tree taken as
+        it stands: a root named by a variable, an assembly found, a leg, or the
+        composed mode."""
+        return bool(self.how) or self.layout != "single" or self.composed
+
     def describe(self) -> List[str]:
         """The roots, one line each, for the report header."""
         lines = [f"openRepoTools test roots: "
@@ -336,6 +422,7 @@ def resolve_roots(environ: Mapping[str, str], suite_root: Path) -> Roots:
     a fixture layout as well as about itself."""
     problems: List[str] = []
     how: Dict[str, str] = {}
+    rejected: Dict[str, str] = {}
 
     composed_value = environ.get(ENV_COMPOSED, "")
     if composed_value not in ("", "0", "1"):
@@ -360,12 +447,16 @@ def resolve_roots(environ: Mapping[str, str], suite_root: Path) -> Roots:
         if candidate.is_dir() and _carries(candidate, ASSEMBLY_MARKERS):
             assembly, how["assembly"] = candidate, ENV_ASSEMBLY_ROOT
         else:
+            rejected["assembly"] = named
             problems.append(f"{ENV_ASSEMBLY_ROOT}={named} is not an assembly "
                             f"root: it carries no {' and '.join(ASSEMBLY_MARKERS)}")
     else:
         assembly = discover_assembly(code)
         if assembly is not None:
-            how["assembly"] = "found above the code root, which it mounts"
+            how["assembly"] = (
+                "found above the code root, which it mounts"
+                if _same(assembly / _mount(assembly, "code"), code) else
+                "found above the code root, a paired feature worktree of its code leg")
 
     spec: Optional[Path] = None
     named = environ.get(ENV_SPEC_ROOT, "")
@@ -374,14 +465,28 @@ def resolve_roots(environ: Mapping[str, str], suite_root: Path) -> Roots:
         if _carries_a_spec_tree(candidate):
             spec, how["spec"] = candidate, ENV_SPEC_ROOT
         else:
+            rejected["spec"] = named
             problems.append(f"{ENV_SPEC_ROOT}={named} is not a spec root: it "
                             f"carries none of {', '.join(SPEC_TREES)}")
     elif assembly is not None:
-        candidate = assembly / _mount(assembly, "spec")
-        if _carries_a_spec_tree(candidate):
-            spec, how["spec"] = candidate, "the assembly's spec leg"
+        # A paired feature's own spec worktree, beside its code worktree, is
+        # that feature's spec root, held to the same proof as the paired code
+        # worktree: a repository of its own holding the spec commit the
+        # assembly pins. A stray `docs/` there is not it (Copilot round 2 on
+        # #195), and the assembly's mounted spec leg is read instead.
+        spec_mount = _mount(assembly, "spec")
+        paired = code.parent / Path(spec_mount).name
+        spec_pin = _gitlink(assembly, spec_mount)
+        if (_same(code.parent.parent, assembly / PAIRED_WORKTREES)
+                and _carries_a_spec_tree(paired) and spec_pin
+                and _own_repository_holding(paired, spec_pin)):
+            spec, how["spec"] = paired, "the paired spec worktree beside the code root"
+        else:
+            candidate = assembly / _mount(assembly, "spec")
+            if _carries_a_spec_tree(candidate):
+                spec, how["spec"] = candidate, "the assembly's spec leg"
 
-    return Roots(code, assembly, spec, composed, how, problems)
+    return Roots(code, assembly, spec, composed, how, problems, rejected)
 
 
 #: THIS RUN'S ROOTS. Module-level names below are its fields, so the modules
@@ -414,6 +519,21 @@ def pytest_configure(config):
 
 def pytest_report_header(config):
     return ROOTS.describe()
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    """THE ROOTS A RUN USED, WHERE `-q` CANNOT HIDE THEM (#193 item 6).
+
+    `OPENREPOTOOLS_CODE_ROOT` re-points `REPO` and `UPSTREAM`, and
+    `OPENREPOTOOLS_ASSEMBLY_ROOT` decides which README, AGENTS.md and length
+    caps are held. The report header says so, but `-q` drops the header, and
+    every CI job and `tests/run.sh` run `-q`. So a run whose roots are not
+    today's one tree says them again at its foot, which `-q` keeps. Today's
+    layout with no variable prints nothing here: its output is unchanged."""
+    if ROOTS.redirected():
+        terminalreporter.write_sep("-", "openRepoTools test roots")
+        for line in ROOTS.describe():
+            terminalreporter.write_line(line)
 
 #: AMENDMENT 14 — NO TEST NUDGES AN INSTALLED INDEXER BY ACCIDENT. Every
 #: `lanes-edit.sh` write that pushes starts a detached `lanes-index sync`
