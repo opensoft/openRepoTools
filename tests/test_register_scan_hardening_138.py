@@ -413,11 +413,9 @@ def test_item_11_a_published_log_git_cannot_read_is_never_classed_dormant(reg):
 
 # ----------------------------------------------- #138: add-row's published scan
 
-def test_item_18_an_unreadable_published_register_refuses_add_row(reg):
-    """#138 item 18: `rows_named_ci` ended in an awk over `register_text`, which
-    answered 0 with an empty text where `git show` of the published register
-    failed, and `|| :` took what was left — so a row a peer had published and
-    this checkout had not pulled was added a second time, and landed."""
+def peer_publishes_repo_x_5(reg: Register) -> None:
+    """A peer publishes a row for repoX-5 above the others, so this checkout's
+    append of a second one would rebase cleanly over it."""
     peer = reg.tmp / "peer"
     reg.raw_git("clone", "-q", str(reg.origin), str(peer))
     lines = (peer / "lanes/LANES.md").read_text(encoding="utf-8").splitlines(True)
@@ -426,15 +424,84 @@ def test_item_18_an_unreadable_published_register_refuses_add_row(reg):
     (peer / "lanes/LANES.md").write_text("".join(lines), encoding="utf-8")
     reg.raw_git("-C", str(peer), "commit", "-q", "-am", "the peer adds repoX-5")
     reg.raw_git("-C", str(peer), "push", "-q", "origin", "main")
-    reg.refuse_git("show origin/main:lanes/LANES.md")
+
+
+def delete_published_register_blob(reg: Register, *, pull: bool) -> None:
+    """Fetch (or pull) the peer's register, then delete its blob from this
+    clone's object store: the tree still names the path, and git cannot read it."""
+    reg.git("config", "fetch.unpackLimit", "100000")
+    reg.git(*(("pull", "-q", "--rebase") if pull else ("fetch", "-q")))
+    blob = reg.git("rev-parse", "origin/main:lanes/LANES.md").strip()
+    loose = reg.wip / ".git" / "objects" / blob[:2] / blob[2:]
+    assert loose.is_file(), "the register blob is not a loose object here"
+    loose.unlink()
+
+
+def add_repo_x_5(reg: Register) -> subprocess.CompletedProcess:
+    return reg.run("add-row", row("repoX-5", "ffff0138-0006-4000-8000-000000000006", "new here",
+                                  "2026-10-13").rstrip("\n"), LANES_LANE="repoX-5")
+
+
+def published_repo_x_5_rows(reg: Register) -> int:
+    return reg.raw_git("-C", str(reg.origin), "show", "main:lanes/LANES.md").count("| `repoX-5` |")
+
+
+@pytest.mark.parametrize("mode", ["git refuses cat-file and show", "the blob is gone"])
+def test_item_18_a_published_register_git_cannot_read_is_not_this_checkouts_copy(reg, mode):
+    """#138 item 18, the review of #230: `register_text` asked `cat-file -e`
+    whether the register is published, which fails for an unreadable blob as for
+    an absent path, so it read THIS checkout's copy instead and add-row's check
+    passed — a duplicate landed (exit 0), or was committed here and stopped only
+    by the rebase (exit 3). The tree answers now, and the read refuses."""
+    peer_publishes_repo_x_5(reg)
+    if mode == "the blob is gone":
+        delete_published_register_blob(reg, pull=False)
+    else:
+        reg.refuse_git("origin/main:lanes/LANES.md")
     before = reg.head()
-    result = reg.run("add-row", row("repoX-5", "ffff0138-0006-4000-8000-000000000006", "new here", "2026-10-13").rstrip("\n"),
-                     LANES_LANE="repoX-5")
+    result = add_repo_x_5(reg)
     assert result.returncode == 1, (result.stdout, result.stderr)
     assert "published register on origin/main could not be read" in result.stderr
     assert reg.head() == before
-    published = reg.raw_git("-C", str(reg.origin), "show", "main:lanes/LANES.md")
-    assert published.count("| `repoX-5` |") == 1
+    assert published_repo_x_5_rows(reg) == 1
+
+
+def test_item_18_next_free_refuses_a_published_register_git_cannot_read(reg):
+    """The same probe in `lane_position_rows`: with the published register's
+    blob gone, `next-free` answered from this checkout's copy."""
+    peer_publishes_repo_x_5(reg)
+    delete_published_register_blob(reg, pull=False)
+    result = next_free(reg)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert result.stdout == ""
+
+
+def test_item_18_the_seam_refuses_a_sweep_over_a_published_register_git_cannot_read(reg):
+    """And the seam: with the published register unreadable and this checkout
+    current, `register_text` handed it this checkout's copy, called every lane
+    legacy, and the sweep was published."""
+    peer_publishes_repo_x_5(reg)
+    delete_published_register_blob(reg, pull=True)
+    before = reg.head()
+    result = reg.sweep("repoX-3", LANES_SESSION=WRITER_ID)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert "is UNKNOWN" in result.stderr
+    assert reg.head() == before
+
+
+def test_item_18_an_unreadable_published_register_refuses_add_row(reg):
+    """#138 item 18: `rows_named_ci` ended in an awk over `register_text`, which
+    answered 0 with an empty text where `git show` of the published register
+    failed, and `|| :` took what was left — so a row a peer had published and
+    this checkout had not pulled was added a second time, and landed."""
+    peer_publishes_repo_x_5(reg)
+    reg.refuse_git("show origin/main:lanes/LANES.md")
+    before = reg.head()
+    result = add_repo_x_5(reg)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert "published register on origin/main could not be read" in result.stderr
+    assert reg.head() == before
+    assert published_repo_x_5_rows(reg) == 1
 
 
 def test_item_1_an_unreadable_published_register_refuses_the_sweep(reg):

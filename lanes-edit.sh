@@ -3239,18 +3239,37 @@ register_text() {
   # (#138 item 18). It answered 0 with an empty text, and cached that, so every
   # reader after it saw a register with no rows. Most callers still read only
   # the text; the ones that must not take empty for "no row" read the status.
-  if have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null; then
-    LANES_REGISTER_CACHE="$(git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null)" ||
-      { LANES_REGISTER_CACHE=""; return 1; }
-  else
-    LANES_REGISTER_CACHE="$(cat -- "$LANES_FILE")"
-  fi
+  # AND WHETHER IT IS PUBLISHED IS `register_published`'s answer, the tree's:
+  # asked with `cat-file -e`, a missing or corrupt blob was "not published" and
+  # this checkout's copy was read in its place.
+  rt_prc=0; register_published || rt_prc=$?
+  case "$rt_prc" in
+    0) LANES_REGISTER_CACHE="$(git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null)" ||
+         { LANES_REGISTER_CACHE=""; return 1; } ;;
+    8) LANES_REGISTER_CACHE="$(cat -- "$LANES_FILE")" ;;
+    *) return 1 ;;
+  esac
   if [ -n "$rt_c" ]; then
     printf '%s\n' "$LANES_REGISTER_CACHE" > "$rt_c.${BASHPID:-$$}" 2>/dev/null &&
       mv -f -- "$rt_c.${BASHPID:-$$}" "$rt_c" 2>/dev/null ||
       rm -f -- "$rt_c.${BASHPID:-$$}"
   fi
   printf '%s\n' "$LANES_REGISTER_CACHE"
+}
+
+# IS THE REGISTER PUBLISHED? 0 yes, 8 no (or there is no `origin/<branch>`), 1
+# the tree could not be listed. THE TREE ANSWERS AND NEVER THE BLOB (#138 item
+# 18, the review of #230): `cat-file -e` fails for a blob that is missing or
+# corrupt exactly as for a path origin does not have, so a register origin has
+# and git could not read was "not published", and `register_text` answered with
+# this checkout's copy — the seam, `next-free` and `add-row` all read that as
+# the published register. `retire_rows` asks a lane's log the same way (item 17).
+register_published() {
+  have_remote_ref || return 8
+  rp_tree=""
+  rp_tree="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_PATH" 2>/dev/null)" || return 1
+  [ -n "$rp_tree" ] || return 8
+  return 0
 }
 
 # ------------------------- AMENDMENT 19(d): THE ARCHIVE IS PART OF THE READ
@@ -7973,10 +7992,18 @@ lane_position_rows() {   # 0 with the names · 1 where a source exists and could
   if [ -f "$LANES_FILE" ] && [ ! -r "$LANES_FILE" ]; then return 1; fi
   lpr_have=0
   if [ -e "$LANES_FILE" ] || [ -L "$LANES_FILE" ]; then lpr_have=1; fi
-  if have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null; then lpr_have=1; fi
+  # AND THE PUBLISHED ONE IS THE TREE'S ANSWER, with `register_text`'s 1 kept
+  # (#138 item 18, the review of #230): a published register whose blob git
+  # cannot read is a source that failed, not one that is absent.
+  lpr_prc=0; register_published || lpr_prc=$?
+  case "$lpr_prc" in
+    0) lpr_have=1 ;;
+    8) : ;;
+    *) return 1 ;;
+  esac
   lpr_reg=""
   if [ "$lpr_have" = 1 ]; then
-    lpr_reg="$(register_text 2>/dev/null || :)"
+    lpr_reg="$(register_text 2>/dev/null)" || return 1
     [ -n "$lpr_reg" ] || return 1
   fi
   lpr_arc=""
