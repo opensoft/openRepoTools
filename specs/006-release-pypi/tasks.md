@@ -196,7 +196,7 @@ upgrade or an uninstall has one defined, honest outcome.
 
 ### Tests for User Story 3 (write first; they MUST fail before T013)
 
-- [ ] T012 [US3] [O] Add to `tests/test_install_pipx.py`, as detailed below — files: `tests/test_install_pipx.py` — verify: `bash tests/run.sh --collect-only -q -k 'test_coexist_ or test_pip_script_ or test_path_report_ or test_pipx_upgrade_ or test_pipx_uninstall_'`
+- [X] T012 [US3] [O] Add to `tests/test_install_pipx.py`, as detailed below — files: `tests/test_install_pipx.py` — verify: `bash tests/run.sh --collect-only -q -k 'test_coexist_ or test_pip_script_ or test_path_report_ or test_pipx_upgrade_ or test_pipx_uninstall_'`
   - `test_coexist_*`:
     - a one-line install, replaced by pipx's link as `pipx install --force` leaves it, then `--install` from the venv's payload: the link is skipped, and the sixteen are replaced;
     - a checkout's, and a piped one-line install's, `--install` beside pipx's link, with the exact count line naming `<repo> @ <ref>`, for an unstamped stamp, a stamped one and an unreadable one beside the link's payload. The unreadable case ends in contracts/cli-output.md's `the openrepotools beside pipx's link, whose stamp cannot be read`, and no output contains `openrepotools an unreadable stamp`;
