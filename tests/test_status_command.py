@@ -74,6 +74,10 @@ from test_park_resume_commands import (  # noqa: F401  (fixtures by name)
     ORG, MEMBERS, FAMILY, FAKE_SHA, commit_all, estate, family_manifest,
     remotes, run, probe_project,
 )
+from test_park_resume_commands import (  # noqa: F401  (fixtures by name)
+    ORG, QUILL, QUILL_DISPLAY, clone_quill_estate, named_apart,
+    probe_family_two_names,
+)
 
 STATUS = REPO / "status"
 
@@ -556,6 +560,60 @@ def test_a_family_reads_the_holder_and_each_working_clone_and_names_a_missing_on
     assert (f"    - not here: no working clone beside the holder (`resume "
             f"{FAMILY}` places it)") in result.stdout
     assert "1 finding(s) in 3 repositories" in result.stdout
+
+
+@NEEDS_UPSTREAM
+@pytest.mark.parametrize("folder", [QUILL, QUILL_DISPLAY],
+                         ids=["repository", "name"])
+def test_a_family_folder_is_read_by_its_repository_name_or_its_display_name(
+        named_apart, remotes, home, folder):
+    """#236: one `family.yaml` (`name: "QuillWorks"`, `repository:
+    testorg/Quill`), laid out in the folder openRepoShape v1.1.0 prescribes —
+    its repository's last part, opensoft/openRepoShape#629 — and in the one
+    `status` required before it, the display name. Both are one estate: the
+    holder, then each member's working clone beside it."""
+    quill = clone_quill_estate(named_apart, remotes, home, folder)
+    result = run(STATUS, folder, home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "no estate named" not in result.stderr
+    assert f"holder main   {quill['holder']}" in result.stdout
+    for name in MEMBERS:
+        assert f"root   main   {quill['siblings'][name]}" in result.stdout
+    assert "0 finding(s) in 3 repositories" in result.stdout
+
+
+@pytest.mark.parametrize("shape", [
+    ("Elsewhere", "Other", f"{ORG}/Other"),
+    (ORG, "Other", f"{ORG}/Quill/Other"),
+    ("Quill", "Other", None),
+], ids=["neither-name-nor-repository",
+        "an-earlier-part-of-the-repository", "no-repository-and-another-name"])
+def test_a_family_folder_that_is_neither_name_is_still_not_an_estate(home,
+                                                                    shape):
+    """The repository arm must not widen past the LAST part of `repository:`,
+    and a missing key must not read as a name: those folders are directories
+    called that, exactly as they were before."""
+    folder, name, repository = shape
+    probe_family_two_names(home / "projects", folder, name=name,
+                           repository=repository)
+    result = run(STATUS, folder, home=home)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert f"no estate named '{folder}'" in result.stderr
+
+
+def test_a_family_folder_named_for_its_repository_wins_over_a_standalone_root(
+        home):
+    """The holder drives the members, so where a family whose `name:` differs
+    shares its folder with a `project.yaml`, `status` reads the family."""
+    projects = home / "projects"
+    holder = probe_family_two_names(projects, QUILL, name=QUILL_DISPLAY,
+                                    repository=f"{ORG}/{QUILL}")
+    probe_project(projects, QUILL, at=projects / QUILL)
+    result = run(STATUS, QUILL, home=home)
+    assert "no estate named" not in result.stderr, result.stderr
+    assert (f"status: {QUILL} - the family holder at {holder}"
+            in result.stdout), result.stdout + result.stderr
+    assert "the assembly root" not in result.stdout
 
 
 # --- every estate ------------------------------------------------------------
