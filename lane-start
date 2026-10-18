@@ -1066,8 +1066,8 @@ if [ -z "${LANES_FILE:-}" ]; then die "$(lanes_workspace_why)" 1; fi
 #
 # ONE RESOLVER, SHARED. `lanes-edit.sh canon-lane` is the same read `lane-end`,
 # `lanes` and `restart` make, for the reason clause (h) gives every other read
-# in this toolset: four implementations of "which row is this name's" is how the
-# four would come to disagree about it.
+# in this toolset: an implementation of "which row is this name's" in each
+# command is how they would come to disagree about it.
 #
 # 2 IS TWO ANSWERS AND THE REFUSAL IS THE ONE THAT MATTERS (Copilot round 4 on
 # openRepoTools#41). It is the code a helper predating this amendment spends on
