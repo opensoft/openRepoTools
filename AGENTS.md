@@ -42,9 +42,8 @@ unreadable workspace with **2**: only 2 blocks a prompt; 1 would let it through.
 Profile-only guard calls carrying exact `CLAUDE_NO_LANE=1` return 0 before input
 or identity probes, even with unreadable configuration; other values enforce.
 Brett Heap directed this exception in `openspec/changes/skip-no-lane-guard/`;
-Shared hooks stay installed, the hook pair once `~/projects/xFactory/lanes-edit.sh` answers `guard`:
-29 artifacts always, plus those two (#237). Exit 1 means *registry not found* in lane tooling,
-and *findings were printed* in estate status; identify the command before interpreting it.
+Shared hooks stay installed while `~/projects/xFactory/lanes-edit.sh` answers `guard`; until then they are deferred and our guard entry taken out (#237):
+29 artifacts always, plus those two. Exit 1 means *registry not found* in lane tooling, and *findings were printed* in estate status; identify the command before interpreting it.
 
 ## Driving `park <Name>`, `resume <Name>` and `status <Name>`
 
