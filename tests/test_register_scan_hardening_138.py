@@ -400,14 +400,19 @@ def test_item_4_the_sweep_refuses_rather_than_finding_nothing_to_do(reg):
     logs = reg.wip / "lanes" / "log"
     logs.chmod(0)
     try:
-        env = dict(reg.env, LANES_EDIT=str(REPO / "lanes-edit.sh"))
-        result = subprocess.run(["bash", str(REPO / "lane-end"), "--retire-dormant", "repoX"],
-                                cwd=str(reg.wip), env=env, text=True, capture_output=True,
-                                timeout=120, check=False)
+        result = retire_dormant(reg)
     finally:
         logs.chmod(0o755)
     assert result.returncode == 1, (result.stdout, result.stderr)
     assert "classed none of them DORMANT" in result.stderr
+
+
+def retire_dormant(reg: Register) -> subprocess.CompletedProcess:
+    """`lane-end --retire-dormant repoX`, the dry run, with this checkout's helper."""
+    env = dict(reg.env, LANES_EDIT=str(REPO / "lanes-edit.sh"))
+    return subprocess.run(["bash", str(REPO / "lane-end"), "--retire-dormant", "repoX"],
+                          cwd=str(reg.wip), env=env, text=True, capture_output=True,
+                          timeout=120, check=False)
 
 
 def test_item_11_a_published_log_git_cannot_read_is_never_classed_dormant(reg):
@@ -505,6 +510,21 @@ def test_item_18_the_seam_refuses_a_sweep_over_a_published_register_git_cannot_r
     assert result.returncode == 1, (result.stdout, result.stderr)
     assert "is UNKNOWN" in result.stderr
     assert reg.head() == before
+
+
+def test_item_18_an_unreadable_register_withholds_the_class_and_the_sweep_refuses(reg):
+    """The re-review of #230: the listing built its rows from `register_text`
+    with its status thrown away, so with the published register's blob gone
+    repoX-2 and repoX-3 vanished, and `lane-end --retire-dormant` said "nothing
+    to do" (exit 8). The listing says so and withholds the class; the sweep
+    refuses (1)."""
+    peer_publishes_repo_x_5(reg)
+    delete_published_register_blob(reg, pull=False)
+    listing = reg.run("lanes", "--closed", "--prefix", "repoX")
+    assert "no row is classed DORMANT here" in listing.stderr
+    result = retire_dormant(reg)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert "classed none of them DORMANT" in result.stderr
 
 
 def test_item_18_an_unreadable_published_register_refuses_add_row(reg):

@@ -7389,6 +7389,16 @@ lanes_rows() {
     note "these published logs could not be read, so no lane of theirs is classed DORMANT: $(printf '%s\n' "$lr_unread_paths" | tr '\n' ' ')"
   [ "$lr_unread_ok" = 1 ] ||
     note "no temporary file could be made for the read's warnings, so whether any published log failed to read is not known, and no row is classed DORMANT here."
+  # AND A REGISTER THAT COULD NOT BE READ IS SAID, ONCE (the re-review of #230).
+  # Every row above came out of `register_text` with its status thrown away, and
+  # since it answers 1 with no text for a published register git cannot read,
+  # those rows simply vanished — and the sweep counted none of them. The class
+  # is withheld, which `lane-end` refuses on. A read that succeeds fills the
+  # cache every later read here takes, so the check costs one render.
+  lr_reg_ok=1
+  register_text >/dev/null 2>&1 || lr_reg_ok=0
+  [ "$lr_reg_ok" = 1 ] ||
+    note "the register ($LANES_PATH, published or this checkout's) could not be read, so its rows are not in this listing, and no row is classed DORMANT here."
   # THE REGISTER AND THE LIVE RECORDS, EACH READ ONCE FOR THE WHOLE LISTING
   # (ruling 12). Both were per-lane before, and `live_session_ids` was rebuilt
   # from 564 session records for every one of them.
@@ -7679,7 +7689,8 @@ EOF2
         # up); this is what it does about it — leaves the class unset, so the
         # row stays listed and the sweep is never offered it.
         if [ -n "$lr_row" ] && [ "$lr_lanekind" = 0 ] && [ "$lr_live_rc" = 0 ] &&
-           [ "$lr_cellrow" = 1 ] && [ "$lr_logs_rc" = 0 ] && [ "$lr_unread_ok" = 1 ]; then
+           [ "$lr_cellrow" = 1 ] && [ "$lr_logs_rc" = 0 ] && [ "$lr_unread_ok" = 1 ] &&
+           [ "$lr_reg_ok" = 1 ]; then
           lr_class=dormant
           # A LOG THIS CHECKOUT HAS AND `origin` HAS NOT IS STILL AN OBJECT LOG,
           # AND SO IS ONE `origin` HAS AND GIT COULD NOT READ (item 11).
