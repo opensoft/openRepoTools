@@ -18,6 +18,9 @@ that changed only `specs/`, `openspec/`, `contracts/openreposhape-pin.yaml` and 
 branch stays on `c4864ac`. A claim
 marked **measured** was run on a throwaway fixture in this lane's scratch directory; one
 marked **derived** follows from the code or from git's documented behaviour and was not run.
+**2026-10-18:** paths on the bench where this was read are written `~/projects/…`, the
+bench's projects directory, as `tests/test_repo_hygiene.py` asks of a committed file since
+#229 item 22; the one quoted `grep` pattern in §4.15 keeps the spelling it searched for.
 This document decides nothing. Plan tasks are T006 (root collisions and leg guidance), T007
 (installer entry point), T009 (separate roots in fixtures and hygiene), T010 (CI and pin
 checks) and T018 (feature selection, park/resume and bindings).
@@ -69,7 +72,7 @@ checks) and T018 (feature selection, park/resume and bindings).
 `lanes-index`, `lane-handoff`, `lane-rename`, `lane`, `lanes`, `link-estates`, `repos.tsv`),
 `openRepoTools --install` and `wip init`, the hooks it merges, the documents that name
 checkout paths, the tests and CI that assume one root, and the register/handoff data in
-`opensoft/brett-wip` that names `/workspace/projects/openRepoTools` (read, never written).
+`opensoft/brett-wip` that names `~/projects/openRepoTools` (read, never written).
 
 **Out of scope:** the estate verbs `park`, `resume` and `status`. They find estates by
 `$PROJECTS_DIR` and run `make park`/`make resume`, and they already know three-leg roots
@@ -153,7 +156,7 @@ copies in `~/.local/bin` are unaffected. **No change; T006 confirms it.**
 | Line | What it does | Under the triad |
 | --- | --- | --- |
 | :608 | `PROJECTS_ROOT=${PROJECTS_ROOT:-$HOME/projects}` | unchanged |
-| :1116-1357 | The lane's directory, by six rungs: `--dir`, the swap record, the lane log's `dir`, `$PROJECTS_ROOT/<repo>`, the estate `project.yaml` legs (:1291-1318), then a checkout named for the home and proved by its origin (:1319-1328) | Lanes openRepoTools-1, -2 and -3 record `dir /workspace/projects/openRepoTools` (§4.15), so rungs 2 and 3 answer. If the assembly stays at that path (an in-place adoption of the live checkout), **nothing changes**. A lane homed at `opensoft/openRepoTools-code` (none exists) would be resolved by rung 5: the reader at :1301-1309 matches `repository:` against the home and resolves `path: code` against the manifest's directory. The shell suite already covers rung 5 on a declared `legs:` manifest (tests/test_lane_helpers.sh:5691-5704). IRRS, IRSS and MedxEHR carry the same block on this workstation today. |
+| :1116-1357 | The lane's directory, by six rungs: `--dir`, the swap record, the lane log's `dir`, `$PROJECTS_ROOT/<repo>`, the estate `project.yaml` legs (:1291-1318), then a checkout named for the home and proved by its origin (:1319-1328) | Lanes openRepoTools-1, -2 and -3 record `dir ~/projects/openRepoTools` (§4.15), so rungs 2 and 3 answer. If the assembly stays at that path (an in-place adoption of the live checkout), **nothing changes**. A lane homed at `opensoft/openRepoTools-code` (none exists) would be resolved by rung 5: the reader at :1301-1309 matches `repository:` against the home and resolves `path: code` against the manifest's directory. The shell suite already covers rung 5 on a declared `legs:` manifest (tests/test_lane_helpers.sh:5691-5704). IRRS, IRSS and MedxEHR carry the same block on this workstation today. |
 | :1118-1128 | "the harness keys a session to the directory it was started in" (Evidence 3) | **This is why a lane's `dir` should stay at the assembly root.** Re-homing a lane into `code/` changes the Claude project folder (`-workspace-projects-openRepoTools` → `-workspace-projects-openRepoTools-code`). That strands the lane's memory, and `--resume <uuid>` stops finding the transcript. **T018 proposal:** bindings keep `dir` = assembly root, and nothing is rebound. |
 | :1180-1199 | The home is written from the directory's `origin` | At the assembly root the origin is still `opensoft/openRepoTools`, so the home is unchanged. |
 | :4294-4340 | Starts the daily report (`lane-worktrees sweep --all --dry-run --report`) for `$PROJECTS_ROOT` | Inherits the report's blind spot: §4.4. |
@@ -257,7 +260,7 @@ line moves for a checkout with no `project.yaml`.
 | :2754-2765 `alias_lookup`; :2776-2847 `canon_object` | resolves a key's repository through repos.tsv. A spelled `owner/repo` is **always accepted** (:2834) | `opensoft/openRepoTools-code#n` works with no repos.tsv row. The bare `openRepoTools-code#n` is refused until the row exists (§4.9). |
 | :2791-2813 | `#n` expands against the lane's **home** | Home stays `opensoft/openRepoTools`, so `#n` always means the **assembly's** issue or PR. The code leg numbers its PRs from #1, so `#3` from an openRepoTools lane is the assembly's #3, never the code leg's. **T018 proposal:** code-leg and spec-leg objects are spelled in full. The lane-collision protocol text should say so. |
 | :2814-2818, :2895-2897 | `owner/repo:openspec/changes/<name>` keys | Rule 1's sibling reads run `gh pr list --repo <object_repo> --search <slug>` (:10249-10272). A change keyed on `opensoft/openRepoTools` therefore searches the **assembly's** PRs, while spec PRs land in `openRepoTools-spec`. **T018 proposal:** at cutover, each open claim on `opensoft/openRepoTools:openspec/changes/<x>` is released and re-claimed as `opensoft/openRepoTools-spec:openspec/changes/<x>`, through `lanes-edit.sh release`/`claim`. The log is append-only and is never rewritten. |
-| :5053-5105 `project_legs_file`, `same_project` | manifests at `$PROJECTS_ROOT/*/project.yaml` and `*/*/project.yaml` | `/workspace/projects/openRepoTools/project.yaml` is depth 1, so a claim on `opensoft/openRepoTools-code#n` from a lane homed at the assembly is "legs of one project.yaml — not a crossing" (:5120-5122). This works with no change. |
+| :5053-5105 `project_legs_file`, `same_project` | manifests at `$PROJECTS_ROOT/*/project.yaml` and `*/*/project.yaml` | `~/projects/openRepoTools/project.yaml` is depth 1, so a claim on `opensoft/openRepoTools-code#n` from a lane homed at the assembly is "legs of one project.yaml — not a crossing" (:5120-5122). This works with no change. |
 | :12555-12595 `tree_id_for`, `lane_tree_put` | sidecar per tree: absolute `path`, `checkout`, branch, head … | Formats are unchanged. Rows written before cutover stay **true**: they describe worktrees of the monorepo history, which is the assembly's own history (FR-001). |
 | :12699-12705 `lane_worktree_roots` | `<dir>/.claude/worktrees`, `${dir%/*}/.lane-worktrees/<lane>` | Same gap as §4.4, proposal 2. |
 | :16791-16829 `set-lane-tree` | takes an absolute path and an **unvalidated** `--checkout` | Records a code-leg tree today: `--checkout <assembly>/code`. |
@@ -303,7 +306,7 @@ if [ -n "$super" ] && [ -f "$super/project.yaml" ]; then here_root="$super"; fi
 (:89-295). It links `~/projects/<estate>/handoffs` → `<workspace>/handoffs/<estate>` for each
 estate directory that exists (:399-409), and `~/projects/xFactory/lanes-edit.sh` →
 `$OPENREPOTOOLS_BIN_DIR/lanes-edit.sh` (:421). **Under the triad:**
-`/workspace/projects/openRepoTools/handoffs` is an untracked symlink in the live checkout today,
+`~/projects/openRepoTools/handoffs` is an untracked symlink in the live checkout today,
 and it stays one at the assembly root. The hook link points at the installed copy. **No
 change.**
 
@@ -414,7 +417,7 @@ name and register row, never the cwd or the repository layout. **No change.**
 | docs/README-lanes.md:573-594, :3979-3997 | `tests/run.sh` | code-leg path | T006 |
 | docs/README-lanes.md:1793 | example `STARTED` line, `dir ~/projects…` | an example; true as long as the assembly stays at its path | none |
 | docs/README-claude-current.md:172 | "looks for `claude-current` beside itself" | true in `code/` | none |
-| ideation/brainstorm/supervised-context-restart-durable-intent.md:31 | `directory: /workspace/projects/openRepoTools` (an example intent record) | spec-leg prose; stays true if the assembly keeps that path | none |
+| ideation/brainstorm/supervised-context-restart-durable-intent.md:31 | `directory: ~/projects/openRepoTools` (an example intent record) | spec-leg prose; stays true if the assembly keeps that path | none |
 
 **Hygiene caps that T006 will trip:** test_repo_hygiene.py:1735-1736 caps AGENTS.md at 316
 lines, and it **is** 316. test_repo_hygiene.py:2232-2233 caps README.md at 486, and it **is**
@@ -515,8 +518,8 @@ at brett-wip `c311a78`:
 | File | Hits | What they are | Carry-over proposal |
 | --- | ---: | --- | --- |
 | lanes/LANES.md | 0 | Rows carry home `opensoft/openRepoTools` | none: the assembly keeps the name |
-| lanes/log/openRepoTools-3.md / -1.md / -2.md | 32 / 11 / 11 | `dir /workspace/projects/openRepoTools` on STARTED/RESUMED/PAUSED lines (29 + 1, 11, 11 of them) | Append-only, never rewritten. They stay valid **if the assembly keeps this path**. If it moves, run one `lane-start --dir <new> openRepoTools <n>` per lane at its breakpoint; that writes the new `dir`. |
-| `/workspace/projects/.lane-state/openRepoTools-{1,2,3}/trees/*.yaml` (beside, not in, brett-wip) | 18 / 8 / 14 sidecars | every row `checkout: /workspace/projects/openRepoTools`; 19 trees under `.claude/worktrees` | They stay true: they describe monorepo-history worktrees of the same repository. Translate each tree's delta through T016/T017 receipts, then retire it with `lane-worktrees sweep --yes`. The sweep's "landed" test compares against the assembly's default branch, where a monorepo branch's content never lands after the split, so expect **rescue to a bundle**, not "landed". |
+| lanes/log/openRepoTools-3.md / -1.md / -2.md | 32 / 11 / 11 | `dir ~/projects/openRepoTools` on STARTED/RESUMED/PAUSED lines (29 + 1, 11, 11 of them) | Append-only, never rewritten. They stay valid **if the assembly keeps this path**. If it moves, run one `lane-start --dir <new> openRepoTools <n>` per lane at its breakpoint; that writes the new `dir`. |
+| `~/projects/.lane-state/openRepoTools-{1,2,3}/trees/*.yaml` (beside, not in, brett-wip) | 18 / 8 / 14 sidecars | every row `checkout: ~/projects/openRepoTools`; 19 trees under `.claude/worktrees` | They stay true: they describe monorepo-history worktrees of the same repository. Translate each tree's delta through T016/T017 receipts, then retire it with `lane-worktrees sweep --yes`. The sweep's "landed" test compares against the assembly's default branch, where a monorepo branch's content never lands after the split, so expect **rescue to a bundle**, not "landed". |
 | handoffs/openRepoTools/session-handoff-2026-09-13-lane-openRepoTools-3.md, migration-handoff-2026-10-06.md, …-2026-10-02-…-2.md, …-2026-09-16-…-1.md | 56, 42, 26, 24 | historical reads and paths | none: each live lane's next Rule 3 top block restates the current paths |
 | handoffs/xFactory/session-handoff-2026-09-05-lane-opsXfactory-1.md | 11 | **"register writes via … `~/projects/openRepoTools/lanes-edit.sh`"**, the **checkout copy** | **Act before cutover:** this lane is live (PAUSED 2026-10-07T11:12:58Z, swap). That path disappears when the live checkout pulls the assembly main. Point its next handoff at the installed copy (`~/.local/bin/lanes-edit.sh` or `~/projects/xFactory/lanes-edit.sh`), and tell its owner. |
 | handoffs/xFactory/attachments/opsXfactory-1/land-444.sh | 2 | `LANES_EDIT="${LANES_EDIT:-$HOME/projects/openRepoTools/lanes-edit.sh}"` (:329) | Same. A script that defaults to the checkout copy breaks at the split. |
