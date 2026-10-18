@@ -1,17 +1,231 @@
 name: release
 
 # ---------------------------------------------------------------------------
-# PUBLISH THE openrepotools WHEEL (#228): TestPyPI, AN INSTALL CHECK, THEN
-# PyPI, IN ONE DISPATCHED RUN. Adapted step for step from openRepoShape
-# v1.1.0's own release.yml (`190133d`, the commit `upstream/openRepoShape`
-# is pinned at), whose checks are taken over as they are (FR-028) except
-# where design.md Decision 10 names a difference: a pre-release `X.Y.ZrcN`
-# is accepted, for TestPyPI alone; the repository guard (FR-048) is new
-# here; the stamp has a fifth field, REPOSITORY; the digest's definition is
-# held to its literal and to the pin; the payload's blobs and modes are
-# checked under `openrepotools/payload/`; and the install check runs on
-# three legs, with no Windows leg, checking `--version` and an offline
-# `--install` beside pipx's link, again under macOS's `/bin/bash` 3.2.
+# PUBLISH THE openrepotools WHEEL (#228): TestPyPI, AN INSTALL CHECK ON THREE
+# LEGS, THEN PyPI, IN ONE DISPATCHED RUN. Adapted step for step from
+# openRepoShape v1.1.0's own release.yml (`190133d`, the commit
+# `upstream/openRepoShape` is pinned at), whose checks are taken over as they
+# are (FR-028) except where design.md Decision 10 names a difference:
+#   - a pre-release `X.Y.ZrcN` is accepted, for TestPyPI alone; PyPI takes a
+#     final `X.Y.Z` and nothing else;
+#   - the repository guard (FR-048, WHERE RELEASES COME FROM below) is new
+#     here, because the model has none;
+#   - the stamp has a fifth field, REPOSITORY, the run's `$GITHUB_REPOSITORY`;
+#   - the digest's definition is held to the literal `sorted-ls-tree-r-v1`
+#     that `--version` prints and to the pin's `digest_definition`, where the
+#     model compares it with its package's own constant;
+#   - the payload's blobs and modes are checked under
+#     `openrepotools/payload/`, against the commit's own paths;
+#   - the install check runs on three legs, ubuntu and macOS on Python 3.x
+#     and ubuntu on 3.9, with no Windows leg, checking `--version` and an
+#     offline `--install` beside pipx's link, again under macOS's
+#     `/bin/bash` 3.2, and compiling the payload's two Python commands on
+#     3.9;
+#   - no step reads the release notes (WHAT THIS WORKFLOW NEVER READS).
+#
+# FOUR JOBS, EACH GATED ON THE ONE BEFORE IT:
+#   build     the version and the repository guard; the tag, the branch, the
+#             clean checkout, both environments, `tests.yml`'s four jobs on
+#             this commit, and the digest; then the wheel, built twice from
+#             two `git archive` extractions of the commit, stamped, compared
+#             byte for byte, checked against the commit's own files, and its
+#             sha256 recorded.
+#   testpypi  the guard again; uploads those bytes to TestPyPI, in the
+#             `testpypi` environment, then requires TestPyPI to serve
+#             exactly that digest.
+#   install   on ubuntu, macOS and Python 3.9: pipx installs TestPyPI's
+#             file, taken by the recorded digest (on a branch, the build's
+#             own wheel), and the one command it places is run.
+#   pypi      the guard again; uploads the same bytes to PyPI, in the `pypi`
+#             environment, which waits for Brett Heap's approval after the
+#             install check, then requires PyPI to serve exactly the
+#             recorded digest.
+#
+# DISPATCH ONLY. Nothing here runs on a push, a tag or a pull request: an
+# upload is an act Brett Heap approves. The version is the tag's: `v1.1.0`
+# gives `1.1.0`, which the build writes into the stamp,
+# `openrepotools/_release.py`, with the tag, the commit, the digest and the
+# repository. A dispatch on a tag refuses unless that tag is `v<version>`,
+# annotated, and pointing at the run's own commit, and unless that commit is
+# on `main` or on the version's release branch, `release/v<major>.<minor>`.
+#
+# RE-RUN ONLY THE FAILED JOBS ("Re-run failed jobs"), never the whole run
+# and never a second dispatch of a version already uploaded. A re-run of a
+# failed job reuses the build's artifact and its recorded digest, and each
+# upload job requires the index to hold no file of the version but the
+# verified wheel at its digest (FR-031), so a re-run after an upload that
+# went through uploads nothing new. A second dispatch builds again, and its
+# wheel is the same file only while the locks, the runner's Python and the
+# commit all stay the same; the index keeps the first file under its name
+# for good, and the upload jobs refuse any other.
+#
+# NO PyPI TOKEN AND NO STORED SECRET, ANYWHERE. Both uploads use trusted
+# publishing (OIDC): `id-token: write` is granted to the two upload jobs and
+# to no other job. The one other credential is GitHub's automatic
+# GITHUB_TOKEN, read-only in every job, which `gh` uses to read this
+# repository's own API.
+#
+# EVERY ACTION IS PINNED BY COMMIT, with its release tag beside it, as
+# `tests.yml` pins them: checkout and setup-python at that file's own
+# commits, the artifact actions at the model's. One limit carried over from
+# the model, where it was accepted: pypa/gh-action-pypi-publish is a
+# container action whose image is pulled by a registry tag, so its commit
+# pins the action's files and not all the code an upload runs. The digest
+# checks before and after each upload bound what that could change.
+#
+# RELEASING: THE PROCEDURE (FR-034 to FR-040). Brett Heap decides every
+# tag, every release-branch cut and every upload, and approves each
+# deployment. The release owner, lane openRepoTools-3, carries them out on
+# his word: it tags, dispatches and creates the GitHub Release, and no other
+# lane does. For each release:
+#   1. THE COMMIT'S CI FIRST. A tag waits for its commit's `tests.yml` runs:
+#      all of them finished, and the newest green, in a push or dispatch run
+#      (the build's gate counts no `pull_request` run). On `main` the push
+#      run that landed the commit does that once it has finished green; on
+#      `release/vX.Y` the branch's own push run does, and for a commit that
+#      reached the branch by fast-forward the newer of main's run and the
+#      branch's decides (FR-039). Otherwise, BEFORE TAGGING, dispatch
+#      `tests.yml` on a branch that points at the release commit, and wait
+#      for it:
+#        git push origin <release-commit>:refs/heads/<branch>
+#        gh workflow run tests.yml --ref <branch> -R <repository>
+#   2. THE TAG, ANNOTATED, on Brett Heap's word, with the message `v1.0.0`'s
+#      has (FR-036), `<time>` the exact UTC second of his word:
+#        openRepoTools vX.Y.Z
+#
+#        <a paragraph: what the release is>
+#
+#        Tagged on Brett Heap's word (<time>, "<words>")
+#        Lane: <lane>
+#      then push it:
+#        git tag -a vX.Y.Z <release-commit> -F <message-file>
+#        git push origin refs/tags/vX.Y.Z
+#   3. DISPATCH THIS WORKFLOW ON THE TAG, with `version` set to X.Y.Z:
+#        gh workflow run release.yml --ref vX.Y.Z -f version=X.Y.Z \
+#            -R <repository>
+#   4. APPROVE `testpypi`, Brett Heap's act. The install check then runs on
+#      its three legs; approve `pypi` once it has passed.
+#   5. ONLY AFTER PyPI SERVES THE VERSION, the GitHub Release, from a
+#      checkout that has the spec leg, so the notes never name a version
+#      PyPI lacks:
+#        gh release create v<version> --repo <repository> --verify-tag \
+#            --notes-file <spec>/docs/release-notes/v<version>.md
+#   6. FOR vX.Y.0, THEN CUT `release/vX.Y` AT THE TAG, on his word:
+#        git push origin 'vX.Y.0^{commit}:refs/heads/release/vX.Y'
+#
+# THE BRANCH AND TAG POLICY, opensoft/openRepoShape#850's (Brett Heap's
+# ruling of 2026-10-17T19:52:26Z; FR-036 to FR-041):
+#   - THE TRUNK is `main`, and every PR lands on it.
+#   - A RELEASE IS AN ANNOTATED TAG `vX.Y.Z`, never a branch and never a
+#     committed version number. A tag is never moved, never deleted and
+#     never reused once it is pushed.
+#   - `release/vX.Y` IS CUT AT THE `vX.Y.0` TAG, right after the tag, and
+#     each patch `vX.Y.Z`, Z above 0, is tagged on it.
+#   - BACK-PORTS. A fix lands on `main` first, through its own review and CI.
+#     While `main` holds only that patch line's work, `release/vX.Y` takes it
+#     by a fast-forward or by a merge of `main`; otherwise by a PR to
+#     `release/vX.Y` of `git cherry-pick -x <squash commit>`.
+#   - THE LANES' SIDE: one HOLD at a time on `release/vX.Y`; the lane that
+#     landed the PR makes the back-port, unless the release owner
+#     fast-forwards; and the LANDED line names both commits, main's and the
+#     branch's.
+#   - PATCH TAGS WAIT FOR THE NEWEST RUN: a patch is tagged on
+#     `release/vX.Y` only once that commit's `tests.yml` runs have all
+#     finished and the newest is green.
+#   - ONE UPLOAD PER VERSION. An index never takes a file name twice, so a
+#     bad upload is fixed by the next patch, never by moving a tag or
+#     reusing one.
+#   - The `release/*` ruleset is Brett Heap's choice, which #850 leaves to
+#     him: no force-push and no deletion keeps fast-forward back-ports, and a
+#     rule requiring a PR makes every back-port a cherry-pick.
+#
+# TWO REHEARSALS, AND NEVER 1.1.0 (FR-033). No rehearsal uses the version
+# `1.1.0` itself: an index never takes a file name twice, and v1.1.0 is
+# built later, from another commit, in opensoft/openRepoTools-code.
+#   - THE BRANCH REHEARSAL. A dispatch on a branch builds, checks and
+#     installs, and uploads nothing: the build's checks all run (the ref step
+#     and the branch step stand down, because a branch has no tag and no
+#     release branch to be on, FR-029), the install check runs on all three
+#     legs over the build's own wheel in place of TestPyPI's, the guard
+#     records `to-testpypi` and `to-pypi` as `false` on every branch, both
+#     upload jobs run only on a `v*` tag, and both environments admit only
+#     the tags `v*`. It builds with the version of the tag it rehearses, as
+#     the model rehearsed v1.1.0 from its branch `l3-rehearsal-v1.1.0`. Before
+#     v1.1.0 that is the next pre-release, so the first branch rehearsal is
+#        gh workflow run release.yml --ref <branch> -f version=1.1.0rc1 \
+#            -R opensoft/openRepoTools
+#     A branch dispatch with `version=1.1.0` would build a 1.1.0 wheel. It
+#     would upload nothing, but this procedure forbids it.
+#   - THE CI GATE HOLDS IN A REHEARSAL TOO, and it counts only push and
+#     dispatch runs. A feature branch's commit has only `pull_request` runs,
+#     so dispatch `tests.yml` on that branch first, and wait for it to
+#     finish green:
+#        gh workflow run tests.yml --ref <branch> -R opensoft/openRepoTools
+#   - THE TestPyPI REHEARSAL. A pre-release `X.Y.ZrcN`, `1.1.0rc1` first,
+#     dispatched on its own annotated tag in opensoft/openRepoTools, on
+#     Brett Heap's word as any tag is, reaches TestPyPI and the install
+#     check, and the `pypi` job is skipped: the build records `to-pypi` as
+#     `false` for a pre-release, so it never asks for the `pypi` approval.
+#
+# WHERE RELEASES COME FROM (FR-041, FR-048).
+#   - FROM v1.1.0 ON, release tags are made in opensoft/openRepoTools-code,
+#     the triad's code leg, where the release is built. `v1.0.0` and every
+#     `rc` rehearsal tag stay in opensoft/openRepoTools, which becomes the
+#     assembly, and no tag is carried from one repository to another.
+#   - THE REPOSITORY GUARD (FR-048), the build's first step, decides from
+#     `$GITHUB_REPOSITORY`, the ref and the version, before any approval is
+#     asked. Each upload job's condition reads its record, and the job's
+#     first step checks the rule again:
+#       opensoft/openRepoTools-code  a tag     X.Y.Z     TestPyPI, then PyPI
+#       opensoft/openRepoTools-code  a tag     X.Y.ZrcN  TestPyPI alone
+#       opensoft/openRepoTools       a tag     X.Y.ZrcN  TestPyPI alone
+#       opensoft/openRepoTools       a tag     X.Y.Z     refused
+#       any other repository         a tag     any       refused
+#       any repository               a branch  any       nothing: the rehearsal
+#     So opensoft/openRepoTools sends a pre-release to TestPyPI and nothing
+#     to PyPI, and every other repository uploads nothing. The names are
+#     compared exactly, as GitHub spells them. opensoft/openRepoTools has no
+#     pypi.org publisher at all, which is the second line of defence.
+#   - opensoft/openRepoTools-code STAYS PUBLIC: the ref step fetches the tag
+#     from it with no credentials, as the model does, and the migration
+#     creates it public.
+#   - BRETT HEAP'S ACTS, NONE OF THEM A LANE'S. The build refuses every
+#     dispatch until both environments exist with their rules.
+#     - In the repository that releases, the environments `testpypi` and
+#       `pypi`, each with brettheap as the required reviewer, self-review
+#       allowed, administrators not bypassing, and a deployment limit of
+#       exactly one tag rule, `v*`.
+#     - The ruleset on the tags `v*`, "Release tags v*: only admins create,
+#       move or delete". It is not checked here (ACCEPTED LIMITS).
+#     - On test.pypi.org, the trusted publisher for opensoft/openRepoTools:
+#       project `openrepotools`, workflow `release.yml`, environment
+#       `testpypi`.
+#     - At the cutover, for opensoft/openRepoTools-code: its two
+#       environments and its tag ruleset, the test.pypi.org publisher
+#       pointed at it, and on pypi.org the project's only publisher,
+#       `release.yml` with the environment `pypi`. v1.1.0 is published only
+#       once both publishers and both environments exist.
+#     THE ENVIRONMENT IS REQUIRED in every publisher, though the form calls
+#     it optional. A publisher that names none accepts a token from ANY job
+#     of a `release.yml` in its repository, so a branch's own copy of this
+#     file could drop `environment:` from an upload job and publish with no
+#     approval and no tag limit.
+#   - ACCEPTED LIMITS, the model's, carried over where they were accepted:
+#     - A deployment limit admits a tag by its NAME. Anyone who can push a
+#       `v*` tag can dispatch on it, and the run is that tag's own copy of
+#       this file, whatever it says. The checks here bind only where the tag
+#       carries the reviewed file, which is why the tag ruleset matters.
+#     - The required reviewer's approval is therefore the last line, and lane
+#       sessions act as brettheap, the reviewer. An approval is a deliberate
+#       act of his, never a session's.
+#
+# WHAT THIS WORKFLOW NEVER READS (FR-046): the release notes, and anything
+# the code leg will not hold. After the cutover it runs in
+# opensoft/openRepoTools-code, which holds none of `docs/`, `openspec/`,
+# `specs/`, `README.md`, `AGENTS.md` and `CLAUDE.md`, so no step names one.
+# `LICENSE` is the one root file the build reads, because the code leg's
+# first commit gives it a byte-identical copy. The release notes are read
+# by the person who creates the GitHub Release (step 5), never by a step.
 # ---------------------------------------------------------------------------
 
 on:
