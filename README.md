@@ -237,9 +237,14 @@ gh api repos/opensoft/openRepoTools/contents/openRepoTools \
     -H 'Accept: application/vnd.github.raw' | bash -s -- --install
 ```
 
-It places SEVENTEEN files into `~/.local/bin` — `openRepoTools`, `park`, `resume`,
-`status`, `lane`, `lanes`, `lane-handoff`, `lane-rename`, `lanes-edit.sh`,
-`lane-start`, `lane-end`, `link-estates`, the alias table `repos.tsv`,
+A workstation uses ONE install route or the other, never both, until
+opensoft/workBenches#165 lets workBenches' `scripts/setup-estate-commands.sh`
+accept pipx's link (Brett Heap's decision of 2026-10-18).
+
+`--install` places SEVENTEEN files (SIXTEEN beside pipx's link, below) into
+`~/.local/bin` — `openRepoTools`, `park`, `resume`, `status`, `lane`, `lanes`,
+`lane-handoff`, `lane-rename`, `lanes-edit.sh`, `lane-start`, `lane-end`,
+`link-estates`, the alias table `repos.tsv`,
 `claude-current`, `claude-restart-check`, `lanes-index` and `lane-worktrees` — 755, idempotently: a
 second run prints `already installed … (unchanged)` per file, one whose bytes have
 drifted prints `updated at`, and one whose bytes were right and whose MODE was not
@@ -259,8 +264,16 @@ THAT EXISTS, so a bin directory that is not there yet is refused for the parent
 that would not take it, and a create needs a directory's search bit as well as
 its write bit. A refusal creates none of those directories either. `cp` follows
 a symlink, and an install through one leaves the command uninstalled and writes
-these bytes into whatever it points at. Then a `17 of 17 placed in <dir>` line,
+these bytes into whatever it points at. The ONE link it skips instead is pipx's,
+at `openRepoTools` (below). Then a `17 of 17 placed in <dir>` line,
 and the `export PATH=…` line if that directory is not on your `PATH`. Last, it names this repository's virtual environment, `${XDG_CACHE_HOME:-~/.cache}/openRepoTools/venvs/openRepoTools/` (one per repository, outside the estate; #162), says whether it is there, and prints the two commands that make it: it never makes one, and `tests/run.sh` runs from it once it has `pytest`.
+
+**Beside pipx's link it places SIXTEEN and leaves the seventeenth to pipx.** A
+`<dir>/openRepoTools` that is a link into pipx's `openrepotools` environment is
+skipped, not refused and not replaced: a line in its place says what updates it,
+it is counted apart, and it gets no receipt row. The count line then reads
+`16 of 17 placed in <dir>, and 1 left to pipx`, and from any run but pipx's own it
+goes on to name where the other sixteen now come from.
 
 It also places **fourteen things that are not files in that directory**: THREE
 SKILLS, `/handoff`, `/lane-swap` and `/restart`, each at
@@ -299,7 +312,10 @@ own `UserPromptSubmit` hooks are left exactly where they are, which is why that
 arm keys on the VERB and not on the word anywhere in a path. It
 never writes a profile's own `settings.json`: the launcher owns that one.
 
-Twenty-nine artifacts always, plus the two hook entries once the path they call answers `guard` (#237), and the count is the invariant. It was sixteen until A11
+Twenty-nine artifacts always, plus the two hook entries once the path they call
+answers `guard` (#237), and the count is the invariant. Beside pipx's link it is
+TWENTY-EIGHT placed always, one left to pipx and 28 receipt rows, with the hook
+pair still on top once that path answers. The count was sixteen until A11
 Addendum 4 ruling 9 gave `--install` a command-file list and `commands/swap.md`
 in it, at the same pair of paths a skill takes — because `opensoft/workBenches#74`
 deletes the launcher's copy and `/swap` would otherwise be installed by nobody;
@@ -342,9 +358,13 @@ where `raw.githubusercontent.com` is blocked.
 | `$LANES_WORKSTATION` | — | this workstation's name, exported by the workBenches launcher. Outside a container it defaults to `hostname -s`; **inside one with no value every writer refuses**, because a container id is not a workstation and the log is never rewritten (Amendment 11, decision 8(d)) |
 | `$PROJECTS_DIR` | `~/projects` | where `wip init` clones your workspace repository |
 
-`openRepoTools --version` prints `openRepoTools (<repo> @ <ref>)`. There is no
-version number here, for the reason openRepoShape has none: the identity is a
-commit.
+A release is an ANNOTATED TAG, `vX.Y.Z`, and the version comes only from the tag:
+no file here holds one. The release build writes it into the `openrepotools`
+package it builds, whose `openRepoTools --version` then names the release in its
+first line, `openRepoTools <version> (<repository> @ <commit>)`. A package built
+from a checkout carries the committed stamp, `0.0.0`, and says it is not a release:
+`openRepoTools 0.0.0 (an unstamped package)`. A checkout, and the one-line
+install, print `openRepoTools (<repo> @ <ref>)`, as they always have.
 
 ## Using them
 
