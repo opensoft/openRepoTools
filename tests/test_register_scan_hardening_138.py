@@ -29,7 +29,7 @@ WRITER_ID = "aaaa0138-0001-4000-8000-000000000001"
 OLD_ID = "bbbb0138-0002-4000-8000-000000000002"
 HEADER = ("| lane | session id | workstation / env / user | started (UTC) "
           "| objects owned | handoff path | state |\n|---|---|---|---|---|---|---|\n")
-ROOT_ONLY = pytest.mark.skipif(
+UNPRIVILEGED_ONLY = pytest.mark.skipif(
     hasattr(os, "geteuid") and os.geteuid() == 0,
     reason="a permission case needs an unprivileged runner")
 
@@ -212,7 +212,7 @@ def test_item_17_a_published_log_git_cannot_read_refuses_the_sweep(reg):
     assert not (reg.wip / "lanes/log/repoX-2.md").exists()
 
 
-@ROOT_ONLY
+@UNPRIVILEGED_ONLY
 def test_item_9_a_log_directory_that_cannot_be_listed_refuses_in_the_scan(reg):
     """#138 item 9: `log_files_named_ci` was `ls 2>/dev/null | awk`, so an
     unreadable log directory passed the scan as "no log" and the sweep failed
@@ -371,7 +371,7 @@ def classes(reg: Register) -> tuple:
     return {f[0]: f[13] for f in (line.split("\t") for line in result.stdout.splitlines()) if len(f) > 13}, result.stderr
 
 
-@ROOT_ONLY
+@UNPRIVILEGED_ONLY
 def test_item_4_a_log_directory_that_cannot_be_listed_classes_no_row_dormant(reg):
     """#138 item 4: the listing's fence of this checkout's logs was
     `ls 2>/dev/null`, so an unreadable directory hid a log committed here and
@@ -392,7 +392,7 @@ def test_item_4_a_log_directory_that_cannot_be_listed_classes_no_row_dormant(reg
     assert "could not be listed" in err
 
 
-@ROOT_ONLY
+@UNPRIVILEGED_ONLY
 def test_item_4_the_sweep_refuses_rather_than_finding_nothing_to_do(reg):
     """The review of #230: with the class withheld, `lane-end --retire-dormant`
     counted zero dormant rows and exited 8, "there is nothing to do", about rows
