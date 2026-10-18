@@ -2,6 +2,19 @@
 
 Paths under the home directory are written portably (`~/`) because the repository's hygiene test refuses host-absolute paths in committed files; the originals are in lane 2's transcript.
 
+Bench paths are written as placeholders, defined here once, for the same reason. Each is a directory on the bench where the reads ran, and the commands below need them as shell variables:
+
+- `$PROJECTS`: the bench's projects directory, the one `~/projects` stood for there.
+- `$WB`: the workBenches checkout, `$PROJECTS/workBenches`.
+- `$BW`: the brett-wip checkout, `$PROJECTS/brett-wip`.
+- `$LS`: the lane-state root, `$PROJECTS/.lane-state`.
+- `$XF`: the xFactory checkout, `$PROJECTS/xFactory`.
+- `$ORT`: the openRepoTools checkout, `$PROJECTS/openRepoTools`.
+- `$ORTW`: the single-repository Speckit worktree root, `$PROJECTS/openRepoTools-worktrees`.
+- `$READS`: lane 2's worktree at the planning branch's commit ff6f6a7 (on lane 2's branch `004-migrate-to-triad-reads`), `$PROJECTS/.lane-worktrees/openRepoTools-2/triad-reads`.
+
+Three recorded searches keep a path inside a single-quoted `grep` pattern exactly as it was typed (the workBenches and brett-wip `grep -e '…'` lines, and the `.lane-state` count), because a placeholder in the pattern would change what was searched for. The hygiene test allows a path inside a single-quoted `grep` pattern and nowhere else. The paths these placeholders stand for are in lane 2's transcript and in this file as #189 landed it.
+
 Read at 2026-10-07T10:04:44Z–11:07:10Z by lane openRepoTools-2's writer, under #186, from ff6f6a7. An API-side error cut the run, and it resumed at 11:03:49Z, when every head was checked again.
 
 HEADs read:
@@ -41,68 +54,68 @@ Plan files (lane 2's worktree, same commit as the planning branch):
 
 ```sh
 date -u +%Y-%m-%dT%H:%M:%SZ
-git -C /workspace/projects/.lane-worktrees/openRepoTools-2/triad-reads rev-parse HEAD
-git -C /workspace/projects/.lane-worktrees/openRepoTools-2/triad-reads status --short
-cat -n /workspace/projects/.lane-worktrees/openRepoTools-2/triad-reads/openspec/changes/migrate-to-triad/adoption-plan.yaml
-cat -n /workspace/projects/.lane-worktrees/openRepoTools-2/triad-reads/specs/004-migrate-to-triad/installer-design.md
-cat -n /workspace/projects/.lane-worktrees/openRepoTools-2/triad-reads/specs/004-migrate-to-triad/tasks.md
-cat -n /workspace/projects/.lane-worktrees/openRepoTools-2/triad-reads/specs/004-migrate-to-triad/plan.md
-cat -n /workspace/projects/.lane-worktrees/openRepoTools-2/triad-reads/specs/004-migrate-to-triad/spec.md
+git -C $READS rev-parse HEAD
+git -C $READS status --short
+cat -n $READS/openspec/changes/migrate-to-triad/adoption-plan.yaml
+cat -n $READS/specs/004-migrate-to-triad/installer-design.md
+cat -n $READS/specs/004-migrate-to-triad/tasks.md
+cat -n $READS/specs/004-migrate-to-triad/plan.md
+cat -n $READS/specs/004-migrate-to-triad/spec.md
 ```
 
 openRepoTools main (read-only; no fetch):
 
 ```sh
-git -C /workspace/projects/openRepoTools rev-parse main c4864ac
-git -C /workspace/projects/openRepoTools ls-tree --name-only c4864ac
-git -C /workspace/projects/openRepoTools ls-tree -r --name-only c4864ac | wc -l                                   # 100
-git -C /workspace/projects/openRepoTools ls-tree -r --name-only daed20957f2dd2f22cca24053bb5bc8636ff6b3f | wc -l   # 64
-git -C /workspace/projects/openRepoTools diff --name-status daed20957f2dd2f22cca24053bb5bc8636ff6b3f c4864ac
-git -C /workspace/projects/openRepoTools ls-tree c4864ac upstream/openRepoShape
-git -C /workspace/projects/openRepoTools show c4864ac:.gitmodules
-git -C /workspace/projects/openRepoTools ls-tree -r --name-only c4864ac contracts
-git -C /workspace/projects/openRepoTools show c4864ac:openRepoTools > <scratchpad>/openRepoTools.c4864ac
+git -C $ORT rev-parse main c4864ac
+git -C $ORT ls-tree --name-only c4864ac
+git -C $ORT ls-tree -r --name-only c4864ac | wc -l                                   # 100
+git -C $ORT ls-tree -r --name-only daed20957f2dd2f22cca24053bb5bc8636ff6b3f | wc -l   # 64
+git -C $ORT diff --name-status daed20957f2dd2f22cca24053bb5bc8636ff6b3f c4864ac
+git -C $ORT ls-tree c4864ac upstream/openRepoShape
+git -C $ORT show c4864ac:.gitmodules
+git -C $ORT ls-tree -r --name-only c4864ac contracts
+git -C $ORT show c4864ac:openRepoTools > <scratchpad>/openRepoTools.c4864ac
 grep -n 'raw.githubusercontent\|gh api\|OPENREPOTOOLS_REPO\|OPENREPOTOOLS_REF\|^REPO=\|^REF=\|INSTALLABLES\|repos.tsv\|SCRIPT_DIR\|script_dir\|BASH_SOURCE\|\$0' <scratchpad>/openRepoTools.c4864ac
 grep -n 'selfdir\|skills/\|commands/\|contracts/\|upstream/\|docs/\|^[a-z_]*() *{' <scratchpad>/openRepoTools.c4864ac
 sed -n '1,135p;136,440p;955,1002p;1210,1222p;1285,1368p;1365,1400p;2490,2545p' <scratchpad>/openRepoTools.c4864ac
-git -C /workspace/projects/openRepoTools grep -n 'raw.githubusercontent\|gh api repos/opensoft/openRepoTools\|bash -s -- --install\|OPENREPOTOOLS_REF\|OPENREPOTOOLS_REPO' c4864ac -- README.md AGENTS.md docs
-git -C /workspace/projects/openRepoTools show c4864ac:repos.tsv
-git -C /workspace/projects/openRepoTools show c4864ac:lanes-edit.sh | grep -n 'repos.tsv'
-git -C /workspace/projects/openRepoTools show c4864ac:lanes-edit.sh | grep -n '\.lane-state'
-git -C /workspace/projects/openRepoTools show c4864ac:lane-worktrees | grep -n 'inventor'
-git -C /workspace/projects/openRepoTools show c4864ac:lane-worktrees | sed -n '2120,2128p;2164,2175p;2708,2716p;4808,4822p'
-git -C /workspace/projects/openRepoTools show c4864ac:link-estates | grep -n 'handoffs\|PROJECTS\|projects/\|estate'
-git -C /workspace/projects/openRepoTools show c4864ac:.gitignore
-for c in 2fb854f 5eb3d5f 500687c c4864ac; do git -C /workspace/projects/openRepoTools show $c:openRepoTools | sha256sum; done
-git -C /workspace/projects/openRepoTools show c4864ac:lane-worktrees | sha256sum
-git -C /workspace/projects/openRepoTools show c4864ac:lanes-edit.sh | sha256sum
-ls -la /workspace/projects/openRepoTools
-git -C /workspace/projects/openRepoTools status --porcelain=v1 --ignored
-cat /workspace/projects/openRepoTools/.git/info/exclude
-stat -c '%y' /workspace/projects/openRepoTools/.git/index   # 2026-10-07 04:28:20Z, before this read: the status call wrote no index
+git -C $ORT grep -n 'raw.githubusercontent\|gh api repos/opensoft/openRepoTools\|bash -s -- --install\|OPENREPOTOOLS_REF\|OPENREPOTOOLS_REPO' c4864ac -- README.md AGENTS.md docs
+git -C $ORT show c4864ac:repos.tsv
+git -C $ORT show c4864ac:lanes-edit.sh | grep -n 'repos.tsv'
+git -C $ORT show c4864ac:lanes-edit.sh | grep -n '\.lane-state'
+git -C $ORT show c4864ac:lane-worktrees | grep -n 'inventor'
+git -C $ORT show c4864ac:lane-worktrees | sed -n '2120,2128p;2164,2175p;2708,2716p;4808,4822p'
+git -C $ORT show c4864ac:link-estates | grep -n 'handoffs\|PROJECTS\|projects/\|estate'
+git -C $ORT show c4864ac:.gitignore
+for c in 2fb854f 5eb3d5f 500687c c4864ac; do git -C $ORT show $c:openRepoTools | sha256sum; done
+git -C $ORT show c4864ac:lane-worktrees | sha256sum
+git -C $ORT show c4864ac:lanes-edit.sh | sha256sum
+ls -la $ORT
+git -C $ORT status --porcelain=v1 --ignored
+cat $ORT/.git/info/exclude
+stat -c '%y' $ORT/.git/index   # 2026-10-07 04:28:20Z, before this read: the status call wrote no index
 ```
 
 workBenches (read-only; committed objects at HEAD `7fd01e3`):
 
 ```sh
-git -C /workspace/projects/workBenches rev-parse HEAD
-git -C /workspace/projects/workBenches status --porcelain=v1                     # " M sysBenches/cloudBench"
-git -C /workspace/projects/workBenches worktree list
-git -C /workspace/projects/workBenches show HEAD:.gitmodules
-git -C /workspace/projects/workBenches submodule status
-git -C /workspace/projects/workBenches grep -n -i 'openRepoTools' HEAD -- .       # 939 lines; per-file counts via cut | sort | uniq -c
-git -C /workspace/projects/workBenches grep -n -e '/workspace/projects/openRepoTools' -e 'openRepoTools-worktrees' -e '\.lane-worktrees' -e 'raw.githubusercontent.com/opensoft/openRepoTools' -e 'repos/opensoft/openRepoTools' -e 'github.com/opensoft/openRepoTools' -e 'opensoft/openRepoTools/' -e 'projects/openRepoTools' HEAD -- .
-git -C /workspace/projects/workBenches show HEAD:devBenches/base-image/upstream-pin.yaml
-git -C /workspace/projects/workBenches show HEAD:devBenches/base-image/Dockerfile | sed -n '136,285p'
-git -C /workspace/projects/workBenches show HEAD:devBenches/base-image/update-upstream.py | sed -n '68,90p;886,960p'
-git -C /workspace/projects/workBenches show HEAD:devBenches/base-image/files/estate/estate-commands-start
-git -C /workspace/projects/workBenches show HEAD:devBenches/base-image/files/estate/workbench-entrypoint | grep -n 'estate-commands-start\|openrepotools\|exec'
-git -C /workspace/projects/workBenches ls-tree -r --name-only HEAD devBenches/base-image/files/openrepotools
-git -C /workspace/projects/workBenches show HEAD:scripts/setup-estate-commands.sh | grep -n -i 'openRepoTools\|vendor\|files/\|OPENREPOTOOLS\|INSTALLABLES\|skills/\|commands/\|755\|link-estates'
-git -C /workspace/projects/workBenches show HEAD:scripts/setup-estate-commands.sh | sed -n '158,200p;276,330p;370,405p'
-git -C /workspace/projects/workBenches show HEAD:setup.sh | sed -n '176,200p'
-git -C /workspace/projects/workBenches show HEAD:README.md | sed -n '188p;190p'
-stat -c '%y' /workspace/projects/workBenches/.git/index    # 2026-10-06 13:08:26Z, before this read
+git -C $WB rev-parse HEAD
+git -C $WB status --porcelain=v1                     # " M sysBenches/cloudBench"
+git -C $WB worktree list
+git -C $WB show HEAD:.gitmodules
+git -C $WB submodule status
+git -C $WB grep -n -i 'openRepoTools' HEAD -- .       # 939 lines; per-file counts via cut | sort | uniq -c
+git -C $WB grep -n -e '/workspace/projects/openRepoTools' -e 'openRepoTools-worktrees' -e '\.lane-worktrees' -e 'raw.githubusercontent.com/opensoft/openRepoTools' -e 'repos/opensoft/openRepoTools' -e 'github.com/opensoft/openRepoTools' -e 'opensoft/openRepoTools/' -e 'projects/openRepoTools' HEAD -- .
+git -C $WB show HEAD:devBenches/base-image/upstream-pin.yaml
+git -C $WB show HEAD:devBenches/base-image/Dockerfile | sed -n '136,285p'
+git -C $WB show HEAD:devBenches/base-image/update-upstream.py | sed -n '68,90p;886,960p'
+git -C $WB show HEAD:devBenches/base-image/files/estate/estate-commands-start
+git -C $WB show HEAD:devBenches/base-image/files/estate/workbench-entrypoint | grep -n 'estate-commands-start\|openrepotools\|exec'
+git -C $WB ls-tree -r --name-only HEAD devBenches/base-image/files/openrepotools
+git -C $WB show HEAD:scripts/setup-estate-commands.sh | grep -n -i 'openRepoTools\|vendor\|files/\|OPENREPOTOOLS\|INSTALLABLES\|skills/\|commands/\|755\|link-estates'
+git -C $WB show HEAD:scripts/setup-estate-commands.sh | sed -n '158,200p;276,330p;370,405p'
+git -C $WB show HEAD:setup.sh | sed -n '176,200p'
+git -C $WB show HEAD:README.md | sed -n '188p;190p'
+stat -c '%y' $WB/.git/index    # 2026-10-06 13:08:26Z, before this read
 ```
 
 openRepoShape at 7f84ca4 (bare clone in lane 2's scratchpad, `ors-verify/ors.git`):
@@ -124,22 +137,22 @@ git -C <ors.git> grep -n -i 'openRepoTools' 7f84ca42ca86a8902928345109d2bf6bad87
 brett-wip (read-only; reads pinned at `ab88a10`):
 
 ```sh
-git -C /workspace/projects/brett-wip rev-parse HEAD
-git -C /workspace/projects/brett-wip status --porcelain=v1 | wc -l             # 215, all untracked
-git -C /workspace/projects/brett-wip ls-tree --name-only HEAD
-git -C /workspace/projects/brett-wip ls-tree HEAD lanes/
-git -C /workspace/projects/brett-wip ls-tree -r --name-only HEAD | grep -i 'workspace.yaml'   # none
-git -C /workspace/projects/brett-wip grep -n -e '/workspace/projects/openRepoTools' -e 'openRepoTools-worktrees' -e '\.lane-worktrees/openRepoTools' -e '~/projects/openRepoTools' -e 'projects/openRepoTools' ab88a10347fb605588643e7ea2e528217dab9a67 -- .   # 341 lines
-git -C /workspace/projects/brett-wip show "ab88a10347fb605588643e7ea2e528217dab9a67:lanes/LANES.md" > <scratchpad>/LANES.md
+git -C $BW rev-parse HEAD
+git -C $BW status --porcelain=v1 | wc -l             # 215, all untracked
+git -C $BW ls-tree --name-only HEAD
+git -C $BW ls-tree HEAD lanes/
+git -C $BW ls-tree -r --name-only HEAD | grep -i 'workspace.yaml'   # none
+git -C $BW grep -n -e '/workspace/projects/openRepoTools' -e 'openRepoTools-worktrees' -e '\.lane-worktrees/openRepoTools' -e '~/projects/openRepoTools' -e 'projects/openRepoTools' ab88a10347fb605588643e7ea2e528217dab9a67 -- .   # 341 lines
+git -C $BW show "ab88a10347fb605588643e7ea2e528217dab9a67:lanes/LANES.md" > <scratchpad>/LANES.md
 grep -n '^| lane\|^| `openRepoTools' <scratchpad>/LANES.md
-git -C /workspace/projects/brett-wip show "ab88a10347fb605588643e7ea2e528217dab9a67:lanes/log/openRepoTools-1.md"   # likewise -2, -3; sampled lines
-git -C /workspace/projects/brett-wip show "ab88a10347fb605588643e7ea2e528217dab9a67:lanes/repos.tsv" | sha256sum
-git -C /workspace/projects/brett-wip grep -n -e '\.local/bin/\(openRepoTools\|park\|resume\|status\|lane\|lanes\|lane-handoff\|lane-rename\|lanes-edit\.sh\|lane-start\|lane-end\|link-estates\|repos\.tsv\|claude-current\|claude-restart-check\|lanes-index\|lane-worktrees\)\b' -e 'share/openRepoTools' -e 'raw.githubusercontent.com/opensoft/openRepoTools' -e 'docs/README-lanes' -e 'openRepoTools-\(code\|spec\)' ab88a10347fb605588643e7ea2e528217dab9a67 -- .
-git -C /workspace/projects/brett-wip grep -n -i -e 'openRepoTools' -e '\.local/bin' HEAD -- README.md AGENTS.md CLAUDE.md scripts/link-estates
-ls -la /workspace/projects/xFactory/lanes-edit.sh /workspace/projects/xFactory/LANES.md
-find /workspace/projects/.lane-state/openRepoTools-{1,2,3} -type f
-grep -rn '^checkout:' /workspace/projects/.lane-state/openRepoTools-{1,2,3}
-grep -rn '^path: /workspace/projects/openRepoTools/' /workspace/projects/.lane-state/openRepoTools-{1,2,3} | wc -l
+git -C $BW show "ab88a10347fb605588643e7ea2e528217dab9a67:lanes/log/openRepoTools-1.md"   # likewise -2, -3; sampled lines
+git -C $BW show "ab88a10347fb605588643e7ea2e528217dab9a67:lanes/repos.tsv" | sha256sum
+git -C $BW grep -n -e '\.local/bin/\(openRepoTools\|park\|resume\|status\|lane\|lanes\|lane-handoff\|lane-rename\|lanes-edit\.sh\|lane-start\|lane-end\|link-estates\|repos\.tsv\|claude-current\|claude-restart-check\|lanes-index\|lane-worktrees\)\b' -e 'share/openRepoTools' -e 'raw.githubusercontent.com/opensoft/openRepoTools' -e 'docs/README-lanes' -e 'openRepoTools-\(code\|spec\)' ab88a10347fb605588643e7ea2e528217dab9a67 -- .
+git -C $BW grep -n -i -e 'openRepoTools' -e '\.local/bin' HEAD -- README.md AGENTS.md CLAUDE.md scripts/link-estates
+ls -la $XF/lanes-edit.sh $XF/LANES.md
+find $LS/openRepoTools-{1,2,3} -type f
+grep -rn '^checkout:' $LS/openRepoTools-{1,2,3}
+grep -rn '^path: /workspace/projects/openRepoTools/' $LS/openRepoTools-{1,2,3} | wc -l
 ```
 
 `~/.agents` and the home directory:
@@ -176,8 +189,8 @@ sed -n '318,336p' ~/.claude/skills/handoff/SKILL.md
 | `base-image/files/claude-profile:54-55, 557, 1649-1653`; `scripts/setup-claude-profiles.sh:213-224` | Matches the guard hook string byte for byte with openRepoTools's `GUARD_COMMAND` (cited as `openRepoTools:460-461`). Parses `openRepoTools --help`. Its install act is the string `openRepoTools --install`. Says `--install` owns the skill and command destinations. | Only installed names, help text, hook strings and destinations are read. The `openRepoTools:<line>` cites point into a file that moves to `code/`. | covered: l.59, l.75, l.86 |
 | `README.md:80, 93, 155-156, 172, 188, 190` | "the lane tooling is installed from `opensoft/openRepoTools`" (`:188`); "places fifteen files" (`:190`). | The implementation moves to `openRepoTools-code`. The assembly keeps the slug and the one-liner (installer-design l.9-11). | not covered |
 | `devBenches/base-image/files/openreposhape/openRepoShape:83, 280` (openRepoShape pin `71cf5de`) | A vendored copy of openRepoShape's raw-URL pointer `…/opensoft/openRepoTools/main/openRepoTools` (see the openRepoShape table). | The URL resolves only if the assembly root carries an `openRepoTools` file (inferred). | covered: l.9-11, l.75 |
-| `devBenches/base-image/files/openrepotools/lane-handoff:813, 913`; `…/lanes-edit.sh:11412, 11939`; `…/skills/handoff/SKILL.md:292` | Vendored openRepoTools code (`b1015f4`) derives `<parent of lane dir>/.lane-worktrees/<lane>`. | The same as the code's own assumption (installer table, lane-worktrees row). It holds while lanes keep `dir /workspace/projects/openRepoTools` (inferred). | not covered |
-| `devcontainer.test/test-setup-estate-commands.sh` (80 lines), `test-claude-profile-amendment-11.sh` (61), `test-setup-workspace-repo.sh` (52), and 8 more files under `devcontainer.test/` (57, including `README.md:70`); `test-claude-profile-lane-default.sh:282, 293`; `.github/workflows/speckit-git-bash.yml:19, 53` | The suites run or fake the vendored shim and its layout. `:282` and `:293` print `cwd /workspace/projects/openRepoTools`. The CI path filters are `devBenches/base-image/files/openrepotools/**`. | They follow whatever the vendored tree becomes. | not covered |
+| `devBenches/base-image/files/openrepotools/lane-handoff:813, 913`; `…/lanes-edit.sh:11412, 11939`; `…/skills/handoff/SKILL.md:292` | Vendored openRepoTools code (`b1015f4`) derives `<parent of lane dir>/.lane-worktrees/<lane>`. | The same as the code's own assumption (installer table, lane-worktrees row). It holds while lanes keep `dir $ORT` (inferred). | not covered |
+| `devcontainer.test/test-setup-estate-commands.sh` (80 lines), `test-claude-profile-amendment-11.sh` (61), `test-setup-workspace-repo.sh` (52), and 8 more files under `devcontainer.test/` (57, including `README.md:70`); `test-claude-profile-lane-default.sh:282, 293`; `.github/workflows/speckit-git-bash.yml:19, 53` | The suites run or fake the vendored shim and its layout. `:282` and `:293` print `cwd $ORT`. The CI path filters are `devBenches/base-image/files/openrepotools/**`. | They follow whatever the vendored tree becomes. | not covered |
 | `docs/claude-multi-account-profiles.md` (20 lines; `:314` cites `:1559`, `:1568`, `:1579` of openRepoTools `63a74af`), `openspec/**` and `specs/**` (52 lines), `base-image/files/claude-statusline-command.sh:477`, `scripts/wave-container-shell.sh:55`, `files/speckit-worktree/…/resume.sh:451, 465`, `devBenches/devcontainer.test/test-speckit-git-feature.sh:3425, 3487` | Prose that names `opensoft/openRepoTools`, its issues, or file:line inside it. | The slug stays as the assembly. The files named move to `code/`. | not covered |
 
 ## openRepoShape (`7f84ca4`)
@@ -199,18 +212,18 @@ openRepoShape pins nothing of openRepoTools.
 
 | file:line | what it assumes today | what the split changes | installer-design.md coverage |
 |---|---|---|---|
-| `lanes/log/openRepoTools-1.md:2`, `openRepoTools-2.md:2`, `openRepoTools-3.md:59` … (52 lines: 11 + 11 + 30) | STARTED, RESUMED and PAUSED records carry `home opensoft/openRepoTools; estate openRepoTools; dir /workspace/projects/openRepoTools`. That is the directory a lane is relaunched in. | In-place adoption keeps the slug as the assembly. The checkout keeps holding only 6 root files plus `spec/` and `code/` (inferred). The executables a lane runs from the checkout root move to `code/`. | not covered (rebinding is plan.md:223-224, T018) |
-| `lanes/log/openRepoTools-1.md:19`, `openRepoTools-3.md:291`, `:405`; `openXfactory-3.md:60`, `openXfactory-5.md:390`, `openxfactory-1.md:169` (+ `:253, 324, 411`) — 10 lines | Notes that name `.lane-worktrees/openRepoTools-1` and `-3`, `openRepoTools-cleanup-archives/…`, or `/workspace/projects/openRepoTools` as a working directory. | These are records of past acts. The paths stay valid while the assembly sits at the same path (inferred). | not covered |
-| `lanes/LANES.md:1109` (`openRepoTools-3`), `:1303` (`openRepoTools-1`), `:2581` (`openRepoTools-2`) | The rows carry a handoff path `handoffs/openRepoTools/…` and no directory column (header `:76`). Only `:1109` names a checkout: `--dir ~/projects/openRepoTools`. `~/projects` → `/workspace/projects`. | The handoff paths are in brett-wip and unaffected. The estate name `openRepoTools` stays. | not covered |
+| `lanes/log/openRepoTools-1.md:2`, `openRepoTools-2.md:2`, `openRepoTools-3.md:59` … (52 lines: 11 + 11 + 30) | STARTED, RESUMED and PAUSED records carry `home opensoft/openRepoTools; estate openRepoTools; dir $ORT`. That is the directory a lane is relaunched in. | In-place adoption keeps the slug as the assembly. The checkout keeps holding only 6 root files plus `spec/` and `code/` (inferred). The executables a lane runs from the checkout root move to `code/`. | not covered (rebinding is plan.md:223-224, T018) |
+| `lanes/log/openRepoTools-1.md:19`, `openRepoTools-3.md:291`, `:405`; `openXfactory-3.md:60`, `openXfactory-5.md:390`, `openxfactory-1.md:169` (+ `:253, 324, 411`) — 10 lines | Notes that name `.lane-worktrees/openRepoTools-1` and `-3`, `openRepoTools-cleanup-archives/…`, or `$ORT` as a working directory. | These are records of past acts. The paths stay valid while the assembly sits at the same path (inferred). | not covered |
+| `lanes/LANES.md:1109` (`openRepoTools-3`), `:1303` (`openRepoTools-1`), `:2581` (`openRepoTools-2`) | The rows carry a handoff path `handoffs/openRepoTools/…` and no directory column (header `:76`). Only `:1109` names a checkout: `--dir ~/projects/openRepoTools`. `~/projects` → `$PROJECTS`. | The handoff paths are in brett-wip and unaffected. The estate name `openRepoTools` stays. | not covered |
 | `lanes/LANES.md:36` (and `:1305`); 12 `docs/README-lanes` lines in 9 files (first: `handoffs/openRepoTools/brief-lane-openRepoTools-1-2026-09-16.md:9`, `session-handoff-2026-09-16-lane-openRepoTools-1.md:33`, `lanes/log/openRepoTools-1.md:22`) | "the manual lives at `docs/README-lanes.md` in `opensoft/openRepoTools`". | `docs/` moves to `openRepoTools-spec`. | not covered |
 | `lanes/repos.tsv:52` | The per-WIP alias override, read by `lanes-edit.sh` as `LANES_REPOS_TSV` (`lanes-edit.sh:2448`). It is byte-identical to the shipped table (sha256 `e4f9160a07ea…`). The only openRepoTools row is `openRepoTools` → `opensoft/openRepoTools`. | There are no `openRepoTools-spec` or `openRepoTools-code` rows, while the IRRS legs have them (`:29-30`, `:34-35`). The table header says an alias not in the table is refused, with a hint to spell owner/repo (shipped `repos.tsv:8`). | not covered |
-| handoffs naming the checkout root `/workspace/projects/openRepoTools`: 145 lines (first: `handoffs/openRepoTools/migration-handoff-2026-10-06.md:15, 16, 32`) | Reads, cwd records and commands run in the monorepo checkout. | After cutover, the checkout at that path is the assembly. Code and docs are under `code/` and `spec/` (inferred). | not covered |
+| handoffs naming the checkout root `$ORT`: 145 lines (first: `handoffs/openRepoTools/migration-handoff-2026-10-06.md:15, 16, 32`) | Reads, cwd records and commands run in the monorepo checkout. | After cutover, the checkout at that path is the assembly. Code and docs are under `code/` and `spec/` (inferred). | not covered |
 | `.lane-worktrees/openRepoTools-1` (50 lines), `-2` (3), `-3` (59) (first: `migration-handoff-2026-10-06.md:202`; `session-handoff-2026-10-02-lane-openRepoTools-2.md:19`; `session-handoff-2026-09-13-lane-openRepoTools-3.md:6`) | Lane worktrees are siblings of the lane directory, as monorepo worktrees. | Worktrees made after cutover would be worktrees of leg repositories. The triad protocol puts Speckit features under `<root>/worktrees/<NNN>/{spec,code}` (inferred from the protocol table below). | not covered |
 | `openRepoTools-worktrees`: 16 lines (first: `migration-handoff-2026-10-06.md:204-206`) | The single-repository Speckit worktree root, `../<repo>-worktrees`. | It becomes `<assembly root>/worktrees/<NNN>/{spec,code}` (`openspec-speckit-workflow.md:114`). | not covered (plan.md:207-208, T006, T016-T018) |
 | `~/projects/openRepoTools/lanes-edit.sh` (and `$HOME/…`): 20 lines (first: `handoffs/xFactory/attachments/opsXfactory-1/briefs/DELTA-land-444-r2.md:9`, `…-r4.md:4`, `…-r5-MERGE-WORKER.md:5`; also `session-handoff-2026-09-13-lane-openRepoTools-3.md:296`) | Runs the helper from the checkout root. | `lanes-edit.sh` moves to `code/` (path `~/projects/openRepoTools/code/lanes-edit.sh`, inferred). | not covered |
 | installed-tool paths `~/.local/bin/<command>`: 82 lines in 30 files (first: `README.md:85`, `README.md:86`, `scripts/link-estates:16`); `~/.local/share/openRepoTools/installed.tsv`: 7 lines in 3 files (first: `migration-handoff-2026-10-06.md:17, 57, 114`) | Installed destinations. `README.md:85-86` and `scripts/link-estates:16-17` are the pre-Amendment-9 legacy map from `~/.local/bin/lane-start` and `lane-end` to `brett-wip/lanes/*`. They name no openRepoTools checkout path, and neither do the legacy copies `lanes/{lane-start,lane-end,lanes-edit.sh,test_lane_helpers.sh,README-lanes.md}`. | Destinations are expected to stay the same. | covered: l.75, l.86 |
-| host-local `/workspace/projects/.lane-state/openRepoTools-{1,2,3}/trees/*.yaml` (not in git), e.g. `…/openRepoTools-2/trees/c95160057-…-triad-reads.yaml:5` | 37 tree records carry `checkout: /workspace/projects/openRepoTools`. 19 of them have a `path:` under `/workspace/projects/openRepoTools/.claude/worktrees/`, and 18 under `.lane-worktrees/openRepoTools-N`, including lane 1's workBenches worktrees (`…wb-image-rebuild-key.yaml:5`). | After cutover, new worktrees are of leg repositories. The checkout is the assembly root (inferred). | not covered |
-| `/workspace/projects/openRepoTools/handoffs` → `/workspace/projects/brett-wip/handoffs/openRepoTools` (symlink placed by `link-estates:399-408`) | The checkout root holds an untracked symlink. It is ignored by `.git/info/exclude` (`/handoffs`), not by the tracked `.gitignore` (3 lines). | The assembly root keeps the path (in place, inferred). Its `.gitignore` gets the shape merge (adoption-plan.yaml:338). | not covered |
+| host-local `$LS/openRepoTools-{1,2,3}/trees/*.yaml` (not in git), e.g. `…/openRepoTools-2/trees/c95160057-…-triad-reads.yaml:5` | 37 tree records carry `checkout: $ORT`. 19 of them have a `path:` under `$ORT/.claude/worktrees/`, and 18 under `.lane-worktrees/openRepoTools-N`, including lane 1's workBenches worktrees (`…wb-image-rebuild-key.yaml:5`). | After cutover, new worktrees are of leg repositories. The checkout is the assembly root (inferred). | not covered |
+| `$ORT/handoffs` → `$BW/handoffs/openRepoTools` (symlink placed by `link-estates:399-408`) | The checkout root holds an untracked symlink. It is ignored by `.git/info/exclude` (`/handoffs`), not by the tracked `.gitignore` (3 lines). | The assembly root keeps the path (in place, inferred). Its `.gitignore` gets the shape merge (adoption-plan.yaml:338). | not covered |
 
 ## `~/.agents` and the home directory
 
@@ -221,7 +234,7 @@ openRepoShape pins nothing of openRepoTools.
 | `protocols/lane-collision-protocol-amendment-9.md:735, 943`; `-11.md:1511`; `-12.md:315`; `-14.md:185`; `-17.md:175`; `-18.md:222` | Name `docs/README-lanes.md` as the tooling's manual. | `docs/` moves to `openRepoTools-spec`. | not covered |
 | `protocols/lane-collision-protocol.md:659-666`; about 45 lines in amendments 8, 9, 11, 12, 16, 17 and 18 (first: `-8.md:194`, `-9.md:150`, `-11.md:1290`) | Name `openRepoTools --install` as the act that places the lane commands, skills and hooks. | Only the command name and act are read. | covered: l.75 |
 | `protocols/lane-collision-protocol-amendment-9.md:673, 1000` | `:673`: `--install` runs from the copies vendored at workBenches' `upstream-pin.yaml`. `:1000`: `gh api repos/opensoft/openRepoTools/contents/<f>` returned 404 for files not yet in the repository. | The contents-API paths at the assembly root change. | partial: l.54 covers the fetch. The protocol text is not covered. |
-| `protocols/openspec-speckit-workflow.md:114, 279-309`; `protocols/project-agent-bootstrap.md:96-131` | Single-repository `worktree_root: ../<repo>-worktrees`. Three-leg layout: `worktree_root: worktrees`, with `<root>/worktrees/<NNN>/{spec,code}`. | openRepoTools's feature worktrees move from `/workspace/projects/openRepoTools-worktrees/` to under the assembly root. | not covered (plan.md:207-208, T006) |
+| `protocols/openspec-speckit-workflow.md:114, 279-309`; `protocols/project-agent-bootstrap.md:96-131` | Single-repository `worktree_root: ../<repo>-worktrees`. Three-leg layout: `worktree_root: worktrees`, with `<root>/worktrees/<NNN>/{spec,code}`. | openRepoTools's feature worktrees move from `$ORTW/` to under the assembly root. | not covered (plan.md:207-208, T006) |
 | `protocols/project-agent-bootstrap.md:138-178, 221-226`; `openspec-speckit-workflow.md:57-66` | `setup-openspeckit` detects a triad from `project.yaml`. It writes `.specify/`, managed blocks, opsx commands and skill links at the root, and OpenSpec scaffolding in the spec leg. The first line of `AGENTS.md` is an invariant. The shared checkout's `.specify/`, `.claude/`, `.agents/` and `.codex/` are local and ignored (`.git/info/exclude`). | The bootstrap must be re-run in the assembly root after the legs exist. | not covered (T006; adoption-plan.yaml:346) |
 | `~/.agents/workspace.yaml:4-5` | `repository: opensoft/brett-wip`, `path: ~/projects/brett-wip`. No openRepoTools path. It is read by `openRepoTools:2211` and by `park`/`resume`. | Nothing in the file. | n/a |
 | `~/.agents/AGENTS.md:384`; `lane-collision-protocol.md:681`; `-14.md:93` | `${XDG_CONFIG_HOME:-$HOME/.config}/openRepoTools/lanes-index.conf`, a per-workstation configuration path. | Nothing layout-dependent (inferred). | n/a |
@@ -304,14 +317,14 @@ Total: 33 rows not covered. A further 7 are partial: workBenches 3, openRepoShap
 
 ## Could not read
 
-- **Brett Heap's worktree `/workspace/projects/openRepoTools-worktrees/004-migrate-to-triad`:** not entered, under the hard rule. The plan files were read from lane 2's worktree at the same commit, ff6f6a7.
+- **Brett Heap's worktree `$ORTW/004-migrate-to-triad`:** not entered, under the hard rule. The plan files were read from lane 2's worktree at the same commit, ff6f6a7.
 - **workBenches submodules** (`sysBenches/cloudBench`, which is modified, and `devBenches/*Bench`, `sysBenches/365Bench`): `git grep` at HEAD does not recurse into them. Not read.
 - **Other writers' trees:** workBenches feature worktrees (`speckit-worktrees/012`–`017`) and lane 1's `wb-*` worktrees. Not read.
 - **brett-wip:** the 215 untracked entries (`handoffs/xFactory/attachments/lane-opendox/…`) were not read. Commits after `ab88a10` (`466c3a8`, `349caef`) were not read.
 - **GitHub, live:** no network read was made. Every statement that a URL or contents path would 404 after the split is marked inferred. PR #187 and the #186 record were not read here.
 - **Raven** and any other workstation: not reachable from this bench.
 - **`~/.claude-profiles/shared/skills/*` and `shared/commands/*`:** not opened. The receipt shows the same digests as the `~/.claude` copies that were read.
-- **`git status` without `--no-optional-locks`** ran in `/workspace/projects/openRepoTools`, `/workspace/projects/workBenches` and `/workspace/projects/brett-wip`. The first two `.git/index` mtimes (`2026-10-07 04:28:20Z`, `2026-10-06 13:08:26Z`) predate this read. brett-wip's (`11:05:49Z`) postdates other writers' commits, and this read ran only `show`, `grep` and `rev-parse` there after 10:06Z.
+- **`git status` without `--no-optional-locks`** ran in `$ORT`, `$WB` and `$BW`. The first two `.git/index` mtimes (`2026-10-07 04:28:20Z`, `2026-10-06 13:08:26Z`) predate this read. brett-wip's (`11:05:49Z`) postdates other writers' commits, and this read ran only `show`, `grep` and `rev-parse` there after 10:06Z.
 
 ## Gate C follow-up list: outside changes and timing (2026-10-07T11:21Z)
 
@@ -340,20 +353,20 @@ All timings are judged from the reads above. Rows that rest on judgement are mar
 | S1 | openRepoShape `templates/workspace-root/AGENTS.md:32, 71-76, 91-95`; `README.md:16, 18, 31, 58`; `handoffs/README.md:24`; `lanes/LANES.md:19, 40`; `lanes/log/README.md:4, 6` | yes: openRepoShape (optional template wording) | ADDITIVE BEFORE CUTOVER (inferred) | The text names the project slug, which survives; a clause naming the spec leg after the split reads true before and after. It reaches WIP repositories only once the openRepoShape pin openRepoTools carries moves (`openRepoTools:2502-2517`). |
 | S2 | openRepoShape `scripts/shape_advisory.py:509` | no change (inferred) | — | `resume` still reads `workspace.yaml`, so the docstring stays true. |
 | S3 | openRepoShape provenance prose (`openRepoShape:19-25, 162`; `README.md:246, 1239`; `docs/handbook.html`; `AGENTS.md:429`; tests) | no change (inferred) | — | The slug survives as the assembly, and the files are still `opensoft/openRepoTools`' at project level. |
-| B1 | brett-wip `lanes/log/openRepoTools-{1,2,3}.md` `dir` records (52 lines) | yes: brett-wip, new STARTED/RESUMED lines written by `lane-start`/`lanes-edit.sh`, only if a lane's directory changes at rebinding. In-place adoption keeps `/workspace/projects/openRepoTools` (inferred). | WAITS FOR REAL LEGS | The recorded `dir` changes only through a lane rebinding (T018); past lines are history. |
+| B1 | brett-wip `lanes/log/openRepoTools-{1,2,3}.md` `dir` records (52 lines) | yes: brett-wip, new STARTED/RESUMED lines written by `lane-start`/`lanes-edit.sh`, only if a lane's directory changes at rebinding. In-place adoption keeps `$ORT` (inferred). | WAITS FOR REAL LEGS | The recorded `dir` changes only through a lane rebinding (T018); past lines are history. |
 | B2 | brett-wip other path-bearing log lines (10) | no change | — | The log is append-only history. |
 | B3 | brett-wip `lanes/LANES.md:1109, 1303, 2581` | no change (inferred) | — | The rows name brett-wip handoff paths, which do not move. |
 | B4 | brett-wip `lanes/LANES.md:36` (the other 11 README-lanes lines are dated records) | yes: brett-wip, the `LANES.md:36` header prose | ADDITIVE BEFORE CUTOVER (inferred) | A pointer naming the manual by project and by its spec-leg `docs/` location after the split is true in both states. Writes follow the file's HAZARD rule (`:1-8`). |
 | B5 | brett-wip `lanes/repos.tsv:52` (per-WIP override) | no: openRepoTools only (the shipped table, I3). The override need not change: "an override row … adds rows the shipped table does not carry" (`lanes-edit.sh:2440-2442`). | WAITS FOR REAL LEGS | Same reason as I3. |
-| B6 | brett-wip handoffs naming `/workspace/projects/openRepoTools` (145 lines) | no change (inferred) | — | In-place adoption keeps the checkout path, and the lines are dated records. |
+| B6 | brett-wip handoffs naming `$ORT` (145 lines) | no change (inferred) | — | In-place adoption keeps the checkout path, and the lines are dated records. |
 | B7 | brett-wip `.lane-worktrees/openRepoTools-{1,2,3}` lines (112) | no change (inferred) | — | The root is derived from the lane `dir`, which stays; the lines are dated records. |
 | B8 | brett-wip `openRepoTools-worktrees` lines (16), live in the canonical top blocks `session-handoff-2026-09-13-lane-openRepoTools-3.md:6`, `…-2026-09-16-lane-openRepoTools-1.md:8`, `…-2026-10-02-lane-openRepoTools-2.md:45` | yes: brett-wip, those top blocks, rewritten by each lane at its next handoff | WAITS FOR REAL LEGS | Live feature worktrees move to `<root>/worktrees/<NNN>/{spec,code}` only through T016-T017 translation and T018 rebinding. |
 | B9 | brett-wip `~/projects/openRepoTools/lanes-edit.sh` lines (20, all in `handoffs/xFactory/**`) | no change | — | All 20 are dated September records. The live hooks use `~/projects/xFactory/lanes-edit.sh`, which points at the installed copy. |
-| B10 | host `/workspace/projects/.lane-state/openRepoTools-{1,2,3}/trees/*.yaml` | no: openRepoTools only. These are host files written by `lanes-edit.sh`/`lane-worktrees`, not by hand. | WAITS FOR REAL LEGS | Records for leg worktrees can be written only once leg worktrees exist. |
-| B11 | host symlink `/workspace/projects/openRepoTools/handoffs` | no outside change. The host's `.git/info/exclude` (`/handoffs`) survives in-place adoption (inferred). An optional root `.gitignore` line would be an openRepoTools change. | ADDITIVE BEFORE CUTOVER (inferred) | An ignore line for `/handoffs` is valid in both shapes. |
+| B10 | host `$LS/openRepoTools-{1,2,3}/trees/*.yaml` | no: openRepoTools only. These are host files written by `lanes-edit.sh`/`lane-worktrees`, not by hand. | WAITS FOR REAL LEGS | Records for leg worktrees can be written only once leg worktrees exist. |
+| B11 | host symlink `$ORT/handoffs` | no outside change. The host's `.git/info/exclude` (`/handoffs`) survives in-place adoption (inferred). An optional root `.gitignore` line would be an openRepoTools change. | ADDITIVE BEFORE CUTOVER (inferred) | An ignore line for `/handoffs` is valid in both shapes. |
 | A1 | `~/.agents/AGENTS.md:327, 347-348, 367, 391-392, 419, 430, 443-444, 462, 488, 498` | yes: `~/.agents/AGENTS.md`, only the lines whose code has not landed; landed ones are history | WAITS FOR REAL LEGS (inferred) | A landing can name `openRepoTools-code` only once that repository exists and takes PRs. |
 | A2 | `~/.agents/protocols/lane-collision-protocol-amendment-9.md:735, 943`; `-11.md:1511`; `-12.md:315`; `-14.md:185`; `-17.md:175`; `-18.md:222` | yes: `~/.agents/protocols` (ratified texts; any edit is the protocol owner's) | ADDITIVE BEFORE CUTOVER (inferred) | A pointer naming the manual's location in both shapes is true before and after. |
-| A3 | host `/workspace/projects/openRepoTools/.specify/extensions/git/git-config.yml:83` (`worktree_root: ../openRepoTools-worktrees`, ignored) | yes: that host file. The `~/.agents` protocols already describe both layouts (`openspec-speckit-workflow.md:114`). | WAITS FOR REAL LEGS | `setup-openspeckit` writes `worktree_root: worktrees` only for a detected three-leg root (`project-agent-bootstrap.md:117, 163`). |
+| A3 | host `$ORT/.specify/extensions/git/git-config.yml:83` (`worktree_root: ../openRepoTools-worktrees`, ignored) | yes: that host file. The `~/.agents` protocols already describe both layouts (`openspec-speckit-workflow.md:114`). | WAITS FOR REAL LEGS | `setup-openspeckit` writes `worktree_root: worktrees` only for a detected three-leg root (`project-agent-bootstrap.md:117, 163`). |
 | A4 | host: the checkout root's ignored `.specify/`, `.claude/`, `.agents/`, `.codex/` | yes: those host files, through a `setup-openspeckit` re-run | WAITS FOR REAL LEGS | The bootstrap refuses a manifest whose spec leg is missing or empty (`project-agent-bootstrap.md:242-246`). |
 | A5 | installed `~/.claude/skills/handoff/SKILL.md:329` | no: openRepoTools only (`skills/handoff/SKILL.md`). It reaches `~/.claude*` through `--install` and workBenches through W1. | ADDITIVE BEFORE CUTOVER (inferred) | A third glob `"$dir"/worktrees/*/*` works today: an absent directory fails `[ -d "$worktree" ]` (`:330`) and is skipped. |
 | I1 | `openRepoTools:1218-1222` (`venv_note` comment) | no: openRepoTools only | ADDITIVE BEFORE CUTOVER (inferred) | A comment can name the manual in both places (adoption-plan.yaml:328 follow-up). |
@@ -379,19 +392,19 @@ All timings are judged from the reads above. Rows that rest on judgement are mar
 - `~/.agents` 2: `AGENTS.md:273-278` stays true through the root entry point, and the `amendment-9.md:673, 1000` text is a dated record.
 - installer 1: the stale counts in installer-design.md are an openRepoTools-side fix.
 
-**Erratum, no row changed.** The brett-wip row for `~/projects/openRepoTools/lanes-edit.sh` in the table above also cites `session-handoff-2026-09-13-lane-openRepoTools-3.md:296`. That line names `/workspace/projects/openRepoTools/handoffs/`, not `lanes-edit.sh`. All 20 `lanes-edit.sh` lines are in `handoffs/xFactory/**`. The command used to check this:
+**Erratum, no row changed.** The brett-wip row for `~/projects/openRepoTools/lanes-edit.sh` in the table above also cites `session-handoff-2026-09-13-lane-openRepoTools-3.md:296`. That line names `$ORT/handoffs/`, not `lanes-edit.sh`. All 20 `lanes-edit.sh` lines are in `handoffs/xFactory/**`. The command used to check this:
 
 ```sh
-git -C /workspace/projects/brett-wip show "ab88a10347fb605588643e7ea2e528217dab9a67:handoffs/openRepoTools/session-handoff-2026-09-13-lane-openRepoTools-3.md" | sed -n '296p'
+git -C $BW show "ab88a10347fb605588643e7ea2e528217dab9a67:handoffs/openRepoTools/session-handoff-2026-09-13-lane-openRepoTools-3.md" | sed -n '296p'
 ```
 
 The commands this revision added (read-only):
 
 ```sh
-git -C /workspace/projects/openRepoTools show c4864ac:lanes-edit.sh | sed -n '2440,2470p'
-git -C /workspace/projects/openRepoTools show c4864ac:repos.tsv | sed -n '8,14p;23p'
+git -C $ORT show c4864ac:lanes-edit.sh | sed -n '2440,2470p'
+git -C $ORT show c4864ac:repos.tsv | sed -n '8,14p;23p'
 grep -n 'missing or empty\|worktree_root: worktrees\|exits non-zero when the manifest' ~/.agents/protocols/project-agent-bootstrap.md
 grep -n '\[ -d "\$worktree" \]' ~/.claude/skills/handoff/SKILL.md
-ls /workspace/projects/openRepoTools/.specify/extensions/git/
-grep -n 'worktree_root\|checkout_mode\|base_branch' /workspace/projects/openRepoTools/.specify/extensions/git/git-config.yml
+ls $ORT/.specify/extensions/git/
+grep -n 'worktree_root\|checkout_mode\|base_branch' $ORT/.specify/extensions/git/git-config.yml
 ```
