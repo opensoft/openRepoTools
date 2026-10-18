@@ -87,8 +87,10 @@ jobs:
           python-version: '3.x'
 
       # pytest is the TEST RUNNER and is the only thing installed here.
-      # Nothing this repository ships is Python at all — three bash files —
-      # and the suite itself imports only the standard library.
+      # Nothing this repository ships needs a Python package: its commands are
+      # bash, or `python3` (`lanes-index`, `lane-worktrees`) importing only the
+      # standard library, and the suite itself imports only the standard
+      # library.
       # PINNED. A CI job that resolves "latest" on every run is a job whose
       # result depends on the day it ran, which is the same objection this
       # family makes to pinning a tag instead of a commit.

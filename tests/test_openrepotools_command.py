@@ -115,9 +115,16 @@ FETCHED = INSTALLED + SKILL_PATHS + COMMAND_PATHS
 #: different shapes, one with a matcher and one without, and one carrying
 #: `|| true` where the other must not — so this is the number that is
 #: hand-kept, and the assertions below are what notice when it stops being true.
+#:
+#: AND SINCE opensoft/openRepoTools#237 THE TWO ARE CONDITIONAL: `--install`
+#: merges them only once `~/projects/xFactory/lanes-edit.sh` — the path both
+#: call — exists, is executable and answers `guard`, which is the
+#: `claude-profile` launcher's own rule. So the count is `ALWAYS` (twenty-nine)
+#: on every run, plus `HOOK_ENTRIES` once that path answers; a test that means
+#: the thirty-one links it first, with `link_xfactory` below.
 HOOK_ENTRIES = 2
-ARTIFACTS = (len(INSTALLED) + 2 * len(SKILL_NAMES) + 2 * len(COMMAND_NAMES)
-             + HOOK_ENTRIES)
+ALWAYS = len(INSTALLED) + 2 * len(SKILL_NAMES) + 2 * len(COMMAND_NAMES)
+ARTIFACTS = ALWAYS + HOOK_ENTRIES
 
 USAGE_LINES = (
     "openRepoTools --install            install (or update) the seventeen estate and",
@@ -216,6 +223,23 @@ def run_cmd(*args: str, home: Path | None = None,
     return subprocess.run(["bash", str(COMMAND), *args], capture_output=True,
                           text=True, check=False, input="",
                           env=command_env(home, env), cwd=cwd)
+
+
+def link_xfactory(home: Path, target: Path | None = None) -> Path:
+    """`~/projects/xFactory/lanes-edit.sh` the way `link-estates` leaves it: a
+    symlink to the bin directory's `lanes-edit.sh` (#237).
+
+    The hook pair is merged only once that path answers `guard`, so a test
+    that asserts the pair is placed links it first. Made BEFORE the install it
+    is for, it dangles until that install's bin loop places the far end — which
+    is the order the gate asks in, after that loop. `target` names another far
+    end, for a test whose bin directory is not `~/.local/bin`.
+    """
+    link = home / "projects" / "xFactory" / "lanes-edit.sh"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(target if target is not None
+                    else home / ".local" / "bin" / "lanes-edit.sh")
+    return link
 
 
 # --- what it says about itself ---------------------------------------------
@@ -417,6 +441,7 @@ def test_installing_twice_changes_nothing(tmp_path):
     """Idempotent BY CONTENT, per file: the second run must not rewrite one
     that already holds these bytes, and must say so rather than claim an
     install."""
+    link_xfactory(tmp_path)
     first = run_cmd("--install", home=tmp_path)
     assert first.returncode == 0, first.stderr
     second = run_cmd("--install", home=tmp_path)
@@ -428,7 +453,9 @@ def test_installing_twice_changes_nothing(tmp_path):
     # invariant Amendment 9(b) names — derived from the three lists, never
     # restated, so a new skill or command moves it. It was eighteen until
     # Amendment 12 adoption act 3 put the name guard beside the SessionStart
-    # entry, which is the `HOOK_ENTRIES` term above.
+    # entry, which is the `HOOK_ENTRIES` term above — and the two count only
+    # because `link_xfactory` gave them a target that answers `guard` (#237);
+    # without it the count is `ALWAYS` (`tests/test_install_hook_gate.py`).
     assert second.stdout.count("unchanged") == ARTIFACTS
 
 
@@ -2138,8 +2165,9 @@ def test_bin_dir_overrides_where_it_lands(tmp_path):
 
 @NEEDS_JQ
 def test_install_says_how_to_put_it_on_path(tmp_path):
-    """ONE path note for the four of them: the directory is the same one, and
-    four copies of the same `export` line reads as four problems."""
+    """ONE path note for everything `--install` places: the directory is the
+    same one, and the same `export` line once per file reads as a problem for
+    each of them."""
     result = run_cmd("--install", home=tmp_path)
     assert f'export PATH="{tmp_path}/.local/bin:$PATH"' in result.stdout
     assert result.stdout.count("export PATH=") == 1
@@ -2198,7 +2226,7 @@ def fake_github(tmp_path, served_names) -> dict:
     """A fake `gh` serving exactly `served_names`, and a `curl` that refuses.
 
     Factored out of the fixture so one test can WITHHOLD a file: `--install`
-    places all four or none, and the only way to prove "or none" is a server
+    places all of them or none, and the only way to prove "or none" is a server
     that cannot answer for one of them.
     """
     served = tmp_path / "served"
@@ -2248,7 +2276,7 @@ def offline_github(tmp_path):
     `fetch_from_repo` tries `gh api` before the raw URL, so a `gh` that
     answers the calls the command makes is the whole of the server these tests
     need: `contents/<command>` comes back as this checkout's own bytes for each
-    of the four files `--install` places. `curl` is shadowed by a script that
+    of the files `--install` places. `curl` is shadowed by a script that
     exits 1 — belt and braces, so that a fake `gh` which stopped matching could
     never quietly become a real request to raw.githubusercontent.com.
     """
@@ -2260,7 +2288,7 @@ def test_install_places_all_nine_or_none(tmp_path):
     on its #83). One file at a time, dying on the first fetch that failed,
     leaves a person with a NEW `openRepoTools` and no `park` — a half-install
     that prints `installed at` and is not one — with nothing on screen to say
-    which of the four were missing.
+    which of them were missing.
 
     Run from stdin with `park` withheld: NOTHING is placed, nothing already
     there is replaced, and the refusal names the file it could not fetch.
@@ -2335,9 +2363,9 @@ def test_install_from_stdin_fetches_itself_into_a_live_workdir(offline_github,
     bash -s -- --install`.
 
     Run from stdin there is no file to copy from — not for this command, not
-    for its three siblings and not for the four lane helpers, the alias table
-    or the skill — so `install_commands` fetches each of the ten at this ref
-    into a temporary directory. THAT DIRECTORY HAS TO STILL BE THERE:
+    for its siblings and not for the lane helpers, the alias table or the
+    skill — so `install_commands` fetches each of them at this ref into a
+    temporary directory. THAT DIRECTORY HAS TO STILL BE THERE:
     `workdir()` sets its EXIT trap in the main shell rather than inside a
     `$(...)` subshell, whose trap would fire the instant the substitution
     closed and take the directory away before a single fetched byte had landed
