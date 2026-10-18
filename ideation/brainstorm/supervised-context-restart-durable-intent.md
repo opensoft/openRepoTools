@@ -28,7 +28,7 @@ operation_id: <uuid>
 state: pending
 agent: claude
 profile: team-01l
-directory: /workspace/projects/openRepoTools
+directory: ~/projects/openRepoTools
 handoff: handoffs/openRepoTools/session-handoff-2026-09-15-lane-openRepoTools-3.md
 mode: fresh-from-handoff
 old_transcript: <uuid>
