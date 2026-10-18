@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -54,8 +55,10 @@ WRAPPER = REPO / "tests" / "run.sh"
 #: `.gitattributes`, which the table also sends to the assembly and which the
 #: code leg must carry too — git never applies the assembly's inside a
 #: submodule (conftest's `GUIDANCE_DOCUMENTS` note) — so a fixture leg keeps
-#: it, as the leg is meant to be (Copilot on #190).
-ASSEMBLY_FILES = ("README.md", "AGENTS.md", "CLAUDE.md", "LICENSE", ".gitignore")
+#: it, as the leg is meant to be (Copilot on #190). `LICENSE` and `.gitignore`
+#: likewise: T006's `code-0001` gives the code leg its own copy of each, so a
+#: fixture leg keeps them too (#193 item 7).
+ASSEMBLY_FILES = ("README.md", "AGENTS.md", "CLAUDE.md")
 SPEC_TREES = ("docs", "openspec", "specs", "ideation")
 
 INSTALL_LINE = (
@@ -102,8 +105,8 @@ legs:
     path: code
 """
 
-#: Git in a fixture: an identity of its own, and file transport allowed for
-#: the one local clone of the dependency.
+#: Git in a fixture: an identity of its own. The one clone of the dependency
+#: is a local-path clone, which needs no `protocol.file.allow` (#193 item 7).
 GIT_ENV = {"GIT_AUTHOR_NAME": "openRepoTools CI",
            "GIT_AUTHOR_EMAIL": "ci@openrepotools.invalid",
            "GIT_COMMITTER_NAME": "openRepoTools CI",
@@ -330,8 +333,34 @@ AGENTS_CAP_TEST = "test_agents_md_is_short_enough_to_be_read"
 README_CAP_TEST = "test_readme_is_short_enough_to_be_read"
 
 
+PIN_RULES_TEST = "test_agents_md_names_the_pin_rules"
+
+
+@pytest.mark.parametrize("prefixed, outcome", [
+    pytest.param(True, "passed", id="the-assemblys-code-prefixed-rules"),
+    pytest.param(False, "failure", id="todays-spelling-at-an-assembly-root"),
+])
+def test_the_pin_rules_are_read_with_the_assemblys_code_prefix(tmp_path, prefixed, outcome):
+    """At an assembly root the pin rules name the submodule through the code
+    mount, `code/upstream/openRepoShape` and `git -C code submodule update
+    …`, as T006's `assembly-0001` writes them; today's spelling there names a
+    path the assembly does not have, and FAILS (#193 item 14). Red at
+    `fb77bed`, which held the assembly's AGENTS.md to today's spelling."""
+    where, init = (("code/", "git -C code submodule update")
+                   if prefixed else ("", "git submodule update"))
+    root = assembly(tmp_path / "asm")
+    (root / "AGENTS.md").write_text(
+        f"1. **Never edit anything under `{where}upstream/openRepoShape` in place.**\n"
+        "2. **Never pin a commit that is not on that repository's `main`.**\n"
+        "3. **The digest is RECOMPUTED, never adjusted.**\n"
+        f"    {init} --init upstream/openRepoShape\n", encoding="utf-8")
+    run = nested(tmp_path, {"OPENREPOTOOLS_ASSEMBLY_ROOT": str(root)},
+                 PIN_RULES_TEST, "test_repo_hygiene.py")
+    assert run.outcome(PIN_RULES_TEST)[0] == outcome, run.output[-2000:]
+
+
 def test_the_length_caps_are_the_assembly_roots_where_one_is_named(tmp_path):
-    """At an assembly root the two caps are 340 and 510 — this repository's 316
+    """At an assembly root the two caps are 347 and 510 — this repository's 323
     and 486 plus the twenty-four lines each that T006's root guidance adds
     there — and they are asked of the ASSEMBLY's files: one line over FAILS,
     the cap itself passes. Red at `origin/main`, which counted this checkout's
@@ -339,9 +368,9 @@ def test_the_length_caps_are_the_assembly_roots_where_one_is_named(tmp_path):
     def lines(n: int) -> str:
         return "".join(f"line {i}\n" for i in range(n))
     at_cap = assembly(tmp_path / "at", readme=lines(510))
-    (at_cap / "AGENTS.md").write_text(lines(340), encoding="utf-8")
+    (at_cap / "AGENTS.md").write_text(lines(347), encoding="utf-8")
     over = assembly(tmp_path / "over", readme=lines(511))
-    (over / "AGENTS.md").write_text(lines(341), encoding="utf-8")
+    (over / "AGENTS.md").write_text(lines(348), encoding="utf-8")
     select = f"{AGENTS_CAP_TEST} or {README_CAP_TEST}"
     green = nested(tmp_path, {"OPENREPOTOOLS_ASSEMBLY_ROOT": str(at_cap)},
                    select, "test_repo_hygiene.py")
@@ -349,7 +378,7 @@ def test_the_length_caps_are_the_assembly_roots_where_one_is_named(tmp_path):
         assert green.outcome(name)[0] == "passed", green.output[-3000:]
     red = nested(tmp_path, {"OPENREPOTOOLS_ASSEMBLY_ROOT": str(over)},
                  select, "test_repo_hygiene.py")
-    for name, said in ((AGENTS_CAP_TEST, "AGENTS.md is 341 lines; the cap is 340"),
+    for name, said in ((AGENTS_CAP_TEST, "AGENTS.md is 348 lines; the cap is 347"),
                        (README_CAP_TEST, "README.md is 511 lines; the cap is 510")):
         outcome, message = red.outcome(name)
         assert outcome == "failure" and said in message, (
@@ -379,33 +408,261 @@ def test_the_lane_suite_fails_a_missing_manual_by_name():
             f"in the three lines above it:\n{guard}")
 
 
+# --- the lane suite's manual sections, read and run ---------------------------
+
+SUITE = REPO / "tests" / "test_lane_helpers.sh"
+MANUAL_GUARD = re.compile(r'^if \[ -n "\$LANE_MANUAL" \]$')
+MANUAL_USE = re.compile(r'\$\{?(?:ln_doc|ss_doc)\b')
+HEREDOC = re.compile(r"""<<(-?)\s*\\?(['"]?)([A-Za-z_][A-Za-z0-9_]*)\2""")
+
+
+def shell_commands(line: str) -> list:
+    """`line` cut at each `;` outside quotes, stopping at a `#` comment: a
+    reading of the suite's one-line `if …; then …` / `else …; fi` forms that
+    is enough to follow their nesting, and no more than that."""
+    out, cur, quote, i = [], [], None, 0
+    while i < len(line):
+        ch = line[i]
+        if quote:
+            cur.append(ch)
+            if ch == "\\" and quote == '"' and i + 1 < len(line):
+                cur.append(line[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+            cur.append(ch)
+        elif ch == "\\" and i + 1 < len(line):
+            cur.append(line[i:i + 2])
+            i += 2
+            continue
+        elif ch == "#" and (not cur or "".join(cur)[-1:].isspace()):
+            break
+        elif ch == ";":
+            out.append("".join(cur).strip())
+            cur = []
+        else:
+            cur.append(ch)
+        i += 1
+    out.append("".join(cur).strip())
+    return [c for c in out if c]
+
+
+def heredoc_in(line: str):
+    """The first here-document `line` opens outside quotes, as (dash, word):
+    its body is not shell this reading follows (the suite writes fakes and
+    Python through them)."""
+    quote, i = None, 0
+    while i < len(line):
+        ch = line[i]
+        if quote:
+            if ch == "\\" and quote == '"':
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "\\":
+            i += 2
+            continue
+        elif ch == "#" and (i == 0 or line[i - 1].isspace()):
+            return None
+        elif line.startswith("<<", i) and not line.startswith("<<<", i):
+            found = HEREDOC.match(line, i)
+            return (found.group(1) == "-", found.group(3)) if found else None
+        i += 1
+    return None
+
+
+def manual_reads(lines: list):
+    """Follow the suite's `if`/`elif`/`else`/`fi` nesting, here-documents
+    skipped. Returns each use of the manual's text (`$ss_doc`, `$ln_doc`, in
+    either spelling) with whether the THEN branch of an
+    `if [ -n "$LANE_MANUAL" ]` holds it; each such section's first and last
+    line; and the frames still open at the end, which must be none for the
+    reading to be trusted."""
+    stack, uses, blocks, heredoc = [], [], [], None
+    for n, raw in enumerate(lines):
+        if heredoc is not None:
+            if (raw.lstrip("\t") if heredoc[0] else raw) == heredoc[1]:
+                heredoc = None
+            continue
+        if raw.lstrip().startswith("#"):
+            continue
+        opened = heredoc_in(raw)
+        for cmd in shell_commands(raw):
+            word, _, rest = cmd.partition(" ")
+            rest = rest.strip()
+            if word in ("then", "do") and rest:
+                cmd = rest
+                word, _, rest = cmd.partition(" ")
+                rest = rest.strip()
+            if word == "if":
+                stack.append([bool(MANUAL_GUARD.match(cmd)), False, n])
+                continue
+            if word in ("elif", "else"):
+                if stack:
+                    stack[-1][1] = True
+                if word == "elif" or not rest:
+                    continue
+                cmd = rest
+            if word == "fi":
+                if stack:
+                    frame = stack.pop()
+                    if frame[0]:
+                        blocks.append((frame[2], n))
+                continue
+            if MANUAL_USE.search(cmd):
+                uses.append((n, any(f[0] and not f[1] for f in stack)))
+        if opened:
+            heredoc = opened
+    return uses, blocks, stack
+
+
 def test_the_lane_suite_reads_the_manual_only_inside_its_guard():
-    """Every use of the manual's text in `tests/test_lane_helpers.sh` sits
-    inside an `if [ -n "$LANE_MANUAL" ]` guard, before that guard's `else` or
-    `fi`. `ss_doc` and `ln_doc` are bound only there, and the suite runs under
-    `set -u`. So one use outside a guard does not skip in a code leg with no
-    spec root: it ABORTS the whole suite with `ln_doc: unbound variable`.
-    Lane openRepoTools-3's review of #190 reproduced that, and so did this
-    work's own standalone-leg proof. Held on the text, like its neighbour
-    above."""
-    lines = (REPO / "tests" / "test_lane_helpers.sh").read_text(
-        encoding="utf-8").splitlines()
-    guard = 'if [ -n "$LANE_MANUAL" ]; then'
-    uses = [i for i, line in enumerate(lines)
-            if ("$ln_doc" in line or "$ss_doc" in line)
-            and not line.lstrip().startswith("#")]
-    assert len(uses) >= 16, (
-        f"expected the manual's sixteen uses, found {len(uses)}")
-    unguarded = []
-    for i in uses:
-        j = i - 1
-        while j >= 0 and lines[j] not in (guard, "else", "fi"):
-            j -= 1
-        if j < 0 or lines[j] != guard:
-            unguarded.append(f"{i + 1}: {lines[i].strip()}")
+    """Every use of the manual's text in `tests/test_lane_helpers.sh` sits in
+    the THEN branch of an `if [ -n "$LANE_MANUAL" ]` guard. `ss_doc` and
+    `ln_doc` are bound only there, and the suite runs under `set -u`, so one
+    use outside a guard does not skip in a code leg with no spec root: it
+    ABORTS the whole suite with `ln_doc: unbound variable` (lane
+    openRepoTools-3's review of #190; fixed in `b50f197`).
+
+    The nesting is FOLLOWED, not guessed from the nearest line spelled `fi`:
+    the first reading missed a `${ln_doc}` and an indented closing `fi` (the
+    review of `b50f197`, point 6; #193 item 7). The reading planted with both
+    is held by the test below."""
+    uses, blocks, still_open = manual_reads(
+        SUITE.read_text(encoding="utf-8").splitlines())
+    assert not still_open, (
+        f"the suite's if/fi nesting could not be followed past line "
+        f"{still_open[0][2] + 1}, so where the manual is read cannot be vouched for")
+    assert len(uses) >= 16 and len(blocks) >= 3, (
+        f"expected the manual's sixteen uses in three guarded sections, found "
+        f"{len(uses)} in {len(blocks)}")
+    unguarded = [n + 1 for n, guarded in uses if not guarded]
     assert not unguarded, (
-        "the manual's text is used outside its guard, which aborts a run with "
-        "no spec root under `set -u`:\n" + "\n".join(unguarded))
+        f"the manual's text is used outside its guard at line(s) {unguarded}, "
+        f"which aborts a run with no spec root under `set -u`")
+
+
+@pytest.mark.parametrize("text, unguarded", [
+    pytest.param(
+        'if [ -n "$LANE_MANUAL" ]; then\n'
+        'ln_doc="$(cat "$LANE_MANUAL" 2>/dev/null || :)"\n'
+        'has "a" "$ln_doc" "x"\n'
+        'fi\n'
+        'has "b" "${ln_doc}" "y"\n', [5], id="braced-use-after-the-guard"),
+    pytest.param(
+        'if [ -n "$LANE_MANUAL" ]; then\n'
+        '  ln_doc="$(cat "$LANE_MANUAL" 2>/dev/null || :)"\n'
+        '  fi\n'
+        'has "c" "$ln_doc" "z"\n', [4], id="indented-closing-fi"),
+    pytest.param(
+        'if [ -n "$LANE_MANUAL" ]; then\n'
+        'ss_doc="$(cat "$LANE_MANUAL")"\n'
+        'else\n'
+        '  has "d" "$ss_doc" "w"\n'
+        'fi\n', [4], id="use-in-the-guards-else"),
+    pytest.param(
+        'if [ -n "$LANE_MANUAL" ]; then\n'
+        'if [ -r "$LANE_MANUAL" ]; then ok "r"\n'
+        'else bad "r" "no readable file"; fi\n'
+        'cat <<EOF\n'
+        'fi\n'
+        'EOF\n'
+        'has "e" "${ln_doc}" "v"\n'
+        'fi\n', [], id="nested-if-and-a-heredoc-inside-the-guard"),
+])
+def test_the_guard_reading_follows_the_nesting_not_a_spelling(text, unguarded):
+    """The planted cases the first reading got wrong (a braced use after the
+    guard, an indented closing `fi`) and two it must keep right."""
+    uses, _blocks, still_open = manual_reads(text.splitlines())
+    assert not still_open
+    assert [n + 1 for n, guarded in uses if not guarded] == unguarded
+
+
+def suite_helpers() -> str:
+    """The suite's own one-line assertion helpers, verbatim, and a stand-in
+    for the `excerpt` its `has` calls."""
+    wanted = re.compile(r"^(ok|bad|skip|has|hasnt)\(\) *\{")
+    found = [line for line in SUITE.read_text(encoding="utf-8").splitlines()
+             if wanted.match(line)]
+    assert len(found) == 5, f"expected the suite's five helpers, found {found}"
+    return "\n".join(found + ["excerpt() { printf '%.200s' \"$1\"; }"])
+
+
+@WINDOWS_SKIP
+@pytest.mark.skipif(shutil.which("bash") is None, reason="the suite is bash")
+def test_the_lane_suites_manual_sections_fail_skip_or_pass_by_name(tmp_path):
+    """THE MISSING-MANUAL BRANCH, RUN (#193 item 3; until now only its text
+    was checked). The suite's three `$LANE_MANUAL` sections, cut out of it by
+    the reading above and run under its own `set -uo pipefail` and its own
+    helpers:
+
+      * a manual that is NOT THERE is a FAIL naming the path, in each section
+        that reads it — never an empty string the quotes then misread;
+      * NO manual (no spec root) is three named skips, and the run reaches
+        its end — never `unbound variable`;
+      * the run's own manual, where it has one, passes every quote."""
+    lines = SUITE.read_text(encoding="utf-8").splitlines()
+    _uses, blocks, _open = manual_reads(lines)
+    body = "\n".join("\n".join(lines[a:b + 1]) for a, b in blocks)
+    script = tmp_path / "manual-sections.sh"
+    script.write_text(
+        "set -uo pipefail\npass=0; fail=0; skipped=0\n" + suite_helpers()
+        + '\nLANE_MANUAL="$MANUAL_UNDER_TEST"\n' + body
+        + '\nprintf "END %s passed, %s failed, %s skipped\\n" '
+          '"$pass" "$fail" "$skipped"\n', encoding="utf-8")
+
+    def run(manual: str) -> str:
+        env = dict(os.environ, MANUAL_UNDER_TEST=manual)
+        proc = subprocess.run([shutil.which("bash") or "bash", str(script)],
+                              env=env, capture_output=True, text=True,
+                              timeout=60, check=False)
+        out = proc.stdout + proc.stderr
+        assert proc.returncode == 0 and "\nEND " in "\n" + out, (
+            f"the manual sections did not run to their end with "
+            f"LANE_MANUAL={manual!r}:\n{out}")
+        assert "unbound variable" not in out, out
+        return out
+
+    missing = tmp_path / "no-spec-leg" / "docs" / "README-lanes.md"
+    out = run(str(missing))
+    named = out.count(f"no readable file at {missing}")
+    assert named == 2 and "\nFAIL " in out, (
+        f"a missing manual must FAIL naming {missing} in both sections that "
+        f"check it; it was named {named} time(s):\n{out}")
+    out = run("")
+    assert "END 0 passed, 0 failed, 3 skipped" in out, out
+    assert out.count("no spec root in this run") == 3, out
+    manual = conftest.ROOTS.root_of("spec")
+    if manual is not None:
+        out = run(str(manual / "docs" / "README-lanes.md"))
+        assert " 0 failed, 0 skipped" in out, out
+
+
+
+def test_a_redirected_run_names_its_roots_where_quiet_output_keeps_them(tmp_path):
+    """A run whose roots a variable named says them at its foot, under the
+    `-q` every CI job and `tests/run.sh` use. The report header that said them
+    is dropped by `-q`, so a run pointed at another tree was silent about it
+    (lane openRepoTools-3's review of #190, #193 item 6). A run on today's
+    layout with no variable prints nothing new."""
+    root = assembly(tmp_path / "asm")
+    named = nested(tmp_path, {"OPENREPOTOOLS_ASSEMBLY_ROOT": str(root)},
+                   README_TEST, "test_repo_hygiene.py")
+    assert named.outcome(README_TEST)[0] == "passed", named.output[-2000:]
+    assert "openRepoTools test roots" in named.output, named.output[-2000:]
+    assert f"assembly: {root.resolve()} (OPENREPOTOOLS_ASSEMBLY_ROOT)" in named.output, (
+        named.output[-2000:])
+    plain = nested(tmp_path, {}, README_TEST, "test_repo_hygiene.py")
+    if conftest.ROOTS.layout == "single" and not conftest.ROOTS.how:
+        assert "openRepoTools test roots" not in plain.output, (
+            "today's layout, with no variable, printed the roots section:\n"
+            + plain.output[-2000:])
 
 
 def test_a_standalone_code_leg_skips_what_only_the_assembly_carries(tmp_path):
@@ -428,6 +685,41 @@ def test_a_standalone_code_leg_skips_what_only_the_assembly_carries(tmp_path):
     assert "the ASSEMBLY root is absent" in composed.output, composed.output[-3000:]
     assert "the SPEC root is absent" in composed.output, composed.output[-3000:]
     assert not composed.outcomes, "a refused session ran tests anyway"
+
+
+#: The command's half of three mixed hygiene tests, and the line each asserts.
+COMMAND_HALVES = (
+    ("test_the_documents_say_what_bare_park_does_now", "park",
+     "PARKED EVERY ESTATE unasked"),
+    ("test_the_documents_say_what_status_is_and_is_not", "status",
+     "--no-optional-locks"),
+    ("test_the_documents_say_what_a_bare_lanes_lists", "openRepoTools",
+     "lanes [--all] [--fetch]"),
+)
+
+
+def test_a_standalone_code_leg_still_checks_each_commands_own_half(tmp_path):
+    """Where a test reads a command and the documents about it, the command's
+    half is asserted FIRST, so a standalone code leg — which skips the
+    documents — still checks the command (the #190 review). A leg whose three
+    commands lost their lines FAILS those three tests rather than skipping
+    them with the documents."""
+    leg = code_leg(tmp_path / "code")
+    for _, name, line in COMMAND_HALVES:
+        path = leg / name
+        text = path.read_text(encoding="utf-8")
+        assert line in text, f"{name} no longer carries {line!r}; this test is stale"
+        path.write_text(text.replace(line, "(removed for the fixture)"),
+                        encoding="utf-8")
+    run = nested(tmp_path, {"OPENREPOTOOLS_CODE_ROOT": str(leg)},
+                 " or ".join(test for test, _, _ in COMMAND_HALVES),
+                 "test_repo_hygiene.py")
+    for test, name, _ in COMMAND_HALVES:
+        outcome, message = run.outcome(test)
+        assert outcome == "failure", (
+            f"{test} {outcome} on a leg whose {name} lost its line: the "
+            f"command's half was not asserted before the documents' skip:\n"
+            f"{message}\n{run.output[-2000:]}")
 
 
 def test_the_pin_checks_read_the_code_roots_own_git_identity(tmp_path):
@@ -537,6 +829,16 @@ def test_the_wrapper_passes_a_relative_root_through_as_an_absolute_one(tmp_path)
     assert seen["OPENREPOTOOLS_SPEC_ROOT"] == f"{caller.resolve()}/asm/spec", seen
     assert seen["OPENREPOTOOLS_CODE_ROOT"] == str(tmp_path / "elsewhere"), seen
     assert seen["OPENREPOTOOLS_COMPOSED"] == "1", seen
+    # A QUOTED `~` is the home directory, as conftest's `expanduser` reads it,
+    # never a directory named `~` under the caller (#193 item 7).
+    env.update(OPENREPOTOOLS_SPEC_ROOT="~/spec", OPENREPOTOOLS_ASSEMBLY_ROOT="~")
+    proc = subprocess.run([shutil.which("bash") or "bash", str(WRAPPER), "-k", "x"],
+                          cwd=str(caller), env=env, capture_output=True, text=True,
+                          stdin=subprocess.DEVNULL, timeout=120, check=False)
+    assert proc.returncode == 0, proc.stderr
+    seen = dict(line.split("=", 1) for line in log.read_text().splitlines())
+    assert seen["OPENREPOTOOLS_SPEC_ROOT"] == f"{tmp_path / 'home'}/spec", seen
+    assert seen["OPENREPOTOOLS_ASSEMBLY_ROOT"] == str(tmp_path / "home"), seen
 
 
 # --- the resolver, asked directly -------------------------------------------
@@ -569,6 +871,10 @@ def test_a_mounted_code_leg_finds_its_assembly_and_spec_leg(tmp_path):
         "the line-ending rule is the code root's: git does not read a "
         "superproject's attributes into a submodule")
     assert roots.path_for("tests/run.sh") == code.resolve() / "tests/run.sh"
+    for own in ("LICENSE", ".gitignore"):
+        assert roots.path_for(own) == code.resolve() / own, (
+            f"{own} is the code root's: the code leg carries its own (T006's "
+            f"code-0001), and it is the copy that governs the leg's files")
     assert [role for role, _ in roots.tracked_roots()] == ["code", "assembly", "spec"]
 
 
@@ -578,6 +884,99 @@ def test_a_directory_that_does_not_mount_the_code_root_is_not_its_assembly(tmp_p
     root = assembly(tmp_path / "asm")              # no repository, no gitlink
     code = code_leg(root / "code")
     assert conftest.resolve_roots({}, code).assembly is None
+
+
+def paired_triad(tmp_path: Path, *, spec_worktree: bool = True):
+    """An assembly with both legs mounted, and a feature's paired worktrees
+    `worktrees/001-feature/{code,spec}` made from those legs, as T006's root
+    guidance and the code leg's AGENTS.md lay them out."""
+    code = code_leg(tmp_path / "asm" / "code", repository=True)
+    spec = spec_leg(tmp_path / "asm" / "spec", repository=True)
+    root = assembly(tmp_path / "asm", code=code, spec=spec, repository=True)
+    feature = root / "worktrees" / "001-feature"
+    run_git(code, "worktree", "add", "-q", "-b", "001-feature",
+            str(feature / "code"))
+    if spec_worktree:
+        run_git(spec, "worktree", "add", "-q", "-b", "001-feature",
+                str(feature / "spec"))
+    return root, feature
+
+
+def test_a_paired_feature_worktree_finds_its_assembly_and_its_own_spec(tmp_path):
+    """The paired layout: a feature's code worktree at
+    `<assembly>/worktrees/<feature>/code` reads the assembly's README and its
+    own spec worktree's manual. Discovery returned None there, so every
+    document test would skip in a feature worktree after Gate C (lane
+    openRepoTools-3's review of #190, #193 item 5)."""
+    root, feature = paired_triad(tmp_path)
+    roots = conftest.resolve_roots({}, feature / "code")
+    assert roots.refusal() is None, roots.refusal()
+    assert roots.assembly == root.resolve(), roots.describe()
+    assert roots.spec == (feature / "spec").resolve(), roots.describe()
+    assert roots.path_for("README.md") == root.resolve() / "README.md"
+    assert roots.path_for("docs/README-lanes.md") == (
+        feature / "spec" / "docs" / "README-lanes.md").resolve()
+    assert "paired feature worktree" in roots.how["assembly"], roots.how
+    # Without a spec worktree of its own, the feature reads the mounted one.
+    root2, feature2 = paired_triad(tmp_path / "two", spec_worktree=False)
+    roots2 = conftest.resolve_roots({}, feature2 / "code")
+    assert roots2.spec == (root2 / "spec").resolve(), roots2.describe()
+
+
+def test_only_the_two_designed_places_are_an_assemblys_code(tmp_path):
+    """Discovery stays bounded to the mount and the paired worktree: a
+    repository that is not the code leg's, at the paired path, is not found,
+    and neither is the code leg's own worktree anywhere but `worktrees/`."""
+    root, feature = paired_triad(tmp_path)
+    # A repository of its own with a history of its own: built from the same
+    # files, but never holding the commit the assembly pins (a fixture leg
+    # committed in the same second with the same tree would BE that commit).
+    stranger = code_leg(root / "worktrees" / "002-stranger" / "code")
+    (stranger / "STRANGER").write_text("not the code leg\n", encoding="utf-8")
+    run_git(stranger, "init", "-q")
+    run_git(stranger, "add", "-A")
+    run_git(stranger, "commit", "-q", "-m", "a history of its own")
+    assert conftest.resolve_roots({}, stranger).assembly is None, (
+        "a checkout that does not hold the pinned commit was taken for the leg")
+    elsewhere = root / "elsewhere" / "001-feature" / "code"
+    run_git(root / "code", "worktree", "add", "-q", "-b", "elsewhere",
+            str(elsewhere))
+    assert conftest.resolve_roots({}, elsewhere).assembly is None, (
+        "a worktree outside worktrees/ was taken for a paired one")
+    # Found is not accepted: a feature's commits are not the pinned leg, and
+    # a composed run there is refused for that, naming it.
+    run_git(feature / "code", "commit", "-q", "--allow-empty", "-m", "feature work")
+    composed = conftest.resolve_roots({"OPENREPOTOOLS_COMPOSED": "1"},
+                                      feature / "code").refusal()
+    assert composed and "composed acceptance is for the pinned code leg" in composed, (
+        composed)
+
+
+def test_a_stale_manifest_under_a_feature_does_not_hide_its_assembly(tmp_path):
+    """An ancestor carrying the assembly's two markers but failing the rest
+    (not a repository's top level, no gitlink) is skipped, not the end of the
+    search: discovery stopped there and found nothing (Copilot round 2 on
+    #195)."""
+    root, feature = paired_triad(tmp_path)
+    (feature / "contracts").mkdir()
+    (feature / "contracts" / "code-pin.yaml").write_text(
+        LEG_PIN.format(role="code", commit="0" * 40, digest="0" * 64), encoding="utf-8")
+    (feature / "project.yaml").write_text(PROJECT_YAML, encoding="utf-8")
+    roots = conftest.resolve_roots({}, feature / "code")
+    assert roots.assembly == root.resolve(), roots.describe()
+
+
+def test_a_stray_spec_tree_beside_a_paired_code_worktree_is_not_its_spec(tmp_path):
+    """The feature's own spec worktree must be a repository holding the spec
+    commit the assembly pins, as the paired code worktree must. A plain `docs/`
+    there is not it, and the mounted spec leg is read instead (Copilot round 2
+    on #195)."""
+    root, feature = paired_triad(tmp_path, spec_worktree=False)
+    stray = spec_leg(feature / "spec")              # files only, no repository
+    assert (stray / "docs" / "README-lanes.md").is_file()
+    roots = conftest.resolve_roots({}, feature / "code")
+    assert roots.spec == (root / "spec").resolve(), roots.describe()
+    assert roots.how["spec"] == "the assembly's spec leg", roots.how
 
 
 def test_the_variables_name_the_roots(tmp_path):
@@ -611,6 +1010,35 @@ def test_a_variable_that_names_the_wrong_thing_is_refused_in_either_mode(
     target = value if variable == "OPENREPOTOOLS_COMPOSED" else str(tmp_path / value)
     refusal = conftest.resolve_roots({variable: target}, code).refusal()
     assert refusal and said in refusal and variable in refusal, refusal
+
+
+@pytest.mark.parametrize("variable, role", [
+    ("OPENREPOTOOLS_SPEC_ROOT", "SPEC"),
+    ("OPENREPOTOOLS_ASSEMBLY_ROOT", "ASSEMBLY"),
+])
+def test_composed_names_the_value_a_rejected_root_was_named_by(
+        tmp_path, variable, role):
+    """A root that was NAMED and refused is absent because of that value,
+    and the composed refusal says so: never that its variable "is unset", or
+    that there is "no" such variable, when the run set it (#193 item 15, lane
+    openRepoTools-2's reading of the composed-run logs). The refusal itself was
+    right before; only its words were wrong."""
+    code = code_leg(tmp_path / "asm" / "code", repository=True)
+    spec = spec_leg(tmp_path / "asm" / "spec", repository=True)
+    assembly(tmp_path / "asm", code=code, spec=spec, repository=True)
+    wrong = tmp_path / "not-a-root"
+    wrong.mkdir()
+    refusal = conftest.resolve_roots(
+        {"OPENREPOTOOLS_COMPOSED": "1", variable: str(wrong)}, code).refusal()
+    assert refusal, "a named root that is not one must be refused"
+    absent = [part for part in refusal.split("; ")
+              if part.startswith(f"the {role} root is absent")]
+    assert absent, refusal
+    assert f"{variable} names {wrong}" in absent[0], absent[0]
+    for misnomer in (f"{variable} is unset", f"no {variable}"):
+        assert misnomer not in refusal, (
+            f"the refusal says {misnomer!r} although the run named "
+            f"{variable}={wrong}:\n{refusal}")
 
 
 def test_composed_names_every_absent_context(tmp_path):
@@ -660,6 +1088,49 @@ def test_composed_refuses_a_leg_whose_status_cannot_be_read(tmp_path):
     (code / ".git" / "index").write_bytes(b"not an index")
     refusal = conftest.resolve_roots(composed, code).refusal()
     assert refusal and "answered no `git status`" in refusal, refusal
+
+
+def test_composed_refuses_a_pin_that_names_another_commit_than_the_gitlink(tmp_path):
+    """The leg pin's `commit:` and the gitlink are one invariant. A pin moved
+    off the gitlink, with the gitlink and the leg's HEAD still agreeing, was
+    accepted (`refusal()` was None) while `scripts/validate-pins.py` exits 1 on
+    the same tree (Copilot round 2 on #190, #193 item 4). Refused now, naming
+    the pin, the gitlink and the mount."""
+    code = code_leg(tmp_path / "asm" / "code", repository=True)
+    spec = spec_leg(tmp_path / "asm" / "spec", repository=True)
+    root = assembly(tmp_path / "asm", code=code, spec=spec, repository=True)
+    for probe in ("scripts/repo_shape.py", "templates/workspace-root/README.md"):
+        target = code / "upstream" / "openRepoShape" / probe
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# a probe\n", encoding="utf-8")
+    composed = {"OPENREPOTOOLS_COMPOSED": "1"}
+    assert conftest.resolve_roots(composed, code).refusal() is None, (
+        conftest.resolve_roots(composed, code).refusal())
+    pin = root / "contracts" / "code-pin.yaml"
+    head = run_git(code, "rev-parse", "HEAD")
+    pin.write_text(pin.read_text(encoding="utf-8").replace(head, "1" * 40),
+                   encoding="utf-8")
+    refusal = conftest.resolve_roots(composed, code).refusal()
+    assert refusal and "contracts/code-pin.yaml pins " + "1" * 40 in refusal, refusal
+    assert f"records {head}" in refusal and "one invariant" in refusal, refusal
+
+
+@pytest.mark.parametrize("variable, markers", [
+    ("OPENREPOTOOLS_CODE_ROOT", ("openRepoTools", "contracts/openreposhape-pin.yaml")),
+    ("OPENREPOTOOLS_ASSEMBLY_ROOT", ("contracts/code-pin.yaml", "project.yaml")),
+])
+def test_a_directory_spelled_like_a_marker_is_not_one(tmp_path, variable, markers):
+    """A root's markers are files. A tree whose `openRepoTools` or
+    `project.yaml` is a DIRECTORY is not that root, and naming it is refused
+    like any other wrong tree; with `exists()` it passed (#193 item 4)."""
+    code = code_leg(tmp_path / "repo", single=True)
+    fake = tmp_path / "fake"
+    for marker in markers:
+        (fake / marker).mkdir(parents=True)
+    refusal = conftest.resolve_roots({variable: str(fake)}, code).refusal()
+    assert refusal and variable in refusal and "is not a" in refusal, (
+        f"{variable} naming a tree of marker-named directories was accepted: "
+        f"{refusal}")
 
 
 def test_this_runs_roots_are_the_ones_it_is_running_with():

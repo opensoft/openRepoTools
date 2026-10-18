@@ -1,0 +1,88 @@
+From b95d667339a5cef54605a949cdcae2d264dd3b6a Mon Sep 17 00:00:00 2001
+From: openRepoTools CI <ci@openrepotools.invalid>
+Date: Thu, 8 Oct 2026 21:53:33 +0000
+Subject: [PATCH] Name the code leg's standalone checkout context in its tests
+ workflow (T010, #186).
+
+---
+ .github/workflows/tests.yml | 36 ++++++++++++++++++++++++++++++++++--
+ 1 file changed, 34 insertions(+), 2 deletions(-)
+
+diff --git a/.github/workflows/tests.yml b/.github/workflows/tests.yml
+index e27bc64..f078694 100644
+--- a/.github/workflows/tests.yml
++++ b/.github/workflows/tests.yml
+@@ -21,6 +21,25 @@ name: tests
+ # job. A suite nothing runs is not a suite (act 3, obligation 6). It is bash
+ # and it skips on Windows, like every other bash claim here; the macOS
+ # `/bin/bash -n` step below parses it under bash 3.2 whatever it does.
++#
++# THIS IS THE CODE LEG'S WORKFLOW, AND EVERY JOB IN IT IS STANDALONE
++# (opensoft/openRepoTools#186, T010 of `specs/004-migrate-to-triad/tasks.md`).
++# The leg is cloned at its own root: `actions/checkout` puts the code root at
++# `$GITHUB_WORKSPACE`, named below as `OPENREPOTOOLS_CODE_ROOT`, and
++# `submodules: true` initializes the one submodule the leg has, the dependency
++# `upstream/openRepoShape`. There is no assembly above it and no spec leg
++# beside it, so `tests/conftest.py` resolves neither: the checks of the
++# documents those two own (`README.md`, `AGENTS.md`, `CLAUDE.md`,
++# `docs/README-lanes.md`) SKIP here naming the root they need, and `-rs`
++# prints every one. `OPENREPOTOOLS_COMPOSED: '0'` says in the file what the
++# jobs are: nothing here is composed acceptance. That claim is the assembly
++# root's `composed` workflow, which checks out all three at their exact pins
++# and runs this same suite with nothing allowed to skip.
++#
++# The platform policy is unchanged by the move: `tests`, `tests-no-submodule`,
++# `tests-windows`, `parse-macos` and `guard-launch-mode` on every
++# `pull_request` push, `tests-macos` on the `ready` label, on main, nightly
++# and on dispatch — Brett Heap's RULING of 2026-09-16 travels with the code.
+ 
+ # `pull_request` names `labeled` beside GitHub's own three defaults
+ # (`opened`, `synchronize`, `reopened`): the coordinator applying `ready` to
+@@ -45,6 +64,13 @@ on:
+     - cron: '17 4 * * *'          # 04:17 UTC, nightly
+   workflow_dispatch:
+ 
++# THE CHECKOUT CONTEXT, NAMED (#186, T010): the code root is the checkout's
++# own root, and the run is standalone. `github.workspace` is the same root on
++# every runner this file uses, Windows' `D:\a\...` included.
++env:
++  OPENREPOTOOLS_CODE_ROOT: ${{ github.workspace }}
++  OPENREPOTOOLS_COMPOSED: '0'
++
+ jobs:
+   # Keep the process launch contract independently visible while the full
+   # lane-helper suite runs. Each GitHub job has its own workstation runner;
+@@ -110,15 +136,19 @@ jobs:
+             echo "GIT_COMMITTER_EMAIL=ci@openrepotools.invalid"
+           } >> "$GITHUB_ENV"
+ 
++      # `-rs`: in the leg the document checks SKIP for want of the assembly and
++      # spec roots, and a skip a person cannot read is a skip nobody audits.
+       - name: tests
+-        run: python3 -m pytest tests -q
++        run: python3 -m pytest tests -q -rs
+ 
+   # THE SKIP PATH, PROVED. A fork's first command is `git clone` without
+   # `--recurse-submodules` and then `pytest`, and if that goes RED the fork is
+   # one nobody finishes. So one job checks out with NO submodules and asserts
+   # the suite still exits 0: the estate tests skip, naming
+   # `git submodule update --init upstream/openRepoShape`, and the hygiene and
+-  # installer tests — which need nothing but this repository — still run.
++  # installer tests — which need nothing but this repository — still run. In
++  # the leg the document checks skip too, naming the assembly or spec root,
++  # exactly as they do in `tests` above: no submodule changes nothing there.
+   #
+   # `pytest -q` exits 0 on skips and 1 on failures, so the job's own status IS
+   # the assertion; `-rs` prints the skip reasons, which is what a person
+@@ -151,6 +181,8 @@ jobs:
+   # THE SAME SUITE ON WINDOWS, because a person on Windows still CLONES this
+   # repository and reads it. What this job proves is the checkout — that the
+   # `.gitattributes` rule holds and the three bash files are LF in the index —
++  # (in the leg that is the LEG'S OWN `.gitattributes`: git never reads the
++  # assembly's into a submodule, so the leg must carry the rule itself) —
+   # and the hygiene tests, which need no shell. The estate and installer tests
+   # carry `WINDOWS_SKIP` in `tests/conftest.py`: these files are bash, there is
+   # no PowerShell twin to run instead, and on Windows the way in is WSL2.
+-- 
+2.43.0
+
