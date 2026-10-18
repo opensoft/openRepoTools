@@ -24,9 +24,10 @@ FOUR GROUPS, ONE PREFIX EACH (plan.md, "The test layout"), so that a task's
   real virtual environment (`venv --without-pip`: the standard library, and
   no network) that holds a `package_tree`. The entry module must replace its
   own process with the first `bash` on PATH, running the packaged
-  `openRepoTools` with the person's arguments unchanged, and must refuse,
-  running nothing, where there is no `bash` (design.md Decision 3, FR-003,
-  FR-004).
+  `openRepoTools` with the person's arguments unchanged and with neither
+  signal Python ignores at start-up still ignored, and must refuse, running
+  nothing, where there is no `bash`, a `PATH` whose last entry is a file
+  included (design.md Decision 3 as amended on 2026-10-18, FR-003, FR-004).
 
 THE HELPERS ARE THE SUITE'S OWN. `command_env`, `placement_temporaries`,
 `path_without`, `SLOW_TOOLS` and `NEEDS_JQ` come from
@@ -831,6 +832,117 @@ def test_entry_a_sigterm_mid_placement_leaves_no_placement_temporary(
         f"not the payload's bash:\n{out}")
 
 
+#: THE SIGNALS PYTHON IGNORES AT START-UP, which the entry module must set
+#: back to `SIG_DFL` before its exec (design.md Decision 3 as amended on
+#: 2026-10-18, FR-003). By name, so a platform without one checks the other.
+PYTHON_IGNORES = tuple((name, getattr(signal, name))
+                       for name in ("SIGPIPE", "SIGXFSZ")
+                       if hasattr(signal, name))
+
+
+def signal_reading_bash(directory: Path, record: Path, real: str) -> Path:
+    """A `bash` that writes down the signals it started with ignored, and
+    runs nothing else.
+
+    It IS a bash: its `#!` line names the real one, so the process the
+    console script's exec becomes is a bash, as the payload's is. It writes
+    its own pid; then, where `/proc/$$/status` can be read (Linux), that
+    file's `SigIgn:` line, read by the shell itself with no child between, so
+    the mask is the one this process started with; then the status a
+    `yes | head -n 1` pipeline ends in under `pipefail`. That is 141,
+    128 + SIGPIPE, when SIGPIPE kills `yes`, and 1, with a "Broken pipe" line
+    on stderr, when `yes` inherited it ignored.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    shim = directory / "bash"
+    shim.write_text("#!" + real + "\n"
+                    "{\n"
+                    "\tprintf 'pid %s\\n' \"$$\"\n"
+                    "\tif [ -r \"/proc/$$/status\" ]; then\n"
+                    "\t\twhile IFS= read -r line; do\n"
+                    "\t\t\tcase $line in\n"
+                    "\t\t\t\tSigIgn:*) printf '%s\\n' \"$line\" ;;\n"
+                    "\t\t\tesac\n"
+                    "\t\tdone < \"/proc/$$/status\"\n"
+                    "\tfi\n"
+                    "\tset -o pipefail\n"
+                    "\tyes | head -n 1 > /dev/null\n"
+                    "\tprintf 'pipeline %s\\n' \"$?\"\n"
+                    "} > " + shlex.quote(str(record)) + "\n"
+                    "exit 0\n", encoding="utf-8")
+    shim.chmod(0o755)
+    return shim
+
+
+@NEEDS_BASH
+@WINDOWS_SKIP
+def test_entry_the_bash_it_execs_has_neither_sigpipe_nor_sigxfsz_ignored(
+        installed, tmp_path):
+    """FR-003: SIGNALS PASS THROUGH AS IF THE PERSON HAD RUN THE PAYLOAD WITH
+    BASH DIRECTLY, so the bash the console script becomes starts with
+    neither signal Python ignores at start-up still ignored.
+
+    An exec keeps an ignored disposition, and a non-interactive bash cannot
+    reset one it was started with, so a SIGPIPE Python left ignored would
+    turn every `yes | head` inside the payload into a "Broken pipe" and a
+    status of 1. This reads the state AFTER THE EXEC, in the bash process
+    itself (`signal_reading_bash`, first on PATH), so it proves what bash
+    inherited and not what Python set. The pid proves that the process read
+    is the one the console script became. On Linux the `SigIgn` mask must
+    hold neither signal; on every platform the pipeline must end in 141.
+
+    The console script's Python is started with `restore_signals=True`, so
+    it starts with both at `SIG_DFL`: whatever bash finds ignored, the
+    console script's own Python left it so.
+    """
+    real = shutil.which("bash")
+    record = tmp_path / "bash-started-with"
+    shim = signal_reading_bash(tmp_path / "first-on-path", record,
+                               str(Path(real).resolve()))
+    home = tmp_path / "home"
+    home.mkdir()
+    run = subprocess.Popen(
+        [str(installed.script), "--version"], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=command_env(home, {
+            "PATH": f"{shim.parent}{os.pathsep}{os.environ['PATH']}"}),
+        cwd=str(tmp_path), restore_signals=True)
+    out, err = run.communicate(timeout=60)
+    assert run.returncode == 0 and record.is_file(), (
+        "the console script never ran the first bash on PATH:\n"
+        f"exit {run.returncode}\n--- stdout\n{out}--- stderr\n{err}")
+    lines = record.read_text(encoding="utf-8").splitlines()
+    pids = [line[len("pid "):] for line in lines if line.startswith("pid ")]
+    masks = [line[len("SigIgn:"):].strip() for line in lines
+             if line.startswith("SigIgn:")]
+    statuses = [line[len("pipeline "):] for line in lines
+                if line.startswith("pipeline ")]
+    assert pids == [str(run.pid)], (
+        f"bash recorded pid {pids}, and the console script was pid {run.pid}: "
+        "what was read is not the process the console script became")
+    problems = []
+    if sys.platform.startswith("linux"):
+        if len(masks) != 1 or not re.fullmatch(r"[0-9a-fA-F]+", masks[0]):
+            problems.append(f"bash read no one SigIgn mask from "
+                            f"/proc/<pid>/status: {masks!r}")
+        else:
+            mask = int(masks[0], 16)
+            for name, number in PYTHON_IGNORES:
+                if (mask >> (number - 1)) & 1:
+                    problems.append(f"{name} is ignored in the bash the "
+                                    f"console script became (SigIgn "
+                                    f"{masks[0]}, bit {number - 1})")
+    wanted = str(128 + signal.SIGPIPE)
+    if statuses != [wanted]:
+        problems.append(f"`yes | head -n 1` under pipefail ended in "
+                        f"{statuses}, not [{wanted!r}], the status SIGPIPE "
+                        "kills `yes` with")
+    assert not problems, (
+        "the bash the console script became started with a signal Python "
+        "ignores still ignored:" + listed(problems)
+        + "\n--- the record\n" + "\n".join(lines) + f"\n--- stderr\n{err}")
+
+
 @WINDOWS_SKIP
 def test_entry_with_no_bash_on_path_refuses_exactly_and_runs_nothing(
         installed, tmp_path):
@@ -844,6 +956,47 @@ def test_entry_with_no_bash_on_path_refuses_exactly_and_runs_nothing(
     for places nothing and prints nothing, because nothing ran.
     """
     path = path_without(tmp_path, "bash")
+    home = tmp_path / "home"
+    home.mkdir()
+    result = run_entry(installed.script, "--install", home=home,
+                       env={"PATH": path}, cwd=tmp_path)
+    assert (result.returncode, result.stdout, result.stderr) == (
+        2, "", NO_BASH + "\n"), (
+        f"not the exact no-bash refusal:\n{said(result)}")
+    assert list(home.iterdir()) == [], (
+        "something ran, and placed files, with no bash on PATH")
+
+
+@WINDOWS_SKIP
+def test_entry_with_no_bash_and_path_ending_in_a_file_refuses_exactly(
+        installed, tmp_path):
+    """FR-004, WHERE `PATH`'S LAST ENTRY IS A FILE: the same refusal.
+
+    `os.execvp` raises the error of the last entry it tried, so with no
+    `bash` anywhere and a regular file as `PATH`'s last entry it raises
+    `NotADirectoryError`, not `FileNotFoundError`. The case is checked
+    first, in the console script's own interpreter, so this cannot pass by
+    reaching the other arm. Then the console script must print
+    contracts/cli-output.md's line exactly, on stderr, and exit 2, as with
+    no `bash` on any `PATH`: not a traceback and exit 1. The `--install`
+    asked for places nothing and prints nothing, because nothing ran.
+    """
+    last = tmp_path / "a-file-not-a-directory"
+    last.write_text("PATH's last entry, and not a directory\n",
+                    encoding="utf-8")
+    path = f"{path_without(tmp_path, 'bash')}{os.pathsep}{last}"
+    probe = subprocess.run(
+        [str(installed.python), "-I", "-c",
+         "import os\n"
+         "try:\n"
+         "    os.execvp('bash', ['bash', '-c', 'exit 97'])\n"
+         "except OSError as error:\n"
+         "    print(type(error).__name__)\n"],
+        capture_output=True, text=True, check=False,
+        stdin=subprocess.DEVNULL, env={"PATH": path})
+    assert (probe.returncode, probe.stdout) == (0, "NotADirectoryError\n"), (
+        "the case is wrong: on this PATH execvp does not raise "
+        f"NotADirectoryError:\n{said(probe)}")
     home = tmp_path / "home"
     home.mkdir()
     result = run_entry(installed.script, "--install", home=home,

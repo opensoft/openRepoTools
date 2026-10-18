@@ -3156,20 +3156,28 @@ def package_modules() -> list:
 #: #228), by top-level name. This is the allowlist, and it is explicit rather
 #: than "whatever `sys.stdlib_module_names` holds": it admits exactly what the
 #: entry module needs, which design.md Decision 3 spells out — `cli.main()` is
-#: `os.execvp("bash", ["bash", <payload>/openRepoTools, *sys.argv[1:]])` and,
-#: on `FileNotFoundError`, a refusal on stderr and exit 2. `__init__.py` holds
-#: a docstring and `_release.py` the five stamp lines, so neither imports
-#: anything. Nothing else is here on purpose: `pathlib`, `subprocess`,
-#: `importlib` and the package's own name are all absent, because the entry
-#: module reads no stamp, runs no child and passes bash nothing but the
-#: person's arguments; `__future__` is absent because nothing in Decision 3's
-#: module needs an annotation postponed on Python 3.9. A module that needs
-#: another name takes an edit here, with its reason beside it.
+#: `os.execvp("bash", ["bash", <payload>/openRepoTools, *sys.argv[1:]])`, with
+#: SIGPIPE and SIGXFSZ set back to `SIG_DFL` first (the lead's amendment of
+#: 2026-10-18), and, on `FileNotFoundError` or `NotADirectoryError`, a refusal
+#: on stderr and exit 2. `__init__.py` holds a docstring and `_release.py` the
+#: five stamp lines, so neither imports anything. Nothing else is here on
+#: purpose: `pathlib`, `subprocess`, `importlib` and the package's own name
+#: are all absent, because the entry module reads no stamp, runs no child and
+#: passes bash nothing but the person's arguments; `__future__` is absent
+#: because nothing in Decision 3's module needs an annotation postponed on
+#: Python 3.9. A module that needs another name takes an edit here, with its
+#: reason beside it.
 PACKAGE_IMPORT_ALLOWLIST = {
     "os": ("os.execvp replaces the process with the first bash on PATH, so "
            "signals, the EXIT trap and the exit status pass through; the "
            "payload directory beside the module's own file is found from "
            "its __file__ with os.path"),
+    "signal": ("Python starts with SIGPIPE and SIGXFSZ ignored, an exec keeps "
+               "an ignored disposition, and a non-interactive bash cannot "
+               "reset one ignored on entry, so signal.signal sets both back "
+               "to SIG_DFL just before the exec, as subprocess's "
+               "restore_signals does (design.md Decision 3, amended "
+               "2026-10-18; FR-003)"),
     "sys": ("sys.argv[1:] is the person's arguments, passed on unchanged; "
             "sys.stderr carries the no-bash refusal that precedes its "
             "exit 2"),
