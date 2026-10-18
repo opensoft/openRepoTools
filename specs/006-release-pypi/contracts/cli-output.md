@@ -6,7 +6,7 @@ resolves it. Text in angle brackets is filled in at run time. Everything else
 is literal, and two spaces mean two spaces.
 
 `die` prints a blank line and then `REFUSED: <text>` to stderr, and exits 2
-(`openRepoTools:86`). Every refusal below goes through it, except the one
+(`openRepoTools:88`). Every refusal below goes through it, except the one
 from the entry module.
 
 ## `--version`
@@ -159,6 +159,9 @@ openRepoTools: note: the first openRepoTools on your PATH is <first, or "none">,
   openRepoTools: note: the first openRepoTools on your PATH is none, not this package's <prefix>/bin/openRepoTools, so the release you just installed is not the one that runs; put the directory that holds pipx's link to it on PATH
   ```
 - `<prefix>` is five levels above `payload/` (research R7).
+- Nothing is printed when the four directories above `payload/` are not
+  named `openrepotools`, `site-packages`, `python*` and `lib`, from the
+  nearest up. Such a layout names no `<prefix>` (research R7).
 
 ## A venv-shaped link that fails the pipx rule (stderr, exit 2; planning phase)
 
@@ -184,7 +187,7 @@ as this entry:
 
 ## No `jq`, with pipx's link in place
 
-The existing `plan_hook_merge` refusal (`openRepoTools:2500`) is unchanged.
+The existing `plan_hook_merge` refusal (`openRepoTools:3153`) is unchanged.
 The run reaches it because pipx's link is recognised before any link
 refusal. Its whole output holds no `rm` line that names
 `<dir>/openRepoTools`.
