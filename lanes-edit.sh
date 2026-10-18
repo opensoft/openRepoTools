@@ -1692,6 +1692,25 @@ delete_lines() {   # <line numbers, one per line, any order>
 # more, not one existing byte different.
 append_text_line() {
   newline="$1"; target="${2:-$LANES_FILE}"
+  # ONE LINE IS REFUSED A NEWLINE BEFORE IT IS WRITTEN, NOT PROVED ONE AFTER
+  # (opensoft/openRepoTools#85). The proofs below are made AFTER the `>>`, so a
+  # text carrying a newline was appended whole — two physical lines where one
+  # was meant — and only then refused: `append changed line count by 2`, exit
+  # 5, the file left modified and uncommitted. What came next was worse than
+  # the refusal. A dirty object log is refused by every later writer in that
+  # checkout; a dirty REGISTER is committed by the next one, as a peer's
+  # `pre-existing` edit (`handle_preexisting`) — measured in `lane-handoff`'s own
+  # flow, where the row flip right after the refused PAUSED line committed the
+  # two lines. A carriage return is refused with it: `wc -l` does not count one, so it
+  # passed the proof and put a line no reader splits the same way into a file
+  # nothing rewrites. `write_event` has refused both since R21; this is the
+  # same gate in the one function every append goes through, which is the
+  # reason this file gives for putting the container guard at the dispatcher:
+  # *"nine copies of one rule is how eight of them would come to disagree"*.
+  # FIRST, before the `mktemp` and the copy, so a refusal touches nothing.
+  if [ "${newline//[$'\n\r']/}" != "$newline" ]; then
+    die "an appended line is ONE line, and this text carries a newline or a carriage return: appended, it would put several lines into $target where one was meant, and the proof that only one was added fails after the write, not before it. Nothing was written. Spell the break '; ' and re-run." 2
+  fi
   TMPD="$(mktemp -d)"
   pre="$TMPD/pre"
   cat -- "$target" > "$pre"
@@ -13762,6 +13781,17 @@ Nothing was written." 2
 
   append-line)
     text="${1-}"; [ -n "$text" ] || die "usage: append-line \"<text>\"" 2
+    # ONE LINE, REFUSED A NEWLINE BEFORE THE LOCK (opensoft/openRepoTools#85).
+    # `append_text_line` refuses it too, and before it writes — but that is
+    # after `acquire_lock` and `handle_preexisting`, which can COMMIT a peer's
+    # uncommitted register edit before this act's own write. A refusal that has
+    # already committed something is a refusal that wrote, so the verb asks
+    # first, exactly where `write_event` asks for `log`: the checkout is left
+    # as this command found it. `lane-handoff`'s file-level PAUSED line is the
+    # caller that met it, with a `why` carrying a newline.
+    if [ "${text//[$'\n\r']/}" != "$text" ]; then
+      die "append-line appends ONE line to the register, and this text carries a newline or a carriage return: it would append several, and the proof that only one was added would fail after the write, leaving the register modified and uncommitted. Nothing was written, and the lock was not taken. Spell the break '; ' and re-run." 2
+    fi
     # NO MARKER BY THE BACK DOOR (Copilot round 3 on #97): `add-row` refuses a
     # row in the marker's vocabulary, and this appends any line at all to the
     # register — a row-shaped one included.
