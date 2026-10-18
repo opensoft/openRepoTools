@@ -630,6 +630,14 @@ add_seed_row "| \`repoL-3\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026
 add_seed_row "| \`repoL-4\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoL/x.md | ACTIVE |"
 add_seed_row "| \`repoL-5\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoL/x.md | ACTIVE |"
 add_seed_row "| \`repoL-6\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoL/x.md | ACTIVE |"
+# repoChain-1/2/3 — opensoft/openRepoTools#74: CHAINS of takeovers, every link
+# naming the lane it displaced as `← lane:<x>` (the payload issue #30's
+# dead-lane takeover writes), all three lanes dead (RETIRED, no live session).
+# repoChain-4 is the taker that makes the third link of the chain below.
+add_seed_row "| \`repoChain-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoChain/x.md | ACTIVE |"
+add_seed_row "| \`repoChain-2\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoChain/x.md | ACTIVE |"
+add_seed_row "| \`repoChain-3\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoChain/x.md | ACTIVE |"
+add_seed_row "| \`repoChain-4\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoChain/x.md | ACTIVE |"
 add_seed_row "| \`repoM-1\` | harness \`$MLIVE_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoM/x.md | ACTIVE |"
 # repoN-1 / repoN-2 — issue #30's OTHER terminal verb: a plain `lane-end`
 # (no --retire) writes ENDED, never RETIRED, and `holder_is_dead` names both
@@ -940,6 +948,32 @@ NOW_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'TAKEOVER — lane repoL-5, session %s@Eagle, %s, opensoft/repoL#40 ← lane:repoL-0\n' "$DEAD_ID" "$OLD_UTC"
   printf 'RETIRED — lane repoL-5, session %s@Eagle, %s, lane:repoL-5\n' "$DEAD_ID" "$NOW_UTC"
 } > "$WIP/lanes/log/repoL-5.md"
+# repoChain-1/2/3 — opensoft/openRepoTools#74, three objects:
+#   #1  a chain: repoChain-1 claims, repoChain-2 takes it over from repoChain-1,
+#       repoChain-3 from repoChain-2; repoChain-4 makes the third link below.
+#   #2  the race README-lanes.md calls "Known, deliberate": repoChain-2 AND
+#       repoChain-3 each took over repoChain-1's claim, neither naming the other.
+#   #3  two TAKEOVERs naming EACH OTHER, which no file order can put in order.
+{ printf '# lane repoChain-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoChain-1, session %s@Eagle, %s, lane:repoChain-1 → home opensoft/repoChain; estate repoChain\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'CLAIMED — lane repoChain-1, session %s@Eagle, %s, opensoft/repoChain#1\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'CLAIMED — lane repoChain-1, session %s@Eagle, %s, opensoft/repoChain#2\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'RETIRED — lane repoChain-1, session %s@Eagle, %s, lane:repoChain-1\n' "$DEAD_ID" "$NOW_UTC"
+} > "$WIP/lanes/log/repoChain-1.md"
+{ printf '# lane repoChain-2 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoChain-2, session %s@Eagle, %s, lane:repoChain-2 → home opensoft/repoChain; estate repoChain\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'TAKEOVER — lane repoChain-2, session %s@Eagle, %s, opensoft/repoChain#1 ← lane:repoChain-1\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'TAKEOVER — lane repoChain-2, session %s@Eagle, %s, opensoft/repoChain#2 ← lane:repoChain-1\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'TAKEOVER — lane repoChain-2, session %s@Eagle, %s, opensoft/repoChain#3 ← lane:repoChain-3\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'RETIRED — lane repoChain-2, session %s@Eagle, %s, lane:repoChain-2\n' "$DEAD_ID" "$NOW_UTC"
+} > "$WIP/lanes/log/repoChain-2.md"
+{ printf '# lane repoChain-3 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoChain-3, session %s@Eagle, %s, lane:repoChain-3 → home opensoft/repoChain; estate repoChain\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'TAKEOVER — lane repoChain-3, session %s@Eagle, %s, opensoft/repoChain#1 ← lane:repoChain-2\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'TAKEOVER — lane repoChain-3, session %s@Eagle, %s, opensoft/repoChain#2 ← lane:repoChain-1\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'TAKEOVER — lane repoChain-3, session %s@Eagle, %s, opensoft/repoChain#3 ← lane:repoChain-2\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'RETIRED — lane repoChain-3, session %s@Eagle, %s, lane:repoChain-3\n' "$DEAD_ID" "$NOW_UTC"
+} > "$WIP/lanes/log/repoChain-3.md"
 # repoN-1 — issue #30's OTHER dead verdict: ENDED (a plain `lane-end`, no
 # `--retire`), no live session, one CLAIMED issue left open.
 { printf '# lane repoN-1 — object log (lane-collision-protocol Amendment 7)\n'
@@ -1619,25 +1653,63 @@ L6="$(cat "$LOGD/repoL-6.md")"
 has  "…writing a TAKEOVER line" "$L6" "TAKEOVER — lane repoL-6, session "
 has  "…referencing the dead lane with ←, not the lane it had itself taken over from" "$L6" "opensoft/repoL#40 ← lane:repoL-5"
 hasnt "…never the earlier dispossessed lane repoL-5 never held directly" "$L6" "← lane:repoL-0"
-# THE WRITE IS RIGHT; THE DERIVED VIEW IS NOT (filed as opensoft/openRepoTools#74,
-# claimed, not fixed here): `superseded_by`'s own "does some OTHER lane's last
-# line here read TAKEOVER" test does not stop at the CURRENT one — repoL-5's
-# now-stale TAKEOVER (over repoL-0) is still read as proof that repoL-6 is
-# ALSO superseded, so `holders_of` drops BOTH ends of the chain instead of
-# only the one repoL-6 actually displaced. This is a pre-existing gap in
-# `superseded_by` (it has always compared positions across different lanes'
-# own files this way); PR #61's broadening of the open-verb gate to admit a
-# dead lane's own TAKEOVER (issue #30) is what makes a CHAIN of two takeovers
-# reachable from one ordinary `--force`, where before only the pre-existing
-# simultaneous-race shape (`repoG-1`/`repoG-2` above) could produce two lanes
-# each ending on TAKEOVER. Nothing here is corrupted: every line above is
-# correct and in the right order, and this asserts the CURRENT, honest
-# (if wrong) reported count rather than assuming the write's correctness
-# implies the read's.
+# THE WRITE IS RIGHT, AND SINCE opensoft/openRepoTools#74 SO IS THE READ: a
+# chain of takeovers resolves to its LAST LINK. repoL-5's own TAKEOVER (over
+# repoL-0) is displaced by repoL-6's, which names it; repoL-6's is displaced by
+# nothing, because no standing TAKEOVER names repoL-6. Until #74 this block
+# pinned ZERO holders as the known gap: `superseded_by` asked only "does some
+# OTHER lane's last line here read TAKEOVER", read repoL-5's stale TAKEOVER as
+# proof that repoL-6 was superseded too, and `holders_of` dropped BOTH ends of
+# the chain — reachable from one ordinary `--force` since PR #61 (issue #30)
+# let a dead lane's own TAKEOVER be taken over.
 run "$E" who "opensoft/repoL#40"
-is   "…but who reports ZERO holders, not one (opensoft/openRepoTools#74)" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 0
-hasnt "…repoL-5's own dead TAKEOVER is not reported as a live hold either way" "$out" "HOLDS    lane repoL-5"
-hasnt "…and neither, wrongly, is repoL-6's — the gap #74 tracks, not a new one here" "$out" "HOLDS    lane repoL-6"
+is   "…and who reports exactly ONE holder of the chain, not zero (#74)" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 1
+has  "…the chain's last link, repoL-6" "$out" "HOLDS    lane repoL-6"
+hasnt "…repoL-5's own dead TAKEOVER is not reported as a live hold" "$out" "HOLDS    lane repoL-5"
+has  "…repoL-5 reads as superseded by repoL-6, the TAKEOVER that names it" \
+     "$(printf '%s\n' "$out" | grep '^super\.   lane repoL-5 ')" "superseded by TAKEOVER (lane:repoL-6)"
+run "$E" who --lane repoL-6
+is   "who --lane on the chain's last link exits 0" "$rc" 0
+has  "…lists its TAKEOVER" "$out" "opensoft/repoL#40"
+hasnt "…and never tells the holder it was taken over by the lane it took the object from" "$out" "taken over by"
+
+# --------- opensoft/openRepoTools#74: a THREE-link chain, its third link made
+# here by `claim --force`. Read one-hop, repoChain-2 and repoChain-3 displaced
+# EACH OTHER, the object read FREE, and this claim was granted as a plain
+# CLAIMED over a held object — the one outcome Rule 1 exists to prevent.
+# Followed to its last link, repoChain-3 is the one holder, and, dead, it is
+# taken over like any dead lane's hold.
+run env LANES_LANE=repoChain-4 "$E" claim "opensoft/repoChain#1" --no-github --force
+is   "--force takes over the LAST link of a chain of two TAKEOVERs (#74)" "$rc" 0
+LC4="$(cat "$LOGD/repoChain-4.md" 2>/dev/null)"
+has  "…writing a TAKEOVER, not a CLAIMED as if the object were free" "$LC4" "TAKEOVER — lane repoChain-4, session "
+has  "…naming the chain's last link, never an earlier one" "$LC4" "opensoft/repoChain#1 ← lane:repoChain-3"
+run "$E" who "opensoft/repoChain#1"
+is   "…and who reports exactly ONE holder of the three-link chain" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 1
+has  "…the third link, repoChain-4" "$out" "HOLDS    lane repoChain-4"
+has  "…the second link superseded by the third, which names it" \
+     "$(printf '%s\n' "$out" | grep '^super\.   lane repoChain-3 ')" "superseded by TAKEOVER (lane:repoChain-4)"
+has  "…the first link superseded by the second, which names it" \
+     "$(printf '%s\n' "$out" | grep '^super\.   lane repoChain-2 ')" "superseded by TAKEOVER (lane:repoChain-3)"
+has  "…and the CLAIMED the chain began with names the lane that holds it NOW" \
+     "$(printf '%s\n' "$out" | grep '^super\.   lane repoChain-1 ')" "superseded by TAKEOVER (lane:repoChain-4)"
+
+# Two TAKEOVERs of one stale claim, NEITHER naming the other: README-lanes.md's
+# "Known, deliberate" race, BOTH holders and the conflict visible. A TAKEOVER is
+# displaced only by one that names its lane (#74); the one-hop test had each
+# displace the other since PR #61 (issue #30) widened its gate, and `who` called
+# the object FREE — so `claim` granted a third lane a plain CLAIMED over it.
+run "$E" who "opensoft/repoChain#2"
+is   "two takers of one claim, neither naming the other, are BOTH holders" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 2
+has  "…the state is HELD, never FREE" "$out" "state    HELD"
+run env LANES_LANE=repoChain-4 "$E" claim "opensoft/repoChain#2" --no-github --force
+is   "…and --force refuses an object two lanes hold" "$rc" 2
+has  "…saying so" "$err" "is held by 2 lanes"
+hasnt "…writing nothing" "$(cat "$LOGD/repoChain-4.md" 2>/dev/null)" "opensoft/repoChain#2"
+# And two TAKEOVERs that name EACH OTHER: nothing in two files says which was
+# written last, so both hold, visibly, rather than displacing each other.
+run "$E" who "opensoft/repoChain#3"
+is   "two TAKEOVERs naming EACH OTHER are both holders, never zero" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 2
 
 # repoN-1's OWN terminal verb is ENDED, not RETIRED (Copilot round 3, PR #61:
 # `holder_is_dead`'s case accepts both, but only RETIRED was ever seeded).
@@ -6965,6 +7037,43 @@ gd_run "$GD_LANE_ID" "do the work" ""
 is    "a payload naming no cwd at all is an indeterminate read, not 'outside the root'" "$rc" 2
 has   "…and says which read did not happen" "$err" "carried no \`cwd\`"
 
+# ---- A REGISTER THAT IS THERE AND WHOSE TEXT COULD NOT BE READ (#60).
+#
+# The file passes the test above, so the guard went on to the table with NO
+# ROWS and refused by its LAST arm — "the harness minted a new transcript",
+# cured by a `lane-start --no-launch` that cannot mend a read. `LANES_DIR` keeps
+# the logs and the alias table where they are, and the file's own name is on no
+# published tree, so `register_text` falls through to the working file.
+# EMPTY IS THE FIXTURE THAT HOLDS ON EVERY HOST AND UID: it renders exactly what
+# a file this checkout cannot open renders. A mode-000 file is the issue's own
+# case, and root reads one, so that case runs only where it means something. A
+# dangling link is no fixture here: `[ -f ]` is false for it, which the refusal
+# above already answers.
+gd_rec "$GD_LANE_ID" repoGD-1 user "$GD_OLD_MS"
+gd_unread_run() {
+  out="$(printf "$gd_hook" "$GD_LANE_ID" "$HOME/projects/repoGD" "do the work" \
+    | LANES_DIR="$WIP/lanes" LANES_FILE="$SANDBOX/register-60.md" "$E" guard 2>"$SANDBOX/stderr")"; rc=$?
+  err="$(cat "$SANDBOX/stderr")"
+}
+: > "$SANDBOX/register-60.md"
+gd_unread_run
+is    "a register whose TEXT comes back empty blocks the prompt with 2" "$rc" 2
+has   "…naming the read, not a row" "$err" "the register's TEXT could not be read"
+has   "…with the window it did read in the triple" "$err" "window   gdsess:@12 'repoGD-1'"
+has   "…and the row as the one half nobody read" "$err" "row      not read"
+hasnt "…and never the table's last arm, whose cure cannot mend a read" "$err" "the harness minted a new transcript"
+has   "…with safe-mode recovery" "$err" "claude --safe-mode"
+if [ "$(id -u)" = 0 ]; then
+  skip "a register file this checkout cannot open is the same refusal" "running as root, which can read a mode-000 file"
+else
+  cp -- "$LANES" "$SANDBOX/register-60.md"; chmod 000 "$SANDBOX/register-60.md"
+  gd_unread_run
+  chmod 644 "$SANDBOX/register-60.md"
+  is    "a register file this checkout cannot open is the same refusal" "$rc" 2
+  has   "…naming the same read" "$err" "the register's TEXT could not be read"
+fi
+rm -f "$SANDBOX/register-60.md"
+
 # ---- (b)'s LAST ROW: NOT INSIDE TMUX AT ALL (ratified decision D2, "Refuse"),
 # AND THE READ THAT DID NOT HAPPEN IS NOT THE SAME STATE.
 #
@@ -8072,6 +8181,27 @@ run env LANES_LANE=repotwo-1 LANES_SESSION="$DEAD_ID" "$E" log PAUSED lane:repot
 is   "…and a WRITE under that name is refused before it appends anything" "$rc" 2
 has  "…naming both files it will not choose between" "$err" "differ only by case"
 is   "…writing no log here" "$(ls "$LOGD" | grep -ci '^repotwo-1\.md$' || :)" 0
+# AND THE `SessionStart` HOOK, WHOSE RENAME TEST READS THIS LOG FOR THE BINDING
+# (#60). The read that failed was folded into "no binding", so a person's
+# rename to another lane — here made a day ago, BEFORE the STARTED the row's own
+# log carries — was called "newer than this window's binding". It names the
+# read now, and still types nothing over the person's own name.
+a15_hook_id="aaaa0060-0000-4000-8000-aaaa00600000"
+a15_save_win="${FAKE_TMUX_WINDOW-}"; a15_save_name="${FAKE_TMUX_WINDOW_NAME-}"; a15_save_wins="${FAKE_TMUX_WINDOWS-}"
+export FAKE_TMUX_WINDOW="gdsess:@12" FAKE_TMUX_WINDOW_NAME=repoTwo-1
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoTwo-1	%12	claude"
+write_record_a12 "$sessions_dir/two.json" "$a15_hook_id" "$LIVE_PID" "$live_start" interactive "gdsess:@12.%12" \
+  repoLate-1 user "$(( gd_now_ms - 86400000 ))"
+gd_before="$(gd_keys)"
+out="$(printf '{"session_id":"%s","source":"resume","cwd":"%s/projects/repoGD"}' "$a15_hook_id" "$HOME" | "$E" session-start 2>/dev/null)"; rc=$?
+is    "the SessionStart hook still exits 0 on a lane whose log cannot be read" "$rc" 0
+has   "…naming that read" "$out" "lane repoTwo-1's object log could not be read"
+hasnt "…never calling a person's rename newer than a binding nobody read" "$out" "newer than this window's binding"
+is    "…and typing nothing over that name" "$(gd_keys)" "$gd_before"
+rm -f "$sessions_dir/two.json"
+if [ -n "$a15_save_wins" ]; then export FAKE_TMUX_WINDOWS="$a15_save_wins"; else unset FAKE_TMUX_WINDOWS; fi
+if [ -n "$a15_save_win" ]; then export FAKE_TMUX_WINDOW="$a15_save_win"; else unset FAKE_TMUX_WINDOW; fi
+if [ -n "$a15_save_name" ]; then export FAKE_TMUX_WINDOW_NAME="$a15_save_name"; else unset FAKE_TMUX_WINDOW_NAME; fi
 a15_unpublish "lanes/log/repoTwo-1.md" "lanes/log/repotwo-1.md"
 
 # ---- THE PAIR IS PUBLISHED AND THIS CHECKOUT HAS ONE ROW ---------------------
@@ -9566,6 +9696,69 @@ is    "…and nothing was written by any of the three" "$(grep -c '^PAUSED' "$LO
 # `PAUSED` lines on purpose: section 3 below is the `--late` rule, and its whole
 # question is what a lane with no paused record does.)
 
+# A ONE-LINE RECORD CANNOT TAKE A NEWLINE, AND IT IS REFUSED BEFORE ANYTHING IS
+# WRITTEN (opensoft/openRepoTools#85, #72 item 6). `append-line` used to append
+# its text and only THEN prove it was one line, so a text carrying a newline
+# left two lines in the register, the checkout dirty, and a refusal (exit 5)
+# that came after the write. And `lane-handoff` put its `why` into four places
+# with only two of them sanitized: a `why` carrying a newline refreshed and
+# committed the handoff, had its PAUSED refused by `write_event`, handed
+# `append-line` two lines — which the row flip after it then committed as a
+# peer's `pre-existing` edit — and exited 0. Every case here is asked on
+# repoHF-7, whose log is kept EMPTY of `PAUSED` lines for section 3: a refusal
+# writes nothing, and that is exactly what these assert.
+a17_nl_head="$(git -C "$WIP" rev-parse HEAD)"
+a17_nl_status="$(git -C "$WIP" status --porcelain)"
+cp -- "$LANES" "$SANDBOX/a17-nl-lanes.md"
+cp -- "$WIP/handoffs/repoHF/repoHF-7.md" "$SANDBOX/a17-nl-handoff.md"
+cp -- "$LOGD/repoHF-7.md" "$SANDBOX/a17-nl-log.md"
+a17_nl_same() {   # <file> <its copy> — `same` where not one byte moved
+  if cmp -s -- "$1" "$2"; then printf same; else printf changed; fi
+}
+run env LANES_LANE=repoHF-7 "$E" append-line \
+    "$(printf 'PAUSED — lane repoHF-7, session %s@Eagle, 2026-09-14T09:30:00Z, clear\nsecond line; handoff refreshed' "$HF4_ID")"
+is    "append-line refuses a text carrying a newline" "$rc" 2
+has   "…saying it appends ONE line" "$err" "append-line appends ONE line"
+is    "…before it writes: the register is byte for byte as it was" \
+      "$(a17_nl_same "$LANES" "$SANDBOX/a17-nl-lanes.md")" same
+is    "…and the checkout is as it was, so the next writer in it is not refused for a dirty register" \
+      "$(git -C "$WIP" status --porcelain)" "$a17_nl_status"
+run env LANES_LANE=repoHF-7 "$E" append-line "$(printf 'LANDING — lane repoHF-7, a carriage\rreturn')"
+is    "…and a carriage return the same way, which the line count after the write never saw" "$rc" 2
+is    "…with nothing written for it either" "$(a17_nl_same "$LANES" "$SANDBOX/a17-nl-lanes.md")" same
+
+# AND THE GATE IS IN `append_text_line` ITSELF, so every caller has it — `add-row`,
+# `log`'s Rule 6 line, a rename's lines — and not only the verb that met it.
+# Lifted out of the helper the way the `cut_to_line` cases below lift theirs,
+# and asked against a file of its own.
+printf 'line one\n' > "$SANDBOX/a17-nl-atl.txt"
+run bash -c 'eval "$(sed -n -e "/^die()/,/^}/p" -e "/^note()/p" -e "/^append_text_line()/,/^}/p" "$1")"; append_text_line "$2" "$3"' \
+    _ "$E" "$(printf 'two\nthree')" "$SANDBOX/a17-nl-atl.txt"
+is    "append_text_line refuses a newline itself, whichever verb called it" "$rc" 2
+is    "…before its copy and its \`>>\`: the file is still its one line" "$(cat "$SANDBOX/a17-nl-atl.txt")" "line one"
+
+run env PATH="$A17PATH" CLAUDE_CODE_SESSION_ID="$HF4_ID" CLAUDE_PROFILE_NAME=team-05a \
+    "$HANDOFF_CMD" --lane repoHF-7 "$(printf 'clear\nsecond line')"
+is    "lane-handoff refuses a why carrying a newline" "$rc" 2
+has   "…at the door, saying the why is one line" "$err" "the why is ONE line"
+is    "…the handoff not refreshed" \
+      "$(a17_nl_same "$WIP/handoffs/repoHF/repoHF-7.md" "$SANDBOX/a17-nl-handoff.md")" same
+is    "…the object log not written" "$(a17_nl_same "$LOGD/repoHF-7.md" "$SANDBOX/a17-nl-log.md")" same
+is    "…the register byte for byte as it was" "$(a17_nl_same "$LANES" "$SANDBOX/a17-nl-lanes.md")" same
+is    "…nothing committed" "$(git -C "$WIP" rev-parse HEAD)" "$a17_nl_head"
+is    "…and the checkout as it was" "$(git -C "$WIP" status --porcelain)" "$a17_nl_status"
+run env PATH="$A17PATH" CLAUDE_CODE_SESSION_ID="$HF4_ID" CLAUDE_PROFILE_NAME=team-05a \
+    "$HANDOFF_CMD" --lane repoHF-7 "$(printf 'clear\r')"
+is    "…and a carriage return is refused the same way" "$rc" 2
+
+# `sanitize` IS THE SECOND LINE OF DEFENCE: a break that reaches it is spelled
+# `; `, one per break whatever its spelling, so the act still happens on one
+# line. Lifted out of `lane-handoff` in a shell of its own, because this file
+# has a `sanitize` of its own (the transcript directory's).
+run bash -c 'eval "$(sed -n "/^sanitize()/,/^}/p" "$1")"; sanitize "$2"' \
+    _ "$HANDOFF_CMD" "$(printf 'a\r\nb\rc\nd — e')"
+is    "lane-handoff's sanitize spells every line break '; ', as it does ' — '" "$out" "a; b; c; d; e"
+
 # `--utc` IS THE LATE `PAUSED`'s SEAM AND HAS NO OTHER CALLER (Amendment 17,
 # adoption act 7). This log is append-only and FILE ORDER is what every state
 # read means by "last", so a STARTED or a RESUMED dated by hand changes what
@@ -9989,6 +10182,15 @@ has   "…the stamp naming the agent and its own id" \
 has   "…the row's session cell appended in the agent's own spelling" \
       "$(grep '^| `repoAG-1`' "$LANES")" "→ Codex \`$CODEX_ID\`"
 has   "…and the row's stamp says who resumed it" "$(grep '^| `repoAG-1`' "$LANES")" "RESUMED by codex $CODEX_ID (lane repoAG-1)"
+# THE FIRST ACT IT DEFERS KEEPS THE AGENT (opensoft/openRepoTools#72 item 5).
+# `codex` keeps no id this command can pass, so a codex launch ALWAYS defers its
+# log line and its Rule 3 stamp to the session's own `--no-launch` — and the
+# command printed for that act dropped `--agent`, leaving `lane-agent` to choose:
+# the agent of the lane's last PAUSED, not the one now running it.
+ag_deferred() {   # <stderr> — the one command lane-start prints for the deferred records
+  printf '%s\n' "$1" | awk 'f { print; exit } /which is this session.s own:$/ { f = 1 }'
+}
+has   "…and the first act it defers to the session carries --agent codex" "$(ag_deferred "$err")" " --agent codex"
 
 : > "$FAKE_CODEX_LOG"
 export FAKE_CODEX_WATCH="$WIP/handoffs/repoAG/repoAG-2.md"
@@ -10047,6 +10249,19 @@ has   "…saying whose the recorded transcript is, and that this launch does not
       "$err" "names agent claude and this launch is codex"
 hasnt "…and the session cell is NOT appended with a Claude uuid in Codex's spelling" \
       "$(grep '^| `repoAG-4`' "$LANES")" "Codex \`$HF2_ID\`"
+# THE CASE #72 ITEM 5 IS ABOUT: the record names claude and the person named
+# codex, so a deferred act without the flag would be settled by claude.
+is    "…and its deferred first act names codex, which this lane's record would not" \
+      "$(ag_deferred "$err")" "lane-start:   lane-start --no-launch repoAG 4 --agent codex"
+# AND A RUN THAT NAMED NO AGENT, OVER A RECORD THAT NAMES NONE, PRINTS NONE:
+# the flag is written down where this run's agent was explicit and only there,
+# so the deferred act chooses its agent exactly as this run did. repoAG-10 has
+# no row and no log, and with nothing minted its records are deferred too.
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="agsess:@41" CLAUDE_PROFILE_NAME=team-05a LANE_START_SESSION_ID=0 \
+    "$START" --dir "$AG_DIR" repoAG-10 --no-launch
+is    "a default-agent start with no uuid to name exits 0" "$rc" 0
+has   "…deferring its records to the session's own first act" "$(ag_deferred "$err")" "--no-launch repoAG 10"
+hasnt "…and naming no agent in it" "$(ag_deferred "$err")" "--agent"
 
 # A LANE WITH NO ROW IS A `STARTED`, WHATEVER BRANCH LAUNCHED IT. `--agent` and
 # the `/ctx` seam both set the verb to RESUMED because they resume a lane that
@@ -12251,6 +12466,40 @@ run a19 "$E" lanes --prefix repo19b
 is    "a no-log row whose 13(a) cell says PAUSED is still listed" "$rc" 0
 has   "…by name" "$out" "repo19b-1"
 is    "…and it is in neither class" "$(a19_field "$out" repo19b-1 14)" "none"
+# AND ITS STATE IS THAT CELL'S WORD, NOT `NO LOG` (#89, out of the suppressed
+# comments of Copilot's review of #82). The cell is the one column Amendment 13
+# exists to make authoritative, and the STATE column was the one read that never
+# consulted it: a row `migrate-state-cells` left parked listed as `NO LOG`, with
+# its `PAUSED` one field along in column 16. The word carries ` (row)`, because
+# it is SHOWN and never bound — with no lane-kind line there is no directory,
+# profile or binding to resume — so column 10 has no act for it and the pick
+# files it in a group of its own, which `lane` never numbers.
+is    "…and its STATE is the cell's own word, marked as the row's (#89)" \
+      "$(a19_field "$out" repo19b-1 2)" "PAUSED (row)"
+is    "…with no act in column 10, because there is no log to resume it from" \
+      "$(a19_field "$out" repo19b-1 10)" "none"
+is    "…and the pick files it rowonly, in none of the three groups it numbers" \
+      "$(printf '%s\n' "$out" | a19 "$E" lane-groups Eagle | cut -f1)" "rowonly"
+run a19 "$LANES_CMD" --prefix repo19b </dev/null
+has   "…and the listing a person reads says PAUSED" "$out" "PAUSED (row)"
+hasnt "…and no longer NO LOG" "$out" "NO LOG"
+# THE CONSERVATIVE CALL, AND `lane` IS WHERE IT IS MADE: a state read out of a
+# cell is DISPLAYED and is never picked or resumed. Before #89 this row was `NO
+# LOG` on this workstation, which the pick files AVAILABLE on the workstation
+# column alone — so it was numbered, and `lane <name>` handed a directory and a
+# profile LAUNCHED it, on a lane whose log records no binding at all.
+A19B_DIR="$SANDBOX/a19b-checkout"
+git init -q -b main "$A19B_DIR"
+git -C "$A19B_DIR" remote add origin git@github.com:opensoft/repo19b.git
+run a19 env -u TMUX -C "$A19B_DIR" "$LANE" </dev/null
+is    "a bare lane in that repository's checkout has nothing to pick" "$rc" 8
+hasnt "…and never numbers the row whose state is its cell" "$out" "repo19b-1"
+: > "$FAKE_PCLAUDE_LOG"
+run a19 env -u TMUX "$LANE" --dir "$A19B_DIR" repo19b-1 team-05a </dev/null
+is    "lane <name> refuses it, whatever directory and profile it is handed" "$rc" 2
+has   "…saying its log has no lane-kind line to give a state" "$err" "no lane-kind line"
+has   "…and naming the read of the row" "$err" "lanes-edit.sh register-row repo19b-1"
+is    "…and launching nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
 
 # `--lane <name>` IS NEVER FILTERED: its caller has named the lane, and an empty
 # answer would read as "there is no such lane".
@@ -12718,6 +12967,17 @@ run a19 env LANES_LANE=repo19-2 "$E" retire-rows repo19ret-1
 is    "…so the writer retires it rather than refusing the row the listing offered" "$rc" 0
 is    "…writing the first and only RETIRED line of its log" \
       "$(grep -c '^RETIRED — lane repo19ret-1' "$A19_WIP/lanes/log/repo19ret-1.md" 2>/dev/null || :)" 1
+
+# AND `LIVE` IS THE ONE CELL WORD THE STATE COLUMN DOES NOT TAKE (#89). The rung
+# that shows `PAUSED (row)` above is not symmetric: a cell cannot prove a
+# session is running, only a live record can, and this row has none — so its
+# STATE stays `NO LOG`, and column 17 flags the cell for still saying `LIVE`.
+run a19 env LANES_LANE=repo19-2 "$E" add-row "| \`repo19live-1\` | harness \`$A19_OLD\` | Eagle / test / brett | 2026-08-21 | none | none | LIVE · 2026-08-22T00:00:00Z · said to be running |"
+is    "a no-log row whose 13(a) cell says LIVE takes its row" "$rc" 0
+run a19 "$E" lanes --prefix repo19live
+is    "…and its STATE stays NO LOG, never LIVE, with no live record behind it" \
+      "$(a19_field "$out" repo19live-1 2)" "NO LOG"
+is    "…while column 17 flags the cell for still saying it" "$(a19_field "$out" repo19live-1 17)" "LIVE"
 
 echo "== Amendment 18: ONE BINDING PER LANE — host/os/container, the ask, the wait, the force =="
 

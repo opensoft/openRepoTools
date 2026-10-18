@@ -1692,6 +1692,25 @@ delete_lines() {   # <line numbers, one per line, any order>
 # more, not one existing byte different.
 append_text_line() {
   newline="$1"; target="${2:-$LANES_FILE}"
+  # ONE LINE IS REFUSED A NEWLINE BEFORE IT IS WRITTEN, NOT PROVED ONE AFTER
+  # (opensoft/openRepoTools#85). The proofs below are made AFTER the `>>`, so a
+  # text carrying a newline was appended whole — two physical lines where one
+  # was meant — and only then refused: `append changed line count by 2`, exit
+  # 5, the file left modified and uncommitted. What came next was worse than
+  # the refusal. A dirty object log is refused by every later writer in that
+  # checkout; a dirty REGISTER is committed by the next one, as a peer's
+  # `pre-existing` edit (`handle_preexisting`) — measured in `lane-handoff`'s own
+  # flow, where the row flip right after the refused PAUSED line committed the
+  # two lines. A carriage return is refused with it: `wc -l` does not count one, so it
+  # passed the proof and put a line no reader splits the same way into a file
+  # nothing rewrites. `write_event` has refused both since R21; this is the
+  # same gate in the one function every append goes through, which is the
+  # reason this file gives for putting the container guard at the dispatcher:
+  # *"nine copies of one rule is how eight of them would come to disagree"*.
+  # FIRST, before the `mktemp` and the copy, so a refusal touches nothing.
+  if [ "${newline//[$'\n\r']/}" != "$newline" ]; then
+    die "an appended line is ONE line, and this text carries a newline or a carriage return: appended, it would put several lines into $target where one was meant, and the proof that only one was added fails after the write, not before it. Nothing was written. Spell the break '; ' and re-run." 2
+  fi
   TMPD="$(mktemp -d)"
   pre="$TMPD/pre"
   cat -- "$target" > "$pre"
@@ -3497,9 +3516,12 @@ lane_objects() {
     # takers, and the one whose last line is a stale CLAIMED could hide the
     # other-s TAKEOVER. `on[]` keeps the spelling of the line that won the
     # position test, so what is PRINTED is still a name somebody wrote.
+    # `ot[]` is the lane a TAKEOVER names as `← lane:<x>`, lower-cased, and
+    # empty for any other line: the link a chain is followed by (#74, below).
     tolower($2) != mel {
       q = pos($10, $11); okey = $6 SUBSEP tolower($2)
-      if (!(okey in op) || q >= op[okey]) { op[okey] = q; ov[okey] = $3; ou[okey] = $1; on[okey] = $2 }
+      if (!(okey in op) || q >= op[okey]) { op[okey] = q; ov[okey] = $3; ou[okey] = $1; on[okey] = $2
+        ot[okey] = ($3 == "TAKEOVER" && $7 == "←" && substr($8, 1, 5) == "lane:") ? tolower(substr($8, 6)) : "" }
     }
     # SUPERSEDED, WITHOUT ORDERING TWO FILES AGAINST EACH OTHER (R14), AND ONLY
     # WHILE THE TAKEOVER STILL STANDS (R18): another lane has a TAKEOVER on the
@@ -3519,9 +3541,26 @@ lane_objects() {
     # test; any later line of this lane is it speaking after the fact and is
     # reported as it stands. The two lines sit in two different lanes, whose
     # files share no clock, and this asks for none.
-    END { for (kk in ov) if (ov[kk] == "TAKEOVER") {
-            split(kk, aa, SUBSEP); oo = aa[1]; ll = on[kk]
-            if (!(oo in tp) || op[kk] >= tp[oo]) { tp[oo] = op[kk]; tlane[oo] = ll; tutc[oo] = ou[kk] } }
+    # A CHAIN IS FOLLOWED TO ITS LAST LINK (opensoft/openRepoTools#74), by the
+    # rule `superseded_by` below argues: when this lane-s own last line is a
+    # TAKEOVER, only another lane-s standing TAKEOVER that NAMES this lane
+    # (`← lane:<this lane>`) displaces it, and not one this lane-s own
+    # TAKEOVER names back; any other open verb is displaced by any standing
+    # TAKEOVER, and the taker NAMED is one no other standing TAKEOVER names
+    # wherever there is one. Without it the true holder at the end of a chain
+    # was told here that it had been "taken over" by the lane it took the
+    # object from, and `lane-end` handed it the release that frees the object.
+    END { for (kk in ov) if (ov[kk] == "TAKEOVER" && ot[kk] != "") {
+            split(kk, aa, SUBSEP); if (ot[kk] != aa[2]) nmd[aa[1], ot[kk]] = 1 }
+          for (kk in ov) if (ov[kk] == "TAKEOVER") {
+            split(kk, aa, SUBSEP); oo = aa[1]; ll = aa[2]
+            if (!(oo in verb)) continue
+            if (verb[oo] == "TAKEOVER") {
+              mt = (ref[oo] == "←" && substr(pay[oo], 1, 5) == "lane:") ? tolower(substr(pay[oo], 6)) : ""
+              if (ot[kk] != mel || mt == ll) continue
+              r = 1
+            } else r = (((oo, ll) in nmd) ? 0 : 1)
+            if (!(oo in tp) || r > tr[oo] || (r == tr[oo] && op[kk] >= tp[oo])) { tp[oo] = op[kk]; tr[oo] = r; tlane[oo] = on[kk]; tutc[oo] = ou[kk] } }
           for (i = 1; i <= n; i++) { o = byn[i]
             supv = ((o in tlane) && (verb[o] == "CLAIMED" || verb[o] == "TAKEOVER" || verb[o] == "OPENED" || verb[o] == "LANDING" || verb[o] == "WITHDRAWN"))
             sup = supv ? tlane[o] "@" tutc[o] : ""
@@ -3550,9 +3589,33 @@ lane_objects() {
 # there is no shared clock to order them by, so the question asked is the one
 # file order can answer — is our own last line still the claim, and is a
 # TAKEOVER still theirs. The UTC printed beside the lane is information for the
-# reader, never a key. When two lanes both end on a TAKEOVER the file-ordered
-# position picks which one is NAMED; both are holders either way, and that
-# conflict is visible in `who` rather than resolved here (see README, "Known").
+# reader, never a key.
+#
+# A CHAIN OF TAKEOVERS RESOLVES TO ITS LAST LINK (opensoft/openRepoTools#74).
+# Issue #30's dead-lane exception lets a TAKEOVER displace an earlier TAKEOVER
+# — A claims, B takes over from A, C takes over from B once B is dead — and
+# every link that displaces a TAKEOVER names the lane it displaced as
+# `← lane:<x>`: `claim --force` writes that payload for every hold that is not
+# a CLAIMED, and only a CLAIMED is ever taken with a comment URL instead. The
+# test used to be "does SOME other lane's last line here read TAKEOVER", and it
+# read B's TAKEOVER — itself displaced by C — as proof that C was displaced
+# too: `who` reported ZERO holders of an object C held. So the question is now
+# asked by what our own last line is:
+#   * a TAKEOVER is displaced ONLY by another lane's standing TAKEOVER that
+#     NAMES our lane. B is displaced by C, which names it; C by nothing, since
+#     no standing TAKEOVER names C. One lane holds the object: the last link.
+#   * any other open verb is displaced by any standing TAKEOVER, as it always
+#     was, and the taker NAMED is one that no other standing TAKEOVER names —
+#     the lane that holds the object now — wherever there is one. A's line
+#     says C, not B. Where every taker is named, the file-ordered position
+#     picks which one is named; A is displaced either way.
+# Two lanes that each end on a TAKEOVER and do not name each other — two takers
+# of one stale claim — are therefore BOTH holders, the visible conflict the
+# README's "Known, deliberate" paragraph has always described; since PR #61
+# (issue #30) widened the gate, the old test had them displace each other and
+# `who` called the object FREE. Two TAKEOVERs that name EACH OTHER (a lane revived and took back
+# what had been taken from it) are both holders too: no file order says which
+# was written last, and a conflict `who` shows is one a person can resolve.
 superseded_by() {   # <object> <lane> <that lane's own last verb on it>
   # ANY OPEN VERB, NOT ONLY CLAIMED (Copilot round 7, PR #61, issue #30): a
   # dead lane's TAKEOVER — decision 8(e)'s stale-CLAIMED case is still the
@@ -3571,12 +3634,24 @@ superseded_by() {   # <object> <lane> <that lane's own last verb on it>
   # reads the same stream: the lane field of a log line carries the spelling
   # that was typed on the day, and one lane's two spellings are one lane. The
   # NAME is still the one the winning line carried, because this is printed.
-  state_events | awk -v sep="$US" -v o="$1" -v me="$2" '
+  # OUR OWN LAST LINE IS READ HERE TOO, not only the other lanes': the TAKEOVER
+  # it may be is what names the lane a chain was taken from (#74, above). `t[]`
+  # is the lane each last line names as `← lane:<x>`, lower-cased, or empty;
+  # a TAKEOVER naming its own lane names nobody.
+  state_events | awk -v sep="$US" -v o="$1" -v me="$2" -v mv="$3" '
     function pos(pf, pn) { return pf "\034" sprintf("%09d", pn) }
     BEGIN { FS = sep; mel = tolower(me) }
-    $6 == o && tolower($2) != mel { p = pos($10, $11); ll = tolower($2)
-      if (!(ll in q) || p >= q[ll]) { q[ll] = p; v[ll] = $3; u[ll] = $1; nm[ll] = $2 } }
-    END { for (l in q) if (v[l] == "TAKEOVER" && (!seen || q[l] >= b)) { seen = 1; b = q[l]; bl = nm[l]; bu = u[l] }
+    $6 == o { p = pos($10, $11); ll = tolower($2)
+      if (!(ll in q) || p >= q[ll]) { q[ll] = p; v[ll] = $3; u[ll] = $1; nm[ll] = $2
+        t[ll] = ($3 == "TAKEOVER" && $7 == "←" && substr($8, 1, 5) == "lane:") ? tolower(substr($8, 6)) : "" } }
+    END { for (l in q) if (v[l] == "TAKEOVER" && t[l] != "" && t[l] != l) named[t[l]] = 1
+          for (l in q) {
+            if (l == mel || v[l] != "TAKEOVER") continue
+            if (mv == "TAKEOVER") {
+              if (t[l] != mel || t[mel] == l) continue
+              r = 1
+            } else r = ((l in named) ? 0 : 1)
+            if (!seen || r > br || (r == br && q[l] >= b)) { seen = 1; br = r; b = q[l]; bl = nm[l]; bu = u[l] } }
           if (seen) print bl "@" bu }'
 }
 
@@ -7730,6 +7805,43 @@ EOF2
     # which is what `lane <name>`, `lane-start` and the handoff would all have
     # been told by an empty answer.
     if [ -n "$lr_class" ] && [ "$lr_closed" = 0 ] && [ -z "$lr_one" ]; then continue; fi
+    # THE ROW'S OWN STATE, WHERE THE LOG HAS NONE TO GIVE (#89, out of the
+    # suppressed comments of Copilot's review of #82). Amendment 13(a) makes the
+    # state cell the lane's CURRENT STATE, and `migrate-state-cells` leaves
+    # exactly that behind: the phrase in the cell and, in the log, NOTED lines
+    # and no lane-kind line at all. So the STATE above said `NO LOG` over a cell
+    # saying `PAUSED`, and the one column the amendment exists to make
+    # authoritative was the one column this listing did not consult. Where the
+    # log gave no answer and `mig_cell_is_phrase` proves the cell is the phrase
+    # — the same test the migration and the class above make of the same cell —
+    # the STATE is the cell's word with ` (row)` after it.
+    #
+    # ` (row)` IS PART OF THE WORD, AND THAT IS THE POINT: the word is SHOWN and
+    # never bound. A row with no lane-kind line records no directory, no profile
+    # and no binding, so there is nothing for `lane` to resume — and every
+    # reader that keys on the log's own `PAUSED` (column 10 below, `lane_groups`,
+    # the `bind it:` line of `lanes`) passes this word by without a change of
+    # its own. `lane_groups` files it `rowonly`, and `lane` refuses that group by
+    # name rather than launching on a word no log wrote.
+    #
+    # FOUR WORDS STAY `NO LOG`. `ENDED`, `RETIRED` and the migration's
+    # `MIGRATED` are the cells of Amendment 19(a)'s DORMANT rows, which 19(b)
+    # shows as `NO LOG` with that cell's head on a line of its own. And `LIVE` is
+    # the one case that is NOT symmetric: a cell cannot prove a session is
+    # running, only a live record can, and the read above has already been
+    # asked — a row it did not find live whose cell still says `LIVE` is the row
+    # column 17 flags, and a STATE column saying so would tell a person a lane
+    # is running that nothing has proved is.
+    #
+    # BELOW THE CLASS, ON PURPOSE: the cell is read only for a row with no object
+    # log and only below the narrowing filter (ruling 12), and the class is the
+    # LOG's question, decided on the log's answer before this changes the word.
+    if [ "$lr_state" = 'NO LOG' ] && mig_cell_is_phrase "$lr_was"; then
+      case "${lr_was%% · *}" in
+        LIVE | ENDED | RETIRED | MIGRATED) : ;;
+        *) lr_state="${lr_was%% · *} (row)" ;;
+      esac
+    fi
     [ -n "$lr_obj" ] || lr_obj="none open"
     lr_age="$([ -n "$lr_utc" ] && age_of "$lr_utc" "$lr_now" || printf 'age unknown')"
     # THE TWO SETS `lane_forks` WOULD OTHERWISE RE-READ THE REGISTER FOR, handed
@@ -7902,6 +8014,10 @@ EOF
 #               another workstation's: the session records are local files, so
 #               saying NOT LIVE about Raven from Eagle would be a claim this
 #               machine has no way to make. Clause (c)'s handoff question.
+#   rowonly     NOT A PICK: a STATE `lanes_rows` read out of the row's own
+#               13(a) cell, `<WORD> (row)`, because the log has no lane-kind
+#               line to give one (#89). Shown by `lanes`, never numbered by
+#               `lane`, and refused by name — there is no log to resume from.
 #
 # CLOSED AND DORMANT LANES LEAVE THE PICK (Amendment 19). A lane whose last act
 # was its last is not a lane a person picks, and a pick that offered one would
@@ -7923,6 +8039,15 @@ lane_groups() {   # <workstation> ; rows on stdin
       cls = (NF >= 14 ? $14 : "")
       if (cls == "closed" || cls == "dormant") next
       if (st == "ENDED" || st == "RETIRED" || st == "CLOSED" || st == "DORMANT") next
+      # A STATE READ OUT OF THE ROW-S OWN CELL IS SHOWN AND NEVER PICKED (#89).
+      # `lanes_rows` prints `<WORD> (row)` for a row whose log has no lane-kind
+      # line and whose cell is Amendment 13(a)-s phrase, and such a row records
+      # no directory, no profile and no binding: there is no log to resume it
+      # from. It is in none of the three groups, so the pick never numbers it,
+      # and `rowonly` is the group `lane <name>` refuses by name. Asked BEFORE
+      # the workstation, because a row with no log on this workstation was
+      # filed AVAILABLE on that column alone.
+      if (st ~ / \(row\)$/) { print "rowonly" "\t" $0; next }
       w = tolower($3); sub(/\..*$/, "", w)
       # COLUMN 13 IS THE READ-S OWN ANSWER to *"may this place pronounce on that
       # binding"* (Amendment 18(b)), and an `IDLE` row is exactly the row that
@@ -9544,7 +9669,6 @@ guard_run() {   # <the hook's JSON, on stdin already read>
   gr_blob="$(cat -- "$gr_file" 2>/dev/null || :)"
   G_NAME="$(jstr "$gr_blob" name)"
   G_SRC="$(jstr "$gr_blob" nameSource)"
-  gr_since="$(jnum "$gr_blob" nameSince)"
   # THE PANE ONLY FROM A TARGET THAT NAMES THIS WINDOW. `here` is true by the
   # record's target OR by the pane's own process tree, and tmux REUSES window
   # ids — so a record that is here BY ANCESTRY can carry a target another
@@ -9556,6 +9680,30 @@ guard_run() {   # <the hook's JSON, on stdin already read>
   gr_pane=""
   if [ -n "$gr_tgt" ] && [ -n "$LANES_THIS_WINDOW" ] && [ "${gr_tgt%.*}" = "$LANES_THIS_WINDOW" ]; then
     case "$gr_tgt" in *.%*) gr_pane="${gr_tgt##*.}" ;; esac
+  fi
+
+  # ---- THE REGISTER'S TEXT, TESTED POSITIVELY, ONCE, BEFORE THE ROW IS READ
+  # (openRepoTools#60). `register_text` prefers `origin/<branch>` and falls back
+  # to this checkout's file, and where both come back empty — a file this
+  # checkout cannot open, with no published copy — it answers EMPTY TEXT AND 0,
+  # because it ends in a `printf`. Every read below then finds no rows, and the
+  # table refused by its LAST arm, "whose row does not name this uuid at all",
+  # with a cure that cannot mend a read that did not happen. A status on
+  # `rows_named_ci` is not the place: its status is its awk's, which says nothing
+  # about the text, and it is shared with `canon_lane` and Amendment 15's
+  # callers. The awk below has one job, and its status IS the answer.
+  # HERE, AND NOT BESIDE THE WORKSPACE TEST WHERE #60 PROPOSED IT: there neither
+  # the window nor the session has been read yet, so the triple this refusal
+  # prints said `not in tmux` about a session that is. Here it names both, and
+  # `row not read`, which is the one thing that is not known.
+  # IT COSTS ONE `cat` AND ONE `awk`, ~6 ms on a 1.3 MB register: the text is
+  # cached beside `$SE_CACHE_FILE` for the life of this process, so this is the
+  # render the first read below would have made, moved here — `GIT_TRACE` counts
+  # one `git show` of the register per prompt with this test and without it. It
+  # is streamed and not captured: `$( )` of the same megabyte measured ~30 ms.
+  if ! register_text 2>/dev/null | awk 'NF { t = 1 } END { exit !t }'; then
+    guard_refuse "the register's TEXT could not be read — neither \`origin/$LANES_BRANCH:$LANES_PATH\` nor $LANES_FILE rendered a line — so the ROW cannot be read and the triple cannot be verified. A register that could not be read is not a register with no row for this lane, and an indeterminate read refuses (Amendment 12(d)). $(guard_bypass)"
+    return 2
   fi
 
   # ---- THE ROW, from `origin/<branch>` as this checkout last had it (R19), and
@@ -9906,10 +10054,20 @@ EOF
 # told apart either way and is drift too, which is (h)1's default and the
 # closed direction. A lane whose log records no binding at all cannot make a
 # rename older than one, so there the rename is the instruction.
+# AND A LOG THAT COULD NOT BE READ IS A THIRD ANSWER, NOT EITHER OF THE TWO
+# (openRepoTools#60). `lane_binding_utc` answers 1 for it — `log_path_ci`
+# refuses two logs differing only by case (Amendment 15) — and this test folded
+# that 1 into the 8, so the `SessionStart` hook, its one caller since #87 made
+# the guard's answer the offer, told a person their rename was newer than a
+# binding nobody read. Read as "not newer" it would type over a person's own
+# `/rename`, which (h) rule 4 forbids, so the caller is told and names the read.
+#   0 newer · 1 not newer, or no `nameSince` · 5 the lane's log could not be read
 guard_rename_is_newer() {   # <lane> <nameSince, epoch ms>
   grn_lane="${1-}"; grn_since="${2-}"
   case "$grn_since" in ''|*[!0-9]*) return 1 ;; esac
-  grn_utc="$(lane_binding_utc "$grn_lane" 2>/dev/null || :)"
+  grn_rc=0
+  grn_utc="$(lane_binding_utc "$grn_lane" 2>/dev/null)" || grn_rc=$?
+  [ "$grn_rc" = 0 ] || [ "$grn_rc" = 8 ] || return 5
   [ -n "$grn_utc" ] || return 0
   grn_e="$(epoch_of "$grn_utc")"
   [ -n "$grn_e" ] || return 0
@@ -10323,13 +10481,26 @@ ssb_name_line() {   # <session uuid> <lane, or empty>
   # offer never happens. It is SAID here and left to the prompt that follows.
   snl_src="$(jstr "$snl_blob" nameSource)"
   snl_since="$(jnum "$snl_blob" nameSince)"
+  snl_nrc=1
   if [ "${snl_src:-}" = user ] && [ "$(lc "$snl_name")" != "$(lc "$snl_lane")" ] \
-     && { [ -n "$(rows_named_ci "$snl_name" 2>/dev/null || :)" ] || lane_shaped "$snl_name"; } \
-     && guard_rename_is_newer "$snl_lane" "$snl_since"; then
-    printf "session name '%s' is a lane name YOU set, newer than this window's binding to '%s' — the name guard offers the move at your next prompt (Amendment 12(h) rule 2); nothing was renamed here\n" \
-      "$snl_name" "$snl_lane"
-    return 0
+     && { [ -n "$(rows_named_ci "$snl_name" 2>/dev/null || :)" ] || lane_shaped "$snl_name"; }; then
+    snl_nrc=0
+    guard_rename_is_newer "$snl_lane" "$snl_since" || snl_nrc=$?
   fi
+  case "$snl_nrc" in
+    0)
+      printf "session name '%s' is a lane name YOU set, newer than this window's binding to '%s' — the name guard offers the move at your next prompt (Amendment 12(h) rule 2); nothing was renamed here\n" \
+        "$snl_name" "$snl_lane"
+      return 0 ;;
+    # A BINDING NOBODY COULD READ IS NEITHER ANSWER (openRepoTools#60): not
+    # "newer", which is a claim about a log this hook did not read, and not
+    # drift, which would type over the person's own rename. The read is named
+    # and the name left alone; this hook refuses nothing, so that is all it does.
+    5)
+      printf "session name '%s' is a lane name YOU set, and lane %s's object log could not be read, so whether you set it after this window's binding is NOT known — nothing was renamed here, and the name guard puts it to you at your next prompt (Amendment 12(h) rule 4)\n" \
+        "$snl_name" "$snl_lane"
+      return 0 ;;
+  esac
   here_context
   snl_pane=""
   if [ -n "$snl_tgt" ] && [ "$snl_tgt" != none ] && [ -n "$LANES_THIS_WINDOW" ] \
@@ -13795,6 +13966,17 @@ Nothing was written." 2
 
   append-line)
     text="${1-}"; [ -n "$text" ] || die "usage: append-line \"<text>\"" 2
+    # ONE LINE, REFUSED A NEWLINE BEFORE THE LOCK (opensoft/openRepoTools#85).
+    # `append_text_line` refuses it too, and before it writes — but that is
+    # after `acquire_lock` and `handle_preexisting`, which can COMMIT a peer's
+    # uncommitted register edit before this act's own write. A refusal that has
+    # already committed something is a refusal that wrote, so the verb asks
+    # first, exactly where `write_event` asks for `log`: the checkout is left
+    # as this command found it. `lane-handoff`'s file-level PAUSED line is the
+    # caller that met it, with a `why` carrying a newline.
+    if [ "${text//[$'\n\r']/}" != "$text" ]; then
+      die "append-line appends ONE line to the register, and this text carries a newline or a carriage return: it would append several, and the proof that only one was added would fail after the write, leaving the register modified and uncommitted. Nothing was written, and the lock was not taken. Spell the break '; ' and re-run." 2
+    fi
     # NO MARKER BY THE BACK DOOR (Copilot round 3 on #97): `add-row` refuses a
     # row in the marker's vocabulary, and this appends any line at all to the
     # register — a row-shaped one included.
