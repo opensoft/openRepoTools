@@ -176,7 +176,7 @@ invocation.
 
 ### Implementation for User Story 2
 
-- [ ] T011 [US2] [O] Teach `openRepoTools` to read its stamp and print its release, as detailed below — files: `openRepoTools` — verify: `bash tests/run.sh -k 'test_package_stamp or test_version_ or test_pipx_ or test_entry_'`
+- [X] T011 [US2] [O] Teach `openRepoTools` to read its stamp and print its release, as detailed below — files: `openRepoTools` — verify: `bash tests/run.sh -k 'test_package_stamp or test_version_ or test_pipx_ or test_entry_'`
   - add `stamp_read`: contracts/stamp.md's grammar and checks, in `pin_parse`'s style, holding to bash 3.2, and never sourcing the file;
   - add `package_init`, called once after every function definition and before the argument loop. In package mode it sets `PACKAGE_DIR` and reads the stamp, and on any refusal it calls `die` with contracts/cli-output.md's broken-stamp line;
   - make the `--version` arm print the stamped or unstamped five lines when `PACKAGE_DIR` is set, and today's line otherwise;
