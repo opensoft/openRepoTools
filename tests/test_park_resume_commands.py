@@ -132,6 +132,31 @@ legs:
     path: "."
 """
 
+#: A FAMILY WHOSE DISPLAY `name:` IS NOT ITS REPOSITORY'S NAME (#236).
+#: `family.py init --family Quill --name QuillWorks` writes exactly this:
+#: `name: "QuillWorks"` beside `repository: testorg/Quill`. `FAMILY_YAML`
+#: above always writes `repository: {org}/{name}`, so no test built on it can
+#: tell the two names apart. The holder is NAMED AFTER THE REPOSITORY under
+#: openRepoShape v1.1.0 (opensoft/openRepoShape#629) and `make siblings` stops
+#: before cloning when it is not (opensoft/openRepoShape#543).
+FAMILY_TWO_NAMES_YAML = """\
+schema_version: 1
+kind: family-manifest
+id: {id}
+name: "{name}"
+org: {org}
+repository: {repository}
+tracking_branch: main
+members_dir: members
+members:{members}
+"""
+
+#: The two names of that one family: the folder v1.1.0 prescribes, which is
+#: its repository's last part, and the display name the commands used to
+#: require instead.
+QUILL = "Quill"
+QUILL_DISPLAY = "QuillWorks"
+
 
 # --- the environment every run gets ----------------------------------------
 
@@ -197,6 +222,32 @@ def probe_family(projects: Path, name: str) -> Path:
     (holder / "family.yaml").write_text(
         FAMILY_YAML.format(id=name.lower(), name=name, org=ORG,
                            members=" []"), encoding="utf-8")
+    (holder / "Makefile").write_text(PROBE_MAKEFILE, encoding="utf-8")
+    return holder
+
+
+def probe_family_two_names(projects: Path, folder: str, *, name: str,
+                           repository: str | None,
+                           member_repository: str | None = None) -> Path:
+    """A family folder like `probe_family`'s, but `family.yaml` carries a
+    display `name:` and a `repository:` of their own (#236), so the folder can
+    equal one, the other, neither. `repository=None` leaves the key out, and
+    `member_repository` adds one member whose own, INDENTED `repository:` is
+    that: a key that is never the holder's."""
+    holder = projects / folder / folder
+    holder.mkdir(parents=True)
+    rows = " []"
+    if member_repository is not None:
+        rows = (f"\n  - project: Alpha\n    id: alpha\n"
+                f"    repository: {member_repository}\n"
+                f"    path: members/Alpha\n")
+    text = FAMILY_TWO_NAMES_YAML.format(
+        id=folder.lower(), name=name, org=ORG, repository=repository,
+        members=rows)
+    if repository is None:
+        text = "".join(line for line in text.splitlines(keepends=True)
+                       if not line.startswith("repository:"))
+    (holder / "family.yaml").write_text(text, encoding="utf-8")
     (holder / "Makefile").write_text(PROBE_MAKEFILE, encoding="utf-8")
     return holder
 
@@ -529,6 +580,87 @@ def estate(remotes, home) -> dict:
             "siblings": siblings}
 
 
+@pytest.fixture(scope="session")
+def named_apart(tmp_path_factory, remotes) -> dict:
+    """The family of #236, whose display name is not its repository's name,
+    as bare repositories: the holder `Quill.git` and a workspace `wip.git`.
+
+    The holder is `remotes["holder"]` with ONLY `family.yaml` rewritten — `id:
+    quill`, `name: "QuillWorks"`, `repository: testorg/Quill` — so it still
+    carries the template bytes and the pinned members every other holder here
+    does. The bare is called `Quill.git` because that is what `resume` asks
+    for: `clone_url_for testorg/Quill`.
+
+    The workspace carries TWO records of it, one per folder a person might
+    have laid it out in. Each is `family_manifest`'s own, so `root:` is
+    `<folder>/<member>` and the record says nothing about the holder's
+    repository: `family:` is the id, and the org is the directory it is filed
+    under.
+    """
+    base = tmp_path_factory.mktemp("namedapart")
+    seed = base / "seed" / QUILL
+    seed.parent.mkdir(parents=True)
+    git("-c", "protocol.file.allow=always", "clone", "-q",
+        "--recurse-submodules", str(remotes["holder"]), str(seed), cwd=base)
+    family_yaml = seed / "family.yaml"
+    text = family_yaml.read_text(encoding="utf-8")
+    rewritten = (text
+                 .replace(f"id: {FAMILY.lower()}\n", f"id: {QUILL.lower()}\n")
+                 .replace(f'name: "{FAMILY}"\n', f'name: "{QUILL_DISPLAY}"\n')
+                 .replace(f"repository: {ORG}/{FAMILY}\n",
+                          f"repository: {ORG}/{QUILL}\n"))
+    # A rewrite that matched nothing would leave `TestFam` in a fixture that
+    # claims not to be it, and every test below would be about the wrong file.
+    assert FAMILY not in rewritten, rewritten
+    assert (f'name: "{QUILL_DISPLAY}"\n' in rewritten
+            and f"repository: {ORG}/{QUILL}\n" in rewritten), rewritten
+    family_yaml.write_text(rewritten, encoding="utf-8")
+    commit_all(seed, "the family's display name is not its repository's")
+    holder = base / "remotes" / f"{QUILL}.git"
+    holder.parent.mkdir(exist_ok=True)
+    git("clone", "-q", "--bare", str(seed), str(holder), cwd=base)
+    workspace = seed_workspace(
+        base, "wip",
+        {f"workspaces/{ORG}/{QUILL.lower()}.yaml": family_manifest(QUILL),
+         f"workspaces/{ORG}/{QUILL_DISPLAY.lower()}.yaml":
+             family_manifest(QUILL_DISPLAY)})
+    return {"dir": base / "remotes", "holder": holder, "workspace": workspace}
+
+
+def clone_quill_estate(named_apart: dict, remotes: dict, home: Path,
+                       folder: str) -> dict:
+    """`estate`'s own shape, for the family of #236 laid out in `folder`:
+    the holder at `<folder>/<folder>` and each member's working clone beside
+    it. `folder` is `QUILL` (v1.1.0's rule) or `QUILL_DISPLAY` (the rule
+    before it); the holder's own `family.yaml` is the same in both."""
+    projects = home / "projects"
+    where = projects / folder
+    where.mkdir(parents=True, exist_ok=True)
+    git("-c", "protocol.file.allow=always", "clone", "-q",
+        "--recurse-submodules", str(named_apart["holder"]),
+        str(where / folder), cwd=projects)
+    siblings = {}
+    for name in MEMBERS:
+        git("clone", "-q", str(remotes["members"][name]),
+            str(where / name), cwd=projects)
+        siblings[name] = where / name
+    return {"projects": projects, "folder": where, "holder": where / folder,
+            "siblings": siblings}
+
+
+def place_quill_workspace(named_apart: dict, home: Path,
+                          bare: Path | None = None) -> None:
+    """The configured workspace, already cloned: what `resume` reads a record
+    out of on a machine that has resumed before (`behind`'s own setup).
+    `bare` is another workspace than `named_apart`'s own."""
+    config = home / ".agents" / "workspace.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text(f"repository: {WORKSPACE_SLUG}\npath: ~/projects/wip\n",
+                      encoding="utf-8")
+    git("clone", "-q", str(bare or named_apart["workspace"]),
+        str(home / "projects" / "wip"), cwd=home)
+
+
 # ===========================================================================
 # estate resolution — the half both commands share
 # ===========================================================================
@@ -567,6 +699,88 @@ def test_a_family_folder_wins_over_a_standalone_root_of_the_same_name(home):
     assert result.returncode == 0, result.stderr + result.stdout
     assert f"PROBE park in {holder}" in result.stdout
     assert f"PROBE park in {projects / 'Dual'} " not in result.stdout
+
+
+# --- a family folder is named for its repository OR its display name (#236) --
+#
+# `is_family_folder` required `family.yaml`'s display `name:` to equal the
+# folder, and openRepoShape v1.1.0 names the folder after the holder's
+# REPOSITORY instead (opensoft/openRepoShape#629), stopping `make siblings`
+# before it clones when it is not (opensoft/openRepoShape#543). A family whose
+# two names differ had no layout both could use. Either name now finds it.
+
+@pytest.mark.parametrize("command", [PARK, RESUME], ids=["park", "resume"])
+@pytest.mark.parametrize("folder", [QUILL, QUILL_DISPLAY],
+                         ids=["repository", "name"])
+def test_a_family_folder_is_found_by_its_repository_name_or_its_display_name(
+        named_apart, remotes, home, command, folder):
+    """`Quill/Quill` is v1.1.0's layout and `QuillWorks/QuillWorks` the one the
+    commands required before it; one `family.yaml` (`name: "QuillWorks"`,
+    `repository: testorg/Quill`) is found in both, by the folder's own name."""
+    quill = clone_quill_estate(named_apart, remotes, home, folder)
+    place_quill_workspace(named_apart, home)
+    result = run(command, folder, "--dry-run", home=home,
+                 env=offline(named_apart))
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "no estate named" not in result.stderr
+    assert f"{quill['holder']}" in result.stdout
+    if command == PARK:
+        assert (f"park: {folder} - the family holder at {quill['holder']}"
+                in result.stdout)
+        for name in MEMBERS:
+            assert f"--- {name}: make park ---" in result.stdout
+    else:
+        assert f"present         {quill['folder']} (family)" in result.stdout
+
+
+@pytest.mark.parametrize("command", [PARK, RESUME], ids=["park", "resume"])
+@pytest.mark.parametrize("shape", [
+    ("Elsewhere", "Other", f"{ORG}/Other", None),
+    (ORG, "Other", f"{ORG}/Quill/Other", None),
+    ("Quill", "Other", None, None),
+    ("Quill", "Other", None, f"{ORG}/Quill"),
+], ids=["neither-name-nor-repository",
+        "an-earlier-part-of-the-repository", "no-repository-and-another-name",
+        "only-a-members-repository-ends-in-the-folder"])
+def test_a_family_folder_that_is_neither_name_still_refuses(
+        remotes, home, command, shape):
+    """What the second arm must NOT widen into. The folder has to equal the
+    LAST part of `repository:` — not any part, not the org, not whatever a
+    missing key reads as, and not a MEMBER's own `repository:` (indented, so
+    never the holder's) — or `name:`; anything else is a directory called
+    that, as it always was."""
+    folder, name, repository, member_repository = shape
+    projects = home / "projects"
+    probe_family_two_names(projects, folder, name=name, repository=repository,
+                           member_repository=member_repository)
+    config = home / ".agents" / "workspace.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text(f"repository: {WORKSPACE_SLUG}\npath: ~/projects/wip\n",
+                      encoding="utf-8")
+    result = run(command, folder, home=home, env=offline(remotes))
+    assert result.returncode == 2, result.stdout + result.stderr
+    if command == PARK:
+        assert f"no estate named '{folder}'" in result.stderr
+        assert f"PROBE park in {projects / folder / folder}" not in result.stdout
+    else:
+        assert f"no workspace manifest records '{folder}'" in result.stderr
+        assert f"present         {projects / folder}" not in result.stdout
+
+
+def test_a_family_folder_named_for_its_repository_wins_over_a_standalone_root(
+        home):
+    """The same rule as above, for a family whose `name:` differs: the holder
+    drives the members, so it is still the answer where a standalone
+    `project.yaml` sits in the same folder."""
+    projects = home / "projects"
+    holder = probe_family_two_names(projects, QUILL, name=QUILL_DISPLAY,
+                                    repository=f"{ORG}/{QUILL}")
+    probe_project(projects, QUILL, at=projects / QUILL)
+    result = run(PARK, QUILL, home=home)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"park: {QUILL} - the family holder at {holder}" in result.stdout
+    assert f"PROBE park in {holder}" in result.stdout
+    assert f"PROBE park in {projects / QUILL} " not in result.stdout
 
 
 def test_with_no_name_the_estate_around_the_cwd_is_used(home):
@@ -1248,6 +1462,81 @@ def test_resume_on_a_fresh_machine_builds_the_whole_estate(remotes, home):
     assert f"holder    {FAMILY}" in result.stdout
     assert "`make resume` exited 0" in result.stdout
     assert "0 refusal(s)" in result.stdout
+
+
+def test_resume_clones_the_holder_under_its_repositorys_name_when_the_display_name_differs(
+        named_apart, remotes, home):
+    """#236, the fresh machine. The record says `family: quill` and each
+    member's `root: Quill/Alpha`, and it is filed under `workspaces/testorg/`:
+    it NEVER carries the holder's repository, so `resume` derives it from the
+    org and the family folder — and under v1.1.0 the folder IS the
+    repository's last part (opensoft/openRepoShape#629). The clone then has to
+    be recognised as an estate although its `name:` is "QuillWorks"; before,
+    `resume` cloned the right repository and refused it as 'not an estate'."""
+    result = run(RESUME, QUILL, "--workspace", WORKSPACE_SLUG, home=home,
+                 env=offline(named_apart))
+    assert result.returncode == 0, result.stderr + result.stdout
+    folder = home / "projects" / QUILL
+    holder = folder / QUILL
+    assert f"root repository {ORG}/{QUILL}" in result.stdout
+    assert f"absent          cloning {ORG}/{QUILL} -> {holder}" in result.stdout
+    assert f"{ORG}/{QUILL_DISPLAY}" not in result.stdout
+    assert 'name: "QuillWorks"' in (holder / "family.yaml").read_text(
+        encoding="utf-8"), "the holder is the one whose display name differs"
+    assert not (home / "projects" / QUILL_DISPLAY).exists()
+    for name in MEMBERS:
+        assert (folder / name / ".git").is_dir(), f"{name} is not beside it"
+        assert f"{name}.sh ran with:" in result.stdout
+    assert f"holder    {QUILL}" in result.stdout
+    assert "0 refusal(s)" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "on_disk, asked", [(QUILL, QUILL), (QUILL_DISPLAY, "quill")],
+    ids=["the-holder-was-moved-to-the-repositorys-name",
+         "the-holder-is-still-in-the-display-names-folder"])
+def test_resume_names_the_repository_of_the_holder_it_resolved_not_the_records_folder(
+        named_apart, remotes, home, tmp_path, on_disk, asked):
+    """The review of #240 (5561239588), finding 1. The record is filed as park
+    files it: ONE per family, named for the id (`quill.yaml`, `family: quill`),
+    parked from the layout before v1.1.0 so its `root:` is `QuillWorks/Alpha`.
+    Then `make siblings`' own advice is followed, `mv QuillWorks/QuillWorks
+    Quill/Quill`, and the record is stale until the next park. The holder IS
+    on disk, found by the name typed; asking for the repository by the
+    record's folder missed it and printed `testorg/QuillWorks`, which is no
+    repository. The second case is the same record against the holder still
+    where the record says, typed as the id."""
+    clone_quill_estate(named_apart, remotes, home, on_disk)
+    record = family_manifest(QUILL_DISPLAY).replace(
+        f"family: {QUILL_DISPLAY.lower()}\n", f"family: {QUILL.lower()}\n")
+    assert "root: QuillWorks/Alpha" in record and "family: quill\n" in record
+    place_quill_workspace(named_apart, home, seed_workspace(
+        tmp_path / "stale", "wip",
+        {f"workspaces/{ORG}/{QUILL.lower()}.yaml": record}))
+    result = run(RESUME, asked, "--dry-run", home=home,
+                 env=offline(named_apart))
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert (f"records         a family estate, root repository "
+            f"{ORG}/{QUILL}") in result.stdout
+    assert f"{ORG}/{QUILL_DISPLAY}" not in result.stdout
+    assert f"present         {home / 'projects' / on_disk} (family)" \
+        in result.stdout
+
+
+def test_resume_names_the_repository_the_holders_family_yaml_gives(
+        named_apart, remotes, home):
+    """#236, the estate already here, laid out before v1.1.0: the folder is the
+    display name, so it is NOT the repository's name, and a repository derived
+    from it (`testorg/QuillWorks`) is a repository that does not exist. The
+    holder's own `family.yaml` says which one it is, and it can be read."""
+    clone_quill_estate(named_apart, remotes, home, QUILL_DISPLAY)
+    place_quill_workspace(named_apart, home)
+    result = run(RESUME, QUILL_DISPLAY, "--dry-run", home=home,
+                 env=offline(named_apart))
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert (f"records         a family estate, root repository "
+            f"{ORG}/{QUILL}") in result.stdout
+    assert f"{ORG}/{QUILL_DISPLAY}" not in result.stdout
 
 
 def test_resume_writes_the_config_only_when_asked_by_name(remotes, home):

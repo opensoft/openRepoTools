@@ -407,8 +407,8 @@ https credential prompt fails and is reported; an ssh host-key or passphrase
 prompt is ssh's own and still blocks, so run `--fetch` where ssh is already
 non-interactive.
 
-Windows: all four files are bash, and there is no PowerShell twin. On Windows
-the way in is WSL2, exactly as it is for openRepoShape's `setup.sh`.
+Windows: no command here has a PowerShell twin. On Windows the way in is WSL2,
+exactly as it is for openRepoShape's `setup.sh`.
 
 ## The dependency direction
 
@@ -477,7 +477,7 @@ refuses.
 
 CI runs the suite on ubuntu only (Brett Heap's decision of 2026-10-15), with one
 ubuntu job that checks out WITHOUT submodules to prove the skip path exits 0.
-No job parses the four bash files under macOS's bash 3.2 — the last GPLv2
+No job parses the shipped bash files under macOS's bash 3.2 — the last GPLv2
 release and what Apple still ships — so that claim is no longer tested in CI.
 
 ## Licence
