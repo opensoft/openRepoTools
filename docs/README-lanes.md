@@ -594,7 +594,7 @@ under, and it is the COUNT and never `pgrep`'s exit status that decides.
 `tests/run.sh` is the canonical implementation of this guard — the lines above
 are it in one place, for a person with no checkout in front of them.
 
-The suite copies the four commands and the shipped alias table into a sandbox
+The suite copies the lane commands and the shipped alias table into a sandbox
 BIN DIRECTORY, seeds a workspace repository with nothing but data in it, and
 writes that sandbox's own `workspace.yaml` to join the two — which is the
 world after Amendment 9, exactly. It unsets every `LANES_*` seam first, so
@@ -4100,7 +4100,7 @@ machine whose repository already exists it clones it, adds nothing to a seeded
 repository, writes the pointer file and runs `link-estates`:
 
 ```sh
-openRepoTools --install     # the thirteen commands, the three skills, the three command files and the hook entry
+openRepoTools --install     # the commands, the three skills, the three command files and the hook entry
 openRepoTools wip init      # create or adopt the workspace, and link it
 ```
 

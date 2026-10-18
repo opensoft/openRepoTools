@@ -27,10 +27,10 @@
 #               stops the call.
 #
 # WHERE THE FILES ARE, after lane-collision-protocol Amendment 9's move. The
-# four commands and the shipped alias table live at the ROOT of
+# lane commands and the shipped alias table live at the ROOT of
 # `opensoft/openRepoTools` and are INSTALLED into a bin directory; the person's
 # workspace repository holds data and no code at all. This suite reproduces
-# exactly that: it copies the five files into a sandbox bin directory, seeds a
+# exactly that: it copies those files into a sandbox bin directory, seeds a
 # workspace repository with nothing but data in it, and writes the sandbox's own
 # `$AGENT_PROTOCOL_ROOT/workspace.yaml` to join the two — which is the default
 # resolution under test, since `:55` unsets every LANES_* seam so that the
@@ -509,7 +509,7 @@ STALE_H=4                      # lanes-edit.sh's default, Rule 1's four hours
 
 # ------------------------------------------------------------- the register
 
-# THE BIN DIRECTORY — the post-move world, where `--install` places the four
+# THE BIN DIRECTORY — the post-move world, where `--install` places the lane
 # commands and the shipped alias table as regular files at 755. The workspace
 # repository below gets NONE of them: Amendment 9(a), data only.
 export OPENREPOTOOLS_BIN_DIR="$SANDBOX/bin"
@@ -1531,7 +1531,13 @@ is   "--force on a stale claim takes it over" "$rc" 0
 G2="$(cat "$LOGD/repoG-2.md")"
 has  "…writing a TAKEOVER line" "$G2" "TAKEOVER — lane repoG-2, session "
 has  "…referencing the claim it supersedes with ←" "$G2" "opensoft/repoG#8 ← lane:repoG-1"
-hasnt "…and no separate CLAIMED line: TAKEOVER is itself an open verb" "$G2" "CLAIMED — lane repoG-2, session .*opensoft/repoG#8"
+# A REAL PATTERN, NOT `hasnt`'S FIXED STRING (issue #66): `hasnt` is a `case`
+# containment test, so the `.*` this line used to carry to skip the session uuid
+# was the two literal characters, never a wildcard — and a log that DID hold a
+# separate CLAIMED line for repoG#8 passed it all the same. `grep -cE` over the
+# log is the real thing, and it counts the lines, so it can be 1.
+is   "…and no separate CLAIMED line: TAKEOVER is itself an open verb" \
+     "$(printf '%s\n' "$G2" | grep -cE '^CLAIMED — lane repoG-2,.*opensoft/repoG#8')" 0
 
 run "$E" who "opensoft/repoG#8"
 has  "…so the taker now holds it" "$out" "HOLDS    lane repoG-2"
@@ -4918,6 +4924,39 @@ is   "…the other line reaches the person UNPREFIXED, exactly as the helper wro
      "$(cat "$SANDBOX/fence3b.err")" "session records for this workstation could not be read: permission denied"
 hasnt "…and grep itself never errors on \`--\` as though it were a missing file" \
      "$(cat "$SANDBOX/fence3b.err")" "No such file or directory"
+
+# #54 part a — `lanes`' OWN LOCAL READ HAD THE SAME LINE (#53 fixed the one in
+# the file above, and `lane`'s copy already carries the `-e`; this was the last
+# one without it). Its stderr is kept minus the one no-fetch sentence, through
+# `grep -v 'pattern' -- file`, and with the pattern a bare operand a
+# non-permuting getopt reads `--` as a second FILE. The stub says the notice
+# AND another line, the way the helper does when this workstation's session
+# records are unreadable, and exits 8 — "no lane" — which is the shortest way
+# through the command that still reaches the filter. `POSIXLY_CORRECT=1` is the
+# same stand-in for BSD's `grep` the case above uses: measured against the
+# unfixed line, this case printed `grep: --: No such file or directory` and put
+# the temp file's own name in front of the real line.
+cat > "$SANDBOX/lanesfence" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  lanes)
+    printf 'LANES_NO_FETCH=1 — not fetching; reading origin/main as the ref already stands here\n' >&2
+    printf 'session records for this workstation could not be read: permission denied\n' >&2
+    exit 8 ;;
+esac
+exit 0
+WRAP
+chmod +x "$SANDBOX/lanesfence"
+lanes_fence_rc=0
+( cd -- "$SANDBOX" && POSIXLY_CORRECT=1 LANES_EDIT="$SANDBOX/lanesfence" \
+    "$OPENREPOTOOLS_BIN_DIR/lanes" </dev/null >/dev/null 2>"$SANDBOX/lanesfence.err" ) || lanes_fence_rc=$?
+is    "lanes under a NON-PERMUTING getopt (BSD's shape) still answers, \"no lane\" being its 8" "$lanes_fence_rc" 8
+is    "…and the other stderr line reaches the person UNPREFIXED, exactly as the helper wrote it" \
+      "$(cat "$SANDBOX/lanesfence.err")" "session records for this workstation could not be read: permission denied"
+hasnt "…grep itself never errors on \`--\` as though it were a missing file" \
+      "$(cat "$SANDBOX/lanesfence.err")" "grep: --:"
+hasnt "…and the known no-fetch notice is still dropped from it" \
+      "$(cat "$SANDBOX/lanesfence.err")" "not fetching"
 
 # AND WITH NO CAPTURE FILE AT ALL, NOTHING IS FILTERED — silence in place of a
 # stream this fence could not open would be the same defect the notice fix
