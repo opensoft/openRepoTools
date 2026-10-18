@@ -820,6 +820,62 @@ def test_t018_a_report_with_no_assembly_has_no_legs_section(tmp_path):
     assert "Assembly legs" not in proc.stdout
 
 
+def test_t018_the_report_lists_a_leg_that_is_also_a_canonical_clone_once(tmp_path):
+    """FINDING 1 OF THE READ-ONLY TRIAD MEASUREMENT (2026-10-17): a leg whose
+    `.git` is a DIRECTORY - a clone, not a submodule's gitfile - is also one of
+    the estate's canonical checkouts, and the report read it once as each, so
+    its branch rows printed twice (8 rows on that workstation) and its `main`
+    row would have. Each leg's rows now appear once, still naming the leg, in
+    the branch, `main` and rescue sections. The manifest is written here, so
+    no template is needed."""
+    b = Bench(tmp_path / "bench", REPO)
+    a = b.projects / "cl"
+    b.origin("cl")
+    b.git("clone", "-q", b.remotes / "cl.git", a)
+    b.commit(a, "the assembly, its legs clones", {
+        ".gitignore": "spec/\ncode/\n",
+        "project.yaml": ("schema_version: 1\nkind: project-manifest\nid: \"cl\"\nlegs:\n"
+                         "  - role: assembly\n    repository: opensoft/cl\n    path: \".\"\n"
+                         "  - role: spec\n    repository: opensoft/cl-spec\n    path: \"spec\"\n"
+                         "  - role: code\n    repository: opensoft/cl-code\n    path: \"code\"\n")})
+    b.git("push", "-q", "origin", "main", cwd=a)
+    spec, code = a / "spec", a / "code"
+    b.git("clone", "-q", b.seeded("cl-spec", {"s.md": "s\n"}), spec)
+    b.git("clone", "-q", b.seeded("cl-code", {"c.txt": "c\n"}), code)
+    assert (spec / ".git").is_dir() and (code / ".git").is_dir()
+    # the code leg: a branch with no upstream, and a rescue branch past the aging line
+    b.git("checkout", "-q", "-b", "leg-unpushed", cwd=code)
+    b.commit(code, "leg work", {"l.txt": "l\n"}, lane="cl-1")
+    b.git("checkout", "-q", "-b", "rescue/cl-1/old", "main", cwd=code)
+    old = {"GIT_AUTHOR_DATE": "2020-01-01T00:00:00+00:00",
+           "GIT_COMMITTER_DATE": "2020-01-01T00:00:00+00:00"}
+    made = b.run("git", "commit", "-q", "--allow-empty", "-m", "old rescue", cwd=code, env=old)
+    assert made.returncode == 0, made.stderr
+    b.git("checkout", "-q", "main", cwd=code)
+    # the spec leg: local main ahead of origin
+    b.commit(spec, "spec work on main", {"m.md": "m\n"}, lane="cl-1")
+
+    proc = b.tool("lane-worktrees", "sweep", "--all", "--dry-run", "--report", "--estate",
+                  b.projects)
+    assert proc.returncode == 0, proc.stderr
+    foreign = _section(proc.stdout, "FOREIGN repositories")
+    assert str(spec) not in foreign and str(code) not in foreign, foreign   # both canonical
+    branches = _section(proc.stdout, "Unmerged branches with a missing, diverged or unpushed upstream")
+    rows = [ln for ln in branches.splitlines() if ln.startswith(f"- {code} leg-unpushed ·")]
+    assert len(rows) == 1, branches
+    assert rows[0].endswith(f"the code leg of {a}"), rows
+    root_main = _section(proc.stdout, "Root main divergence")
+    rows = [ln for ln in root_main.splitlines() if ln.startswith(f"- {spec} · local main ahead")]
+    assert len(rows) == 1, root_main
+    assert rows[0].endswith(f"the spec leg of {a}"), rows
+    aging = _section(proc.stdout, "Awaiting disposition")
+    rows = [ln for ln in aging.splitlines() if ln.startswith(f"- {code} rescue/cl-1/old ·")]
+    assert len(rows) == 1, aging
+    assert rows[0].endswith(f"the code leg of {a}"), rows
+    legs = _section(proc.stdout, "Assembly legs with uncommitted or unpublished work")
+    assert legs.count(f"- {spec} · the spec leg of {a} ·") == 1, legs
+
+
 # ================================================================ (d) add
 
 def _inventory(b: Bench, lane: str) -> dict:

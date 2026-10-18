@@ -5391,11 +5391,41 @@ class Report:
         return legs
 
     def _leg_cell(self, path: str) -> str:
-        """'' for a canonical checkout; for a leg, which assembly it is under."""
-        for g in getattr(self, "legs", []):
+        """'' for a canonical checkout; for a leg, which assembly it is under -
+        by its real path too, because `_checkouts` keeps the FIRST spelling of
+        a checkout that is both, and that is the canonical one."""
+        legs = getattr(self, "legs", [])
+        if not legs:
+            return ""
+        for g in legs:
             if g.path == path:
                 return f"the {g.decl} leg of {g.assembly}"
+        rp = real(path)
+        for g in legs:
+            if g.real == rp:
+                return f"the {g.decl} leg of {g.assembly}"
         return ""
+
+    def _checkouts(self, canonical: list) -> list:
+        """The checkouts the branch, `main` and rescue sections read: every
+        canonical checkout, then every leg checked out here (T018), EACH ONCE
+        BY ITS REAL PATH, in that order. A leg whose `.git` is a directory - a
+        clone, not a submodule's gitfile - is also one of the estate's
+        canonical checkouts, and read once as each it printed every branch row
+        and its `main` row twice (the read-only triad measurement of
+        2026-10-17, finding 1). With no leg checked out it is `canonical`
+        itself, untouched, so a report of single repositories cannot move."""
+        legs = [g.path for g in getattr(self, "legs", []) if g.checkout]
+        if not legs:
+            return list(canonical)
+        out, seen = [], set()
+        for c in canonical + legs:
+            r = real(c)
+            if r in seen:
+                continue
+            seen.add(r)
+            out.append(c)
+        return out
 
     def _legs_section(self) -> None:
         """T018: every leg checkout holding edits no commit carries or commits
@@ -5497,7 +5527,7 @@ class Report:
         rows = []
         fmt = ("%(refname:short)%1f%(objectname:short=12)%1f%(upstream:short)%1f"
                "%(upstream:track)%1f%(committerdate:iso-strict)%1f%(contents:trailers)%00")
-        for c in canonical + [g.path for g in getattr(self, "legs", []) if g.checkout]:
+        for c in self._checkouts(canonical):
             proc = git(c, "for-each-ref", f"--format={fmt}", "refs/heads/")
             if proc.returncode != 0:
                 continue
@@ -5534,7 +5564,7 @@ class Report:
 
     def _root_main(self, canonical: list) -> None:
         rows = []
-        for c in canonical + [g.path for g in getattr(self, "legs", []) if g.checkout]:
+        for c in self._checkouts(canonical):
             if git(c, "rev-parse", "-q", "--verify", "refs/heads/main").returncode != 0 or \
                     git(c, "rev-parse", "-q", "--verify", "refs/remotes/origin/main").returncode != 0:
                 continue
@@ -5557,7 +5587,7 @@ class Report:
         rows = []
         rescue_count = 0
         seen = set()
-        for c in canonical + [g.path for g in getattr(self, "legs", []) if g.checkout]:
+        for c in self._checkouts(canonical):
             proc = git(c, "for-each-ref", "--format=%(refname)\t%(committerdate:iso-strict)",
                        "refs/heads/rescue/", "refs/remotes/origin/rescue/")
             for line in proc.stdout.splitlines():
