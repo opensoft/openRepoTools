@@ -1452,8 +1452,13 @@ DUPES
         # holders`' own `duplicate` case, "any record at all in ANOTHER
         # profile's sessions/", which this PR's own repoGD fixture already
         # exercises). Built in its own pass because a row's verdict alone
-        # cannot answer this from OUTSIDE any bound window: every row here
-        # reads `unrelated` in that case, `companion` included.
+        # cannot answer this from OUTSIDE any bound window wherever no ONE
+        # live window answers for the transcript. `transcript_holders` now
+        # reads the companion off the LANE's live window record from any
+        # window (openRepoTools#73, item 2) — but where tmux is silent, the
+        # session is in no window, or two live windows in two profiles carry
+        # it, every row still reads `unrelated`, `companion` included, and
+        # `duplicate_holder_pids` applies this very rule, so it stays.
         dup_int_profs=""
         while IFS=$'\037' read -r ip_pid ip_kind ip_tgt ip_prof ip_where ip_verdict ip_file; do
           [ -n "${ip_pid:-}" ] || continue
@@ -1464,8 +1469,12 @@ DUPES
           [ -n "${dr_pid:-}" ] || continue
           # A WINDOW THAT COULD NOT BE ASKED ABOUT IS UNKNOWN AND NOT DEAD
           # (Amendment 18(b)): `(not asked)` — no tmux here, or a record with
-          # no `<@id>` in it — PROTECTS the process, and only a `(gone)` this
-          # server actually refuted makes it retirable.
+          # no `<@id>` in it — PROTECTS the process, and so does `(no
+          # answer)` — tmux installed and its server silent, which used to
+          # come back `(gone)` and let `--retire <the lane's own pid>` print
+          # 6(d)'s retitle for the conversation that IS the lane
+          # (openRepoTools#73, item 1). Only a `(gone)` this server actually
+          # refuted makes it retirable.
           case "$dr_where" in
             "window "*"(gone)") dr_own=0 ;;
             "window "*) dr_own=1 ;;
@@ -1505,10 +1514,11 @@ DUPES
             # rather than falling through to "neither" and naming nothing.
             #
             # `$dr_is_comp` (Copilot rounds 9 AND 10, PR #61), NOT `dr_verdict`
-            # ALONE: the verdict is `companion` only when `lane-end` runs from
-            # WITHIN the lane's own bound window (the one context where
-            # `th_here_prof` is set at all) — run the ordinary way, a plain
-            # script, every row here verdicts `unrelated` instead, `companion`
+            # ALONE: the verdict is `companion` when `lane-end` runs from
+            # WITHIN the lane's own bound window, or — since openRepoTools#73 —
+            # from anywhere ONE live window answers for the transcript; where
+            # none does (tmux silent, no window, two live windows in two
+            # profiles) every row here verdicts `unrelated` instead, `companion`
             # included, and round 9's first fix read `dr_kind = bg` alone as
             # the fallback signal — which ALSO excluded a genuine `kind: bg`
             # duplicate in a DIFFERENT profile (`transcript_holders`' own
@@ -1543,9 +1553,17 @@ DUPES
   # THE WINDOW'S OWN SESSION IS REFUSED BY NAME, and the refusal names the act
   # that DOES end a lane, because an operator who typed this meant one of the
   # two and there is no third thing to mean.
+  # AND WHERE TMUX DID NOT ANSWER, IT SAYS THAT INSTEAD (openRepoTools#73,
+  # item 1): `(no answer)` protects the process because its window could not be
+  # read at all, which is not the same as having read it and found the lane, so
+  # the refusal names the silence rather than claiming what it could not see.
   if [ -z "$fk_sid" ] && [ -z "$dh_parent" ] && [ -n "$dup_pid" ]; then
     case " $dup_own " in
       *" $dup_pid "*)
+        case "$dup_where" in
+          *"(no answer)")
+            die "pid $dup_pid carries lane $LANE's own transcript in $dup_where, and tmux did not answer at all — its server is down, or unreachable from here — so whether that window is still there could not be read. A window nobody could ask about is NOT a dead one (Amendment 18(b)), and the process in it may be the session that IS the lane, so nothing is named. Re-run this where tmux answers; to end the lane, run: $prog $LANE" 2 ;;
+        esac
         die "pid $dup_pid IS lane $LANE's own live session, in its own window ($dup_where) — not a duplicate of it. Retiring the session that IS the lane is how a lane loses the conversation it is, so nothing is named. To end the lane, run: $prog $LANE   ·   to retire a duplicate, pass ITS pid (\`$LANES_EDIT transcript-holders $dup_id\` lists every live process carrying this transcript)." 2 ;;
     esac
   fi

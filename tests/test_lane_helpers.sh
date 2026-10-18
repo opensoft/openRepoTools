@@ -108,6 +108,7 @@ cleanup() {
   [ -n "${PART_CHILD_A:-}" ] && kill "$PART_CHILD_A" 2>/dev/null
   [ -n "${PART_CHILD_B:-}" ] && kill -KILL "$PART_CHILD_B" 2>/dev/null
   [ -n "${GD_DUP:-}" ] && kill "$GD_DUP" 2>/dev/null
+  [ -n "${TH73_PID:-}" ] && kill "$TH73_PID" 2>/dev/null
   # #180's short checkout root for the clause (c) TAIL case, which is outside
   # `$SANDBOX` wherever the run root is long.
   [ -n "${A11T_ROOT:-}" ] && [ -d "$A11T_ROOT" ] && rm -rf -- "$A11T_ROOT"
@@ -318,6 +319,18 @@ cat > "$SANDBOX/fakebin/tmux" <<'FAKE'
 # that it was attempted — and then refused the way tmux refuses one, on stderr
 # with a nonzero exit, and the name does not stick. Unset, nothing changes for
 # any case written before it.
+#
+# openRepoTools#73 ADDS A SILENT SERVER AND ONE UNTARGETED FORMAT. Under
+# `$FAKE_TMUX_SILENT=1` every call answers as tmux does with no server to reach
+# — nothing on stdout, `no server running on …` on stderr, exit 1 — which is the
+# state a dead WINDOW must not be read out of. And the untargeted
+# `'#{session_name}'` is `record_window_state`'s second question, "does a server
+# answer here at all", so it answers the session of `$FAKE_TMUX_WINDOW`, as tmux
+# answers for the client a shell is in.
+if [ "${FAKE_TMUX_SILENT:-0}" = 1 ]; then
+  printf 'no server running on %s\n' "${TMUX%%,*}" >&2
+  exit 1
+fi
 case "${1-}" in
   list-windows)
     if [ -n "${FAKE_TMUX_WINDOWS:-}" ]; then
@@ -352,6 +365,7 @@ case "${1-}" in
     fake_w="${FAKE_TMUX_WINDOW:-testsess:@1}"
     case "$fake_f" in
       '#{session_name}:#{window_id}')    printf '%s\n' "$fake_w" ;;
+      '#{session_name}')                 printf '%s\n' "${fake_w%%:*}" ;;
       '#{session_name}:#{window_index}') printf '%s\n' "${fake_w%%:*}:${FAKE_TMUX_WINDOW_INDEX:-0}" ;;
       '#S:#I')                           printf '%s\n' "${fake_w%%:*}:${FAKE_TMUX_WINDOW_INDEX:-0}" ;;
       '#{window_id}')                    case "${fake_w#*:}" in @*) printf '%s\n' "${fake_w#*:}" ;; *) printf '%s\n' "${FAKE_TMUX_WINDOW_ID:-@1}" ;; esac ;;
@@ -7728,6 +7742,77 @@ has   "…and naming the read that says which process is which" "$err" "transcri
 hasnt "…never 6(d)'s ending for it" "$err" "an idle background session still holding a lane"
 rm -f "$sessions_dir/bgtwin.json"
 
+# ---- A SILENT TMUX IS NOT A DEAD WINDOW (openRepoTools#73, item 1).
+#
+# `record_window_state` answered 1 — "refuted" — both for a window this server
+# does not have AND for a server that never answered, and `transcript_holders`
+# writes every 1 as `(gone)`, which `lane-end --retire` reads as "not the lane's
+# own session". MEASURED ON f87fd5a WITH THIS VERY FIXTURE: with tmux installed
+# and its server silent, `--retire <the lane's own pid>` was "proved" a live
+# DUPLICATE and handed Amendment 6(d)'s retitle — `/rename repoGD-1 · retired
+# <date>` — for the conversation that IS the lane, exit 0. The session here is
+# named for ANOTHER lane by a person (the offer's state), so `live-holder`
+# passes over it and the record read is what answers, exactly as it does
+# wherever `live-holder` picks some other holder first.
+gd_rec "$GD_LANE_ID" repoGD-2 user "$GD_NEW_MS"
+run   env FAKE_TMUX_SILENT=1 "$E" transcript-holders "$GD_LANE_ID"
+is    "transcript-holders still answers while tmux is silent" "$rc" 0
+is    "…and a window tmux did not answer about is NO ANSWER, never gone" \
+      "$(printf '%s\n' "$out" | awk -F'\037' -v p="$LIVE_PID" '$1 == p { print $5; exit }')" "window gdsess:@12 (no answer)"
+run   env FAKE_TMUX_WINDOWS="" "$E" transcript-holders "$GD_LANE_ID"
+is    "…while a window a server that DOES answer does not have is still gone" \
+      "$(printf '%s\n' "$out" | awk -F'\037' -v p="$LIVE_PID" '$1 == p { print $5; exit }')" "window gdsess:@12 (gone)"
+run   env FAKE_TMUX_SILENT=1 "$END" repoGD-1 --retire "$LIVE_PID"
+is    "lane-end --retire REFUSES the lane's own pid while tmux is silent" "$rc" 2
+has   "…naming the silence, not a dead window" "$err" "tmux did not answer at all"
+has   "…and the act that does end a lane" "$err" "to end the lane, run: lane-end repoGD-1"
+hasnt "…never proving it a duplicate" "$err" "IS a live DUPLICATE"
+hasnt "…nor handing 6(d)'s retitle to the conversation that IS the lane" "$err" "/rename repoGD-1 · retired"
+gd_rec "$GD_LANE_ID" repoGD-1 user "$GD_OLD_MS"
+
+# ---- THE COMPANION IS THE HARNESS'S RELATION, NOT THE ASKER'S (openRepoTools#73,
+# item 2).
+#
+# `transcript_holders` read it relative to the ASKING window, so asked from a
+# bare shell or another lane's window it found nothing `here` and called every
+# holder `unrelated`, the companion included — and the refusal just above names
+# that read as the one that "says which is which". The companion is now read off
+# the LANE's live window record: the interactive record in a window this server
+# resolves and agrees with. `othersess:@55` is a window with no record of this
+# transcript at all.
+write_record_a12 "$sessions_dir/bgtwin.json" "$GD_LANE_ID" "$GD_DUP" "$gd_dup_start" bg "-" "repoGD-1" - "$GD_OLD_MS"
+run   env FAKE_TMUX_WINDOW="othersess:@55" "$E" transcript-holders "$GD_LANE_ID"
+is    "transcript-holders asked from ANOTHER window answers" "$rc" 0
+is    "…calling the harness's bg record beside the lane's live window its companion" \
+      "$(printf '%s\n' "$out" | awk -F'\037' -v p="$GD_DUP" '$1 == p { print $6; exit }')" companion
+is    "…while the lane's own session, which is not that window's, stays unrelated" \
+      "$(printf '%s\n' "$out" | awk -F'\037' -v p="$LIVE_PID" '$1 == p { print $6; exit }')" unrelated
+run   "$E" transcript-holders "$GD_LANE_ID"
+is    "…which is the verdict the lane's own window has always read" \
+      "$(printf '%s\n' "$out" | awk -F'\037' -v p="$GD_DUP" '$1 == p { print $6; exit }')" companion
+run   env FAKE_TMUX_WINDOW="othersess:@55" "$END" repoGD-1 --retire "$GD_DUP"
+is    "…and lane-end --retire from that other window refuses it" "$rc" 2
+has   "…by name" "$err" "is the HARNESS'S OWN COMPANION"
+# A `bg` RECORD IN ANOTHER PROFILE IS NOBODY'S PROVEN COMPANION of the lane's
+# window, and stays `unrelated` from outside it.
+mv -f "$sessions_dir/bgtwin.json" "$gd_t2/bgtwin.json"
+run   env FAKE_TMUX_WINDOW="othersess:@55" "$E" transcript-holders "$GD_LANE_ID"
+is    "a bg record in ANOTHER profile is no companion of the lane's live window" \
+      "$(printf '%s\n' "$out" | awk -F'\037' -v p="$GD_DUP" '$1 == p { print $6; exit }')" unrelated
+mv -f "$gd_t2/bgtwin.json" "$sessions_dir/bgtwin.json"
+# AND ONLY ONE PROFILE MAY ANSWER: two live windows in two profiles on one
+# transcript is 18(h)'s own case, with no way to tell from here which of them
+# is the lane's, so nothing is read off either.
+sleep "$LIVE_SLEEP" & TH73_PID=$!
+th73_start="$(cut -d' ' -f22 "/proc/$TH73_PID/stat" 2>/dev/null || printf '')"
+write_record_a12 "$gd_t2/wintwin.json" "$GD_LANE_ID" "$TH73_PID" "$th73_start" interactive "gdsess:@77.%77" "repoGD-1" - "$GD_OLD_MS"
+run   env FAKE_TMUX_WINDOW="othersess:@55" FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude
+gdsess:1	@77	repoGD-1	%77	claude" "$E" transcript-holders "$GD_LANE_ID"
+is    "two live windows in two profiles leave no ONE window to read the companion off" \
+      "$(printf '%s\n' "$out" | awk -F'\037' -v p="$GD_DUP" '$1 == p { print $6; exit }')" unrelated
+rm -f "$gd_t2/wintwin.json" "$sessions_dir/bgtwin.json"
+kill "$TH73_PID" 2>/dev/null; wait "$TH73_PID" 2>/dev/null; TH73_PID=""
+
 # ---- AMENDMENT 18(h) IN THE LAUNCH BRANCH: THE ID A RUN IS ABOUT TO RESUME.
 # The clause counts the holders of "the id it is about to resume or bind", and
 # the two are different ids: the binding step asks about THIS WINDOW's session,
@@ -7781,6 +7866,46 @@ gd_run "$GD_LANE_ID" "3"
 is    "…which it does" "$rc" 2
 has   "…adjusting the session to the lane" "$err" "ADJUSTED SESSION TO LANE repoGD-1"
 is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
+
+# ---- AND THE TABLE'S OWN CURES SAY THE SAME (openRepoTools#73, item 3).
+#
+# The offer above was fixed and the diagnostic beside it was not: rows 1, 5 and
+# 6 of the (b) table printed `lane_start_args` straight, so a lane named before
+# Rule 4 was told `run: lane-start --no-launch --dir <path> legacy-ui` — a
+# placeholder in the one line a person is told to type, where F-B6 says every
+# command is printed filled in. Where it cannot be, the row now says why in the
+# offer's words and prints the offer's own line.
+rm -f "$GD_OFFER"
+export FAKE_TMUX_WINDOW_NAME=claude
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	claude	%12	claude"
+gd_rec "$GD_LANE_ID" legacy-ui user "$GD_OLD_MS"
+gd_run "$GD_LANE_ID"
+is    "row 1, a session named for a lane from before Rule 4, still BLOCKS the prompt" "$rc" 2
+has   "…as the case that ran for three days" "$err" "THAT IS THE 2026-09-10 CASE"
+has   "…saying in the offer's words why its command cannot be filled in" "$err" "Lane legacy-ui is named before Rule 4's \`<repo>-<n>\` form"
+has   "…and whose the checkout is to supply" "$err" "the checkout is yours to supply"
+has   "…printing the offer's own line" "$err" "run: lane-start --no-launch --dir <that lane's checkout> legacy-ui"
+hasnt "…and never the bare placeholder" "$err" "--dir <path>"
+L73_OLD="aaaa0073-0000-4000-8000-aaaa00730000"
+L73_LAST="aaaa0073-1111-4000-8000-aaaa00731111"
+L73_FREE="aaaa0073-2222-4000-8000-aaaa00732222"
+"$E" add-row "| \`legacy-gd\` | harness $L73_OLD → harness $L73_LAST (transcript uuid; profile t1) | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/legacy/w.md | ACTIVE |" >/dev/null 2>&1
+export FAKE_TMUX_WINDOW_NAME=legacy-gd
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	legacy-gd	%12	claude"
+gd_rec "$L73_OLD" legacy-gd user "$GD_OLD_MS"
+gd_run "$L73_OLD"
+is    "row 5, a superseded transcript of such a lane, BLOCKS the prompt" "$rc" 2
+has   "…named as one" "$err" "this is a SUPERSEDED transcript of lane legacy-gd"
+has   "…cured by the real launch, its checkout left to the person" "$err" "run: lane-start --dir <that lane's checkout> legacy-gd"
+hasnt "…never the bare placeholder" "$err" "--dir <path>"
+gd_rec "$L73_FREE" legacy-gd user "$GD_OLD_MS"
+gd_run "$L73_FREE"
+is    "row 6, an id in no row of such a lane, BLOCKS the prompt" "$rc" 2
+has   "…named as the harness minting a transcript with nobody acting" "$err" "does not name $L73_FREE at all"
+has   "…cured by the recording act, its checkout left to the person" "$err" "run: lane-start --no-launch --dir <that lane's checkout> legacy-gd"
+hasnt "…never the bare placeholder" "$err" "--dir <path>"
+export FAKE_TMUX_WINDOW_NAME=repoGD-1
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
 
 # ---- THE OTHER TEXT A SESSION CELL CAN CARRY INSTEAD OF A UUID.
 #

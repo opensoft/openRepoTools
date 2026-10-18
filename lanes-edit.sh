@@ -8804,9 +8804,23 @@ under_projects_root() {   # <cwd> <projects root>
 # of another session. So the id alone is not the window: the id must resolve
 # HERE and the session it resolves in must be the one the record wrote down.
 #   0  the window exists and agrees
-#   1  the id resolves nowhere here, or resolves in another tmux session
+#   1  the id resolves nowhere here, or resolves in another tmux session — and
+#      the SERVER answered, so this is a refutation and not a silence
+#   2  tmux did not answer at all: its server is down or unreachable from here,
+#      so the window is UNKNOWN, not gone (openRepoTools#73, item 1)
 #   8  there is nothing to test — no target on the record, no `@id` in it, or no
 #      tmux to ask (a record with no window is not thereby a record nowhere)
+#
+# THE 2 NEEDS A SECOND QUESTION, AND IT IS ASKED ONLY WHERE THE FIRST CAME BACK
+# EMPTY. `tmux_window_field` answers empty for a window this server refuted and
+# for a server that never answered, and this function used to call both 1 —
+# which `transcript_holders` writes as `(gone)`, and which `lane-end --retire`
+# reads as "not the lane's own session". So with tmux installed and its server
+# silent, `--retire <the lane's own pid>` was accepted and printed Amendment
+# 6(d)'s retitle for the conversation that IS the lane (measured on f87fd5a:
+# `/rename repoGD-1 · retired …`, exit 0). `tmux_server_answers` tells the two
+# apart, and a window nobody could ask about keeps `(not asked)`'s posture: it
+# protects the process in it.
 record_window_state() {   # <the record's tmux field>
   rws_t="${1-}"
   [ -n "$rws_t" ] && [ "$rws_t" != none ] || return 8
@@ -8816,9 +8830,26 @@ record_window_state() {   # <the record's tmux field>
   case "$rws_id" in @*) : ;; *) return 8 ;; esac
   command -v tmux >/dev/null 2>&1 || return 8
   rws_now="$(tmux_window_field "$rws_id" '#{session_name}' 2>/dev/null || :)"
-  [ -n "$rws_now" ] || return 1
+  if [ -z "$rws_now" ]; then
+    tmux_server_answers || return 2
+    return 1
+  fi
   [ "$rws_now" = "$rws_sess" ] || return 1
   return 0
+}
+
+# DOES A TMUX SERVER ANSWER HERE AT ALL? Asked UNTARGETED, so it names no window
+# and no window's absence can refute it: with no `-t`, tmux answers for the
+# client this shell is in, or outside tmux for a session of its own choosing,
+# and with no server it prints nothing and exits 1 (`no server running on …`).
+# Measured on this estate 2026-10-13 against tmux 3.4 on a private socket: no
+# server → empty, exit 1; a server up, asked from outside it → the session's
+# name, exit 0; and a TARGETED read of an `@id` that server does not have →
+# empty, exit 0 — the very answer a silent server also gives, which is why this
+# is a separate question and not a status code read off the first one.
+tmux_server_answers() {
+  command -v tmux >/dev/null 2>&1 || return 1
+  [ -n "$(tmux display-message -p '#{session_name}' 2>/dev/null | head -n1)" ]
 }
 
 # ------------------------------------- AMENDMENT 18(h): ONE LIVE PROCESS
@@ -8852,7 +8883,9 @@ record_window_state() {   # <the record's tmux field>
 #   <pid><US><kind><US><tmux|none><US><profile><US><where><US><verdict><US><file>
 #
 # `where` is for a person to read — `window <session>:<@id>`, the same with
-# ` (gone)` where the agreement rule above refuses it, or `bg`.
+# ` (gone)` where the agreement rule above refuses it, ` (no answer)` where tmux
+# did not answer at all and ` (not asked)` where there was nothing to ask — or
+# `bg`. Only `(gone)` is a window this server REFUTED (openRepoTools#73).
 #
 # THE VERDICT IS THE WHOLE OF THE JUDGEMENT, and it has four values because
 # THREE IN-FORCE RULES MEET HERE AND NONE OF THEM MAY BE OVERTURNED BY THIS ONE:
@@ -8895,6 +8928,22 @@ record_window_state() {   # <the record's tmux field>
 #               and a record too old to carry a `kind` at all, which pass 1
 #               writes down as `interactive` — is a duplicate, which is the
 #               closed direction.
+#               AND WHERE THIS WINDOW CARRIES NO RECORD OF THE TRANSCRIPT, THE
+#               LANE'S LIVE WINDOW STANDS IN FOR IT (openRepoTools#73, item 2).
+#               The relation is the HARNESS's, between two records of one
+#               session, and nothing about it depends on who asks — but it was
+#               read relative to the ASKING process, so `lane-end --retire` typed
+#               in a bare shell or in another lane's window found nothing
+#               `here`, every holder came back `unrelated`, and the companion
+#               was never called one. The record a session's companion sits
+#               beside is the interactive record in a window this server
+#               RESOLVES AND AGREES WITH (rc 0 above) — the record `lane-end`
+#               already calls "the lane's session" — so a `kind: bg` record in
+#               that record's profile is `companion` from any window. ONLY ONE
+#               PROFILE MAY ANSWER: two live windows in two profiles on one
+#               transcript is 18(h)'s own case with no way to tell which is the
+#               lane's, and there every row stays `unrelated`, as before. The
+#               anchor row itself is not this window's and stays `unrelated`.
 #   duplicate   EVERY OTHER live record carrying this id: a session record in
 #               another window of this same profile, or any record at all in
 #               ANOTHER profile's `sessions/` beside this window's own. That is
@@ -8906,19 +8955,20 @@ record_window_state() {   # <the record's tmux field>
 #               duplicate is one `--resume` away"* — but the rule it states is
 #               one live PROCESS per transcript, not one per profile.
 #   unrelated   THIS WINDOW CARRIES NO RECORD OF THIS TRANSCRIPT AT ALL, so this
-#               read says nothing about the processes that do. That is not
-#               timidity: `live_holder` answers "is any session this row names
-#               alive" and Amendment 8(f) rules an ORPHAN reported and never
-#               refused, while `lane_forks` answers about a fork. A rule that
-#               counted every live record here would overturn both from a read
-#               that was not asked about either. ONE CALLER TAKES IT AS A
-#               BLOCKER ANYWAY AND SAYS SO WHERE IT DOES: `lane-start`'s
-#               `dup_check`, asked about the ONE id a run is about to resume,
-#               where an `unrelated` holder is a second live process on the very
-#               file that run is about to open (Amendment 18(h), *"never
-#               launches a second resume of it"*). That is a narrower question
-#               than this verdict answers, so the narrowing lives at that call
-#               site and not in this table.
+#               read says nothing about the processes that do — beyond the one
+#               relation that is not this window's to have, the companion above
+#               (#73). That is not timidity: `live_holder` answers "is any
+#               session this row names alive" and Amendment 8(f) rules an
+#               ORPHAN reported and never refused, while `lane_forks` answers
+#               about a fork. A rule that counted every live record here would
+#               overturn both from a read that was not asked about either. ONE
+#               CALLER TAKES IT AS A BLOCKER ANYWAY AND SAYS SO WHERE IT DOES:
+#               `lane-start`'s `dup_check`, asked about the ONE id a run is
+#               about to resume, where an `unrelated` holder is a second live
+#               process on the very file that run is about to open (Amendment
+#               18(h), *"never launches a second resume of it"*). That is a
+#               narrower question than this verdict answers, so the narrowing
+#               lives at that call site and not in this table.
 #
 # 0 with rows, 8 with none, 1 where the records could not be read, 64 no uuid.
 transcript_holders() {   # <session uuid>
@@ -8933,6 +8983,11 @@ transcript_holders() {   # <session uuid>
   # `the same lane live in THIS window is not a collision`, which asks
   # `lane-start` for an exit 0 and got `dup_check`'s fail-closed 1.
   th_here=""; th_here_prof=""; th_prof=""; th_wrc=0; th_final=""
+  # THE LANE'S LIVE WINDOW, for the companion verdict where this window has no
+  # record of the transcript (#73): the profile of the session record whose
+  # window this server resolves and agrees with, and whether a SECOND profile
+  # answered too, which leaves no single one to read it from.
+  th_live_win=no; th_win_prof=""; th_win_two=no
   SESSION_FILES_ERR=""
   here_context
   th_files="$(mktemp "${TMPDIR:-/tmp}/lanes-edit-tf.XXXXXX" 2>/dev/null || printf '')"
@@ -8974,13 +9029,14 @@ transcript_holders() {   # <session uuid>
     th_pid="$(jnum "$th_blob" pid)"
     th_kind="$(jstr "$th_blob" kind)"
     th_tgt="$(jstr "$th_blob" tmux)"
-    th_where=bg
+    th_where=bg; th_live_win=no
     if record_fields_are_session "$th_kind" && [ -n "$th_tgt" ]; then
       th_wrc=0
       record_window_state "$th_tgt" || th_wrc=$?
       case "$th_wrc" in
-        0) th_where="window ${th_tgt%.*}" ;;
+        0) th_where="window ${th_tgt%.*}"; th_live_win=yes ;;
         1) th_where="window ${th_tgt%.*} (gone)" ;;
+        2) th_where="window ${th_tgt%.*} (no answer)" ;;
         *) th_where="window ${th_tgt%.*} (not asked)" ;;
       esac
     elif record_fields_are_session "$th_kind"; then
@@ -8994,11 +9050,17 @@ transcript_holders() {   # <session uuid>
     fi
     th_prof="$(record_profile "$th_f")"
     [ "$th_here" = yes ] && [ -z "$th_here_prof" ] && th_here_prof="$th_prof"
+    if [ "$th_live_win" = yes ]; then
+      if [ -z "$th_win_prof" ]; then th_win_prof="$th_prof"
+      elif [ "$th_win_prof" != "$th_prof" ]; then th_win_two=yes
+      fi
+    fi
     th_out="${th_out}${th_pid:-unknown}${US}${th_kind:-interactive}${US}${th_tgt:-none}${US}${th_prof}${US}${th_where}${US}${th_here}${US}${th_f}
 "
   done < "$th_match"
   rm -f -- "$th_match"
   [ -n "$th_out" ] || return 8
+  [ "$th_win_two" = yes ] && th_win_prof=""
   # PASS 2 — THE VERDICT, WHICH NEEDS THE WHOLE SET AND SO CANNOT BE MADE ABOVE.
   th_final=""
   while IFS="$US" read -r tv_pid tv_kind tv_tgt tv_prof tv_where tv_here tv_file; do
@@ -9006,7 +9068,15 @@ transcript_holders() {   # <session uuid>
     if [ "$tv_here" = yes ]; then
       tv_v=here
     elif [ -z "$th_here_prof" ]; then
-      tv_v=unrelated
+      # NOTHING HERE, SO THE LANE'S LIVE WINDOW ANSWERS FOR THE ONE RELATION
+      # THAT IS NOT THE ASKER'S (#73): the harness's `bg` companion beside it.
+      # Everything else stays `unrelated`, which is what every caller already
+      # reads this state as.
+      if [ -n "$th_win_prof" ] && [ "$tv_prof" = "$th_win_prof" ] && [ "$tv_kind" = bg ]; then
+        tv_v=companion
+      else
+        tv_v=unrelated
+      fi
     elif [ "$tv_prof" = "$th_here_prof" ] && [ "$tv_kind" = bg ]; then
       tv_v=companion
     else
@@ -9603,7 +9673,9 @@ guard_refuse() {
 #
 # THE (b) TABLE, ONE ROW PER STATE AND ONE CURE EACH, in the amendment's own
 # order. Every message prints the register's own spelling of the lane
-# (Amendment 15) and every command is filled in.
+# (Amendment 15) and every command is filled in — or, for a lane named before
+# Rule 4, which leaves its checkout unknown, SAYS it cannot be
+# (`guard_refuse_start`, openRepoTools#73).
 #
 #   the window is not a lane, the session name parses as `<repo>-<n>`
 #       -> `lane-start --no-launch <repo> <n>`               THE 2026-09-10 CASE
@@ -10018,7 +10090,7 @@ EOF
   # ---- (b) ROWS 1 AND 2: THE WINDOW IS NOT A LANE.
   if [ -z "$G_LANE" ]; then
     if [ -n "$G_SES_LANE" ]; then
-      guard_refuse "this window is named '$G_WINNAME', which is no lane, while the SESSION is named for lane $G_SES_LANE — so nothing binds this conversation to a row, no surface would refuse a second window taking the same lane, and the handoff this session writes is one only this profile can find. THAT IS THE 2026-09-10 CASE, which ran for three days." "lane-start --no-launch $(lane_start_args "$G_SES_LANE")"
+      guard_refuse_start "this window is named '$G_WINNAME', which is no lane, while the SESSION is named for lane $G_SES_LANE — so nothing binds this conversation to a row, no surface would refuse a second window taking the same lane, and the handoff this session writes is one only this profile can find. THAT IS THE 2026-09-10 CASE, which ran for three days." "$G_SES_LANE" --no-launch
     else
       guard_refuse "neither this window ('$G_WINNAME') nor this session ('${G_NAME:-none}') names a lane, so the guard cannot name one either: WHICH lane this work is is yours to say, and a guard that guessed would bind a window to a row nobody chose." "lane-start <repo> <n>   (for the lane this work is)"
     fi
@@ -10089,11 +10161,11 @@ EOF
   fi
 
   if [ -n "$gr_ids" ] && printf '%s\n' "$gr_ids" | grep -qx -F -- "$G_ID"; then
-    guard_refuse "this is a SUPERSEDED transcript of lane $G_LANE: the row's session cell carries $G_ID but ENDS on $gr_last, so the conversation in this window is not the lane's and renaming it would not make it one. Exit this session and start the lane, which resumes the id the row ends on." "lane-start $(lane_start_args "$G_LANE")"
+    guard_refuse_start "this is a SUPERSEDED transcript of lane $G_LANE: the row's session cell carries $G_ID but ENDS on $gr_last, so the conversation in this window is not the lane's and renaming it would not make it one. Exit this session and start the lane, which resumes the id the row ends on." "$G_LANE"
     return 2
   fi
 
-  guard_refuse "this window is lane $G_LANE, whose row ${gr_last:+ends on $gr_last and }does not name $G_ID at all — the harness minted a new transcript with nobody acting (a /clear, a usage reset, a profile switch). The lane is right and the ROW is behind, so the cure is the recording act and no relaunch: it reads the live record in this window and appends that uuid to the cell." "lane-start --no-launch $(lane_start_args "$G_LANE")"
+  guard_refuse_start "this window is lane $G_LANE, whose row ${gr_last:+ends on $gr_last and }does not name $G_ID at all — the harness minted a new transcript with nobody acting (a /clear, a usage reset, a profile switch). The lane is right and the ROW is behind, so the cure is the recording act and no relaunch: it reads the live record in this window and appends that uuid to the cell." "$G_LANE" --no-launch
   return 2
 }
 
@@ -10169,6 +10241,24 @@ guard_args_filled() {   # <lane>
   gaf_a="$(lane_start_args "$1")"
   case "$gaf_a" in *'<path>'*) return 1 ;; esac
   return 0
+}
+
+# AND THE TABLE'S OWN CURES SAY IT TOO (openRepoTools#73, item 3). The offer was
+# fixed and the diagnostic beside it was not: rows 1, 5 and 6 of the (b) table
+# printed `$(lane_start_args …)` straight, so a lane named before Rule 4 got
+# `run: lane-start --no-launch --dir <path> legacy-ui` — a `<path>` placeholder
+# in the one line a person is told to type, which F-B6 says is printed filled
+# in. Filled in where it can be; where it cannot, the reason is the OFFER's
+# sentence, the act is the offer's own line, and the checkout is the person's to
+# supply, because nothing this guard can read says which one it is.
+guard_refuse_start() {   # <why> <lane> [--no-launch]
+  grs_why="${1-}"; grs_lane="${2-}"; grs_flag="${3-}"
+  if guard_args_filled "$grs_lane"; then
+    guard_refuse "$grs_why" "lane-start ${grs_flag:+$grs_flag }$(lane_start_args "$grs_lane")"
+    return 2
+  fi
+  guard_refuse "$grs_why Lane $grs_lane is named before Rule 4's \`<repo>-<n>\` form, so the command below cannot be filled in here: \`lane-start\` needs that lane's DIRECTORY and nothing in the register, the window or this session says which one it is — the checkout is yours to supply." "lane-start ${grs_flag:+$grs_flag }--dir <that lane's checkout> $grs_lane"
+  return 2
 }
 
 # ------------------------------------------------------------ (h)2: THE OFFER

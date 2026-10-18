@@ -2107,6 +2107,13 @@ every command is filled in, never `<repo> <n>`.
 | the window's name matches TWO rows differing only by case | refuses naming both spellings and the merge, which is a person's act (Amendment 15(d)) |
 | not inside tmux at all | refuses: a lane RUNS in a tmux window named for it (Rule 4, Amendment 2) |
 
+**A lane named before Rule 4's `<repo>-<n>` form has no `<repo> <n>` to fill
+in**, and nothing in the register, the window or the session says where its
+checkout is. Rows 1, 5 and 6 then say so in the offer's own words (below) and
+print the offer's own line, `lane-start [--no-launch] --dir <that lane's
+checkout> <lane>`: the checkout is yours to supply, and a bare `--dir <path>` is
+never printed as though it were a command (openRepoTools#73).
+
 ### The lock
 
 Under the projects root the session name is **not the person's to set freely; it
@@ -2259,6 +2266,14 @@ what tells it from a second live process, not the profile: one profile can
 resume one transcript twice — no move, no swap, one command — and the
 interactive record that makes is 18(h)'s own case.
 
+**The companion is the harness's relation, not the asker's.** Where the asking
+window carries no record of the transcript at all — `lane-end --retire` typed
+in a bare shell or in another lane's window — it is read off the **lane's live
+window record** instead: the interactive record in a window tmux resolves and
+agrees with, and a `kind: bg` record in that record's profile is its companion
+from any window. Only one profile may answer; two live windows in two profiles
+on one transcript leave every row `unrelated`, as before (openRepoTools#73).
+
 `lanes-edit.sh transcript-holders <uuid>` is the read, and three surfaces share
 it rather than implementing the rule three times:
 
@@ -2279,7 +2294,14 @@ it rather than implementing the rule three times:
   half of the live session, not a rival to it.
 
 A window is matched by **id AND session name** (Amendment 11(h)'s agreement
-rule) because tmux reuses window ids once a window is gone.
+rule) because tmux reuses window ids once a window is gone. **A silent tmux is
+not a dead window**: where that read comes back empty, a second, untargeted
+question (`tmux display-message -p '#{session_name}'`) asks whether a server
+answers here at all. Only a window a server that answers does not have is
+`(gone)`; one tmux did not answer about is `(no answer)`, and like `(not
+asked)` it **protects** the process in it, so `--retire` refuses the lane's own
+pid while tmux is down or unreachable rather than handing Amendment 6(d)'s
+retitle to the conversation that IS the lane (openRepoTools#73).
 
 ### The `SessionStart` block's own line (clause (f))
 
