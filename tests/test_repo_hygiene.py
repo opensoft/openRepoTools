@@ -3523,11 +3523,11 @@ def test_no_shipped_bash_opens_a_case_inside_a_command_substitution(name):
     not' ;; esac)` against `did not` - twice, and green on every GNU runner.
 
     A `bash -n` ON A GNU RUNNER PARSES IT, which is why this is a text rule
-    rather than a parse gate: all twelve files already pass `bash -n` in CI,
-    and the macOS job is the only place the defect exists. The fix is one line
-    each time - hoist the `case` above the assertion and read the variable it
-    sets - so the rule is held for every bash file this repository ships
-    rather than for the two that were found.
+    rather than a parse gate: every file in `ALL_BASH` already passes `bash -n`
+    under the Linux bash CI runs, and bash 3.2 is the only place the defect
+    exists. The fix is one line each time - hoist the `case` above the
+    assertion and read the variable it sets - so the rule is held for every
+    bash file this repository ships rather than for the two that were found.
 
     Only the same-line form is matched. A `case` inside a multi-line `$(` ...
     `)` is the same defect and wants the same hoist, but a line-level regex is
