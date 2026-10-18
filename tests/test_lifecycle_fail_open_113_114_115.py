@@ -45,6 +45,20 @@ US = "\x1f"
 #: which fails the way a read git cannot complete does. The suite's own `git`
 #: calls never set it.
 FAKE_GIT = """#!/usr/bin/env bash
+# FAKE_GIT_TRANSLATED: a git whose messages are translated, which only the C
+# locale turns back into git's English words.
+if [ -n "${FAKE_GIT_TRANSLATED:-}" ] && [ "${LC_ALL-}" != C ]; then
+  case " $* " in
+    *" rev-parse --git-dir "*)
+      err="$("%(real)s" "$@" 2>&1 >/dev/null </dev/null)" && exec "%(real)s" "$@"
+      case "$err" in
+        *"not a git repository"*)
+          printf 'fatal: kein Git-Repository (oder irgendeines der Elternverzeichnisse): .git\\n' >&2 ;;
+        *) printf '%%s\\n' "$err" >&2 ;;
+      esac
+      exit 128 ;;
+  esac
+fi
 if [ -n "${FAKE_GIT_FAIL:-}" ]; then
   case " $* " in
     *" $FAKE_GIT_FAIL "*)
@@ -56,19 +70,24 @@ exec "%(real)s" "$@"
 """
 
 
-@pytest.fixture
-def box(tmp_path: Path) -> Sandbox:
+def make_box(tmp_path: Path, state_root: Path) -> Sandbox:
     real_git = shutil.which("git")
     assert real_git
     box = Sandbox(tmp_path)
     shim = box.fakebin / "git"
-    shim.write_text(FAKE_GIT.replace("%(real)s", real_git), encoding="utf-8")
+    shim.write_text(FAKE_GIT.replace("%(real)s", real_git).replace("%%s", "%s"),
+                    encoding="utf-8")
     shim.chmod(0o755)
-    box.env["LANES_LANE_STATE_ROOT"] = str(tmp_path / "state")
+    box.env["LANES_LANE_STATE_ROOT"] = str(state_root)
     box.resolver()
     seeded = box.start("--no-launch")
     assert seeded.returncode == 0, seeded.stderr
     return box
+
+
+@pytest.fixture
+def box(tmp_path: Path) -> Sandbox:
+    return make_box(tmp_path, tmp_path / "state")
 
 
 def helper(box: Sandbox, *args: str, **env: str) -> subprocess.CompletedProcess:
@@ -220,6 +239,19 @@ def test_113_4_registrations_nobody_could_list_are_never_a_clearance(box):
     assert verdict(out) == "resumable", out
 
 
+def test_113_4_no_repository_is_read_in_the_c_locale(box):
+    """`lane_no_repository` matches git's English "not a git repository", so it
+    asks git in the C locale, as `lane-worktrees`' `git_env` does (review r1 of
+    #252). Under a translated git the words were never found, the absence read
+    as a failed read, and the two readers of one checkout disagreed."""
+    swapped(box)
+    shutil.rmtree(box.lane_dir / ".git")
+    out = reconcile(box, FAKE_GIT_FAIL="worktree list --porcelain",
+                    FAKE_GIT_TRANSLATED="1", LC_ALL="de_DE.UTF-8")
+    assert verdict(out) == "resumable", out
+    assert "could not be read" not in rows(out, "VERDICT")[0][2]
+
+
 @pytest.mark.parametrize("mode", [0o000, 0o300, 0o600],
                          ids=["no-access", "no-read", "no-search"])
 def test_113_4_a_lane_root_nobody_could_list_is_never_a_clearance(box, mode):
@@ -280,6 +312,39 @@ def test_114_115_a_count_that_is_not_one_is_refused_before_anything_is_written(b
     assert result.returncode == 64, (result.stdout, result.stderr)
     assert f"'{value}'" in result.stderr
     assert helper(box, "lane-trees", LANE).returncode == 8
+
+
+@pytest.mark.parametrize("flag", ["--branch", "--head", "--upstream", "--checkout", "--writer"])
+def test_115_a_field_that_is_only_blanks_is_refused_before_anything_is_written(box, flag):
+    """A reader trims a value, so a blank one files a record with no such field
+    — refused only at the rename, after the lock, with exit 1. It is a usage
+    error and is said as one, 64, before anything is taken (review r1 of #252)."""
+    given = {"--checkout": str(box.lane_dir), "--branch": "b", "--head": "h",
+             "--upstream": "none", "--dirty": "0", "--unpushed": "0", "--writer": "none"}
+    given[flag] = "  "
+    result = helper(box, "set-lane-tree", LANE, str(box.lane_dir / "w"),
+                    *[x for pair in given.items() for x in pair])
+    assert result.returncode == 64, (result.stdout, result.stderr)
+    assert f"{flag} is only blanks" in result.stderr
+    assert helper(box, "lane-trees", LANE).returncode == 8
+    trees = control_root(box) / "trees"
+    assert not trees.exists() or not list(trees.iterdir())
+
+
+def test_115_a_control_root_under_a_directory_named_trees_keeps_its_snapshot(tmp_path):
+    """The validator tells a snapshot from a tree record by where it is filed,
+    and a `case` pattern's `*` matches `/`: `*/trees/*.yaml` matched a snapshot
+    under any directory named `trees`, so it was asked a tree's keys and refused
+    — `lane-start` wrote none, `set-lane-state` exited 1 and the reconciliation
+    said `no-state`, the answer a launcher goes past (review r1 of #252)."""
+    box = make_box(tmp_path, tmp_path / "trees" / "state")
+    assert snapshot(box).is_file(), "lane-start wrote no snapshot"
+    assert tabbed(ok(box, "lane-state", LANE))["state"] == "RUNNING"
+    took = tabbed(ok(box, "set-lane-state", LANE, "SWAPPING", "--expect", "RUNNING"))
+    assert took["state"] == "SWAPPING", took
+    out = reconcile(box)
+    assert rows(out, "STATE")[0][1] == "SWAPPING", out
+    assert verdict(out) != "no-state", out
 
 
 # --------------------------------------------------------------------- #115
