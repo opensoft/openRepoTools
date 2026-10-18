@@ -153,16 +153,49 @@ projects_dir_for_new() {
     printf '%s\n' "${PROJECTS_DIRS[0]}"
 }
 
+# ONE SCALAR'S TEXT, read the way openRepoShape v1.1.0's `parse_yaml` reads
+# it (`scripts/repo_shape.py`: `_strip_comment`, `_quote_end`,
+# `_quoted_scalar`), so a file both of them read gets one answer (#243). A
+# value that OPENS WITH A QUOTE is the text up to the quote that closes it -
+# inside `"..."` a `\` takes the character after it along, and inside `'...'`
+# a doubled `''` is one quote, so neither closes it - and whatever follows
+# the close, a `# comment` included, is not the value: a ` #` inside the
+# quotes is text. Any other value is cut at the first `#` that opens it or
+# follows a space or tab, which is a comment, and trimmed; `a#b` is the text
+# `a#b`. The escapes are honoured to find the close and never unescaped, as
+# this reader never unescaped them: no branch, path, folder or repository
+# name it is asked for carries one. A quote nothing closes is not YAML at
+# all, and the text is kept whole, as before. What is NULL is not said here:
+# `null` and `"null"` are both the text `null`, and `yaml_scalar` says which
+# of the two it was.
 trim_unquote() {
-    local value="$1"
+    local value="$1" quote="" ch="" i=1
     value="${value%$'\r'}"
     value="${value#"${value%%[![:space:]]*}"}"
-    value="${value%"${value##*[![:space:]]}"}"
     case "$value" in
-    '"'*'"') value="${value#\"}"; value="${value%\"}" ;;
-    "'"*"'") value="${value#\'}"; value="${value%\'}" ;;
+    '"'* | "'"*)
+        quote="${value:0:1}"
+        while [ "$i" -lt "${#value}" ]; do
+            ch="${value:$i:1}"
+            if [ "$quote" = '"' ] && [ "$ch" = "\\" ]; then
+                i=$((i + 2))
+            elif [ "$ch" != "$quote" ]; then
+                i=$((i + 1))
+            elif [ "$quote" = "'" ] && [ "${value:$((i + 1)):1}" = "'" ]; then
+                i=$((i + 2))
+            else
+                printf '%s' "${value:1:$((i - 1))}"
+                return 0
+            fi
+        done
+        ;;
+    *)
+        value=" $value"
+        value="${value%%[[:space:]]#*}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        ;;
     esac
-    printf '%s' "$value"
+    printf '%s' "${value%"${value##*[![:space:]]}"}"
 }
 
 # ONE FOLDER NAME, and never a path. A `<Name>` off the command line and a
@@ -182,21 +215,34 @@ is_safe_folder_name() {
 }
 
 # One indent-zero scalar out of a small YAML file, with parameter expansion
-# only: no YAML library, no python per line, no forks per line. This is the
-# reader the Speckit extension's `workspace_read_scalar` is, narrowed to the
-# keys these two commands read (`kind`, `name`, `family`, `tracking_branch`,
-# `repository`).
+# only: no YAML library, no python per line, no forks per line. The line is
+# found the way the Speckit extension's `workspace_read_scalar` finds one, at
+# indent zero by its key; the VALUE is `trim_unquote`'s, above, which is
+# openRepoShape v1.1.0's reading of it and differs from the extension's where
+# a `#` sits inside quotes or with no space in front of it, and on a line that
+# is not YAML at all (#243). The keys the three commands ask for are
+# `family.yaml`'s and `project.yaml`'s, a record's `family:`, the two of
+# `workspace.yaml`, and the shape pin's.
+# `YAML_QUOTED` is 1 when the value was QUOTED: YAML's null is an unquoted
+# `null` or `~`, and a quoted `"null"` is the text, which is a difference
+# `trim_unquote`'s answer alone cannot carry (`named_for_repository`).
 YAML_VALUE=""
+YAML_QUOTED=0
 yaml_scalar() {
-    local file="$1" key="$2" line
+    local file="$1" key="$2" line value
     YAML_VALUE=""
+    YAML_QUOTED=0
     [ -f "$file" ] || return 1
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in
         "$key":*) ;;
         *) continue ;;
         esac
-        YAML_VALUE="$(trim_unquote "${line#"$key":}")"
+        value="${line#"$key":}"
+        case "${value#"${value%%[![:space:]]*}"}" in
+        '"'* | "'"*) YAML_QUOTED=1 ;;
+        esac
+        YAML_VALUE="$(trim_unquote "$value")"
         return 0
     done <"$file"
     return 1
@@ -249,7 +295,9 @@ is_pinned_member() {
 # (opensoft/openRepoShape#543). A family whose two names differ has no layout
 # that works for both unless both are accepted. A directory called Northwind
 # is a directory called Northwind; what makes it a family folder is read,
-# never guessed from a name.
+# never guessed from a name. The repository arm is `named_for_repository`,
+# below, which `status` and `resume` also ask when one family is on disk in
+# both layouts (#243).
 is_family_folder() {
     local dir="$1" name manifest
     name="${dir##*/}"
@@ -260,7 +308,25 @@ is_family_folder() {
     if yaml_scalar "$manifest" name && [ "$YAML_VALUE" = "$name" ]; then
         return 0
     fi
-    yaml_scalar "$manifest" repository || return 1
+    named_for_repository "$dir"
+}
+
+# Is `<dir>` named for its holder's REPOSITORY: the LAST PART of
+# `<dir>/<basename>/family.yaml`'s `repository:`, as v1.1.0's `repo_basename`
+# takes it (`rsplit("/", 1)[-1]`)? That is the folder v1.1.0 prescribes, and
+# where `make siblings` moves a holder that is not in it. AN UNQUOTED `null`
+# OR `~` IS NO REPOSITORY (#243) - nor `Null` or `NULL`, the spellings
+# v1.1.0's `_scalar` reads as null too - so a folder called `null` is not
+# named for one, and `is_family_folder` has only the display `name:` left to
+# go on, which is v1.1.0's own fallback. A QUOTED `"null"` is the text.
+named_for_repository() {
+    local dir="$1" name
+    name="${dir##*/}"
+    [ -n "$name" ] || return 1
+    yaml_scalar "$dir/$name/family.yaml" repository || return 1
+    if [ "$YAML_QUOTED" -eq 0 ]; then
+        case "$YAML_VALUE" in null | Null | NULL | '~') return 1 ;; esac
+    fi
     [ "${YAML_VALUE##*/}" = "$name" ]
 }
 
@@ -350,6 +416,47 @@ estates_or_none() {
     else
         printf '  (none)\n'
     fi
+}
+
+# Every FAMILY FOLDER under the projects directory whose holder's
+# `family.yaml` says `id: <id>`, one per line, in `list_estates`' order, and
+# nothing for an empty <id>. The id is what `park.sh` files a family's record
+# under (`workspace_family_name` reads it), and it is the SAME in every layout
+# of one family: v1.1.0's folder named for the repository and the
+# display-name folder before it are two directories, two estates and ONE
+# record (#243). So this is how `resume` finds a holder its record's folder
+# no longer names, and how `status` sees one family laid out twice.
+#
+# ONE FOLDER IS LISTED ONCE, however many spellings reach it. `PROJECTS_DIRS`
+# is deduped by inode, but the folders inside two distinct directories are
+# not: a `~/Projects/Quill` that is a LINK to `~/projects/Quill` is one
+# holder, and listing it twice made `resume` refuse "2 family folders" and
+# `status` report one family "laid out 2 times" (the review of #251, finding
+# 1). So a folder that is `-ef` one already listed is skipped, and the first
+# spelling, in `PROJECTS_DIRS`' order, is the one named.
+#
+# shellcheck disable=SC2329  # `park` never asks: it files the record, and
+# never looks a holder up by it. The block is byte-identical by design.
+family_folders_with_id() {
+    local want="$1" dir child prior dup
+    local -a found=()
+    [ -n "$want" ] || return 0
+    for dir in "${PROJECTS_DIRS[@]}"; do
+        [ -d "$dir" ] || continue
+        for child in "$dir"/*; do
+            [ -d "$child" ] || continue
+            is_family_folder "$child" || continue
+            yaml_scalar "$child/${child##*/}/family.yaml" id || continue
+            [ "$YAML_VALUE" = "$want" ] || continue
+            dup=0
+            for prior in ${found[@]+"${found[@]}"}; do
+                if [ "$child" -ef "$prior" ]; then dup=1; fi
+            done
+            [ "$dup" -eq 0 ] || continue
+            found+=("$child")
+            printf '%s\n' "$child"
+        done
+    done
 }
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
@@ -506,10 +613,15 @@ legs_of() {
 # ` #` cannot be inside one). The loader is not matched to the letter: it keeps
 # a QUOTED `"null"` and `'~'` as branches and reads `false` and `0` as no
 # branch, while this does the opposite for both. No real branch is named any
-# of those, so nothing here chases the difference.
+# of those, so nothing here chases the difference. (Since #243 `trim_unquote`
+# cuts that comment as well; the cut here runs first and is kept.)
 #
-# shellcheck disable=SC2329  # `park` never asks where a leg belongs;
-# `resume` and `status` do.
+# WHO ASKS IT: `resume`'s leg guard (`root_legs_ok`), `status`'s
+# `estate_repos` and `read_leg`, and `park`'s not-carried report
+# (`report_repos`, #242, PR #249) - each to know the branch a leg belongs on.
+#
+# shellcheck disable=SC2329  # a `park` from before #249 never calls it;
+# the disable can go once #249 has landed.
 leg_branch_of() {
     local root="$1" want="$2" line role="" path="" branch=""
     [ -n "$want" ] || return 0
@@ -1250,11 +1362,14 @@ fi
 # --- what the manifest says the estate is -----------------------------------
 MANIFEST_KIND=""
 MANIFEST_DIRNAME=""
+MANIFEST_FAMILY=""
+MANIFEST_ROOT_VALUE=""
 ROOT_REPOSITORY=""
 if [ -n "$MANIFEST_FILE" ]; then
     MANIFEST_ROOT_VALUE="$(manifest_project_field "$MANIFEST_FILE" root || true)"
     if yaml_scalar "$MANIFEST_FILE" family && [ -n "$YAML_VALUE" ]; then
         MANIFEST_KIND="family"
+        MANIFEST_FAMILY="$YAML_VALUE"
         # THE FOLDER COMES FROM `root:`, NEVER FROM `family:` (F2 of the
         # review on #83, and the headline of it). `park.sh` writes `family:`
         # from `family.yaml`'s `id:` — `workspace_family_name` reads that key
@@ -1323,6 +1438,70 @@ if [ "$ESTATE_PRESENT" -eq 0 ] && [ -n "$MANIFEST_DIRNAME" ] &&
     fi
 fi
 
+# THE HOLDER BY ITS ID, when neither the name typed nor the record's folder is
+# an estate here (#243). A record goes stale the moment its holder moves -
+# `make siblings`' own `mv QuillWorks/QuillWorks Quill/Quill` - until the next
+# park rewrites it, and `resume quill`, the id, is how park files it: both
+# lookups above then miss a holder that IS on disk, and the run went on to
+# clone the record's folder BESIDE it, which is one family laid out twice.
+# `park.sh` writes `family:` from `family.yaml`'s `id:`, the same in every
+# layout of one family, so the holder is the family folder whose `family.yaml`
+# says it - by either naming rule, `is_family_folder`'s. ONE is that estate.
+# TWO OR MORE is one family laid out twice, which is ONE record that a park
+# from either rewrites: nothing here picks one and nothing is cloned over
+# either, so it is REFUSED by name, the folder to keep named as `status` names
+# it. NONE is a family that is not here, and it is cloned as before. Every
+# name `resume` was handed has been held to `is_safe_folder_name` above; the
+# one found here is held to it too before it is used.
+FOUND_BY_ID=""
+if [ "$ESTATE_PRESENT" -eq 0 ] && [ "$MANIFEST_KIND" = "family" ]; then
+    BY_ID_COUNT=0
+    BY_ID_ROWS=""
+    BY_ID_KEEP=""
+    BY_ID_KEEPS=0
+    while IFS= read -r BY_ID_FOLDER; do
+        [ -n "$BY_ID_FOLDER" ] || continue
+        BY_ID_COUNT=$((BY_ID_COUNT + 1))
+        BY_ID_ROWS="$BY_ID_ROWS      $BY_ID_FOLDER
+"
+        FOUND_BY_ID="$BY_ID_FOLDER"
+        if named_for_repository "$BY_ID_FOLDER"; then
+            BY_ID_KEEP="$BY_ID_FOLDER"
+            BY_ID_KEEPS=$((BY_ID_KEEPS + 1))
+        fi
+    done < <(family_folders_with_id "$MANIFEST_FAMILY")
+    if [ "$BY_ID_COUNT" -gt 1 ]; then
+        if [ "$BY_ID_KEEPS" -eq 1 ]; then
+            BY_ID_EXIT="Keep $BY_ID_KEEP, the folder named for its repository
+    (openRepoShape v1.1.0's layout, where \`make siblings\` moves a holder),
+    move the rest aside, and re-run \`$SELF_NAME $NAME\`."
+        else
+            BY_ID_EXIT="Keep the one folder named for its repository's last part
+    (openRepoShape v1.1.0's layout, where \`make siblings\` moves a holder),
+    move the rest aside, and re-run \`$SELF_NAME $NAME\`."
+        fi
+        die "$MANIFEST_FILE records family '$MANIFEST_FAMILY' at
+    \`root: $MANIFEST_ROOT_VALUE\`, where there is no estate. Yet
+    $BY_ID_COUNT family folders under your projects directory carry
+    \`id: $MANIFEST_FAMILY\` in their family.yaml:
+
+$BY_ID_ROWS
+    One family laid out twice is ONE record, and a park from either replaces
+    the member blocks the other parked. So nothing here picks one, and
+    nothing was cloned over either. $BY_ID_EXIT"
+    fi
+    if [ "$BY_ID_COUNT" -eq 1 ]; then
+        is_safe_folder_name "${FOUND_BY_ID##*/}" ||
+            die "the holder of family '$MANIFEST_FAMILY' is at $FOUND_BY_ID, and
+    '${FOUND_BY_ID##*/}' is not a name an estate folder may have: no slash, no
+    leading dot, and nothing but letters, digits and \`_.+@-\`. Nothing was
+    cloned. Rename the folder, then re-run \`$SELF_NAME $NAME\`."
+        if estate_here "$FOUND_BY_ID"; then
+            ESTATE_PRESENT=1
+        fi
+    fi
+fi
+
 # WHAT THE RECORD SAYS THE ESTATE IS, said once the estate on disk is known,
 # because a holder that is here knows its own repository (#236): the HOLDER
 # THIS RUN RESOLVED, whatever the record's folder is. A record goes stale the
@@ -1362,6 +1541,9 @@ ROOT_REFUSED=0
 
 if [ "$ESTATE_PRESENT" -eq 1 ]; then
     say "  present         $ESTATE_DIR ($ESTATE_KIND)"
+    if [ -n "$FOUND_BY_ID" ]; then
+        say "                  found by its family.yaml id '$MANIFEST_FAMILY': the record's \`root: $MANIFEST_ROOT_VALUE\` names another folder until the next park rewrites it"
+    fi
     if [ "$ESTATE_KIND" = "family" ]; then
         refresh_root "holder $ESTATE_NAME" "$ESTATE_ROOT" || ROOT_REFUSED=1
     else

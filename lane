@@ -66,6 +66,11 @@
 # offering to reopen something closed on purpose. They are still ROWS in
 # `lanes`, which is the read: this is a pick.
 #
+# AND A ROW WHOSE STATE IS ONLY ITS OWN CELL IS NOT PICKED EITHER (#89). `lanes`
+# shows it as `<WORD> (row)` — the state its Amendment 13(a) cell names, where
+# its log has no lane-kind line to give one — and this word refuses it by name:
+# with no log there is nothing to resume from. `go_rowonly` says so.
+#
 # IT IS A PICKER, AND THAT IS THE AMENDMENT AND NOT A DRIFT. Ratified decision 3
 # ruled "never a picker, never a menu" for `restart` and for `/restart`, and
 # Addendum 1 is the later word on a question that decision was not asked: a
@@ -225,6 +230,24 @@ take_arg() {
 	*) die "$prog takes a lane and an optional profile: $prog [<name> [<profile>]]" 64 ;;
 	esac
 }
+# A FLAG WHERE A VALUE BELONGS IS REFUSED, in the spaced spelling (opensoft/
+# openRepoTools#80 item 1, Copilot's review of workBenches#91 at `lane:215`).
+# `lane --dir --all` took `--all` as the checkout: the flag a person typed was
+# swallowed as a value and never took effect, so the run asked a different
+# question from the one asked of it. `--force --dry-run` was worse, a REAL
+# takeover whose why was the word `--dry-run`, written into another place's
+# append-only log. `park`, `resume` and `status` refuse this with their shared
+# `flag_value` (92eab6c) and `lane-handoff` with its own; this is the same
+# answer for the three value-taking arms here. The `=` spelling is the way back
+# for a value that really does begin with `-` — `--dir=--odd` takes whatever
+# follows the `=` — and an empty one there is already refused at its arm.
+not_a_flag() {   # <flag> <the value the spaced spelling would take>
+	case "$2" in
+	-*) die "$1 needs a value and '$2' is a flag: nothing here swallows the next word
+    whatever it is. A value that really does begin with \`-\` is given after an
+    \`=\`:  $1=$2" 64 ;;
+	esac
+}
 while [ $# -gt 0 ]; do
 	if [ "$endopts" = 1 ]; then take_arg "$1"; shift; continue; fi
 	case "$1" in
@@ -233,11 +256,11 @@ while [ $# -gt 0 ]; do
 	--switch) switch=1; shift ;;
 	--dry-run) dry_run=1; shift ;;
 	--request-handoff) request_flag=1; shift ;;
-	--force) force_why="${2-}"; [ -n "$force_why" ] || die "--force takes the WHY you are taking a lane another place is bound to: it is written into that lane's append-only log and it is the sentence the bound session reads when it refuses every prompt from then on (Amendment 18(e))" 64; shift 2 ;;
+	--force) force_why="${2-}"; [ -n "$force_why" ] || die "--force takes the WHY you are taking a lane another place is bound to: it is written into that lane's append-only log and it is the sentence the bound session reads when it refuses every prompt from then on (Amendment 18(e))" 64; not_a_flag --force "$force_why"; shift 2 ;;
 	--force=*) force_why="${1#--force=}"; [ -n "$force_why" ] || die "--force takes the WHY you are taking a lane another place is bound to (Amendment 18(e))" 64; shift ;;
-	--wait) handoff_wait="${2-}"; [ -n "$handoff_wait" ] || die "--wait needs a number of seconds" 64; shift 2 ;;
+	--wait) handoff_wait="${2-}"; [ -n "$handoff_wait" ] || die "--wait needs a number of seconds" 64; not_a_flag --wait "$handoff_wait"; shift 2 ;;
 	--wait=*) handoff_wait="${1#--wait=}"; [ -n "$handoff_wait" ] || die "--wait needs a number of seconds" 64; shift ;;
-	--dir) dir_flag="${2-}"; [ -n "$dir_flag" ] || die "--dir needs a path" 64; shift 2 ;;
+	--dir) dir_flag="${2-}"; [ -n "$dir_flag" ] || die "--dir needs a path" 64; not_a_flag --dir "$dir_flag"; shift 2 ;;
 	--dir=*) dir_flag="${1#--dir=}"; [ -n "$dir_flag" ] || die "--dir needs a path" 64; shift ;;
 	--) endopts=1; shift ;;
 	-*) die "unknown option '$1' — see $prog --help" 64 ;;
@@ -1184,14 +1207,37 @@ go_new() {   # <repo>
 	exec "${gn_cmd[@]}"
 }
 
+# A ROW WHOSE STATE IS ITS OWN CELL IS SHOWN AND NEVER BOUND (#89). Where a
+# lane's log has no lane-kind line, `lanes_rows` reads the STATE out of the
+# row's Amendment 13(a) cell and prints it as `<WORD> (row)` — `PAUSED (row)`
+# for a row `migrate-state-cells` left parked — and `lane-groups` files it
+# `rowonly`. The pick never numbers that group, and a lane NAMED here arrives in
+# it and is refused: a log with no lane-kind line records no directory, no
+# profile and no binding, so there is nothing to resume, and a launch on a
+# word no log wrote is a resume of nothing. The refusal names the read, and the
+# act by hand that gives the lane its first lane-kind line.
+go_rowonly() {
+	die "lane $R_LANE reads ${R_STATE:-a state from its row}: that is its register row's own
+    state cell (Amendment 13(a)), shown because its log has no lane-kind line —
+    no STARTED, PAUSED or RESUMED — to give a state of its own. So there is
+    nothing here to resume: no recorded directory, profile or binding, and this
+    command will not launch a lane on a word no log wrote. Nothing was launched.
+      what the row says:   lanes-edit.sh register-row $R_LANE
+      start it by hand, in its own checkout, and \`lane-start\` records its
+      first lane-kind line:
+        cd <the lane's checkout> && pclaude --lane $R_LANE <profile>" 2
+}
+
 # THE ONE DISPATCH, so the three branches are chosen in ONE place whether the
-# lane was picked by number or named on the command line.
+# lane was picked by number or named on the command line — and the one group
+# that is not a branch is refused here too, for the same reason.
 go_row() {   # <group> <row>
 	split_row "$2"
 	case "$1" in
 	available) go_available ;;
 	live) go_live ;;
 	elsewhere) go_elsewhere ;;
+	rowonly) go_rowonly ;;
 	*) die "lane $R_LANE is in state '${R_STATE:-unknown}', which this command has no branch
     for. Read it:  lanes --all" 1 ;;
 	esac
@@ -1218,9 +1264,9 @@ if [ -n "$name" ]; then
 	# name is one name under any case"* (ratified 2026-09-14T00:07:18Z verbatim
 	# "Ratify as drafted"), and `lanes-edit.sh canon-lane` is the ONE resolver
 	# every command that takes a `<lane>` shares — for the reason clause (h) gives
-	# every other read here: four implementations of *which row is this name's* is
-	# how the four come to disagree about it. This is `restart`'s own call, moved
-	# here with the act under Amendment 18 Addendum 2.
+	# every other read here: an implementation of *which row is this name's* in
+	# each command is how they come to disagree about it. This is `restart`'s own
+	# call, moved here with the act under Amendment 18 Addendum 2.
 	#
 	# `2` IS TWO ANSWERS AND ONE OF THEM IS A REFUSAL. It is what a helper
 	# predating Amendment 15 spends on an unknown subcommand — silent, expected,

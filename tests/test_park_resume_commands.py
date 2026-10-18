@@ -619,11 +619,13 @@ def named_apart(tmp_path_factory, remotes) -> dict:
     does. The bare is called `Quill.git` because that is what `resume` asks
     for: `clone_url_for testorg/Quill`.
 
-    The workspace carries TWO records of it, one per folder a person might
-    have laid it out in. Each is `family_manifest`'s own, so `root:` is
-    `<folder>/<member>` and the record says nothing about the holder's
-    repository: `family:` is the id, and the org is the directory it is filed
-    under.
+    The workspace carries ONE record of it, as `park.sh` files one: named for
+    the family's id (`quill.yaml`, `family: quill`), parked from v1.1.0's
+    layout so each `root:` is `Quill/<member>`. It is `family_manifest`'s own,
+    so the record says nothing about the holder's repository: `family:` is
+    the id, and the org is the directory it is filed under. A second record
+    named for the display name (`quillworks.yaml`) is a file park never writes
+    for `id: quill` (#243), so there is none.
     """
     base = tmp_path_factory.mktemp("namedapart")
     seed = base / "seed" / QUILL
@@ -649,9 +651,7 @@ def named_apart(tmp_path_factory, remotes) -> dict:
     git("clone", "-q", "--bare", str(seed), str(holder), cwd=base)
     workspace = seed_workspace(
         base, "wip",
-        {f"workspaces/{ORG}/{QUILL.lower()}.yaml": family_manifest(QUILL),
-         f"workspaces/{ORG}/{QUILL_DISPLAY.lower()}.yaml":
-             family_manifest(QUILL_DISPLAY)})
+        {f"workspaces/{ORG}/{QUILL.lower()}.yaml": family_manifest(QUILL)})
     return {"dir": base / "remotes", "holder": holder, "workspace": workspace}
 
 
@@ -795,6 +795,49 @@ def test_a_family_folder_that_is_neither_name_still_refuses(
         assert f"present         {projects / folder}" not in result.stdout
 
 
+#: `family.yaml`'s `repository:` line as openRepoShape v1.1.0's `parse_yaml`
+#: and `repo_basename` read it (#243): the folder, the value, and whether the
+#: folder is that family's. The first three are the issue's own table, where
+#: the commands read the comment into the value and `null` as text. The last
+#: two are the quoting rules that go with them: a ` #` INSIDE quotes is text,
+#: not a comment, and only an UNQUOTED `null` is YAML's null.
+REPOSITORY_VALUE_SHAPES = [
+    ("a-trailing-comment", QUILL, f"{ORG}/{QUILL}   # the holder", True),
+    ("a-trailing-comment-after-quotes", QUILL,
+     f'"{ORG}/{QUILL}"   # the holder', True),
+    ("an-unquoted-null-is-no-repository", "null", "null", False),
+    ("a-quoted-null-is-the-text-null", "null", '"null"', True),
+    ("a-hash-inside-quotes-is-text", QUILL, f'"{ORG}/{QUILL} #2"', False),
+]
+
+
+@pytest.mark.parametrize("folder, repository, found",
+                         [case[1:] for case in REPOSITORY_VALUE_SHAPES],
+                         ids=[case[0] for case in REPOSITORY_VALUE_SHAPES])
+def test_a_family_yamls_repository_is_read_the_way_yaml_reads_it(
+        home, folder, repository, found):
+    """The display `name:` is never the folder here, so the repository arm
+    alone decides. `testorg/Quill   # the holder` is `Quill` to v1.1.0 and was
+    `Quill   # the holder` here; `null` is no repository to v1.1.0, which then
+    falls back to `name:`, and was a folder called `null` here. The fix is in
+    the shared `trim_unquote` and nowhere narrower, because a cut inside
+    `is_family_folder` alone would have left the quotes on the second row and
+    cut the last one short."""
+    projects = home / "projects"
+    holder = probe_family_two_names(projects, folder, name="Other",
+                                    repository=repository)
+    result = run(PARK, folder, home=home)
+    if found:
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert (f"park: {folder} - the family holder at {holder}"
+                in result.stdout)
+        assert f"PROBE park in {holder}" in result.stdout
+    else:
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert f"no estate named '{folder}'" in result.stderr
+        assert "PROBE park" not in result.stdout
+
+
 def test_a_family_folder_named_for_its_repository_wins_over_a_standalone_root(
         home):
     """The same rule as above, for a family whose `name:` differs: the holder
@@ -831,6 +874,37 @@ def test_nearest_wins_so_a_member_parks_itself(home):
     result = run(PARK, home=home, cwd=member)
     assert result.returncode == 0, result.stderr + result.stdout
     assert f"PROBE park in {member}" in result.stdout
+
+
+@pytest.mark.parametrize("where", [f"{QUILL}/{QUILL}/scripts",
+                                   f"{QUILL}/{QUILL}", QUILL,
+                                   f"{QUILL}/Alpha"],
+                         ids=["inside-the-holder", "the-holder",
+                              "the-family-folder", "inside-a-member"])
+def test_the_walk_up_finds_a_family_named_for_its_repository_and_nearest_wins(
+        home, where):
+    """The two tests above, for a family whose folder is named for its
+    REPOSITORY (#236) and not its display `name:` (#243, the review of #240's
+    note 3). Every case before resolved by `<Name>`; this is the walk-up.
+    From inside the holder, the holder itself, or the family folder, `park`
+    answers the holder; from inside the member beside it, the member, because
+    the nearest estate wins."""
+    projects = home / "projects"
+    holder = probe_family_two_names(projects, QUILL, name=QUILL_DISPLAY,
+                                    repository=f"{ORG}/{QUILL}")
+    (holder / "scripts").mkdir()
+    member = probe_project(projects, "Alpha", at=projects / QUILL / "Alpha")
+    result = run(PARK, "--dry-run", home=home, cwd=projects / where)
+    assert result.returncode == 0, result.stderr + result.stdout
+    if where.endswith("/Alpha"):
+        assert (f"park: Alpha - the assembly root at {member}"
+                in result.stdout)
+        assert f"PROBE park in {member} ARGS=[--dry-run]" in result.stdout
+        assert f"PROBE park in {holder}" not in result.stdout
+    else:
+        assert (f"park: {QUILL} - the family holder at {holder}"
+                in result.stdout)
+        assert f"PROBE park in {holder} ARGS=[--dry-run]" in result.stdout
 
 
 # --- the bare form outside every estate ASKS; `--all` / `-a` is the sweep ----
@@ -1387,6 +1461,158 @@ def test_park_says_when_it_left_nothing_behind(estate, home):
     assert "0 thing(s) above are not park's to carry" in result.stdout
 
 
+def clone_leg_member(dest: Path, base: Path, member: str,
+                     **seed) -> dict[str, Path]:
+    """`seed_leg_member`'s root, cloned into `dest` with its legs mounted.
+
+    Built per test under `base` rather than into the session's `remotes`, so a
+    leg has a `develop` to sit on only where a test asks for one (`seed` goes
+    to `seed_leg_member`). The legs arrive DETACHED at their pins, as every
+    fresh clone's do.
+    """
+    base.mkdir()
+    bare, _ = seed_leg_member(base, member, **seed)
+    root = dest / member
+    git("-c", "protocol.file.allow=always", "clone", "-q",
+        "--recurse-submodules", str(bare), str(root), cwd=dest)
+    return {"root": root, "spec": root / "spec", "code": root / "code"}
+
+
+def commits_on(leg: Path, branch: str, count: int) -> None:
+    """`count` commits on `leg`'s local `branch` that origin has not seen."""
+    git("checkout", "-q", "-B", branch, f"origin/{branch}", cwd=leg)
+    for number in range(count):
+        (leg / f"{branch}-{number}.md").write_text("never pushed\n",
+                                                   encoding="utf-8")
+        commit_all(leg, f"commit {number} on {branch}, not pushed")
+
+
+def family_folder_naming_delta(home: Path) -> Path:
+    """A family folder whose holder (a probe Makefile) names ONE member,
+    `Delta`, and whose working clone `clone_leg_member` puts beside it."""
+    folder = home / "projects" / FAMILY
+    holder = folder / FAMILY
+    holder.mkdir(parents=True)
+    (holder / "family.yaml").write_text(
+        FAMILY_YAML.format(
+            id=FAMILY.lower(), name=FAMILY, org=ORG,
+            members=(f"\n  - project: Delta\n    id: delta\n"
+                     f"    repository: {ORG}/Delta\n"
+                     f"    path: members/Delta\n")), encoding="utf-8")
+    (holder / "Makefile").write_text(PROBE_MAKEFILE, encoding="utf-8")
+    return folder
+
+
+def test_park_reports_a_leg_on_the_branch_its_own_row_declares(home, tmp_path):
+    """#242. `scripts/bootstrap.py` places a leg on `str(leg.get("branch") or
+    branch)`, so a leg whose row in `project.yaml` declares `branch: develop`
+    keeps its work on `develop`. The report asked about the ROOT's
+    `tracking_branch` for every leg, found nothing ahead on `main`, and ended
+    without naming the leg: work `park` did not carry, missed silently."""
+    root = clone_leg_member(home / "projects", tmp_path / "remotes",
+                            "Delta", leg_branch="develop")
+    commits_on(root["spec"], "develop", 3)
+
+    result = run(PARK, "Delta", home=home)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"unpushed develop leg     {root['spec']}" in result.stdout, (
+        "a leg's unpushed commits on its own `branch:` were not reported:\n"
+        + result.stdout)
+    assert "3 commit(s) on develop that origin has not seen" in result.stdout
+    assert "A leg goes up as a pull request too" in result.stdout
+    assert f"unpushed main   leg     {root['spec']}" not in result.stdout, (
+        "the leg was asked about the root's branch")
+
+
+def test_park_reports_a_family_members_leg_on_its_own_declared_branch(
+        home, tmp_path):
+    """#242, in a family: the holder's report reads the member's working clone
+    beside it, and that member's legs, which are built by a second loop. Its
+    leg rows carried the member's `tracking_branch` too."""
+    folder = family_folder_naming_delta(home)
+    member = clone_leg_member(folder, tmp_path / "remotes", "Delta",
+                              leg_branch="develop", code_leg=True)
+    commits_on(member["spec"], "develop", 2)
+    commits_on(member["code"], "main", 1)
+
+    result = run(PARK, FAMILY, home=home)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"unpushed develop leg     {member['spec']}" in result.stdout, (
+        "a member's leg on its own `branch:` was not reported:\n"
+        + result.stdout)
+    assert "2 commit(s) on develop that origin has not seen" in result.stdout
+    assert f"unpushed main   leg     {member['spec']}" not in result.stdout
+    # The leg that declares none is the member's `tracking_branch`'s: the
+    # family loop's fallback, which nothing else here reaches.
+    assert f"unpushed main   leg     {member['code']}" in result.stdout, (
+        result.stdout)
+    assert "1 commit(s) on main that origin has not seen" in result.stdout
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                    reason="mode 000 does not bind root, so the manifest "
+                           "stays readable and there is nothing to survive")
+def test_park_reports_a_leg_when_its_members_manifest_cannot_be_read(
+        home, tmp_path):
+    """#242, the review of #249: `leg_branch_of` fails when `project.yaml`
+    exists and cannot be read, and `report_repos` runs under `set -e`, so an
+    unguarded `legbranch="$(leg_branch_of ...)"` ended the report's subshell:
+    that leg's row and every row after it were dropped, `make park`'s exit
+    code was untouched and `park` said nothing. The leg is reported against
+    the member's own branch instead (main's `park` did, because it never read
+    the file for a leg)."""
+    folder = family_folder_naming_delta(home)
+    member = clone_leg_member(folder, tmp_path / "remotes", "Delta")
+    commits_on(member["spec"], "main", 2)
+    manifest = member["root"] / "project.yaml"
+    manifest.chmod(0o000)
+    try:
+        result = run(PARK, FAMILY, home=home)
+    finally:
+        manifest.chmod(0o644)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"unpushed main   leg     {member['spec']}" in result.stdout, (
+        "an unreadable manifest dropped the leg's row from the report:\n"
+        + result.stdout)
+    assert "2 commit(s) on main that origin has not seen" in result.stdout
+
+
+def test_park_still_reports_a_leg_with_no_branch_of_its_own_on_the_roots(
+        home, tmp_path):
+    """UNCHANGED for a row with no `branch:`: bootstrap places that leg on the
+    root's `tracking_branch`, so that is the branch its unpushed commits are
+    counted on. Green before the fix of #242 and after it."""
+    root = clone_leg_member(home / "projects", tmp_path / "remotes", "Echo")
+    commits_on(root["spec"], "main", 1)
+
+    result = run(PARK, "Echo", home=home)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"unpushed main   leg     {root['spec']}" in result.stdout
+    assert "1 commit(s) on main that origin has not seen" in result.stdout
+
+
+def test_park_asks_each_leg_of_one_root_about_its_own_branch(home, tmp_path):
+    """One root, two legs: `spec` declares `branch: develop` and `code`
+    declares none. Each is read against the branch bootstrap puts it on, so
+    the report names `spec` on `develop` and `code` on `main`, with their own
+    counts and neither leg's branch lent to the other."""
+    root = clone_leg_member(home / "projects", tmp_path / "remotes", "Foxtrot",
+                            leg_branch="develop", code_leg=True)
+    commits_on(root["spec"], "develop", 3)
+    commits_on(root["code"], "main", 1)
+
+    result = run(PARK, "Foxtrot", home=home)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"unpushed develop leg     {root['spec']}" in result.stdout, (
+        result.stdout)
+    assert f"unpushed main   leg     {root['code']}" in result.stdout, (
+        result.stdout)
+    assert "3 commit(s) on develop that origin has not seen" in result.stdout
+    assert "1 commit(s) on main that origin has not seen" in result.stdout
+    assert f"unpushed main   leg     {root['spec']}" not in result.stdout
+    assert f"unpushed develop leg     {root['code']}" not in result.stdout
+
+
 def test_park_never_reads_the_pinned_copy(estate, home):
     """`members/<Project>` is pinned and DETACHED; nobody's work is there, and
     a report that named it would be reporting on the wrong copy."""
@@ -1554,17 +1780,199 @@ def test_resume_names_the_repository_of_the_holder_it_resolved_not_the_records_f
 def test_resume_names_the_repository_the_holders_family_yaml_gives(
         named_apart, remotes, home):
     """#236, the estate already here, laid out before v1.1.0: the folder is the
-    display name, so it is NOT the repository's name, and a repository derived
-    from it (`testorg/QuillWorks`) is a repository that does not exist. The
-    holder's own `family.yaml` says which one it is, and it can be read."""
-    clone_quill_estate(named_apart, remotes, home, QUILL_DISPLAY)
+    display name, so it is NOT the repository's name. The holder's own
+    `family.yaml` says which repository it is, and it can be read.
+
+    Asked for the way park files it (#243): `resume quill` against the ONE
+    record, `quill.yaml`, parked from v1.1.0's layout elsewhere, so its
+    `root:` is `Quill/Alpha` while this machine has `QuillWorks/QuillWorks`.
+    Neither the id nor the record's folder is an estate here, so the holder
+    is found by its `family.yaml` `id:`; before, `resume` planned a clone of
+    `testorg/Quill` into `Quill/Quill`, BESIDE the holder that was here,
+    which is how a person ends up with one family laid out twice. (Where the
+    repository derived from the record's folder is wrong as well, the stale
+    record above is the case.)"""
+    quill = clone_quill_estate(named_apart, remotes, home, QUILL_DISPLAY)
     place_quill_workspace(named_apart, home)
-    result = run(RESUME, QUILL_DISPLAY, "--dry-run", home=home,
+    result = run(RESUME, QUILL.lower(), "--dry-run", home=home,
                  env=offline(named_apart))
     assert result.returncode == 0, result.stderr + result.stdout
     assert (f"records         a family estate, root repository "
             f"{ORG}/{QUILL}") in result.stdout
     assert f"{ORG}/{QUILL_DISPLAY}" not in result.stdout
+    assert f"present         {quill['folder']} (family)" in result.stdout
+    assert "found by its family.yaml id 'quill'" in result.stdout
+    assert "absent          cloning" not in result.stdout
+    assert "would clone      git clone" not in result.stdout
+    assert not (home / "projects" / QUILL).exists()
+
+
+def stale_quill_workspace(tmp_path: Path) -> Path:
+    """The ONE record park files for the family of #236, parked from the
+    layout before v1.1.0: `workspaces/testorg/quill.yaml`, `family: quill`,
+    each `root:` `QuillWorks/<member>`. Stale wherever the holder is not in
+    `QuillWorks/QuillWorks`."""
+    record = family_manifest(QUILL_DISPLAY).replace(
+        f"family: {QUILL_DISPLAY.lower()}\n", f"family: {QUILL.lower()}\n")
+    assert "root: QuillWorks/Alpha" in record and "family: quill\n" in record
+    return seed_workspace(tmp_path / "stale", "wip",
+                          {f"workspaces/{ORG}/{QUILL.lower()}.yaml": record})
+
+
+def second_projects_spelling(home: Path) -> Path:
+    """`~/Projects` as a directory of its own beside the fixture's
+    `~/projects`, which is what a person who spells it both ways has, and the
+    second place `PROJECTS_DIRS` looks. On a filesystem that folds case — a
+    stock Mac — the two names are ONE directory, so there is no second
+    spelling to make: the test is SKIPPED there, saying why, instead of
+    failing on a `mkdir` that finds the directory already there."""
+    other = home / "Projects"
+    if other.exists() and other.samefile(home / "projects"):
+        pytest.skip("case-insensitive filesystem: ~/Projects is ~/projects "
+                    "here, so there is no second spelling of the projects "
+                    "directory to put a holder in")
+    other.mkdir()
+    return other
+
+
+def test_resume_finds_the_holder_by_its_id_when_the_record_names_another_folder(
+        named_apart, remotes, home, tmp_path):
+    """#243, item 3, the issue's own case. `make siblings`' advice was
+    followed, `mv QuillWorks/QuillWorks Quill/Quill`, and the record still
+    says `root: QuillWorks/Alpha`. `resume quill` (the id, which is how park
+    files the record) missed it twice — `quill` is no folder here, and
+    neither is `QuillWorks` — and planned a clone of `testorg/QuillWorks`
+    although the family was on disk. The holder whose `family.yaml` says
+    `id: quill` is that estate: no clone, and the repository and the root
+    are the ones on disk."""
+    quill = clone_quill_estate(named_apart, remotes, home, QUILL)
+    place_quill_workspace(named_apart, home, stale_quill_workspace(tmp_path))
+    result = run(RESUME, QUILL.lower(), "--dry-run", home=home,
+                 env=offline(named_apart))
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"present         {quill['folder']} (family)" in result.stdout
+    assert ("found by its family.yaml id 'quill': the record's "
+            "`root: QuillWorks/Alpha` names another folder") in result.stdout
+    assert (f"records         a family estate, root repository "
+            f"{ORG}/{QUILL}") in result.stdout
+    assert f"would run: make siblings   ({quill['holder']})" in result.stdout
+    assert "absent          cloning" not in result.stdout
+    assert "would clone      git clone" not in result.stdout
+    assert f"{ORG}/{QUILL_DISPLAY}" not in result.stdout
+    assert not (home / "projects" / QUILL_DISPLAY).exists()
+
+
+@pytest.mark.parametrize("second", ["Projects", "QuillCopy"],
+                         ids=["under-the-other-spelling",
+                              "a-folder-of-another-name"])
+def test_resume_refuses_two_holders_of_one_id_and_clones_over_neither(
+        named_apart, home, tmp_path, second):
+    """#243, item 3, consistent with item 2: one family laid out twice is ONE
+    record, so with the record's folder nowhere and two holders of its id on
+    disk there is no estate to pick. Refused by name, naming both, and
+    NOTHING cloned — a real run, not a dry one. The second holder is the
+    same family under `~/Projects` (people spell it both ways), or a copy
+    under a folder named for its own display `name:`, which leaves exactly
+    one named for the repository: the one to keep."""
+    projects = home / "projects"
+    first = probe_family_two_names(projects, QUILL, name=QUILL_DISPLAY,
+                                   repository=f"{ORG}/{QUILL}")
+    if second == "Projects":
+        other = probe_family_two_names(second_projects_spelling(home), QUILL,
+                                       name=QUILL_DISPLAY,
+                                       repository=f"{ORG}/{QUILL}")
+    else:
+        other = probe_family_two_names(projects, second, name=second,
+                                       repository=f"{ORG}/{QUILL}")
+        manifest = other / "family.yaml"
+        manifest.write_text(manifest.read_text(encoding="utf-8").replace(
+            f"id: {second.lower()}\n", f"id: {QUILL.lower()}\n"),
+            encoding="utf-8")
+    place_quill_workspace(named_apart, home, stale_quill_workspace(tmp_path))
+    result = run(RESUME, QUILL.lower(), home=home, env=offline(named_apart))
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "2 family folders under your projects" in result.stderr
+    assert f"      {first.parent}\n" in result.stderr
+    assert f"      {other.parent}\n" in result.stderr
+    assert "nothing was cloned over either" in result.stderr
+    if second == "QuillCopy":
+        assert (f"Keep {first.parent}, the folder named for its repository"
+                in result.stderr)
+    assert "PROBE" not in result.stdout, "a holder's make ran"
+    assert not (projects / QUILL_DISPLAY).exists(), "the record's folder"
+    assert not (home / "Projects" / QUILL_DISPLAY).exists()
+
+
+def test_one_holder_reached_under_both_spellings_is_one_holder_not_two(
+        named_apart, remotes, home, tmp_path):
+    """The review of #251, finding 1. `~/Projects` is a real directory whose
+    `Quill` is a LINK to `~/projects/Quill`: one folder, reached under both
+    spellings of the projects directory. `PROJECTS_DIRS` dedupes the two
+    directories by inode, but nothing compared the folders INSIDE them, so
+    `family_folders_with_id` listed one holder twice: `resume quill` refused
+    "2 family folders" with nothing to choose between, and `status` reported
+    one family "laid out 2 times" — and its remedy, "move the rest aside",
+    would have taken the link away. A folder that is `-ef` one already
+    listed is the same holder, so it is listed once: `resume` resumes it and
+    `status` has no finding to make. Two REAL holders still refuse (above)."""
+    quill = clone_quill_estate(named_apart, remotes, home, QUILL)
+    (second_projects_spelling(home) / QUILL).symlink_to(quill["folder"])
+
+    status = run(STATUS, QUILL, home=home)
+    assert status.returncode == 0, status.stdout + status.stderr
+    assert "laid out" not in status.stdout, status.stdout
+    assert "0 finding(s) in 3 repositories" in status.stdout
+
+    place_quill_workspace(named_apart, home, stale_quill_workspace(tmp_path))
+    result = run(RESUME, QUILL.lower(), "--dry-run", home=home,
+                 env=offline(named_apart))
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "family folders under your projects" not in result.stderr
+    assert f"present         {quill['folder']} (family)" in result.stdout
+    assert "found by its family.yaml id 'quill'" in result.stdout
+    assert "absent          cloning" not in result.stdout
+    assert not (home / "projects" / QUILL_DISPLAY).exists()
+
+
+def test_resume_holds_a_holder_found_by_its_id_to_an_estate_folders_name(
+        named_apart, home, tmp_path):
+    """Every folder `resume` builds a path from is held to
+    `is_safe_folder_name` first: `<Name>` and the record's `root:`, and now
+    the holder found by its id (#243), which comes off the disk rather than
+    out of anybody's typing. A family folder whose name carries a space is a
+    family folder all the same — its `name:` says so — and it is refused by
+    name, with nothing cloned beside it."""
+    folder = "Quill Old"
+    holder = probe_family_two_names(home / "projects", folder, name=folder,
+                                    repository=f"{ORG}/{QUILL}")
+    manifest = holder / "family.yaml"
+    manifest.write_text(manifest.read_text(encoding="utf-8").replace(
+        f"id: {folder.lower()}\n", f"id: {QUILL.lower()}\n"), encoding="utf-8")
+    place_quill_workspace(named_apart, home, stale_quill_workspace(tmp_path))
+    result = run(RESUME, QUILL.lower(), home=home, env=offline(named_apart))
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert (f"the holder of family 'quill' is at {holder.parent}"
+            in result.stderr)
+    assert "is not a name an estate folder may have" in result.stderr
+    assert "PROBE" not in result.stdout
+    assert not (home / "projects" / QUILL_DISPLAY).exists()
+
+
+def test_resume_still_clones_a_family_no_holder_here_carries_the_id_of(
+        named_apart, home, tmp_path):
+    """#243, item 3's third arm: no holder of `id: quill` is here — a family
+    of another id is, and it is not this one — so the family is genuinely
+    absent and the plan is today's, the clone of the record's folder."""
+    probe_family(home / "projects", "Other")
+    place_quill_workspace(named_apart, home, stale_quill_workspace(tmp_path))
+    result = run(RESUME, QUILL.lower(), "--dry-run", home=home,
+                 env=offline(named_apart))
+    assert result.returncode == 0, result.stderr + result.stdout
+    target = home / "projects" / QUILL_DISPLAY / QUILL_DISPLAY
+    assert (f"absent          cloning {ORG}/{QUILL_DISPLAY} -> {target}"
+            in result.stdout)
+    assert "would clone      git clone --recurse-submodules" in result.stdout
+    assert "found by its family.yaml id" not in result.stdout
 
 
 def test_resume_writes_the_config_only_when_asked_by_name(remotes, home):
@@ -2399,6 +2807,68 @@ def test_leg_branch_of_reads_a_rows_own_branch_the_way_bootstrap_does(
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout == (f"{expected}\n" if expected else ""), (
         f"asked for {want!r}, answered {proc.stdout!r}")
+
+
+#: `trim_unquote`, the one reader of a VALUE in the shared block: the text
+#: after `key:` as the three commands hand it over, and the text openRepoShape
+#: v1.1.0's `parse_yaml` reads out of the same line (#243) — its
+#: `_strip_comment`, `_quote_end` and `_quoted_scalar`. A quoted value is the
+#: text up to its closing quote, a `\` or a `''` not closing it, and nothing
+#: after the close is the value; an unquoted one is cut at a `#` that opens
+#: it or follows whitespace. The escapes are honoured to find the close and
+#: never unescaped, as before, and `null` is text here: what is null is the
+#: caller's to say.
+TRIM_UNQUOTE_CASES = [
+    ("plain", " testorg/Quill", "testorg/Quill"),
+    ("crlf", " testorg/Quill\r", "testorg/Quill"),
+    ("double-quoted", ' "testorg/Quill"', "testorg/Quill"),
+    ("single-quoted", " 'testorg/Quill'", "testorg/Quill"),
+    ("a-trailing-comment", " testorg/Quill   # the holder", "testorg/Quill"),
+    ("a-tab-before-the-comment", " testorg/Quill\t# the holder",
+     "testorg/Quill"),
+    ("a-trailing-comment-after-double-quotes",
+     ' "testorg/Quill"   # the holder', "testorg/Quill"),
+    ("a-trailing-comment-after-single-quotes",
+     " 'testorg/Quill' # the holder", "testorg/Quill"),
+    ("a-comment-and-crlf", " main # x\r", "main"),
+    ("only-a-comment-is-empty", "   # nothing", ""),
+    ("a-comment-with-no-space-after-the-colon-is-empty", "# nothing", ""),
+    ("empty", "", ""),
+    ("empty-double-quotes", ' ""', ""),
+    ("a-hash-inside-double-quotes-is-text", ' "testorg/Quill #2"',
+     "testorg/Quill #2"),
+    ("a-hash-inside-single-quotes-is-text", " 'a # b' # c", "a # b"),
+    ("a-hash-with-no-space-before-it-is-text", " a#b", "a#b"),
+    ("spaces-inside-quotes-are-kept", ' "  a  " ', "  a  "),
+    ("an-escaped-quote-does-not-close", ' "a\\"b" # c', 'a\\"b'),
+    ("a-doubled-single-quote-does-not-close", " 'it''s' # c", "it''s"),
+    ("a-quote-in-a-plain-value-is-text", " it's # c", "it's"),
+    ("a-quote-nothing-closes-is-kept-whole", ' "abc # x', '"abc # x'),
+    ("null-is-text-here", " null", "null"),
+]
+
+
+@pytest.mark.parametrize("raw,expected",
+                         [case[1:] for case in TRIM_UNQUOTE_CASES],
+                         ids=[case[0] for case in TRIM_UNQUOTE_CASES])
+def test_trim_unquote_reads_a_value_the_way_openreposhapes_parse_yaml_does(
+        tmp_path, raw, expected):
+    """Every scalar the three commands read goes through here — `kind:`,
+    `name:`, `id:`, `repository:`, `tracking_branch:`, a leg's `role:` and
+    `path:`, a member's `- project:` — so a comment v1.1.0 drops was part of
+    the value, and a folder or a branch named with it was never found. The
+    code is the real one, cut out of `resume`; the byte-for-byte tests keep
+    the other two copies the same."""
+    functions = tmp_path / "functions.sh"
+    functions.write_text(shared_function(RESUME, "trim_unquote"),
+                         encoding="utf-8")
+    proc = subprocess.run(
+        ["bash", "-c", 'source "$1"; trim_unquote "$2"', "_",
+         str(functions), raw],
+        capture_output=True, text=True, check=False, input="")
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == expected, (
+        f"read {raw!r} as {proc.stdout!r}, not {expected!r}")
 
 
 def test_each_leg_of_one_root_is_held_to_its_own_branch(home, tmp_path):

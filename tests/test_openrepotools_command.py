@@ -149,7 +149,7 @@ pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
 #: reason `AGENTS.md` gives for the submodule SKIP.
 #:
 #: The tests NOT marked are the ones that never reach the merge: the refusals,
-#: `--help`, `--version`, and `test_install_places_all_nine_or_none`, which is
+#: `--help`, `--version`, and `test_install_places_all_or_none`, which is
 #: refused at `collect_commands` before `plan_hook_merge` is called at all.
 #: `test_without_jq_it_refuses_and_places_nothing` is the positive case for the
 #: same fact and is deliberately unmarked.
@@ -417,7 +417,7 @@ def test_install_refuses_a_second_argument_and_installs_nothing(tmp_path):
 
 @NEEDS_JQ
 def test_install_writes_an_executable_copy(tmp_path):
-    """All NINE files, each 755 and byte-identical to this checkout's.
+    """Every `INSTALLED` file, each 755 and byte-identical to this checkout's.
 
     A `park` that is not executable is not a command, and a `park` that is a
     near-copy is a command whose refusals nobody reviewed — so the bytes are
@@ -2284,7 +2284,7 @@ def offline_github(tmp_path):
     return fake_github(tmp_path, FETCHED)
 
 
-def test_install_places_all_nine_or_none(tmp_path):
+def test_install_places_all_or_none(tmp_path):
     """ALL IN HAND BEFORE ANY IS PLACED (openRepoShape #82, F10 of the review
     on its #83). One file at a time, dying on the first fetch that failed,
     leaves a person with a NEW `openRepoTools` and no `park` — a half-install
