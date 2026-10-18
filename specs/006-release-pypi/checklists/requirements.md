@@ -45,12 +45,15 @@
 - **The technology in the success criteria.** SC-001 to SC-010 count
   outcomes: artifacts placed, facts printed, refusals, uploads. They name a
   tool only where the tool is the outcome, as with PyPI serving a version.
-- **No `[NEEDS CLARIFICATION]`.** None remains. The one open item, Brett
-  Heap's choice of (a), (b) or (c) on workBenches, is FR-047. It is marked
-  pending his word, and it is not a blocker: it changes only when FR-045's
-  README text may appear. The `release/*` ruleset choice and the v1.1.0
-  notes text are recorded as assumptions. The change already specifies both
-  outcomes of the first, and the second is settled before the tag.
+- **No `[NEEDS CLARIFICATION]`.** None remains. Brett Heap's choice of
+  (a), (b) or (c) on workBenches, FR-047, is decided: spec.md's FR-047 says
+  "decided: position (c)", and design.md's "Resolved by Brett Heap,
+  2026-10-18", item 12, has his words "go with (c)" and
+  opensoft/workBenches#165. It was never a blocker: it changes only when
+  FR-045's README text may appear, and adds README's one-route sentence.
+  The `release/*` ruleset choice and the v1.1.0 notes text are recorded as
+  assumptions. The change already specifies both outcomes of the first, and
+  the second is settled before the tag.
 - **Coverage.** Every one of the delta specs' 25 requirements maps to a
   functional requirement: 17 in `pypi-package` and 8 in
   `release-tags-and-branches`. Their 49 scenarios are acceptance scenarios,

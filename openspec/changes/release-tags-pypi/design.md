@@ -40,7 +40,7 @@ What the design builds on, as the code stands at `aaa7bc8`:
     - its version source searches its file with
       `(?i)^(__version__|VERSION) *= *(['"])v?(?P<version>.+?)\2` under
       `re.MULTILINE`, and takes the first match (`hatchling/version/core.py:6`
-      and `:31`).
+      and `:32`).
   - **pipx 1.17.12's source:**
     - the default home is platformdirs' user data directory
       (`pipx/paths.py:14`), which on macOS is
@@ -122,8 +122,8 @@ The console script's function does one thing. It calls
 - On `FileNotFoundError` it prints `REFUSED: openRepoTools needs bash, and
   there is no bash on this PATH. Nothing ran.` to stderr and exits 2, the
   same status as bash's `die`.
-- It does not read the stamp. Bash is the one reader (Decision 5), so Python
-  and bash can never disagree about a stamp.
+- It does not read the stamp. Bash is the one reader at run time
+  (Decision 5), so Python and bash can never disagree about a stamp.
 - **Amended 2026-10-18 by the lead, on T007's measured report** (task T026):
   - **The ignored signals are put back first.** Python starts with SIGPIPE
     and SIGXFSZ ignored, an exec keeps an ignored disposition, and a
@@ -180,8 +180,8 @@ parent holds a regular file `_release.py`.
 
 ### 5. The stamp's grammar, the writer and the reader (N2)
 
-**The file.** It has a module docstring, then exactly five lines, in this
-order:
+**The file.** The committed file has a module docstring, then exactly five
+lines, in this order:
 
 ```text
 VERSION = "<v>"
@@ -193,14 +193,16 @@ REPOSITORY = "<r>"
 
 The committed file has `0.0.0` and four empty strings. The release build
 rewrites only those five lines, from the tag, the commit, the digest and
-`$GITHUB_REPOSITORY`, and leaves the docstring byte for byte.
+`$GITHUB_REPOSITORY`, and leaves the docstring byte for byte. The grammar
+allows a docstring, and does not require one.
 
 **The reader** is a bash function in `pin_parse`'s style. It sets `STAMP_*`
 and returns 0, or sets `STAMP_WHY` and returns 1.
 
 - It reads LF only. A carriage return is refused with its line number.
-- It skips blank lines, `#` comments, and the one leading docstring: from a
-  line that begins with `"""` to the next line that contains `"""`.
+- It skips blank lines, `#` comments, and the one leading docstring if
+  there is one: from a line that begins with `"""` to the next line that
+  contains `"""`.
 - Every other line must be `NAME = "value"` at column 0. NAME is one of the
   five, each appears exactly once, and the value holds no `"`, `\` or `$`.
 - An unknown name, a repeated name, a missing name or an unclosed docstring is
@@ -229,6 +231,10 @@ and returns 0, or sets `STAMP_WHY` and returns 1.
   case-insensitive pattern.
 - So the reader also refuses a docstring line that begins, in any case, with
   `version` or `__version__` followed by optional spaces and `=`.
+  - The guard first folds the three non-ASCII letters that Python's `(?i)`
+    matches: U+017F onto `s`, and U+0130 and U+0131 onto `i` (T011).
+  - A guarded line is refused when the docstring closes, not when it is
+    read, so an unclosed docstring is reported as unclosed (T011).
 - A test runs hatch's pattern and the reader on the committed file and on a
   stamped one, and requires one answer.
 
@@ -628,6 +634,15 @@ the lead, 2026-10-18.
     - a branch rehearsal builds with the version of the tag it rehearses.
       Before v1.1.0 that is the next pre-release, `1.1.0rc1` for the first,
       as the model rehearsed v1.1.0 from `l3-rehearsal-v1.1.0`.
+
+Ruled after #237 merged, so numbered after item 12 below:
+
+13. **006's counts follow #237 (merged as `586dea2`).**
+    - Before: `--install` placed 31 artifacts always; with pipx's link, 30
+      placed, 1 left to pipx and 28 receipt rows.
+    - After: it places 29 always; with pipx's link, 28 placed, 1 left to pipx
+      and 28 receipt rows; and the two hook entries on top of either, once
+      `~/projects/xFactory/lanes-edit.sh` answers `guard`.
 
 ### Resolved by Brett Heap, 2026-10-18
 

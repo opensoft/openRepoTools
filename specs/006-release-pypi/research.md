@@ -109,9 +109,9 @@ were read read-only.
     `OPENREPOTOOLS_PACKAGE_COMMIT`, `OPENREPOTOOLS_PACKAGE_DIGEST` and
     `OPENREPOTOOLS_PACKAGE_REPOSITORY` on a checkout run, and requires today's
     line.
-- **Rationale**: bash is the one reader, as D2 and design.md Decision 3
-  require. The variable names in that test are the ones a future change
-  might reach for, so the test proves that no channel exists.
+- **Rationale**: bash is the one reader at run time, as D2 and design.md
+  Decision 3 require. The variable names in that test are the ones a future
+  change might reach for, so the test proves that no channel exists.
 - **Alternatives considered**: none. The spec fixes this.
 
 ## R5. The count line's `<source>` and `<version>`

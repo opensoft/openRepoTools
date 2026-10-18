@@ -2,8 +2,9 @@
 
 ## The committed file, `src/openrepotools/_release.py`
 
-The file is the SPDX line, then one module docstring, then the five
-assignment lines.
+The committed file is the SPDX line, then one module docstring, then the
+five assignment lines. The grammar below allows that docstring, and does not
+require it.
 
 ```python
 # SPDX-License-Identifier: Apache-2.0
@@ -35,6 +36,8 @@ Lines are read in order.
    opens the file is skipped, and so is any blank line before the docstring.
 3. **The docstring.** Before the first assignment, one line that begins
    with `"""` opens the docstring.
+   - A file need not have one. Without it, every line rule 2 does not skip
+     is held to rule 4.
    - It need not be the file's first line. Only lines that rule 2 skips may
      come before it. The committed file's docstring opens on line 2, after
      the SPDX line.
@@ -68,12 +71,12 @@ imports or runs the file.
 Each reason begins with its cause, exactly one of `cannot be read`,
 `is partial:` and `is malformed:`, so that the broken-stamp line in
 [cli-output.md](cli-output.md) reads correctly. The rest of each reason's
-text is the implementer's. Each MUST be distinct, and each MUST name the
-field or the line it is about.
+text is the implementer's. Each MUST be distinct, and each MUST name what
+its row's "Reason names" column gives.
 
 | Fixture | Cause | Reason names |
 | --- | --- | --- |
-| the file is unreadable (no read permission, or it is a directory) | `cannot be read` | the file |
+| the file is unreadable (no read permission, or it is a directory) | `cannot be read` | the cause, in the form `cannot be read (<detail>)`, such as `cannot be read (it is a directory)`; the refusal line names the file around it |
 | a carriage return on line N | `is malformed:` | line N |
 | a name missing (each of the five in turn) | `is malformed:` | the missing name |
 | a name repeated | `is malformed:` | the repeated name |
@@ -91,21 +94,28 @@ field or the line it is about.
 | `DIGEST` of 63 digits | `is malformed:` | `DIGEST` |
 | `REPOSITORY` that is not a slug, such as `openRepoTools` or `a/b/c` | `is malformed:` | `REPOSITORY` |
 
+Two rows are read this way:
+
+- A `"`, `\` or `$` inside a value falls under the row of a line that is not
+  `NAME = "VALUE"`, so its reason names the line number.
+- In the "`TAG` alone" fixture, `VERSION` and `REPOSITORY` stay set, so the
+  empty fields its reason names are exactly `COMMIT` and `DIGEST`.
+
 ## Agreement with hatch
 
 - Hatch's version source finds the version with
   `(?i)^(__version__|VERSION) *= *(['"])v?(?P<version>.+?)\2` under
   `re.MULTILINE`, and takes the first match
-  (`hatchling/version/core.py:6` and `:31` in 1.27.0).
+  (`hatchling/version/core.py:6` and `:32` in 1.27.0).
 - A `#` line, such as the SPDX line, can never match that pattern. So the
   first match is still the `VERSION` line, as long as the docstring guard
   of rule 3 holds.
 - A test runs that pattern, copied with its citation, and `stamp_read` on
-  each of these, and requires one `VERSION` from both:
-  - the committed file;
-  - a stamped file;
-  - a fixture with a guarded docstring line, which the reader refuses and
-    hatch would misread.
+  the committed file and on a stamped file, and requires one `VERSION` from
+  both.
+- On a fixture with a guarded docstring line, no `VERSION` can come from
+  both. The test holds instead that hatch reads `9.9.9` from that line, and
+  that `stamp_read` refuses the file, naming the line.
 
 ## The writer: `release.yml`'s "write the stamp into both extractions" step
 
