@@ -136,7 +136,7 @@ The tests use fake venv layouts, with no pipx and no wheel.
   - it calls `os.execvp("bash", ["bash", <payload>/openRepoTools, *sys.argv[1:]])`, where `<payload>` is the `payload` directory beside the module's own file;
   - on `FileNotFoundError`, it prints contracts/cli-output.md's no-bash refusal to stderr and returns 2;
   - it reads no stamp, and passes nothing else.
-- [ ] T008 [P] [US1] [O] Teach `openRepoTools` to recognise and skip pipx's link, holding to bash 3.2 throughout, as detailed below — files: `openRepoTools` — verify: `bash tests/run.sh -k 'test_pipx_link_ or test_pipx_skip_ or test_pipx_offline_ or openrepotools_command or install_skill or install_by_rename or install_payload'`
+- [X] T008 [P] [US1] [O] Teach `openRepoTools` to recognise and skip pipx's link, holding to bash 3.2 throughout, as detailed below — files: `openRepoTools` — verify: `bash tests/run.sh -k 'test_pipx_link_ or test_pipx_skip_ or test_pipx_offline_ or openrepotools_command or install_skill or install_by_rename or install_payload'`
   - add `link_resolve`, `package_payload_dir`, `pipx_link_match` and `venv_shaped_link` (contracts/pipx-link.md);
   - call the pipx match in `plan_install_targets`, for `openRepoTools`, before `unplaceable_kind`;
   - skip that target in `install_commands`' placement loop, printing the exact skip line;
