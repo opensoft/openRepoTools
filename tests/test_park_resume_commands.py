@@ -1387,6 +1387,117 @@ def test_park_says_when_it_left_nothing_behind(estate, home):
     assert "0 thing(s) above are not park's to carry" in result.stdout
 
 
+def clone_leg_member(dest: Path, base: Path, member: str,
+                     **seed) -> dict[str, Path]:
+    """`seed_leg_member`'s root, cloned into `dest` with its legs mounted.
+
+    Built per test under `base` rather than into the session's `remotes`, so a
+    leg has a `develop` to sit on only where a test asks for one (`seed` goes
+    to `seed_leg_member`). The legs arrive DETACHED at their pins, as every
+    fresh clone's do.
+    """
+    base.mkdir()
+    bare, _ = seed_leg_member(base, member, **seed)
+    root = dest / member
+    git("-c", "protocol.file.allow=always", "clone", "-q",
+        "--recurse-submodules", str(bare), str(root), cwd=dest)
+    return {"root": root, "spec": root / "spec", "code": root / "code"}
+
+
+def commits_on(leg: Path, branch: str, count: int) -> None:
+    """`count` commits on `leg`'s local `branch` that origin has not seen."""
+    git("checkout", "-q", "-B", branch, f"origin/{branch}", cwd=leg)
+    for number in range(count):
+        (leg / f"{branch}-{number}.md").write_text("never pushed\n",
+                                                   encoding="utf-8")
+        commit_all(leg, f"commit {number} on {branch}, not pushed")
+
+
+def test_park_reports_a_leg_on_the_branch_its_own_row_declares(home, tmp_path):
+    """#242. `scripts/bootstrap.py` places a leg on `str(leg.get("branch") or
+    branch)`, so a leg whose row in `project.yaml` declares `branch: develop`
+    keeps its work on `develop`. The report asked about the ROOT's
+    `tracking_branch` for every leg, found nothing ahead on `main`, and ended
+    without naming the leg: work `park` did not carry, missed silently."""
+    root = clone_leg_member(home / "projects", tmp_path / "remotes",
+                            "Delta", leg_branch="develop")
+    commits_on(root["spec"], "develop", 3)
+
+    result = run(PARK, "Delta", home=home)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"unpushed develop leg     {root['spec']}" in result.stdout, (
+        "a leg's unpushed commits on its own `branch:` were not reported:\n"
+        + result.stdout)
+    assert "3 commit(s) on develop that origin has not seen" in result.stdout
+    assert "A leg goes up as a pull request too" in result.stdout
+    assert f"unpushed main   leg     {root['spec']}" not in result.stdout, (
+        "the leg was asked about the root's branch")
+
+
+def test_park_reports_a_family_members_leg_on_its_own_declared_branch(
+        home, tmp_path):
+    """#242, in a family: the holder's report reads the member's working clone
+    beside it, and that member's legs, which are built by a second loop. Its
+    leg rows carried the member's `tracking_branch` too."""
+    folder = home / "projects" / FAMILY
+    holder = folder / FAMILY
+    holder.mkdir(parents=True)
+    (holder / "family.yaml").write_text(
+        FAMILY_YAML.format(
+            id=FAMILY.lower(), name=FAMILY, org=ORG,
+            members=(f"\n  - project: Delta\n    id: delta\n"
+                     f"    repository: {ORG}/Delta\n"
+                     f"    path: members/Delta\n")), encoding="utf-8")
+    (holder / "Makefile").write_text(PROBE_MAKEFILE, encoding="utf-8")
+    member = clone_leg_member(folder, tmp_path / "remotes", "Delta",
+                              leg_branch="develop")
+    commits_on(member["spec"], "develop", 2)
+
+    result = run(PARK, FAMILY, home=home)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"unpushed develop leg     {member['spec']}" in result.stdout, (
+        "a member's leg on its own `branch:` was not reported:\n"
+        + result.stdout)
+    assert "2 commit(s) on develop that origin has not seen" in result.stdout
+    assert f"unpushed main   leg     {member['spec']}" not in result.stdout
+
+
+def test_park_still_reports_a_leg_with_no_branch_of_its_own_on_the_roots(
+        home, tmp_path):
+    """UNCHANGED for a row with no `branch:`: bootstrap places that leg on the
+    root's `tracking_branch`, so that is the branch its unpushed commits are
+    counted on. Green before the fix of #242 and after it."""
+    root = clone_leg_member(home / "projects", tmp_path / "remotes", "Echo")
+    commits_on(root["spec"], "main", 1)
+
+    result = run(PARK, "Echo", home=home)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"unpushed main   leg     {root['spec']}" in result.stdout
+    assert "1 commit(s) on main that origin has not seen" in result.stdout
+
+
+def test_park_asks_each_leg_of_one_root_about_its_own_branch(home, tmp_path):
+    """One root, two legs: `spec` declares `branch: develop` and `code`
+    declares none. Each is read against the branch bootstrap puts it on, so
+    the report names `spec` on `develop` and `code` on `main`, with their own
+    counts and neither leg's branch lent to the other."""
+    root = clone_leg_member(home / "projects", tmp_path / "remotes", "Foxtrot",
+                            leg_branch="develop", code_leg=True)
+    commits_on(root["spec"], "develop", 3)
+    commits_on(root["code"], "main", 1)
+
+    result = run(PARK, "Foxtrot", home=home)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"unpushed develop leg     {root['spec']}" in result.stdout, (
+        result.stdout)
+    assert f"unpushed main   leg     {root['code']}" in result.stdout, (
+        result.stdout)
+    assert "3 commit(s) on develop that origin has not seen" in result.stdout
+    assert "1 commit(s) on main that origin has not seen" in result.stdout
+    assert f"unpushed main   leg     {root['spec']}" not in result.stdout
+    assert f"unpushed develop leg     {root['code']}" not in result.stdout
+
+
 def test_park_never_reads_the_pinned_copy(estate, home):
     """`members/<Project>` is pinned and DETACHED; nobody's work is there, and
     a report that named it would be reporting on the wrong copy."""
