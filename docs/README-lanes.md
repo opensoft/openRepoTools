@@ -250,6 +250,11 @@ repository, grouped.
 | **LIVE HERE** | **attaches, and never starts a second process** (clause (h)). Inside tmux: `tmux move-window -a -s <session>:<@id>` then `tmux select-window -t <session>:<@id>` — the `@id` on both, so tmux resolves the window inside the session the record named or not at all — and where the window is already in this session, only the select. With `--switch`: the same select first, and `tmux switch-client` only after it worked. Outside tmux: `tmux attach -t <session>:<@id>` — the window named in the attach itself, which tmux resolves in that session or refuses — with that window selected first |
 | **bound elsewhere** | clause (c)'s question, the **handoff request**. That request is `brettheap/new-workstation#38`'s act 4 and does not exist yet, so until it does `lane` **refuses and names where the lane is bound**. It never offers a launch: a second session on a lane another workstation holds is the collision |
 
+A row whose `STATE` is read from its own state cell — `PAUSED (row)`, because
+its log has no lane-kind line — is in **none** of the three: `lane` does not
+number it, and `lane <name>` refuses it, because there is no log to resume it
+from (`openRepoTools#89`; Amendment 19 below).
+
 **The window is matched by its id AND its session name.** tmux reissues `@` ids
 from `@0` when its server is replaced — measured here on 2026-09-13, where 0 of
 5 recorded windows resolved — so an id alone would attach to whatever pane has
@@ -2974,6 +2979,18 @@ already left the numbered pick; this is what takes them out of the read.
 or the migration's `MIGRATED`. The row says the lane is somewhere — `PAUSED`,
 `LANDING #<n>`, `HANDED OFF` — and hiding it would hide a lane a person can
 still pick up.
+
+**Its `STATE` is that word with `(row)` after it** — `PAUSED (row)`, `LANDING
+#12 (row)` — and not `NO LOG` (`openRepoTools#89`): the cell is the lane's
+current state, and a listing that printed `NO LOG` over it was not reading the
+one column Amendment 13 made authoritative. The mark keeps it a **read**. A row
+whose log has no lane-kind line records no directory, no profile and no
+binding, so there is nothing to resume: column 10 offers no act, `lane-groups`
+files the row `rowonly`, `lane` never numbers it and refuses it by name, and
+the lane is picked up by hand in its own checkout — `pclaude --lane <lane>
+<profile>` — where `lane-start` records its first lane-kind line. A cell saying
+**`LIVE`** stays `NO LOG`: a cell cannot prove a session is running, only a
+live record can, and the row is flagged for still saying it.
 
 ### The listing
 

@@ -12323,6 +12323,40 @@ run a19 "$E" lanes --prefix repo19b
 is    "a no-log row whose 13(a) cell says PAUSED is still listed" "$rc" 0
 has   "…by name" "$out" "repo19b-1"
 is    "…and it is in neither class" "$(a19_field "$out" repo19b-1 14)" "none"
+# AND ITS STATE IS THAT CELL'S WORD, NOT `NO LOG` (#89, out of the suppressed
+# comments of Copilot's review of #82). The cell is the one column Amendment 13
+# exists to make authoritative, and the STATE column was the one read that never
+# consulted it: a row `migrate-state-cells` left parked listed as `NO LOG`, with
+# its `PAUSED` one field along in column 16. The word carries ` (row)`, because
+# it is SHOWN and never bound — with no lane-kind line there is no directory,
+# profile or binding to resume — so column 10 has no act for it and the pick
+# files it in a group of its own, which `lane` never numbers.
+is    "…and its STATE is the cell's own word, marked as the row's (#89)" \
+      "$(a19_field "$out" repo19b-1 2)" "PAUSED (row)"
+is    "…with no act in column 10, because there is no log to resume it from" \
+      "$(a19_field "$out" repo19b-1 10)" "none"
+is    "…and the pick files it rowonly, in none of the three groups it numbers" \
+      "$(printf '%s\n' "$out" | a19 "$E" lane-groups Eagle | cut -f1)" "rowonly"
+run a19 "$LANES_CMD" --prefix repo19b </dev/null
+has   "…and the listing a person reads says PAUSED" "$out" "PAUSED (row)"
+hasnt "…and no longer NO LOG" "$out" "NO LOG"
+# THE CONSERVATIVE CALL, AND `lane` IS WHERE IT IS MADE: a state read out of a
+# cell is DISPLAYED and is never picked or resumed. Before #89 this row was `NO
+# LOG` on this workstation, which the pick files AVAILABLE on the workstation
+# column alone — so it was numbered, and `lane <name>` handed a directory and a
+# profile LAUNCHED it, on a lane whose log records no binding at all.
+A19B_DIR="$SANDBOX/a19b-checkout"
+git init -q -b main "$A19B_DIR"
+git -C "$A19B_DIR" remote add origin git@github.com:opensoft/repo19b.git
+run a19 env -u TMUX -C "$A19B_DIR" "$LANE" </dev/null
+is    "a bare lane in that repository's checkout has nothing to pick" "$rc" 8
+hasnt "…and never numbers the row whose state is its cell" "$out" "repo19b-1"
+: > "$FAKE_PCLAUDE_LOG"
+run a19 env -u TMUX "$LANE" --dir "$A19B_DIR" repo19b-1 team-05a </dev/null
+is    "lane <name> refuses it, whatever directory and profile it is handed" "$rc" 2
+has   "…saying its log has no lane-kind line to give a state" "$err" "no lane-kind line"
+has   "…and naming the read of the row" "$err" "lanes-edit.sh register-row repo19b-1"
+is    "…and launching nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
 
 # `--lane <name>` IS NEVER FILTERED: its caller has named the lane, and an empty
 # answer would read as "there is no such lane".
@@ -12790,6 +12824,17 @@ run a19 env LANES_LANE=repo19-2 "$E" retire-rows repo19ret-1
 is    "…so the writer retires it rather than refusing the row the listing offered" "$rc" 0
 is    "…writing the first and only RETIRED line of its log" \
       "$(grep -c '^RETIRED — lane repo19ret-1' "$A19_WIP/lanes/log/repo19ret-1.md" 2>/dev/null || :)" 1
+
+# AND `LIVE` IS THE ONE CELL WORD THE STATE COLUMN DOES NOT TAKE (#89). The rung
+# that shows `PAUSED (row)` above is not symmetric: a cell cannot prove a
+# session is running, only a live record can, and this row has none — so its
+# STATE stays `NO LOG`, and column 17 flags the cell for still saying `LIVE`.
+run a19 env LANES_LANE=repo19-2 "$E" add-row "| \`repo19live-1\` | harness \`$A19_OLD\` | Eagle / test / brett | 2026-08-21 | none | none | LIVE · 2026-08-22T00:00:00Z · said to be running |"
+is    "a no-log row whose 13(a) cell says LIVE takes its row" "$rc" 0
+run a19 "$E" lanes --prefix repo19live
+is    "…and its STATE stays NO LOG, never LIVE, with no live record behind it" \
+      "$(a19_field "$out" repo19live-1 2)" "NO LOG"
+is    "…while column 17 flags the cell for still saying it" "$(a19_field "$out" repo19live-1 17)" "LIVE"
 
 echo "== Amendment 18: ONE BINDING PER LANE — host/os/container, the ask, the wait, the force =="
 
