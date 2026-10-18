@@ -2138,8 +2138,9 @@ def test_bin_dir_overrides_where_it_lands(tmp_path):
 
 @NEEDS_JQ
 def test_install_says_how_to_put_it_on_path(tmp_path):
-    """ONE path note for the four of them: the directory is the same one, and
-    four copies of the same `export` line reads as four problems."""
+    """ONE path note for everything `--install` places: the directory is the
+    same one, and the same `export` line once per file reads as a problem for
+    each of them."""
     result = run_cmd("--install", home=tmp_path)
     assert f'export PATH="{tmp_path}/.local/bin:$PATH"' in result.stdout
     assert result.stdout.count("export PATH=") == 1
@@ -2198,7 +2199,7 @@ def fake_github(tmp_path, served_names) -> dict:
     """A fake `gh` serving exactly `served_names`, and a `curl` that refuses.
 
     Factored out of the fixture so one test can WITHHOLD a file: `--install`
-    places all four or none, and the only way to prove "or none" is a server
+    places all of them or none, and the only way to prove "or none" is a server
     that cannot answer for one of them.
     """
     served = tmp_path / "served"
@@ -2248,7 +2249,7 @@ def offline_github(tmp_path):
     `fetch_from_repo` tries `gh api` before the raw URL, so a `gh` that
     answers the calls the command makes is the whole of the server these tests
     need: `contents/<command>` comes back as this checkout's own bytes for each
-    of the four files `--install` places. `curl` is shadowed by a script that
+    of the files `--install` places. `curl` is shadowed by a script that
     exits 1 — belt and braces, so that a fake `gh` which stopped matching could
     never quietly become a real request to raw.githubusercontent.com.
     """
@@ -2260,7 +2261,7 @@ def test_install_places_all_nine_or_none(tmp_path):
     on its #83). One file at a time, dying on the first fetch that failed,
     leaves a person with a NEW `openRepoTools` and no `park` — a half-install
     that prints `installed at` and is not one — with nothing on screen to say
-    which of the four were missing.
+    which of them were missing.
 
     Run from stdin with `park` withheld: NOTHING is placed, nothing already
     there is replaced, and the refusal names the file it could not fetch.
@@ -2335,9 +2336,9 @@ def test_install_from_stdin_fetches_itself_into_a_live_workdir(offline_github,
     bash -s -- --install`.
 
     Run from stdin there is no file to copy from — not for this command, not
-    for its three siblings and not for the four lane helpers, the alias table
-    or the skill — so `install_commands` fetches each of the ten at this ref
-    into a temporary directory. THAT DIRECTORY HAS TO STILL BE THERE:
+    for its siblings and not for the lane helpers, the alias table or the
+    skill — so `install_commands` fetches each of them at this ref into a
+    temporary directory. THAT DIRECTORY HAS TO STILL BE THERE:
     `workdir()` sets its EXIT trap in the main shell rather than inside a
     `$(...)` subshell, whose trap would fire the instant the substitution
     closed and take the directory away before a single fetched byte had landed
