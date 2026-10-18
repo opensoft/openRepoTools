@@ -2481,9 +2481,26 @@ def test_readme_is_short_enough_to_be_read():
     lockstep-invariant section the leg pins' `resync_runbook:` names
     (`README.md#the-lockstep-invariant`) and the three-repository front door.
     Today's single repository keeps 486.
+
+    486 -> 505 HERE AND 510 -> 529 AT AN ASSEMBLY ROOT, on 2026-10-18
+    (opensoft/openRepoTools #228, feature 006, T024), for what a workstation
+    with pipx's link reads. Twenty lines, each one a thing a person MEETS: the
+    version paragraph, 3 -> 7 (FR-043), which said "no version number" and
+    now says that a release is an annotated tag, that the version comes only
+    from the tag, and what `--version` prints stamped, unstamped and from a
+    checkout; the one sentence that a workstation uses one install route or
+    the other until workBenches#165 lets its `setup-estate-commands.sh`
+    accept pipx's link, with its blank (FR-047, Brett Heap's decision of this
+    day), 4; the paragraph that says what `--install` does beside that link,
+    with its blank, 7; the sixteen-of-seventeen pointer on the file count and
+    the one-link-skipped sentence in the symlink passage, 1 and 1; and the
+    count invariant's twenty-eight placed, one left to pipx and 28 receipt
+    rows, 3 (FR-044). No pipx install route is added (FR-045). The assembly's
+    twenty-four lines are unchanged, so its cap is this count plus them, the
+    rule the 2026-10-08 entry states. Every dated entry above stays.
     """
     lines = doc("README.md").read_text().splitlines()
-    cap = 486 if ROOTS.assembly is None else 510
+    cap = 505 if ROOTS.assembly is None else 529
     assert len(lines) <= cap, f"README.md is {len(lines)} lines; the cap is {cap}"
 
 
