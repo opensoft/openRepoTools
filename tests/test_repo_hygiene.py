@@ -18,10 +18,12 @@ the root it needs, and in the composed run it fails rather than skip.
 
 from __future__ import annotations
 
+import ast
 import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -3140,11 +3142,97 @@ def test_every_shipped_bash_file_is_tracked_with_lf():
         assert "i/lf" in row, f"not LF in the index:\n    {row}"
 
 
+def package_modules() -> list:
+    """Every `.py` file under `src/openrepotools/`, the code root's own: the
+    modules the `openrepotools` wheel ships (opensoft/openRepoTools#228). A
+    subdirectory is searched too, so a module cannot hide one level down, and
+    an empty answer is a failure rather than a pass with nothing read."""
+    modules = sorted((REPO / "src" / "openrepotools").rglob("*.py"))
+    assert modules, "no module under src/openrepotools/: package missing"
+    return modules
+
+
+#: THE MODULES THE PACKAGE MAY IMPORT, AND WHY (FR-005, opensoft/openRepoTools
+#: #228), by top-level name. This is the allowlist, and it is explicit rather
+#: than "whatever `sys.stdlib_module_names` holds": it admits exactly what the
+#: entry module needs, which design.md Decision 3 spells out — `cli.main()` is
+#: `os.execvp("bash", ["bash", <payload>/openRepoTools, *sys.argv[1:]])` and,
+#: on `FileNotFoundError`, a refusal on stderr and exit 2. `__init__.py` holds
+#: a docstring and `_release.py` the five stamp lines, so neither imports
+#: anything. Nothing else is here on purpose: `pathlib`, `subprocess`,
+#: `importlib` and the package's own name are all absent, because the entry
+#: module reads no stamp, runs no child and passes bash nothing but the
+#: person's arguments; `__future__` is absent because nothing in Decision 3's
+#: module needs an annotation postponed on Python 3.9. A module that needs
+#: another name takes an edit here, with its reason beside it.
+PACKAGE_IMPORT_ALLOWLIST = {
+    "os": ("os.execvp replaces the process with the first bash on PATH, so "
+           "signals, the EXIT trap and the exit status pass through; the "
+           "payload directory beside the module's own file is found from "
+           "its __file__ with os.path"),
+    "sys": ("sys.argv[1:] is the person's arguments, passed on unchanged; "
+            "sys.stderr carries the no-bash refusal that precedes its "
+            "exit 2"),
+}
+
+
+def test_the_package_imports_only_the_standard_library():
+    """FR-005: the `openrepotools` wheel declares `dependencies = []`, so a
+    module under `src/openrepotools/` that imports a third-party name is a
+    console script that dies with `ModuleNotFoundError` on a clean pipx
+    install, before anything of ours can say why.
+
+    The rule is the allowlist above, held to the syntax tree: every `import`
+    and `from … import` at ANY depth of every module (`ast.walk`, so one inside
+    a function or a `try` counts), by the top-level name, with a relative
+    import refused as a name of its own. `__import__()` is refused too, since
+    it names a module the tree walk would never see. Where this Python has
+    `sys.stdlib_module_names` (3.10 and up), the allowlist itself must be
+    standard-library names, so nobody makes the rule pass by adding `yaml` to
+    it. On 3.9, which the package supports and has no such set, that one check
+    is not made and NOTHING SKIPS: the explicit allowlist alone decides.
+    """
+    stdlib = getattr(sys, "stdlib_module_names", None)
+    if stdlib is not None:
+        outside = sorted(set(PACKAGE_IMPORT_ALLOWLIST) - set(stdlib))
+        assert not outside, (
+            "PACKAGE_IMPORT_ALLOWLIST holds names that are not in the "
+            "standard library of this Python (sys.stdlib_module_names): "
+            + ", ".join(outside))
+    problems = []
+    for path in package_modules():
+        label = path.relative_to(REPO).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=label)
+        for node in ast.walk(tree):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = ["." * node.level + (node.module or "")]
+            elif (isinstance(node, ast.Call)
+                  and isinstance(node.func, ast.Name)
+                  and node.func.id == "__import__"):
+                problems.append(
+                    f"{label}:{node.lineno}: __import__() loads a module by "
+                    "a name this rule cannot read; write an import")
+            for name in names:
+                top = name.split(".")[0]
+                if top not in PACKAGE_IMPORT_ALLOWLIST:
+                    note = " (a relative import)" if top == "" else ""
+                    problems.append(
+                        f"{label}:{node.lineno}: imports {name!r}{note}, "
+                        "which is not on PACKAGE_IMPORT_ALLOWLIST (allowed: "
+                        + ", ".join(sorted(PACKAGE_IMPORT_ALLOWLIST)) + ")")
+    assert not problems, (
+        "the package's modules may import only the standard library "
+        "(FR-005, dependencies = []):\n    " + "\n    ".join(problems))
+
+
 def test_the_python_files_compile():
-    """The suite is the Python here, bar two shipped commands named below, and a
-    file that does not parse is a file that fails as a collection ERROR rather
-    than as a test — which reads as the suite being broken instead of as one
-    file being wrong.
+    """The suite is the Python here, bar two shipped commands and the package's
+    modules named below, and a file that does not parse is a file that fails as
+    a collection ERROR rather than as a test — which reads as the suite being
+    broken instead of as one file being wrong.
 
     `compile()` rather than `py_compile`: nothing is written anywhere, so this
     runs in a read-only checkout and leaves no `__pycache__` behind.
@@ -3154,8 +3242,16 @@ def test_the_python_files_compile():
     text is compiled the same way — a syntax error there is a command that
     fails on every workstation's first sync. opensoft/openRepoTools#162 put
     `lane-worktrees` beside it, for the same reason.
+
+    opensoft/openRepoTools#228: `src/openrepotools/*.py` is the `openrepotools`
+    package, which the wheel ships and whose console script runs on every
+    pipx install, so a syntax error in one of its modules is a command that
+    fails on every workstation the release reaches. `package_modules()` is the
+    set the standard-library rule above reads, so the two cover the same files.
     """
     for path in sorted((REPO / "tests").glob("*.py")):
+        compile(path.read_text(encoding="utf-8"), str(path), "exec")
+    for path in package_modules():
         compile(path.read_text(encoding="utf-8"), str(path), "exec")
     for name in ("lanes-index", "lane-worktrees"):
         command = REPO / name
