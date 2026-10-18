@@ -115,9 +115,16 @@ FETCHED = INSTALLED + SKILL_PATHS + COMMAND_PATHS
 #: different shapes, one with a matcher and one without, and one carrying
 #: `|| true` where the other must not — so this is the number that is
 #: hand-kept, and the assertions below are what notice when it stops being true.
+#:
+#: AND SINCE opensoft/openRepoTools#237 THE TWO ARE CONDITIONAL: `--install`
+#: merges them only once `~/projects/xFactory/lanes-edit.sh` — the path both
+#: call — exists, is executable and answers `guard`, which is the
+#: `claude-profile` launcher's own rule. So the count is `ALWAYS` (twenty-nine)
+#: on every run, plus `HOOK_ENTRIES` once that path answers; a test that means
+#: the thirty-one links it first, with `link_xfactory` below.
 HOOK_ENTRIES = 2
-ARTIFACTS = (len(INSTALLED) + 2 * len(SKILL_NAMES) + 2 * len(COMMAND_NAMES)
-             + HOOK_ENTRIES)
+ALWAYS = len(INSTALLED) + 2 * len(SKILL_NAMES) + 2 * len(COMMAND_NAMES)
+ARTIFACTS = ALWAYS + HOOK_ENTRIES
 
 USAGE_LINES = (
     "openRepoTools --install            install (or update) the seventeen estate and",
@@ -216,6 +223,23 @@ def run_cmd(*args: str, home: Path | None = None,
     return subprocess.run(["bash", str(COMMAND), *args], capture_output=True,
                           text=True, check=False, input="",
                           env=command_env(home, env), cwd=cwd)
+
+
+def link_xfactory(home: Path, target: Path | None = None) -> Path:
+    """`~/projects/xFactory/lanes-edit.sh` the way `link-estates` leaves it: a
+    symlink to the bin directory's `lanes-edit.sh` (#237).
+
+    The hook pair is merged only once that path answers `guard`, so a test
+    that asserts the pair is placed links it first. Made BEFORE the install it
+    is for, it dangles until that install's bin loop places the far end — which
+    is the order the gate asks in, after that loop. `target` names another far
+    end, for a test whose bin directory is not `~/.local/bin`.
+    """
+    link = home / "projects" / "xFactory" / "lanes-edit.sh"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(target if target is not None
+                    else home / ".local" / "bin" / "lanes-edit.sh")
+    return link
 
 
 # --- what it says about itself ---------------------------------------------
@@ -417,6 +441,7 @@ def test_installing_twice_changes_nothing(tmp_path):
     """Idempotent BY CONTENT, per file: the second run must not rewrite one
     that already holds these bytes, and must say so rather than claim an
     install."""
+    link_xfactory(tmp_path)
     first = run_cmd("--install", home=tmp_path)
     assert first.returncode == 0, first.stderr
     second = run_cmd("--install", home=tmp_path)
@@ -428,7 +453,9 @@ def test_installing_twice_changes_nothing(tmp_path):
     # invariant Amendment 9(b) names — derived from the three lists, never
     # restated, so a new skill or command moves it. It was eighteen until
     # Amendment 12 adoption act 3 put the name guard beside the SessionStart
-    # entry, which is the `HOOK_ENTRIES` term above.
+    # entry, which is the `HOOK_ENTRIES` term above — and the two count only
+    # because `link_xfactory` gave them a target that answers `guard` (#237);
+    # without it the count is `ALWAYS` (`tests/test_install_hook_gate.py`).
     assert second.stdout.count("unchanged") == ARTIFACTS
 
 
