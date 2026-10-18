@@ -12585,7 +12585,12 @@ lane_sidecar_field() {   # <file> <key>
 # WHICH KIND OF RECORD IT IS COMES FROM WHERE IT IS FILED — `<root>/lane-state.yaml`
 # for the snapshot, `<root>/trees/<id>.yaml` for a tree — and the second argument
 # names that place for a file that is not there yet (`lane_sidecar_put`'s
-# temporary file). `LSS_WHY` says why a record failed, in words a caller puts
+# temporary file). THE SNAPSHOT'S ARM COMES FIRST (review r1 of #252): a `case`
+# pattern's `*` matches `/`, so `*/trees/*.yaml` also matches
+# `/x/trees/state/<lane>/lane-state.yaml`, and under a control root with any
+# directory named `trees` above it every snapshot was asked a tree's keys,
+# refused, and never written. A tree's file is never named `lane-state.yaml`:
+# its id is `c<cksum>-…` (`tree_id_for`). `LSS_WHY` says why a record failed, in words a caller puts
 # in its own message; it is set in the caller's shell, so call this directly
 # and never inside `$( )`. The awk reads the id through the ENVIRONMENT, because
 # `awk -v` processes escapes in a value.
@@ -12603,8 +12608,8 @@ lane_sidecar_schema_ok() {   # <file> [<the path it is filed as>]
   fi
   lss_as="${2:-$1}"; lss_kind=""; lss_id=""
   case "$lss_as" in
-    */trees/*.yaml)    lss_kind=tree; lss_id="${lss_as##*/}"; lss_id="${lss_id%.yaml}" ;;
     */lane-state.yaml) lss_kind=snapshot ;;
+    */trees/*.yaml)    lss_kind=tree; lss_id="${lss_as##*/}"; lss_id="${lss_id%.yaml}" ;;
   esac
   [ -n "$lss_kind" ] || return 0
   lss_rc=0
@@ -13226,11 +13231,14 @@ lane_tree_now() {   # <path>
 # checkout cannot disagree about it. A directory with a `.git` of its own IS a
 # repository however broken — git answers "not a git repository" for a gitdir
 # it cannot read too — and only git's own "not a git repository" for a
-# directory with none is the answer "there is nothing registered here".
+# directory with none is the answer "there is nothing registered here". That
+# message is read in the C locale, as `lane-worktrees`' `git_env` reads it: a
+# translated git would otherwise say it in words this match never finds, and the
+# two readers would disagree (review r1 of #252).
 lane_no_repository() {   # <dir>
   lnr_d="${1-}"; lnr_err=""
   if [ -e "$lnr_d/.git" ] || [ -L "$lnr_d/.git" ]; then return 1; fi
-  if lnr_err="$(git -C "$lnr_d" rev-parse --git-dir 2>&1 >/dev/null </dev/null)"; then return 1; fi
+  if lnr_err="$(LC_ALL=C git -C "$lnr_d" rev-parse --git-dir 2>&1 >/dev/null </dev/null)"; then return 1; fi
   case "$(printf '%s' "$lnr_err" | tr '[:upper:]' '[:lower:]')" in
     *"not a git repository"*) return 0 ;;
   esac
@@ -13674,8 +13682,11 @@ EOF
 # `base`, its merge-base with `origin/main`, else `main`, else `origin/HEAD`
 # — in the tree, or in its recorded checkout once the tree is gone. A detached
 # head is `detached <sha>`; a record that could not be read is `unreadable
-# sidecar` and one of another schema `unknown schema <n>`, with the record's
-# id where its path would be (a path always begins with `/`). A count that is
+# sidecar`, one of another schema `unknown schema <n>`, and one of this schema
+# that is not whole `malformed sidecar` (#115). Each keeps the path the record
+# names where it names one, else the record's id (its file name) stands
+# there. A kept path is the record's own word, so it may be relative or
+# not a tree at all; only a whole record's path is known absolute. A count that is
 # `unknown` is empty — an INTEGER column has no word for it.
 #
 # The rows are sorted bytewise, which is the order the index's copy is written
@@ -17240,8 +17251,8 @@ EOF
   #       A snapshot of this schema that is not a whole record is 10 as well
   #       (#115): nothing can be read out of it as a snapshot.
   #  64   a usage error of this subcommand's own — for `set-lane-tree`, a
-  #       partial observation, or a `--dirty`/`--unpushed` that is not a count
-  #       (`unknown` is one for `--unpushed`)
+  #       partial observation, a `--dirty`/`--unpushed` that is not a count
+  #       (`unknown` is one for `--unpushed`), or a field that is only blanks
 
   lane-state)
     lane="${1-}"; [ -n "$lane" ] || die "usage: lane-state <lane>" 64
@@ -17471,6 +17482,16 @@ EOF
       unknown) : ;;
       ''|*[!0-9]*) die "set-lane-tree's --unpushed takes a count of commits, or 'unknown' where the upstream is configured and its remote-tracking ref is not here; '$slt_n' is neither, and a record carrying it could be neither read nor replaced. Nothing was written." 64 ;;
     esac
+    # AND NO FIELD THAT IS ONLY BLANKS (review r1 of #252). A reader trims a
+    # value, so `--branch '  '` files a record with no branch — one the rename
+    # below refused only after the lock, with exit 1 and "the shell's own error
+    # is above". It is the caller's usage, said as one, before anything is taken.
+    for slt_fv in "branch=$slt_b" "head=$slt_h" "upstream=$slt_u" "checkout=$slt_co" "writer=$slt_w"; do
+      case "${slt_fv#*=}" in
+        ''|*[![:space:]]*) : ;;
+        *) die "set-lane-tree's --${slt_fv%%=*} is only blanks: a reader trims a value, so the record would carry no ${slt_fv%%=*} and could be neither read nor replaced. Nothing was written." 64 ;;
+      esac
+    done
     # THE FENCE, AND IT IS THE LANE'S OWN (Copilot round 5 on #97). A caller
     # that names the generation and the operation it is recording under is
     # saying *this observation belongs to that transition* — and until this
