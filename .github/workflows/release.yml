@@ -8,8 +8,10 @@ name: release
 # where design.md Decision 10 names a difference: a pre-release `X.Y.ZrcN`
 # is accepted, for TestPyPI alone; the repository guard (FR-048) is new
 # here; the stamp has a fifth field, REPOSITORY; the digest's definition is
-# held to its literal and to the pin; and the payload's blobs and modes are
-# checked under `openrepotools/payload/`.
+# held to its literal and to the pin; the payload's blobs and modes are
+# checked under `openrepotools/payload/`; and the install check runs on
+# three legs, with no Windows leg, checking `--version` and an offline
+# `--install` beside pipx's link, again under macOS's `/bin/bash` 3.2.
 # ---------------------------------------------------------------------------
 
 on:
@@ -799,3 +801,713 @@ jobs:
           name: wheel
           path: ${{ runner.temp }}/dist-a/
           if-no-files-found: error
+
+  testpypi:
+    name: publish to TestPyPI
+    needs: build
+    # ON A v* TAG ONLY, AND ONLY WHERE THE BUILD'S GUARD SENDS THIS VERSION
+    # (FR-048): `to-testpypi` is `true` for any version on a tag in
+    # opensoft/openRepoTools-code and for a pre-release on a tag in
+    # opensoft/openRepoTools, and the build refused every other tag. A
+    # branch is the rehearsal, and both environments would refuse it anyway
+    # (their deployment limit is the tags v*). With no status function in
+    # it, `if:` also requires the build to have succeeded.
+    if: startsWith(github.ref, 'refs/tags/v') && needs.build.outputs.to-testpypi == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/openrepotools/${{ inputs.version }}/
+    permissions:
+      id-token: write  # trusted publishing: the OIDC token TestPyPI accepts
+      actions: read  # this environment's rules and this run's approvals
+      contents: read  # the tag, read again
+    env:
+      WHEEL: ${{ needs.build.outputs.wheel }}
+      WHEEL_SHA256: ${{ needs.build.outputs.wheel-sha256 }}
+      INDEX: TestPyPI
+      JSON_BASE: https://test.pypi.org/pypi/openrepotools/
+    steps:
+      # THE REPOSITORY GUARD AGAIN, ON ITS OWN, FIRST (FR-048), in case the
+      # job's condition is ever loosened or the build's record is wrong:
+      # TestPyPI takes any release from opensoft/openRepoTools-code, a
+      # pre-release X.Y.ZrcN alone from opensoft/openRepoTools, and nothing
+      # from any other repository, each from its own tag v<version>. The
+      # names are compared exactly, as GitHub spells them.
+      - name: the repository guard (FR-048) again, before anything else, and this repository may send v<version> to TestPyPI
+        run: |
+          final='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          pre='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)rc(0|[1-9][0-9]*)$'
+          if [[ "$VERSION" =~ $final ]] && [ "$VERSION" != 0.0.0 ]; then
+            kind=final
+          elif [[ "$VERSION" =~ $pre ]]; then
+            kind=rc
+          else
+            echo "::error::the version input is not X.Y.Z or X.Y.ZrcN, so nothing is uploaded"
+            printf 'the input, quoted: %q\n' "$VERSION"
+            exit 1
+          fi
+          if [ "$GITHUB_REF" != "refs/tags/v$VERSION" ]; then
+            echo "::error::an upload is made from the tag v$VERSION alone, and this run names '$GITHUB_REF', so nothing is uploaded"
+            exit 1
+          fi
+          if [ "$GITHUB_REPOSITORY" = opensoft/openRepoTools-code ]; then
+            echo "opensoft/openRepoTools-code sends $VERSION ($kind) to TestPyPI"
+          elif [ "$GITHUB_REPOSITORY" = opensoft/openRepoTools ] && [ "$kind" = rc ]; then
+            echo "opensoft/openRepoTools sends the pre-release $VERSION to TestPyPI, and nothing to PyPI"
+          elif [ "$GITHUB_REPOSITORY" = opensoft/openRepoTools ]; then
+            echo "::error::opensoft/openRepoTools sends a pre-release X.Y.ZrcN to TestPyPI and nothing else, and $VERSION is a final, so nothing is uploaded"
+            exit 1
+          else
+            echo "::error::'$GITHUB_REPOSITORY' is neither opensoft/openRepoTools-code nor opensoft/openRepoTools, as GitHub spells them, so nothing is uploaded"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: wheel
+          path: dist
+
+      - name: dist holds the wheel the build job verified, and nothing else
+        run: |
+          found="$(ls -A dist)"
+          if [ "$found" != "$WHEEL" ]; then
+            echo "::error::dist holds '$found', and the build job verified $WHEEL"
+            exit 1
+          fi
+          echo "$WHEEL_SHA256  dist/$WHEEL" | sha256sum --strict -c -
+
+      # AT USE TIME, the environment's rules again, and this run's approval.
+      # The build job's reading goes stale while the run waits: a rule
+      # removed meanwhile would let this job start with nobody approving it.
+      - name: this environment still asks a reviewer and admits only the tags v*, and this run's deployment to it was approved
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ENVIRONMENT: testpypi
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, sys
+
+          repo, environment = os.environ["GITHUB_REPOSITORY"], os.environ["ENVIRONMENT"]
+
+
+          def api(path):
+              done = subprocess.run(["gh", "api", path], capture_output=True, text=True)
+              if done.returncode != 0:
+                  sys.exit(f"::error::`gh api {path}` failed, so nothing is uploaded: {done.stderr.strip()}")
+              return json.loads(done.stdout)
+
+
+          settings = api(f"repos/{repo}/environments/{environment}")
+          reviewers = [rule for rule in settings.get("protection_rules") or []
+                       if rule.get("type") == "required_reviewers" and rule.get("reviewers")]
+          policy = settings.get("deployment_branch_policy") or {}
+          limits = api(f"repos/{repo}/environments/{environment}/deployment-branch-policies?per_page=100")
+          rules = sorted((p.get("type"), p.get("name")) for p in limits.get("branch_policies") or [])
+          if not reviewers:
+              sys.exit(f"::error::the {environment} environment names no required reviewer now")
+          if policy.get("custom_branch_policies") is not True or rules != [("tag", "v*")]:
+              sys.exit(f"::error::the {environment} environment's deployment limit is now {rules}, "
+                       "not the one rule ('tag', 'v*'), so nothing is uploaded")
+          approved = [review["user"]["login"]
+                      for review in api(f"repos/{repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}/approvals")
+                      if review.get("state") == "approved"
+                      and any(e.get("name") == environment for e in review.get("environments") or [])]
+          if not approved:
+              sys.exit(f"::error::this run holds no approval of a deployment to {environment}, "
+                       "so nothing is uploaded")
+          print(f"{environment}: a reviewer, the tags v* alone, and approved by {', '.join(approved)}")
+          PY
+
+      # THE TAG, AGAIN, RIGHT BEFORE THE UPLOAD. The run may have waited on
+      # an approval, and a tag can be moved or deleted meanwhile; an upload
+      # cannot be taken back.
+      - name: the tag v<version> still names this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          object="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" \
+              --jq 'select(.object.type == "tag") | .object.sha')" || object=
+          commit=
+          if [ -n "$object" ]; then
+            commit="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$object" \
+                --jq 'select(.object.type == "commit") | .object.sha')" || commit=
+          fi
+          if [ "$commit" != "$GITHUB_SHA" ]; then
+            echo "::error::the annotated tag v$VERSION no longer names $GITHUB_SHA (it names '$commit'), so nothing is uploaded"
+            exit 1
+          fi
+          echo "v$VERSION still names $GITHUB_SHA"
+
+      # BEFORE THE UPLOAD, NOTHING ELSE HELD. skip-existing skips a file
+      # name the index already holds, so the index must hold no file of
+      # this version but the verified wheel, at its verified digest: an
+      # index never replaces a file. A 404 is a version with no file yet.
+      # The verified wheel itself, already there, is a re-run of this job
+      # after its upload went through, and uploads nothing new.
+      - name: the index holds no file of this version but the verified wheel
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, urllib.error, urllib.request
+
+          index, version = os.environ["INDEX"], os.environ["VERSION"]
+          url = f"{os.environ['JSON_BASE']}{version}/json"
+          wanted = {os.environ["WHEEL"]: os.environ["WHEEL_SHA256"]}
+          try:
+              with urllib.request.urlopen(url, timeout=30) as response:
+                  release = json.load(response)
+          except urllib.error.HTTPError as error:
+              if error.code != 404:
+                  raise
+              print(f"{index} holds no file of openrepotools {version} yet")
+              sys.exit(0)
+          held = {f["filename"]: f["digests"]["sha256"] for f in release["urls"]}
+          other = {name: digest for name, digest in held.items() if wanted.get(name) != digest}
+          if other:
+              sys.exit(f"::error::{index} already holds {other} for openrepotools {version}, "
+                       "which the build job did not verify, so nothing is uploaded")
+          yanked = sorted(f["filename"] for f in release["urls"] if f.get("yanked"))
+          if yanked:
+              sys.exit(f"::error::{index} holds {yanked} at the verified digest, but yanked; "
+                       "un-yank it on the index, or release a new version")
+          print(f"{index} holds {sorted(held)}, at the verified digest; skip-existing uploads nothing new")
+          PY
+
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+          print-hash: true
+
+      # AFTER THE UPLOAD, the index serves exactly the verified wheel, by
+      # digest, not yanked. Its JSON can lag an upload, so it is read up to
+      # 20 times, 15 seconds apart.
+      - name: the index serves exactly the verified wheel
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, time, urllib.error, urllib.request
+
+          index, version = os.environ["INDEX"], os.environ["VERSION"]
+          url = f"{os.environ['JSON_BASE']}{version}/json"
+          wanted = {os.environ["WHEEL"]: os.environ["WHEEL_SHA256"]}
+          served = None
+          for attempt in range(1, 21):
+              try:
+                  with urllib.request.urlopen(url, timeout=30) as response:
+                      release = json.load(response)
+                  served = {f["filename"]: f["digests"]["sha256"] for f in release["urls"]}
+                  if served == wanted:
+                      if any(f.get("yanked") for f in release["urls"]):
+                          sys.exit(f"::error::{index} serves the verified wheel, yanked")
+                      break
+                  print(f"read {attempt}: {index} serves {served} so far")
+              except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+                  code = getattr(error, "code", None)
+                  if code is not None and code != 404 and code < 500:
+                      raise
+                  print(f"read {attempt}: {url} did not answer yet ({error})")
+              time.sleep(15)
+          else:
+              sys.exit(f"::error::after 20 reads {index} serves {served}, and the build job "
+                       f"verified {wanted}")
+          print(f"{index} serves exactly the verified wheel: {served}")
+          PY
+
+  install:
+    name: install check (${{ matrix.os }}, Python ${{ matrix.python }})
+    needs: [build, testpypi]
+    # ON A TAG, AFTER TestPyPI HOLDS THE WHEEL. On a branch, the rehearsal,
+    # where the testpypi job is skipped, after the build alone, over the
+    # build's own wheel.
+    if: >-
+      ${{ !cancelled() && needs.build.result == 'success' &&
+      (needs.testpypi.result == 'success' ||
+      (needs.testpypi.result == 'skipped' && !startsWith(github.ref, 'refs/tags/'))) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read  # the checkout, for the pipx lock alone
+    # THREE LEGS, AND NO WINDOWS LEG (FR-032): ubuntu and macOS on a
+    # current Python 3, and ubuntu on 3.9, the oldest Python the package
+    # supports (`requires-python`). The package is bash, and has no native
+    # Windows command.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: '3.x'
+          - os: macos-latest
+            python: '3.x'
+          - os: ubuntu-latest
+            python: '3.9'
+    env:
+      WHEEL: ${{ needs.build.outputs.wheel }}
+      WHEEL_SHA256: ${{ needs.build.outputs.wheel-sha256 }}
+      DIGEST: ${{ needs.build.outputs.digest }}
+      # EVERY pip THIS JOB RUNS, pipx's own included, reads PyPI and no
+      # other index. The package has no dependency, and pipx's come from
+      # its hash lock; TestPyPI, where anyone can upload, serves the one
+      # file this job fetches by its recorded digest, and nothing else.
+      PIP_INDEX_URL: https://pypi.org/simple/
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        id: python
+        with:
+          python-version: ${{ matrix.python }}
+
+      # FROM TestPyPI, BY THE RECORDED DIGEST: the file TestPyPI lists under
+      # the wheel's name, fetched from its file host, and kept only if its
+      # sha256 is the one the build job recorded (the step after the next).
+      - name: fetch the wheel from TestPyPI
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          mkdir -p "$RUNNER_TEMP/wheel"
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 10 --retry-delay 15 --retry-all-errors \
+              -o "$RUNNER_TEMP/testpypi.json" "https://test.pypi.org/pypi/openrepotools/$VERSION/json"
+          url="$(python - "$RUNNER_TEMP/testpypi.json" <<'PY'
+          import json, os, sys, urllib.parse
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              files = json.load(handle)["urls"]
+          entries = [f for f in files if f["filename"] == os.environ["WHEEL"]
+                     and f["digests"]["sha256"] == os.environ["WHEEL_SHA256"]]
+          if len(entries) != 1:
+              sys.exit(f"TestPyPI lists {len(entries)} {os.environ['WHEEL']} at the recorded "
+                       f"digest, not one: {files}")
+          entry = entries[0]
+          parts = urllib.parse.urlsplit(entry["url"])
+          if parts.scheme != "https" or parts.hostname != "test-files.pythonhosted.org":
+              sys.exit(f"TestPyPI lists the wheel at {entry['url']}, not on its own file host")
+          print(entry["url"])
+          PY
+          )"
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors \
+              -o "$RUNNER_TEMP/wheel/$WHEEL" "$url"
+          echo "fetched $url"
+
+      # THE REHEARSAL: no upload was made, so the build's own wheel.
+      - name: take the build's own wheel, on a branch (the rehearsal)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: wheel
+          path: ${{ runner.temp }}/wheel
+
+      - name: the wheel is the one the build job verified
+        run: |
+          python - <<'PY'
+          import hashlib, os, pathlib, sys
+
+          folder = pathlib.Path(os.environ["RUNNER_TEMP"]) / "wheel"
+          found, wheel = sorted(p.name for p in folder.iterdir()), os.environ["WHEEL"]
+          if found != [wheel]:
+              sys.exit(f"::error::{folder} holds {found}, and the build job verified {wheel}")
+          digest = hashlib.sha256((folder / wheel).read_bytes()).hexdigest()
+          if digest != os.environ["WHEEL_SHA256"]:
+              sys.exit(f"::error::{wheel} has sha256 {digest}, and the build job recorded "
+                       f"{os.environ['WHEEL_SHA256']}; nothing from it is run")
+          print(f"{wheel}: sha256 {digest}, the recorded digest")
+          PY
+
+      # pipx FROM ITS HASH LOCK, on this leg's Python: 1.11.1 on 3.9, the
+      # newest pipx that installs there, and 1.17.8 from 3.10
+      # (`.github/release-pipx-requirements.txt` says why). Its home and its
+      # links are directories of this job's own, under the runner's temp,
+      # as in `tests.yml`'s `package` job, and the steps below read them
+      # through `$GITHUB_ENV`.
+      - name: pipx from its hash lock, on this leg's Python
+        run: |
+          python -m pip install --only-binary :all: --require-hashes \
+              -r .github/release-pipx-requirements.txt
+          {
+            echo "PIPX_HOME=$RUNNER_TEMP/pipx/home"
+            echo "PIPX_BIN_DIR=$RUNNER_TEMP/pipx/bin"
+          } >> "$GITHUB_ENV"
+          python -m pipx --version
+
+      # THE WHEEL INTO A FRESH ENVIRONMENT OF pipx's, as a person installs
+      # it, wheels only. ONE COMMAND, SO ONE LINK: the package declares the
+      # one console script `openRepoTools`, and pipx places that link and
+      # nothing else.
+      - name: pipx installs the wheel into a fresh environment, and places the one link openRepoTools
+        env:
+          PIPX_DEFAULT_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: |
+          python -m pipx install --pip-args=--only-binary=:all: "$RUNNER_TEMP/wheel/$WHEEL"
+          ls -l "$PIPX_BIN_DIR"
+          placed="$(ls -A "$PIPX_BIN_DIR")"
+          if [ "$placed" != openRepoTools ] || [ ! -L "$PIPX_BIN_DIR/openRepoTools" ]; then
+            echo "::error::pipx placed '$placed' in $PIPX_BIN_DIR, and the package's one command is the link openRepoTools"
+            exit 1
+          fi
+
+      # THE RELEASE THIS IS, LINE FOR LINE: the stamped package's five
+      # lines, naming the run's repository, the version, its tag, the commit
+      # and the digest the build recorded. On a branch these are the
+      # build's own stamp values, which are the same five.
+      - name: openRepoTools --version names this release, line for line
+        run: |
+          "$PIPX_BIN_DIR/openRepoTools" --version > "$RUNNER_TEMP/version.out" 2>&1
+          printf '%s\n' \
+              "openRepoTools $VERSION ($GITHUB_REPOSITORY @ $GITHUB_SHA)" \
+              "  version   $VERSION" \
+              "  tag       v$VERSION" \
+              "  commit    $GITHUB_SHA" \
+              "  digest    $DIGEST (sorted-ls-tree-r-v1)" > "$RUNNER_TEMP/version.want"
+          if ! diff -u "$RUNNER_TEMP/version.want" "$RUNNER_TEMP/version.out"; then
+            echo "::error::openRepoTools --version does not name $GITHUB_REPOSITORY, $VERSION, v$VERSION, $GITHUB_SHA and $DIGEST, line for line"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/version.out"
+
+      # OFFLINE, IN A HOME OF ITS OWN, BESIDE PIPX'S LINK, SET UP AS
+      # `tests.yml`'s `package` job sets up its own (FR-016, FR-032), so the
+      # two cannot drift. `--install`, run through the link, places the
+      # other sixteen commands, the skills and the command files, leaves the
+      # link to pipx, and says so in the two lines below, exactly. `env -i`
+      # hands it nothing of the runner's environment but what is named on
+      # its line: a fresh HOME, the bin directory pipx's link is in, a
+      # repository that cannot resolve, and a PATH whose first directory
+      # holds a `gh` and a `curl` that both fail, so anything that fetched
+      # would fail. The receipt has 28 rows, a full install's 29 less the
+      # link, and the link is as pipx left it. The link's fingerprint is
+      # taken by this leg's Python, because the macOS leg's `stat` and
+      # `sha256sum` are not GNU's.
+      - name: an offline --install beside pipx's link
+        run: |
+          set -euo pipefail
+          home="$RUNNER_TEMP/install-home"
+          offline="$RUNNER_TEMP/offline-bin"
+          mkdir "$home" "$offline"
+          for tool in gh curl; do
+            printf '#!/bin/sh\necho "%s: this run is offline" >&2\nexit 1\n' "$tool" > "$offline/$tool"
+            chmod 755 "$offline/$tool"
+          done
+          link="$PIPX_BIN_DIR/openRepoTools"
+          fingerprint='import hashlib, os, sys; p = sys.argv[1]; print(os.lstat(p).st_ino, os.readlink(p), hashlib.sha256(open(p, "rb").read()).hexdigest())'
+          before="$(python3 -I -c "$fingerprint" "$link")"
+          status=0
+          env -i HOME="$home" PATH="$offline:$PIPX_BIN_DIR:$PATH" \
+              OPENREPOTOOLS_BIN_DIR="$PIPX_BIN_DIR" OPENREPOTOOLS_REPO=offline.invalid/sentinel \
+              "$link" --install > "$RUNNER_TEMP/install.out" 2> "$RUNNER_TEMP/install.err" ||
+              status=$?
+          cat "$RUNNER_TEMP/install.out"
+          cat "$RUNNER_TEMP/install.err" >&2
+          if [ "$status" -ne 0 ]; then
+            echo "::error::the offline --install exited $status"
+            exit 1
+          fi
+          skip="openRepoTools: left to pipx at $link (a link into pipx's openrepotools environment); update it with \`pipx upgrade openrepotools\`, then run \`openRepoTools --install\` again"
+          count="openRepoTools: 16 of 17 placed in $PIPX_BIN_DIR, and 1 left to pipx"
+          for line in "$skip" "$count"; do
+            seen="$(grep -cFx -e "$line" "$RUNNER_TEMP/install.out" || true)"
+            if [ "$seen" -ne 1 ]; then
+              echo "::error::--install printed this line $seen times, not once: $line"
+              exit 1
+            fi
+          done
+          receipt="$home/.local/share/openRepoTools/installed.tsv"
+          if [ ! -f "$receipt" ]; then
+            echo "::error::--install wrote no receipt at $receipt"
+            exit 1
+          fi
+          rows="$(awk -F '\t' 'NF == 4' "$receipt" | wc -l)"
+          lines="$(wc -l < "$receipt")"
+          if [ "$rows" -ne 28 ] || [ "$lines" -ne 28 ]; then
+            echo "::error::the receipt has $lines lines and $rows rows, not 28: a full install's 29 less pipx's link"
+            exit 1
+          fi
+          if [ ! -L "$link" ] || [ "$(python3 -I -c "$fingerprint" "$link")" != "$before" ]; then
+            echo "::error::--install changed pipx's link at $link"
+            exit 1
+          fi
+
+      # ON macOS, THE SAME OFFLINE --install AGAIN UNDER APPLE'S OWN
+      # `/bin/bash` 3.2 (FR-032), in a fresh home: `/bin` first on PATH, so
+      # the bash the package's entry point finds there is `/bin/bash`. The
+      # bash first on that same PATH prints its BASH_VERSION first, and it
+      # must be 3.2. The skip line, the count line, the 28 rows and the link
+      # must be as they were under the leg's own bash.
+      - name: on macOS, the offline --install again under Apple's /bin/bash 3.2
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          home="$RUNNER_TEMP/install-home-bin-bash"
+          offline="$RUNNER_TEMP/offline-bin-bin-bash"
+          mkdir "$home" "$offline"
+          for tool in gh curl; do
+            printf '#!/bin/sh\necho "%s: this run is offline" >&2\nexit 1\n' "$tool" > "$offline/$tool"
+            chmod 755 "$offline/$tool"
+          done
+          link="$PIPX_BIN_DIR/openRepoTools"
+          fingerprint='import hashlib, os, sys; p = sys.argv[1]; print(os.lstat(p).st_ino, os.readlink(p), hashlib.sha256(open(p, "rb").read()).hexdigest())'
+          before="$(python3 -I -c "$fingerprint" "$link")"
+          # shellcheck disable=SC2016
+          version="$(env -i PATH="/bin:$offline:$PIPX_BIN_DIR:$PATH" bash -c 'printf "%s\n" "$BASH_VERSION"')"
+          echo "BASH_VERSION $version, from the bash first on PATH=/bin:..."
+          case "$version" in
+            3.2.*) ;;
+            *)
+              echo "::error::the bash first on a PATH that begins with /bin is $version, not Apple's 3.2"
+              exit 1
+              ;;
+          esac
+          status=0
+          env -i HOME="$home" PATH="/bin:$offline:$PIPX_BIN_DIR:$PATH" \
+              OPENREPOTOOLS_BIN_DIR="$PIPX_BIN_DIR" OPENREPOTOOLS_REPO=offline.invalid/sentinel \
+              "$PIPX_BIN_DIR/openRepoTools" --install > "$RUNNER_TEMP/install-bin-bash.out" \
+              2> "$RUNNER_TEMP/install-bin-bash.err" || status=$?
+          cat "$RUNNER_TEMP/install-bin-bash.out"
+          cat "$RUNNER_TEMP/install-bin-bash.err" >&2
+          if [ "$status" -ne 0 ]; then
+            echo "::error::the offline --install under /bin/bash $version exited $status"
+            exit 1
+          fi
+          skip="openRepoTools: left to pipx at $link (a link into pipx's openrepotools environment); update it with \`pipx upgrade openrepotools\`, then run \`openRepoTools --install\` again"
+          count="openRepoTools: 16 of 17 placed in $PIPX_BIN_DIR, and 1 left to pipx"
+          for line in "$skip" "$count"; do
+            seen="$(grep -cFx -e "$line" "$RUNNER_TEMP/install-bin-bash.out" || true)"
+            if [ "$seen" -ne 1 ]; then
+              echo "::error::--install under /bin/bash $version printed this line $seen times, not once: $line"
+              exit 1
+            fi
+          done
+          receipt="$home/.local/share/openRepoTools/installed.tsv"
+          if [ ! -f "$receipt" ]; then
+            echo "::error::--install under /bin/bash $version wrote no receipt at $receipt"
+            exit 1
+          fi
+          rows="$(awk -F '\t' 'NF == 4' "$receipt" | wc -l)"
+          lines="$(wc -l < "$receipt")"
+          if [ "$rows" -ne 28 ] || [ "$lines" -ne 28 ]; then
+            echo "::error::under /bin/bash $version the receipt has $lines lines and $rows rows, not 28"
+            exit 1
+          fi
+          if [ ! -L "$link" ] || [ "$(python3 -I -c "$fingerprint" "$link")" != "$before" ]; then
+            echo "::error::--install under /bin/bash $version changed pipx's link at $link"
+            exit 1
+          fi
+
+      # ON PYTHON 3.9, THE SHIPPED BYTES COMPILE (FR-032): the two payload
+      # commands written in Python, `lanes-index` and `lane-worktrees`, as
+      # the installed package holds them under its own `payload/`, compiled
+      # by this leg's python3, the oldest the package supports. Nothing is
+      # written: `compile()` keeps no bytecode.
+      - name: on Python 3.9, the installed payload's own lanes-index and lane-worktrees compile
+        if: matrix.python == '3.9'
+        run: |
+          python3 -I - <<'PY'
+          import glob, os, sys
+
+          if sys.version_info[:2] != (3, 9):
+              sys.exit(f"::error::this leg's python3 is {sys.version.split()[0]}, not 3.9")
+          venv = os.path.join(os.environ["PIPX_HOME"], "venvs", "openrepotools")
+          found = glob.glob(os.path.join(venv, "lib", "python*", "site-packages",
+                                         "openrepotools", "payload"))
+          if len(found) != 1:
+              sys.exit(f"::error::pipx's openrepotools environment at {venv} holds {found}, "
+                       "not one payload directory")
+          problems = []
+          for name in ("lanes-index", "lane-worktrees"):
+              path = os.path.join(found[0], name)
+              try:
+                  with open(path, "rb") as handle:
+                      compile(handle.read(), path, "exec")
+              except (OSError, SyntaxError, ValueError) as error:
+                  problems.append(f"{path} does not compile on Python 3.9: {error}")
+              else:
+                  print(f"{path}: compiles on Python {sys.version.split()[0]}")
+          for problem in problems:
+              print(f"::error::{problem}")
+          sys.exit(1 if problems else 0)
+          PY
+
+  pypi:
+    name: publish to PyPI
+    needs: [build, testpypi, install]
+    # ON A v* TAG ONLY, ONLY FOR A FINAL FROM THE CODE LEG, and only after
+    # TestPyPI and every leg of the install check passed: with no status
+    # function in it, `if:` also requires every job above to have
+    # succeeded. An expression cannot test a pattern, so the build's record
+    # decides: `to-pypi` is `true` for a final X.Y.Z on a tag in
+    # opensoft/openRepoTools-code alone (FR-048), so in an rc rehearsal
+    # this job is skipped and never asks for the `pypi` approval.
+    if: startsWith(github.ref, 'refs/tags/v') && needs.build.outputs.to-pypi == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: pypi
+      url: https://pypi.org/project/openrepotools/${{ inputs.version }}/
+    permissions:
+      id-token: write  # trusted publishing: the OIDC token PyPI accepts
+      actions: read  # this environment's rules and this run's approvals
+      contents: read  # the tag, read again
+    env:
+      WHEEL: ${{ needs.build.outputs.wheel }}
+      WHEEL_SHA256: ${{ needs.build.outputs.wheel-sha256 }}
+      INDEX: PyPI
+      JSON_BASE: https://pypi.org/pypi/openrepotools/
+    steps:
+      # THE REPOSITORY GUARD AGAIN, ON ITS OWN, FIRST (FR-031, FR-048): PyPI
+      # takes a final X.Y.Z from opensoft/openRepoTools-code, from its own
+      # tag v<version>, and nothing else, ever. So in opensoft/openRepoTools
+      # this step refuses outright, in case the job's condition is ever
+      # loosened; that repository's missing pypi.org publisher is the second
+      # line of defence.
+      - name: the repository guard (FR-048) again, before anything else, and v<version> is a final from opensoft/openRepoTools-code
+        run: |
+          final='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          if ! [[ "$VERSION" =~ $final ]] || [ "$VERSION" = 0.0.0 ]; then
+            echo "::error::PyPI takes a final release X.Y.Z alone, never a pre-release, so nothing is uploaded"
+            printf 'the input, quoted: %q\n' "$VERSION"
+            exit 1
+          fi
+          if [ "$GITHUB_REF" != "refs/tags/v$VERSION" ]; then
+            echo "::error::an upload is made from the tag v$VERSION alone, and this run names '$GITHUB_REF', so nothing is uploaded"
+            exit 1
+          fi
+          if [ "$GITHUB_REPOSITORY" != opensoft/openRepoTools-code ]; then
+            echo "::error::a release reaches PyPI from opensoft/openRepoTools-code alone, as GitHub spells it, and this run is in '$GITHUB_REPOSITORY', so nothing is uploaded"
+            exit 1
+          fi
+          echo "opensoft/openRepoTools-code sends the final $VERSION to PyPI"
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: wheel
+          path: dist
+
+      - name: dist holds the wheel the build job verified, and nothing else
+        run: |
+          found="$(ls -A dist)"
+          if [ "$found" != "$WHEEL" ]; then
+            echo "::error::dist holds '$found', and the build job verified $WHEEL"
+            exit 1
+          fi
+          echo "$WHEEL_SHA256  dist/$WHEEL" | sha256sum --strict -c -
+
+      - name: this environment still asks a reviewer and admits only the tags v*, and this run's deployment to it was approved
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ENVIRONMENT: pypi
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, sys
+
+          repo, environment = os.environ["GITHUB_REPOSITORY"], os.environ["ENVIRONMENT"]
+
+
+          def api(path):
+              done = subprocess.run(["gh", "api", path], capture_output=True, text=True)
+              if done.returncode != 0:
+                  sys.exit(f"::error::`gh api {path}` failed, so nothing is uploaded: {done.stderr.strip()}")
+              return json.loads(done.stdout)
+
+
+          settings = api(f"repos/{repo}/environments/{environment}")
+          reviewers = [rule for rule in settings.get("protection_rules") or []
+                       if rule.get("type") == "required_reviewers" and rule.get("reviewers")]
+          policy = settings.get("deployment_branch_policy") or {}
+          limits = api(f"repos/{repo}/environments/{environment}/deployment-branch-policies?per_page=100")
+          rules = sorted((p.get("type"), p.get("name")) for p in limits.get("branch_policies") or [])
+          if not reviewers:
+              sys.exit(f"::error::the {environment} environment names no required reviewer now")
+          if policy.get("custom_branch_policies") is not True or rules != [("tag", "v*")]:
+              sys.exit(f"::error::the {environment} environment's deployment limit is now {rules}, "
+                       "not the one rule ('tag', 'v*'), so nothing is uploaded")
+          approved = [review["user"]["login"]
+                      for review in api(f"repos/{repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}/approvals")
+                      if review.get("state") == "approved"
+                      and any(e.get("name") == environment for e in review.get("environments") or [])]
+          if not approved:
+              sys.exit(f"::error::this run holds no approval of a deployment to {environment}, "
+                       "so nothing is uploaded")
+          print(f"{environment}: a reviewer, the tags v* alone, and approved by {', '.join(approved)}")
+          PY
+
+      - name: the tag v<version> still names this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          object="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" \
+              --jq 'select(.object.type == "tag") | .object.sha')" || object=
+          commit=
+          if [ -n "$object" ]; then
+            commit="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$object" \
+                --jq 'select(.object.type == "commit") | .object.sha')" || commit=
+          fi
+          if [ "$commit" != "$GITHUB_SHA" ]; then
+            echo "::error::the annotated tag v$VERSION no longer names $GITHUB_SHA (it names '$commit'), so nothing is uploaded"
+            exit 1
+          fi
+          echo "v$VERSION still names $GITHUB_SHA"
+
+      - name: the index holds no file of this version but the verified wheel
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, urllib.error, urllib.request
+
+          index, version = os.environ["INDEX"], os.environ["VERSION"]
+          url = f"{os.environ['JSON_BASE']}{version}/json"
+          wanted = {os.environ["WHEEL"]: os.environ["WHEEL_SHA256"]}
+          try:
+              with urllib.request.urlopen(url, timeout=30) as response:
+                  release = json.load(response)
+          except urllib.error.HTTPError as error:
+              if error.code != 404:
+                  raise
+              print(f"{index} holds no file of openrepotools {version} yet")
+              sys.exit(0)
+          held = {f["filename"]: f["digests"]["sha256"] for f in release["urls"]}
+          other = {name: digest for name, digest in held.items() if wanted.get(name) != digest}
+          if other:
+              sys.exit(f"::error::{index} already holds {other} for openrepotools {version}, "
+                       "which the build job did not verify, so nothing is uploaded")
+          yanked = sorted(f["filename"] for f in release["urls"] if f.get("yanked"))
+          if yanked:
+              sys.exit(f"::error::{index} holds {yanked} at the verified digest, but yanked; "
+                       "un-yank it on the index, or release a new version")
+          print(f"{index} holds {sorted(held)}, at the verified digest; skip-existing uploads nothing new")
+          PY
+
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        with:
+          skip-existing: true
+          print-hash: true
+
+      # AFTER THE UPLOAD, PyPI SERVES EXACTLY THE VERIFIED DIGEST: the
+      # bytes TestPyPI served and the install check ran.
+      - name: the index serves exactly the verified wheel
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, time, urllib.error, urllib.request
+
+          index, version = os.environ["INDEX"], os.environ["VERSION"]
+          url = f"{os.environ['JSON_BASE']}{version}/json"
+          wanted = {os.environ["WHEEL"]: os.environ["WHEEL_SHA256"]}
+          served = None
+          for attempt in range(1, 21):
+              try:
+                  with urllib.request.urlopen(url, timeout=30) as response:
+                      release = json.load(response)
+                  served = {f["filename"]: f["digests"]["sha256"] for f in release["urls"]}
+                  if served == wanted:
+                      if any(f.get("yanked") for f in release["urls"]):
+                          sys.exit(f"::error::{index} serves the verified wheel, yanked")
+                      break
+                  print(f"read {attempt}: {index} serves {served} so far")
+              except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+                  code = getattr(error, "code", None)
+                  if code is not None and code != 404 and code < 500:
+                      raise
+                  print(f"read {attempt}: {url} did not answer yet ({error})")
+              time.sleep(15)
+          else:
+              sys.exit(f"::error::after 20 reads {index} serves {served}, and the build job "
+                       f"verified {wanted}")
+          print(f"{index} serves exactly the verified wheel: {served}")
+          PY
