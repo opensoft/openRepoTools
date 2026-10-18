@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The release stamp: which release of openRepoTools this package is (#228).
 
 Only the release build writes this file. Its writer replaces each of the

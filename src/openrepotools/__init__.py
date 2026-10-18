@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """openrepotools: openRepoTools as a package, installed with pipx (#228).
 
 The wheel carries the installer's whole payload byte for byte under
