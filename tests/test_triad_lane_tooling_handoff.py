@@ -112,6 +112,23 @@ def top_block(b: Bench, lane: str) -> str:
     return (b.wip / "handoffs" / f"{lane}.md").read_text().split("\n---\n", 1)[0]
 
 
+def git_says(b: Bench, leg: Path) -> str:
+    """WHAT EVERY READER QUOTES for a leg git cannot read - the sweep's
+    `probe_leg`, `lane-reconcile` and `lane-handoff` alike: git's own answer to
+    `rev-parse --show-toplevel` in the leg, its first non-empty error line, or
+    `git answers <toplevel> there` where git names another checkout. Asked of
+    the git under test, never spelled here, because git words the same
+    condition differently by version: for a `.git` file naming a directory that
+    does not exist, 2.43 says `fatal: not a git repository: <that path>` and
+    2.55 (CI's ubuntu runner, PR #246) says `fatal: not a git repository:
+    (null)`. The tools read the CONDITION (git's toplevel there is not the leg,
+    and a `.git` stands in it); only this quoted clause is git's."""
+    proc = b.run("git", "-C", leg, "rev-parse", "--show-toplevel")
+    if proc.returncode == 0:
+        return f"git answers {proc.stdout.strip()} there"
+    return next((ln.strip() for ln in proc.stderr.splitlines() if ln.strip()), "no answer")
+
+
 def leg_tree(b: Bench, leg: Path, path: Path, branch: str) -> Path:
     """A worktree of `leg`'s repository at `path`, on a new branch from origin/main."""
     b.git("worktree", "add", "-q", "-b", branch, path, "origin/main", cwd=leg)
@@ -484,7 +501,7 @@ def test_t018_reconcile_reports_a_leg_git_cannot_read_as_the_sweep_counts_it(tri
         assert "git could not be read through it" in leg["why"] and answer in leg["why"], leg
 
     (spec / ".git").write_text("gitdir: /nonexistent/t018-spec\n")
-    check("/nonexistent/t018-spec")
+    check(git_says(b, spec))
     (spec / ".git").unlink()
     (spec / ".git").mkdir()
     check(f"git answers {real(a)} there")
@@ -562,7 +579,7 @@ def test_t018_the_handoff_reports_a_leg_git_cannot_read_as_the_sweep_counts_it(t
             assert (f"- `{tree}` — branch `" in writers) is (tree not in unplaced), (tree, writers)
 
     (spec / ".git").write_text("gitdir: /nonexistent/t018-spec\n")
-    check("/nonexistent/t018-spec", (lane_root,), (), "SWAPPED")
+    check(git_says(b, spec), (lane_root,), (), "SWAPPED")
     assert inventory(b, "triad-1") == {str(lane_root): str(a)}
     rec = b.tool("lanes-edit.sh", "lane-reconcile", "triad-1")
     assert reconcile_rows(rec.stdout)[real(spec)][0] == "unreadable", rec.stdout
@@ -580,7 +597,7 @@ def test_t018_the_handoff_reports_a_leg_git_cannot_read_as_the_sweep_counts_it(t
     want = {str(lane_spec): str(spec), str(lane_root): str(a)}
     assert inventory(b, "triad-1") == want
     (spec / ".git").write_text("gitdir: /nonexistent/t018-spec\n")
-    check("/nonexistent/t018-spec", (lane_spec, lane_root), (lane_spec,), "SWAPPING")
+    check(git_says(b, spec), (lane_spec, lane_root), (lane_spec,), "SWAPPING")
     assert inventory(b, "triad-1") == want
 
     (spec / ".git").write_text(gitfile)
