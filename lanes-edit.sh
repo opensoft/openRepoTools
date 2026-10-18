@@ -9527,7 +9527,6 @@ guard_run() {   # <the hook's JSON, on stdin already read>
   gr_blob="$(cat -- "$gr_file" 2>/dev/null || :)"
   G_NAME="$(jstr "$gr_blob" name)"
   G_SRC="$(jstr "$gr_blob" nameSource)"
-  gr_since="$(jnum "$gr_blob" nameSince)"
   # THE PANE ONLY FROM A TARGET THAT NAMES THIS WINDOW. `here` is true by the
   # record's target OR by the pane's own process tree, and tmux REUSES window
   # ids — so a record that is here BY ANCESTRY can carry a target another
@@ -9539,6 +9538,30 @@ guard_run() {   # <the hook's JSON, on stdin already read>
   gr_pane=""
   if [ -n "$gr_tgt" ] && [ -n "$LANES_THIS_WINDOW" ] && [ "${gr_tgt%.*}" = "$LANES_THIS_WINDOW" ]; then
     case "$gr_tgt" in *.%*) gr_pane="${gr_tgt##*.}" ;; esac
+  fi
+
+  # ---- THE REGISTER'S TEXT, TESTED POSITIVELY, ONCE, BEFORE THE ROW IS READ
+  # (openRepoTools#60). `register_text` prefers `origin/<branch>` and falls back
+  # to this checkout's file, and where both come back empty — a file this
+  # checkout cannot open, with no published copy — it answers EMPTY TEXT AND 0,
+  # because it ends in a `printf`. Every read below then finds no rows, and the
+  # table refused by its LAST arm, "whose row does not name this uuid at all",
+  # with a cure that cannot mend a read that did not happen. A status on
+  # `rows_named_ci` is not the place: its status is its awk's, which says nothing
+  # about the text, and it is shared with `canon_lane` and Amendment 15's
+  # callers. The awk below has one job, and its status IS the answer.
+  # HERE, AND NOT BESIDE THE WORKSPACE TEST WHERE #60 PROPOSED IT: there neither
+  # the window nor the session has been read yet, so the triple this refusal
+  # prints said `not in tmux` about a session that is. Here it names both, and
+  # `row not read`, which is the one thing that is not known.
+  # IT COSTS ONE `cat` AND ONE `awk`, ~6 ms on a 1.3 MB register: the text is
+  # cached beside `$SE_CACHE_FILE` for the life of this process, so this is the
+  # render the first read below would have made, moved here — `GIT_TRACE` counts
+  # one `git show` of the register per prompt with this test and without it. It
+  # is streamed and not captured: `$( )` of the same megabyte measured ~30 ms.
+  if ! register_text 2>/dev/null | awk 'NF { t = 1 } END { exit !t }'; then
+    guard_refuse "the register's TEXT could not be read — neither \`origin/$LANES_BRANCH:$LANES_PATH\` nor $LANES_FILE rendered a line — so the ROW cannot be read and the triple cannot be verified. A register that could not be read is not a register with no row for this lane, and an indeterminate read refuses (Amendment 12(d)). $(guard_bypass)"
+    return 2
   fi
 
   # ---- THE ROW, from `origin/<branch>` as this checkout last had it (R19), and
@@ -9889,10 +9912,20 @@ EOF
 # told apart either way and is drift too, which is (h)1's default and the
 # closed direction. A lane whose log records no binding at all cannot make a
 # rename older than one, so there the rename is the instruction.
+# AND A LOG THAT COULD NOT BE READ IS A THIRD ANSWER, NOT EITHER OF THE TWO
+# (openRepoTools#60). `lane_binding_utc` answers 1 for it — `log_path_ci`
+# refuses two logs differing only by case (Amendment 15) — and this test folded
+# that 1 into the 8, so the `SessionStart` hook, its one caller since #87 made
+# the guard's answer the offer, told a person their rename was newer than a
+# binding nobody read. Read as "not newer" it would type over a person's own
+# `/rename`, which (h) rule 4 forbids, so the caller is told and names the read.
+#   0 newer · 1 not newer, or no `nameSince` · 5 the lane's log could not be read
 guard_rename_is_newer() {   # <lane> <nameSince, epoch ms>
   grn_lane="${1-}"; grn_since="${2-}"
   case "$grn_since" in ''|*[!0-9]*) return 1 ;; esac
-  grn_utc="$(lane_binding_utc "$grn_lane" 2>/dev/null || :)"
+  grn_rc=0
+  grn_utc="$(lane_binding_utc "$grn_lane" 2>/dev/null)" || grn_rc=$?
+  [ "$grn_rc" = 0 ] || [ "$grn_rc" = 8 ] || return 5
   [ -n "$grn_utc" ] || return 0
   grn_e="$(epoch_of "$grn_utc")"
   [ -n "$grn_e" ] || return 0
@@ -10306,13 +10339,26 @@ ssb_name_line() {   # <session uuid> <lane, or empty>
   # offer never happens. It is SAID here and left to the prompt that follows.
   snl_src="$(jstr "$snl_blob" nameSource)"
   snl_since="$(jnum "$snl_blob" nameSince)"
+  snl_nrc=1
   if [ "${snl_src:-}" = user ] && [ "$(lc "$snl_name")" != "$(lc "$snl_lane")" ] \
-     && { [ -n "$(rows_named_ci "$snl_name" 2>/dev/null || :)" ] || lane_shaped "$snl_name"; } \
-     && guard_rename_is_newer "$snl_lane" "$snl_since"; then
-    printf "session name '%s' is a lane name YOU set, newer than this window's binding to '%s' — the name guard offers the move at your next prompt (Amendment 12(h) rule 2); nothing was renamed here\n" \
-      "$snl_name" "$snl_lane"
-    return 0
+     && { [ -n "$(rows_named_ci "$snl_name" 2>/dev/null || :)" ] || lane_shaped "$snl_name"; }; then
+    snl_nrc=0
+    guard_rename_is_newer "$snl_lane" "$snl_since" || snl_nrc=$?
   fi
+  case "$snl_nrc" in
+    0)
+      printf "session name '%s' is a lane name YOU set, newer than this window's binding to '%s' — the name guard offers the move at your next prompt (Amendment 12(h) rule 2); nothing was renamed here\n" \
+        "$snl_name" "$snl_lane"
+      return 0 ;;
+    # A BINDING NOBODY COULD READ IS NEITHER ANSWER (openRepoTools#60): not
+    # "newer", which is a claim about a log this hook did not read, and not
+    # drift, which would type over the person's own rename. The read is named
+    # and the name left alone; this hook refuses nothing, so that is all it does.
+    5)
+      printf "session name '%s' is a lane name YOU set, and lane %s's object log could not be read, so whether you set it after this window's binding is NOT known — nothing was renamed here, and the name guard puts it to you at your next prompt (Amendment 12(h) rule 4)\n" \
+        "$snl_name" "$snl_lane"
+      return 0 ;;
+  esac
   here_context
   snl_pane=""
   if [ -n "$snl_tgt" ] && [ "$snl_tgt" != none ] && [ -n "$LANES_THIS_WINDOW" ] \

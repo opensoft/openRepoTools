@@ -7037,6 +7037,43 @@ gd_run "$GD_LANE_ID" "do the work" ""
 is    "a payload naming no cwd at all is an indeterminate read, not 'outside the root'" "$rc" 2
 has   "…and says which read did not happen" "$err" "carried no \`cwd\`"
 
+# ---- A REGISTER THAT IS THERE AND WHOSE TEXT COULD NOT BE READ (#60).
+#
+# The file passes the test above, so the guard went on to the table with NO
+# ROWS and refused by its LAST arm — "the harness minted a new transcript",
+# cured by a `lane-start --no-launch` that cannot mend a read. `LANES_DIR` keeps
+# the logs and the alias table where they are, and the file's own name is on no
+# published tree, so `register_text` falls through to the working file.
+# EMPTY IS THE FIXTURE THAT HOLDS ON EVERY HOST AND UID: it renders exactly what
+# a file this checkout cannot open renders. A mode-000 file is the issue's own
+# case, and root reads one, so that case runs only where it means something. A
+# dangling link is no fixture here: `[ -f ]` is false for it, which the refusal
+# above already answers.
+gd_rec "$GD_LANE_ID" repoGD-1 user "$GD_OLD_MS"
+gd_unread_run() {
+  out="$(printf "$gd_hook" "$GD_LANE_ID" "$HOME/projects/repoGD" "do the work" \
+    | LANES_DIR="$WIP/lanes" LANES_FILE="$SANDBOX/register-60.md" "$E" guard 2>"$SANDBOX/stderr")"; rc=$?
+  err="$(cat "$SANDBOX/stderr")"
+}
+: > "$SANDBOX/register-60.md"
+gd_unread_run
+is    "a register whose TEXT comes back empty blocks the prompt with 2" "$rc" 2
+has   "…naming the read, not a row" "$err" "the register's TEXT could not be read"
+has   "…with the window it did read in the triple" "$err" "window   gdsess:@12 'repoGD-1'"
+has   "…and the row as the one half nobody read" "$err" "row      not read"
+hasnt "…and never the table's last arm, whose cure cannot mend a read" "$err" "the harness minted a new transcript"
+has   "…with safe-mode recovery" "$err" "claude --safe-mode"
+if [ "$(id -u)" = 0 ]; then
+  skip "a register file this checkout cannot open is the same refusal" "running as root, which can read a mode-000 file"
+else
+  cp -- "$LANES" "$SANDBOX/register-60.md"; chmod 000 "$SANDBOX/register-60.md"
+  gd_unread_run
+  chmod 644 "$SANDBOX/register-60.md"
+  is    "a register file this checkout cannot open is the same refusal" "$rc" 2
+  has   "…naming the same read" "$err" "the register's TEXT could not be read"
+fi
+rm -f "$SANDBOX/register-60.md"
+
 # ---- (b)'s LAST ROW: NOT INSIDE TMUX AT ALL (ratified decision D2, "Refuse"),
 # AND THE READ THAT DID NOT HAPPEN IS NOT THE SAME STATE.
 #
@@ -8144,6 +8181,27 @@ run env LANES_LANE=repotwo-1 LANES_SESSION="$DEAD_ID" "$E" log PAUSED lane:repot
 is   "…and a WRITE under that name is refused before it appends anything" "$rc" 2
 has  "…naming both files it will not choose between" "$err" "differ only by case"
 is   "…writing no log here" "$(ls "$LOGD" | grep -ci '^repotwo-1\.md$' || :)" 0
+# AND THE `SessionStart` HOOK, WHOSE RENAME TEST READS THIS LOG FOR THE BINDING
+# (#60). The read that failed was folded into "no binding", so a person's
+# rename to another lane — here made a day ago, BEFORE the STARTED the row's own
+# log carries — was called "newer than this window's binding". It names the
+# read now, and still types nothing over the person's own name.
+a15_hook_id="aaaa0060-0000-4000-8000-aaaa00600000"
+a15_save_win="${FAKE_TMUX_WINDOW-}"; a15_save_name="${FAKE_TMUX_WINDOW_NAME-}"; a15_save_wins="${FAKE_TMUX_WINDOWS-}"
+export FAKE_TMUX_WINDOW="gdsess:@12" FAKE_TMUX_WINDOW_NAME=repoTwo-1
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoTwo-1	%12	claude"
+write_record_a12 "$sessions_dir/two.json" "$a15_hook_id" "$LIVE_PID" "$live_start" interactive "gdsess:@12.%12" \
+  repoLate-1 user "$(( gd_now_ms - 86400000 ))"
+gd_before="$(gd_keys)"
+out="$(printf '{"session_id":"%s","source":"resume","cwd":"%s/projects/repoGD"}' "$a15_hook_id" "$HOME" | "$E" session-start 2>/dev/null)"; rc=$?
+is    "the SessionStart hook still exits 0 on a lane whose log cannot be read" "$rc" 0
+has   "…naming that read" "$out" "lane repoTwo-1's object log could not be read"
+hasnt "…never calling a person's rename newer than a binding nobody read" "$out" "newer than this window's binding"
+is    "…and typing nothing over that name" "$(gd_keys)" "$gd_before"
+rm -f "$sessions_dir/two.json"
+if [ -n "$a15_save_wins" ]; then export FAKE_TMUX_WINDOWS="$a15_save_wins"; else unset FAKE_TMUX_WINDOWS; fi
+if [ -n "$a15_save_win" ]; then export FAKE_TMUX_WINDOW="$a15_save_win"; else unset FAKE_TMUX_WINDOW; fi
+if [ -n "$a15_save_name" ]; then export FAKE_TMUX_WINDOW_NAME="$a15_save_name"; else unset FAKE_TMUX_WINDOW_NAME; fi
 a15_unpublish "lanes/log/repoTwo-1.md" "lanes/log/repotwo-1.md"
 
 # ---- THE PAIR IS PUBLISHED AND THIS CHECKOUT HAS ONE ROW ---------------------
