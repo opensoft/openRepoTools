@@ -10156,6 +10156,95 @@ has   "…with the retire act" "$err" "lane-end repoLV-1 --retire"
 is    "…and the transcript was NOT moved" \
       "$( [ -f "$t2_projects/$lv_slug/$LV_ID.jsonl" ] && echo yes || echo no )" yes
 
+# A HOLDER IS COUNTED BY THE ESTATE'S ONE LIVENESS CONTRACT, NOT BY `kill -0`
+# (opensoft/openRepoTools#56). `follow_transcript` used to test the pid alone, so
+# a record that had ENDED, or whose pid had been RECYCLED onto some other
+# process, read as a live holder and refused a lane that nothing held. It now
+# asks `lanes-edit.sh transcript-holders`, which is `record_is_live` — status not
+# ended, pid answers `kill -0`, `procStart` still the one the record wrote — and
+# every case below is a lane whose transcript sits in another profile and whose
+# one record the old scan counted.
+seed_follow_lane() {   # <repo> <id>: the repository, its transcript in t2's projects, its row
+  SFL_DIR="$HOME/projects/$1"
+  mkdir -p "$SFL_DIR"
+  git init -q -b main "$SFL_DIR"
+  git -C "$SFL_DIR" remote add origin "https://github.com/opensoft/$1.git"
+  SFL_SLUG="$(sanitize "$SFL_DIR")"
+  mkdir -p "$t2_projects/$SFL_SLUG"
+  printf '{"type":"user"}\n' > "$t2_projects/$SFL_SLUG/$2.jsonl"
+  mkdir -p "$WIP/handoffs/$1"
+  printf 'Lane: %s-1 — resume prompt\n\nx\n' "$1" > "$WIP/handoffs/$1/$1-1.md"
+  git -C "$WIP" add -- "handoffs/$1" >/dev/null 2>&1
+  git -C "$WIP" commit -q -m "seed the $1 handoff"
+  git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+  git -C "$WIP" push -q origin main
+  "$E" add-row "| \`$1-1\` | harness \`$2\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/$1/$1-1.md | ACTIVE |" >/dev/null 2>&1
+}
+
+# STATUS `ended`, AND A PID THAT STILL ANSWERS. Named for another lane by a
+# person, as the live fixture above is, so the lane's own liveness read skips it.
+EN_ID="a17a0056-5656-4000-8000-a17a00565656"
+seed_follow_lane repoEN "$EN_ID"; EN_DIR="$SFL_DIR"; en_slug="$SFL_SLUG"
+write_record_ns "$HOME/.claude-profiles/profiles/opensoft/team/t2/sessions/ended-en.json" \
+  "$EN_ID" "$LIVE_PID" "$live_start" "othersess:@98.%98" "somewhere-else-9" "user" "ended"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="ensess:@72" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$EN_DIR" repoEN-1 --no-launch
+is    "a record whose status is ENDED is not a holder, whatever its pid answers" "$rc" 0
+has   "…and the transcript is followed" "$err" "moved into $HOME/.claude/projects/$en_slug"
+hasnt "…without a refusal naming a live process" "$err" "a LIVE process there holds it"
+is    "…it is HERE now" \
+      "$( [ -f "$HOME/.claude/projects/$en_slug/$EN_ID.jsonl" ] && echo yes || echo no )" yes
+
+# A `procStart` THAT IS NOT THE PID'S OWN: the pid was recycled onto another
+# process, which is the case the contract's third test exists for. That test
+# reads `/proc/<pid>/stat`, and `pid_alive` skips it where that file cannot be
+# read (macOS), so the case can only be set up where it can.
+PS_ID="a17a0057-5757-4000-8000-a17a00575757"
+if [ -r "/proc/$LIVE_PID/stat" ]; then
+  seed_follow_lane repoPS "$PS_ID"; PS_DIR="$SFL_DIR"; ps_slug="$SFL_SLUG"
+  write_record_ns "$HOME/.claude-profiles/profiles/opensoft/team/t2/sessions/recycled-ps.json" \
+    "$PS_ID" "$LIVE_PID" "999999999999" "othersess:@97.%97" "somewhere-else-9" "user" "idle"
+  run env PATH="$A17PATH" FAKE_TMUX_WINDOW="pssess:@73" CLAUDE_PROFILE_NAME=team-05a \
+      "$START" --dir "$PS_DIR" repoPS-1 --no-launch
+  is    "a record whose procStart is not the pid's own (a recycled pid) is not a holder" "$rc" 0
+  has   "…and the transcript is followed" "$err" "moved into $HOME/.claude/projects/$ps_slug"
+  hasnt "…without a refusal naming a live process" "$err" "a LIVE process there holds it"
+  is    "…it is HERE now" \
+        "$( [ -f "$HOME/.claude/projects/$ps_slug/$PS_ID.jsonl" ] && echo yes || echo no )" yes
+else
+  skip "a record whose procStart is not the pid's own is not a holder" "no readable /proc/<pid>/stat on this host: the contract's third test cannot run here, so no recycled pid can be told apart"
+fi
+
+# THE HELPER'S OWN EXITS, as `dup_check` reads them: 0 and 8 are answers, 2 is a
+# helper that predates the read, and anything else is a read that FAILED —
+# which is not "nothing holds it", and must not move a transcript out from under
+# a process that might.
+cat > "$SANDBOX/thfail" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  transcript-holders) printf 'lanes-edit: simulated failure\n' >&2; exit "${TH_RC:-3}" ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/thfail"
+TF_ID="a17a0058-5858-4000-8000-a17a00585858"
+seed_follow_lane repoTF "$TF_ID"; TF_DIR="$SFL_DIR"; tf_slug="$SFL_SLUG"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="tfsess:@74" CLAUDE_PROFILE_NAME=team-05a \
+    REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/thfail" TH_RC=3 \
+    "$START" --dir "$TF_DIR" repoTF-1 --no-launch
+is    "a transcript-holders that FAILS refuses the follow, rather than reading as no holder" "$rc" 2
+has   "…naming the helper and its exit code" "$err" "transcript-holders $TF_ID exited 3"
+has   "…passing the helper's own stderr through" "$err" "lanes-edit: simulated failure"
+has   "…saying nothing was moved" "$err" "nothing was moved"
+is    "…and the transcript was NOT moved" \
+      "$( [ -f "$t2_projects/$tf_slug/$TF_ID.jsonl" ] && echo yes || echo no )" yes
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="tfsess:@74" CLAUDE_PROFILE_NAME=team-05a \
+    REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/thfail" TH_RC=2 \
+    "$START" --dir "$TF_DIR" repoTF-1 --no-launch
+is    "a helper that predates transcript-holders (exit 2) carries on, as dup_check does" "$rc" 0
+has   "…saying the read is not known here" "$err" "has no \`transcript-holders\` (exit 2)"
+has   "…and the transcript is followed" "$err" "moved into $HOME/.claude/projects/$tf_slug"
+
 # `--dry-run` MOVES NOTHING (Copilot round 1 on openRepoTools#47). This search
 # runs long before the dry-run exit at the foot of the command, and a run whose
 # last line is *nothing was renamed, written or launched* must not have moved a
