@@ -130,7 +130,8 @@ USAGE
 # first time somebody copied only one of them. The rules themselves are NOT
 # new: `<dir>/<Name>/family.yaml` carrying `kind: family-manifest` and naming
 # `<Name>` is `setup-project.py`'s `family_folder_here`, doubled-name layout
-# and all (#76, RULING ruling 3).
+# and all (#76, RULING ruling 3). What "naming" accepts is widened by #236,
+# at `is_family_folder` below: the display `name:` or the repository's name.
 
 # `$PROJECTS_DIR` names ONE directory when it is set. Otherwise both
 # spellings, in that order, because people really do use both - and DEDUPED by
@@ -199,7 +200,8 @@ is_safe_folder_name() {
 # One indent-zero scalar out of a small YAML file, with parameter expansion
 # only: no YAML library, no python per line, no forks per line. This is the
 # reader the Speckit extension's `workspace_read_scalar` is, narrowed to the
-# keys these two commands read (`kind`, `name`, `family`, `tracking_branch`).
+# keys these two commands read (`kind`, `name`, `family`, `tracking_branch`,
+# `repository`).
 YAML_VALUE=""
 yaml_scalar() {
     local file="$1" key="$2" line
@@ -251,11 +253,19 @@ is_pinned_member() {
     [ "$YAML_VALUE" = "family-manifest" ]
 }
 
-# Is `<dir>` a FAMILY FOLDER? All three facts have to agree, exactly as
-# `family_folder_here` requires them to: the holder clone sits at
-# `<dir>/<basename>`, its `family.yaml` says `kind: family-manifest`, and it
-# names that same family. A directory called Northwind is a directory called
-# Northwind; what makes it a family folder is read, never guessed from a name.
+# Is `<dir>` a FAMILY FOLDER? All three facts have to agree: the holder clone
+# sits at `<dir>/<basename>`, its `family.yaml` says `kind: family-manifest`,
+# and the folder is named for the family. A family has TWO names and either
+# one is the folder's (#236): its display `name:`, which is the rule this
+# block began with and what an estate laid out before openRepoShape v1.1.0
+# has, or the LAST PART of its `repository:`, which is v1.1.0's rule - the
+# holder, and the folder around it, are named for the REPOSITORY, `name:`
+# being only a title (opensoft/openRepoShape#629), and the holder's `make
+# siblings` stops before cloning when the folder is not that name
+# (opensoft/openRepoShape#543). A family whose two names differ has no layout
+# that works for both unless both are accepted. A directory called Northwind
+# is a directory called Northwind; what makes it a family folder is read,
+# never guessed from a name.
 is_family_folder() {
     local dir="$1" name manifest
     name="${dir##*/}"
@@ -263,8 +273,11 @@ is_family_folder() {
     manifest="$dir/$name/family.yaml"
     yaml_scalar "$manifest" kind || return 1
     [ "$YAML_VALUE" = "family-manifest" ] || return 1
-    yaml_scalar "$manifest" name || return 1
-    [ "$YAML_VALUE" = "$name" ]
+    if yaml_scalar "$manifest" name && [ "$YAML_VALUE" = "$name" ]; then
+        return 0
+    fi
+    yaml_scalar "$manifest" repository || return 1
+    [ "${YAML_VALUE##*/}" = "$name" ]
 }
 
 is_project_root() {
