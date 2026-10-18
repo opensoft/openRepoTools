@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# THE openrepotools PACKAGE (#228): A SECOND WAY IN, NEVER A REQUIREMENT.
+# Cloning this repository and running `openRepoTools --install`, or the
+# one-line install, keeps working and needs nothing from this file. Brett
+# Heap asked for the package on 2026-10-17 ("we will publish on pypi").
+#
+# WHOLE, WHERE openRepoShape's IS THIN: the wheel holds `src/openrepotools/`
+# as `openrepotools/`, and under `openrepotools/payload/` every file the
+# installer's `payload_names` lists, byte for byte, with the openRepoShape
+# pin. So `openRepoTools --install` run from the package takes everything
+# from inside it and reaches no network.
+#
+# `src/`, AND NOT THE ROOT, because the root already holds `openRepoTools`,
+# the bash installer: a directory `openrepotools/` beside it is the same name
+# on a case-insensitive disk (macOS's and Windows' default), and a clone
+# there could not hold both. openRepoShape made the same choice for the same
+# reason.
+#
+# NO `readme`, because README.md goes to the assembly root at the triad
+# cutover (#186), while this file goes to the code leg: a `readme` here would
+# name a file the release's own tree does not hold. openRepoShape's declares
+# none either.
+
+[build-system]
+# PINNED, as every tool this repository's CI installs is: a build that
+# resolves the newest backend on the day it runs is a build whose bytes
+# depend on that day. 1.27.0 is the newest hatchling that still runs on
+# Python 3.9, the oldest Python this package supports (1.28.0 and later need
+# 3.10, by their own `Requires-Python`), and it is the pin openRepoShape
+# v1.1.0 was published with. Hatchling, because `force-include` below puts
+# the payload into the wheel declaratively, with no build hook. Any hash
+# lock that names hatchling names this same version.
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openrepotools"
+# THE TAG IS THE ONE SOURCE OF THE VERSION: the release build writes it into
+# the stamp, `src/openrepotools/_release.py`, with the tag, the commit, the
+# digest and the repository, and `[tool.hatch.version]` below reads it from
+# there. The committed stamp says 0.0.0, unstamped.
+dynamic = ["version"]
+requires-python = ">=3.9"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+# NONE: the payload is bash, and the entry module uses the standard library
+# alone. What the payload runs (git, `jq` for `--install`, python3 for two
+# commands) it finds on PATH, as a checkout's does.
+dependencies = []
+# no `readme` key: README.md goes to the assembly root at the cutover (above)
+
+# THE ONE COMMAND, the name a checkout's `--install` places.
+# `openrepotools.cli:main` replaces its own process with the first `bash` on
+# PATH, running the packaged `openRepoTools` with the person's arguments
+# unchanged, and reads no stamp: bash is the one reader.
+[project.scripts]
+openRepoTools = "openrepotools.cli:main"
+
+[tool.hatch.version]
+path = "src/openrepotools/_release.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openrepotools"]
+
+# THE WHOLE PAYLOAD, BYTE FOR BYTE: each payload path P at
+# `openrepotools/payload/P`. First the installer's `payload_names`, in its
+# own order (the seventeen INSTALLABLES, then the three skills, then the
+# three command files), and then the openRepoShape pin, which `wip init`
+# reads from beside the installer (`wip_shape_ref`). `payload_names` stays
+# the only list: a test compares it, plus the pin, with these keys and with
+# the built wheel, both ways round. A payload file joins both lists in one
+# commit.
+[tool.hatch.build.targets.wheel.force-include]
+"openRepoTools" = "openrepotools/payload/openRepoTools"
+"park" = "openrepotools/payload/park"
+"resume" = "openrepotools/payload/resume"
+"status" = "openrepotools/payload/status"
+"lane" = "openrepotools/payload/lane"
+"lanes" = "openrepotools/payload/lanes"
+"lane-handoff" = "openrepotools/payload/lane-handoff"
+"lane-rename" = "openrepotools/payload/lane-rename"
+"lanes-edit.sh" = "openrepotools/payload/lanes-edit.sh"
+"lane-start" = "openrepotools/payload/lane-start"
+"lane-end" = "openrepotools/payload/lane-end"
+"link-estates" = "openrepotools/payload/link-estates"
+"repos.tsv" = "openrepotools/payload/repos.tsv"
+"claude-current" = "openrepotools/payload/claude-current"
+"claude-restart-check" = "openrepotools/payload/claude-restart-check"
+"lanes-index" = "openrepotools/payload/lanes-index"
+"lane-worktrees" = "openrepotools/payload/lane-worktrees"
+"skills/handoff/SKILL.md" = "openrepotools/payload/skills/handoff/SKILL.md"
+"skills/lane-swap/SKILL.md" = "openrepotools/payload/skills/lane-swap/SKILL.md"
+"skills/restart/SKILL.md" = "openrepotools/payload/skills/restart/SKILL.md"
+"commands/handoff.md" = "openrepotools/payload/commands/handoff.md"
+"commands/ctx.md" = "openrepotools/payload/commands/ctx.md"
+"commands/swap.md" = "openrepotools/payload/commands/swap.md"
+"contracts/openreposhape-pin.yaml" = "openrepotools/payload/contracts/openreposhape-pin.yaml"
