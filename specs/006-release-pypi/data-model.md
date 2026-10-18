@@ -158,12 +158,14 @@ tagged ─▶ built (two builds, one file) ─▶ on TestPyPI ─▶ install-che
 | Job | Granted | Environment | Runs on |
 | --- | --- | --- | --- |
 | `build` | `contents: read`, `actions: read` | none | every dispatch |
-| `testpypi` | `id-token: write` (and the reads its re-checks need) | `testpypi` | a `v*` tag only |
-| `install` | read only | none | every dispatch: on the build's wheel for a branch, from TestPyPI for a tag |
-| `pypi` | `id-token: write` (and the reads its re-checks need) | `pypi` | a `v*` tag of a final `X.Y.Z` only |
+| `testpypi` | exactly `id-token: write`, `actions: read`, `contents: read` | `testpypi` | a `v*` tag only |
+| `install` | `contents: read` | none | every dispatch: on the build's wheel for a branch, from TestPyPI for a tag |
+| `pypi` | exactly `id-token: write`, `actions: read`, `contents: read` | `pypi` | a `v*` tag of a final `X.Y.Z` only |
 
-**Outputs of `build`**: the wheel's file name, its sha256 and the tree
-digest. These are what each later job checks against.
+**Outputs of `build`**: the wheel's file name, its sha256, the tree digest,
+and `final`. `final` is `true` only for a final `X.Y.Z`, and the `pypi`
+job's condition reads it. The others are what each later job checks
+against.
 
 **The environments**, which Brett Heap creates: each names a required
 reviewer, and each has a deployment limit of exactly one rule, the tag

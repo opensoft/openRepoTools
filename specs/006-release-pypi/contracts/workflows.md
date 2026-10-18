@@ -46,9 +46,13 @@ on:
 2. `actions/setup-python` with `python-version: '3.9'`.
 3. **Git identity**, by environment and never by global config, as the
    `tests` job sets it.
-4. **The test tools.** First `tomli==2.4.1`, by hash, from a one-line file
-   the step writes with the build lock's `tomli` hash, installed with
-   `--require-hashes --only-binary=:all:`. Then `pytest==8.3.4`.
+4. **The test tools.**
+   - First `tomli==2.4.1`, by hash. The step extracts the build lock's
+     whole `tomli` entry, the requirement line and every `--hash` line
+     under it, into a file under `$RUNNER_TEMP`, and installs it with
+     `--require-hashes --only-binary=:all:`. The job holds no digest of its
+     own.
+   - Then `pytest==8.3.4`.
 5. **Build twice, then compare.**
    - `SOURCE_DATE_EPOCH="$(git log -1 --format=%ct HEAD)"`.
    - `python3 -m pip wheel --no-deps -w "$RUNNER_TEMP/a" .`, then the same
@@ -58,7 +62,8 @@ on:
 6. **The wheel check**: a `python3 - <<'PY'` heredoc that runs
    [wheel.md](wheel.md)'s checks 2 to 6 against `HEAD`, with the stamp equal
    to the committed file. It names every problem, then exits 1 if there was
-   any.
+   any. The suite extracts this heredoc and runs it on synthetic wheels
+   (`tests/test_tests_workflow.py`).
 7. **pipx from its hash lock**: `.github/release-pipx-requirements.txt`, with
    `--require-hashes --only-binary=:all:`. On 3.9 that gives pipx 1.11.1.
    `PIPX_HOME` and `PIPX_BIN_DIR` sit under `$RUNNER_TEMP`.
@@ -129,6 +134,10 @@ jobs: {build, testpypi, install, pypi}
    - A branch dispatch builds, checks and installs, and uploads nothing.
    - A `X.Y.ZrcN` dispatched on its annotated tag reaches TestPyPI and the
      install check, and the `pypi` job refuses it.
+   - The build's CI gate holds in a rehearsal too, and it counts only push
+     and dispatch runs. A feature branch's commit has only `pull_request`
+     runs, so dispatch `tests.yml` on that branch first, and wait for it to
+     finish green.
    - No rehearsal uses `1.1.0`.
 5. **Where releases come from.**
    - From v1.1.0 on, tags are made in `openRepoTools-code`.
@@ -155,8 +164,12 @@ The steps are the model's, in its order. Each is a refusal on failure:
 2. The ref:
    - on a tag, it is the annotated tag `v$VERSION`, whose object names
      `$GITHUB_SHA`, read from the forge and from git;
-   - on a branch, it is a rehearsal, and the version must still parse.
-3. `$GITHUB_SHA` is on `main` or on `release/v<X.Y>`.
+   - on a branch, it is a rehearsal, and the version must still parse;
+   - any other ref is refused.
+3. On a tag, `$GITHUB_SHA` is on `main` or on `release/v<X.Y>`. On a
+   branch, the rehearsal has no release branch to be on, and the step says
+   so and passes. This is the model's form (`release.yml:200-249` at
+   v1.1.0), and every later step runs in a rehearsal too.
 4. The checkout is `$GITHUB_SHA`, and it is clean.
 5. Both environments:
    - each names at least one required reviewer;
@@ -182,11 +195,17 @@ The steps are the model's, in its order. Each is a refusal on failure:
     `SOURCE_DATE_EPOCH` the commit's time.
 12. The two wheels are one file.
 13. [wheel.md](wheel.md)'s checks 2 to 6, with the stamp as the release's.
+    This is a heredoc, which `tests/test_release_workflow.py` extracts and
+    runs on synthetic wheels.
 14. Record these as job outputs: the wheel's name, its sha256, the digest,
     and `final`. `final` is `true` only when `VERSION` is a final `X.Y.Z`,
     as decided by step 1's own pattern. Keep the wheel as an artifact.
 
-### `testpypi` (`environment: testpypi`; `id-token: write` plus the reads its re-checks need)
+### `testpypi` (`environment: testpypi`; permissions exactly `id-token: write`, `actions: read`, `contents: read`)
+
+These are the model's grants (`release.yml:691-694` at v1.1.0):
+`id-token` for trusted publishing, `actions` for the environment's rules and
+this run's approvals, and `contents` for the tag, read again.
 
 - It runs only when `github.ref` is a `refs/tags/v*` tag and `build`
   succeeded.
@@ -223,10 +242,13 @@ The steps:
    `package` job's step 10. The skip line and the count line must be exact.
 6. On macOS only, run step 5 again with `PATH="/bin:$PATH"`, and print
    `BASH_VERSION`, which must begin with `3.2`.
-7. On 3.9 only, compile `lanes-index` and `lane-worktrees` with
-   `python3 -c` `compile(...)`.
+7. On 3.9 only, compile the installed package's own
+   `payload/lanes-index` and `payload/lane-worktrees` with `python3 -c`
+   `compile(...)`. The shipped bytes are what must compile on 3.9.
 
-### `pypi` (`environment: pypi`; `id-token: write` plus the reads its re-checks need)
+### `pypi` (`environment: pypi`; permissions exactly `id-token: write`, `actions: read`, `contents: read`)
+
+These are the model's grants (`release.yml:1133-1136` at v1.1.0).
 
 - It needs `build`, `testpypi` and `install`.
 - Its job-level `if:` requires a `refs/tags/v*` tag and
@@ -244,14 +266,24 @@ The steps:
 - A dispatch with `version` is the only trigger, and `permissions: {}` is
   set at the top.
 - Only `testpypi` and `pypi` hold `id-token: write`, each in its own
-  environment and on a `v*` tag alone.
+  environment and on a `v*` tag alone. Each holds exactly `id-token: write`,
+  `actions: read` and `contents: read`. `build` holds exactly
+  `contents: read` and `actions: read`, and `install` holds exactly
+  `contents: read`.
+- The ref step passes a branch as a rehearsal and refuses any other non-tag
+  ref, and the branch-membership step passes a rehearsal.
+- The wheel-check heredoc is run on four synthetic wheels made from HEAD's
+  blobs:
+  - the wheel as built, which passes;
+  - one with no `licenses/LICENSE`, which fails, naming `LICENSE`;
+  - one with a payload file's byte changed, which fails, naming that file;
+  - one with a payload file's mode changed, which fails, naming that file.
 - Every `uses:` is pinned by 40 hex digits, and the publish action is
   `dc37677…`.
 - Every `pip install` is from a hash lock, with `--require-hashes`.
 - Every entry in both locks is one version, named by its sha256.
 - The build lock's hatchling is `pyproject.toml`'s pin.
 - The pipx lock gives 1.11.1 below Python 3.10 and 1.17.8 from 3.10.
-- The `package` job's `tomli` hash is the build lock's.
 - The build gate names exactly the four job ids.
 - The digest step compares `TREE_DIGEST_DEFINITION` with the literal and
   with the pin.
@@ -276,4 +308,8 @@ The steps:
   pull request's diff review confirms the rest of "unchanged".
 - The `package` job runs on `ubuntu-latest` with Python `3.9` and
   `submodules: true`, and carries steps 4 to 11 in order.
+- Its `tomli` comes from the build lock's own entry, and the job holds no
+  `--hash` of its own.
+- Its wheel-check heredoc (step 6) is run on the same four synthetic wheels
+  as the release build's, with the same four outcomes.
 - The header comment names both push branches and four jobs.

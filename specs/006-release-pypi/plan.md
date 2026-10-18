@@ -70,7 +70,8 @@ this plan.
   - `pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33`
     (v1.14.2);
   - pipx 1.11.1 and 1.17.8, from `.github/release-pipx-requirements.txt`;
-  - `pytest==8.3.4`, and `tomli==2.4.1` by hash.
+  - `pytest==8.3.4`, and `tomli==2.4.1` by hash, from the build lock's own
+    entry (research R12).
 - **Reused from the submodule**: openRepoShape's pinned
   `scripts/repo_shape.py`, for `tree_digest`, `tree_digest_from_gh`,
   `TREE_DIGEST_DEFINITION` and `load_yaml`. It is never copied.

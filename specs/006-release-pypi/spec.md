@@ -452,8 +452,9 @@ passages, and the absence of the pipx route.
     are, and only their docstring, which says "no version number", is
     rewritten.
 
-  `--help`, `--install --version` and the parser's refusals MUST behave in
-  the package as they do in a checkout. `--version` names the command's
+  In a package whose stamp passes FR-010, `--help`, `--install --version`
+  and the parser's refusals MUST behave as they do in a checkout. A broken
+  stamp refuses all of them first (FR-012). `--version` names the command's
   release, not the release of the files `--install` placed.
 
 #### `--install` and pipx
@@ -569,9 +570,11 @@ passages, and the absence of the pipx route.
 - **FR-029**: The build MUST refuse unless every one of these holds:
   - the version is a final `X.Y.Z` other than `0.0.0`, or a pre-release
     `X.Y.ZrcN` bound for TestPyPI;
-  - the dispatched ref is the annotated tag `v<version>`, and the tag object
-    names the run's commit, as read both from the forge and from git;
-  - that commit is on `main` or on `release/v<X.Y>`;
+  - on a dispatch on a tag, the dispatched ref is the annotated tag
+    `v<version>`, and the tag object names the run's commit, as read both
+    from the forge and from git;
+  - on a dispatch on a tag, that commit is on `main` or on `release/v<X.Y>`;
+  - the dispatched ref is a tag or a branch, and nothing else;
   - the checkout is that commit, and it is clean;
   - the environments `testpypi` and `pypi` each name a required reviewer,
     and each has a deployment limit of exactly one rule, the tag pattern
@@ -584,6 +587,11 @@ passages, and the absence of the pipx route.
   - the pinned standard's digest definition is `sorted-ls-tree-r-v1`, the
     literal that `--version` labels the digest with and that
     `contracts/openreposhape-pin.yaml` names.
+
+  A dispatch on a branch is the rehearsal of FR-033, as in the model
+  (`release.yml:200-249` at v1.1.0). The two tag-bound checks above stand
+  down, because a branch has no tag and no release branch to be on. Every
+  other check still runs, and no upload job runs.
 - **FR-030**: The build MUST be reproducible.
   - It installs its tools from a hash lock, wheels only, with hatchling at
     the package's own pin.

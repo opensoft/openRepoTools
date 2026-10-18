@@ -47,10 +47,13 @@ every task below assumes them.
 
 - **Merge `origin/main` into `006-release-pypi` first,** by a merge commit,
   never a rebase or a force-push. The branch was cut at `aaa7bc8`, and `main`
-  is at `2732d59` as of 2026-10-17. Since the cut:
+  is at `83d2690` as of 2026-10-18. Since the cut:
   - `tests/conftest.py` gained the four-roots layout;
   - `tests/test_repo_hygiene.py` moved by about 260 lines;
-  - AGENTS.md is 321 lines against a cap of 323.
+  - AGENTS.md is 321 lines against a cap of 323;
+  - `lane-start` and `skills/handoff/SKILL.md` changed in content. Both are
+    payload files, but their modes and the payload list are unchanged, and
+    the wheel copies whatever bytes the commit holds.
 - **Line numbers.** Line numbers in plan.md, research.md and the contracts
   are at `aaa7bc8`. Find each test by its name, and each bash function by
   its name.
@@ -111,6 +114,7 @@ The tests use fake venv layouts, with no pipx and no wheel.
     - no `jq`: ends in the `jq` refusal, with no `rm` for the link;
     - `restart` retirement, and a later `--install`, both leaving the link.
   - `test_pipx_offline_*`: a package-mode `--install` with `OPENREPOTOOLS_REPO=offline.invalid/sentinel` and a `gh` and a `curl` that fail. It places the same artifacts and receipt rows as a checkout's install, apart from the link.
+  - Every test here runs `bash <payload>/openRepoTools` directly, as the entry module's exec would. None runs the console script, which is `test_entry_*`'s job in T005. So these tests need T008 and not T007, and T007 and T008 stay parallel.
 - [ ] T005 [P] [US1] [O] Write `tests/test_package.py`, as detailed below — files: `tests/test_package.py` — verify: `bash tests/run.sh --collect-only -q -k 'test_metadata_ or test_payload_map_ or test_wheel_ or test_entry_'`
   - `test_metadata_*`: contracts/wheel.md's `pyproject.toml` rules, read with `tomllib`, falling back to `tomli`, and skipping, naming `tomli`, when neither imports.
   - `test_payload_map_*`: the force-include keys and values against `payload_names` (run from the bash file) plus the pin, in both directions, naming every difference.
@@ -220,8 +224,9 @@ pushed commit's `package` job is green.
   - the four job ids;
   - the three existing jobs' `runs-on`, checkout options, Python version and `run:` commands;
   - the `package` job's runner, Python 3.9, `submodules: true`, and steps 4 to 11 in order;
-  - the `package` job's `tomli` hash, equal to the build lock's;
-  - the header comment naming both push branches and four jobs.
+  - the `package` job's `tomli`, extracted from the build lock's own entry with every hash, and no `--hash` held in `tests.yml` itself;
+  - the header comment naming both push branches and four jobs;
+  - step 6's wheel-check heredoc, extracted and run on four synthetic wheels made from HEAD's blobs, with contracts/workflows.md's four outcomes: the wheel as built passes; no `licenses/LICENSE` fails, naming `LICENSE`; a changed payload byte fails, naming the file; a changed payload mode fails, naming the file.
 
 ### Implementation for User Story 4
 
@@ -257,6 +262,8 @@ environments exist.
   - `test_release_trigger_`, `test_release_build_`, `test_release_upload_`, `test_release_install_check_`, `test_release_header_` and `test_release_reads_`;
   - `test_release_stamp_writer_`: the heredoc, extracted as the model's `heredoc()` does, is run on a copy of the committed stamp and read back by `--version` from a `package_tree`. The step must refuse a file already stamped, and a value no release carries;
   - `test_release_lock_`, for both locks: one version per entry, by sha256; hatchling equal to `pyproject.toml`'s pin; pipx 1.11.1 below Python 3.10 and 1.17.8 from 3.10.
+  - `test_release_build_` also runs step 13's wheel-check heredoc on the four synthetic wheels of contracts/workflows.md, with their four outcomes. It also holds the ref step and the branch-membership step to the rehearsal rule: a branch passes as a rehearsal, and any other non-tag ref is refused.
+  - `test_release_upload_` also holds each job's permissions exactly: `testpypi` and `pypi` get `id-token: write`, `actions: read` and `contents: read`; `build` gets `contents: read` and `actions: read`; `install` gets `contents: read`.
 
   The tests also hold the digest-label literal equal to `openRepoTools`' `--version` arm and to the pin's `digest_definition`.
 
@@ -265,12 +272,13 @@ environments exist.
 - [ ] T019 [US5] [O] Create `.github/workflows/release.yml`'s shape and its `build` job, adapted from openRepoShape v1.1.0 (`190133d`) step for step, as detailed below — files: `.github/workflows/release.yml` — verify: `actionlint .github/workflows/release.yml && bash tests/run.sh -k 'test_release_trigger_ or test_release_build_ or test_release_stamp_writer_ or test_release_lock_ or test_release_reads_'`
   - the shape: `workflow_dispatch` with `version`, `permissions: {}`, the `release` concurrency group without cancelling, `bash` by default, and `VERSION` and `PYTHONUTF8` in `env`;
   - contracts/workflows.md's build steps 1 to 14, with design.md Decision 10's differences: `X.Y.ZrcN` accepted; the stamp's `REPOSITORY` from `GITHUB_REPOSITORY`; the digest-definition assertion against the literal and the pin; the payload blob and mode check; and the `final` output;
+  - the model's rehearsal rule in steps 2 and 3 (FR-029): on a branch, the tag and branch-membership checks pass as a rehearsal, and every other step runs;
   - every action pinned by a full commit.
 - [ ] T020 [US5] [O] Add `release.yml`'s `testpypi`, `install` and `pypi` jobs per contracts/workflows.md, as detailed below — files: `.github/workflows/release.yml` — verify: `actionlint .github/workflows/release.yml && bash tests/run.sh -k 'test_release_upload_ or test_release_install_check_ or test_release_reads_'`
   - the order: TestPyPI, then the three-leg install check, then PyPI;
-  - `id-token: write` on the two upload jobs alone, each in its environment, on a `v*` tag;
+  - `id-token: write` on the two upload jobs alone, each in its environment, on a `v*` tag. Each upload job gets exactly `id-token: write`, `actions: read` and `contents: read`, and `install` gets `contents: read`;
   - the re-reads, the empty-index check and the served-digest check, around `pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33`;
-  - the install legs: ubuntu 3.x, macOS 3.x and ubuntu 3.9, with no Windows leg. They check the exact skip and count lines; the macOS leg reruns under `/bin/bash`, printing `BASH_VERSION`; the 3.9 leg compiles `lanes-index` and `lane-worktrees`;
+  - the install legs: ubuntu 3.x, macOS 3.x and ubuntu 3.9, with no Windows leg. They check the exact skip and count lines; the macOS leg reruns under `/bin/bash`, printing `BASH_VERSION`; the 3.9 leg compiles the installed payload's own `lanes-index` and `lane-worktrees`;
   - `pypi` refuses a pre-release, at its job condition (`needs.build.outputs.final`) and again at its first step.
 - [ ] T021 [US5] [O] Write `release.yml`'s header, RELEASING, in contracts/workflows.md's six sections, as detailed below — files: `.github/workflows/release.yml` — verify: `actionlint .github/workflows/release.yml && bash tests/run.sh -k test_release_`
   - the procedure on Brett Heap's word, with the tag message's form, and the `gh release create` step after PyPI serves the version;
@@ -281,7 +289,7 @@ environments exist.
     - back-ports by fast-forward, by a merge, or by a PR of `cherry-pick -x`;
     - one HOLD at a time, the landing lane back-porting, and the LANDED line naming both commits;
     - patch tags waiting for the newest run;
-  - the two rehearsals, and never `1.1.0`;
+  - the two rehearsals, and never `1.1.0`. A branch rehearsal's commit needs a finished, green push or dispatch run of `tests.yml`, so dispatch `tests.yml` on that branch first;
   - where releases come from: the code leg's tags from v1.1.0, `v1.0.0` and the `rc` tags staying here, no PyPI upload from `opensoft/openRepoTools`, and Brett Heap's environments, ruleset and publishers;
   - what the workflow never reads.
 
@@ -297,8 +305,9 @@ index does not serve.
 **Independent Test**: the three verify commands below.
 
 - [ ] T022 [P] [US6] [S] Create `docs/release-notes/v1.0.0.md` as exactly the output of `gh release view v1.0.0 --repo opensoft/openRepoTools --json body --jq .body` (research R15) — files: `docs/release-notes/v1.0.0.md` — verify: `gh release view v1.0.0 --repo opensoft/openRepoTools --json body --jq .body | cmp - docs/release-notes/v1.0.0.md`
-- [ ] T023 [P] [US6] [S] Draft `docs/release-notes/v1.1.0.md`, as detailed below — files: `docs/release-notes/v1.1.0.md` — verify: `tail -n 1 docs/release-notes/v1.1.0.md | command grep -q 'openRepoTools-spec.*docs/release-notes/v1.1.0.md' && command grep -q '^## Before the tag' docs/release-notes/v1.1.0.md`
+- [ ] T023 [P] [US6] [S] Draft `docs/release-notes/v1.1.0.md`, as detailed below — files: `docs/release-notes/v1.1.0.md` — verify: `tail -n 1 docs/release-notes/v1.1.0.md | command grep -q 'openRepoTools-spec.*docs/release-notes/v1.1.0.md' && command grep -q '^## Before the tag' docs/release-notes/v1.1.0.md && command grep -q 'pipx install --force openrepotools' docs/release-notes/v1.1.0.md`
   - what v1.1.0 brings: the `openrepotools` package on PyPI; `pipx install` and the offline `--install` that leaves `openRepoTools` to pipx; `--version` naming the release; and the `package` job and the release workflow;
+  - the move from the one-line install (FR-024): `pipx install --force openrepotools`, then `openRepoTools --install`, and why `--force` is needed;
   - each value not yet known as a named `<placeholder>`, every one listed in a closing `## Before the tag` checklist;
   - a last line naming the file's own path in the spec leg, `opensoft/openRepoTools-spec`'s `docs/release-notes/v1.1.0.md`.
 - [ ] T024 [P] [US6] [S] Correct `README.md`, as detailed below — files: `README.md`, `tests/test_repo_hygiene.py` — verify: `! command grep -qE 'pipx install( --force)? openrepotools' README.md && bash tests/run.sh -k 'repo_hygiene or readme'`
@@ -409,6 +418,8 @@ header (T021), the release notes (T022, T023) and the README (T024).
 | FR-036 to FR-041: tags, `release/v1.1`, back-ports, patch tags | lane 3, on his word | 6.2, 6.3, and later releases |
 | FR-042: each GitHub Release, after PyPI serves the version | lane 3, on his word | 6.3 |
 | FR-045: the pipx route in the assembly's README | lane 3, on his word, once the workBenches condition holds | 6.4 |
+| FR-024: README's copy of the move from the one-line install, beside the pipx route (the v1.1.0 notes carry it already, T023) | lane 3, on his word | 6.4 |
+| FR-031: nothing ever uploads to PyPI from `opensoft/openRepoTools` | the absence of any pypi.org publisher for it (Brett Heap's answer 3), and his word for every tag. The RELEASING header states it (T021). No code guard is specified | 4.1, 6.1 |
 | FR-046: the code leg's `LICENSE` blob `261eeb9`; the plan's entries | lane 3's check; lane openRepoTools-1's plan | 5.1, 5.2 |
 | FR-047: the workBenches condition | **pending Brett Heap's choice of (a), (b) or (c)** | 1.4 |
 

@@ -251,17 +251,25 @@ were read read-only.
 ## R12. The `package` job's test tools
 
 - **Decision**:
-  - The job installs `tomli==2.4.1` first. It is installed by hash, with
-    `--require-hashes --only-binary=:all:`, from a one-line requirements
-    file the step writes. The hash is the build lock's own `tomli` entry.
-  - Then it installs `pytest==8.3.4` as the other jobs do. pip then keeps
-    the hashed `tomli`, which satisfies pytest's requirement on Python
-    below 3.11.
-  - A test holds the job's `tomli` hash equal to the build lock's.
+  - The job installs `tomli==2.4.1` first, by hash, with
+    `--require-hashes --only-binary=:all:`.
+  - The step does not copy any digest. It extracts the build lock's whole
+    `tomli` entry, the `tomli==2.4.1 ; python_full_version < '3.11'` line
+    with every `--hash` line under it, into a requirements file under
+    `$RUNNER_TEMP`. At v1.1.0 that entry has one hash per platform wheel,
+    39 or more of them.
+  - Then it installs `pytest==8.3.4`, as the other jobs do. pip keeps the
+    hashed `tomli`, which satisfies pytest's requirement on Python below
+    3.11.
+  - A test holds that the step reads its `tomli` entry from the build lock,
+    and that the job holds no `--hash` of its own.
 - **Rationale**:
   - design.md Decision 9 asks for tomli at a pinned version, by hash,
     beside pytest.
   - The proposal's file list adds no third lock.
+  - Extracting the entry, rather than copying one digest, keeps the build
+    lock the only record of tomli's digests. That avoids two copies that
+    could drift.
 - **Alternatives considered**: a third lock file, rejected as a file nothing
   else needs.
 
@@ -322,7 +330,7 @@ were read read-only.
   - At this branch's base `aaa7bc8`, README.md is 485 lines against a cap of
     486 (`tests/test_repo_hygiene.py:2253`), and AGENTS.md is 314 against 316
     (`:1748`).
-  - `main` has moved since. At `2732d59` (2026-10-17), AGENTS.md is 321
+  - `main` has moved since. At `83d2690` (2026-10-18), AGENTS.md is 321
     against 323, and README is still 485 against 486. The tests are
     `test_agents_md_is_short_enough_to_be_read` and
     `test_readme_is_short_enough_to_be_read`, wherever they now sit.

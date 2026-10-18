@@ -127,8 +127,13 @@ openRepoTools: note: the first openRepoTools on your PATH is <first, or "none">,
 - It is printed only on a mismatch, or when `type -P openRepoTools` finds
   nothing.
 - `<first>` is that path as `type -P` gives it.
-- `<first's directory>` is its `dirname`, and is `PATH` itself when `<first>`
-  is `none`.
+- `<first's directory>` is its `dirname`.
+- When nothing is found, `<first's directory>` cannot be filled, so the line
+  is the same up to its last `;`, and then ends differently:
+
+  ```text
+  openRepoTools: note: the first openRepoTools on your PATH is none, not this package's <prefix>/bin/openRepoTools, so the release you just installed is not the one that runs; put the directory that holds pipx's link to it on PATH
+  ```
 - `<prefix>` is five levels above `payload/` (research R7).
 
 ## A venv-looking link that fails the pipx rule (stderr, exit 2; planning phase)
