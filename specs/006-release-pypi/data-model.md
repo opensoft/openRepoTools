@@ -15,8 +15,12 @@ them, its states.
 | `DIGEST` | empty | 64 lowercase hex digits (`is_lower_hex 64`), that commit's `sorted-ls-tree-r-v1` tree digest |
 | `REPOSITORY` | empty | an owner/name slug (`is_slug`), the release run's `$GITHUB_REPOSITORY` |
 
-**The file's shape**: one module docstring, then the five assignment lines in
-the order above. [contracts/stamp.md](contracts/stamp.md) gives the grammar.
+**The file's shape**: the repository's SPDX line,
+`# SPDX-License-Identifier: Apache-2.0`, then one module docstring, then the
+five assignment lines in the order above (the lead's ruling of 2026-10-18).
+[contracts/stamp.md](contracts/stamp.md) gives the grammar, whose reader
+skips the SPDX line as it skips any `#` comment or blank line before the
+docstring.
 
 **States**:
 

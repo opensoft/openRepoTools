@@ -2,7 +2,11 @@
 
 ## The committed file, `src/openrepotools/_release.py`
 
+The file is the SPDX line, then one module docstring, then the five
+assignment lines.
+
 ```python
+# SPDX-License-Identifier: Apache-2.0
 """<a module docstring: what the file is, that only the release build writes
 it, and that bash reads it with a fixed grammar and never imports it>"""
 VERSION = "0.0.0"
@@ -12,6 +16,11 @@ DIGEST = ""
 REPOSITORY = ""
 ```
 
+- Its first line is the repository's SPDX line,
+  `# SPDX-License-Identifier: Apache-2.0`, as in every tracked `.py` file
+  here and in openRepoShape v1.1.0's own package files (the lead's ruling of
+  2026-10-18). The docstring opens on the next line, with no blank line
+  between, as in those files.
 - It is LF only, with a final newline.
 - No line of the docstring begins, in any case, with `version` or
   `__version__` followed by optional spaces and `=`.
@@ -21,9 +30,14 @@ REPOSITORY = ""
 Lines are read in order.
 
 1. A line holding a carriage return is refused, with its line number.
-2. A blank line, or a line whose first character is `#`, is skipped.
+2. A blank line, or a line whose first character is `#`, is skipped. That
+   holds before the docstring as well as after it. So the SPDX line that
+   opens the file is skipped, and so is any blank line before the docstring.
 3. **The docstring.** Before the first assignment, one line that begins
    with `"""` opens the docstring.
+   - It need not be the file's first line. Only lines that rule 2 skips may
+     come before it. The committed file's docstring opens on line 2, after
+     the SPDX line.
    - The docstring closes on that same line if a second `"""` follows the
      opening one. Otherwise it closes at the next line that contains `"""`.
    - Every docstring line is skipped, except one that begins, in any case,
@@ -83,6 +97,9 @@ field or the line it is about.
   `(?i)^(__version__|VERSION) *= *(['"])v?(?P<version>.+?)\2` under
   `re.MULTILINE`, and takes the first match
   (`hatchling/version/core.py:6` and `:31` in 1.27.0).
+- A `#` line, such as the SPDX line, can never match that pattern. So the
+  first match is still the `VERSION` line, as long as the docstring guard
+  of rule 3 holds.
 - A test runs that pattern, copied with its citation, and `stamp_read` on
   each of these, and requires one `VERSION` from both:
   - the committed file;
@@ -103,7 +120,7 @@ field or the line it is about.
     `COMMIT = ""`, `DIGEST = ""` and `REPOSITORY = ""`) is replaced exactly
     once.
   - A count other than one refuses, so a file already stamped is refused.
-  - The docstring and every other byte stay as they are.
+  - The SPDX line, the docstring and every other byte stay as they are.
 - **After writing**: the file is read again, and must assign exactly the
   five release values.
 - **The test**:

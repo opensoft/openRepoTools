@@ -16,17 +16,26 @@ were read read-only.
 
 - **Decision**:
   - The one console script is `openRepoTools = "openrepotools.cli:main"`.
-  - `src/openrepotools/__init__.py` holds a docstring and nothing else.
+  - `src/openrepotools/__init__.py` holds the SPDX line and a docstring,
+    and no code.
   - `src/openrepotools/cli.py` holds `main()`, which does what design.md
     Decision 3 says and nothing more.
+  - Both package files open with the repository's SPDX line,
+    `# SPDX-License-Identifier: Apache-2.0`, on the lead's ruling of
+    2026-10-18. Every tracked `.py` file here does the same, and so do
+    openRepoShape v1.1.0's `__init__.py` and `_release.py`, read on
+    2026-10-18. The docstring follows on line 2, with no blank line.
+  - The stamp file, `src/openrepotools/_release.py`, is that SPDX line, then
+    one module docstring, then the five assignment lines
+    ([contracts/stamp.md](contracts/stamp.md)).
 - **Rationale**:
   - It mirrors the model's `openreposhape.cli`.
   - pip's console-script template then writes
     `from openrepotools.cli import main`. That is the line design.md
     Decision 8's pattern
     `^from openrepotools(\.[A-Za-z_][A-Za-z0-9_]*)* import ` matches.
-  - An empty `__init__` keeps the import of the entry point free of side
-    effects.
+  - An `__init__` with no code keeps the import of the entry point free of
+    side effects.
 - **Alternatives considered**:
   - `openrepotools.__main__`: it would add `python -m openrepotools`, a
     second entry the proposal does not ask for.
