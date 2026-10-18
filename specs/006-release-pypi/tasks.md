@@ -208,7 +208,7 @@ upgrade or an uninstall has one defined, honest outcome.
 
 ### Implementation for User Story 3
 
-- [ ] T013 [US3] [O] Teach `openRepoTools` the coexistence rules, as detailed below — files: `openRepoTools` — verify: `bash tests/run.sh -k 'test_install_pipx or test_package_stamp or test_package or openrepotools_command or install_skill or install_by_rename or install_payload'`
+- [X] T013 [US3] [O] Teach `openRepoTools` the coexistence rules, as detailed below — files: `openRepoTools` — verify: `bash tests/run.sh -k 'test_install_pipx or test_package_stamp or test_package or openrepotools_command or install_skill or install_by_rename or install_payload'`
   - add the other-source count line (research R5):
     - `<source>` is `openrepotools $STAMP_VERSION` in any package-mode run. In a checkout or the one-line install, it is `PAYLOAD_REPO @ PAYLOAD_REV` for an adopted source, and `REPO @ REF` otherwise;
     - `<version>` comes from `stamp_read` on the stamp beside `PIPX_PAYLOAD`. When that stamp fails the reader, the line ends in contracts/cli-output.md's unreadable-stamp clause;
