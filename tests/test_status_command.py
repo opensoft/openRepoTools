@@ -138,13 +138,17 @@ def home(tmp_path) -> Path:
     return target
 
 
-def seed_root_with_leg(base: Path, name: str) -> dict:
+def seed_root_with_leg(base: Path, name: str,
+                       leg_branch: str | None = None) -> dict:
     """Bare remotes for ONE standalone root that mounts ONE leg.
 
     The leg has two commits so a checkout can be moved one back and be
     genuinely away from its pin; the root pins the leg's tip. No Makefile and
     no overlay: `status` runs nothing, so a root here is a `project.yaml`, a
     `.gitmodules` and git.
+
+    `leg_branch` makes the leg's row declare `branch: <leg_branch>`, its OWN
+    branch (#235), and gives the leg's remote that branch at the pin.
     """
     leg_seed = base / "seed" / f"{name}-spec"
     leg_seed.mkdir(parents=True)
@@ -153,15 +157,18 @@ def seed_root_with_leg(base: Path, name: str) -> dict:
     commit_all(leg_seed, "the leg")
     (leg_seed / "more.md").write_text("more spec\n", encoding="utf-8")
     commit_all(leg_seed, "the leg moved on")
+    if leg_branch is not None:
+        git("branch", leg_branch, cwd=leg_seed)
     leg_bare = base / "remotes" / f"{name}-spec.git"
     leg_bare.parent.mkdir(parents=True, exist_ok=True)
     git("clone", "-q", "--bare", str(leg_seed), str(leg_bare), cwd=base)
 
     seed = base / "seed" / name
     seed.mkdir(parents=True)
+    own_branch = "" if leg_branch is None else f"    branch: {leg_branch}\n"
     (seed / "project.yaml").write_text(
-        ROOT_WITH_LEG_YAML.format(id=name.lower(), name=name, org=ORG),
-        encoding="utf-8")
+        ROOT_WITH_LEG_YAML.format(id=name.lower(), name=name, org=ORG)
+        + own_branch, encoding="utf-8")
     (seed / "README.md").write_text(f"# {name}\n", encoding="utf-8")
     git("init", "-q", "-b", "main", ".", cwd=seed)
     commit_all(seed, "seed")
@@ -468,6 +475,48 @@ def test_a_leg_on_a_feature_branch_at_its_pin_is_a_finding(atlas, home):
     git("branch", "-q", "-D", "001-leg-work", cwd=leg)
     result = run(STATUS, "Atlas", home=home)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_a_leg_off_its_own_declared_branch_is_a_finding_that_names_it(
+        home, tmp_path):
+    """#235: the leg's row declares `branch: develop`, which `make bootstrap`
+    places it on instead of the root's `tracking_branch`, so a leg sitting on
+    `main` — the ROOT's branch, and at its pin — is the leg `resume` refuses.
+    The finding names `develop`, says it is the leg's own, and the row and the
+    reads under it are about `develop`, not `main`."""
+    base = tmp_path / "own-branch-remotes"
+    base.mkdir()
+    root = clone_root(home, seed_root_with_leg(base, "Atlas", "develop"),
+                      "Atlas")
+    leg = root / "spec"
+    git("checkout", "-q", "main", cwd=leg)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert f"  leg    develop {leg}" in result.stdout, (
+        "the leg's row names the branch the leg is read against")
+    assert ("    - on branch main, not develop, the `branch:` this leg's own "
+            "row declares in project.yaml (`resume` refuses a root whose leg "
+            "sits on any other branch, because `make bootstrap` would move "
+            "it)") in result.stdout
+    assert "not main" not in result.stdout
+    assert "1 finding(s) in 2 repositories" in result.stdout
+
+
+def test_a_leg_on_its_own_declared_branch_is_not_a_finding(home, tmp_path):
+    """The other direction of #235: a leg on the `branch:` its row declares is
+    where `make bootstrap` leaves it, not "on branch develop, not main"."""
+    base = tmp_path / "own-branch-remotes"
+    base.mkdir()
+    root = clone_root(home, seed_root_with_leg(base, "Atlas", "develop"),
+                      "Atlas")
+    leg = root / "spec"
+    git("checkout", "-q", "-b", "develop", "origin/develop", cwd=leg)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "on branch" not in result.stdout, result.stdout
+    assert ("    at its pin, which is origin/develop's tip as of the last "
+            "fetch; clean") in result.stdout
+    assert "0 finding(s) in 2 repositories" in result.stdout
 
 
 def test_a_pin_behind_its_legs_origin_after_the_leg_fetched(atlas, home,

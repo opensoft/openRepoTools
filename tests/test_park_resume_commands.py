@@ -402,7 +402,8 @@ projects:
 LEG_MEMBER = "Charlie"
 
 
-def seed_leg_member(base: Path) -> tuple[Path, Path]:
+def seed_leg_member(base: Path, member: str = LEG_MEMBER,
+                    leg_branch: str | None = None) -> tuple[Path, Path]:
     """A bare project WITH A LEG, carrying the REAL `scripts/bootstrap.py`.
 
     THE GUARD MUST GUARD THE REAL THING (F3 of the review on #83). The other
@@ -411,26 +412,34 @@ def seed_leg_member(base: Path) -> tuple[Path, Path]:
     This one ships `templates/assembly-root/scripts/bootstrap.py` itself — the
     file whose `checkout_tracking_branch` runs `git checkout <tracking>` in a
     leg whose branch tip equals the pin — so the test is about that code.
+
+    `leg_branch` makes the spec leg's row declare `branch: <leg_branch>`, the
+    leg's OWN branch (#235), which `bootstrap.py` places the leg on instead of
+    the root's `tracking_branch`. The leg's remote then has that branch too,
+    at the pin, so a leg can sit on it and `bootstrap.py` can check it out.
     """
-    leg_seed = base / "seed" / f"{LEG_MEMBER}-spec"
+    leg_seed = base / "seed" / f"{member}-spec"
     leg_seed.mkdir(parents=True)
     (leg_seed / "spec.md").write_text("# the spec leg\n", encoding="utf-8")
     git("init", "-q", "-b", "main", ".", cwd=leg_seed)
     commit_all(leg_seed, "the leg")
-    leg_bare = base / "remotes" / f"{LEG_MEMBER}-spec.git"
+    if leg_branch is not None:
+        git("branch", leg_branch, cwd=leg_seed)
+    leg_bare = base / "remotes" / f"{member}-spec.git"
     leg_bare.parent.mkdir(exist_ok=True)
     git("clone", "-q", "--bare", str(leg_seed), str(leg_bare), cwd=base)
 
-    seed = base / "seed" / LEG_MEMBER
+    seed = base / "seed" / member
     (seed / "scripts").mkdir(parents=True)
+    own_branch = "" if leg_branch is None else f"    branch: {leg_branch}\n"
     (seed / "project.yaml").write_text(
         "schema_version: 1\nkind: project-manifest\n"
-        f"id: {LEG_MEMBER.lower()}\nname: \"{LEG_MEMBER}\"\n"
+        f"id: {member.lower()}\nname: \"{member}\"\n"
         "tracking_branch: main\nlegs:\n"
-        f"  - role: assembly\n    repository: {ORG}/{LEG_MEMBER}\n"
+        f"  - role: assembly\n    repository: {ORG}/{member}\n"
         '    path: "."\n'
-        f"  - role: spec\n    repository: {ORG}/{LEG_MEMBER}-spec\n"
-        "    path: spec\n", encoding="utf-8")
+        f"  - role: spec\n    repository: {ORG}/{member}-spec\n"
+        f"    path: spec\n{own_branch}", encoding="utf-8")
     shutil.copy2(UPSTREAM / "templates" / "assembly-root" / "Makefile",
                  seed / "Makefile")
     shutil.copy2(UPSTREAM / "templates" / "assembly-root" / ".gitignore",
@@ -440,13 +449,13 @@ def seed_leg_member(base: Path) -> tuple[Path, Path]:
     shutil.copy2(UPSTREAM / "scripts" / "repo_shape.py",
                  seed / "scripts" / "repo_shape.py")
     for verb in ("park", "resume"):
-        write_stub(seed, verb, label=LEG_MEMBER)
+        write_stub(seed, verb, label=member)
     git("init", "-q", "-b", "main", ".", cwd=seed)
     commit_all(seed, "seed")
     git("-c", "protocol.file.allow=always", "submodule", "add", "-q",
         str(leg_bare), "spec", cwd=seed)
     commit_all(seed, "the leg, pinned")
-    bare = base / "remotes" / f"{LEG_MEMBER}.git"
+    bare = base / "remotes" / f"{member}.git"
     git("clone", "-q", "--bare", str(seed), str(bare), cwd=base)
     return bare, leg_bare
 
@@ -1849,6 +1858,132 @@ def test_a_leg_detached_at_the_pin_is_not_a_refusal(legged, home, remotes):
     assert "not its tracking branch" not in result.stdout, (
         result.stdout + result.stderr)
     assert f"{LEG_MEMBER}.sh ran with:" in result.stdout
+
+
+# --- F3, again (#235): the branch a leg is held to is the LEG's own --------
+
+#: A member like `Charlie`, except that its spec leg's row declares
+#: `branch: develop`.
+OWN_BRANCH_MEMBER = "Delta"
+
+
+@pytest.fixture
+def legged_own_branch(home, tmp_path) -> dict:
+    """`legged`, for a root whose spec leg declares `branch: develop`.
+
+    Built per test under `tmp_path` rather than into the session's `remotes`,
+    so the leg has a `develop` to sit on only where a test asks for one. The
+    leg arrives DETACHED at the pin, as every fresh clone's does, and `main`
+    and `develop` are both the pin.
+    """
+    base = tmp_path / "own-branch-remotes"
+    base.mkdir()
+    bare, leg_bare = seed_leg_member(base, OWN_BRANCH_MEMBER,
+                                     leg_branch="develop")
+    workspace = seed_workspace(
+        base, "legged",
+        {f"workspaces/{ORG}/{OWN_BRANCH_MEMBER.lower()}.yaml":
+            standalone_manifest(OWN_BRANCH_MEMBER)})
+    config = home / ".agents" / "workspace.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text("repository: tester/legged\npath: ~/projects/legged\n",
+                      encoding="utf-8")
+    git("clone", "-q", str(workspace), str(home / "projects" / "legged"),
+        cwd=home)
+    root = home / "projects" / OWN_BRANCH_MEMBER
+    git("-c", "protocol.file.allow=always", "clone", "-q",
+        "--recurse-submodules", str(bare), str(root), cwd=home / "projects")
+    return {"root": root, "leg": root / "spec", "dir": base / "remotes",
+            "bare": bare, "leg_bare": leg_bare}
+
+
+def test_a_leg_on_its_own_declared_branch_is_not_refused(legged_own_branch,
+                                                         home):
+    """The guard compared every leg with the ROOT's `tracking_branch`, so a
+    leg sitting on the `branch:` its own row declares was refused as "not its
+    tracking branch 'main'" — where it belongs, and where `make bootstrap`
+    leaves it.
+    """
+    leg = legged_own_branch["leg"]
+    git("checkout", "-q", "-b", "develop", cwd=leg)
+    head = git("rev-parse", "HEAD", cwd=leg).stdout.strip()
+    assert git("status", "--porcelain", cwd=legged_own_branch["root"]
+               ).stdout == "", "fixture: the superproject is clean"
+
+    result = run(RESUME, OWN_BRANCH_MEMBER, home=home,
+                 env=offline(legged_own_branch))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "REFUSED" not in result.stdout, result.stdout
+    assert "not its tracking branch" not in result.stdout
+    assert f"{OWN_BRANCH_MEMBER}.sh ran with:" in result.stdout, (
+        "a root whose leg is where it belongs is given the verb")
+    assert git("rev-parse", "--abbrev-ref",
+               "HEAD", cwd=leg).stdout.strip() == "develop"
+    assert git("rev-parse", "HEAD", cwd=leg).stdout.strip() == head
+
+
+def test_a_leg_off_its_own_declared_branch_refuses_the_root_and_is_not_moved(
+        legged_own_branch, home):
+    """THE MOVE THE GUARD EXISTS TO REFUSE, for a leg the old guard let
+    through. The leg sits on `main`, the ROOT's `tracking_branch`, while its
+    row declares `branch: develop` and a local `develop` is AT the pin — so
+    the root's own `make bootstrap` checks `develop` out, and `resume` used to
+    report that as success (exit 0) with the leg's HEAD moved.
+    """
+    root, leg = legged_own_branch["root"], legged_own_branch["leg"]
+    git("branch", "-q", "develop", cwd=leg)
+    git("checkout", "-q", "main", cwd=leg)
+    head = git("rev-parse", "HEAD", cwd=leg).stdout.strip()
+    assert git("status", "--porcelain", cwd=root).stdout == "", (
+        "fixture: the superproject is clean, which is the whole point")
+
+    result = run(RESUME, OWN_BRANCH_MEMBER, home=home,
+                 env=offline(legged_own_branch))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"REFUSED root {OWN_BRANCH_MEMBER}: leg spec is on 'main', "
+            "not its own branch 'develop' "
+            "(the `branch:` of its row in project.yaml);") in result.stdout
+    assert "`make bootstrap` would move it - nothing was touched." \
+        in result.stdout
+    assert "put it back on develop, and re-run." in result.stdout
+    assert git("rev-parse", "--abbrev-ref",
+               "HEAD", cwd=leg).stdout.strip() == "main", (
+        "the leg was walked onto its own branch")
+    assert git("rev-parse", "HEAD", cwd=leg).stdout.strip() == head
+    assert f"{OWN_BRANCH_MEMBER}.sh ran with:" not in result.stdout, (
+        "a refused root does not get the verb either")
+
+    # The premise, so the refusal is not theatre: the root's REAL bootstrap,
+    # run by hand over what `resume` refused, is what moves the leg.
+    proc = subprocess.run([sys.executable, "scripts/bootstrap.py"],
+                          cwd=str(root), capture_output=True, text=True,
+                          check=False)
+    assert git("rev-parse", "--abbrev-ref",
+               "HEAD", cwd=leg).stdout.strip() == "develop", (
+        "the premise of the guard is gone: bootstrap no longer places a leg "
+        "on its own branch\n" + proc.stdout + proc.stderr)
+
+
+def test_a_leg_with_no_branch_of_its_own_is_held_to_the_roots_and_says_so(
+        legged, home, remotes):
+    """UNCHANGED for a row with no `branch:`: the root's `tracking_branch` is
+    where bootstrap puts that leg, so a leg off it is refused exactly as
+    before — and the refusal now says WHICH branch the one it names is.
+    """
+    leg = legged["leg"]
+    git("checkout", "-q", "-b", "001-my-feature", cwd=leg)
+    head = git("rev-parse", "HEAD", cwd=leg).stdout.strip()
+
+    result = run(RESUME, LEG_MEMBER, home=home, env=offline(remotes))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"REFUSED root {LEG_MEMBER}: leg spec is on '001-my-feature', "
+            "not its tracking branch 'main' "
+            "(the root's `tracking_branch`);") in result.stdout
+    assert "put it back on main, and re-run." in result.stdout
+    assert git("rev-parse", "--abbrev-ref",
+               "HEAD", cwd=leg).stdout.strip() == "001-my-feature"
+    assert git("rev-parse", "HEAD", cwd=leg).stdout.strip() == head
+    assert f"{LEG_MEMBER}.sh ran with:" not in result.stdout
 
 
 # --- F4: two checkouts of one workspace are not two orgs -------------------
