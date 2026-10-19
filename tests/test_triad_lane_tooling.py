@@ -633,6 +633,64 @@ def test_t018_a_leg_git_cannot_read_is_counted_and_holds_lane_end(triad):
     assert "lane triad-1 is NOT ended" in end.stderr and str(t["spec"]) in end.stderr
 
 
+#: The words every reader gives a leg directory this account cannot search (#255).
+UNSEARCHABLE = ("git could not be read through it (its directory cannot be searched, so whether "
+                "it has a .git of its own could not be tested, and git could not read it: ")
+
+
+@NEEDS_UPSTREAM
+def test_255_a_leg_directory_that_cannot_be_searched_is_unreadable_and_holds_lane_end(triad):
+    """#255, OPENREPOSHAPE-2'S SHOULD ON #246: A LEG DIRECTORY THIS ACCOUNT
+    CANNOT SEARCH hid whether a `.git` stood in it, and `probe_leg` read it as
+    a leg that is not checked out - `absent`, counted for nobody - so the dry
+    run exited 0, the daily report left it out and `lane-end` ENDED the lane
+    over the lane's unpushed commit inside it. It is a read that failed
+    (Amendment 7(d)): `unreadable` and counted, with no permission at all and
+    with read but no search, the report names it, and `lane-end` refuses,
+    naming it. Searchable again, it is the leg holding the lane's commit; a
+    leg directory that is not there at all is still `absent`."""
+    b, t = triad
+    if os.geteuid() == 0:
+        pytest.skip("root searches a directory whatever its mode")
+    a, spec = t["assembly"], t["spec"]
+    b.git("checkout", "-q", "-b", "in-place", cwd=spec)
+    b.commit(spec, "worked in the leg", {"w.md": "w\n"}, lane="triad-1")
+    for mode in (0, 0o600):
+        os.chmod(spec, mode)
+        try:
+            proc = b.sweep("triad-1", "--dry-run", "--porcelain")
+            report = b.tool("lane-worktrees", "sweep", "--all", "--dry-run", "--report",
+                            "--estate", b.projects)
+            end = b.tool("lane-end", "triad-1")
+        finally:
+            os.chmod(spec, 0o755)
+        assert proc.returncode == 3, (oct(mode), proc.stdout + proc.stderr)
+        leg = porcelain_rows(proc.stdout, "leg")[str(spec)]
+        assert leg["disposition"] == "unreadable" and leg["retire"] == "retire", (oct(mode), leg)
+        assert f"the spec leg of {a}/project.yaml (opensoft/triad-spec): {UNSEARCHABLE}" \
+            in leg["why"], (oct(mode), leg)
+        assert report.returncode == 0, (oct(mode), report.stderr)
+        legs = _section(report.stdout, "Assembly legs with uncommitted or unpublished work")
+        assert f"- {spec} · the spec leg of {a} · (unreadable) ·" in legs, (oct(mode), legs)
+        assert "its directory cannot be searched" in legs, (oct(mode), legs)
+        assert end.returncode == 2, (oct(mode), end.stdout + end.stderr)
+        assert "lane triad-1 is NOT ended" in end.stderr and str(spec) in end.stderr, end.stderr
+        assert "1 leg checkout(s)" in end.stderr, end.stderr
+    proc = b.sweep("triad-1", "--dry-run", "--porcelain")
+    assert proc.returncode == 3, proc.stdout + proc.stderr
+    leg = porcelain_rows(proc.stdout, "leg")[str(spec)]
+    assert leg["disposition"] == "unpushed" and leg["retire"] == "retire", leg
+    away = b.root / "spec-moved-away"
+    spec.rename(away)
+    try:
+        proc = b.sweep("triad-1", "--dry-run", "--porcelain")
+    finally:
+        away.rename(spec)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    leg = porcelain_rows(proc.stdout, "leg")[str(spec)]
+    assert leg["disposition"] == "absent" and leg["retire"] == "-", leg
+
+
 @NEEDS_UPSTREAM
 def test_t018_dependencies_a_leg_nests_that_cannot_be_listed_refuse_the_sweep(triad):
     """THE SWEEP'S OWN REFUSAL, UNSHADOWED: `git submodule status --recursive`
