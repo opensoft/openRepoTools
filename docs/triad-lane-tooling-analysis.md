@@ -696,7 +696,7 @@ landing.
     format. `resume` records the tree it rebuilds with `lanes-edit.sh set-lane-tree
     <lane> <path> --checkout <assembly>/<leg>`, which covers both the parked and the
     resumed state. Both are workBenches changes, to be filed as one workBenches issue
-    that cites this item and is linked from the T018 PR. **workBenches issue: to be
+    that cites this item and is linked from the T018 PR. **workBenches issue: opensoft/workBenches#166, filed and
     linked.** The PR does not wait for it. Until it lands, `docs/README-lanes.md` (T018
     section) says what to check before `lane-end`.
 12. **The paired root in `lane-handoff` (T018, the pre-PR review's M1).** **Ruled
