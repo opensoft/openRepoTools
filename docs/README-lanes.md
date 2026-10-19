@@ -4032,6 +4032,7 @@ lane    <lane> <state> <holder> <holder uuid> <binding> <verdict>
 refused <why>                                   (only when refused)
 tree    <disposition> <retire|-> <path> <branch> <head> <why>
 <kind>  <disposition> <retire|-> <path> <detail> <bytes> <why>     (branch, scratch, cache, sandbox, link)
+leg     <disposition> <retire|-> <path> <branch> <head> <why>    (an assembly's checkouts only, T018)
 summary <to retire> <trees> <live> <foreign>
 ```
 
@@ -4060,6 +4061,175 @@ line could not be written, which stops the rest; each failure is in
 the table and in `DISPOSITION.md`, which is written even when an error no read
 caught stops the run), and **2** when the self-check refused a removal; usage
 is 64, a `--live` path that names no tree included.
+
+### A triad: its legs, their worktrees and the paired trees (T018)
+
+**Plan task T018 of the triad migration (opensoft/openRepoTools#186).** A lane's
+checkout is an **assembly** when its own `project.yaml` declares a leg other than
+itself — the standard's rule, as openRepoShape's `templates/assembly-root/project.yaml`
+writes it: a top-level `legs:` list of `- role:` / `repository:` / `path:`, the
+assembly's own leg at `path: "."`. One reader answers it for every lane tool:
+
+```sh
+lanes-edit.sh project-legs <checkout>   # <repository> TAB <path as declared> TAB <where it is checked out>
+```
+
+It is `lane-start`'s rung-5 reading of `legs:`, line for line (a test holds the two
+equal), and reads `repository:` and `path:` only — the manifest confers nothing,
+and `role:` is never read. 0 with legs; 8 with none (no `project.yaml`, or one naming
+no leg but the checkout itself); 1 where the manifest is there and cannot be read,
+which is never "no legs"; 64 usage. It touches no workspace.
+
+**Why the sweep needed it.** A leg is a submodule: its `.git` is a file,
+`git -C <assembly> worktree list` names none of its worktrees, and a feature's
+trees in the standard's three-leg layout, `<assembly>/worktrees/<feature>/{spec,code}`,
+are worktrees of the LEGS' repositories. So a code tree was invisible to the sweep,
+to `lane-end`'s gate, to the handoff's poll and to the daily report unless it had
+been recorded with the code leg as its checkout — and a lane with unpushed work in
+one passed `lane-end`.
+
+**Where the lane's checkout is an assembly**, `lane-worktrees sweep` also:
+
+* reads every leg, and every dependency nested in one (an initialized submodule of
+  the leg's own, as `code/upstream/openRepoShape` will be), as a **`leg` row** —
+  `clean`, `dirty`, `unpushed`, `dirty+unpushed`, `absent` (not checked out here)
+  or `unreadable`. A leg is the assembly's, shared by every lane the assembly
+  homes, as the assembly's own checkout is: **no `--yes` acts on a leg
+  checkout** (its branches are another matter: see `--branches` below). It is
+  COUNTED (exit 3, and `lane-end`'s gate) only where its HEAD's own `Lane:` trailer
+  is this lane's and it holds edits or commits origin lacks — the rule the sweep
+  already applies to `.claude/worktrees` — or where it could not be read; one
+  that holds another lane's work, or nobody's, is listed and counted for nobody;
+* lists the worktrees git registers in **every leg** — a FOREIGN row names the leg
+  it is registered in — so a tree recorded with the leg as its checkout is the
+  lane's as any recorded tree is;
+* takes **`<assembly>/worktrees`** as a root: a tree there that the lane's
+  inventory does not record is the lane's by its HEAD's own `Lane:` trailer and by
+  nothing else, because the paired root, like `.claude/worktrees`, is per feature
+  and not per lane — and `lane-handoff` records a tree there only on that rule, or
+  where the lane's own writers file names it (below), so the inventory does not
+  take in other lanes' trees; a standalone clone there
+  is FOREIGN; the root, a feature directory or a leg's directory under it that
+  cannot be listed or searched refuses, exit **2**;
+* with `--branches`, makes each leg's branches rows like the checkout's own, each
+  naming its leg, and **`--yes` deletes a merged lane branch there exactly as it
+  does in the checkout** — bundling first any commits only its reflog names, and
+  deleting its origin branch too where the row says `delete+remote`. No `--yes`
+  acts on a leg *checkout*. With `--fetch` (and under `--yes`), it asks each leg's
+  origin.
+
+A manifest, or a leg's own submodule list, that cannot be read refuses, exit
+**2**. **A checkout with no `project.yaml` is asked nothing** — no helper call, no
+read, no row — so a single repository's sweep, gate, handoff, report and `add` are
+byte for byte what they were; `tests/test_triad_lane_tooling.py` holds every one of
+them to the output `c45a452`'s tools printed.
+
+**`lane-end`'s gate** counts a `leg` row marked `retire` as a "leg checkout" it
+names, with the remedy a person's (commit and push from inside it; no `--yes` is
+offered when legs are all it counted), and lists a leg that holds work and is not
+this lane's below the table as NOT counted — whether the gate passes or not.
+
+**`lane-handoff` and `lane-reconcile` (T018 (b)).** Where the lane's checkout is an
+assembly, `lane-handoff` also looks in the **paired root**:
+`<assembly>/worktrees/<feature>` and `<feature>/<each declared leg's path>`, at every
+directory there with a `.git` of its own. The paired root is per feature and not per
+lane — every lane the assembly homes keeps its feature trees there — so the handoff
+takes a tree there as this lane's on the sweep's terms and on no wider ones. It
+**polls and records a paired tree only where one of three things holds**:
+
+* this lane's inventory already names it;
+* its HEAD's own last `Lane:` trailer is this lane's, on a commit origin's default
+  branch lacks — the sweep's own rule for that root;
+* the `--writers-file` names it, because a writer with nothing committed yet has no
+  trailer to be found by.
+
+Those trees are in the WRITERS block and its count. **Every other checkout there is
+another lane's, or nobody's**: one line in the top block under a heading of its own,
+outside WRITERS — `- PAIRED ROOT, not this lane's: <path> — branch …`, with its last
+commit and its HEAD's own trailer, which is what finds its lane. It is not counted, not
+recorded, and never a writer for the next session to relaunch; its own lane's handoff
+records it. So one lane's `lane-end` never refuses on another lane's paired work, and
+its `sweep --yes` never acts on it. This is option (a) of the pre-PR review's M1, as
+lane 1 ruled on 2026-10-17 (#186, comment 6240800023, item 1; the analysis's §7 item
+12): a handoff that recorded every paired tree made other
+lanes' trees the running lane's inventory, and a tree two lanes' inventories both name
+is `keep`, counted, in both sweeps.
+
+Every tree it polls is **recorded under the checkout it belongs to**. A worktree of a
+leg's repository (a paired tree, or one `lane-worktrees add --checkout
+<assembly>/code` made under the lane's root) is recorded under that leg, the path
+`project-legs` prints and `add` records. A tree the inventory already records under a
+checkout of the tree's own repository keeps it: a dependency nested in a leg
+(`--checkout <assembly>/code/upstream/<dep>`) is no declared leg. Any other tree keeps
+the lane's `dir`, as before. A leg that is not checked out here (never initialized, or
+deinitialized) names no tree. A leg with a `.git` of its own that git cannot read is
+`unreadable`, the sweep's word: one `- UNREADABLE LEG: …` line in WRITERS and a note on
+stderr, and counted on stderr's `legs: N of the assembly's legs under <dir> unreadable`
+line, never in WRITERS' `(N found)`. The lane is not held `SWAPPING` for the leg
+itself. A polled tree that could then be of that leg's repository is one it cannot
+place: its common git directory lies inside the assembly or its git directory (a
+leg's `.git/modules/<leg>`) and is no readable leg's and not the assembly's own, or
+the inventory records it under the unreadable leg. Such a tree is named, marked
+`(NOT recorded)` in its WRITERS line, and not recorded, so the checkout `add` recorded
+stays, and the lane stays `SWAPPING` for that tree. The `UNREADABLE LEG` line says how
+many trees were withheld, or that none was. A tree of any other repository, such as a
+worktree of an unrelated repository in the lane's own root, is recorded under the
+lane's `dir`, as when every leg reads. A tree with a `.git` of its own that git cannot
+read at all (a damaged `.git/modules/<leg>` takes every worktree of that leg with it)
+is listed in WRITERS and counted, marked `(NOT recorded)` and `UNREADABLE`, never
+recorded, and the lane stays `SWAPPING` for it. A checkout with no `project.yaml`
+naming a leg passes over such a tree, as it always did. A worktree
+a leg registers anywhere else is not polled
+as a writer, just as the checkout's own registrations elsewhere are not;
+`lanes-edit.sh lane-reconcile` reports it. The reconciliation reads what the legs hold
+beside what the checkout holds. Every worktree git registers in a checked-out leg that
+no sidecar names is a `TREE` row: `unmanaged`, or `stale-registration` where its
+directory is gone, naming the leg. A checkout in the paired root that nothing else named
+is `unmanaged`. A leg with a `.git` of its own that git cannot read is a `TREE` row
+`unreadable` that requires recovery: the sweep's rule and word for its `leg` row, which
+it counts. The verdict is not `indeterminate` for it, so the sweep still lists and
+counts that leg. Nothing is adopted, deleted or overwritten.
+
+**A `project.yaml` that cannot be read is never "no legs".** `lane-handoff` still
+completes (`R-A11-11`), but it does not poll the paired root. It says so in the top
+block's WRITERS section (`- NOT POLLED: …`), files no sidecar for a tree it cannot
+place (a tree of the lane's own repository is still recorded), and leaves the lane
+`SWAPPING`. The reconciliation's verdict is `indeterminate`, said in the words the
+sweep refuses with ("the legs of the assembly `<dir>` could not be read"): the sweep
+reads that verdict first and refuses on it, exit **2**. The verdict is `indeterminate`
+too where a leg's registrations, the paired root or a feature directory under it
+cannot be listed, or a leg's directory under a feature cannot be searched. For the
+same directories, and where the lane's inventory cannot be read (which paired trees it
+names would then be unknown), `lane-handoff` gives the same three signs: a
+`- NOT POLLED: …` line in WRITERS, a note on stderr, and the lane left `SWAPPING`.
+**A checkout with no `project.yaml` is asked nothing**, and one whose
+`project.yaml` names no leg but itself is asked only `project-legs`, which answers 8.
+The handoff's output, top block and inventory, and the reconciliation, are byte for
+byte what they were. `tests/test_triad_lane_tooling_handoff.py` holds them to the
+output `c45a452`'s tools printed, on a repository laid out to look like a triad: a
+submodule's worktree under `worktrees/<feature>/code`, and a tree recorded with the
+submodule as its checkout.
+
+**A parked paired tree is not the lane's to the sweep — a gap lane 1 has ruled on, and
+not yet closed (docs/triad-lane-tooling-analysis.md §7, item 11).** On 2026-10-17 (#186,
+comment 6240800023, item 2) lane 1 ruled that park's WIP commit carries a `Lane: <lane>`
+trailer and that `resume` records the tree it rebuilds with `lanes-edit.sh
+set-lane-tree`. Both are workBenches changes and neither has landed, so what follows
+holds until they do. The sweep and `lane-end`'s gate
+give a tree under `<assembly>/worktrees` to a lane by its HEAD's own `Lane:` trailer
+and by nothing else, unless the lane's inventory names it. `make park` commits a dirty
+leg tree as `wip: park <UTC time> — lane <lane>`, with no trailer, and `resume`
+soft-resets those commits, leaving the work uncommitted on the commit below them. So a
+parked or resumed paired tree is a FOREIGN row of `lane-worktrees sweep <lane>
+--dry-run` ("… its HEAD carries no Lane: trailer of this lane's as its own"), counted
+for nobody, and a gate that passes says nothing of it. **Before `lane-end` in an
+assembly**, run that dry run and read every FOREIGN row under `<assembly>/worktrees`:
+one whose HEAD, or whose branch's upstream, is a `wip: park … — lane <this lane>`
+commit, or that holds uncommitted edits, may be this lane's parked work. Land it or
+hand it over first, or record it with `lanes-edit.sh set-lane-tree <lane> <path>
+--checkout <assembly>/<leg>` so the gate counts it. `lane-handoff` does not record it
+for you: on the sweep's terms it records a paired tree with no trailer of the lane's
+only where the inventory or the writers file already names it.
 
 ### Two protocol lines this act assumes (proposed for the amendment that ratifies it)
 
@@ -4113,6 +4283,25 @@ A tree made any other way — a brief's own `git worktree add`, the harness's
 `isolation: worktree` — is still legal git and is FOREIGN to every sweep until
 `lanes-edit.sh set-lane-tree <lane> <path>` records it.
 
+**In a triad (T018), a tree of a leg is made from the leg** — the guidance of
+docs/triad-lane-tooling-analysis.md §4.4, proposal 1:
+
+```sh
+lane-worktrees add <lane> <slice> --checkout <assembly>/code
+```
+
+Where the lane's checkout is an assembly (its `project.yaml` declares a leg other
+than itself, read by `lanes-edit.sh project-legs`), a tree made from any checkout of
+a leg's repository — the leg itself, or a worktree of it, a paired
+`<assembly>/worktrees/<feature>/code` included — is recorded with **the leg** as its
+checkout (`<assembly>/<path>`), which every reader of the inventory enumerates; the
+note names the leg, and says so where the checkout given was a worktree of it. Made
+from the assembly itself (no `--checkout`), the tree is a worktree of the assembly,
+whose legs a worktree does not check out: `add` makes it as before and says that its
+legs are empty there, naming the `--checkout <assembly>/<leg>` that makes a leg's
+tree. A lane whose checkout has no `project.yaml` is asked nothing, and its `add` is
+what it always was. A manifest that cannot be read refuses, exit **2**, nothing made.
+
 ### The estate report — `sweep --all --dry-run --report`
 
 The net under every actor that never runs `lane-end`: **creation outpacing
@@ -4137,8 +4326,9 @@ lane-worktrees sweep --all --dry-run --report [--estate <dir>] [--post <file> | 
 |---|---|
 | FOREIGN repositories | a CLONE inside a worktree container (`.lane-worktrees/<lane>`, `.claude/worktrees`, `worktrees`, `<x>-worktrees`), and a second clone of an origin the estate already has a checkout of: path, size, last commit, owner (the last `Lane:` trailer), and LOAD-BEARING with its dependents where something leans on it |
 | Orphaned worktrees of ENDED lanes | trees an inventory records, and directories under `.lane-worktrees/<lane>`, of a lane whose snapshot is `CLOSED` or whose log's last lane line is `ENDED` or `RETIRED` — with the sweep that retires them. Empty beside a record it could not read — a lane snapshot, an inventory, the register's lines, a directory the walk could not list — it says "none found in what could be read", never "none" (#170 B8); a failure that is no lane record (an ignored-file listing, say) is still a row of the last section but leaves "none" as it is (#179); so does Awaiting disposition |
-| Unmerged branches | local branches of every checkout with no upstream, a gone upstream, a diverged one, or unpushed commits: tip, state, age, owner, and whether a worktree holds it. Never deleted; `main`, `master` and `rescue/*` are not listed |
+| Unmerged branches | local branches of every checkout — and of every leg of an assembly (T018) — with no upstream, a gone upstream, a diverged one, or unpushed commits: tip, state, age, owner, and whether a worktree holds it. Never deleted; `main`, `master` and `rescue/*` are not listed |
 | Root main divergence | a checkout whose local `main` is ahead of `origin/main`; where every changed path is under `handoffs/` or `lanes/`, the remedy is Amendment 4's — those live in the workspace repository and are pushed per write |
+| Assembly legs with uncommitted or unpublished work | **only where the estate holds an assembly with a leg checked out** (T018): every leg of a canonical checkout whose `project.yaml` declares legs, holding dirty or untracked paths or a HEAD no origin ref holds, or that could not be read — each named with its assembly. A leg is a submodule (its `.git` a file), so it was never a canonical checkout; it is now read as a checkout of its own here, and in the three branch sections, whose leg rows end with `the <path> leg of <assembly>` |
 | Awaiting disposition | a `rescue/*` branch (local or on origin) and a DIRTY inventory tree whose git directory has been still for `aging_days` (14), with owner and age |
 | Caches and sandboxes | `--include-caches`' and `--include-sandboxes`' rows across every lane, by size |
 | Ignored directories over `ignored_report_mb` | every ignored directory of every repository at or over 50 MB (`du -sk`) |
