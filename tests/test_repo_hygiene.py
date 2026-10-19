@@ -2482,7 +2482,7 @@ def test_readme_is_short_enough_to_be_read():
     (`README.md#the-lockstep-invariant`) and the three-repository front door.
     Today's single repository keeps 486.
 
-    486 -> 505 HERE AND 510 -> 529 AT AN ASSEMBLY ROOT, on 2026-10-18
+    486 -> 505 HERE, on 2026-10-18
     (opensoft/openRepoTools #228, feature 006, T024), for what a workstation
     with pipx's link reads. Twenty lines, each one a thing a person MEETS: the
     version paragraph, 3 -> 7 (FR-043), which said "no version number" and
@@ -2500,10 +2500,13 @@ def test_readme_is_short_enough_to_be_read():
     THE ASSEMBLY'S 510 DOES NOT MOVE HERE, although the 2026-10-08 entry makes
     it this count plus T006's twenty-four, which would be 529. Its file does
     not exist yet, and the README part of `assembly-0001` no longer applies to
-    today's README: its hunk at `README.md:300` fails against #237's (#247's)
-    rewrite of the count paragraph, and, with this entry's own rewrite of the
-    file-count sentence, its hunk at `README.md:237`, which adds the assembly's
-    install sentence, fails as well. Neither can be counted at this head, so
+    today's README, at three hunks: the one at `README.md:237`, which adds the
+    assembly's install sentence, fails against this entry's own rewrite of the
+    file-count sentence; the one at `README.md:260`, which moves `tests/run.sh`
+    under `code/`, fails against this entry's one-link-skipped sentence in the
+    symlink passage; and the one at `README.md:300`, which does the same for
+    `commands/swap.md`, fails against #237's (#247's) rewrite of the count
+    paragraph. None of the three can be counted at this head, so
     529 would be arithmetic over a patch that does not apply. The re-cut that
     makes the assembly's file again sets its cap, as the 2026-10-18 AGENTS.md
     entry above says for its 347, and `tests/test_test_roots.py` holds 510
