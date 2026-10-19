@@ -12474,9 +12474,26 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
     # `log_path_ci` is a `ls-tree` of the whole log directory and this loop runs
     # per lane, so asking it twice for one lane is a second read of the same
     # tree for the same answer.
+    #
+    # AND THE QUESTION IS `ensure_log`'S OWN, NOT A PARAPHRASE OF IT (#120 item
+    # 2, Copilot round 5 on #93). The scan asked it only where this checkout had
+    # NO log, and beside that compared a BASENAME with a repo-relative PATH, a
+    # clause that could never be equal. So the state a case-only rename leaves
+    # when its commit has not been pushed — the row's spelling here, committed;
+    # the old spelling still in origin's tree; a checkout merely AHEAD, which the
+    # `behind` guard rightly lets through — passed the scan, and `ensure_log`
+    # refused it INSIDE THE WRITE LOOP, after the lanes before it in this one
+    # commit had had their logs created and appended. It is asked here as
+    # `ensure_log` asks it, in its words, because it is the same refusal; the
+    # refusal of a local file of another case above means `rr_from`, where
+    # there is one, is the row's own spelling.
     rr_pub="$rr_pubp"
-    if [ "${rr_pub##*/}" != "$(log_path_for "$rr_l")" ] && [ "$rr_pub" != "$(log_path_for "$rr_l")" ] && [ "$rr_ln2" = 0 ]; then
-      die "lane $rr_l's object log is published as $rr_pub and this checkout does not have it: writing one here now would leave TWO files for one lane (Amendment 15). Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run. Nothing was written." 2
+    rr_from=""
+    [ "$rr_ln2" = 1 ] && rr_from="$rr_loc"
+    if [ "$rr_pub" != "$(log_path_for "$rr_l")" ] && [ "${rr_from##*/}" != "${rr_pub##*/}" ]; then
+      rr_here="and this checkout does not have it"
+      [ -n "$rr_from" ] && rr_here="while this checkout has ${LANES_LOG_PREFIX}${rr_from##*/} instead — a case-only rename whose commit never landed"
+      die "lane ${rr_l}'s object log is published as $rr_pub $rr_here: the row spells the lane $rr_l, so the log is $(log_path_for "$rr_l") (Amendment 15), and writing one here now would leave TWO files for one lane. Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run. Nothing was written." 2
     fi
 
     # THE LINE AND THE CELL, BOTH BUILT AND BOTH CHECKED BEFORE ANYTHING IS

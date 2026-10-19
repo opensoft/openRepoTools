@@ -3163,7 +3163,11 @@ half-written act is worse than no act: a checkout **behind** `origin` or dirty
 in anything but the register; a row whose ` | ` count makes **which text is the
 state cell** unknowable; a lane whose object log would need Amendment 15's
 **case-only rename**, which is a write of its own and not one this commit
-smuggles; an object log that exists here and is **NOT TRACKED**, which is
+smuggles — or whose log `origin` still publishes under another case while this
+checkout already has the row's spelling, **a case-only rename whose commit
+never landed**, which the scan refuses in `ensure_log`'s own words rather than
+leaving it to `ensure_log` half-way through the write (#120 item 2); an object
+log that exists here and is **NOT TRACKED**, which is
 somebody's uncommitted work and would land inside this commit under this act's
 message; a lane **named twice**, whose log would take the same line twice in a
 file nothing can correct; and a `--reason` carrying a `|`, a second ` · ` or a
