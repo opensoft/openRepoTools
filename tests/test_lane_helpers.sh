@@ -67,9 +67,11 @@ done
 # anybody has is the whole of it: lane 1's one instrumented run on WSL put 56% of
 # the wall in the exit trap's `rm -rf "$SANDBOX"` and 57% of the rest in two
 # sections, from ONE run, under contention, on one workstation. Nothing about a
-# CI runner's own split was ever printed, and the pytest wrapper prints this
-# file's transcript only when the suite FAILS, so a green run said nothing at
-# all. Three things, all of them reading and none of them changing what is run:
+# CI runner's own split was ever printed, and the pytest wrapper printed this
+# file's transcript only when the suite FAILED, so a green run said nothing at
+# all (step 1b: the wrapper now prints the table and the teardown line below on
+# a pass too). Three things, all of them reading and none of them changing what
+# is run:
 #
 #   `section "== … =="`  prints a heading exactly as `echo` did and stamps the
 #                        clock beside it, so each section's whole-second wall
@@ -80,9 +82,10 @@ done
 #   `cleanup`            times its own `rm -rf` and says so on stderr.
 #
 # AND BOTH GO TO THE JOB'S STEP SUMMARY where CI names one. A passing run's
-# stdout and stderr are both captured by the wrapper and thrown away, so a
-# table that only reached them would be one nobody reads on the runs that
-# matter. `$GITHUB_STEP_SUMMARY` is a file the runner reads after the step, it
+# stdout and stderr are both captured by the wrapper, which prints from them
+# only the table and the teardown line (step 1b) and drops the rest. The step
+# summary is the formatted copy, for a person signed in to the web UI.
+# `$GITHUB_STEP_SUMMARY` is a file the runner reads after the step, it
 # is an absolute path and survives the `HOME` and `TMPDIR` this suite moves
 # below, and a write to it that fails is a note on stderr and never a failed
 # assertion: a timing table is not a reason to turn a green run red.
