@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
@@ -117,9 +118,12 @@ def test_120_item_1_a_rewrite_cut_short_leaves_the_register_whole(reg, act, cut)
     register on disk and on origin is byte for byte what it was — or, where
     the bytes could not be put back either, the refusal says the register MAY
     NOW BE TRUNCATED, keeps the exact copy it was made from and names where,
-    and nothing is committed (the review of #263, NIT 6). The copy refusal says
-    nothing has been COMMITTED and names what the act had already written here,
-    never "Nothing was written" (S2)."""
+    and nothing is committed (the review of #263, NIT 6). The copy is kept in
+    the checkout's own git directory, mode 0600, under a name of its own, where
+    a restart that empties the temporary directory leaves it (the delta
+    review's NIT). The copy refusal says THIS ACT has committed nothing and
+    names what the act had already written here, never "Nothing was written"
+    (S2)."""
     if act == "delete_lines":
         retire_repo_x_3(reg)
     register = reg.read("lanes/LANES.md")
@@ -132,20 +136,45 @@ def test_120_item_1_a_rewrite_cut_short_leaves_the_register_whole(reg, act, cut)
     if cut == "write and restore fail":
         assert "IT MAY NOW BE TRUNCATED" in result.stderr
         assert "UNCHANGED" not in result.stderr
-        kept = re.search(r"are kept in (\S+) \(", result.stderr)
-        assert kept, result.stderr
-        assert Path(kept.group(1)).read_text(encoding="utf-8") == register
+        found = re.search(r"are kept in (\S+) \(", result.stderr)
+        assert found, result.stderr
+        kept = Path(found.group(1))
+        assert kept.read_text(encoding="utf-8") == register
+        assert kept.parent.resolve() == Path(reg.git("rev-parse", "--absolute-git-dir").strip()).resolve()
+        assert re.fullmatch(r"lanes-edit-register-before-edit\.\d{8}T\d{6}Z\.\d+", kept.name), kept.name
+        assert stat.S_IMODE(kept.stat().st_mode) == 0o600
         return
     assert reg.read("lanes/LANES.md") == register
     if cut.startswith("copy"):
         assert "could not be copied whole" in result.stderr
-        assert "nothing has been committed" in result.stderr
+        assert "this act has committed nothing" in result.stderr
         assert "Nothing was written" not in result.stderr
         if act == "delete_lines":
             assert "NOT committed: lanes/archive/LANES-retired.md (created)" in result.stderr
     else:
         assert "have been put back and proved" in result.stderr
         assert "UNCHANGED" not in result.stderr
+
+
+@PROC_FD
+def test_120_item_1_a_refusal_after_a_captured_peer_edit_says_this_act_committed_nothing(reg):
+    """The delta review of #263: a peer's uncommitted register edit found
+    before the act is captured as a commit of its own (`handle_preexisting`),
+    so a refusal after it that said "nothing has been committed" was false. It
+    says what holds: this act has committed nothing."""
+    before = reg.head()
+    reg.write("lanes/LANES.md", reg.read("lanes/LANES.md").replace(
+        "another repository's row 30 |", "another repository's row 30, edited by a peer |"))
+    edited = reg.read("lanes/LANES.md")
+    reg.cut_cat("copy fails")
+    result = reg.run(*ACTS["replace_line"], LANES_LANE="repoX-1")
+    assert result.returncode == 5, (result.stdout, result.stderr)
+    assert "captured pre-existing edit" in result.stderr
+    assert reg.git("log", "--format=%s", f"{before}..HEAD").startswith("LANES(pre-existing@")
+    assert reg.git("rev-list", "--count", f"{before}..HEAD").strip() == "1"
+    assert "this act has committed nothing" in result.stderr
+    assert "nothing has been committed" not in result.stderr
+    assert reg.read("lanes/LANES.md") == edited
 
 
 @UNPRIVILEGED_ONLY
@@ -187,7 +216,7 @@ def test_120_item_1_a_sweep_refused_part_way_names_what_it_wrote_and_is_not_call
     reg.cut_cat("copy fails")
     result = reg.sweep("repoX-2")
     assert result.returncode == 5, (result.stdout, result.stderr)
-    assert "nothing has been committed" in result.stderr
+    assert "this act has committed nothing" in result.stderr
     assert "NOT committed: lanes/log/repoX-2.md (its RETIRED line)" in result.stderr
     assert "Nothing was written" not in result.stderr
     (reg.fakebin / "cat").unlink()
@@ -266,6 +295,28 @@ def test_120_item_3_a_lane_whose_log_closes_it_is_told_it_is_closed(reg, last):
     assert reg.head() == before
 
 
+@pytest.mark.parametrize("last", ["ENDED", "RETIRED"])
+def test_120_item_3_a_closing_line_only_this_checkout_has_is_not_called_closed(reg, last):
+    """The review of #263, S2, from a commit rather than a cut sweep: a closing
+    line committed here and never pushed is refused as this checkout's alone,
+    never called CLOSED, and with its article right: "an ENDED line" (the
+    delta review's NIT)."""
+    started = lane_line("STARTED", "repoX-2", OLD_ID, "2026-09-11T00:00:00Z")
+    reg.write("lanes/log/repoX-2.md", log_text("repoX-2", started))
+    reg.publish("repoX-2 started")
+    reg.write("lanes/log/repoX-2.md", log_text(
+        "repoX-2", started, lane_line(last, "repoX-2", OLD_ID, "2026-09-12T00:00:00Z")))
+    reg.commit(f"repoX-2 {last.lower()}, not pushed")
+    before = reg.head()
+    result = reg.sweep("repoX-2")
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    article = "an" if last == "ENDED" else "a"
+    assert (f"in THIS CHECKOUT ends on {article} {last} line, and origin/main's copy does not"
+            in result.stderr)
+    assert "already CLOSED" not in result.stderr
+    assert reg.head() == before
+
+
 def test_120_item_3_a_lane_whose_log_says_it_is_parked_is_sent_to_lane_end(reg):
     """…and the other branch: a log whose last lane-kind line is STARTED,
     PAUSED or RESUMED is a lane a person can still pick up, so the refusal
@@ -293,9 +344,49 @@ MANGLED = {
 }
 
 
+#: The row `add_repo_x_4` adds, with its newline: a peer that publishes it
+#: first publishes the very line add-row appends.
+NEW_ROW = row("repoX-4", NEW_ID, "new here", "2026-10-19")
+ARCHIVE = "lanes/archive/LANES-retired.md"
+
+
 def add_repo_x_4(reg: Register) -> subprocess.CompletedProcess:
-    return reg.run("add-row", row("repoX-4", NEW_ID, "new here", "2026-10-19").rstrip("\n"),
-                   LANES_LANE="repoX-4")
+    return reg.run("add-row", NEW_ROW.rstrip("\n"), LANES_LANE="repoX-4")
+
+
+def peer_pushes_during_pull(reg: Register, tmp_path: Path, changes: dict[str, str]) -> Path:
+    """The shell suite's `repo19race` shape. A peer clone commits `changes`
+    (a path and its whole new text each, one commit each, in order) now, and a
+    `git` first on PATH pushes them the moment the writer's own checkout runs
+    its first `pull`: after add-row has committed its row, before it pushes.
+    Returns the mark the shim leaves; the caller removes the shim."""
+    peer = tmp_path / "peer"
+    reg.raw_git("clone", "-q", str(reg.origin), str(peer))
+    for rel, text in changes.items():
+        (peer / rel).parent.mkdir(parents=True, exist_ok=True)
+        (peer / rel).write_text(text, encoding="utf-8")
+        reg.raw_git("-C", str(peer), "add", "--", rel)
+        reg.raw_git("-C", str(peer), "commit", "-q", "-m", f"peer: {rel}")
+    real = shutil.which("git", path=os.environ.get("PATH"))
+    mark = tmp_path / "raced"
+    shim = reg.fakebin / "git"
+    shim.write_text(f"""#!/usr/bin/env bash
+if [ "${{1-}}" = -C ] && [ "${{3-}}" = pull ] && [ ! -e '{mark}' ]; then
+  case "${{2-}}" in */wip)
+    : > '{mark}'
+    '{real}' -C '{peer}' push -q origin main || exit 1 ;;
+  esac
+fi
+exec '{real}' "$@"
+""")
+    shim.chmod(0o755)
+    return mark
+
+
+def a_good_archive(reg: Register) -> str:
+    reg.write(ARCHIVE, ARCHIVE_HEAD + row("repoX-9", OLD_ID, RETIRED_CELL, "2026-08-01"))
+    reg.publish("a good archive")
+    return reg.read(ARCHIVE)
 
 
 @pytest.mark.parametrize("where", ["published", "committed here, not pushed"])
@@ -368,30 +459,11 @@ def test_122_a_refusal_after_the_rebase_takes_its_row_back(reg, tmp_path):
     retired-match branch took the committed row back, so the next unrelated
     write from this checkout published the row add-row had refused. Every
     refusal there now removes it in a compensating local commit."""
-    arch = "lanes/archive/LANES-retired.md"
-    reg.write(arch, ARCHIVE_HEAD + row("repoX-9", OLD_ID, RETIRED_CELL, "2026-08-01"))
-    reg.publish("a good archive")
-    peer = tmp_path / "peer"
-    reg.raw_git("clone", "-q", str(reg.origin), str(peer))
-    real = shutil.which("git", path=os.environ.get("PATH"))
-    mark = tmp_path / "raced"
-    line = MANGLED["the lane lost its backticks"]
-    shim = reg.fakebin / "git"
-    shim.write_text(f"""#!/usr/bin/env bash
-if [ "${{1-}}" = -C ] && [ "${{3-}}" = pull ] && [ ! -e '{mark}' ]; then
-  case "${{2-}}" in */wip)
-    : > '{mark}'
-    printf '%s\\n' '{line}' >> '{peer}/{arch}'
-    '{real}' -C '{peer}' add -- '{arch}' || exit 1
-    '{real}' -C '{peer}' commit -q -m 'peer: an archive row whose lane lost its backticks' || exit 1
-    '{real}' -C '{peer}' push -q origin main || exit 1 ;;
-  esac
-fi
-exec '{real}' "$@"
-""")
-    shim.chmod(0o755)
+    archive = a_good_archive(reg)
+    mark = peer_pushes_during_pull(reg, tmp_path, {
+        ARCHIVE: archive + MANGLED["the lane lost its backticks"] + "\n"})
     result = add_repo_x_4(reg)
-    shim.unlink()
+    (reg.fakebin / "git").unlink()
     assert mark.exists(), "the peer never raced the pull"
     assert result.returncode == 1, (result.stdout, result.stderr)
     assert "removed in a compensating LOCAL commit" in result.stderr
@@ -401,4 +473,93 @@ exec '{real}' "$@"
     after = reg.run("set-row-state", "repoX-2", "PAUSED · the next unrelated write", LANES_LANE="repoX-1")
     assert after.returncode == 0, (after.stdout, after.stderr)
     assert "PAUSED · " in reg.published("lanes/LANES.md").split("`repoX-2`")[1].splitlines()[0]
+    assert "`repoX-4`" not in reg.published("lanes/LANES.md")
+
+
+#: What the rescan after the rebase refuses, each with add-row's exit: a peer's
+#: archive line it cannot take apart (another lane's), or a peer's retirement
+#: of repoX-4 itself.
+RESCAN_REFUSALS = {
+    "a line the scan cannot take apart": (
+        MANGLED["the lane lost its backticks"].replace("repoX-4", "repoQ-7") + "\n", 1),
+    "a retirement": (row("repoX-4", OLD_ID, RETIRED_CELL, "2026-08-01"), 2),
+}
+
+
+@pytest.mark.parametrize("why", sorted(RESCAN_REFUSALS))
+def test_122_a_refusal_after_the_rebase_leaves_a_peers_identical_row_alone(reg, tmp_path, why):
+    """The delta review of #263, D1: a peer publishes the byte-identical
+    repoX-4 row while add-row is in its `pull --rebase`, so the rebase drops
+    add-row's commit as already upstream and the one copy left is the PEER's.
+    The take-back found it by its exact text and deleted it in a local commit,
+    and the next write published that deletion: the peer's row gone from
+    origin. Only a copy this checkout adds over origin's is taken back now, so
+    here none is, for either refusal of the rescan."""
+    archive = a_good_archive(reg)
+    refusal, code = RESCAN_REFUSALS[why]
+    mark = peer_pushes_during_pull(reg, tmp_path, {
+        "lanes/LANES.md": reg.read("lanes/LANES.md") + NEW_ROW, ARCHIVE: archive + refusal})
+    result = add_repo_x_4(reg)
+    (reg.fakebin / "git").unlink()
+    assert mark.exists(), "the peer never raced the pull"
+    assert result.returncode == code, (result.stdout, result.stderr)
+    assert "origin/main already carries this exact row" in result.stderr
+    assert "compensating LOCAL commit" not in result.stderr
+    assert reg.git("log", "--oneline", "origin/main..HEAD") == ""
+    assert reg.git("diff", "origin/main", "HEAD") == ""
+    after = reg.run("set-row-state", "repoX-2", "PAUSED · the next unrelated write", LANES_LANE="repoX-1")
+    assert after.returncode == 0, (after.stdout, after.stderr)
+    assert reg.published("lanes/LANES.md").count("`repoX-4`") == 1
+
+
+def test_122_a_refusal_after_the_rebase_takes_back_its_own_row_beside_a_peers_copy(reg, tmp_path):
+    """…and the other direction. Where the peer put the identical row in
+    another place, the rebase KEEPS add-row's commit and the register holds
+    two copies. The one this checkout adds is taken back: not the peer's, and
+    not neither. "origin already has the row" would have kept add-row's
+    commit, and the next write would have published a second copy."""
+    archive = a_good_archive(reg)
+    seeded = row("repoX-3", OLD_ID, "more old words")
+    peer_register = reg.read("lanes/LANES.md").replace(seeded, seeded + NEW_ROW)
+    assert peer_register != reg.read("lanes/LANES.md")
+    mark = peer_pushes_during_pull(reg, tmp_path, {
+        "lanes/LANES.md": peer_register,
+        ARCHIVE: archive + RESCAN_REFUSALS["a line the scan cannot take apart"][0]})
+    result = add_repo_x_4(reg)
+    (reg.fakebin / "git").unlink()
+    assert mark.exists(), "the peer never raced the pull"
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert "removed in a compensating LOCAL commit" in result.stderr
+    assert reg.read("lanes/LANES.md") == peer_register
+    assert reg.git("diff", "origin/main", "HEAD", "--", "lanes/LANES.md") == ""
+    after = reg.run("set-row-state", "repoX-2", "PAUSED · the next unrelated write", LANES_LANE="repoX-1")
+    assert after.returncode == 0, (after.stdout, after.stderr)
+    assert reg.published("lanes/LANES.md").count("`repoX-4`") == 1
+
+
+@PROC_FD
+def test_122_a_take_back_that_cannot_rewrite_says_add_row_has_committed(reg, tmp_path):
+    """The delta review of #263, on the wording: where the take-back itself
+    cannot rewrite the register, add-row HAS committed its row (locally, not
+    pushed), and the refusal says so and how to remove it, never that this
+    act has committed nothing."""
+    archive = a_good_archive(reg)
+    mark = peer_pushes_during_pull(reg, tmp_path, {
+        ARCHIVE: archive + RESCAN_REFUSALS["a line the scan cannot take apart"][0]})
+    copies = tmp_path / "copies"
+    # The register's SECOND copy into a `pre` is cut: add-row's own append
+    # makes the first, the take-back's `delete_lines` the second.
+    reg.shim("cat", 'if [ "${1-}" = -- ] && case "${2-}" in */lanes/LANES.md) true ;; *) false ;; esac && '
+                    'case "$(readlink "/proc/$$/fd/1" 2>/dev/null)" in */pre) true ;; *) false ;; esac; then\n'
+                    f"  echo copy >> '{copies}'\n"
+                    f"  if [ \"$(grep -c . '{copies}')\" -ge 2 ]; then n=$(wc -l < \"$2\"); head -n $((n / 2)) -- \"$2\"; exit 1; fi\n"
+                    "fi")
+    result = add_repo_x_4(reg)
+    (reg.fakebin / "git").unlink()
+    (reg.fakebin / "cat").unlink()
+    assert mark.exists(), "the peer never raced the pull"
+    assert result.returncode == 5, (result.stdout, result.stderr)
+    assert "this act HAS committed its row for lane repoX-4" in result.stderr
+    assert "this act has committed nothing" not in result.stderr
+    assert "add row" in reg.git("log", "--format=%s", "origin/main..HEAD")
     assert "`repoX-4`" not in reg.published("lanes/LANES.md")

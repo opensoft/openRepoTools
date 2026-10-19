@@ -3209,9 +3209,12 @@ register is put back where the write cut it short, #120 item 1) — leaves this 
 the register unpublished: that is what `git status` then shows, `git checkout --
 lanes` undoes it whole, and the next run is REFUSED by the dirty-checkout guard
 rather than made twice. `migrate-state-cells` has the same shape for the same
-reason. Such a refusal says nothing has been committed, and lists what the act
-had already written in this checkout. Where the register may be truncated, it
-also names where the exact copy of the register from before the edit is kept.
+reason. Such a refusal says this act has committed nothing (a peer's edit it
+found and captured first is a commit of its own), and lists what the act had
+already written in this checkout. Where the register may be truncated, it also
+names where the exact copy of the register from before the edit is kept: in the
+checkout's own git directory, as `lanes-edit-register-before-edit.<UTC>.<pid>`
+with mode 0600, where a restart that empties the temporary directory leaves it.
 
 ### The archive — a second act on a second word
 
@@ -3272,7 +3275,10 @@ an archive with CRLF line endings, or a table written without the spaces around
 its `|`: `archive-rows` writes neither, and nothing in this tool reads CRLF.
 Where add-row has already committed its row when a peer's archive arrives in its
 `pull --rebase`, any of these refusals removes the row again in a compensating
-local commit, as a peer's retirement does, so no later write publishes it.
+local commit, as a peer's retirement does, so no later write publishes it. It
+removes only the copy this checkout's register adds over origin's: where a peer
+published the same row first, the rebase drops add-row's commit, and the copy
+left is the peer's, so nothing is taken back.
 
 **One such line refuses every lane, not only its own.** `lanes-edit.sh
 retired-identity <lane>`, the check `lane-start` makes before it launches,

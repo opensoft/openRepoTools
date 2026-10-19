@@ -1617,15 +1617,26 @@ lane_from_text() {
 # A REFUSAL SAYS WHAT IS ALREADY ON DISK (the review of #263, S2). The sweeps
 # write their logs, their archive and their earlier rows before a row's
 # rewrite, so a refusal that said "Nothing was written" was false there: `git
-# status` showed those files, and a re-run read them back. "Nothing has been
-# committed" is what holds, and each sweep names its local writes with
-# `reg_wrote`, which the refusals list. AND WHERE THE REGISTER MAY BE TRUNCATED
-# the copy is KEPT (S2's NIT 6): it is the only exact copy of the register as it
-# was, uncommitted edits included, and the exit trap removes `$TMPD`, so it is
-# moved beside that directory (a rename, which needs no free space) and named.
+# status` showed those files, and a re-run read them back. What holds is that
+# THIS ACT has committed nothing — not "nothing has been committed": a peer's
+# uncommitted register edit found first is captured as a commit of its own
+# (`handle_preexisting`) before the act's edit, and the one caller that HAS
+# committed when it rewrites (add-row's after-rebase take-back) says so through
+# `REG_COMMITTED_HERE` (the delta review of #263). Each sweep names its local
+# writes with `reg_wrote`, which the refusals list. AND WHERE THE REGISTER MAY
+# BE TRUNCATED the copy is KEPT (S2's NIT 6): it is the only exact copy of the
+# register as it was, uncommitted edits included, and the exit trap removes
+# `$TMPD`. So it is copied into the checkout's own git directory — mode 0600,
+# under a name nothing else holds, proved byte for byte — where a restart that
+# empties the temporary directory leaves it; only where that cannot be done is
+# it renamed beside `$TMPD` instead (a rename needs no free space).
 REG_WRITTEN_HERE=""
+REG_COMMITTED_HERE=""
 reg_wrote() {   # <what this act has written in this checkout, not committed>
   REG_WRITTEN_HERE="$REG_WRITTEN_HERE, $1"
+}
+reg_committed() {   # — what this act has committed, as a refusal says it
+  printf '%s' "${REG_COMMITTED_HERE:-this act has committed nothing}"
 }
 reg_written_here() {   # — the sentence a refusal ends with, or nothing
   [ -n "$REG_WRITTEN_HERE" ] || return 0
@@ -1634,7 +1645,7 @@ reg_written_here() {   # — the sentence a refusal ends with, or nothing
 }
 register_copy() {   # <copy> <what the refusal leaves as it was>
   cat -- "$LANES_FILE" > "$1" && cmp -s -- "$LANES_FILE" "$1" ||
-    die "the register at $LANES_FILE could not be copied whole to $1, and every proof of this edit is made against that copy: a short one would make a short register look like a one-line edit of itself. The register is as it was and nothing has been committed: $2.$(reg_written_here)" 5
+    die "the register at $LANES_FILE could not be copied whole to $1, and every proof of this edit is made against that copy: a short one would make a short register look like a one-line edit of itself. The register is as it was and $(reg_committed): $2.$(reg_written_here)" 5
 }
 register_rewrite() {   # <the copy> <what the register becomes> <what else the refusal says>
   cat -- "$2" > "$LANES_FILE" && cmp -s -- "$LANES_FILE" "$2" && return 0
@@ -1644,9 +1655,27 @@ register_rewrite() {   # <the copy> <what the register becomes> <what else the r
   if cat -- "$1" > "$LANES_FILE" && cmp -s -- "$LANES_FILE" "$1"; then
     die "the rewritten register $LANES_FILE did not land as it was written: the write cut it short, and its earlier bytes have been put back and proved. $3$(reg_written_here)" 5
   fi
-  rgw_keep="${1%/*}.register-before-edit"
-  if mv -- "$1" "$rgw_keep" 2>/dev/null; then
-    rgw_copy="Its exact bytes from before this edit, with any uncommitted edit they held, are kept in $rgw_keep (\`cat -- $rgw_keep > $LANES_FILE\` puts them back, and \`git -C $LANES_REPO diff -- $LANES_PATH\` shows what it lost meanwhile); \`git checkout\` would bring back only its last commit and drop any uncommitted edit."
+  rgw_keep=""; rgw_where=""
+  rgw_git="$(git -C "$LANES_REPO" rev-parse --absolute-git-dir 2>/dev/null)" || rgw_git=""
+  if [ -n "$rgw_git" ] && [ -d "$rgw_git" ]; then
+    rgw_to="$rgw_git/lanes-edit-register-before-edit.$(date -u +%Y%m%dT%H%M%SZ).$$"
+    if [ ! -e "$rgw_to" ] && [ ! -L "$rgw_to" ]; then
+      if ( umask 077 && set -C && cat -- "$1" > "$rgw_to" ) 2>/dev/null && cmp -s -- "$1" "$rgw_to"; then
+        rgw_keep="$rgw_to"
+      else
+        rm -f -- "$rgw_to" 2>/dev/null || :
+      fi
+    fi
+  fi
+  if [ -z "$rgw_keep" ]; then
+    rgw_to="${1%/*}.register-before-edit"
+    if [ ! -e "$rgw_to" ] && [ ! -L "$rgw_to" ] && chmod 600 -- "$1" 2>/dev/null && mv -- "$1" "$rgw_to" 2>/dev/null; then
+      rgw_keep="$rgw_to"
+      rgw_where=" That is the temporary directory, because the checkout's git directory could not take the copy: a restart that empties it loses them, so restore them first."
+    fi
+  fi
+  if [ -n "$rgw_keep" ]; then
+    rgw_copy="Its exact bytes from before this edit, with any uncommitted edit they held, are kept in $rgw_keep (mode 0600; \`cat -- $rgw_keep > $LANES_FILE\` puts them back, and \`git -C $LANES_REPO diff -- $LANES_PATH\` shows what it lost meanwhile); \`git checkout\` would bring back only its last commit and drop any uncommitted edit.$rgw_where"
   else
     rgw_copy="Its bytes from before this edit could not be kept either: \`git -C $LANES_REPO diff -- $LANES_PATH\` shows what it lost, and \`git -C $LANES_REPO checkout -- $LANES_PATH\` brings back its last commit, dropping any uncommitted edit it held."
   fi
@@ -1712,7 +1741,7 @@ replace_line() {
   # else it changed. For a rename that is the alias landing while the row it
   # points at never moves. AND ITS RESULT IS PROVED, not only its status, with
   # the register put back where the write cut it short (#120 item 1, above).
-  register_rewrite "$pre" "$out" "Its line $n is not rewritten, and nothing else this write touched has been committed."
+  register_rewrite "$pre" "$out" "Its line $n is not rewritten, and $(reg_committed)."
   note "line $n rewritten in $LANES_FILE"
 }
 
@@ -1771,7 +1800,7 @@ delete_lines() {   # <line numbers, one per line, any order>
   # appended archive while the source rows remain in the register. And its
   # RESULT is the fence as well, with the register put back where the write cut
   # it short (#120 item 1, above `replace_line`).
-  register_rewrite "$dl_pre" "$dl_out" "The archive may have been appended locally, but no commit was made; resolve that partial move before retrying."
+  register_rewrite "$dl_pre" "$dl_out" "The archive may have been appended locally, but $(reg_committed); resolve that partial move before retrying."
   note "$dl_n row(s) removed from $LANES_FILE"
 }
 
@@ -3728,13 +3757,54 @@ add_row_retirement_rescan() {
   # Leaving the rejected add-row at HEAD would let the next unrelated registry
   # write push it. Remove ONLY this invocation's exact appended line and commit
   # that compensation locally; any swept pre-existing edit stays intact.
-  ar_lines="$(command grep -nFx -- "$ADD_ROW_TEXT" "$LANES_FILE" 2>/dev/null)" || {
-    note "$ar_why; and the rejected row could not be found exactly in $LANES_FILE, so the local add-row commit must be repaired before any later push"
+  #
+  # AND ONLY A ROW THIS CHECKOUT STILL ADDS IS ITS OWN TO TAKE BACK (the delta
+  # review of #263, D1). A peer that published the byte-identical row first
+  # makes `pull --rebase` DROP this add-row's commit as already upstream, and
+  # the one copy left in the register is then the peer's: the exact-line grep
+  # found it and deleted it, and the next write published that deletion
+  # (measured: the peer's row gone from origin). So the copy taken back is the
+  # one this checkout's register adds over origin/$LANES_BRANCH's, read from
+  # their diff by content — which is what a surviving add-row commit is, under
+  # whatever sha the rebase gave it, and whatever local commits sit beside it.
+  # None added: nothing of this add-row's is left, and nothing is taken back.
+  # One: that line, wherever an identical peer copy sits. More than one, or a
+  # diff that cannot be read: not this act's to guess, and said so.
+  # "origin already has the row" would be wrong the other way: an add-row
+  # commit that SURVIVED beside a peer's identical row at another place would
+  # be kept, and published by the next write as a second copy.
+  ar_diff="$(git --no-replace-objects --no-pager -C "$LANES_REPO" -c "$CP_EXACT" diff --no-color --no-ext-diff --no-textconv -U0 "refs/remotes/origin/$LANES_BRANCH" -- "$LANES_PATH" 2>/dev/null)" || {
+    note "$ar_why; and this checkout's register could not be compared with origin/$LANES_BRANCH's, so whether a copy of the rejected row here is this add-row's or a peer's is not known. Nothing was taken back: read \`git -C $LANES_REPO log -p origin/$LANES_BRANCH..HEAD -- $LANES_PATH\` and remove this add-row's row before any later push"
     return 1
   }
-  case "$ar_lines" in *$'\n'*) note "$ar_why; and more than one exact copy of the rejected row exists, so it is not compensated automatically: the local add-row commit must be repaired before any later push"; return 1 ;; esac
-  ar_line="${ar_lines%%:*}"
+  ar_lines="$(printf '%s\n' "$ar_diff" | AR_ROW="$ADD_ROW_TEXT" LC_ALL=C awk '
+    /^@@ / { h = $0; sub(/^@@ -[0-9,]+ [+]/, "", h); sub(/[ ,].*$/, "", h); n = h + 0; inh = 1; next }
+    !inh { next }
+    substr($0, 1, 1) == "+" { if (substr($0, 2) == ENVIRON["AR_ROW"]) print n; n++ }
+  ')" || {
+    note "$ar_why; and the diff of this checkout's register against origin/$LANES_BRANCH's could not be read, so nothing was taken back: remove this add-row's row before any later push"
+    return 1
+  }
+  case "$ar_lines" in
+    '')
+      if git --no-replace-objects --no-pager -C "$LANES_REPO" show "refs/remotes/origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null | command grep -qFx -- "$ADD_ROW_TEXT"; then
+        note "$ar_why. origin/$LANES_BRANCH already carries this exact row, published by a peer, and the rebase dropped this add-row's commit as already upstream: this checkout adds no copy of it, so there is nothing of this add-row's to take back and the peer's row is left as it is."
+      else
+        note "$ar_why. This checkout's register carries no copy of the row that origin/$LANES_BRANCH's does not, so there is nothing of this add-row's to take back."
+      fi
+      return "$ar_back" ;;
+    *$'\n'*)
+      note "$ar_why; and this checkout's register adds more than one exact copy of the rejected row over origin/$LANES_BRANCH's, so which is this add-row's is not known and none was taken back: the local add-row commit must be repaired before any later push"
+      return 1 ;;
+  esac
+  ar_line="$ar_lines"
+  [ "$(sed -n "${ar_line}p" "$LANES_FILE" 2>/dev/null)" = "$ADD_ROW_TEXT" ] || {
+    note "$ar_why; and line $ar_line of $LANES_FILE, where the diff puts the rejected row, does not hold it exactly, so nothing was taken back: the local add-row commit must be repaired before any later push"
+    return 1
+  }
+  REG_COMMITTED_HERE="this act HAS committed its row for lane $ADD_ROW_LANE, locally and unpushed, and could not take it back: remove that row from $LANES_PATH and commit that before any other write in $LANES_REPO, because the next one would publish it"
   delete_lines "$ar_line"
+  REG_COMMITTED_HERE=""
   git -C "$LANES_REPO" -c "$CP_EXACT" add -- "$LANES_PATH" || return 1
   git -C "$LANES_REPO" -c "$CP_EXACT" commit -q -m "LANES($ADD_ROW_LANE@$WS): $ar_subject" -- "$LANES_PATH" || return 1
   note "$ar_why; the rejected row was removed in a compensating LOCAL commit, so no later write publishes it. Neither commit was pushed."
@@ -12600,8 +12670,9 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
     case "$rr_open" in
       '') : ;;
       ENDED | RETIRED)
+        rr_art=a; [ "$rr_open" != ENDED ] || rr_art=an
         [ "$rr_pub_open" = "$rr_open" ] ||
-          die "lane $rr_l's object log in THIS CHECKOUT ends on a $rr_open line, and origin/$LANES_BRANCH's copy does not: it is a write made here and never published, by an earlier act that stopped part-way or a commit whose push has not landed (\`git -C $LANES_REPO status\` and \`git -C $LANES_REPO log origin/$LANES_BRANCH..HEAD -- $(log_path_for "$rr_l")\` say which). It is refused either way, since a second closing line would be one more line in an append-only log, and the lane is not called CLOSED, since nothing published says so. Publish that line or undo it, then re-run. Nothing was written." 2
+          die "lane $rr_l's object log in THIS CHECKOUT ends on $rr_art $rr_open line, and origin/$LANES_BRANCH's copy does not: it is a write made here and never published, by an earlier act that stopped part-way or a commit whose push has not landed (\`git -C $LANES_REPO status\` and \`git -C $LANES_REPO log origin/$LANES_BRANCH..HEAD -- $(log_path_for "$rr_l")\` say which). It is refused either way, since a second closing line would be one more line in an append-only log, and the lane is not called CLOSED, since nothing published says so. Publish that line or undo it, then re-run. Nothing was written." 2
         case "$rr_open" in
           RETIRED)
             die "lane $rr_l's object log ends on a RETIRED line, so the lane is already CLOSED and RETIRED (Amendment 19(a)), not a dormant row: \`lanes\` already hides it (19(b)), and its log is append-only, so it is not retired a second time. Its row leaves the register by \`lanes-edit.sh archive-rows ${rr_l%-*}\` (19(d)), which moves that repository's rows whose state cell says RETIRED. Nothing was written." 2 ;;
