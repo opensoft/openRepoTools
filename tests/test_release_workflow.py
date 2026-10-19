@@ -2874,6 +2874,144 @@ def test_release_install_check_the_3_9_leg_compiles_the_two_python_commands():
             and "payload" in run_text(s)], [label(s) for s in steps]
 
 
+#: The install check's `--version` step, by its name.
+VERSION_STEP = "openRepoTools --version names this release, line for line"
+
+#: The release the run is (contracts/stamp.md's names), and each stamp the
+#: installed package may carry instead, with whether the step passes it.
+VERSION_RUN = dict(RELEASES["an-rc-rehearsal-here"])
+VERSION_CASES = {
+    "this-release": ({}, True),
+    "another-digest": ({"DIGEST": "1" * 64}, False),
+    "another-commit": ({"COMMIT": "a" * 40}, False),
+    "another-repository": ({"REPOSITORY": CODE_LEG}, False),
+    "another-version": ({"VERSION": "1.1.0rc2", "TAG": "v1.1.0rc2"}, False),
+    "unstamped": (None, False),
+}
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@pytest.mark.parametrize("which", VERSION_CASES)
+def test_release_install_check_the_version_step_passes_this_release_s_five_lines_alone(
+        tmp_path, which):
+    """THE `--version` STEP, RUN (contracts/workflows.md's install step 4):
+    `$PIPX_BIN_DIR/openRepoTools` is the installed package's own entry,
+    which execs bash on its payload as pipx's console script does, and its
+    `--version` must be this run's five lines, the digest's among them. A
+    package stamped with another digest, commit, repository or version, or
+    unstamped, is refused."""
+    changes, passes = VERSION_CASES[which]
+    stamp = (layout.stamp_text() if changes is None
+             else layout.stamp_text(**dict(VERSION_RUN, **changes)))
+    payload = layout.package_tree(tmp_path / "venv", stamp=stamp)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    entry = bin_dir / "openRepoTools"
+    entry.write_text("#!/bin/sh\nexec bash "
+                     f"{shlex.quote(str(payload / 'openRepoTools'))} \"$@\"\n",
+                     encoding="utf-8")
+    entry.chmod(0o755)
+    workflow = release()
+    values = {"VERSION": VERSION_RUN["VERSION"],
+              "GITHUB_REPOSITORY": VERSION_RUN["REPOSITORY"],
+              "GITHUB_SHA": VERSION_RUN["COMMIT"],
+              "DIGEST": VERSION_RUN["DIGEST"], "PIPX_BIN_DIR": str(bin_dir)}
+    runner = Runner(tmp_path / "work", workflow, "install", values)
+    done = runner.run(named(workflow, "install", VERSION_STEP))
+    assert (done.returncode == 0) == passes, transcript(done)
+    if passes:
+        assert done.stdout == STAMPED_VERSION.format(**VERSION_RUN), transcript(done)
+    else:
+        assert "::error::" in done.stdout, transcript(done)
+
+
+#: A heredoc run by this Python as if it were another release of Python:
+#: `sys.version_info` and `sys.version` say `<version>`, and nothing else is
+#: changed. The 3.9 leg's step refuses any Python but 3.9, and the suite runs
+#: on a current one.
+AS_ANOTHER_PYTHON = r'''
+import sys
+code, version = sys.argv[1], sys.argv[2]
+sys.version = f"{version} (the suite's {sys.version.split()[0]}, read as {version})"
+sys.version_info = tuple(int(part) for part in version.split(".")) + ("final", 0)
+sys.argv = ["-"]
+with open(code, encoding="utf-8") as handle:
+    source = handle.read()
+exec(compile(source, "<stdin>", "exec"), {"__name__": "__main__"})
+'''
+
+
+def with_two_pythons(home: Path) -> None:
+    layout.pipx_venv(home, "1.11.1")
+    layout.package_tree(home / "venvs" / "openrepotools", "python3.10")
+
+
+def with_lanes_index_broken(home: Path) -> None:
+    layout.pipx_venv(home, "1.11.1")
+    payload = home / "venvs/openrepotools/lib/python3.9/site-packages/openrepotools/payload"
+    (payload / "lanes-index").write_bytes(b"def broken(:\n")
+
+
+def with_lane_worktrees_missing(home: Path) -> None:
+    layout.pipx_venv(home, "1.11.1")
+    payload = home / "venvs/openrepotools/lib/python3.9/site-packages/openrepotools/payload"
+    (payload / "lane-worktrees").unlink()
+
+
+#: `(the Python the step is run as, the pipx home it reads, whether it
+#: passes, what its refusal names)`.
+COMPILE_CASES = {
+    "the-payload-as-built": ("3.9.25", lambda home: layout.pipx_venv(home, "1.11.1"),
+                             True, None),
+    "lanes-index-does-not-compile": ("3.9.25", with_lanes_index_broken, False,
+                                     "lanes-index"),
+    "lane-worktrees-missing": ("3.9.25", with_lane_worktrees_missing, False,
+                               "lane-worktrees"),
+    "no-payload-directory": ("3.9.25", lambda home: home.mkdir(parents=True),
+                             False, "not one payload directory"),
+    "two-payload-directories": ("3.9.25", with_two_pythons, False,
+                                "not one payload directory"),
+    "not-python-3.9": ("3.12.3", lambda home: layout.pipx_venv(home, "1.11.1"),
+                       False, "not 3.9"),
+}
+
+
+@NEEDS_UPSTREAM
+@pytest.mark.parametrize("which", COMPILE_CASES)
+def test_release_install_check_the_3_9_step_refuses_a_payload_command_that_does_not_compile(
+        tmp_path, which):
+    """THE 3.9 LEG'S STEP, RUN (FR-032), on a pipx home laid out as pipx
+    1.11.1 leaves it: it passes the payload as built, and refuses, naming
+    why, a `lanes-index` that does not compile, a `lane-worktrees` that is
+    missing, no payload directory or two, and any Python but 3.9. The step
+    is run by this Python, reading as the Python the case names."""
+    version, lay_out, passes, names = COMPILE_CASES[which]
+    steps = [s for s in install_steps(release())
+             if condition_kind(s.get("if")) == "python-3.9"]
+    assert len(steps) == 1, [label(s) for s in steps]
+    home = tmp_path / "pipx-home"
+    lay_out(home)
+    work = tmp_path / "run"
+    work.mkdir()
+    (work / "heredoc.py").write_text(heredoc(run_text(steps[0])), encoding="utf-8")
+    (work / "as-another-python.py").write_text(AS_ANOTHER_PYTHON, encoding="utf-8")
+    env = clean_environ(work / "home")
+    env.update(PYTHONUTF8="1", PIPX_HOME=str(home))
+    done = subprocess.run([sys.executable, "-I", str(work / "as-another-python.py"),
+                           str(work / "heredoc.py"), version],
+                          capture_output=True, text=True, check=False,
+                          stdin=subprocess.DEVNULL, env=env, cwd=str(work),
+                          timeout=STEP_TIMEOUT)
+    assert (done.returncode == 0) == passes, transcript(done)
+    out = done.stdout + done.stderr
+    assert "Traceback" not in out, transcript(done)
+    if names:
+        assert [line for line in out.splitlines()
+                if line.startswith("::error::") and names in line], transcript(done)
+
+
 # --- what the workflow reads ----------------------------------------------------------
 
 #: What the code leg will not hold (FR-046): the spec trees and the front-door
