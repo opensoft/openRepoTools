@@ -1552,13 +1552,20 @@ def no_license(members: dict, info: str) -> None:
                                   mode)
 
 
-def a_changed_byte(rel: str) -> Callable[[dict, str], None]:
+def a_changed_member(member: str) -> Callable[[dict, str], None]:
+    """`member`, where `{info}` is the `.dist-info/` prefix, with its middle
+    byte changed."""
     def change(members: dict, info: str) -> None:
-        data, mode = members[layout.PAYLOAD_PREFIX + rel]
+        name = member.format(info=info)
+        data, mode = members[name]
         middle = len(data) // 2
-        members[layout.PAYLOAD_PREFIX + rel] = (
+        members[name] = (
             data[:middle] + bytes([data[middle] ^ 0x20]) + data[middle + 1:], mode)
     return change
+
+
+def a_changed_byte(rel: str) -> Callable[[dict, str], None]:
+    return a_changed_member(layout.PAYLOAD_PREFIX + rel)
 
 
 def a_changed_mode(rel: str, mode: int) -> Callable[[dict, str], None]:
@@ -1568,29 +1575,74 @@ def a_changed_mode(rel: str, mode: int) -> Callable[[dict, str], None]:
     return change
 
 
-#: contracts/workflows.md's synthetic wheels that are not the commit's, each
-#: with what its refusal must name, and the mode HEAD gives the file changed.
+def a_missing_member(member: str) -> Callable[[dict, str], None]:
+    def change(members: dict, info: str) -> None:
+        del members[member]
+    return change
+
+
+def an_extra_member(member: str, data: bytes) -> Callable[[dict, str], None]:
+    def change(members: dict, info: str) -> None:
+        assert member not in members, f"the case is wrong: {member} is HEAD's"
+        members[member] = (data, 0o644)
+    return change
+
+
+def a_line_more_in_the_stamp(members: dict, info: str) -> None:
+    """The stamp with a comment line after its last: its five assignments are
+    still the release's, and its bytes are not the committed file stamped."""
+    data, mode = members["openrepotools/_release.py"]
+    members["openrepotools/_release.py"] = (
+        data + b"# a line the committed stamp does not have\n", mode)
+
+
+#: THE SYNTHETIC WHEELS THAT ARE NOT THE COMMIT'S: contracts/workflows.md's
+#: four, then one for each other check the step makes (contracts/wheel.md's
+#: checks 2 to 5, and the run's values). Each is `(what its refusal must
+#: name, the change to the wheel as built, the mode HEAD gives the file
+#: changed, the run's values where they are not the release's)`.
 NOT_THE_COMMITS = {
-    "no-licenses-LICENSE": ("LICENSE", no_license, None),
+    "no-licenses-LICENSE": ("LICENSE", no_license, None, None),
     "a-payload-byte-changed": ("lanes-edit.sh", a_changed_byte("lanes-edit.sh"),
-                               None),
+                               None, None),
     "a-payload-mode-0755-made-0644": (
-        "link-estates", a_changed_mode("link-estates", 0o644), "100755"),
+        "link-estates", a_changed_mode("link-estates", 0o644), "100755", None),
     "a-payload-mode-0644-made-0755": (
-        "repos.tsv", a_changed_mode("repos.tsv", 0o755), "100644"),
+        "repos.tsv", a_changed_mode("repos.tsv", 0o755), "100644", None),
+    "a-licenses-LICENSE-of-other-bytes": (
+        "licenses/LICENSE", a_changed_member("{info}licenses/LICENSE"), None,
+        None),
+    "a-module-byte-changed": ("openrepotools/cli.py",
+                              a_changed_member("openrepotools/cli.py"), None,
+                              None),
+    "a-payload-file-missing": (
+        "openrepotools/payload/lanes-index",
+        a_missing_member(layout.PAYLOAD_PREFIX + "lanes-index"), None, None),
+    "a-member-nothing-puts-there": (
+        "extra.pth", an_extra_member("extra.pth", b"import os\n"), None, None),
+    "the-stamp-with-a-line-more": ("_release.py", a_line_more_in_the_stamp,
+                                   None, None),
+    "a-run-of-another-repository": (
+        f"'REPOSITORY': '{THIS_REPOSITORY}'", None, None,
+        {"GITHUB_REPOSITORY": THIS_REPOSITORY}),
 }
 
 
 def run_wheel_check(workflow: dict, work: Path, release_: dict,
-                    change: Optional[Callable[[dict, str], None]]
-                    ) -> subprocess.CompletedProcess:
+                    change: Optional[Callable[[dict, str], None]],
+                    run: Optional[dict] = None) -> subprocess.CompletedProcess:
+    """The wheel check's heredoc on the wheel as built for `release_`, with
+    `change` made to it, under the run's values: the release's, or `run`'s
+    where it names any."""
     members, info = wheel_members(release_)
     if change is not None:
         change(members, info)
     wheel = write_wheel(work / "dist" / f"openrepotools-{release_['VERSION']}"
                         "-py3-none-any.whl", members, info)
+    values = release_values(release_)
+    values.update(run or {})
     return run_heredoc(named(workflow, "build", WHEEL_CHECK_STEP), work, [wheel],
-                       release_values(release_), cwd=REPO)
+                       values, cwd=REPO)
 
 
 @NEEDS_UPSTREAM
@@ -1613,16 +1665,21 @@ def test_release_build_the_wheel_check_refuses_a_wheel_that_is_not_the_commit_s(
         tmp_path, which):
     """STEP 13 ON EACH WHEEL THAT IS NOT THE COMMIT'S (FR-002, FR-006): no
     `licenses/LICENSE`, a payload file with a byte changed, and a payload file
-    with its mode changed either way. Each fails, and among the lines it
-    prints beyond the wheel as built's is one naming what is wrong."""
-    names, change, head_mode = NOT_THE_COMMITS[which]
+    with its mode changed either way; then a `licenses/LICENSE` that is not
+    the commit's, a module with a byte changed, a payload file missing, a
+    member nothing puts in the wheel, a stamp whose bytes are not the
+    committed file stamped though its five values are the release's, and the
+    wheel as built checked in a run of another repository. Each fails, and
+    among the lines it prints beyond the wheel as built's is one naming what
+    is wrong."""
+    names, change, head_mode, run = NOT_THE_COMMITS[which]
     if head_mode is not None:
         assert head()[1][names][0] == head_mode, (
             f"the case is wrong: HEAD's {names} is not {head_mode}")
     workflow = release()
     release_ = wheel_release("1.1.0")
     good = run_wheel_check(workflow, tmp_path / "w" / "a", release_, None)
-    bad = run_wheel_check(workflow, tmp_path / "w" / "b", release_, change)
+    bad = run_wheel_check(workflow, tmp_path / "w" / "b", release_, change, run)
     assert good.returncode == 0, transcript(good)
     assert bad.returncode != 0, transcript(bad)
     assert "Traceback (most recent call last)" not in bad.stdout + bad.stderr, (
