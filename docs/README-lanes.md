@@ -94,7 +94,22 @@ files — `pull --rebase` refuses outright on any unstaged tracked change — an
 pushes straight out instead, warning and naming the files. If the push is also
 rejected (the remote moved), it stops with exit 3, leaves your edit as a local
 commit, and prints the recovery: the owner of that file commits it, then you
-re-run `lanes-edit.sh commit`.
+re-run `lanes-edit.sh commit`. If `lanes/LANES.md` is clean, that re-run makes
+no commit of its own and pushes the local commits origin does not have yet,
+through the same loop, guard and retries (#194). It reads that queue on
+`refs/heads/main`, the branch the push sends, with HEAD required to be on it,
+and pushes exactly the commit it read. It refuses with 2 and pushes nothing
+unless every queued commit is a non-merge commit whose every change is an added
+or modified regular file under `lanes/` or `handoffs/`, and never bytecode, a
+cache or an environment. That refuses a merge, a deletion (a lane rename's
+included), a type change, a symlink, a gitlink and any other path. It is a
+path filter, not an ownership check: another lane's register write passes it,
+so read `git cherry -v origin/main HEAD` before you publish a shared queue.
+Only `commit` publishes that queue: any other write with nothing to stage
+leaves it local, and with nothing ahead `commit` is the no-op it always was.
+When `pull --rebase` finds every queued commit on origin already, by content
+under other shas, it drops them all. The publish then says so and exits 0
+without a push.
 
 ## THE ONE HAZARD — `sed -i` DESTROYS THE SYMLINK
 
@@ -205,7 +220,17 @@ dangling commit by rebasing it onto a newer base, which changes its hash, so
 actually published. `git -C <the workspace checkout> cherry origin/main <your
 commit> | grep -c '^+'` compares by patch instead and still finds it; 0 means
 it is already there, in which case STOP. Only once fetch succeeded AND this
-prints something other than 0 do you read your edit back with
+prints something other than 0 do you check that `git -C <the workspace
+checkout> rev-parse HEAD` is still the commit the recovery named; if the checkout
+has moved since the abort, STOP. Then list WHOSE the commits are, with
+`git -C <the workspace checkout> cherry -v origin/main HEAD`: one `+` line per
+local commit origin lacks, which is exactly what a reset drops, and in a shared
+checkout not every one is yours. If any `+` line is not your own write, STOP and
+take it to the lane its subject names. A `LANES(concurrent@…)` or
+`LANES(pre-existing@…)` capture names no lane, so it is not yours either. Never
+reset, stash or overwrite a peer's work: `reset --hard` drops EVERY `+` commit
+in the checkout, theirs with yours, and origin holds no copy of any of them
+(#194). Only when every `+` line is yours do you read your edit back with
 `git -C <the workspace checkout> diff origin/main..HEAD -- lanes/LANES.md`,
 then `git -C <the workspace checkout> reset --hard origin/main` and redo it on
 top of the peer's version.
@@ -1194,9 +1219,9 @@ else.
 
 | code | meaning |
 |---|---|
-| 0 | done |
+| 0 | done, including `commit`'s publish of a queue that `pull --rebase` emptied because origin already held every commit in it by content (#194; it says so, and sends no push) |
 | 1 | environment — no register, no writer |
-| 2 | refusal — bad arguments, the object is held, an unknown alias, a checkout that cannot be rebased |
+| 2 | refusal — bad arguments, the object is held, an unknown alias, a checkout that cannot be rebased, or `commit` refusing to publish local commits that are not register or handoff writes, from a checkout whose HEAD is off the branch, or that it cannot read (#194; it pushes none of them) |
 | 3 | the edit is never a permanent loss, but this attempt cannot confirm whether it also reached origin — a rebase conflict (not pushed by this attempt; a later write from this checkout may already carry it to origin, so look by content before you retry), a network timeout on a push or a pull (a hung one often already landed), or six attempts exhausted because a peer's uncommitted file blocks every rebase |
 | 4 | the mutex could not be taken within 60s |
 | 5 | an edit moved more than one line and was refused |
