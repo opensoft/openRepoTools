@@ -3132,7 +3132,9 @@ once). Per dormant row:
   `RETIRED — lane <lane>, session <the sweeping session's uuid>@<ws>, <UTC>,
   lane:<lane> → retired-dormant by lane <writer>; reason <why>; was: <the state
   cell's head, verbatim, capped at 240>`. The session field is the **writer's**
-  transcript uuid (7(b)), and the row's own last words are carried into the log
+  transcript uuid (7(b)): `$LANES_SESSION`, else the last id of **this
+  checkout's** row for the writer, else the published row's, so a transcript
+  stamped here and not yet pushed is the one written. The row's own last words are carried into the log
   so that nothing the row said is lost when the row stops saying it;
 * the row's state cell becomes `RETIRED · <UTC> · <why>; was: <head>`. Clause
   (c) writes that cell as `RETIRED <UTC> · <why> · was: <head>`, which is four
@@ -3150,7 +3152,11 @@ is not dormant**); and a repository with no dormant row — *nothing to do is
 said, not done* (exit **8**). Any one of them refuses the **whole run**, before
 a byte is written, because it is one commit and therefore one decision. It also
 refuses a session-record read that failed: *"a read that failed is not 'nothing
-is live'"*.
+is live'"*. So does a listing that **withheld the class** (exit **1**). The
+listing withholds it where it could not list this checkout's log directory, or
+had nowhere to keep its warnings about published logs it could not read, and it
+says so. Counting zero there would be "nothing to do" about rows nobody could
+class.
 
 It refuses six more things for the reason every writer here refuses them — a
 half-written act is worse than no act: a checkout **behind** `origin` or dirty
@@ -3164,13 +3170,24 @@ file nothing can correct; and a `--reason` carrying a `|`, a second ` · ` or a
 newline, which is refused as the **argument** it is (capped at 180 characters,
 because the row's own last words go in beside it).
 
+It also refuses what a write would go **through** (exit **2**): a lane's log
+path that is a symlink, or is there and not a regular file. The append's `>>`
+would follow the link and put the RETIRED line outside the repository while the
+commit records only the link. And it refuses the reads that **failed**
+(exit **1**), because a failed read is not "it has none":
+* a published log that the tree names and git cannot read;
+* a log directory that cannot be listed;
+* a published register that cannot be read (the seam's read, before every row).
+
 It touches **no file outside the register and the logs**. A retired row records
 that a lane is finished; worktrees, branches and handoffs stay exactly where
 they are.
 
 **Nothing is half-PUBLISHED, because the commit is the only thing that
 publishes.** Every refusal above is made in the scan, before a byte is written.
-A failure in the writes themselves — a log whose append could not be proved, a
+That includes the commit of a peer's uncommitted register edit, which the act
+makes as its own `LANES(pre-existing@…)` commit: it is made only after the
+scan, so a refusal leaves HEAD where it was. A failure in the writes themselves — a log whose append could not be proved, a
 row whose rewrite touched more than one line — leaves this checkout DIRTY and
 the register unpublished: that is what `git status` then shows, `git checkout --
 lanes` undoes it whole, and the next run is REFUSED by the dirty-checkout guard
@@ -3190,14 +3207,40 @@ each lane moved. The archive is written **first** and the rows removed second,
 so a refusal between the two leaves a copy in the archive and the register
 whole, never a row in neither file.
 
+Before anything is written, `--yes` refuses (exit **2**) in two cases:
+* an archive, or archive directory, that is a **symlink**, or an archive path
+  that is there and **not a regular file**. The append would follow the link,
+  and the rows would leave the repository while the commit removed them from
+  the register.
+* a **published archive this checkout does not have**, because it is outside a
+  sparse checkout or marked skip-worktree. A new archive made here would hold
+  only these rows, and its commit would drop every position the published one
+  reserves.
+
+As in the sweep, a peer's register edit is committed only after these checks.
+
 Nothing reads a row differently for having moved: the listing reads the archive
 beside the register (so `lanes --closed` still shows those rows) and so does
 every reader of the next free position — and a published archive that cannot be
 *rendered* is a REFUSAL that says so, never a fallback to this checkout's copy,
 which may lack a retired position the published one holds: read as absent, or
-from that copy, it would put a retired position back on offer. `add-row` refuses a lane
-name the archive holds, so `lane-start <repo> <n>` cannot reissue one by hand
-either. **Rule 9 holds either way** — a row is
+from that copy, it would put a retired position back on offer. Five more reads
+fail closed rather than answer, and for the same reason. The first three refuse
+(exit **1**); the listing withholds the class for the last two:
+* a local archive path that is there and not a regular file;
+* a register path that renders empty (a zero-byte register, or a broken
+  symlink);
+* a published register whose blob git cannot read. Whether the register or a
+  log is published is the TREE's answer, never `cat-file -e`'s, which fails for
+  an unreadable blob as for an absent path.
+* a published log git cannot read: the listing names it and never classes that
+  lane DORMANT;
+* a log directory it cannot list: the listing classes no row DORMANT at all.
+
+`add-row` refuses a lane name the archive holds, so `lane-start <repo> <n>`
+cannot reissue one by hand either. It also refuses (exit **1**) where the
+published register cannot be read, rather than read that as "no such row":
+otherwise a row this checkout has not pulled would be added a second time. **Rule 9 holds either way** — a row is
 one `git show` away — so the archive is for a register a person wants shorter,
 and never a requirement.
 
