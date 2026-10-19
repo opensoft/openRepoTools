@@ -588,6 +588,78 @@ def run_version(payload: Path, home: Path) -> subprocess.CompletedProcess:
                           cwd=str(home), timeout=STEP_TIMEOUT)
 
 
+#: A `gh` THAT ANSWERS THE FORGE'S REST READS from `FORGE_DATA`, a JSON map of
+#: path (its query left off) to the object the API returns, writes down every
+#: call in `FORGE_LOG`, and answers any other path as a 404. It evaluates the
+#: three `--jq` forms the release's steps use, and refuses any other, so a step
+#: that starts asking something new fails here rather than reading nothing.
+API_FORGE = r'''
+import json, os, re, sys
+args = sys.argv[1:]
+with open(os.environ["FORGE_LOG"], "a", encoding="utf-8") as log:
+    log.write(json.dumps(args) + "\n")
+paths = [a for a in args[1:] if a.lstrip("/").startswith("repos/")]
+if args[:1] != ["api"] or len(paths) != 1:
+    sys.stderr.write("gh: Not Found (HTTP 404)\n")
+    sys.exit(1)
+path = paths[0].lstrip("/").partition("?")[0]
+with open(os.environ["FORGE_DATA"], encoding="utf-8") as handle:
+    answers = json.load(handle)
+if path not in answers:
+    sys.stderr.write("gh: Not Found (HTTP 404)\n")
+    sys.exit(1)
+answer = answers[path]
+jq = None
+for flag in ("--jq", "-q"):
+    if flag in args:
+        jq = args[args.index(flag) + 1].strip()
+if jq is None:
+    print(json.dumps(answer))
+    sys.exit(0)
+kind = re.fullmatch(r'select\(\.object\.type == "([a-z]+)"\) \| \.object\.sha', jq)
+if kind:
+    if answer.get("object", {}).get("type") == kind.group(1):
+        print(answer["object"]["sha"])
+elif jq == "[.tag, .object.type, .object.sha] | @tsv":
+    print("\t".join([answer["tag"], answer["object"]["type"], answer["object"]["sha"]]))
+else:
+    sys.stderr.write(f"fake forge: it answers no --jq {jq!r}\n")
+    sys.exit(1)
+'''
+
+
+def api_forge(tmp_path: Path, answers: dict) -> Tuple[Path, dict]:
+    """`API_FORGE` in `tmp_path/forge`, answering `answers`, and the values
+    a run gives it."""
+    data = tmp_path / "forge.json"
+    data.write_text(json.dumps(answers), encoding="utf-8")
+    forge = python_tool(tmp_path / "forge", "gh", API_FORGE)
+    return forge, {"FORGE_DATA": str(data), "FORGE_LOG": str(tmp_path / "forge.log")}
+
+
+def forge_asked(tmp_path: Path) -> List[list]:
+    log = tmp_path / "forge.log"
+    return ([json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+            if log.exists() else [])
+
+
+def annotated_tag(repository: str, tag: str, object_: str, commit: str,
+                  **lie) -> dict:
+    """The forge's two answers for the annotated tag `tag`, its ref and its
+    tag object, `object_` naming `commit`; `lie` changes the tag object's
+    `name`, the `type` it names or the commit it `names`, or makes it
+    `lightweight`."""
+    if lie.get("lightweight"):
+        return {f"repos/{repository}/git/ref/tags/{tag}": {
+            "ref": f"refs/tags/{tag}", "object": {"type": "commit", "sha": commit}}}
+    return {f"repos/{repository}/git/ref/tags/{tag}": {
+                "ref": f"refs/tags/{tag}", "object": {"type": "tag", "sha": object_}},
+            f"repos/{repository}/git/tags/{object_}": {
+                "tag": lie.get("name", tag), "sha": object_,
+                "object": {"type": lie.get("type", "commit"),
+                           "sha": lie.get("names", commit)}}}
+
+
 # --- HEAD, as git holds it -------------------------------------------------------
 
 @functools.lru_cache(maxsize=1)
@@ -984,6 +1056,71 @@ def test_release_build_the_checkout_and_both_environments_are_read_before_the_bu
     for word in ("testpypi", "pypi", "required_reviewers", "custom_branch_policies",
                  "deployment-branch-policies", "v*"):
         assert word in environments, f"the environments step never reads {word}"
+
+
+def an_environment(reviewers: Tuple[str, ...] = ("brettheap",),
+                   custom: bool = True) -> dict:
+    """An environment as `GET repos/<r>/environments/<name>` returns it."""
+    rules = ([{"type": "required_reviewers",
+               "reviewers": [{"type": "User", "reviewer": {"login": login}}
+                             for login in reviewers]}] if reviewers else [])
+    return {"protection_rules": rules + [{"type": "branch_policy"}],
+            "deployment_branch_policy": {"protected_branches": not custom,
+                                         "custom_branch_policies": custom}}
+
+
+def environment_answers(repository: str, changes: dict) -> dict:
+    """Both environments as Brett Heap sets them up, a required reviewer and
+    the one deployment rule `('tag', 'v*')` each, with `changes` by
+    environment: `reviewers`, `custom`, `rules`, or `missing`."""
+    answers = {}
+    for name in ("testpypi", "pypi"):
+        change = changes.get(name, {})
+        if change.get("missing"):
+            continue
+        rules = change.get("rules", [("tag", "v*")])
+        answers[f"repos/{repository}/environments/{name}"] = an_environment(
+            change.get("reviewers", ("brettheap",)), change.get("custom", True))
+        answers[f"repos/{repository}/environments/{name}/deployment-branch-policies"] = {
+            "total_count": len(rules),
+            "branch_policies": [{"type": kind, "name": pattern} for kind, pattern in rules]}
+    return answers
+
+
+#: STEP 5, RUN: `(the changes to both environments, the environment a
+#: refusal names, or None where the step passes)`.
+ENVIRONMENT_CASES = {
+    "both-as-set-up": ({}, None),
+    "testpypi-not-created-yet": ({"testpypi": {"missing": True}}, "testpypi"),
+    "pypi-names-no-reviewer": ({"pypi": {"reviewers": ()}}, "pypi"),
+    "a-branch-rule-beside-the-tags": (
+        {"testpypi": {"rules": [("tag", "v*"), ("branch", "main")]}}, "testpypi"),
+    "a-branch-rule-alone": ({"pypi": {"rules": [("branch", "v*")]}}, "pypi"),
+    "another-tag-pattern": ({"pypi": {"rules": [("tag", "v1.*")]}}, "pypi"),
+    "protected-branches-not-custom-rules": ({"testpypi": {"custom": False}}, "testpypi"),
+}
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@pytest.mark.parametrize("which", ENVIRONMENT_CASES)
+def test_release_build_the_environments_step_refuses_an_environment_without_its_rules(
+        tmp_path, which):
+    """STEP 5, RUN under a forge (FR-029): both environments as set up pass;
+    an environment not created yet, one with no required reviewer, one
+    whose deployment limit holds a branch rule or another pattern, and one
+    limited to protected branches are each refused, naming it."""
+    changes, refused = ENVIRONMENT_CASES[which]
+    forge, values = api_forge(tmp_path, environment_answers(CODE_LEG, changes))
+    values["GITHUB_REPOSITORY"] = CODE_LEG
+    workflow = release()
+    runner = Runner(tmp_path / "work", workflow, "build", values, forge)
+    done = runner.run(named(workflow, "build", ENVIRONMENTS_STEP))
+    assert (done.returncode == 0) == (refused is None), transcript(done)
+    if refused is not None:
+        assert [line for line in done.stdout.splitlines() if line.startswith(
+            f"::error::the {refused} environment")], transcript(done)
 
 
 # --- the ref step and the branch step: the rehearsal rule ------------------------
@@ -2403,6 +2540,107 @@ def test_release_upload_both_jobs_run_the_same_checks_after_their_guards():
     for a, b in zip(mine, theirs):
         assert a.get("run") == b.get("run"), label(a)
     assert "test.pypi.org" not in json.dumps(job(workflow, "pypi"))
+
+
+# --- the re-checks at use time, run against a forge ------------------------------------
+
+#: The upload jobs' two re-checks, by their names.
+APPROVAL_STEP = "this environment still asks a reviewer and admits only the tags v*"
+TAG_AGAIN_STEP = "the tag v<version> still names this commit"
+RUN_ID = "4242"
+
+
+def approvals(*given: Tuple[str, str]) -> list:
+    """`GET repos/<r>/actions/runs/<id>/approvals`: one review per
+    `(environment, state)`, by brettheap."""
+    return [{"state": state, "comment": "", "user": {"login": "brettheap"},
+             "environments": [{"name": environment}]} for environment, state in given]
+
+
+#: THE APPROVAL RE-CHECK, RUN: `(the changes to the job's own environment,
+#: this run's approvals, with "<own>" and "<other>" for the two
+#: environments, or None where they cannot be read; whether the step
+#: passes)`.
+APPROVAL_CASES = {
+    "approved-by-its-reviewer": ({}, [("<own>", "approved")], True),
+    "no-approval": ({}, [], False),
+    "approved-for-the-other-environment-alone": ({}, [("<other>", "approved")], False),
+    "rejected": ({}, [("<own>", "rejected")], False),
+    "the-approvals-cannot-be-read": ({}, None, False),
+    "no-reviewer-now": ({"reviewers": ()}, [("<own>", "approved")], False),
+    "a-branch-rule-now": ({"rules": [("tag", "v*"), ("branch", "main")]},
+                          [("<own>", "approved")], False),
+}
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@pytest.mark.parametrize("which", APPROVAL_CASES)
+@pytest.mark.parametrize("name", sorted(UPLOADS))
+def test_release_upload_the_approval_recheck_refuses_a_run_its_environment_did_not_approve(
+        tmp_path, name, which):
+    """AT USE TIME, RUN under a forge, in each upload job: its environment
+    still names a reviewer and admits the tags `v*` alone, and this run's
+    deployment to it was approved, so it passes; no approval, an approval
+    of the other environment alone, a rejection, approvals that cannot be
+    read, and an environment that lost its reviewer or gained a branch rule
+    while the run waited are each refused."""
+    changes, given, passes = APPROVAL_CASES[which]
+    own, other = UPLOADS[name], ("pypi" if name == "testpypi" else "testpypi")
+    answers = environment_answers(THIS_REPOSITORY, {own: changes})
+    if given is not None:
+        answers[f"repos/{THIS_REPOSITORY}/actions/runs/{RUN_ID}/approvals"] = approvals(
+            *[(own if env == "<own>" else other, state) for env, state in given])
+    forge, values = api_forge(tmp_path, answers)
+    values.update(GITHUB_REPOSITORY=THIS_REPOSITORY, GITHUB_RUN_ID=RUN_ID)
+    workflow = release()
+    runner = Runner(tmp_path / "work", workflow, name, values, forge)
+    done = runner.run(named(workflow, name, APPROVAL_STEP))
+    assert (done.returncode == 0) == passes, transcript(done)
+    if passes:
+        assert done.stdout.strip() == (f"{own}: a reviewer, the tags v* alone, and "
+                                       "approved by brettheap"), transcript(done)
+    else:
+        assert "::error::" in done.stderr, transcript(done)
+
+
+#: THE TAG RE-CHECK, RUN: `(what the forge says of v1.1.0's tag object,
+#: whether the step passes)`, the run's commit being `c` * 40.
+TAG_AGAIN_CASES = {
+    "it-still-names-this-commit": ({}, True),
+    "it-was-moved-to-another-commit": ({"names": "d" * 40}, False),
+    "it-was-deleted": (None, False),
+    "it-is-a-lightweight-tag-now": ({"lightweight": True}, False),
+    "its-object-names-a-tag": ({"type": "tag"}, False),
+}
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@pytest.mark.parametrize("which", TAG_AGAIN_CASES)
+@pytest.mark.parametrize("name", sorted(UPLOADS))
+def test_release_upload_the_tag_recheck_refuses_a_tag_moved_while_the_run_waited(
+        tmp_path, name, which):
+    """RIGHT BEFORE THE UPLOAD, RUN under a forge, in each upload job: the
+    annotated tag `v$VERSION` still names the run's commit, so it passes; a
+    tag moved to another commit, deleted, made lightweight, or whose object
+    names a tag is refused, since an upload cannot be taken back."""
+    lie, passes = TAG_AGAIN_CASES[which]
+    commit = "c" * 40
+    answers = ({} if lie is None
+               else annotated_tag(CODE_LEG, "v1.1.0", "7a" * 20, commit, **lie))
+    forge, values = api_forge(tmp_path, answers)
+    values.update(GITHUB_REPOSITORY=CODE_LEG, GITHUB_SHA=commit, VERSION="1.1.0")
+    workflow = release()
+    runner = Runner(tmp_path / "work", workflow, name, values, forge)
+    done = runner.run(named(workflow, name, TAG_AGAIN_STEP))
+    assert (done.returncode == 0) == passes, transcript(done)
+    if passes:
+        assert done.stdout.strip() == f"v1.1.0 still names {commit}", transcript(done)
+    else:
+        assert "::error::" in done.stdout, transcript(done)
 
 
 # --- the index checks, run against a fake index ----------------------------------------
