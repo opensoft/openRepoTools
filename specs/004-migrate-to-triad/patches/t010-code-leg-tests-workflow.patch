@@ -1,50 +1,68 @@
-From b95d667339a5cef54605a949cdcae2d264dd3b6a Mon Sep 17 00:00:00 2001
+From 1b10dd968ac63f2ab3a5fe0fbae355aa67b039e4 Mon Sep 17 00:00:00 2001
 From: openRepoTools CI <ci@openrepotools.invalid>
-Date: Thu, 8 Oct 2026 21:53:33 +0000
+Date: Mon, 19 Oct 2026 14:28:41 +0000
 Subject: [PATCH] Name the code leg's standalone checkout context in its tests
  workflow (T010, #186).
 
+Made against the tests.yml that #228's PR 2 leaves (blob 2cfa173), the file
+the code leg takes at the cutover. It adds the header paragraphs, the workflow
+`env:` that names the code root and the standalone mode, and the note on
+`tests-no-submodule` that says where the leg's skips are read. It changes no
+job, no trigger and no `run:` line: tests/test_tests_workflow.py pins the first
+three jobs' `run:` lines and the four job ids the release gate reads.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
- .github/workflows/tests.yml | 36 ++++++++++++++++++++++++++++++++++--
- 1 file changed, 34 insertions(+), 2 deletions(-)
+ .github/workflows/tests.yml | 42 ++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 41 insertions(+), 1 deletion(-)
 
 diff --git a/.github/workflows/tests.yml b/.github/workflows/tests.yml
-index e27bc64..f078694 100644
+index 2cfa173..e2d1fe2 100644
 --- a/.github/workflows/tests.yml
 +++ b/.github/workflows/tests.yml
-@@ -21,6 +21,25 @@ name: tests
- # job. A suite nothing runs is not a suite (act 3, obligation 6). It is bash
- # and it skips on Windows, like every other bash claim here; the macOS
- # `/bin/bash -n` step below parses it under bash 3.2 whatever it does.
+@@ -25,6 +25,33 @@ name: tests
+ # job. A suite nothing runs is not a suite (act 3, obligation 6). It is bash,
+ # and with macOS out of CI it runs under Linux's bash 5 only: no job here parses
+ # it under Apple's bash 3.2 any more.
 +#
 +# THIS IS THE CODE LEG'S WORKFLOW, AND EVERY JOB IN IT IS STANDALONE
-+# (opensoft/openRepoTools#186, T010 of `specs/004-migrate-to-triad/tasks.md`).
-+# The leg is cloned at its own root: `actions/checkout` puts the code root at
-+# `$GITHUB_WORKSPACE`, named below as `OPENREPOTOOLS_CODE_ROOT`, and
-+# `submodules: true` initializes the one submodule the leg has, the dependency
-+# `upstream/openRepoShape`. There is no assembly above it and no spec leg
-+# beside it, so `tests/conftest.py` resolves neither: the checks of the
-+# documents those two own (`README.md`, `AGENTS.md`, `CLAUDE.md`,
-+# `docs/README-lanes.md`) SKIP here naming the root they need, and `-rs`
-+# prints every one. `OPENREPOTOOLS_COMPOSED: '0'` says in the file what the
-+# jobs are: nothing here is composed acceptance. That claim is the assembly
-+# root's `composed` workflow, which checks out all three at their exact pins
-+# and runs this same suite with nothing allowed to skip.
++# (opensoft/openRepoTools#186, T010 of `specs/004-migrate-to-triad/tasks.md`,
++# which lives in the spec leg). The leg is cloned at its own root:
++# `actions/checkout` puts the code root at `$GITHUB_WORKSPACE`, named below as
++# `OPENREPOTOOLS_CODE_ROOT`, and `submodules: true` (`tests-no-submodule`
++# excepted, as above) initializes the one submodule the leg has, the
++# dependency `upstream/openRepoShape`. There is no assembly above it and no
++# spec leg beside it, so `tests/conftest.py` resolves neither: the checks of
++# the documents those two own (`README.md`, `AGENTS.md`, `CLAUDE.md`,
++# `docs/README-lanes.md`) SKIP here, each naming the root it needs, and
++# `tests-no-submodule`'s `-rs` prints every reason.
++# `OPENREPOTOOLS_COMPOSED: '0'` says in the file what the jobs are: nothing
++# here is composed acceptance. That claim is the assembly root's `composed`
++# workflow, which checks out all three at their exact pins and runs this same
++# suite with an absent root a refusal and not a skip.
 +#
-+# The platform policy is unchanged by the move: `tests`, `tests-no-submodule`,
-+# `tests-windows`, `parse-macos` and `guard-launch-mode` on every
-+# `pull_request` push, `tests-macos` on the `ready` label, on main, nightly
-+# and on dispatch — Brett Heap's RULING of 2026-09-16 travels with the code.
++# The jobs and their triggers are not changed by the move: Linux only, as
++# above, and `guard-launch-mode`, `tests`, `tests-no-submodule` and `package`
++# on every trigger below. #228's `package` job and its `release/v*` push
++# trigger belong to this leg, where releases are built and tagged from v1.1.0
++# on, and the release workflow reads those four job ids by name, so the leg
++# keeps every one. What the leg needs besides this workflow is two files of
++# its own: `.gitattributes`, because git never reads the assembly's into a
++# submodule (`test_the_root_carries_the_line_ending_rule` reads the leg's
++# copy), and `LICENSE`, which the wheel carries, both from T006's `code-0001`,
++# the first commit after the split.
  
  # `pull_request` names `labeled` beside GitHub's own three defaults
- # (`opened`, `synchronize`, `reopened`): the coordinator applying `ready` to
-@@ -45,6 +64,13 @@ on:
+ # (`opened`, `synchronize`, `reopened`). It was put there so that the
+@@ -47,6 +74,15 @@ on:
      - cron: '17 4 * * *'          # 04:17 UTC, nightly
    workflow_dispatch:
  
 +# THE CHECKOUT CONTEXT, NAMED (#186, T010): the code root is the checkout's
-+# own root, and the run is standalone. `github.workspace` is the same root on
-+# every runner this file uses, Windows' `D:\a\...` included.
++# own root, and the run is standalone. Every job below checks out into
++# `github.workspace`, so this one `env:` reaches all four, whether the suite
++# is run through `tests/run.sh`, which passes both variables on as they are,
++# or by pytest directly.
 +env:
 +  OPENREPOTOOLS_CODE_ROOT: ${{ github.workspace }}
 +  OPENREPOTOOLS_COMPOSED: '0'
@@ -52,37 +70,19 @@ index e27bc64..f078694 100644
  jobs:
    # Keep the process launch contract independently visible while the full
    # lane-helper suite runs. Each GitHub job has its own workstation runner;
-@@ -110,15 +136,19 @@ jobs:
-             echo "GIT_COMMITTER_EMAIL=ci@openrepotools.invalid"
-           } >> "$GITHUB_ENV"
- 
-+      # `-rs`: in the leg the document checks SKIP for want of the assembly and
-+      # spec roots, and a skip a person cannot read is a skip nobody audits.
-       - name: tests
--        run: python3 -m pytest tests -q
-+        run: python3 -m pytest tests -q -rs
- 
-   # THE SKIP PATH, PROVED. A fork's first command is `git clone` without
-   # `--recurse-submodules` and then `pytest`, and if that goes RED the fork is
+@@ -122,7 +158,11 @@ jobs:
    # one nobody finishes. So one job checks out with NO submodules and asserts
    # the suite still exits 0: the estate tests skip, naming
    # `git submodule update --init upstream/openRepoShape`, and the hygiene and
 -  # installer tests — which need nothing but this repository — still run.
 +  # installer tests — which need nothing but this repository — still run. In
-+  # the leg the document checks skip too, naming the assembly or spec root,
-+  # exactly as they do in `tests` above: no submodule changes nothing there.
++  # the leg the document checks skip here too, naming the assembly or spec
++  # root, exactly as they do in `guard-launch-mode` and `tests`, which print
++  # no reasons: a skip a person cannot read is a skip nobody audits, so the
++  # reasons are read here.
    #
    # `pytest -q` exits 0 on skips and 1 on failures, so the job's own status IS
    # the assertion; `-rs` prints the skip reasons, which is what a person
-@@ -151,6 +181,8 @@ jobs:
-   # THE SAME SUITE ON WINDOWS, because a person on Windows still CLONES this
-   # repository and reads it. What this job proves is the checkout — that the
-   # `.gitattributes` rule holds and the three bash files are LF in the index —
-+  # (in the leg that is the LEG'S OWN `.gitattributes`: git never reads the
-+  # assembly's into a submodule, so the leg must carry the rule itself) —
-   # and the hygiene tests, which need no shell. The estate and installer tests
-   # carry `WINDOWS_SKIP` in `tests/conftest.py`: these files are bash, there is
-   # no PowerShell twin to run instead, and on Windows the way in is WSL2.
 -- 
 2.43.0
 
