@@ -432,8 +432,15 @@ def test_the_door_stands_before_anything_is_renamed_or_written() -> None:
         f"the door opens at line {door.opens}, after step 1 (line {step1[0]})")
     acts = ('"$L" log', "append-line", "set-row-state", "publish-handoff",
             "commit", "rename-window", "send-keys", "lane-handoff")
-    later = [b.opens for b in _shell_blocks()
-             if b.opens != door.opens and any(act in b.body for act in acts)]
+
+    def code(block: Block) -> List[str]:
+        """The lines that run: a comment that NAMES an act (the preamble's
+        fence cites `lane-handoff`'s own) is not that act."""
+        return [line for line in block.body.split("\n")
+                if not line.lstrip().startswith("#")]
+
+    later = [b.opens for b in _shell_blocks() if b.opens != door.opens
+             and any(act in line for line in code(b) for act in acts)]
     assert later and all(opens > door.opens for opens in later), (
         door.opens, later)
 
