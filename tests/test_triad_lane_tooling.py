@@ -691,6 +691,128 @@ def test_255_a_leg_directory_that_cannot_be_searched_is_unreadable_and_holds_lan
     assert leg["disposition"] == "absent" and leg["retire"] == "-", leg
 
 
+def _work_in_the_nested_dependency(b: Bench, t: dict) -> None:
+    """A commit of triad-1's, on a branch no origin holds, in the dependency
+    nested in the code leg (`code/upstream/dep`)."""
+    dep = t["dep"]
+    b.git("checkout", "-q", "-b", "in-dep", cwd=dep)
+    b.commit(dep, "worked in the nested dependency", {"n.md": "n\n"}, lane="triad-1")
+
+
+@NEEDS_UPSTREAM
+def test_255_a_nested_dependency_directory_that_cannot_be_searched_is_unreadable_and_holds_lane_end(
+        triad):
+    """#255, LANE 3'S REVIEW (finding 1): `git submodule status --recursive`
+    lists a nested dependency whose directory this account cannot search as
+    `-` - not initialized - and exits 0, and `assembly_checkouts` skipped every
+    `-` line before it probed anything. The dependency got no row, the code
+    leg read `clean`, the dry run exited 0 and `lane-end` ENDED the lane over
+    the lane's unpushed commit in it - what `probe_leg` stopped for a declared
+    leg. A `-` line is now probed, and the dependency is `unreadable` and
+    counted, with no permission at all and with read but no search; the sweep
+    exits 3 and `lane-end` refuses, naming it. Searchable again, it is the
+    dependency holding the lane's commit."""
+    b, t = triad
+    if os.geteuid() == 0:
+        pytest.skip("root searches a directory whatever its mode")
+    dep = t["dep"]
+    _work_in_the_nested_dependency(b, t)
+    proc = b.sweep("triad-1", "--dry-run", "--porcelain")
+    assert proc.returncode == 3, proc.stdout + proc.stderr
+    leg = porcelain_rows(proc.stdout, "leg")[str(dep)]
+    assert leg["disposition"] == "unpushed" and leg["retire"] == "retire", leg
+    for mode in (0, 0o600):
+        os.chmod(dep, mode)
+        try:
+            proc = b.sweep("triad-1", "--dry-run", "--porcelain")
+            end = b.tool("lane-end", "triad-1")
+        finally:
+            os.chmod(dep, 0o755)
+        assert proc.returncode == 3, (oct(mode), proc.stdout + proc.stderr)
+        legs = porcelain_rows(proc.stdout, "leg")
+        assert list(legs) == [str(t["spec"]), str(t["code"]), str(dep)], (oct(mode), legs)
+        leg = legs[str(dep)]
+        assert leg["disposition"] == "unreadable" and leg["retire"] == "retire", (oct(mode), leg)
+        assert f"a dependency nested in the code leg (code/upstream/dep): {UNSEARCHABLE}" \
+            in leg["why"], (oct(mode), leg)
+        assert end.returncode == 2, (oct(mode), end.stdout + end.stderr)
+        assert "lane triad-1 is NOT ended" in end.stderr and str(dep) in end.stderr, end.stderr
+        assert "1 leg checkout(s)" in end.stderr, end.stderr
+    proc = b.sweep("triad-1", "--dry-run", "--porcelain")
+    assert proc.returncode == 3, proc.stdout + proc.stderr
+    leg = porcelain_rows(proc.stdout, "leg")[str(dep)]
+    assert leg["disposition"] == "unpushed" and leg["retire"] == "retire", leg
+
+
+@NEEDS_UPSTREAM
+def test_255_a_nested_dependency_beneath_a_directory_that_cannot_be_searched_holds_lane_end(
+        triad):
+    """The same, with the dependency's PARENT (`code/upstream`) unsearchable
+    and the dependency itself left as it is. Git lists it as `-` and exits 0
+    here too, and `Leg.exists` - `os.path.isdir` - is False for a path it cannot
+    reach exactly as for one that is not there, so `probe_leg` alone would read
+    it `absent`. It holds whichever way git answers: the dependency is an
+    `unreadable` row (the sweep exits 3), or - where `git submodule status`
+    itself fails - the sweep refuses to list the dependencies nested in the
+    leg (exit 2); either way `lane-end` refuses and the lane is NOT ended."""
+    b, t = triad
+    if os.geteuid() == 0:
+        pytest.skip("root searches a directory whatever its mode")
+    dep = t["dep"]
+    parent = dep.parent
+    assert parent == t["code"] / "upstream"
+    _work_in_the_nested_dependency(b, t)
+    for mode in (0, 0o600):
+        os.chmod(parent, mode)
+        try:
+            proc = b.sweep("triad-1", "--dry-run", "--porcelain")
+            end = b.tool("lane-end", "triad-1")
+        finally:
+            os.chmod(parent, 0o755)
+        assert proc.returncode in (2, 3), (oct(mode), proc.stdout + proc.stderr)
+        if proc.returncode == 3:
+            leg = porcelain_rows(proc.stdout, "leg")[str(dep)]
+            assert leg["disposition"] == "unreadable" and leg["retire"] == "retire", (oct(mode), leg)
+            assert "a dependency nested in the code leg (code/upstream/dep): git could not be " \
+                "read through it (" in leg["why"], (oct(mode), leg)
+        else:
+            assert "could not be listed (git submodule status failed)" in proc.stdout, proc.stdout
+        assert end.returncode == 2, (oct(mode), end.stdout + end.stderr)
+        assert "lane triad-1 is NOT ended" in end.stderr, end.stderr
+        assert "nothing of lane triad-1's is left on disk" not in end.stderr, end.stderr
+    proc = b.sweep("triad-1", "--dry-run", "--porcelain")
+    assert porcelain_rows(proc.stdout, "leg")[str(dep)]["disposition"] == "unpushed", proc.stdout
+
+
+@NEEDS_UPSTREAM
+def test_255_a_nested_dependency_never_initialized_adds_no_row(triad):
+    """A dependency the code leg declares and nobody initialized is a `-`
+    line git prints for it exactly as for an unreadable one, and it is still
+    nothing to read: with its directory empty and searchable - or not there at
+    all - the sweep has no row for it and exits 0, and `lane-end` passes. Only
+    a read that FAILED is a row (#255); an uninitialized dependency is not one."""
+    b, t = triad
+    code, dep = t["code"], t["dep"]
+    b.git("submodule", "deinit", "-q", "-f", "upstream/dep", cwd=code)
+    sub = b.run("git", "-C", code, "submodule", "status", "--recursive")
+    assert sub.returncode == 0 and sub.stdout.startswith("-"), sub.stdout + sub.stderr
+    assert dep.is_dir() and not any(dep.iterdir())
+    proc = b.sweep("triad-1", "--dry-run", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    legs = porcelain_rows(proc.stdout, "leg")
+    assert list(legs) == [str(t["spec"]), str(code)], legs
+    assert str(dep) not in proc.stdout, proc.stdout
+    dep.rmdir()
+    proc = b.sweep("triad-1", "--dry-run", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert list(porcelain_rows(proc.stdout, "leg")) == [str(t["spec"]), str(code)], proc.stdout
+    assert str(dep) not in proc.stdout, proc.stdout
+    dep.mkdir()
+    end = b.tool("lane-end", "triad-1")
+    assert end.returncode == 0, end.stdout + end.stderr
+    assert "close-out gate: nothing of lane triad-1's is left on disk" in end.stderr, end.stderr
+
+
 @NEEDS_UPSTREAM
 def test_t018_dependencies_a_leg_nests_that_cannot_be_listed_refuse_the_sweep(triad):
     """THE SWEEP'S OWN REFUSAL, UNSHADOWED: `git submodule status --recursive`
