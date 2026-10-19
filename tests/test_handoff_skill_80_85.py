@@ -29,7 +29,7 @@ Bash tool runs a skill's block under the user's own shell.
 `lane-handoff`'s side of every comparison is ITS OWN code: its `sanitize`
 function, its kind-word lines and its register-line template, cut out of the
 file. So the two cannot drift apart with this file still green. Every case
-marked RED fails against the skill at 5e88a2c and passes with the fix.
+marked RED fails against the skill at b707bd7 and passes with the fix.
 
 NOTHING HERE READS THE CALLER'S ENVIRONMENT. A lane window exports
 `WORKBENCHES_CLAUDE_*`, `TMUX`, `LANES_AGENT` and the other `LANES_*` seams,
@@ -77,7 +77,7 @@ PLACEHOLDER = re.compile(r"<[^<>\n]+>")
 
 #: The markers that find the blocks, each carried by exactly one shell block.
 STEP4 = "# (c) the row: ONE WRITE"
-DOOR = 'case "$why" in'
+DOOR = "REFUSED: the why is ONE line"
 
 
 # --- the blocks, as the files hold them --------------------------------------
@@ -242,7 +242,7 @@ def _the_one(box: Sandbox, verb: str) -> Call:
 @pytest.mark.parametrize("shell", SHELLS)
 def test_both_record_writes_carry_the_why_the_block_computed(
         box: Sandbox, shell: str) -> None:
-    """RED at 5e88a2c. The object log's PAUSED line takes the why, then the
+    """RED at b707bd7. The object log's PAUSED line takes the why, then the
     kind's word, as its free text, and the register's file-level line is the
     shape `lane-handoff` writes: lane, session@workstation, the instant, that
     same text, then `handoff refreshed`."""
@@ -264,7 +264,7 @@ def test_both_record_writes_carry_the_why_the_block_computed(
 @pytest.mark.parametrize("shell", SHELLS)
 def test_no_write_records_a_template_placeholder(box: Sandbox,
                                                  shell: str) -> None:
-    """RED at 5e88a2c. Run as printed, no argument of any write is a
+    """RED at b707bd7. Run as printed, no argument of any write is a
     `<placeholder>`: what the template showed a reader is never what the
     block records."""
     _step4(box, shell, "a usage reset")
@@ -276,7 +276,7 @@ def test_no_write_records_a_template_placeholder(box: Sandbox,
 
 
 def test_no_shell_block_carries_the_placeholders_80_item_7_names() -> None:
-    """RED at 5e88a2c. The three placeholders the finding quotes are gone from
+    """RED at b707bd7. The three placeholders the finding quotes are gone from
     every shell block of the skill, so no later copy brings one back beside
     the fixed writes."""
     left = [line.strip() for block in _shell_blocks()
@@ -308,7 +308,7 @@ WHY_CASES = {
 @pytest.mark.parametrize("case", sorted(WHY_CASES))
 def test_the_skill_writes_what_lane_handoff_writes_for_the_same_why(
         box: Sandbox, shell: str, case: str) -> None:
-    """RED at 5e88a2c. For the same why and the same kind, the skill hands
+    """RED at b707bd7. For the same why and the same kind, the skill hands
     `log PAUSED` and `append-line` exactly what `lane-handoff`'s own code
     hands them: `sanitize` (` — ` and every line break spelled `; `), an empty
     why written `handoff`, then the kind's word (`kind unknown`, `respawn`,
@@ -325,7 +325,7 @@ def test_the_skill_writes_what_lane_handoff_writes_for_the_same_why(
 @pytest.mark.parametrize("shell", SHELLS)
 def test_a_line_break_reaches_neither_one_line_write(box: Sandbox,
                                                      shell: str) -> None:
-    """RED at 5e88a2c (#85). A break that reaches step 4 anyway, whatever its
+    """RED at b707bd7 (#85). A break that reaches step 4 anyway, whatever its
     spelling, is one `; `, as #218 spelled it for `lane-handoff`: the record
     is still written, on one line, and no write is handed a newline or a
     carriage return."""
@@ -356,7 +356,7 @@ REFUSED_WHYS = {
 @pytest.mark.parametrize("case", sorted(REFUSED_WHYS))
 def test_a_why_carrying_a_line_break_is_refused_at_the_door(
         box: Sandbox, shell: str, case: str) -> None:
-    """RED at 5e88a2c, where there was no door. A why carrying a newline or a
+    """RED at b707bd7, where there was no door. A why carrying a newline or a
     carriage return stops the skill where it stands (nothing after the block
     runs) with exit 2, and says what `lane-handoff` says at its own door: the
     why is ONE line, nothing was written, put `; ` where the break was."""
@@ -392,8 +392,31 @@ def test_a_one_line_why_passes_the_door_untouched(box: Sandbox, shell: str,
         case, proc.returncode, proc.stdout, proc.stderr)
 
 
+@pytest.mark.parametrize("shell", SHELLS)
+def test_an_unset_why_passes_the_door_under_set_u_and_is_written_handoff(
+        box: Sandbox, shell: str) -> None:
+    """RED at 9b80eed, where the door read `$why` bare: under `set -u` an
+    unset why stopped the shell there ("why: unbound variable" in bash,
+    "parameter not set" in zsh), before step 1. A why the operator did not
+    give is no why at all. It passes the door with nothing said, and step 4,
+    run in the same `set -u` shell, writes it `handoff`, as `lane-handoff`
+    does."""
+    script = (f'set -u\nL="{box.helper}"\nlane={LANE}\nws={WS}\nuuid={UUID}\n'
+              'ws_missing=""\nuuid_missing=""\nunset why\n' +
+              _one_block(DOOR).body + "printf 'AFTER\\n'\n" +
+              _one_block(STEP4).body)
+    proc = box.run(shell, script)
+    assert proc.returncode == 0, (proc.returncode, proc.stderr)
+    assert proc.stdout.startswith("AFTER\n"), (proc.stdout, proc.stderr)
+    assert "why" not in proc.stderr, proc.stderr
+    assert _the_one(box, "log").argv[-1] == "handoff kind unknown"
+    assert _the_one(box, "append-line").argv[1:] == [
+        f"PAUSED — lane {LANE}, session {UUID}@{WS}, {NOW}, "
+        "handoff kind unknown; handoff refreshed"]
+
+
 def test_the_door_stands_before_anything_is_renamed_or_written() -> None:
-    """RED at 5e88a2c. The door is asked before step 1, which renames the
+    """RED at b707bd7. The door is asked before step 1, which renames the
     window, and before every block that publishes, commits or writes a record,
     so its refusal leaves nothing to undo, as `lane-handoff`'s does."""
     door = _one_block(DOOR)
@@ -418,7 +441,7 @@ def test_the_door_stands_before_anything_is_renamed_or_written() -> None:
 
 
 def test_step_4s_prose_says_a_line_break_is_spelled_too() -> None:
-    """RED at 5e88a2c. The sentence that tells a reader what "sanitize" means
+    """RED at b707bd7. The sentence that tells a reader what "sanitize" means
     names the line break beside the ` — `, as the code under it now does."""
     text = _skill_text()
     start = text.index("First sanitize the operator's words")

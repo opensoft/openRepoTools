@@ -126,10 +126,12 @@ write, but step 4 runs after step 2 has refreshed and committed the handoff, so 
 act with a top block and no record behind it. So the test is made here, before step 1 renames anything and
 before anything is written. It is the test `lane-handoff` makes right after reading its arguments, because
 the skill and `lane-handoff` are one act (Amendment 17(a)) and refuse the same why. Step 4 still spells a
-break `; `, as `lane-handoff`'s `sanitize` does, and that is the second line of defence, not this one.
+break `; `, as `lane-handoff`'s `sanitize` does, and that is the second line of defence, not this one. A
+why the operator did not give is no why at all: it passes, and step 4 writes `handoff`. That holds in a shell
+running under `set -u` too, which is why the check reads `${why-}`.
 
 ```sh
-case "$why" in
+case "${why-}" in
   *$'\n'*|*$'\r'*)
     printf '%s\n' "REFUSED: the why is ONE line: it is written into the handoff's top block, the object log's PAUSED line and the register's file-level line, and a newline or carriage return in it would split each of them — the last two in files nothing rewrites. Nothing was renamed or written. Put it on one line, with '; ' where the break was, and run /handoff again." >&2
     exit 2 ;;
