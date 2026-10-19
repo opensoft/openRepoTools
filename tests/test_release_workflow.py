@@ -660,6 +660,46 @@ def annotated_tag(repository: str, tag: str, object_: str, commit: str,
                            "sha": lie.get("names", commit)}}}
 
 
+#: The identity and the clock of the git fixtures' commits and tags.
+FIXTURE_GIT = {"GIT_AUTHOR_NAME": "release fixture",
+               "GIT_AUTHOR_EMAIL": "fixture@openrepotools.invalid",
+               "GIT_COMMITTER_NAME": "release fixture",
+               "GIT_COMMITTER_EMAIL": "fixture@openrepotools.invalid",
+               "GIT_AUTHOR_DATE": "2026-10-19T00:00:00Z",
+               "GIT_COMMITTER_DATE": "2026-10-19T00:00:00Z",
+               "GIT_CONFIG_NOSYSTEM": "1"}
+
+
+def fixture_git(home: Path, cwd: Path, *args: str, data: Optional[str] = None) -> str:
+    env = clean_environ(home)
+    env.update(FIXTURE_GIT)
+    done = subprocess.run(["git", *args], cwd=str(cwd), env=env, input=data,
+                          capture_output=True, text=True, check=False,
+                          timeout=STEP_TIMEOUT)
+    assert done.returncode == 0, transcript(done)
+    return done.stdout.strip()
+
+
+def tagged_origin(where: Path, tags: Tuple[str, ...]) -> Tuple[Path, str, Dict[str, str]]:
+    """A bare repository on this filesystem holding one commit and an
+    annotated tag at it for each of `tags`, and an empty repository whose
+    `origin` is it, by a `file://` URL: what the ref step fetches from.
+    Returns that repository, the commit, and each tag's object."""
+    home, origin, checkout = where / "home", where / "origin.git", where / "checkout"
+    for directory in (origin, checkout):
+        directory.mkdir(parents=True)
+    fixture_git(home, origin, "init", "--quiet", "--bare")
+    tree = fixture_git(home, origin, "mktree", data="")
+    commit = fixture_git(home, origin, "commit-tree", tree, "-m", "the release commit")
+    objects = {}
+    for tag in tags:
+        fixture_git(home, origin, "tag", "-a", tag, "-m", f"openRepoTools {tag}", commit)
+        objects[tag] = fixture_git(home, origin, "rev-parse", f"refs/tags/{tag}")
+    fixture_git(home, checkout, "init", "--quiet")
+    fixture_git(home, checkout, "remote", "add", "origin", origin.as_uri())
+    return checkout, commit, objects
+
+
 # --- HEAD, as git holds it -------------------------------------------------------
 
 @functools.lru_cache(maxsize=1)
@@ -1189,6 +1229,66 @@ def test_release_build_the_ref_step_reads_the_tag_from_the_forge_and_from_git():
             if re.search(r"\bgit\s", line) and "refs/tags/" in line], (
         "the ref step reads no tag from git")
     assert "$GITHUB_SHA" in script
+
+
+#: STEP 2 ON A TAG, where the forge and `origin` both hold the annotated tag
+#: `v1.1.0` at the run's commit (and `v1.1.0-again`, another tag object at
+#: it): `(the dispatched ref, the version, what the forge says otherwise,
+#: whether the step passes)`. So what refuses is the step's own comparison:
+#: the ref against `refs/tags/v$VERSION`, the forge's tag object against the
+#: tag and the commit, and git's copy against the forge's.
+REF_TAG_CASES = {
+    "the-version-s-own-tag": ("refs/tags/v1.1.0", "1.1.0", {}, True),
+    "another-version-s-tag": ("refs/tags/v1.0.0", "1.1.0", {}, False),
+    "the-tag-without-its-v": ("refs/tags/1.1.0", "1.1.0", {}, False),
+    "the-rc-tag-for-the-final": ("refs/tags/v1.1.0rc1", "1.1.0", {}, False),
+    "the-forge-s-tag-names-another-commit": (
+        "refs/tags/v1.1.0", "1.1.0", {"names": "d" * 40}, False),
+    "the-forge-s-tag-object-has-another-name": (
+        "refs/tags/v1.1.0", "1.1.0", {"name": "v1.1.1"}, False),
+    "the-forge-s-tag-names-a-tag": ("refs/tags/v1.1.0", "1.1.0", {"type": "tag"}, False),
+    "a-lightweight-tag-on-the-forge": (
+        "refs/tags/v1.1.0", "1.1.0", {"lightweight": True}, False),
+    "the-forge-s-tag-object-is-not-git-s": (
+        "refs/tags/v1.1.0", "1.1.0", {"object": "v1.1.0-again"}, False),
+}
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@pytest.mark.parametrize("which", REF_TAG_CASES)
+def test_release_build_the_ref_step_holds_the_ref_the_forge_and_git_to_v_version_at_this_commit(
+        tmp_path, which):
+    """STEP 2 ON A TAG, RUN (FR-029), with `origin` a bare repository on
+    this filesystem: on `refs/tags/v1.1.0`, the annotated tag the forge and
+    git both hold at the run's commit, it passes, fetching that tag. A ref
+    that is another version's tag, the tag without its `v` or an rc's tag is
+    refused before the forge is asked. A forge whose tag object names
+    another commit, has another name, names a tag, or is a lightweight tag,
+    and a git copy that is not the forge's object, are each refused."""
+    ref, version, lie, passes = REF_TAG_CASES[which]
+    checkout, commit, objects = tagged_origin(tmp_path / "git", ("v1.1.0", "v1.1.0-again"))
+    lie = dict(lie)
+    object_ = objects[lie.pop("object", "v1.1.0")]
+    forge, values = api_forge(tmp_path, annotated_tag(CODE_LEG, "v1.1.0", object_,
+                                                      commit, **lie))
+    values.update(GITHUB_REF=ref, GITHUB_REF_NAME=ref_name(ref), GITHUB_SHA=commit,
+                  GITHUB_REPOSITORY=CODE_LEG, VERSION=version)
+    workflow = release()
+    runner = Runner(tmp_path / "work", workflow, "build", values, forge)
+    done = runner.run(named(workflow, "build", REF_STEP), cwd=checkout)
+    assert (done.returncode == 0) == passes, transcript(done)
+    if passes:
+        assert done.stdout.strip().endswith(
+            f"v1.1.0: annotated, tag object {objects['v1.1.0']}, at {commit}"), transcript(done)
+        assert fixture_git(tmp_path / "git" / "home", checkout, "rev-parse",
+                           "refs/tags/v1.1.0") == objects["v1.1.0"]
+    else:
+        assert "::error::" in done.stdout, transcript(done)
+    if ref != f"refs/tags/v{version}":
+        assert forge_asked(tmp_path) == [], (
+            f"the step asked the forge about a ref it must refuse: {forge_asked(tmp_path)}")
 
 
 #: A `gh` that answers `compare` as the forge does (`FORGE_COMPARE`, a JSON map
