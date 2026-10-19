@@ -150,7 +150,7 @@ Phase 0 and again after Phase 1.
 | G2 | Nothing under `upstream/openRepoShape` is edited, and the pin does not move (AGENTS.md; proposal Non-goals) | PASS | PASS: the digest code and `load_yaml` are run from the submodule, and never copied (R9) |
 | G3 | The suite reaches no network, and creates no real repository (AGENTS.md) | PASS | PASS: wheel tests take a built wheel by variable (R8); the v1.0.0 notes are checked by their task, not the suite (R15) |
 | G4 | Tests skip without the submodule, naming it, and never fail for it (AGENTS.md; `tests-no-submodule`) | PASS | PASS: workflow tests skip like command tests (R9); the `package` job checks out with `submodules: true` and fails on a skip |
-| G5 | AGENTS.md and README caps move only by dated entries (`tests/test_repo_hygiene.py:1748`, `:2253`) | PASS | PASS: R16 |
+| G5 | AGENTS.md and README caps move only by dated entries (`tests/test_repo_hygiene.py:1981`, `:2516`) | PASS | PASS: R16 |
 | G6 | Governed files (CI workflows, and every file recording a pin or a digest) are `[O]` work (Speckit protocol, Build Tiers) | PASS | PASS: `tests.yml`, `release.yml`, both hash locks, the stamp and every action pin are touched only by `[O]` tasks |
 | G7 | Every refusal is in the planning phase, and a refusal places nothing (design.md Goals) | PASS | PASS: pipx's link, a venv-shaped link and pip's script are decided in `plan_install_targets`; a broken stamp in `package_init` before the argument loop |
 | G8 | Brett Heap decides every tag, cut and upload; no lane act is a build task (proposal "Release owner") | PASS | PASS: environments, publishers, tags, dispatches, uploads, the Release and the assembly README PR stay in the change's `tasks.md` |
@@ -209,7 +209,7 @@ tests/
 ├── test_release_workflow.py                 # NEW: release.yml, both locks, the stamp writer round trip
 ├── test_tests_workflow.py                   # NEW: tests.yml's triggers, job ids and package job
 ├── test_repo_hygiene.py                     # CHANGED: the standard-library rule, the compile set, caps
-└── test_openrepotools_command.py            # CHANGED: one docstring (:300-302), assertions unchanged
+└── test_openrepotools_command.py            # CHANGED: one docstring (:324-327), assertions unchanged
 docs/release-notes/
 ├── v1.0.0.md                                # NEW: the published body, byte for byte (R15)
 └── v1.1.0.md                                # NEW: the draft

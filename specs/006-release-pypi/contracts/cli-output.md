@@ -42,8 +42,8 @@ openRepoTools (<repo> @ <ref>)
 
 This is unchanged. `<repo>` is `${OPENREPOTOOLS_REPO:-opensoft/openRepoTools}`
 and `<ref>` is `${OPENREPOTOOLS_REF:-main}`. No `OPENREPOTOOLS_PACKAGE_*`
-variable changes it. `tests/test_openrepotools_command.py:299-319` keeps its
-assertions, and only the docstring at `:300-302` is rewritten.
+variable changes it. `tests/test_openrepotools_command.py:323-344` keeps its
+assertions, and only the docstring at `:324-327` is rewritten.
 
 The digest label `sorted-ls-tree-r-v1` is one literal. It is held equal to
 the pinned `repo_shape.TREE_DIGEST_DEFINITION` and to

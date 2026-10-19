@@ -14,13 +14,15 @@ git submodule update --init upstream/openRepoShape   # the command and workflow 
 command -v bash jq git python3                        # all four are needed
 ```
 
-Building a wheel (steps 3 and 4) fetches hatchling into pip's isolated build
-environment, so it needs the network. Nothing else here does.
+Three steps can need the network. Building the wheel (step 3) fetches
+hatchling into pip's isolated build environment. A pipx that installs with
+pip rather than uv (step 5) fetches pip into a new `PIPX_HOME`'s shared
+libraries. Step 8 asks GitHub. Nothing else here does.
 
 ## 1. The package's tests, without a wheel
 
 ```sh
-bash tests/run.sh -k 'test_package or test_install_pipx or test_release_workflow or test_tests_workflow'
+bash tests/run.sh -k 'test_package or test_install_pipx or test_release_workflow or test_tests_workflow' -rs
 ```
 
 - Expect every test to pass, except the built-wheel tests in
@@ -37,7 +39,7 @@ bash tests/run.sh -k 'repo_hygiene or openrepotools_command or install_'
 
 - The standard-library rule now covers `src/openrepotools/`, and the compile
   test compiles it.
-- The `--version` tests at `tests/test_openrepotools_command.py:299-319` keep
+- The `--version` tests at `tests/test_openrepotools_command.py:323-344` keep
   their assertions.
 - The README and AGENTS.md caps pass, with any dated entry the change needed.
 
@@ -89,7 +91,9 @@ Expect each of these:
 - 28 rows in the receipt under
   `"$t/user-home/.local/share/openRepoTools/"`;
 - `"$t/bin/openRepoTools"` still a link into
-  `"$t/pipx/venvs/openrepotools/bin/"`.
+  `"$t/pipx/venvs/openrepotools/bin/"`;
+- last, the PATH note, because `$t/bin` is not on `PATH`:
+  `openRepoTools: note: the first openRepoTools on your PATH is <first, or "none">, not this package's <t>/pipx/venvs/openrepotools/bin/openRepoTools, …`.
 
 Then run `--install` again from the checkout's own `openRepoTools`, with the
 same environment:
