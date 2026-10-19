@@ -19,8 +19,11 @@
 # `.github/workflows/tests.yml`'s `package` job reads one entry, tomli's: it
 # copies the requirement line and every `--hash` line under it into a file
 # under `$RUNNER_TEMP`, and installs that by hash, wheels only, before
-# pytest. The job holds no digest of its own, so this file is the one record
-# of tomli's digests, and a resolution that moves tomli moves that job's too.
+# pytest. The job holds no digest of its own, but the pipx lock,
+# `.github/release-pipx-requirements.txt`, carries this same `tomli` entry,
+# byte for byte, and the job installs that lock after this file's `tomli`
+# (step 7 after step 4), so its tests run on the pipx lock's `tomli`. The two
+# entries must move together, re-resolved in one act.
 # The job's own two builds are `pip wheel`, in pip's isolated build
 # environment, which this lock does not reach.
 #

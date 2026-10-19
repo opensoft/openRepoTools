@@ -304,9 +304,12 @@ were read read-only.
   - design.md Decision 9 asks for tomli at a pinned version, by hash,
     beside pytest.
   - The proposal's file list adds no third lock.
-  - Extracting the entry, rather than copying one digest, keeps the build
-    lock the only record of tomli's digests. That avoids two copies that
-    could drift.
+  - Extracting the entry, rather than copying one digest, keeps the job free
+    of a digest of its own. It does not make the build lock the only record
+    of tomli's digests: the pipx lock carries the same entry, byte for byte,
+    and step 7 installs that lock after step 4's tomli, so the package tests
+    run on the pipx lock's tomli. The two locks' entries must move together,
+    re-resolved in one act, as the build lock's header says.
 - **Alternatives considered**: a third lock file, rejected as a file nothing
   else needs.
 
