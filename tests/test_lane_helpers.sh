@@ -106,6 +106,7 @@ SECTION_TAB=$'\t'
 SECTION_NAME="(preamble, before the first heading)"
 SECTION_T0=$SUITE_T0
 SECTION_ROWS=""
+TEARDOWN_SAID=""
 
 section_close() {   # <clock reading> — the open section's row, once
   [ -n "$SECTION_NAME" ] || return 0
@@ -159,11 +160,18 @@ ${sr_md}| **${sr_total}** | 100% | **the whole run, from the top of the suite to
 "
 }
 
-teardown_report() {   # <seconds> — stderr, because the footer is stdout's last line
-  printf 'teardown: rm -rf of the sandbox took %s s\n' "$1" >&2
-  step_summary "### Shell suite: sandbox teardown
+teardown_report() {   # <seconds> <took|failed> — stderr, because the footer is stdout's last line
+  if [ "$2" = took ]; then
+    printf 'teardown: rm -rf of the sandbox took %s s\n' "$1" >&2
+    step_summary "### Shell suite: sandbox teardown
 
 The exit trap's \`rm -rf\` of the suite's sandbox took **$1 s** (whole seconds). It runs after the footer, so it is in none of the rows above."
+  else
+    printf 'teardown: rm -rf of the sandbox FAILED after %s s, so part of it is left behind\n' "$1" >&2
+    step_summary "### Shell suite: sandbox teardown
+
+The exit trap's \`rm -rf\` of the suite's sandbox **FAILED after $1 s** (whole seconds), so part of it is left behind. It runs after the footer, so it is in none of the rows above."
+  fi
 }
 
 SANDBOX="$(mktemp -d)"
@@ -214,17 +222,29 @@ cleanup() {
   [ -n "${GD_DUP:-}" ] && kill "$GD_DUP" 2>/dev/null
   [ -n "${TH73_PID:-}" ] && kill "$TH73_PID" 2>/dev/null
   # opensoft/openRepoTools#77, step 1a: THE TEARDOWN IS TIMED, both removals
-  # together, and said once. It is said only where the sandbox was really
-  # there to remove: the INT and TERM handlers below call this and then `exit`,
-  # which runs the EXIT trap and so this function a second time, and a second
-  # "took 0 s" would be a number about nothing.
-  local cl_t0=$SECONDS
+  # together, and said ONCE, by a flag. The INT and TERM handlers below call
+  # this and then `exit`, which runs the EXIT trap and so this function a second
+  # time; a second line would repeat the first, or say "took 0 s" about nothing.
+  # The flag is not "is the sandbox still there": a removal that FAILED (a
+  # directory inside it that is not writable) leaves it there, and a guard that
+  # reads that said it twice. The second call still tries the removal again,
+  # as it always did, and says nothing. And a removal that failed is said to
+  # have failed, with the seconds it took to do so, not "took": a number that
+  # reads as a teardown that finished is the one thing this line must not be.
+  local cl_t0=$SECONDS cl_ok=1
   # #180's short checkout root for the clause (c) TAIL case, which is outside
   # `$SANDBOX` wherever the run root is long.
-  [ -n "${A11T_ROOT:-}" ] && [ -d "$A11T_ROOT" ] && rm -rf -- "$A11T_ROOT"
+  [ -n "${A11T_ROOT:-}" ] && [ -d "$A11T_ROOT" ] && { rm -rf -- "$A11T_ROOT" || cl_ok=0; }
   if [ -n "${SANDBOX:-}" ] && [ -d "$SANDBOX" ]; then
-    rm -rf -- "$SANDBOX"
-    teardown_report "$((SECONDS - cl_t0))"
+    rm -rf -- "$SANDBOX" || cl_ok=0
+    if [ -z "${TEARDOWN_SAID:-}" ]; then
+      TEARDOWN_SAID=1
+      if [ "$cl_ok" = 1 ]; then
+        teardown_report "$((SECONDS - cl_t0))" took
+      else
+        teardown_report "$((SECONDS - cl_t0))" failed
+      fi
+    fi
   fi
   return 0
 }
@@ -17284,24 +17304,6 @@ has   "…by name" "$err" "--inventory-only is the door past ONE lane's close-ou
 
 if [ -n "$cg_had_lsr" ]; then export LANES_LANE_STATE_ROOT="$cg_lsr"; else unset LANES_LANE_STATE_ROOT; fi
 
-# ----------------------------------------- the section clock reads every heading
-#
-# opensoft/openRepoTools#77, step 1a. A heading printed with a bare `echo`
-# prints exactly as it always did and is NOT clocked, so its seconds would
-# silently join the section before it and the table at the foot would blame
-# the wrong one. Two readings of this file's own text hold that: no `echo "== `
-# is left, and by the time the last heading has opened, the clock holds one row
-# for each `section` heading in the file — the preamble's, plus every heading's
-# but the open one's — which is also the proof that none of them sits in a
-# branch this run skipped. `grep -c` reads a FILE here, which always exists:
-# it prints `0` and exits 1 on no match, so the `|| :` only keeps the status
-# quiet.
-is    "every == heading in this suite goes through section, so each is clocked" \
-      "$(grep -c '^echo "== ' "$SELF" || :)" 0
-is    "…and the clock holds one row per heading by the last heading's start" \
-      "$(printf '%s' "$SECTION_ROWS" | awk 'END { print NR + 0 }')" \
-      "$(grep -c '^section "== ' "$SELF" || :)"
-
 # ------------------------------------------------------- nothing real touched
 #
 # The check is that the suite CREATED nothing here, which is not the same as
@@ -17342,6 +17344,28 @@ is   "…and every log it did create is inside the sandbox workspace" \
 # what needs raising; red here beside two hundred others means it is why.
 is   "the liveness fixture was still running when the run ended" \
      "$(kill -0 "$LIVE_PID" 2>/dev/null && printf alive || printf gone)" alive
+
+# THE SECTION CLOCK READS EVERY HEADING, asserted HERE, at the foot, and not
+# above the guards: it must run after the last section has opened, or a section
+# added where the next one naturally goes (just above `nothing real touched`)
+# would be counted in the file and not yet in the clock, and turn this red for
+# nothing. It is two readings, and it reads this file and its clock, not a
+# fixture, so the liveness assertion above is still the last one about the RUN.
+# opensoft/openRepoTools#77, step 1a. A heading printed with a bare `echo`
+# prints exactly as it always did and is NOT clocked, so its seconds would
+# silently join the section before it and the table below would blame the
+# wrong one. First, no heading is spelled with `echo` any more, at any indent
+# and in either quote. Second, by the last heading's start the clock holds one
+# row for each `section` heading in the file — the preamble's, plus every
+# heading's but the open one's — which also proves none of them sits in a
+# branch this run skipped. `grep -c` reads a FILE here, which always exists: it
+# prints `0` and exits 1 on no match, so the `|| :` only keeps the status quiet.
+sc_bare_re="^[[:space:]]*echo[[:space:]]+[\"']== "
+is    "every == heading in this suite goes through section, so each is clocked" \
+      "$(grep -cE "$sc_bare_re" "$SELF" || :)" 0
+is    "…and the clock holds one row per heading by the last heading's start" \
+      "$(printf '%s' "$SECTION_ROWS" | awk 'END { print NR + 0 }')" \
+      "$(grep -c '^section "== ' "$SELF" || :)"
 
 # THE TABLE OF opensoft/openRepoTools#77, step 1a: every section's wall time,
 # longest first, and the same table in the job's step summary. It is printed
