@@ -503,13 +503,14 @@ def test_122_a_refusal_after_the_rebase_leaves_a_peers_identical_row_alone(reg, 
     (reg.fakebin / "git").unlink()
     assert mark.exists(), "the peer never raced the pull"
     assert result.returncode == code, (result.stdout, result.stderr)
-    assert "origin/main already carries this exact row" in result.stderr
-    assert "compensating LOCAL commit" not in result.stderr
-    assert reg.git("log", "--oneline", "origin/main..HEAD") == ""
-    assert reg.git("diff", "origin/main", "HEAD") == ""
+    ahead = reg.git("log", "--oneline", "origin/main..HEAD")
+    diff = reg.git("diff", "origin/main", "HEAD")
     after = reg.run("set-row-state", "repoX-2", "PAUSED · the next unrelated write", LANES_LANE="repoX-1")
     assert after.returncode == 0, (after.stdout, after.stderr)
-    assert reg.published("lanes/LANES.md").count("`repoX-4`") == 1
+    assert reg.published("lanes/LANES.md").count("`repoX-4`") == 1, (ahead, result.stderr)
+    assert ahead == "" and diff == ""
+    assert "origin/main already carries this exact row" in result.stderr
+    assert "compensating LOCAL commit" not in result.stderr
 
 
 def test_122_a_refusal_after_the_rebase_takes_back_its_own_row_beside_a_peers_copy(reg, tmp_path):
@@ -529,12 +530,14 @@ def test_122_a_refusal_after_the_rebase_takes_back_its_own_row_beside_a_peers_co
     (reg.fakebin / "git").unlink()
     assert mark.exists(), "the peer never raced the pull"
     assert result.returncode == 1, (result.stdout, result.stderr)
-    assert "removed in a compensating LOCAL commit" in result.stderr
-    assert reg.read("lanes/LANES.md") == peer_register
-    assert reg.git("diff", "origin/main", "HEAD", "--", "lanes/LANES.md") == ""
+    register = reg.read("lanes/LANES.md")
+    diff = reg.git("diff", "origin/main", "HEAD", "--", "lanes/LANES.md")
     after = reg.run("set-row-state", "repoX-2", "PAUSED · the next unrelated write", LANES_LANE="repoX-1")
     assert after.returncode == 0, (after.stdout, after.stderr)
-    assert reg.published("lanes/LANES.md").count("`repoX-4`") == 1
+    assert reg.published("lanes/LANES.md").count("`repoX-4`") == 1, result.stderr
+    assert register == peer_register
+    assert diff == ""
+    assert "removed in a compensating LOCAL commit" in result.stderr
 
 
 @PROC_FD
