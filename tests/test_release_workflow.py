@@ -2322,14 +2322,25 @@ def test_release_upload_pypi_waits_for_testpypi_and_every_install_leg():
         "build", "testpypi", "install"}
 
 
+#: EACH UPLOAD JOB'S CHECK OF THE ARTIFACT AGAINST THE BUILD'S RECORD, the
+#: model's own step: found by its name, and holding the one command that
+#: compares the file's sha256 with the recorded one. No bare "sha256" will
+#: do, because the index steps read `["sha256"]` from the JSON too.
+DIST_STEP = "dist holds the wheel the build job verified, and nothing else"
+DIST_SHA256 = 'echo "$WHEEL_SHA256  dist/$WHEEL" | sha256sum --strict -c -'
+
+
 def before_publish_checks() -> list:
     """What each upload job reads before the upload, by what its script
-    asks: the artifact, its sha256, the environment's rules and this run's
-    approval again, the tag again, and the index's JSON for the version."""
+    asks: the artifact, its sha256 (the dist step, by its name and its
+    command), the environment's rules and this run's approval again, the tag
+    again, and the index's JSON for the version."""
     return [
         ("the build's artifact",
          lambda s: str(s.get("uses", "")).startswith("actions/download-artifact@")),
-        ("the wheel's sha256 against the build's", lambda s: "sha256" in run_text(s)),
+        ("the wheel's sha256 against the build's",
+         lambda s: (str(s.get("name", "")) == DIST_STEP
+                    and DIST_SHA256 in commands(run_text(s)))),
         ("the environment's rules, again",
          lambda s: "deployment-branch-policies" in run_text(s)),
         ("this run's approval", lambda s: "approvals" in run_text(s)),
@@ -2455,13 +2466,20 @@ def test_release_install_check_reads_pypi_alone_and_installs_pipx_from_its_lock(
     assert not any(problems.values()), problems
 
 
+#: THE INSTALL CHECK'S OWN CHECK OF THE WHEEL IT TOOK, by its name: on a tag
+#: and on a branch alike, the one file it holds must have the sha256 the build
+#: job recorded before anything from it runs.
+WHEEL_DIGEST_STEP = "the wheel is the one the build job verified"
+
+
 @NEEDS_UPSTREAM
 def test_release_install_check_takes_the_wheel_by_its_digest_on_a_tag_and_a_branch():
     """STEP 1: on a tag the wheel comes from TestPyPI, on a branch it is the
     build's artifact, and in both cases its sha256 is checked before
-    anything from it runs. Only the intended steps are conditional: those
-    two, and the macOS and Python 3.9 legs' own; and the checkout keeps no
-    credentials."""
+    anything from it runs: `WHEEL_DIGEST_STEP`, with no `if:`, comes after
+    both and before pipx installs the wheel, and the test after this one
+    runs it. Only the intended steps are conditional: those two, and the
+    macOS and Python 3.9 legs' own; and the checkout keeps no credentials."""
     workflow = release()
     steps = install_steps(workflow)
     kinds = {}
@@ -2476,11 +2494,61 @@ def test_release_install_check_takes_the_wheel_by_its_digest_on_a_tag_and_a_bran
     assert "test.pypi.org" in run_text(fetch), label(fetch)
     assert str(take.get("uses", "")).startswith("actions/download-artifact@")
     after = max(kinds["a-tag"][0], kinds["a-branch"][0])
-    assert [s for s in steps[after + 1:] if "if" not in s
-            and "sha256" in run_text(s)], "the wheel's sha256 is not checked"
+    check = named(workflow, "install", WHEEL_DIGEST_STEP)
+    at = where(workflow, "install", check)
+    assert at > after and "if" not in check, (
+        f"{label(check)!r} is step {at}, conditional or before the wheel is "
+        f"taken (step {after})")
+    installs = [i for i, s in enumerate(steps)
+                if re.search(r"\bpipx install\b", run_text(s))]
+    assert installs and at < min(installs), (
+        f"pipx installs the wheel (steps {installs}) before {label(check)!r} "
+        f"(step {at}) checks its sha256")
     for step in steps:
         if str(step.get("uses", "")).startswith("actions/checkout@"):
             assert (step.get("with") or {}).get("persist-credentials") is False
+
+
+#: The bytes the build recorded, and other bytes under the same name.
+RECORDED_WHEEL = b"PK\x03\x04 the wheel the build job verified\n"
+OTHER_WHEEL = b"PK\x03\x04 another file under the wheel's name\n"
+
+#: `(the files in the job's wheel directory, whether the step passes)`.
+WHEEL_DIGEST_CASES = {
+    "the-recorded-wheel": ({"<wheel>": RECORDED_WHEEL}, True),
+    "other-bytes-under-its-name": ({"<wheel>": OTHER_WHEEL}, False),
+    "the-recorded-wheel-and-another-file": (
+        {"<wheel>": RECORDED_WHEEL, "openrepotools-1.0.0-py3-none-any.whl":
+         RECORDED_WHEEL}, False),
+    "another-name-at-the-recorded-digest": (
+        {"openrepotools-1.0.0-py3-none-any.whl": RECORDED_WHEEL}, False),
+    "nothing": ({}, False),
+}
+
+
+@NEEDS_UPSTREAM
+@pytest.mark.parametrize("which", WHEEL_DIGEST_CASES)
+def test_release_install_check_the_digest_step_passes_the_recorded_wheel_alone(
+        tmp_path, which):
+    """THE STEP, RUN (contracts/workflows.md's install step 1): its heredoc,
+    over the job's wheel directory, passes the one file named `$WHEEL` whose
+    sha256 is `$WHEEL_SHA256`, and refuses other bytes under that name,
+    another file beside it, another name, and nothing at all, so the install
+    check never runs a file the build did not verify."""
+    files, passes = WHEEL_DIGEST_CASES[which]
+    wheel = "openrepotools-1.1.0rc1-py3-none-any.whl"
+    temp = tmp_path / "runner-temp"
+    (temp / "wheel").mkdir(parents=True)
+    for name, data in files.items():
+        (temp / "wheel" / name.replace("<wheel>", wheel)).write_bytes(data)
+    values = {"RUNNER_TEMP": str(temp), "WHEEL": wheel,
+              "WHEEL_SHA256": hashlib.sha256(RECORDED_WHEEL).hexdigest()}
+    step = named(release(), "install", WHEEL_DIGEST_STEP)
+    done = run_heredoc(step, tmp_path / "run", [], values, cwd=tmp_path)
+    assert (done.returncode == 0) == passes, transcript(done)
+    if not passes:
+        out = done.stdout + done.stderr
+        assert "::error::" in out and "Traceback" not in out, transcript(done)
 
 
 @NEEDS_UPSTREAM
