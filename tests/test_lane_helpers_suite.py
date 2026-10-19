@@ -27,10 +27,14 @@ that file.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shutil
+import signal
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -151,6 +155,133 @@ def test_the_liveness_fixture_outlives_the_suite_timeout():
         "Raise the sleep in tests/test_lane_helpers.sh above this bound.")
 
 
+#: How long the suite's process group gets to answer a TERM - its own trap
+#: removes the sandbox it made - before it is KILLed.
+#:
+#: FIVE, AND NOT THE TEN `tests/run.sh` GIVES ITS OWN GROUP. run.sh's
+#: `stop_group` polls fifty times at 0.2 s and each poll runs `ps`, so it waits
+#: about 10.7 s before it KILLs pytest. This stop is TERM, this wait, KILL and a
+#: reap, and all of it has to finish well inside that: a stop that takes as long
+#: as run.sh's gets pytest killed in the middle of it, with the suite's group
+#: left running - which is the orphan this exists to prevent.
+GROUP_TERM_GRACE = 5
+
+#: How often `run_in_own_group` looks up from waiting on the suite to see
+#: whether a TERM or a hangup has arrived.
+_SIGNAL_POLL = 0.5
+
+
+def stop_group(child) -> None:
+    """Stop the process group `child` leads: TERM, up to GROUP_TERM_GRACE
+    seconds for its leader to answer it, then KILL for whatever is left, and
+    reap the leader. A group that is already gone is not an error.
+
+    THE KILL IS IN A `finally`, AND CTRL-C IS IGNORED UNTIL IT HAS BEEN SENT.
+    A second Ctrl-C during the grace used to leave the wait with a
+    KeyboardInterrupt, skip the KILL, and orphan a suite that was ignoring
+    TERM. The stop is bounded, so ignoring a person's Ctrl-C for it costs at
+    most GROUP_TERM_GRACE seconds."""
+    on_main = threading.current_thread() is threading.main_thread()
+    held = signal.signal(signal.SIGINT, signal.SIG_IGN) if on_main else None
+    try:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(child.pid, signal.SIGTERM)
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            child.wait(timeout=GROUP_TERM_GRACE)
+    finally:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(child.pid, signal.SIGKILL)
+        child.wait()
+        if held is not None:
+            signal.signal(signal.SIGINT, held)
+
+
+def run_in_own_group(argv, *, timeout, **popen_kwargs):
+    """`subprocess.run(argv, capture_output=True, timeout=timeout)` with the
+    command in a session of its own, which is stopped whenever this does not
+    return normally.
+
+    THE SUITE RUNS IN A SESSION OF ITS OWN (opensoft/openRepoTools#142, item
+    3). `subprocess.run(timeout=)` kills only the bash it started, and the
+    suite's `EXIT` trap does not run on that SIGKILL, so the liveness
+    fixture's `sleep` - longer than TIMEOUT_SECONDS on purpose - and every
+    later fixture's were orphaned for up to 70 minutes. The child leads its
+    session, so its pid is its group's id, and the group is what `stop_group`
+    stops: TERM first, so the suite's own TERM trap removes its sandbox.
+
+    A SESSION OF ITS OWN IS NOT THE GROUP `tests/run.sh` STOPS, NOR THE
+    TERMINAL'S. A TERM to that group, a hangup and a Ctrl-C now reach THIS
+    process and no longer reach the suite. pytest has no handler for the first
+    two, so one is installed here for as long as this waits - only where the
+    disposition is still the default, so a `nohup`'d run goes on ignoring a
+    hangup. The handler only NOTES the signal, and the wait is made in slices
+    of _SIGNAL_POLL that look for it: a handler that raised would raise inside
+    `Popen()` as well, after the fork and before `child` is bound, and leave
+    the suite with nobody to stop it. A noted signal stops the group, and then
+    the signal is sent to this process again with its default action restored,
+    so it ends as it would have had nothing been handling it. The timeout and
+    a KeyboardInterrupt stop the group too.
+
+    WHAT THIS DOES NOT REACH: the pty driver's children (`LANE_PTY` in the
+    suite) are session leaders of their own (`pty.fork` runs `setsid`), so they
+    are outside the group; each is bounded by that driver's own silence limit.
+
+    `errors="replace"`, because the thing the wrapper below exists to print is
+    the TRANSCRIPT, and a decode that raises loses all of it. The suite renders
+    its own failures with bash substrings for that reason (R-A9-11), so a
+    stray byte here should be impossible - and if one ever gets through, a
+    `\\ufffd` in one line is a readable result where `UnicodeDecodeError` is
+    none at all. Measured: at `dcf1027` one truncated em dash cost the whole
+    998-line transcript on the macOS job.
+    """
+    pending = []   # the TERM or HUP numbers that arrived, oldest first
+    handled = []
+
+    def note(signum, _frame):
+        pending.append(signum)
+
+    try:
+        if threading.current_thread() is threading.main_thread():
+            for signum in (signal.SIGTERM, signal.SIGHUP):
+                if signal.getsignal(signum) == signal.SIG_DFL:
+                    signal.signal(signum, note)
+                    handled.append(signum)
+        with subprocess.Popen(argv, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, encoding="utf-8",
+                              errors="replace", start_new_session=True,
+                              **popen_kwargs) as child:
+            try:
+                deadline = time.monotonic() + timeout
+                while not pending:
+                    left = deadline - time.monotonic()
+                    try:
+                        stdout, stderr = child.communicate(
+                            timeout=max(min(_SIGNAL_POLL, left), 0))
+                    except subprocess.TimeoutExpired as expired:
+                        if left > _SIGNAL_POLL:
+                            continue
+                        # The bound that was passed, not the last slice's: a
+                        # CI log reads "timed out after 5400 seconds".
+                        raise subprocess.TimeoutExpired(
+                            child.args, timeout, output=expired.output,
+                            stderr=expired.stderr) from None
+                    break
+            except BaseException:
+                stop_group(child)
+                raise
+            if pending:   # also a signal that came as the suite finished
+                stop_group(child)
+        if pending:
+            raise SystemExit(128 + pending[0])   # the `finally` sends the signal itself
+        return subprocess.CompletedProcess(child.args, child.returncode,
+                                           stdout, stderr)
+    finally:
+        for signum in handled:
+            signal.signal(signum, signal.SIG_DFL)
+        if pending:
+            os.kill(os.getpid(), pending[0])
+
+
 @WINDOWS_SKIP
 @pytest.mark.skipif(shutil.which("bash") is None,
                     reason="the lane helpers and their suite are bash")
@@ -189,17 +320,8 @@ def test_the_lane_helper_suite_passes():
     env["OPENREPOTOOLS_LANE_MANUAL"] = (
         "" if spec is None else str(spec / "docs" / "README-lanes.md"))
 
-    # `errors="replace"`, because the thing this wrapper exists to print is the
-    # TRANSCRIPT, and a decode that raises loses all of it. The suite renders
-    # its own failures with bash substrings for that reason (R-A9-11), so a
-    # stray byte here should be impossible — and if one ever gets through, a
-    # `\ufffd` in one line is a readable result where `UnicodeDecodeError` is
-    # none at all. Measured: at `dcf1027` one truncated em dash cost the whole
-    # 998-line transcript on the macOS job.
-    proc = subprocess.run(["bash", str(SUITE)], capture_output=True,
-                          encoding="utf-8", errors="replace",
-                          check=False, cwd=str(REPO), timeout=TIMEOUT_SECONDS,
-                          env=env)
+    proc = run_in_own_group(["bash", str(SUITE)], timeout=TIMEOUT_SECONDS,
+                            cwd=str(REPO), env=env)
     tail = proc.stdout.strip().splitlines()[-1:] or ["(no output)"]
     assert proc.returncode == 0, (
         f"tests/test_lane_helpers.sh failed ({tail[0]}):\n"
