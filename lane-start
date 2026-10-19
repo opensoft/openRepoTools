@@ -112,6 +112,19 @@
 #                    pane supervisor. The intent named by it is the one this run
 #                    reads; an id that is not the lane's current operation is a
 #                    refusal
+#   --bind <uuid>    THE NAME GUARD'S BINDING MODE, and nobody else's: the
+#                    guard passes it on a person's choice `2` at its offer
+#                    (Amendment 12(h) rule 2, openRepoTools#70). <uuid> is the
+#                    transcript of the session live in THIS window. It is
+#                    appended to the lane's session cell even where another row
+#                    records it — that `2` is the person's yes (clause (h) rule
+#                    4) — and the row's stamp, the lane's log line and the
+#                    handoff's Rule 3 stamp all name it, never the id this run
+#                    would otherwise have resumed. It binds or it refuses: only
+#                    with --no-launch, never with --fresh or --agent, and a
+#                    <uuid> that is not this window's live session, or a window
+#                    named for another lane, is a refusal before anything is
+#                    written
 #   -h, --help
 #   --               everything after it is passed through to claude
 #
@@ -139,7 +152,9 @@
 #      this run resumes and stamps. There is no flag for it and there could not
 #      be one — the id does not exist until the session does, so the act is
 #      `lane-start --no-launch <repo> <n>` run IN that window, which is what the
-#      SessionStart hook's block tells the new session to do;
+#      SessionStart hook's block tells the new session to do. (`--bind <uuid>`
+#      is the one caller already INSIDE that session — the name guard — naming
+#      it, and it is the guard's alone: see OPTIONS);
 #   3c. `--confirm`, if it was passed and this window is not already named for
 #      the lane: the triple in front of a person, and a question. Before the
 #      rename and before any write, so a No costs nothing;
@@ -767,6 +782,8 @@ quoted() {
 
 dry_run=0; no_launch=0; estate=""; dir_override=""; confirm=0; take_yes=0
 agent_flag=""; fresh_flag=0; op_flag=""
+# THE NAME GUARD'S BINDING MODE (openRepoTools#70) — the transcript being bound.
+bind_sid=""
 # AMENDMENT 18(c)/(e) — the three words a second place has for a bound lane.
 request_handoff=0; force_why=""; handoff_wait=300
 positional=(); pass=()
@@ -803,6 +820,12 @@ while [ $# -gt 0 ]; do
     # rather than consuming a newer lane's intent.
     --operation)   op_flag="${2-}"; [ -n "$op_flag" ] || die "--operation needs an operation id" 2; shift 2 ;;
     --operation=*) op_flag="${1#--operation=}"; [ -n "$op_flag" ] || die "--operation needs an operation id" 2; shift ;;
+    # THE NAME GUARD'S BINDING MODE (openRepoTools#70). The guard's choice `2`
+    # passes the transcript it is running in, and this run stamps THAT id rather
+    # than the one the row would have resumed. What it may be combined with is
+    # decided below the loop, where every flag has been read.
+    --bind)      bind_sid="${2-}"; [ -n "$bind_sid" ] || die "--bind needs the transcript uuid of the session being bound" 2; shift 2 ;;
+    --bind=*)    bind_sid="${1#--bind=}"; [ -n "$bind_sid" ] || die "--bind needs the transcript uuid of the session being bound" 2; shift ;;
     # AMENDMENT 18(c) AND (e) — THE SECOND PLACE'S THREE WORDS, and each of
     # them is an ANSWER to a question this command would otherwise ask. A
     # caller with no terminal on stdin cannot be asked (an agent's is not one),
@@ -845,6 +868,26 @@ case "$handoff_wait" in ''|*[!0-9]*) die "--wait takes a whole number of seconds
 # run took would be decided by the order of two arms rather than by the person.
 [ "$request_handoff" = 1 ] && [ -n "$force_why" ] &&
   die "--request-handoff ASKS the place that holds this lane to hand it off and waits for it; --force takes it without asking and makes that place stop loudly (Amendment 18(e)). They are two different acts on somebody else's session — pick one." 2
+# THE BINDING MODE BINDS A SESSION THAT IS ALREADY RUNNING, AND NOTHING ELSE
+# (openRepoTools#70). Its whole reason to exist is that the guard's `yes` ran
+# `--no-launch` and the row's resume path stamped `RESUMED by <the id the row
+# already had>` — a conversation nobody was in. So every combination that could
+# put a different id on that stamp is refused here, before anything is read or
+# written: a launch (the session is running; there is nothing to start), a fresh
+# session (a second answer to which session this lane is), and another agent
+# (the session being bound is the Claude one the guard is running in). These are
+# refusals, never quiet corrections: a caller that passes them has misread what
+# the mode is for.
+if [ -n "$bind_sid" ]; then
+  [[ "$bind_sid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] ||
+    die "--bind takes the transcript uuid of the session live in this window (the name of its <uuid>.jsonl), and '$bind_sid' is not one" 2
+  [ "$no_launch" = 1 ] ||
+    die "--bind is the name guard's binding mode: it binds the session ALREADY running in this window and launches nothing, so it is given only with --no-launch (Amendment 12(h) rule 2, openRepoTools#70)" 2
+  [ "$fresh_flag" = 0 ] ||
+    die "--bind binds the session live in this window and --fresh starts a new one: two answers to which session this lane is. Pick one." 2
+  [ -z "$agent_flag" ] ||
+    die "--bind binds the Claude session live in this window, and --agent names an agent to launch; a run that launches nothing has no agent to name" 2
+fi
 case "${#positional[@]}" in
   2) repo="${positional[0]}"; n="${positional[1]}" ;;
   1)
@@ -1073,8 +1116,8 @@ if [ -z "${LANES_FILE:-}" ]; then die "$(lanes_workspace_why)" 1; fi
 #
 # ONE RESOLVER, SHARED. `lanes-edit.sh canon-lane` is the same read `lane-end`,
 # `lanes` and `restart` make, for the reason clause (h) gives every other read
-# in this toolset: four implementations of "which row is this name's" is how the
-# four would come to disagree about it.
+# in this toolset: an implementation of "which row is this name's" in each
+# command is how they would come to disagree about it.
 #
 # 2 IS TWO ANSWERS AND THE REFUSAL IS THE ONE THAT MATTERS (Copilot round 4 on
 # openRepoTools#41). It is the code a helper predating this amendment spends on
@@ -2099,7 +2142,60 @@ if [ -n "$win_sid" ] && [ -n "$this_window_name" ] && [ "$this_window_name" != "
 fi
 
 harness_sid=""; cell_anchor=""
-if [ -n "$win_veto" ]; then
+# ------------------- 3b(ii). THE BINDING MODE (`--bind`, openRepoTools#70)
+#
+# THE GUARD'S CHOICE `2` IS A PERSON SAYING "THIS SESSION IS THAT LANE NOW", and
+# clause (h) rule 2 names the act it asks for: *"the row created or this uuid
+# appended to its cell"*. Without this mode the take below refused that uuid —
+# veto 1, because the row being LEFT still records it — so the row's ordinary
+# resume path ran instead and stamped the row, the lane's log and the handoff
+# with `RESUMED by <the id the row already had>`, under `--no-launch`, about a
+# conversation nobody was in; and the guard then appended the uuid to the cell
+# itself. The cell ended right and the append-only log said something else.
+#
+# SO THE MODE IS STEP 3b's OWN TAKE, WITH VETO 1 ANSWERED BY THE PERSON. Clause
+# (h) rule 4's limit is that a uuid never moves between rows WITHOUT the
+# person's yes, and `--bind` is that yes, carried by the one caller that asked
+# for it. Everything else about the take is unchanged: the cell is extended
+# first and the stamp second (Amendment 8), with the PUBLISHED last id as the
+# anchor. One rule is added, and it is the guard's own former anchor rule moved
+# here: a cell recording no uuid is anchored on either of the two texts such a
+# cell carries instead.
+#
+# AND IT BINDS OR IT REFUSES. Every case where the take cannot happen — no live
+# session in this window, a different one from the uuid named, a window named
+# for ANOTHER lane (veto 2, which this mode does NOT lift) — is a refusal here,
+# before the rename and before any write. Carrying on would reach the resume
+# path, and that path stamping an id nobody is in is the defect this mode exists
+# to end.
+if [ -n "$bind_sid" ]; then
+  bind_lc="$(printf '%s' "$bind_sid" | tr 'A-F' 'a-f')"
+  [ -n "$win_sid" ] ||
+    die "--bind $bind_sid: no live session record names this window ($this_window), so there is no session here to bind. Nothing has been renamed, written or launched." 2
+  [ "$(printf '%s' "$win_sid" | tr 'A-F' 'a-f')" = "$bind_lc" ] ||
+    die "--bind names $bind_sid, and the session live in this window is $win_sid. The binding mode binds THIS window's session and no other one, so nothing has been renamed, written or launched." 2
+  [ -z "$win_veto" ] ||
+    die "this window is named '$win_veto', $win_veto_why — so the session live in it ($win_sid) is NOT bound as $LANE's (Amendment 11 clause (d) rule 1, veto 2, which --bind does not lift). Rename the window to $LANE first. Nothing has been renamed, written or launched." 2
+  if [ "$bind_lc" = "$row_sid" ]; then
+    step "--bind: $win_sid is already the last id in $LANE's session cell — nothing to append"
+  else
+    harness_sid="$win_sid"
+    cell_anchor="$row_sid"
+    if [ -z "$cell_anchor" ]; then
+      # THE TWO TEXTS A CELL CARRIES INSTEAD OF A UUID: `none recorded`, which a
+      # person writes into a row by hand, and the `pending` line this file writes
+      # into a row it creates with no uuid to put there (step 5, below). Both are
+      # whole-cell texts, so they anchor exactly as an id does, and a cell
+      # carrying anything else prints the act and is never guessed at.
+      bind_cell="$(cell 3 | sed -e 's/^ *//' -e 's/ *$//')"
+      case "$bind_cell" in
+        "none recorded" | "pending — set by the session's first act") cell_anchor="$bind_cell" ;;
+      esac
+    fi
+    row_sid="$harness_sid"
+    note "--bind: the session live in THIS window is $harness_sid, and it is bound as $LANE's on the person's choice 2 at the name guard (Amendment 12(h) rule 2). Its uuid goes into the session cell before the row's status — even where another row records it, because that choice is the person's yes (clause (h) rule 4) — and every stamp this run writes names it."
+  fi
+elif [ -n "$win_veto" ]; then
   note "this window is named '$win_veto', $win_veto_why — so the session live in it ($win_sid) is NOT taken as $LANE's, and $LANE's row is not stamped with it (Amendment 11 clause (d) rule 1, veto 2; Evidence 2(b)). Run this from $LANE's own window, or pass --dir and let it start its own session."
 elif [ -n "$win_sid" ] && [ "$holder_here" = 0 ]; then
   if ! [[ "$win_sid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
@@ -2486,7 +2582,13 @@ read_recorded_agent() {
   esac
   return 0
 }
-if [ -n "$agent_flag" ]; then
+if [ -n "$bind_sid" ]; then
+  # THE BINDING MODE BINDS THE CLAUDE SESSION THE GUARD IS RUNNING IN
+  # (openRepoTools#70), whichever agent last paused this lane: the launcher
+  # table below would otherwise stamp `<agent> pending` for a session that is
+  # plainly here and plainly Claude.
+  AGENT=claude
+elif [ -n "$agent_flag" ]; then
   AGENT="$agent_flag"; AGENT_EXPLICIT=1
 else
   read_recorded_agent
@@ -3278,7 +3380,10 @@ new_sid=""
 rec_file=""
 resume_sid="$row_sid"
 restored_sid=""
-if [ -n "$row_sid" ] && [ "$AGENT" = claude ] && (( ! fresh )); then
+# NOT IN THE BINDING MODE (openRepoTools#70): the id there is a session that is
+# RUNNING in this window, its launch decision does not read where its transcript
+# is, and a transcript a live process holds is one this act refuses to move.
+if [ -n "$row_sid" ] && [ "$AGENT" = claude ] && (( ! fresh )) && [ -z "$bind_sid" ]; then
   rec_file="$(recorded_transcript "$row_sid" 2>/dev/null || :)"
   if [ -n "$rec_file" ]; then
     # WHICH DIRECTORY IT WAS FOUND IN, and whether that directory is SHARED —
@@ -3338,8 +3443,9 @@ fi
 # directory (the harness has been seen to keep one under another `cwd` key),
 # and an older PAUSED record beside it. It would have `--resume`d the older
 # conversation over the person's own, in the window they are sitting in. Both
-# halves of the evidence are asked for now.
-if [ -z "$rec_file" ] && [ -z "$harness_sid" ] && (( ! holder_here )) \
+# halves of the evidence are asked for now — and `--bind` is that evidence
+# named outright (openRepoTools#70).
+if [ -z "$rec_file" ] && [ -z "$harness_sid" ] && [ -z "$bind_sid" ] && (( ! holder_here )) \
    && [ "$AGENT" = claude ] \
    && [ "$RECORDED_AGENT" = claude ] && (( ! fresh )); then
   paused_sid=""; paused_rc=0
@@ -3402,6 +3508,19 @@ if [ "$AGENT" != claude ]; then
     *)
       die "this command has no launcher for the agent '$AGENT'. It knows: claude (resume by id where its transcript is here, else a named new session with the handoff's top block as its first prompt) and codex (the top block as its first prompt). A lane is resumed by an agent whose launch this command has been taught and tested — never by a guessed argv (Amendment 17(c))." 2 ;;
   esac
+elif [ -n "$bind_sid" ]; then
+  # THE BINDING MODE STAMPS THE ID BEING BOUND (openRepoTools#70), and it is
+  # decided FIRST, ahead of every branch that reads where a transcript is: the
+  # session is running in this window, so which directory holds its file is not
+  # a question this run has to answer, and the title and new-session branches
+  # would stamp `unknown` or a minted id for a conversation that is plainly
+  # here. Step 3b has already put this uuid at the end of the cell (or found it
+  # there), and the 18(h) count for it was made at the window-binding call. The
+  # command is the exact resume of that id — printed, never run, since --bind
+  # comes only with --no-launch — which is what the next `lane-start` resumes.
+  step "--bind: lane $LANE is bound to $win_sid, the session live in this window — the row's stamp, the lane's log line and the handoff's Rule 3 stamp name it"
+  cmd=("$CLAUDE_BIN" --name "$LANE" --resume "$win_sid")
+  lane_verb=RESUMED; lane_sid="$win_sid"
 elif [ -n "$resume_sid" ] && [ -n "$rec_file" ]; then
   # AMENDMENT 18(h), AND THIS IS THE ONLY LAUNCH BRANCH WITH AN ID TO COUNT
   # (`main`, #52). The clause is *"the id it is about to resume or bind"*: this
@@ -3764,12 +3883,16 @@ else
   # one that landed, and a refusal prints the act rather than corrupting a cell.
   if [ -n "$harness_sid" ]; then
     harness_hint="LANES_LANE=$LANE $LANES_EDIT append-session-id $LANE \"<the session cell's last id>\" \"→ $harness_cell\""
+    # THE COMMIT SAYS WHICH ACT THIS WAS: under `--bind` nothing was minted, a
+    # person moved a running session here (openRepoTools#70).
+    harness_why="session cell: the harness minted $harness_sid for this window"
+    [ -z "$bind_sid" ] || harness_why="session cell: bound $harness_sid on the person's choice 2 at the name guard (Amendment 12(h) rule 2)"
     if [ -z "$cell_anchor" ]; then
       note "the row's session cell records no transcript uuid to append to (some rows carry only \`session_…\` footer ids, which are not transcript ids). STAMP IT AS THIS SESSION'S FIRST ACT:"
       note "  $harness_hint"
     elif (( dry_run )); then
       plan "lanes-edit.sh append-session-id $LANE '$cell_anchor' '→ $harness_cell'"
-    elif LANES_LANE="$LANE" "$LANES_EDIT" append-session-id "$LANE" "$cell_anchor" "→ $harness_cell" "session cell: the harness minted $harness_sid for this window"; then
+    elif LANES_LANE="$LANE" "$LANES_EDIT" append-session-id "$LANE" "$cell_anchor" "→ $harness_cell" "$harness_why"; then
       step "session cell updated: $cell_anchor → $harness_sid (the transcript live in this window)"
     else
       note "the session cell was NOT extended with $harness_sid (this checkout's copy of the row does not carry $cell_anchor exactly once IN ITS SESSION CELL — it may be older than the published one). STAMP IT AS THIS SESSION'S FIRST ACT:"

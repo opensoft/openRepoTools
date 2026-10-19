@@ -97,7 +97,18 @@ cleanup() {
   [ -n "${DUP_CHILD:-}" ] && kill "$DUP_CHILD" 2>/dev/null
   [ -n "${RACE_PARENT:-}" ] && kill "$RACE_PARENT" 2>/dev/null
   [ -n "${RACE_CHILD:-}" ] && kill "$RACE_CHILD" 2>/dev/null
+  # opensoft/openRepoTools#76 and #86's fixtures. `PART_CHILD_B` ignores TERM
+  # on purpose, so it is the one that takes KILL.
+  [ -n "${SP_PARENT:-}" ] && kill "$SP_PARENT" 2>/dev/null
+  [ -n "${SP_CHILD:-}" ] && kill "$SP_CHILD" 2>/dev/null
+  [ -n "${TWO_PARENT:-}" ] && kill "$TWO_PARENT" 2>/dev/null
+  [ -n "${TWO_CHILD_A:-}" ] && kill "$TWO_CHILD_A" 2>/dev/null
+  [ -n "${TWO_CHILD_B:-}" ] && kill "$TWO_CHILD_B" 2>/dev/null
+  [ -n "${PART_PARENT:-}" ] && kill "$PART_PARENT" 2>/dev/null
+  [ -n "${PART_CHILD_A:-}" ] && kill "$PART_CHILD_A" 2>/dev/null
+  [ -n "${PART_CHILD_B:-}" ] && kill -KILL "$PART_CHILD_B" 2>/dev/null
   [ -n "${GD_DUP:-}" ] && kill "$GD_DUP" 2>/dev/null
+  [ -n "${TH73_PID:-}" ] && kill "$TH73_PID" 2>/dev/null
   # #180's short checkout root for the clause (c) TAIL case, which is outside
   # `$SANDBOX` wherever the run root is long.
   [ -n "${A11T_ROOT:-}" ] && [ -d "$A11T_ROOT" ] && rm -rf -- "$A11T_ROOT"
@@ -320,6 +331,18 @@ cat > "$SANDBOX/fakebin/tmux" <<'FAKE'
 # that it was attempted — and then refused the way tmux refuses one, on stderr
 # with a nonzero exit, and the name does not stick. Unset, nothing changes for
 # any case written before it.
+#
+# openRepoTools#73 ADDS A SILENT SERVER AND ONE UNTARGETED FORMAT. Under
+# `$FAKE_TMUX_SILENT=1` every call answers as tmux does with no server to reach
+# — nothing on stdout, `no server running on …` on stderr, exit 1 — which is the
+# state a dead WINDOW must not be read out of. And the untargeted
+# `'#{session_name}'` is `record_window_state`'s second question, "does a server
+# answer here at all", so it answers the session of `$FAKE_TMUX_WINDOW`, as tmux
+# answers for the client a shell is in.
+if [ "${FAKE_TMUX_SILENT:-0}" = 1 ]; then
+  printf 'no server running on %s\n' "${TMUX%%,*}" >&2
+  exit 1
+fi
 case "${1-}" in
   list-windows)
     if [ -n "${FAKE_TMUX_WINDOWS:-}" ]; then
@@ -354,6 +377,7 @@ case "${1-}" in
     fake_w="${FAKE_TMUX_WINDOW:-testsess:@1}"
     case "$fake_f" in
       '#{session_name}:#{window_id}')    printf '%s\n' "$fake_w" ;;
+      '#{session_name}')                 printf '%s\n' "${fake_w%%:*}" ;;
       '#{session_name}:#{window_index}') printf '%s\n' "${fake_w%%:*}:${FAKE_TMUX_WINDOW_INDEX:-0}" ;;
       '#S:#I')                           printf '%s\n' "${fake_w%%:*}:${FAKE_TMUX_WINDOW_INDEX:-0}" ;;
       '#{window_id}')                    case "${fake_w#*:}" in @*) printf '%s\n' "${fake_w#*:}" ;; *) printf '%s\n' "${FAKE_TMUX_WINDOW_ID:-@1}" ;; esac ;;
@@ -5470,25 +5494,36 @@ rm -f "$sessions_dir/$DUP_CHILD-repoM1-companion.json"
 # absent) must not have the wrong one attached to this parent's row. Pure
 # discovery, no kill: fixed numbers are fine here, `lane-end --retire` is
 # never called against them.
+#
+# AND A SECOND RIGHT CHILD (opensoft/openRepoTools#86): the scan used to stop
+# at the first child that verified, and the record had one child slot, so
+# $AMBIG_CHILD_RIGHT2, listed by pgrep -P after $AMBIG_CHILD_RIGHT, was left
+# out of the report `lane-end --retire` acts on. The slot is a space-separated
+# list of every verified child now, in pgrep -P's order.
 AMBIG_PARENT=900101
 AMBIG_CHILD_RIGHT=900102
 AMBIG_CHILD_WRONG=900103
+AMBIG_CHILD_RIGHT2=900104
 WRONG_ID="aaaa0007-7777-4000-8000-aaaa00077777"
-FAKE_PS_AMBIG="$(printf '%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s' \
-  "$AMBIG_PARENT"      1               "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl" \
-  "$AMBIG_CHILD_RIGHT" "$AMBIG_PARENT" "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl" \
-  "$AMBIG_CHILD_WRONG" "$AMBIG_PARENT" "claude --session-id $WRONG_ID --fork-session --resume /nonexistent/other-projects/$WRONG_ID.jsonl")"
-FAKE_PGREP_F_AMBIG="$(printf '%s\n%s\n%s\n%s' "$LIVE_PID" "$AMBIG_PARENT" "$AMBIG_CHILD_WRONG" "$AMBIG_CHILD_RIGHT")"
+FAKE_PS_AMBIG="$(printf '%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s' \
+  "$AMBIG_PARENT"       1               "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl" \
+  "$AMBIG_CHILD_RIGHT"  "$AMBIG_PARENT" "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl" \
+  "$AMBIG_CHILD_WRONG"  "$AMBIG_PARENT" "claude --session-id $WRONG_ID --fork-session --resume /nonexistent/other-projects/$WRONG_ID.jsonl" \
+  "$AMBIG_CHILD_RIGHT2" "$AMBIG_PARENT" "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl")"
+FAKE_PGREP_F_AMBIG="$(printf '%s\n%s\n%s\n%s\n%s' "$LIVE_PID" "$AMBIG_PARENT" "$AMBIG_CHILD_WRONG" "$AMBIG_CHILD_RIGHT" "$AMBIG_CHILD_RIGHT2")"
 # THE WRONG CHILD LISTED FIRST (Copilot round 8), so a fix that merely kept
 # "whichever `pgrep -P` lists first" would still pass every OTHER assertion
 # here and only this ordering would catch it.
-FAKE_PGREP_CHILDREN_AMBIG="$(printf '%s\t%s\n%s\t%s' "$AMBIG_CHILD_WRONG" "$AMBIG_PARENT" "$AMBIG_CHILD_RIGHT" "$AMBIG_PARENT")"
+FAKE_PGREP_CHILDREN_AMBIG="$(printf '%s\t%s\n%s\t%s\n%s\t%s' "$AMBIG_CHILD_WRONG" "$AMBIG_PARENT" "$AMBIG_CHILD_RIGHT" "$AMBIG_PARENT" "$AMBIG_CHILD_RIGHT2" "$AMBIG_PARENT")"
 
 run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_AMBIG" FAKE_PS_RECORDS="$FAKE_PS_AMBIG" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_AMBIG" \
   "$E" duplicate-holder repoM-1
-is   "two fork-session children of one wrapper: still one row, and no crash" "$rc" 0
+is   "three fork-session children of one wrapper: still one row, and no crash" "$rc" 0
 has  "…names the parent" "$out" "$AMBIG_PARENT"
 has  "…and the child that actually resumes THIS transcript" "$out" "$AMBIG_CHILD_RIGHT"
+has  "…and the SECOND child that resumes it too, not only the first (#86)" "$out" "$AMBIG_CHILD_RIGHT2"
+is   "…the child slot is both, space-separated, in pgrep -P's order" \
+     "$(printf '%s\n' "$out" | cut -d "$(printf '\037')" -f2)" "$AMBIG_CHILD_RIGHT $AMBIG_CHILD_RIGHT2"
 hasnt "…never the sibling resuming a DIFFERENT transcript, though pgrep -P lists it first" "$out" "$AMBIG_CHILD_WRONG"
 is   "…exactly one row" "$(printf '%s\n' "$out" | grep -c .)" 1
 
@@ -5591,6 +5626,203 @@ is   "…and the fixture pair really is gone before its pids are freed" \
      "$(kill -0 "$RACE_PARENT" 2>/dev/null && echo alive || echo gone),$(kill -0 "$RACE_CHILD" 2>/dev/null && echo alive || echo gone)" \
      "gone,gone"
 RACE_PARENT=""; RACE_CHILD=""
+
+# ------------- opensoft/openRepoTools#76: a --resume path with a SPACE in it
+#
+# `ps -o args=` joins the argv with spaces and quotes nothing, so a duplicate
+# resumed from a directory with a space in it reads back as `--resume
+# /nonexistent/projects with a space/<id>.jsonl`, and the cut both reads made
+# at the first space (`${v%% *}`) took `/nonexistent/projects` from that and
+# matched nothing: `duplicate-holder` answered 8 over a duplicate that was
+# there, and `lane-end --retire`'s pre-kill recheck, the same cut, could only
+# have withheld its TERM. Trailing options after the path, as a harness passes
+# them, prove the value ends at its `.jsonl` and not at the end of the line.
+# Real processes, for the reason $DUP_PARENT's comment gives.
+sleep 3000 & SP_PARENT=$!
+sleep 3000 & SP_CHILD=$!
+SP_ARGS="claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects with a space/$MLIVE_ID.jsonl --output-format stream-json"
+FAKE_PS_SP="$(printf '%s\t%s\t%s\n%s\t%s\t%s' \
+  "$SP_PARENT" 1            "$SP_ARGS" \
+  "$SP_CHILD"  "$SP_PARENT" "$SP_ARGS")"
+FAKE_PGREP_F_SP="$(printf '%s\n%s\n%s' "$LIVE_PID" "$SP_PARENT" "$SP_CHILD")"
+FAKE_PGREP_CHILDREN_SP="$(printf '%s\t%s' "$SP_CHILD" "$SP_PARENT")"
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_SP" FAKE_PS_RECORDS="$FAKE_PS_SP" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_SP" \
+  "$E" duplicate-holder repoM-1
+is   "a duplicate resumed from a directory with a SPACE in it is found (#76)" "$rc" 0
+has  "…naming its parent" "$out" "$SP_PARENT"
+has  "…and its child, whose own --resume value is read whole too" "$out" "$SP_CHILD"
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_SP" FAKE_PS_RECORDS="$FAKE_PS_SP" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_SP" \
+  "$END" repoM-1 --retire "$SP_PARENT"
+is   "…and lane-end --retire's pre-kill recheck reads it whole as well: retired, 0" "$rc" 0
+has  "…reporting RETIRED" "$err" "RETIRED lane repoM-1's duplicate holder"
+has  "…the parent TERMed, not withheld as an argv that no longer matched" "$err" "pid $SP_PARENT (bg-pty-host): gone"
+has  "…and the child" "$err" "pid $SP_CHILD (child): gone"
+sleep 0.2
+is   "…and both really are gone" \
+     "$(kill -0 "$SP_PARENT" 2>/dev/null && echo alive || echo gone),$(kill -0 "$SP_CHILD" 2>/dev/null && echo alive || echo gone)" \
+     "gone,gone"
+# CLEARED ONLY ONCE GONE, the rule $DUP_PARENT's own clearing gives: a pid
+# still alive here (a failed case above) stays the trap's to end.
+kill -0 "$SP_PARENT" 2>/dev/null || SP_PARENT=""
+kill -0 "$SP_CHILD" 2>/dev/null || SP_CHILD=""
+
+# …AND READING THE VALUE WHOLE REOPENS NEITHER CUT PR #61 ALREADY MADE.
+# Copilot round 5's own shape, `--resume /other.jsonl --label /<id>.jsonl`,
+# still reads `/other.jsonl`: the value ends at the first `.jsonl` that ends
+# an argument. And a `--resume` given a bare session id, with this
+# transcript's path in a LATER option, has no `.jsonl` of its own to stop at,
+# so the value would run across that option; a value holding a word that
+# opens with `--` is refused rather than read across it. Discovery only, so
+# fixed numbers, as the AMBIG case above says.
+#
+# …NOR ACROSS A LATER PLAIN WORD THAT NAMES THIS TRANSCRIPT (Brett Heap's
+# ruling of 2026-10-18 on PR #205, "Add the condition first (Recommended)").
+# A bare session id followed by a prompt, and a `<id>.jsonl.bak` followed by
+# a word naming the transcript, hold no `--` to refuse, so the value ran on to
+# the later `/<id>.jsonl` and matched, where the cut at the first space never
+# had. A value with a space in it must be one absolute path, starting with `/`
+# and holding no ` /`, and each half needs a row that only IT refuses:
+# $SPAN_PARENT_C's starts with the id AND reaches its path through ` /`,
+# $SPAN_PARENT_D's starts with `/` and reaches the later path through ` /`
+# alone, and $SPAN_PARENT_E's starts with the id and holds no ` /` at all, so
+# only the start-with-`/` half refuses it (deleting that line from
+# `dhp_resume_value` left every row above passing, measured on de0809c, since
+# C and D are both refused by the ` /` half). The SP case above is the spaced
+# path that must still match, and does.
+SPAN_PARENT_A=900201
+SPAN_PARENT_B=900202
+SPAN_PARENT_C=900203
+SPAN_PARENT_D=900204
+SPAN_PARENT_E=900205
+FAKE_PS_SPAN="$(printf '%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s' \
+  "$SPAN_PARENT_A" 1 "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/other.jsonl --label /nonexistent/projects/$MLIVE_ID.jsonl" \
+  "$SPAN_PARENT_B" 1 "claude --session-id $MLIVE_ID --fork-session --resume $WRONG_ID --append-system-prompt-file /nonexistent/projects/$MLIVE_ID.jsonl" \
+  "$SPAN_PARENT_C" 1 "claude --session-id $MLIVE_ID --fork-session --resume $WRONG_ID read /nonexistent/projects/$MLIVE_ID.jsonl and summarise" \
+  "$SPAN_PARENT_D" 1 "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl.bak note /nonexistent/other-projects/$MLIVE_ID.jsonl" \
+  "$SPAN_PARENT_E" 1 "claude --session-id $MLIVE_ID --fork-session --resume $WRONG_ID summarise nonexistent/projects/$MLIVE_ID.jsonl")"
+FAKE_PGREP_F_SPAN="$(printf '%s\n%s\n%s\n%s\n%s\n%s' "$LIVE_PID" "$SPAN_PARENT_A" "$SPAN_PARENT_B" "$SPAN_PARENT_C" "$SPAN_PARENT_D" "$SPAN_PARENT_E")"
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_SPAN" FAKE_PS_RECORDS="$FAKE_PS_SPAN" FAKE_PGREP_CHILDREN="" \
+  "$E" duplicate-holder repoM-1
+is    "…and a --resume value is never read across into a LATER argument: 8" "$rc" 8
+hasnt "…not round 5's --label shape, which still reads /other.jsonl" "$out" "$SPAN_PARENT_A"
+hasnt "…nor a bare session id followed by an option naming this transcript" "$out" "$SPAN_PARENT_B"
+hasnt "…nor a bare session id followed by a PROMPT naming it, with no -- to refuse (#205 ruling)" "$out" "$SPAN_PARENT_C"
+hasnt "…nor a <id>.jsonl.bak followed by a later word naming it (#205 ruling)" "$out" "$SPAN_PARENT_D"
+hasnt "…nor a bare session id followed by a RELATIVE path naming it, which only the start-with-/ half refuses (#205 ruling)" "$out" "$SPAN_PARENT_E"
+
+# …AND THE TWO COPIES OF THAT READ ARE ONE TEXT. The rows above drive
+# discovery only, so `lane-end`'s own copy, `dh_resume_value` (its pre-kill
+# recheck), could lose its condition and every case here would still pass
+# (measured on de0809c: removing that copy alone left 75 passed). Its comment
+# says the two "must stay the same rule", and a rule held by two copies is held
+# by nothing until a case compares them. Each body is EXTRACTED FROM ITS FILE,
+# like `/restart`'s rung 4 and `cut_to_line` beside it, and not copied here: a
+# copy is what would go on passing after the file drifted. Only the name prefix
+# (`dhp_` in `lanes-edit.sh`, `dh_` in `lane-end`) may differ, and `lane-end`'s
+# copy sits inside a function, so its four-space indent is taken off. The
+# address is awk's own match on the function's line and its closing brace, not
+# `sed -n '/…/,/^}/p'`: `lane-end`'s closing brace is indented, and an
+# unescaped `{` in a BSD `sed` BRE is undefined (the `cut_to_line` note).
+resume_body() {   # <file> <function> <its indent> — the function's own lines, indent off
+  awk -v name="$2" -v ind="$3" '
+    !on && index($0, ind name "() {") == 1 { on = 1 }
+    on { print substr($0, length(ind) + 1) }
+    on && $0 == ind "}" { exit }' "$1"
+}
+resume_body "$E" dhp_resume_value "" | sed 's/dhp_/dh_/g' > "$SANDBOX/resume_body.lanes-edit"
+resume_body "$END" dh_resume_value "    " > "$SANDBOX/resume_body.lane-end"
+resume_body_whole() {   # <extracted file> — "whole" when it opens at the function and ends at its brace
+  local rbw_t
+  rbw_t="$(cat "$1")"
+  case "$rbw_t" in
+    "dh_resume_value() {"*$'\n'"}") printf 'whole' ;;
+    *) printf 'EMPTY-OR-CUT' ;;
+  esac
+}
+is "both copies of the --resume read were found in their files, opening at the function and ending at its closing brace" \
+   "$(resume_body_whole "$SANDBOX/resume_body.lanes-edit") $(resume_body_whole "$SANDBOX/resume_body.lane-end")" "whole whole"
+is "lane-end's dh_resume_value is lanes-edit.sh's dhp_resume_value, word for word, name prefix aside (#205 review)" \
+   "$(diff "$SANDBOX/resume_body.lane-end" "$SANDBOX/resume_body.lanes-edit" 2>&1)" ""
+
+# ------- opensoft/openRepoTools#86: --retire acts on EVERY verified child
+#
+# A wrapper with TWO children, both resuming this transcript. Before #86 the
+# discovery named only the first, `lane-end --retire` TERMed the parent and
+# that one child, said RETIRED, and the second went on holding the
+# transcript: Amendment 18(h)'s double holder, surviving a retirement
+# reported clean. Real processes, so the TERM is proved, not asserted.
+sleep 3000 & TWO_PARENT=$!
+sleep 3000 & TWO_CHILD_A=$!
+sleep 3000 & TWO_CHILD_B=$!
+TWO_ARGS="claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl"
+FAKE_PS_TWO="$(printf '%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s' \
+  "$TWO_PARENT"  1             "$TWO_ARGS" \
+  "$TWO_CHILD_A" "$TWO_PARENT" "$TWO_ARGS" \
+  "$TWO_CHILD_B" "$TWO_PARENT" "$TWO_ARGS")"
+FAKE_PGREP_F_TWO="$(printf '%s\n%s\n%s\n%s' "$LIVE_PID" "$TWO_PARENT" "$TWO_CHILD_A" "$TWO_CHILD_B")"
+FAKE_PGREP_CHILDREN_TWO="$(printf '%s\t%s\n%s\t%s' "$TWO_CHILD_A" "$TWO_PARENT" "$TWO_CHILD_B" "$TWO_PARENT")"
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_TWO" FAKE_PS_RECORDS="$FAKE_PS_TWO" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_TWO" \
+  "$END" repoM-1 --retire 777777
+is   "a pid that is none of them is still refused 2 beside a two-child duplicate" "$rc" 2
+has  "…and the listing it prints names BOTH children of the wrapper (#86)" "$err" "pid $TWO_PARENT (bg-pty-host), pid $TWO_CHILD_A (child), pid $TWO_CHILD_B (child)"
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_TWO" FAKE_PS_RECORDS="$FAKE_PS_TWO" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_TWO" \
+  "$END" repoM-1 --retire "$TWO_PARENT" --dry-run
+is   "--retire --dry-run on a wrapper with two verified children exits 0" "$rc" 0
+has  "…naming BOTH children it would TERM (#86)" "$err" "and pid $TWO_CHILD_A (child) and pid $TWO_CHILD_B (child)"
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_TWO" FAKE_PS_RECORDS="$FAKE_PS_TWO" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_TWO" \
+  "$END" repoM-1 --retire "$TWO_PARENT"
+is   "lane-end --retire TERMs EVERY verified child of a duplicate holder, not the first (#86)" "$rc" 0
+has  "…reporting RETIRED" "$err" "RETIRED lane repoM-1's duplicate holder"
+has  "…the parent gone" "$err" "pid $TWO_PARENT (bg-pty-host): gone"
+has  "…the first child gone" "$err" "pid $TWO_CHILD_A (child): gone"
+has  "…and the SECOND child gone, which it used to leave running" "$err" "pid $TWO_CHILD_B (child): gone"
+sleep 0.2
+is   "…and all three really are gone" \
+     "$(kill -0 "$TWO_PARENT" 2>/dev/null && echo alive || echo gone),$(kill -0 "$TWO_CHILD_A" 2>/dev/null && echo alive || echo gone),$(kill -0 "$TWO_CHILD_B" 2>/dev/null && echo alive || echo gone)" \
+     "gone,gone,gone"
+kill -0 "$TWO_PARENT" 2>/dev/null || TWO_PARENT=""
+kill -0 "$TWO_CHILD_A" 2>/dev/null || TWO_CHILD_A=""
+kill -0 "$TWO_CHILD_B" 2>/dev/null || TWO_CHILD_B=""
+
+# …AND ONE CHILD STILL ALIVE, WHICHEVER IT IS, IS A PARTIAL RETIREMENT AND
+# NEVER RETIRED. The SECOND child ignores TERM (an ignored signal survives
+# `exec`), and it is named as the target itself, which before #86 matched
+# nothing at all, because the child slot held only the first. Its `exec` is
+# waited for before the act, so the TERM cannot reach the shell before the
+# shell has set the trap; the real `ps` (`command -p`), because the suite's
+# fake knows nothing of this process.
+sleep 3000 & PART_PARENT=$!
+sleep 3000 & PART_CHILD_A=$!
+bash -c 'trap "" TERM; exec sleep 3000' & PART_CHILD_B=$!
+part_tries=0
+while [ "$part_tries" -lt 50 ]; do
+  case "$(command -p ps -o comm= -p "$PART_CHILD_B" 2>/dev/null)" in *sleep*) break ;; esac
+  part_tries=$((part_tries + 1)); sleep 0.1
+done
+PART_ARGS="claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl"
+FAKE_PS_PART="$(printf '%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s' \
+  "$PART_PARENT"  1              "$PART_ARGS" \
+  "$PART_CHILD_A" "$PART_PARENT" "$PART_ARGS" \
+  "$PART_CHILD_B" "$PART_PARENT" "$PART_ARGS")"
+FAKE_PGREP_F_PART="$(printf '%s\n%s\n%s\n%s' "$LIVE_PID" "$PART_PARENT" "$PART_CHILD_A" "$PART_CHILD_B")"
+FAKE_PGREP_CHILDREN_PART="$(printf '%s\t%s\n%s\t%s' "$PART_CHILD_A" "$PART_PARENT" "$PART_CHILD_B" "$PART_PARENT")"
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_PART" FAKE_PS_RECORDS="$FAKE_PS_PART" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_PART" \
+  "$END" repoM-1 --retire "$PART_CHILD_B"
+is    "the SECOND child's pid is a --retire target too, and one survivor makes it partial: 1" "$rc" 1
+has   "…naming the survivor as alive despite the TERM it was sent" "$err" "pid $PART_CHILD_B (child): STILL ALIVE despite TERM delivered"
+has   "…and the child that did go" "$err" "pid $PART_CHILD_A (child): gone"
+has   "…and the parent" "$err" "pid $PART_PARENT (bg-pty-host): gone"
+has   "…refusing as only partly retired" "$err" "was only partly retired"
+hasnt "…never RETIRED over a child still holding the transcript" "$err" "RETIRED lane repoM-1's duplicate holder"
+is    "…and the survivor really is still running" "$(kill -0 "$PART_CHILD_B" 2>/dev/null && echo alive || echo gone)" "alive"
+kill -KILL "$PART_CHILD_B" 2>/dev/null || :
+sleep 0.2
+is    "…and the fixture trio really is gone before its pids are freed" \
+      "$(kill -0 "$PART_PARENT" 2>/dev/null && echo alive || echo gone),$(kill -0 "$PART_CHILD_A" 2>/dev/null && echo alive || echo gone),$(kill -0 "$PART_CHILD_B" 2>/dev/null && echo alive || echo gone)" \
+      "gone,gone,gone"
+kill -0 "$PART_PARENT" 2>/dev/null || PART_PARENT=""
+kill -0 "$PART_CHILD_A" 2>/dev/null || PART_CHILD_A=""
+kill -0 "$PART_CHILD_B" 2>/dev/null || PART_CHILD_B=""
 
 # --------------------------- clause (c): lane-start RECORDS dir and profile
 mkdir -p "$HOME/projects/repoA11b"
@@ -7400,18 +7632,143 @@ has   "…and this window is the other lane now" "$err" "MOVED: this window is n
 has   "…the window renamed by lane-start's own act" "$(grep 'rename-window' "$FAKE_TMUX_LOG" | tail -n1)" "rename-window repoGD-2"
 has   "…this session appended to that lane's cell, which is what the next resume follows" \
       "$("$E" register-row repoGD-2 2>/dev/null || :)" "$GD_LANE_ID"
-# AND THE GUARD SAYS IT MADE THAT WRITE, because `lane-start` cannot: its step
-# 3b veto 1 never takes a uuid another row records, and after the rename this
-# one is repoGD-1's. Without this the new row would carry a FRESH id, the next
-# prompt would find a lane whose row does not name this transcript, and the
-# guard would refuse for ever on a state it created by obeying the person.
-has   "…the guard having made that one write itself, on the person's choice 2" "$err" "session cell now ends on $GD_LANE_ID"
+# AND `lane-start` MADE THAT WRITE, IN ITS BINDING MODE (openRepoTools#70). Its
+# step 3b veto 1 never takes a uuid another row records, and after the rename
+# this one is repoGD-1's: without a write that answers it the new row would carry
+# a FRESH id, the next prompt would find a lane whose row does not name this
+# transcript, and the guard would refuse for ever on a state it created by
+# obeying the person. The guard used to make that write itself; `--bind` is the
+# person's choice 2 handed to `lane-start`, so the guard now only reads it back.
+has   "…lane-start having made that one write, on the person's choice 2" "$err" "session cell now ends on $GD_LANE_ID"
+has   "…in a commit of its own that says which act it was" \
+      "$(git -C "$WIP" log -n 12 --format=%s)" "session cell: bound $GD_LANE_ID on the person's choice 2 at the name guard"
+hasnt "…and with no register write of the guard's own" \
+      "$(git -C "$WIP" log -n 12 --format=%s)" "the name guard moved this window from repoGD-1"
 has   "…and the lane it LEFT marked PAUSED, so the register says where the work went" \
       "$("$E" register-row repoGD-1 2>/dev/null || :)" "PAUSED · "
 has   "…naming the lane this window moved to (Amendment 13(a): the cell is SET, never appended to)" \
       "$("$E" register-row repoGD-1 2>/dev/null || :)" "this window moved to lane repoGD-2"
 is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
 unset FAKE_TMUX_RENAME_STICKS FAKE_TMUX_NAME_FILE
+
+# ---- THE DESTINATION ALREADY RECORDS A TRANSCRIPT (openRepoTools#70).
+#
+# The case the binding mode exists for. The lane a person renamed their session
+# to has a row whose cell names a transcript this directory has, so before
+# `--bind` the guard's `yes` ran `lane-start --no-launch`, which took that row's
+# ordinary RESUME path and wrote `RESUMED` naming the id THE ROW ALREADY HAD —
+# into the row's stamp and into the lane's append-only log — about a
+# conversation nobody was in, launched by nothing. The guard then appended this
+# session to the cell, so the row ended right and the log said something else.
+GD_ROW6_ID="aaaa0012-6666-4000-8000-aaaa00126666"
+"$E" add-row "| \`repoGD-6\` | harness $GD_ROW6_ID (transcript uuid; profile t1) | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoGD/t.md | ACTIVE |" >/dev/null 2>&1
+gd6_tdir="$HOME/.claude/projects/$(sanitize "$HOME/projects/repoGD")"
+mkdir -p "$gd6_tdir"
+printf '{"type":"user"}\n' > "$gd6_tdir/$GD_ROW6_ID.jsonl"
+export FAKE_TMUX_WINDOW_NAME=repoGD-1
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
+gd_rec "$GD_LANE_ID" repoGD-6 user "$GD_NEW_MS"
+
+# THE FLAG FIRST, DRIVEN DIRECTLY, AND EVERY REFUSAL BEFORE ANYTHING IS WRITTEN.
+# It is the guard's alone, so what it may be combined with is narrow: a uuid,
+# `--no-launch`, never `--fresh`, and only the session live in THIS window, in
+# a window not named for another lane.
+gd6_row="$("$E" register-row repoGD-6 2>/dev/null || :)"
+run   "$START" repoGD 6 --no-launch --bind not-a-uuid
+is    "lane-start --bind refuses a value that is not a transcript uuid" "$rc" 2
+has   "…saying what it takes" "$err" "--bind takes the transcript uuid of the session live in this window"
+run   "$START" repoGD 6 --no-launch --bind=
+is    "…and an empty value, in the \`=\` spelling as in the other" "$rc" 2
+has   "…saying what it needs" "$err" "--bind needs the transcript uuid of the session being bound"
+run   "$START" repoGD 6 --bind "$GD_LANE_ID"
+is    "…and refuses without --no-launch: the session it binds is already running" "$rc" 2
+has   "…saying so" "$err" "it is given only with --no-launch"
+run   "$START" repoGD 6 --no-launch --fresh --bind "$GD_LANE_ID"
+is    "…and beside --fresh, which is a second answer to which session this lane is" "$rc" 2
+has   "…naming both" "$err" "--bind binds the session live in this window and --fresh starts a new one"
+run   "$START" repoGD 6 --no-launch --agent codex --bind "$GD_LANE_ID"
+is    "…and beside --agent, since the session it binds is the Claude one in this window" "$rc" 2
+has   "…saying a run that launches nothing has no agent to name" "$err" "a run that launches nothing has no agent to name"
+run   "$START" repoGD 6 --no-launch --bind "$GD_FREE_ID"
+is    "…and a uuid that is not the session live in this window" "$rc" 2
+has   "…naming the one that is" "$err" "the session live in this window is $GD_LANE_ID"
+run   "$START" repoGD 6 --no-launch --bind "$GD_LANE_ID"
+is    "…and a window still named for ANOTHER lane, because --bind answers veto 1 and never veto 2" "$rc" 2
+has   "…saying which veto" "$err" "veto 2, which --bind does not lift"
+is    "…every one of them before anything was written" "$("$E" register-row repoGD-6 2>/dev/null || :)" "$gd6_row"
+is    "…and nothing launched" "$(cat "$FAKE_CLAUDE_LOG" 2>/dev/null | grep -c "repoGD-6" || :)" "0"
+
+# THEN THE GUARD'S `yes`, which renames the window first and so reaches the bind.
+export FAKE_TMUX_RENAME_STICKS=1 FAKE_TMUX_NAME_FILE="$SANDBOX/tmux-window-name"
+printf 'repoGD-1\n' > "$FAKE_TMUX_NAME_FILE"
+gd_run "$GD_LANE_ID"
+is    "a rename to a lane that already records a transcript is the offer" "$rc" 2
+has   "…naming that lane's own last session" "$err" "2) adjust the lane to session repoGD-6 (existing lane; last session $GD_ROW6_ID)"
+gd_run "$GD_LANE_ID" "2"
+is    "…and \`yes\` moves the window" "$rc" 2
+has   "…saying so" "$err" "MOVED: this window is now lane repoGD-6"
+gd6_log="$(cat "$LOGD/repoGD-6.md" 2>/dev/null || :)"
+has   "…and the destination's log records a RESUMED by the transcript BOUND" \
+      "$(printf '%s\n' "$gd6_log" | grep '^RESUMED')" "session $GD_LANE_ID@"
+hasnt "…never by the transcript its row already had, which nobody is in" "$gd6_log" "$GD_ROW6_ID"
+is    "…and that RESUMED is the log's one lane-kind line, so nothing stamped it twice" \
+      "$(printf '%s\n' "$gd6_log" | grep -cE '^(STARTED|RESUMED) ' || :)" 1
+gd6_row="$("$E" register-row repoGD-6 2>/dev/null || :)"
+has   "…the row's stamp names the bound transcript too" "$gd6_row" "RESUMED by $GD_LANE_ID"
+hasnt "…and not the old one" "$gd6_row" "RESUMED by $GD_ROW6_ID"
+hasnt "…nor does any stamp lane-start wrote or owed on the way through" "$err" "RESUMED by $GD_ROW6_ID"
+is    "…and the session cell ENDS on it, which is what the next resume follows" \
+      "$(printf '%s\n' "$gd6_row" | awk -F'|' '{print $3}' | grep -oiE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tail -n1)" \
+      "$GD_LANE_ID"
+has   "…keeping the id it had, in front of it, as the cell's history" "$gd6_row" "$GD_ROW6_ID"
+has   "…which the guard reads back and says" "$err" "repoGD-6's session cell now ends on $GD_LANE_ID"
+hasnt "…and the guard-only flag is in no command printed for a person to type" "$err" "--bind $GD_LANE_ID"
+is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
+unset FAKE_TMUX_RENAME_STICKS FAKE_TMUX_NAME_FILE
+export FAKE_TMUX_WINDOW_NAME=repoGD-1
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
+
+# ---- CHOICE 2 INTO A LANE WITH NO ROW (openRepoTools#70).
+#
+# The binding mode's other door. A person who renames their session to a lane
+# the register does not have is offered to CREATE it, so the guard's `yes` runs
+# `lane-start --no-launch --bind` for a lane with no row at all, and the row that
+# run creates is the only record the lane has. Before `--bind`, step 3b's veto 1
+# refused this session's uuid — the row being LEFT still records it — so the new
+# row was born naming an id `lane-start` MINTED for a session nobody would ever
+# launch: its session cell began with that id, its `STARTED by` stamp and the
+# lane's first log line named it, and the guard then appended this session to
+# the cell behind it. In the binding mode the row is created with THIS uuid as
+# the one transcript its cell names, stamped STARTED by it (a lane with no row
+# has nothing to resume, so the verb is STARTED and not RESUMED), and the lane's
+# log opens with one lane-kind line, naming it.
+export FAKE_TMUX_WINDOW_NAME=repoGD-1
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
+gd_rec "$GD_LANE_ID" repoGD-8 user "$GD_NEW_MS"
+export FAKE_TMUX_RENAME_STICKS=1 FAKE_TMUX_NAME_FILE="$SANDBOX/tmux-window-name"
+printf 'repoGD-1\n' > "$FAKE_TMUX_NAME_FILE"
+gd_run "$GD_LANE_ID"
+is    "a rename to a lane with no row is the offer" "$rc" 2
+has   "…offering to create it" "$err" "2) adjust the lane to session repoGD-8 (create or move to this lane)"
+gd_run "$GD_LANE_ID" "2"
+is    "…and \`yes\` moves the window" "$rc" 2
+has   "…saying so" "$err" "MOVED: this window is now lane repoGD-8"
+gd8_row="$("$E" register-row repoGD-8 2>/dev/null || :)"
+has   "…into a row created with the bound transcript in its session cell" \
+      "$(printf '%s\n' "$gd8_row" | awk -F'|' '{print $3}')" "harness $GD_LANE_ID"
+is    "…as the one transcript uuid that cell names, with no id minted for a session nobody runs" \
+      "$(printf '%s\n' "$gd8_row" | awk -F'|' '{print $3}' | grep -oiE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | grep -c . || :)" 1
+has   "…stamped STARTED by the bound transcript, a lane with no row having nothing to resume" "$gd8_row" "STARTED by $GD_LANE_ID"
+gd8_log="$(cat "$LOGD/repoGD-8.md" 2>/dev/null || :)"
+has   "…and the new lane's log records a STARTED by the transcript BOUND" \
+      "$(printf '%s\n' "$gd8_log" | grep '^STARTED')" "session $GD_LANE_ID@"
+is    "…as that log's one lane-kind line" "$(printf '%s\n' "$gd8_log" | grep -cE '^(STARTED|RESUMED) ' || :)" 1
+has   "…which the guard reads back as lane-start's own write" "$err" "repoGD-8's session cell now ends on $GD_LANE_ID, written by lane-start's binding mode"
+hasnt "…and nothing minted an id on the way through" "$err" "minted session id"
+is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
+unset FAKE_TMUX_RENAME_STICKS FAKE_TMUX_NAME_FILE
+export FAKE_TMUX_WINDOW_NAME=repoGD-1
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
 
 # ---- CHOICE 3 IS A TYPED ACT, AND A PANE THAT WILL NOT TAKE IT LEAVES THE
 # QUESTION STANDING. M1's condition is the pane's current command: `/rename
@@ -7560,6 +7917,77 @@ has   "…and naming the read that says which process is which" "$err" "transcri
 hasnt "…never 6(d)'s ending for it" "$err" "an idle background session still holding a lane"
 rm -f "$sessions_dir/bgtwin.json"
 
+# ---- A SILENT TMUX IS NOT A DEAD WINDOW (openRepoTools#73, item 1).
+#
+# `record_window_state` answered 1 — "refuted" — both for a window this server
+# does not have AND for a server that never answered, and `transcript_holders`
+# writes every 1 as `(gone)`, which `lane-end --retire` reads as "not the lane's
+# own session". MEASURED ON f87fd5a WITH THIS VERY FIXTURE: with tmux installed
+# and its server silent, `--retire <the lane's own pid>` was "proved" a live
+# DUPLICATE and handed Amendment 6(d)'s retitle — `/rename repoGD-1 · retired
+# <date>` — for the conversation that IS the lane, exit 0. The session here is
+# named for ANOTHER lane by a person (the offer's state), so `live-holder`
+# passes over it and the record read is what answers, exactly as it does
+# wherever `live-holder` picks some other holder first.
+gd_rec "$GD_LANE_ID" repoGD-2 user "$GD_NEW_MS"
+run   env FAKE_TMUX_SILENT=1 "$E" transcript-holders "$GD_LANE_ID"
+is    "transcript-holders still answers while tmux is silent" "$rc" 0
+is    "…and a window tmux did not answer about is NO ANSWER, never gone" \
+      "$(printf '%s\n' "$out" | awk -F'\037' -v p="$LIVE_PID" '$1 == p { print $5; exit }')" "window gdsess:@12 (no answer)"
+run   env FAKE_TMUX_WINDOWS="" "$E" transcript-holders "$GD_LANE_ID"
+is    "…while a window a server that DOES answer does not have is still gone" \
+      "$(printf '%s\n' "$out" | awk -F'\037' -v p="$LIVE_PID" '$1 == p { print $5; exit }')" "window gdsess:@12 (gone)"
+run   env FAKE_TMUX_SILENT=1 "$END" repoGD-1 --retire "$LIVE_PID"
+is    "lane-end --retire REFUSES the lane's own pid while tmux is silent" "$rc" 2
+has   "…naming the silence, not a dead window" "$err" "tmux did not answer at all"
+has   "…and the act that does end a lane" "$err" "to end the lane, run: lane-end repoGD-1"
+hasnt "…never proving it a duplicate" "$err" "IS a live DUPLICATE"
+hasnt "…nor handing 6(d)'s retitle to the conversation that IS the lane" "$err" "/rename repoGD-1 · retired"
+gd_rec "$GD_LANE_ID" repoGD-1 user "$GD_OLD_MS"
+
+# ---- THE COMPANION IS THE HARNESS'S RELATION, NOT THE ASKER'S (openRepoTools#73,
+# item 2).
+#
+# `transcript_holders` read it relative to the ASKING window, so asked from a
+# bare shell or another lane's window it found nothing `here` and called every
+# holder `unrelated`, the companion included — and the refusal just above names
+# that read as the one that "says which is which". The companion is now read off
+# the LANE's live window record: the interactive record in a window this server
+# resolves and agrees with. `othersess:@55` is a window with no record of this
+# transcript at all.
+write_record_a12 "$sessions_dir/bgtwin.json" "$GD_LANE_ID" "$GD_DUP" "$gd_dup_start" bg "-" "repoGD-1" - "$GD_OLD_MS"
+run   env FAKE_TMUX_WINDOW="othersess:@55" "$E" transcript-holders "$GD_LANE_ID"
+is    "transcript-holders asked from ANOTHER window answers" "$rc" 0
+is    "…calling the harness's bg record beside the lane's live window its companion" \
+      "$(printf '%s\n' "$out" | awk -F'\037' -v p="$GD_DUP" '$1 == p { print $6; exit }')" companion
+is    "…while the lane's own session, which is not that window's, stays unrelated" \
+      "$(printf '%s\n' "$out" | awk -F'\037' -v p="$LIVE_PID" '$1 == p { print $6; exit }')" unrelated
+run   "$E" transcript-holders "$GD_LANE_ID"
+is    "…which is the verdict the lane's own window has always read" \
+      "$(printf '%s\n' "$out" | awk -F'\037' -v p="$GD_DUP" '$1 == p { print $6; exit }')" companion
+run   env FAKE_TMUX_WINDOW="othersess:@55" "$END" repoGD-1 --retire "$GD_DUP"
+is    "…and lane-end --retire from that other window refuses it" "$rc" 2
+has   "…by name" "$err" "is the HARNESS'S OWN COMPANION"
+# A `bg` RECORD IN ANOTHER PROFILE IS NOBODY'S PROVEN COMPANION of the lane's
+# window, and stays `unrelated` from outside it.
+mv -f "$sessions_dir/bgtwin.json" "$gd_t2/bgtwin.json"
+run   env FAKE_TMUX_WINDOW="othersess:@55" "$E" transcript-holders "$GD_LANE_ID"
+is    "a bg record in ANOTHER profile is no companion of the lane's live window" \
+      "$(printf '%s\n' "$out" | awk -F'\037' -v p="$GD_DUP" '$1 == p { print $6; exit }')" unrelated
+mv -f "$gd_t2/bgtwin.json" "$sessions_dir/bgtwin.json"
+# AND ONLY ONE PROFILE MAY ANSWER: two live windows in two profiles on one
+# transcript is 18(h)'s own case, with no way to tell from here which of them
+# is the lane's, so nothing is read off either.
+sleep "$LIVE_SLEEP" & TH73_PID=$!
+th73_start="$(cut -d' ' -f22 "/proc/$TH73_PID/stat" 2>/dev/null || printf '')"
+write_record_a12 "$gd_t2/wintwin.json" "$GD_LANE_ID" "$TH73_PID" "$th73_start" interactive "gdsess:@77.%77" "repoGD-1" - "$GD_OLD_MS"
+run   env FAKE_TMUX_WINDOW="othersess:@55" FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude
+gdsess:1	@77	repoGD-1	%77	claude" "$E" transcript-holders "$GD_LANE_ID"
+is    "two live windows in two profiles leave no ONE window to read the companion off" \
+      "$(printf '%s\n' "$out" | awk -F'\037' -v p="$GD_DUP" '$1 == p { print $6; exit }')" unrelated
+rm -f "$gd_t2/wintwin.json" "$sessions_dir/bgtwin.json"
+kill "$TH73_PID" 2>/dev/null; wait "$TH73_PID" 2>/dev/null; TH73_PID=""
+
 # ---- AMENDMENT 18(h) IN THE LAUNCH BRANCH: THE ID A RUN IS ABOUT TO RESUME.
 # The clause counts the holders of "the id it is about to resume or bind", and
 # the two are different ids: the binding step asks about THIS WINDOW's session,
@@ -7614,6 +8042,46 @@ is    "…which it does" "$rc" 2
 has   "…adjusting the session to the lane" "$err" "ADJUSTED SESSION TO LANE repoGD-1"
 is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
 
+# ---- AND THE TABLE'S OWN CURES SAY THE SAME (openRepoTools#73, item 3).
+#
+# The offer above was fixed and the diagnostic beside it was not: rows 1, 5 and
+# 6 of the (b) table printed `lane_start_args` straight, so a lane named before
+# Rule 4 was told `run: lane-start --no-launch --dir <path> legacy-ui` — a
+# placeholder in the one line a person is told to type, where F-B6 says every
+# command is printed filled in. Where it cannot be, the row now says why in the
+# offer's words and prints the offer's own line.
+rm -f "$GD_OFFER"
+export FAKE_TMUX_WINDOW_NAME=claude
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	claude	%12	claude"
+gd_rec "$GD_LANE_ID" legacy-ui user "$GD_OLD_MS"
+gd_run "$GD_LANE_ID"
+is    "row 1, a session named for a lane from before Rule 4, still BLOCKS the prompt" "$rc" 2
+has   "…as the case that ran for three days" "$err" "THAT IS THE 2026-09-10 CASE"
+has   "…saying in the offer's words why its command cannot be filled in" "$err" "Lane legacy-ui is named before Rule 4's \`<repo>-<n>\` form"
+has   "…and whose the checkout is to supply" "$err" "the checkout is yours to supply"
+has   "…printing the offer's own line" "$err" "run: lane-start --no-launch --dir <that lane's checkout> legacy-ui"
+hasnt "…and never the bare placeholder" "$err" "--dir <path>"
+L73_OLD="aaaa0073-0000-4000-8000-aaaa00730000"
+L73_LAST="aaaa0073-1111-4000-8000-aaaa00731111"
+L73_FREE="aaaa0073-2222-4000-8000-aaaa00732222"
+"$E" add-row "| \`legacy-gd\` | harness $L73_OLD → harness $L73_LAST (transcript uuid; profile t1) | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/legacy/w.md | ACTIVE |" >/dev/null 2>&1
+export FAKE_TMUX_WINDOW_NAME=legacy-gd
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	legacy-gd	%12	claude"
+gd_rec "$L73_OLD" legacy-gd user "$GD_OLD_MS"
+gd_run "$L73_OLD"
+is    "row 5, a superseded transcript of such a lane, BLOCKS the prompt" "$rc" 2
+has   "…named as one" "$err" "this is a SUPERSEDED transcript of lane legacy-gd"
+has   "…cured by the real launch, its checkout left to the person" "$err" "run: lane-start --dir <that lane's checkout> legacy-gd"
+hasnt "…never the bare placeholder" "$err" "--dir <path>"
+gd_rec "$L73_FREE" legacy-gd user "$GD_OLD_MS"
+gd_run "$L73_FREE"
+is    "row 6, an id in no row of such a lane, BLOCKS the prompt" "$rc" 2
+has   "…named as the harness minting a transcript with nobody acting" "$err" "does not name $L73_FREE at all"
+has   "…cured by the recording act, its checkout left to the person" "$err" "run: lane-start --no-launch --dir <that lane's checkout> legacy-gd"
+hasnt "…never the bare placeholder" "$err" "--dir <path>"
+export FAKE_TMUX_WINDOW_NAME=repoGD-1
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
+
 # ---- THE OTHER TEXT A SESSION CELL CAN CARRY INSTEAD OF A UUID.
 #
 # `lane-start` writes `pending — set by the session's first act` into a row it
@@ -7622,7 +8090,9 @@ is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo 
 # destination can be in: veto 1 refuses this window's uuid because the row being
 # LEFT still records it. Anchored only on `none recorded`, the guard's own last
 # write could not be made there and the next prompt refused for ever on a state
-# it had created by obeying the person (Copilot round 3 on this PR).
+# it had created by obeying the person (Copilot round 3 on this PR). That write
+# is `lane-start --bind`'s now (openRepoTools#70), and the anchor rule went with
+# it.
 "$E" add-row "| \`repoGD-4\` | pending — set by the session's first act | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoGD/w.md | ACTIVE |" >/dev/null 2>&1
 export FAKE_TMUX_RENAME_STICKS=1 FAKE_TMUX_NAME_FILE="$SANDBOX/tmux-window-name"
 printf 'repoGD-1\n' > "$SANDBOX/tmux-window-name"
@@ -7633,7 +8103,7 @@ has   "…naming the lane it would move to" "$err" "2) adjust the lane to sessio
 gd_run "$GD_LANE_ID" "2"
 is    "…and \`yes\` moves the window" "$rc" 2
 has   "…saying so" "$err" "MOVED: this window is now lane repoGD-4"
-has   "…with the guard's own last write anchored on the cell's \`pending\` text" "$err" "session cell now ends on $GD_LANE_ID"
+has   "…with lane-start's binding mode anchored on the cell's \`pending\` text" "$err" "session cell now ends on $GD_LANE_ID"
 has   "…which the register carries" "$("$E" register-row repoGD-4 2>/dev/null || :)" "$GD_LANE_ID"
 unset FAKE_TMUX_RENAME_STICKS FAKE_TMUX_NAME_FILE
 export FAKE_TMUX_WINDOW_NAME=repoGD-1
@@ -9130,7 +9600,7 @@ rm -f "$sessions_dir/a16i.json"
 # ============ Copilot round 4 on openRepoTools#81 ============================
 
 # ---- THE ALIAS-READ REFUSAL HAS ITS OWN EXIT CODE, because 2 already carries
-# two meanings to the four commands that read `canon-lane`.
+# two meanings to the commands that read `canon-lane`.
 ren_unread3="$WIP/lanes/aliases-unread3.tsv"
 printf 'someLane-1\tsomeLane-2\t2026-09-15T00:00:00Z\n' > "$ren_unread3"
 chmod 0000 "$ren_unread3"
