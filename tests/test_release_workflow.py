@@ -2784,6 +2784,66 @@ FINGERPRINT_LINES = (
       ' != "$before" ]; then']),
 )
 
+#: THE macOS RERUN IS THE SAME SCRIPT AGAIN (FR-032): the release's offline
+#: `--install`, run a second time under Apple's `/bin/bash` 3.2, and different
+#: only where it must be. Each difference allowed, in order: `(the offline
+#: --install's lines, the macOS rerun's lines)`. Its own home and offline
+#: directory; the bash it runs under, which must print a `BASH_VERSION` of
+#: 3.2; `/bin` first on the `--install`'s PATH; its own output files; and
+#: refusals that name that bash. The skip line, the count line, the receipt's
+#: 28 rows and the link's fingerprint are the offline --install's own.
+MACOS_RERUN_LINES = (
+    (['home="$RUNNER_TEMP/install-home"',
+      'offline="$RUNNER_TEMP/offline-bin"'],
+     ['home="$RUNNER_TEMP/install-home-bin-bash"',
+      'offline="$RUNNER_TEMP/offline-bin-bin-bash"']),
+    ([],
+     ['# shellcheck disable=SC2016',
+      'version="$(env -i PATH="/bin:$offline:$PIPX_BIN_DIR:$PATH" bash -c '
+      '\'printf "%s\\n" "$BASH_VERSION"\')"',
+      'echo "BASH_VERSION $version, from the bash first on PATH=/bin:..."',
+      'case "$version" in',
+      '  3.2.*) ;;',
+      '  *)',
+      '    echo "::error::the bash first on a PATH that begins with /bin is '
+      '$version, not Apple\'s 3.2"',
+      '    exit 1',
+      '    ;;',
+      'esac']),
+    (['env -i HOME="$home" PATH="$offline:$PIPX_BIN_DIR:$PATH" \\'],
+     ['env -i HOME="$home" PATH="/bin:$offline:$PIPX_BIN_DIR:$PATH" \\']),
+    (['    "$link" --install > "$RUNNER_TEMP/install.out" 2> '
+      '"$RUNNER_TEMP/install.err" ||',
+      '    status=$?',
+      'cat "$RUNNER_TEMP/install.out"',
+      'cat "$RUNNER_TEMP/install.err" >&2'],
+     ['    "$PIPX_BIN_DIR/openRepoTools" --install > '
+      '"$RUNNER_TEMP/install-bin-bash.out" \\',
+      '    2> "$RUNNER_TEMP/install-bin-bash.err" || status=$?',
+      'cat "$RUNNER_TEMP/install-bin-bash.out"',
+      'cat "$RUNNER_TEMP/install-bin-bash.err" >&2']),
+    (['  echo "::error::the offline --install exited $status"'],
+     ['  echo "::error::the offline --install under /bin/bash $version exited '
+      '$status"']),
+    (['  seen="$(grep -cFx -e "$line" "$RUNNER_TEMP/install.out" || true)"'],
+     ['  seen="$(grep -cFx -e "$line" "$RUNNER_TEMP/install-bin-bash.out" || '
+      'true)"']),
+    (['    echo "::error::--install printed this line $seen times, not once: '
+      '$line"'],
+     ['    echo "::error::--install under /bin/bash $version printed this line '
+      '$seen times, not once: $line"']),
+    (['  echo "::error::--install wrote no receipt at $receipt"'],
+     ['  echo "::error::--install under /bin/bash $version wrote no receipt at '
+      '$receipt"']),
+    (['  echo "::error::the receipt has $lines lines and $rows rows, not 28: a '
+      'full install\'s 29 less pipx\'s link"'],
+     ['  echo "::error::under /bin/bash $version the receipt has $lines lines '
+      'and $rows rows, not 28"']),
+    (['  echo "::error::--install changed pipx\'s link at $link"'],
+     ['  echo "::error::--install under /bin/bash $version changed pipx\'s link '
+      'at $link"']),
+)
+
 #: The offline `--install` step, in either file: the one step of its job, with
 #: no `if:`, that runs `--install` against the sentinel repository.
 SENTINEL = re.compile(r"\bOPENREPOTOOLS_REPO=[\"']?offline\.invalid/sentinel")
@@ -2798,32 +2858,49 @@ def offline_install_step(steps: list, whose: str) -> dict:
     return found[0]
 
 
-@NEEDS_UPSTREAM
-def test_release_install_check_the_offline_install_is_the_package_job_s_but_for_the_fingerprint():
-    """THE TWO COPIES CANNOT DRIFT (FR-016, FR-032): the install check's
-    offline `--install` is `tests.yml`'s `package` job's, line for line, with
-    the same keys beside its script, and differs from it only in
-    `FINGERPRINT_LINES`, each named there. So a count line, a skip line or a
-    receipt count changed in one copy alone fails here, before a release
-    tests what `tests.yml` never did and burns the version on TestPyPI."""
-    ours = offline_install_step(install_steps(release()),
-                                "release.yml's install job")
-    package = (standard().load_yaml(TESTS_WORKFLOW).get("jobs") or {}).get("package")
-    if not isinstance(package, dict) or not isinstance(package.get("steps"), list):
-        pytest.fail("tests.yml has no `package` job with steps", pytrace=False)
-    theirs = offline_install_step(package["steps"], "tests.yml's package job")
-    keys = {k: v for k, v in ours.items() if k not in ("name", "run")}
-    assert keys == {k: v for k, v in theirs.items() if k not in ("name", "run")}, (
-        f"the two steps differ beside their scripts: {ours} against {theirs}")
+def assert_one_script_but(theirs: dict, ours: dict, allowed: tuple,
+                          names: Tuple[str, str], beside: tuple) -> None:
+    """`ours` is `theirs` with the same keys but `beside`, and its script is
+    `theirs`'s, line for line, but for `allowed`'s pairs, in order."""
+    keys = {k: v for k, v in ours.items() if k not in beside}
+    assert keys == {k: v for k, v in theirs.items() if k not in beside}, (
+        f"{names[1]}'s step and {names[0]}'s differ beside their scripts: "
+        f"{ours} against {theirs}")
     mine, its = run_text(ours).split("\n"), run_text(theirs).split("\n")
     matcher = difflib.SequenceMatcher(a=its, b=mine, autojunk=False)
     found = [(its[i1:i2], mine[j1:j2])
              for tag, i1, i2, j1, j2 in matcher.get_opcodes() if tag != "equal"]
-    allowed = [(list(a), list(b)) for a, b in FINGERPRINT_LINES]
-    assert found == allowed, (
-        "the release's offline --install is not tests.yml's but for the "
-        "fingerprint lines:\n" + "\n".join(difflib.unified_diff(
-            its, mine, "tests.yml", "release.yml", lineterm="", n=0)))
+    assert found == [(list(a), list(b)) for a, b in allowed], (
+        f"{names[1]} is not {names[0]} but for the lines this test names:\n"
+        + "\n".join(difflib.unified_diff(its, mine, names[0], names[1],
+                                         lineterm="", n=0)))
+
+
+@NEEDS_UPSTREAM
+def test_release_install_check_the_offline_installs_are_one_script_but_for_named_lines():
+    """THE THREE COPIES CANNOT DRIFT (FR-016, FR-032). The install check's
+    offline `--install` is `tests.yml`'s `package` job's, line for line, with
+    the same keys beside its script, but for `FINGERPRINT_LINES`. Its macOS
+    rerun under `/bin/bash` 3.2 is that offline `--install` again, with the
+    same keys but its `if:`, but for `MACOS_RERUN_LINES`. Each difference is
+    named there. So a count line, a skip line or a receipt count changed in
+    one copy alone fails here, before a release tests what `tests.yml` never
+    did and burns the version on TestPyPI, and so does a rerun that no
+    longer requires 3.2."""
+    steps = install_steps(release())
+    ours = offline_install_step(steps, "release.yml's install job")
+    package = (standard().load_yaml(TESTS_WORKFLOW).get("jobs") or {}).get("package")
+    if not isinstance(package, dict) or not isinstance(package.get("steps"), list):
+        pytest.fail("tests.yml has no `package` job with steps", pytrace=False)
+    theirs = offline_install_step(package["steps"], "tests.yml's package job")
+    assert_one_script_but(theirs, ours, FINGERPRINT_LINES,
+                          ("tests.yml", "release.yml"), ("name", "run"))
+    reruns = [s for s in steps if condition_kind(s.get("if")) == "macos"
+              and SENTINEL.search(run_text(s))]
+    assert len(reruns) == 1, [label(s) for s in reruns]
+    assert_one_script_but(ours, reruns[0], MACOS_RERUN_LINES,
+                          ("the offline --install", "the macOS rerun"),
+                          ("name", "run", "if"))
 
 
 #: `/bin` put first on `PATH`: for one command (`PATH="/bin:..." command`),
