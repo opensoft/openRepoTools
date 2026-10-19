@@ -2069,16 +2069,18 @@ def probe_leg(leg: Leg) -> None:
 
 def probe_uninitialized(leg: Leg) -> None:
     """A dependency `git submodule status` lists as `-`: `read_error` is set
-    ONLY where its directory, or one above it, cannot be searched (#255).
-    `probe_leg` alone cannot see the second: `Leg.exists` is `os.path.isdir`,
-    which answers False for a path it cannot reach exactly as for one that is
-    not there, so a dependency beneath a directory this account cannot search
-    would read `absent`. The path is asked of `stat` itself: only "no such
+    where its directory, or one above it, cannot be searched, and `checkout`
+    where it holds a checkout of its own that git can read (#255).
+    `probe_leg` alone cannot see a dependency beneath a directory this
+    account cannot search: `Leg.exists` is `os.path.isdir`, which answers
+    False for a path it cannot reach exactly as for one that is not there, so
+    it would read `absent`. The path is asked of `stat` itself: only "no such
     file" (or "not a directory") is a dependency that is not there, which sets
     nothing; any other failure is a read that failed. A directory that is
     there is `probe_leg`'s: with no search it is unreadable through its
-    `lstat` of the `.git`; empty and searchable, it is a dependency never
-    initialized and sets nothing."""
+    `lstat` of the `.git`; holding a checkout git can read - a clone made by
+    hand, which git does not count as initialized - it is a checkout; empty
+    and searchable, it is a dependency never initialized and sets nothing."""
     try:
         os.stat(leg.path)
     except (FileNotFoundError, NotADirectoryError):
@@ -2105,10 +2107,14 @@ def assembly_checkouts(helper, assembly: str) -> tuple:
     for one never initialized. Skipped unread, it got no row, the sweep
     exited 0, and `lane-end` ended the lane over that dependency's unpushed
     commit. So a `-` line is probed (`probe_uninitialized`) and gets a row
-    ONLY where the probe is a read that failed: a directory that is not there,
-    or an empty one that can be searched, is a dependency never initialized
-    and still adds none. A `-` line whose directory holds a checkout git can
-    read is left as it always was: no row."""
+    where the probe is a read that failed, or where its directory holds a
+    checkout git can read - a clone made by hand, which git does not count as
+    initialized, and which holds the lane's work all the same: it is read like
+    an initialized one. A directory that is not there, or an empty one that
+    can be searched, is a dependency never initialized and still adds none.
+    The path on a `-` line is the whole of the rest of the line: git prints a
+    describe suffix only on a ` ` or `+` line (`print_status` in
+    builtin/submodule--helper.c), so none is trimmed from it."""
     rows, why = project_legs(helper, assembly)
     if why:
         return [], False, why
@@ -2130,15 +2136,16 @@ def assembly_checkouts(helper, assembly: str) -> tuple:
             if len(parts) < 2:
                 continue
             rel = parts[1]
-            if rel.endswith(")") and " (" in rel:
+            if not line.startswith("-") and rel.endswith(")") and " (" in rel:
                 rel = rel[:rel.rindex(" (")]
             nested = Leg(os.path.normpath(os.path.join(path, rel)), f"{decl}/{rel}", "",
                          assembly, nested_in=decl)
             if line.startswith("-"):
                 # Declared and not initialized: nothing to read - unless git
-                # could not search its directory, which it lists the same way.
+                # could not search its directory, which it lists the same way,
+                # or a checkout of its own stands there (a hand clone).
                 probe_uninitialized(nested)
-                if not nested.read_error:
+                if not (nested.read_error or nested.checkout):
                     continue
             else:
                 probe_leg(nested)

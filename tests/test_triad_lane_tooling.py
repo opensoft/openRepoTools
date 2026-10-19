@@ -814,6 +814,74 @@ def test_255_a_nested_dependency_never_initialized_adds_no_row(triad):
 
 
 @NEEDS_UPSTREAM
+def test_255_a_nested_dependency_git_lists_as_not_initialized_that_holds_a_checkout_is_read(triad):
+    """#255, LANE 3'S RULING ON THE REVIEW'S FINDING 1: a dependency git lists
+    as `-` whose directory holds a checkout `probe_leg` can read - a clone made
+    by hand into the directory of a deinitialized dependency, which git does
+    not count as initialized - holds the lane's work all the same. It was
+    skipped with every `-` line, so the sweep exited 0 and `lane-end` ENDED
+    the lane over the lane's unpushed commit there. It is read like an
+    initialized dependency now: the sweep has a row for it and exits 3, and
+    `lane-end` refuses. An empty directory still adds none (the test above)."""
+    b, t = triad
+    code, dep = t["code"], t["dep"]
+    b.git("submodule", "deinit", "-q", "-f", "upstream/dep", cwd=code)
+    b.git("clone", "-q", b.remotes / "triad-dep.git", dep)
+    sub = b.run("git", "-C", code, "submodule", "status", "--recursive")
+    assert sub.returncode == 0 and sub.stdout.startswith("-"), sub.stdout + sub.stderr
+    b.git("checkout", "-q", "-b", "in-dep", cwd=dep)
+    b.commit(dep, "worked in a hand-cloned dependency", {"n.md": "n\n"}, lane="triad-1")
+    proc = b.sweep("triad-1", "--dry-run", "--porcelain")
+    assert proc.returncode == 3, proc.stdout + proc.stderr
+    legs = porcelain_rows(proc.stdout, "leg")
+    assert list(legs) == [str(t["spec"]), str(code), str(dep)], legs
+    assert legs[str(dep)]["disposition"] == "unpushed" and legs[str(dep)]["retire"] == "retire", legs
+    assert legs[str(dep)]["branch"] == "in-dep", legs
+    end = b.tool("lane-end", "triad-1")
+    assert end.returncode == 2, end.stdout + end.stderr
+    assert "lane triad-1 is NOT ended" in end.stderr and str(dep) in end.stderr, end.stderr
+    assert "1 leg checkout(s)" in end.stderr, end.stderr
+
+
+@NEEDS_UPSTREAM
+def test_255_a_nested_dependency_whose_path_ends_in_a_parenthesis_is_read_by_that_path(triad):
+    """git prints a describe suffix, ` (v1)`, only on a ` ` or `+` line
+    (`print_status`), never on a `-` line, so nothing is trimmed from the
+    path of a `-` line. A dependency never initialized at `upstream/dep (1)`
+    ends in what the trim would cut: read as `upstream/dep`, it became a second
+    row for the initialized dependency beside it and left `dep (1)` unread -
+    here at mode 000, where it must be the `unreadable` row."""
+    if os.geteuid() == 0:
+        pytest.skip("root searches a directory whatever its mode")
+    b, t = triad
+    code, dep = t["code"], t["dep"]
+    odd = code / "upstream" / "dep (1)"
+    b.git("submodule", "add", "-q", b.remotes / "triad-dep.git", "upstream/dep (1)", cwd=code)
+    b.git("submodule", "deinit", "-q", "-f", "upstream/dep (1)", cwd=code)
+    sub = b.run("git", "-C", code, "submodule", "status", "--recursive")
+    assert any(ln.startswith("-") and ln.endswith(" upstream/dep (1)")
+               for ln in sub.stdout.splitlines()), sub.stdout
+    assert odd.is_dir() and not any(odd.iterdir())
+
+    def leg_paths(proc):
+        return [ln.split("\t")[3] for ln in proc.stdout.splitlines() if ln.startswith("leg\t")]
+
+    proc = b.sweep("triad-1", "--dry-run", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert leg_paths(proc) == [str(t["spec"]), str(code), str(dep)], proc.stdout
+    os.chmod(odd, 0)
+    try:
+        proc = b.sweep("triad-1", "--dry-run", "--porcelain")
+    finally:
+        os.chmod(odd, 0o755)
+    assert proc.returncode == 3, proc.stdout + proc.stderr
+    assert leg_paths(proc) == [str(t["spec"]), str(code), str(dep), str(odd)], proc.stdout
+    leg = porcelain_rows(proc.stdout, "leg")[str(odd)]
+    assert leg["disposition"] == "unreadable" and leg["retire"] == "retire", leg
+    assert "a dependency nested in the code leg (code/upstream/dep (1))" in leg["why"], leg
+
+
+@NEEDS_UPSTREAM
 def test_t018_dependencies_a_leg_nests_that_cannot_be_listed_refuse_the_sweep(triad):
     """THE SWEEP'S OWN REFUSAL, UNSHADOWED: `git submodule status --recursive`
     failing in a checked-out leg - here a nested dependency whose `.git` names

@@ -4100,6 +4100,9 @@ one passed `lane-end`.
   cannot search as not initialized too, so where its directory, or one above it,
   cannot be searched (or it holds a `.git` that git cannot read), it is an
   `unreadable` row, counted: a read that failed is never a clean dependency (#255).
+  One whose directory holds a checkout that git can read (a clone made by hand,
+  which git does not count as initialized) is read like an initialized one: it
+  holds the lane's work all the same.
   A leg is the assembly's, shared by every lane the assembly homes, as the
   assembly's own checkout is: **no `--yes` acts on a leg
   checkout** (its branches are another matter: see `--branches` below). It is
