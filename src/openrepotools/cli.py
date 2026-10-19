@@ -77,7 +77,7 @@ def main() -> int:
         if number is not None:
             found.append((number, signal.signal(number, signal.SIG_DFL)))
     try:
-        os.execvp("bash", argv)
+        os.execvp("bash", argv)  # NOSONAR: the caller's own arguments (#228)
     except (FileNotFoundError, NotADirectoryError):
         for number, before in found:
             if before is not None:
