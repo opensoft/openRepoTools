@@ -76,6 +76,7 @@ here reads `specs/`, which goes to the spec leg at the cutover.
 from __future__ import annotations
 
 import base64
+import difflib
 import functools
 import hashlib
 import json
@@ -2334,6 +2335,68 @@ def test_release_install_check_installs_with_pipx_and_runs_version_and_the_offli
             and "offline.invalid/sentinel" in t
             and "(a link into pipx's openrepotools environment)" in t
             and "and 1 left to pipx" in t], "no step checks the offline install"
+
+
+#: THE OFFLINE `--install` IS `tests.yml`'s OWN (the comment above the
+#: release's step): the install check's script and the `package` job's are
+#: one script, line for line, but for the two places that fingerprint pipx's
+#: link. `tests.yml` takes the fingerprint with GNU's `stat -c` and
+#: `sha256sum`, and the release, whose macOS leg has neither, with the leg's
+#: Python. Each difference allowed, in order: `(tests.yml's lines,
+#: release.yml's lines)`.
+FINGERPRINT_LINES = (
+    (['before="$(stat -c %i "$link") $(readlink "$link") $(sha256sum < "$link")"'],
+     ["fingerprint='import hashlib, os, sys; p = sys.argv[1]; "
+      "print(os.lstat(p).st_ino, os.readlink(p), "
+      "hashlib.sha256(open(p, \"rb\").read()).hexdigest())'",
+      'before="$(python3 -I -c "$fingerprint" "$link")"']),
+    (['if [ ! -L "$link" ] ||',
+      '    [ "$(stat -c %i "$link") $(readlink "$link") $(sha256sum < "$link")"'
+      ' != "$before" ]; then'],
+     ['if [ ! -L "$link" ] || [ "$(python3 -I -c "$fingerprint" "$link")"'
+      ' != "$before" ]; then']),
+)
+
+#: The offline `--install` step, in either file: the one step of its job, with
+#: no `if:`, that runs `--install` against the sentinel repository.
+SENTINEL = re.compile(r"\bOPENREPOTOOLS_REPO=[\"']?offline\.invalid/sentinel")
+
+
+def offline_install_step(steps: list, whose: str) -> dict:
+    found = [s for s in steps if SENTINEL.search(run_text(s)) and "if" not in s]
+    if len(found) != 1:
+        pytest.fail(f"{whose} has {len(found)} unconditional steps that run "
+                    "--install against offline.invalid/sentinel, not one: "
+                    f"{[label(s) for s in found]}", pytrace=False)
+    return found[0]
+
+
+@NEEDS_UPSTREAM
+def test_release_install_check_the_offline_install_is_the_package_job_s_but_for_the_fingerprint():
+    """THE TWO COPIES CANNOT DRIFT (FR-016, FR-032): the install check's
+    offline `--install` is `tests.yml`'s `package` job's, line for line, with
+    the same keys beside its script, and differs from it only in
+    `FINGERPRINT_LINES`, each named there. So a count line, a skip line or a
+    receipt count changed in one copy alone fails here, before a release
+    tests what `tests.yml` never did and burns the version on TestPyPI."""
+    ours = offline_install_step(install_steps(release()),
+                                "release.yml's install job")
+    package = (standard().load_yaml(TESTS_WORKFLOW).get("jobs") or {}).get("package")
+    if not isinstance(package, dict) or not isinstance(package.get("steps"), list):
+        pytest.fail("tests.yml has no `package` job with steps", pytrace=False)
+    theirs = offline_install_step(package["steps"], "tests.yml's package job")
+    keys = {k: v for k, v in ours.items() if k not in ("name", "run")}
+    assert keys == {k: v for k, v in theirs.items() if k not in ("name", "run")}, (
+        f"the two steps differ beside their scripts: {ours} against {theirs}")
+    mine, its = run_text(ours).split("\n"), run_text(theirs).split("\n")
+    matcher = difflib.SequenceMatcher(a=its, b=mine, autojunk=False)
+    found = [(its[i1:i2], mine[j1:j2])
+             for tag, i1, i2, j1, j2 in matcher.get_opcodes() if tag != "equal"]
+    allowed = [(list(a), list(b)) for a, b in FINGERPRINT_LINES]
+    assert found == allowed, (
+        "the release's offline --install is not tests.yml's but for the "
+        "fingerprint lines:\n" + "\n".join(difflib.unified_diff(
+            its, mine, "tests.yml", "release.yml", lineterm="", n=0)))
 
 
 #: `/bin` put first on `PATH`: for one command (`PATH="/bin:..." command`),
