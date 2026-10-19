@@ -1612,20 +1612,44 @@ lane_from_text() {
 # proved before the refusal (5) says which of the two the register now holds.
 # Both still write through `cat` and a redirection, which FOLLOW a symlinked
 # register; a rename beside it would replace the link with a file.
+#
+# A REFUSAL SAYS WHAT IS ALREADY ON DISK (the review of #263, S2). The sweeps
+# write their logs, their archive and their earlier rows before a row's
+# rewrite, so a refusal that said "Nothing was written" was false there: `git
+# status` showed those files, and a re-run read them back. "Nothing has been
+# committed" is what holds, and each sweep names its local writes with
+# `reg_wrote`, which the refusals list. AND WHERE THE REGISTER MAY BE TRUNCATED
+# the copy is KEPT (S2's NIT 6): it is the only exact copy of the register as it
+# was, uncommitted edits included, and the exit trap removes `$TMPD`, so it is
+# moved beside that directory (a rename, which needs no free space) and named.
+REG_WRITTEN_HERE=""
+reg_wrote() {   # <what this act has written in this checkout, not committed>
+  REG_WRITTEN_HERE="$REG_WRITTEN_HERE, $1"
+}
+reg_written_here() {   # — the sentence a refusal ends with, or nothing
+  [ -n "$REG_WRITTEN_HERE" ] || return 0
+  printf ' This act has already written, in this checkout and NOT committed: %s. `git -C %s status` shows them; commit or undo them before re-running.' \
+    "${REG_WRITTEN_HERE#, }" "$LANES_REPO"
+}
 register_copy() {   # <copy> <what the refusal leaves as it was>
   cat -- "$LANES_FILE" > "$1" && cmp -s -- "$LANES_FILE" "$1" ||
-    die "the register at $LANES_FILE could not be copied whole to $1, and every proof of this edit is made against that copy: a short one would make a short register look like a one-line edit of itself. Nothing was written: $2." 5
+    die "the register at $LANES_FILE could not be copied whole to $1, and every proof of this edit is made against that copy: a short one would make a short register look like a one-line edit of itself. The register is as it was and nothing has been committed: $2.$(reg_written_here)" 5
 }
 register_rewrite() {   # <the copy> <what the register becomes> <what else the refusal says>
   cat -- "$2" > "$LANES_FILE" && cmp -s -- "$LANES_FILE" "$2" && return 0
   if cmp -s -- "$LANES_FILE" "$1"; then
-    rgw_now="it is as it was before this edit"
-  elif cat -- "$1" > "$LANES_FILE" && cmp -s -- "$LANES_FILE" "$1"; then
-    rgw_now="the write had cut it short, and its earlier bytes have been put back and proved"
-  else
-    die "could not write the rewritten register $LANES_FILE, and the bytes it had before this edit could not be put back either: IT MAY NOW BE TRUNCATED. Restore it before any other write in $LANES_REPO, because the next one would commit it as a pre-existing edit: \`git -C $LANES_REPO diff -- $LANES_PATH\` shows what it lost, and \`git -C $LANES_REPO checkout -- $LANES_PATH\` brings back its last commit. $3" 5
+    die "could not write the rewritten register $LANES_FILE: the write did not reach it, and it is byte for byte as it was before this edit. $3$(reg_written_here)" 5
   fi
-  die "could not write the rewritten register $LANES_FILE, or what landed is not what was written: $rgw_now. $3" 5
+  if cat -- "$1" > "$LANES_FILE" && cmp -s -- "$LANES_FILE" "$1"; then
+    die "the rewritten register $LANES_FILE did not land as it was written: the write cut it short, and its earlier bytes have been put back and proved. $3$(reg_written_here)" 5
+  fi
+  rgw_keep="${1%/*}.register-before-edit"
+  if mv -- "$1" "$rgw_keep" 2>/dev/null; then
+    rgw_copy="Its exact bytes from before this edit, with any uncommitted edit they held, are kept in $rgw_keep (\`cat -- $rgw_keep > $LANES_FILE\` puts them back, and \`git -C $LANES_REPO diff -- $LANES_PATH\` shows what it lost meanwhile); \`git checkout\` would bring back only its last commit and drop any uncommitted edit."
+  else
+    rgw_copy="Its bytes from before this edit could not be kept either: \`git -C $LANES_REPO diff -- $LANES_PATH\` shows what it lost, and \`git -C $LANES_REPO checkout -- $LANES_PATH\` brings back its last commit, dropping any uncommitted edit it held."
+  fi
+  die "could not write the rewritten register $LANES_FILE, and the bytes it had before this edit could not be put back either: IT MAY NOW BE TRUNCATED. Restore it before any other write in $LANES_REPO, because the next one would commit it as a pre-existing edit. $rgw_copy $3$(reg_written_here)" 5
 }
 
 # Replace line N with $2, leaving every other byte untouched. Verified with
@@ -3621,6 +3645,10 @@ archive_local_text() {
 # nobody can read may be the very lane being added. AND THE SCAN'S OWN STATUS
 # IS READ. The scan's status used to be that of the `sort -u` behind it, so an
 # awk that FAILED read as "no archived row matched".
+#
+# EACH LINE NUMBER NAMES ITS COPY (the review of #263, NIT 4). Both copies are
+# scanned, and where the published archive and this checkout's differ, one bad
+# line had two numbers and no word on which file either was in.
 RETIRED_ROWS_AWK='
   function key(n,   h, p) {
     p = n; sub(/^.*-/, "", p); sub(/[A-Za-z]$/, "", p)
@@ -3635,7 +3663,7 @@ RETIRED_ROWS_AWK='
     h = c; sub(/^[ \t]+/, "", h); sub(/[ \t|]+$/, "", h)
     if (tolower(h) == "lane") next
     p1 = index(c, "`"); p2 = p1 ? index(substr(c, p1 + 1), "`") : 0
-    if (!p1 || p2 < 2) { printf "M%sline %d: %s\n", sep, NR, $0; next }
+    if (!p1 || p2 < 2) { printf "M%s%d%s%s\n", sep, NR, sep, $0; next }
     t = substr(c, p1 + 1, p2 - 1)
     if (tolower(t) == tolower(want) || (wk != "" && key(t) == wk)) printf "H%s%s\n", sep, t
   }'
@@ -3648,11 +3676,23 @@ retired_identity_hits() { # <lane>; stdout: matching retired spellings · 1 not 
   ri_scan="$(printf '%s\n' "$ri_pub" | awk -v want="$ri_lane" -v sep="$US" "$RETIRED_ROWS_AWK")" || return 1
   ri_scan2=""
   ri_scan2="$(printf '%s\n' "$ri_local" | awk -v want="$ri_lane" -v sep="$US" "$RETIRED_ROWS_AWK")" || return 1
+  # WHICH COPY `archive_text` ANSWERED WITH: the index's under `--index`, else
+  # origin's where the tree publishes one, else this checkout's (its own rungs,
+  # read the same way; a read that failed has already returned 1 above).
+  ri_from="this checkout"
+  if [ -n "$LANES_IDX_DIR" ]; then
+    [ -f "$LANES_IDX_DIR/archive" ] && ri_from="the index"
+  elif register_published "$LANES_ARCH_PATH" >/dev/null 2>&1; then
+    ri_from="origin/$LANES_BRANCH"
+  fi
   ri_bad=""
-  ri_bad="$(printf '%s\n%s\n' "$ri_scan" "$ri_scan2" |
-    awk -v sep="$US" 'substr($0, 1, 2) == "M" sep && !seen[$0]++ { print substr($0, 3) }')" || return 1
+  ri_bad="$( { printf '%s\n' "$ri_scan" | awk -v sep="$US" -v w="$ri_from" 'substr($0, 1, 2) == "M" sep { print w sep substr($0, 3) }'
+               printf '%s\n' "$ri_scan2" | awk -v sep="$US" -v w="this checkout" 'substr($0, 1, 2) == "M" sep { print w sep substr($0, 3) }'; } |
+    awk -F"$US" '{ k = $2 FS $3
+                   if (!(k in w)) { o[++n] = k; w[k] = $1 } else if (w[k] != $1) w[k] = w[k] " and " $1 }
+                 END { for (i = 1; i <= n; i++) { split(o[i], p, FS); print "line " p[1] " (" w[o[i]] "): " p[2] } }')" || return 1
   if [ -n "$ri_bad" ]; then
-    note "$LANES_ARCH_PATH carries a table line that is neither its header, its rule, nor a row whose first cell holds its lane in backticks (the published copy or this checkout's):"
+    note "$LANES_ARCH_PATH carries a table line that is neither its header, its rule, nor a row whose first cell holds its lane in backticks (each named with the copy it is in):"
     printf '%s\n' "$ri_bad" | sed -e 's/^/lanes-edit:   /' >&2
     return 3
   fi
@@ -3662,28 +3702,42 @@ retired_identity_hits() { # <lane>; stdout: matching retired spellings · 1 not 
   [ -z "$ri_hits" ] || printf '%s\n' "$ri_hits" | LC_ALL=C sort -u
 }
 
+# EVERY REFUSAL HERE TAKES ITS ROW BACK, not only the retired match (the review
+# of #263, M1). This runs after `pull --rebase`, so the add-row is already a
+# local commit on top of the peer's archive. A refusal that only returned left
+# that commit at HEAD, and the next unrelated write from this checkout pushed
+# it: measured, a peer's archive line this scan could not take apart during
+# add-row's pull gave exit 1, then `set-row-state` published the row it had
+# refused. A read that failed and a line that is not a row are refusals of the
+# same row as a retired match is, so all three run the same compensation.
 add_row_retirement_rescan() {
-  ar_rebased_hits="$(retired_identity_hits "$ADD_ROW_LANE")" || {
-    note "the archive could not be read after rebase, or it carries a line that is not a row (above); refusing to push add-row for $ADD_ROW_LANE"
+  ar_rebased_rc=0
+  ar_rebased_hits="$(retired_identity_hits "$ADD_ROW_LANE")" || ar_rebased_rc=$?
+  if [ "$ar_rebased_rc" != 0 ]; then
+    ar_why="the archive could not be read after rebase, or it carries a line that is not a row (above), so whether lane $ADD_ROW_LANE was retired meanwhile is not known"
+    ar_subject="cancel add-row whose retirement could not be checked after rebase"
+    ar_back=1
+  elif [ -n "$ar_rebased_hits" ]; then
+    ar_why="lane $ADD_ROW_LANE was retired by a peer before this add-row could push (archive: $(printf '%s' "$ar_rebased_hits" | tr '\n' ' '))"
+    ar_subject="cancel add-row rejected by peer retirement"
+    ar_back=2
+  else
+    return 0
+  fi
+  # Leaving the rejected add-row at HEAD would let the next unrelated registry
+  # write push it. Remove ONLY this invocation's exact appended line and commit
+  # that compensation locally; any swept pre-existing edit stays intact.
+  ar_lines="$(command grep -nFx -- "$ADD_ROW_TEXT" "$LANES_FILE" 2>/dev/null)" || {
+    note "$ar_why; and the rejected row could not be found exactly in $LANES_FILE, so the local add-row commit must be repaired before any later push"
     return 1
   }
-  if [ -n "$ar_rebased_hits" ]; then
-    # The rejected add-row is already a local commit on top of the peer's
-    # archive. Leaving it at HEAD would let the next unrelated registry write
-    # push it. Remove ONLY this invocation's exact appended line and commit
-    # that compensation locally; any swept pre-existing edit stays intact.
-    ar_lines="$(command grep -nFx -- "$ADD_ROW_TEXT" "$LANES_FILE" 2>/dev/null)" || {
-      note "the rejected row could not be found exactly in $LANES_FILE; the local add-row commit must be repaired before any later push"
-      return 1
-    }
-    case "$ar_lines" in *$'\n'*) note "more than one exact copy of the rejected row exists; refusing automatic compensation"; return 1 ;; esac
-    ar_line="${ar_lines%%:*}"
-    delete_lines "$ar_line"
-    git -C "$LANES_REPO" -c "$CP_EXACT" add -- "$LANES_PATH" || return 1
-    git -C "$LANES_REPO" -c "$CP_EXACT" commit -q -m "LANES($ADD_ROW_LANE@$WS): cancel add-row rejected by peer retirement" -- "$LANES_PATH" || return 1
-    note "lane $ADD_ROW_LANE was retired by a peer before this add-row could push (archive: $(printf '%s' "$ar_rebased_hits" | tr '\n' ' ')); the rejected row was removed in a compensating LOCAL commit. Neither commit was pushed."
-    return 2
-  fi
+  case "$ar_lines" in *$'\n'*) note "$ar_why; and more than one exact copy of the rejected row exists, so it is not compensated automatically: the local add-row commit must be repaired before any later push"; return 1 ;; esac
+  ar_line="${ar_lines%%:*}"
+  delete_lines "$ar_line"
+  git -C "$LANES_REPO" -c "$CP_EXACT" add -- "$LANES_PATH" || return 1
+  git -C "$LANES_REPO" -c "$CP_EXACT" commit -q -m "LANES($ADD_ROW_LANE@$WS): $ar_subject" -- "$LANES_PATH" || return 1
+  note "$ar_why; the rejected row was removed in a compensating LOCAL commit, so no later write publishes it. Neither commit was pushed."
+  return "$ar_back"
 }
 
 # Each lane's LAST line on <object>, as
@@ -11819,6 +11873,7 @@ EOF
   cat -- "$LANES_FILE" > "$msc_arch" || die "could not write the archive $msc_arch — nothing else has been touched" 6
   cmp -s -- "$LANES_FILE" "$msc_arch" || die "the archive $msc_arch is not byte for byte the register it was copied from; nothing else has been touched" 5
   note "archive written: $msc_arch_rel"
+  reg_wrote "$msc_arch_rel (the register as it was)"
 
   msc_paths=("$LANES_PATH" "$msc_arch_rel")
   while IFS="$US" read -r msc_n msc_lf msc_rel; do
@@ -11834,10 +11889,14 @@ EOF
   done <<EOF
 $(cat -- "$msc_tmp/targets")
 EOF
+  [ "${#msc_paths[@]}" -le 2 ] || reg_wrote "$(( ${#msc_paths[@]} - 2 )) lanes' logs under $LANES_LOG_PREFIX (their migrated lines)"
 
+  msc_rows=0
   while IFS="$US" read -r msc_n msc_new msc_head msc_tail; do
     [ -n "${msc_n:-}" ] || continue
     replace_line "$msc_n" "$msc_head$msc_new $msc_tail"
+    msc_rows=$((msc_rows + 1))
+    [ "$msc_rows" != 1 ] || reg_wrote "$LANES_PATH (the state cells rewritten before this one)"
   done <<EOF
 $(cat -- "$msc_tmp/cells")
 EOF
@@ -12460,15 +12519,30 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
         die "lane $rr_l's object log $rr_lf could not be parsed, so whether it carries a lane-kind line is not known (Amendment 7(d)). Nothing was written." 1
     fi
     rr_open="$(printf '%s\n%s\n' "$rr_ev" "$rr_lev" | awk -F"$US" '$3 == "STARTED" || $3 == "PAUSED" || $3 == "RESUMED" || $3 == "ENDED" || $3 == "RETIRED" { v = $3 } END { if (v != "") print v }')"
+    rr_pub_open="$(printf '%s\n' "$rr_ev" | awk -F"$US" '$3 == "STARTED" || $3 == "PAUSED" || $3 == "RESUMED" || $3 == "ENDED" || $3 == "RETIRED" { v = $3 } END { if (v != "") print v }')"
     # THE RULE IS CLAUSE (c)'s AND STAYS: a log that CARRIES a lane-kind line is
     # refused. THE SENTENCE FOLLOWS THE LAST ONE (#120 item 3, Copilot round 5 on
     # #93). A log whose last lane-kind line is ENDED or RETIRED is a lane already
     # CLOSED (19(a)), and `lane-end` is not its exit: it is told it is closed,
-    # already hidden, and which act takes a finished row out of the register.
+    # already hidden, and — for RETIRED alone, the only cell `archive-rows`
+    # moves — which act takes the row out of the register.
+    #
+    # AND "CLOSED" IS SAID ONLY OF A CLOSING LINE ORIGIN CARRIES (the review of
+    # #263, S2). An earlier sweep that stopped part-way leaves its RETIRED line
+    # in this checkout's log and nowhere else; a re-run told the lane it was
+    # CLOSED, "nothing more is owed", about a row never retired and a line never
+    # published. That line is still refused, and is named as this checkout's.
     case "$rr_open" in
       '') : ;;
       ENDED | RETIRED)
-        die "lane $rr_l's object log ends on a $rr_open line, so the lane is already CLOSED (Amendment 19(a)) and not a dormant row: \`lanes\` already hides it (19(b)), and its log is append-only, so it is not retired a second time. A closed row is the record (Rule 9) and nothing more is owed; where a person wants it out of the register, \`lanes-edit.sh archive-rows ${rr_l%-*}\` moves that repository's rows whose state cell says RETIRED (19(d)). Nothing was written." 2 ;;
+        [ "$rr_pub_open" = "$rr_open" ] ||
+          die "lane $rr_l's object log in THIS CHECKOUT ends on a $rr_open line, and origin/$LANES_BRANCH's copy does not: it is a write made here and never published, by an earlier act that stopped part-way or a commit whose push has not landed (\`git -C $LANES_REPO status\` and \`git -C $LANES_REPO log origin/$LANES_BRANCH..HEAD -- $(log_path_for "$rr_l")\` say which). It is refused either way, since a second closing line would be one more line in an append-only log, and the lane is not called CLOSED, since nothing published says so. Publish that line or undo it, then re-run. Nothing was written." 2
+        case "$rr_open" in
+          RETIRED)
+            die "lane $rr_l's object log ends on a RETIRED line, so the lane is already CLOSED and RETIRED (Amendment 19(a)), not a dormant row: \`lanes\` already hides it (19(b)), and its log is append-only, so it is not retired a second time. Its row leaves the register by \`lanes-edit.sh archive-rows ${rr_l%-*}\` (19(d)), which moves that repository's rows whose state cell says RETIRED. Nothing was written." 2 ;;
+          *)
+            die "lane $rr_l's object log ends on an ENDED line, so the lane is already CLOSED (Amendment 19(a)): it was ended, and a closed lane is not a dormant row. \`lanes\` already hides it (19(b)), and its log is append-only, so a RETIRED line after its ENDED would be one more line for a lane that is already finished. Nothing more is owed: its row stays in the register as the record (Rule 9), and \`archive-rows\` is not its exit, since it moves only rows whose state cell says RETIRED. Nothing was written." 2 ;;
+        esac ;;
       *)
         die "lane $rr_l's object log carries a $rr_open line as its last lane-kind line, so it is not a dormant row: a running or parked lane is a lane a person can still pick up. End it as itself when its work is done: lane-end $rr_l. Nothing was written." 2 ;;
     esac
@@ -12593,12 +12667,14 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
     ensure_log "$rr_l"
     append_text_block "$(log_file_for "$rr_l")" "$(cat -- "$rr_tmp/line.$rr_ln")"
     rr_paths+=("$(log_path_for "$rr_l")")
+    reg_wrote "$(log_path_for "$rr_l") (its RETIRED line)"
   done <<EOF
 $(cat -- "$rr_tmp/plan")
 EOF
   while IFS="$US" read -r rr_ln rr_l rr_new rr_head2 rr_tail; do
     [ -n "${rr_ln:-}" ] || continue
     replace_line "$rr_ln" "$rr_head2$rr_new $rr_tail"
+    reg_wrote "$LANES_PATH (the row of $rr_l)"
   done <<EOF
 $(cat -- "$rr_tmp/plan")
 EOF
@@ -12813,8 +12889,10 @@ EOF
     } > "$LANES_ARCH_FILE" ||
       die "could not write $LANES_ARCH_FILE — nothing has been removed from the register" 6
     note "created $LANES_ARCH_FILE"
+    reg_wrote "$LANES_ARCH_PATH (created)"
   fi
   append_text_block "$LANES_ARCH_FILE" "$(cat -- "$ar_tmp/rows")"
+  reg_wrote "$LANES_ARCH_PATH ($ar_n row(s) appended)"
   delete_lines "$(cat -- "$ar_tmp/nums")"
 
   ar_msg="LANES(archive@$WS): Amendment 19(d) — $ar_n RETIRED row(s) of $ar_repo moved to $LANES_ARCH_PATH: $(tr '\n' ' ' < "$ar_tmp/names")"

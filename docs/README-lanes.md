@@ -3159,11 +3159,16 @@ says so. Counting zero there would be "nothing to do" about rows nobody could
 class.
 
 A log whose **last** lane-kind line is `ENDED` or `RETIRED` is refused too,
-since a second `RETIRED` would be one more line in an append-only log. The
-refusal says the lane is **already CLOSED** and already hidden (19(b)), and that
-`lanes-edit.sh archive-rows <repo>` is the act that takes rows whose cell says
-`RETIRED` out of the register. A log whose last lane-kind line is `STARTED`,
-`PAUSED` or `RESUMED` is sent to `lane-end <lane>` instead (#120 item 3).
+since a `RETIRED` after it would be one more line in an append-only log. The
+refusal says the lane is **already CLOSED** and already hidden (19(b)). For
+`RETIRED` it names `lanes-edit.sh archive-rows <repo>` as the act that takes the
+row out of the register. For `ENDED` it says nothing more is owed: the row stays
+as the record, because `archive-rows` moves only rows whose cell says `RETIRED`.
+A log whose last lane-kind line is `STARTED`, `PAUSED` or `RESUMED` is sent to
+`lane-end <lane>` instead (#120 item 3). The lane is called CLOSED only when
+origin's copy of its log ends on that line. A closing line only this checkout's
+log carries, left by an earlier act that stopped part-way or never pushed, is
+refused as exactly that.
 
 It refuses six more things for the reason every writer here refuses them — a
 half-written act is worse than no act: a checkout **behind** `origin` or dirty
@@ -3204,7 +3209,9 @@ register is put back where the write cut it short, #120 item 1) — leaves this 
 the register unpublished: that is what `git status` then shows, `git checkout --
 lanes` undoes it whole, and the next run is REFUSED by the dirty-checkout guard
 rather than made twice. `migrate-state-cells` has the same shape for the same
-reason.
+reason. Such a refusal says nothing has been committed, and lists what the act
+had already written in this checkout. Where the register may be truncated, it
+also names where the exact copy of the register from before the edit is kept.
 
 ### The archive — a second act on a second word
 
@@ -3254,12 +3261,27 @@ cannot reissue one by hand either. It also refuses (exit **1**) where the
 published register cannot be read, rather than read that as "no such row":
 otherwise a row this checkout has not pulled would be added a second time.
 And it refuses (exit **1**) an archive that carries a `|` line it cannot take
-apart, naming each such line by its number (#122). A line counts only if it is
+apart, naming each such line by its number and the copy it is in, published
+or this checkout's (#122). A line counts only if it is
 the table's header (its first cell is `lane`), its `|---|` rule, or a row whose
 first cell holds its lane in backticks; any other line may be the very lane
 being added. The header is found by that first cell, because a ` | ` count
 cannot tell it from a row (both carry six), and a hand edit can part it from its
-rule. An archive scan that **failed** is a refusal too, never "no match".
+rule. An archive scan that **failed** is a refusal too, never "no match". So is
+an archive with CRLF line endings, or a table written without the spaces around
+its `|`: `archive-rows` writes neither, and nothing in this tool reads CRLF.
+Where add-row has already committed its row when a peer's archive arrives in its
+`pull --rebase`, any of these refusals removes the row again in a compensating
+local commit, as a peer's retirement does, so no later write publishes it.
+
+**One such line refuses every lane, not only its own.** `lanes-edit.sh
+retired-identity <lane>`, the check `lane-start` makes before it launches,
+exits 1 on it as well, so every `lane-start` refuses while the line is there.
+`lane-start` hides the reason: it reads that check with its stderr discarded and
+says only that the archive could not be checked for the lane. Run
+`lanes-edit.sh retired-identity <lane>` to see the line, its number and its
+copy.
+
 **Rule 9 holds either way** — a row is
 one `git show` away — so the archive is for a register a person wants shorter,
 and never a requirement.

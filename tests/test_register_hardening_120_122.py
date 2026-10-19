@@ -16,6 +16,7 @@ operator's own register.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -23,7 +24,7 @@ from pathlib import Path
 import pytest
 
 from test_register_scan_hardening_138 import (  # noqa: F401  (pytestmark is this module's too)
-    HEADER, OLD_ID, Register as SweepRegister, lane_line, log_text, pytestmark, row)
+    HEADER, OLD_ID, UNPRIVILEGED_ONLY, Register as SweepRegister, lane_line, log_text, pytestmark, row)
 
 NEW_ID = "cccc0122-0003-4000-8000-000000000003"
 #: The archive exactly as `archive_rows` creates it: a title, a paragraph, then
@@ -115,7 +116,10 @@ def test_120_item_1_a_rewrite_cut_short_leaves_the_register_whole(reg, act, cut)
     itself: rewritten, committed and pushed. Each refuses (5) now, and the
     register on disk and on origin is byte for byte what it was — or, where
     the bytes could not be put back either, the refusal says the register MAY
-    NOW BE TRUNCATED and how to restore it, and nothing is committed."""
+    NOW BE TRUNCATED, keeps the exact copy it was made from and names where,
+    and nothing is committed (the review of #263, NIT 6). The copy refusal says
+    nothing has been COMMITTED and names what the act had already written here,
+    never "Nothing was written" (S2)."""
     if act == "delete_lines":
         retire_repo_x_3(reg)
     register = reg.read("lanes/LANES.md")
@@ -127,15 +131,72 @@ def test_120_item_1_a_rewrite_cut_short_leaves_the_register_whole(reg, act, cut)
     assert reg.published("lanes/LANES.md") == register
     if cut == "write and restore fail":
         assert "IT MAY NOW BE TRUNCATED" in result.stderr
-        assert "checkout -- lanes/LANES.md" in result.stderr
         assert "UNCHANGED" not in result.stderr
+        kept = re.search(r"are kept in (\S+) \(", result.stderr)
+        assert kept, result.stderr
+        assert Path(kept.group(1)).read_text(encoding="utf-8") == register
         return
     assert reg.read("lanes/LANES.md") == register
     if cut.startswith("copy"):
         assert "could not be copied whole" in result.stderr
+        assert "nothing has been committed" in result.stderr
+        assert "Nothing was written" not in result.stderr
+        if act == "delete_lines":
+            assert "NOT committed: lanes/archive/LANES-retired.md (created)" in result.stderr
     else:
         assert "have been put back and proved" in result.stderr
         assert "UNCHANGED" not in result.stderr
+
+
+@UNPRIVILEGED_ONLY
+@pytest.mark.parametrize("act", sorted(ACTS))
+def test_120_item_1_a_write_that_never_reached_the_register_says_it_is_as_it_was(reg, act):
+    """The review of #263, NIT 3 (its X4): a register the write could not even
+    open is byte for byte what it was, and the refusal says so in words of its
+    own, apart from the put-back's and the truncation's. archive-rows has
+    appended the archive by then, and the refusal names it (S2)."""
+    if act == "delete_lines":
+        retire_repo_x_3(reg)
+    register = reg.read("lanes/LANES.md")
+    before = reg.head()
+    path = reg.wip / "lanes/LANES.md"
+    path.chmod(0o444)
+    try:
+        result = reg.run(*ACTS[act], LANES_LANE="repoX-1")
+    finally:
+        path.chmod(0o644)
+    assert result.returncode == 5, (result.stdout, result.stderr)
+    assert "the write did not reach it, and it is byte for byte as it was before this edit" in result.stderr
+    assert "put back" not in result.stderr
+    assert "MAY NOW BE TRUNCATED" not in result.stderr
+    assert reg.read("lanes/LANES.md") == register
+    assert reg.head() == before
+    assert reg.published("lanes/LANES.md") == register
+    if act == "delete_lines":
+        assert "NOT committed: lanes/archive/LANES-retired.md (created)" in result.stderr
+
+
+@PROC_FD
+def test_120_item_1_a_sweep_refused_part_way_names_what_it_wrote_and_is_not_called_closed(reg):
+    """The review of #263, S2: retire-rows appends a lane's RETIRED line before
+    it rewrites the row, so a copy refusal that said "Nothing was written" left
+    `?? lanes/log/repoX-2.md` behind it. And a re-run then read that
+    uncommitted line and called the lane "already CLOSED … nothing more is
+    owed", about a row never retired and a line never published. The refusal
+    names the log, and the re-run refuses the line as this checkout's alone."""
+    reg.cut_cat("copy fails")
+    result = reg.sweep("repoX-2")
+    assert result.returncode == 5, (result.stdout, result.stderr)
+    assert "nothing has been committed" in result.stderr
+    assert "NOT committed: lanes/log/repoX-2.md (its RETIRED line)" in result.stderr
+    assert "Nothing was written" not in result.stderr
+    (reg.fakebin / "cat").unlink()
+    rerun = reg.sweep("repoX-2")
+    assert rerun.returncode == 2, (rerun.stdout, rerun.stderr)
+    assert "in THIS CHECKOUT ends on a RETIRED line, and origin/main's copy does not" in rerun.stderr
+    assert "already CLOSED" not in rerun.stderr
+    assert "`repoX-2`" in reg.published("lanes/LANES.md")
+    assert "RETIRED" not in reg.published("lanes/LANES.md").split("`repoX-2`")[1].splitlines()[0]
 
 
 # ------------------------------- #120 item 2: the sweep's published-path scan
@@ -181,9 +242,11 @@ def test_120_item_2_a_rename_whose_commit_never_landed_refuses_in_the_scan(reg):
 def test_120_item_3_a_lane_whose_log_closes_it_is_told_it_is_closed(reg, last):
     """#120 item 3: the refusal for a lane whose log's LAST lane-kind line is
     ENDED or RETIRED read the same as the one for a running lane, and named no
-    way out. It says the lane is already CLOSED and hidden (19(b)), and names
-    `archive-rows <repo>` (19(d)) — never `lane-end`, which is not the exit for
-    a lane that has ended."""
+    way out. It says the lane is already CLOSED and hidden (19(b)) — never
+    `lane-end`, which is not the exit for a lane that has ended. For RETIRED it
+    names `archive-rows <repo>` (19(d)) exactly; for ENDED it says archive-rows
+    is not the row's exit, and never that the lane "is not retired a second
+    time" (the review of #263, NITs 3 and 5)."""
     reg.write("lanes/log/repoX-2.md", log_text(
         "repoX-2", lane_line("STARTED", "repoX-2", OLD_ID, "2026-09-11T00:00:00Z"),
         lane_line(last, "repoX-2", OLD_ID, "2026-09-11T02:00:00Z")))
@@ -193,8 +256,13 @@ def test_120_item_3_a_lane_whose_log_closes_it_is_told_it_is_closed(reg, last):
     assert result.returncode == 2, (result.stdout, result.stderr)
     assert f"{last} line" in result.stderr
     assert "already CLOSED" in result.stderr
-    assert "lanes-edit.sh archive-rows repoX" in result.stderr
     assert "lane-end" not in result.stderr
+    if last == "RETIRED":
+        assert "`lanes-edit.sh archive-rows repoX`" in result.stderr
+    else:
+        assert "`archive-rows` is not its exit" in result.stderr
+        assert "lanes-edit.sh archive-rows" not in result.stderr
+        assert "retired a second time" not in result.stderr
     assert reg.head() == before
 
 
@@ -237,9 +305,9 @@ def test_122_an_archive_row_the_scan_cannot_take_apart_reissues_no_position(reg,
     token — and read a first backtick in ANOTHER cell as the lane — so a
     retired row whose lane cell a hand edit had mangled disappeared from the
     answer, and add-row reissued its position (exit 0). Such a line is refused
-    by its line number now (1). The archive's own header and its rule are
-    `|` lines with no backtick on every archive `archive_rows` writes, and
-    they are not named."""
+    by its line number and its copy now (1), in add-row's own words. The
+    archive's own header and its rule are `|` lines with no backtick on every
+    archive `archive_rows` writes, and they are not named."""
     mangled = MANGLED[mangle]
     reg.write("lanes/archive/LANES-retired.md", ARCHIVE_HEAD
               + row("repoX-9", OLD_ID, RETIRED_CELL, "2026-08-01") + mangled + "\n")
@@ -250,9 +318,11 @@ def test_122_an_archive_row_the_scan_cannot_take_apart_reissues_no_position(reg,
     before = reg.head()
     result = add_repo_x_4(reg)
     assert result.returncode == 1, (result.stdout, result.stderr)
-    assert f"line 10: {mangled}" in result.stderr
-    assert f"line 7: {HEADER.splitlines()[0]}" not in result.stderr
-    assert "line 8: |---|" not in result.stderr
+    copies = "origin/main and this checkout" if where == "published" else "this checkout"
+    assert f"line 10 ({copies}): {mangled}" in result.stderr
+    assert "carries a line this scan cannot take apart (above)" in result.stderr
+    assert "line 7 (" not in result.stderr
+    assert "line 8 (" not in result.stderr
     assert reg.head() == before
     assert "`repoX-4`" not in reg.published("lanes/LANES.md")
 
@@ -269,4 +339,66 @@ def test_122_an_archive_scan_that_failed_is_not_an_archive_with_no_match(reg):
     result = add_repo_x_4(reg)
     assert result.returncode == 1, (result.stdout, result.stderr)
     assert reg.head() == before
+    assert "`repoX-4`" not in reg.published("lanes/LANES.md")
+
+
+def test_122_a_line_number_says_which_copy_it_is_in(reg):
+    """The review of #263, NIT 4: with the published archive and this
+    checkout's apart, one bad line was listed as "line 10" and "line 12" with
+    no word on which file either number belongs to."""
+    mangled = MANGLED["the lane lost its backticks"]
+    reg.write("lanes/archive/LANES-retired.md", ARCHIVE_HEAD
+              + row("repoX-9", OLD_ID, RETIRED_CELL, "2026-08-01") + mangled + "\n")
+    reg.publish("the archive, with a hand-mangled row 10")
+    reg.write("lanes/archive/LANES-retired.md", ARCHIVE_HEAD
+              + row("repoX-7", OLD_ID, RETIRED_CELL, "2026-08-01")
+              + row("repoX-8", OLD_ID, RETIRED_CELL, "2026-08-01")
+              + row("repoX-9", OLD_ID, RETIRED_CELL, "2026-08-01") + mangled + "\n")
+    reg.commit("two more rows above it, not pushed")
+    result = add_repo_x_4(reg)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert f"line 10 (origin/main): {mangled}" in result.stderr
+    assert f"line 12 (this checkout): {mangled}" in result.stderr
+
+
+def test_122_a_refusal_after_the_rebase_takes_its_row_back(reg, tmp_path):
+    """The review of #263, M1, the shell suite's `repo19race` shape: a peer
+    publishes an archive line this scan cannot take apart while add-row is in
+    its `pull --rebase`. The after-rebase rescan refused (1), but only the
+    retired-match branch took the committed row back, so the next unrelated
+    write from this checkout published the row add-row had refused. Every
+    refusal there now removes it in a compensating local commit."""
+    arch = "lanes/archive/LANES-retired.md"
+    reg.write(arch, ARCHIVE_HEAD + row("repoX-9", OLD_ID, RETIRED_CELL, "2026-08-01"))
+    reg.publish("a good archive")
+    peer = tmp_path / "peer"
+    reg.raw_git("clone", "-q", str(reg.origin), str(peer))
+    real = shutil.which("git", path=os.environ.get("PATH"))
+    mark = tmp_path / "raced"
+    line = MANGLED["the lane lost its backticks"]
+    shim = reg.fakebin / "git"
+    shim.write_text(f"""#!/usr/bin/env bash
+if [ "${{1-}}" = -C ] && [ "${{3-}}" = pull ] && [ ! -e '{mark}' ]; then
+  case "${{2-}}" in */wip)
+    : > '{mark}'
+    printf '%s\\n' '{line}' >> '{peer}/{arch}'
+    '{real}' -C '{peer}' add -- '{arch}' || exit 1
+    '{real}' -C '{peer}' commit -q -m 'peer: an archive row whose lane lost its backticks' || exit 1
+    '{real}' -C '{peer}' push -q origin main || exit 1 ;;
+  esac
+fi
+exec '{real}' "$@"
+""")
+    shim.chmod(0o755)
+    result = add_repo_x_4(reg)
+    shim.unlink()
+    assert mark.exists(), "the peer never raced the pull"
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert "removed in a compensating LOCAL commit" in result.stderr
+    assert "`repoX-4`" not in reg.read("lanes/LANES.md")
+    assert "`repoX-4`" not in reg.git("diff", "origin/main", "HEAD", "--", "lanes/LANES.md")
+    assert "`repoX-4`" not in reg.published("lanes/LANES.md")
+    after = reg.run("set-row-state", "repoX-2", "PAUSED · the next unrelated write", LANES_LANE="repoX-1")
+    assert after.returncode == 0, (after.stdout, after.stderr)
+    assert "PAUSED · " in reg.published("lanes/LANES.md").split("`repoX-2`")[1].splitlines()[0]
     assert "`repoX-4`" not in reg.published("lanes/LANES.md")
