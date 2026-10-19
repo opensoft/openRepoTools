@@ -139,15 +139,20 @@ class Register:
         path.chmod(0o755)
 
     def cut_cat(self, cut: str) -> None:
-        """A `cat` that cuts ONE copy at half its lines. `copy…`: the
+        """A `cat` that cuts a copy at half its lines. `copy…`: the
         register's copy into a file named `pre`, the copy every proof of a
         rewrite is made against. `write…`: the rewrite itself, `cat -- <tmp>/out`
-        into the register. `…fails` exits 1 after the half, as a full disk
-        does; `…says done` exits 0, a short write nothing reported."""
-        rc = 1 if cut.endswith("fails") else 0
+        into the register — and with `…and restore fail`, the copy's bytes put
+        back into the register as well. `…fail(s)` exits 1 after the half, as a
+        full disk does; `…says done` exits 0, a short write nothing reported."""
+        rc = 0 if cut.endswith("says done") else 1
+        goes_to = 'case "$(readlink "/proc/$$/fd/1" 2>/dev/null)" in {} ) true ;; *) false ;; esac'
         if cut.startswith("copy"):
             when = ('[ "${1-}" = -- ] && case "${2-}" in */lanes/LANES.md) true ;; *) false ;; esac && '
-                    'case "$(readlink "/proc/$$/fd/1" 2>/dev/null)" in */pre) true ;; *) false ;; esac')
+                    + goes_to.format("*/pre"))
+        elif cut == "write and restore fail":
+            when = ('[ "${1-}" = -- ] && case "${2-}" in */out) true ;; '
+                    '*/pre) ' + goes_to.format("*/lanes/LANES.md") + ' ;; *) false ;; esac')
         else:
             when = '[ "${1-}" = -- ] && case "${2-}" in */out) true ;; *) false ;; esac'
         self.shim("cat", f'if {when}; then\n'
@@ -184,7 +189,8 @@ ACTS = {
     "replace_line": ("set-row-state", "repoX-2", "PAUSED · cut short"),
     "delete_lines": ("archive-rows", "repoX", "--yes"),
 }
-CUTS = ["copy fails", "copy says done", "write fails", "write says done"]
+CUTS = ["copy fails", "copy says done", "write fails", "write says done",
+        "write and restore fail"]
 
 
 @PROC_FD
@@ -198,7 +204,9 @@ def test_120_item_1_a_rewrite_cut_short_leaves_the_register_whole(reg, act, cut)
     0). And the COPY every proof is made against was read with no status at
     all, so a short copy made a short register look like a one-line edit of
     itself: rewritten, committed and pushed. Each refuses (5) now, and the
-    register on disk and on origin is byte for byte what it was."""
+    register on disk and on origin is byte for byte what it was — or, where
+    the bytes could not be put back either, the refusal says the register MAY
+    NOW BE TRUNCATED and how to restore it, and nothing is committed."""
     if act == "delete_lines":
         retire_repo_x_3(reg)
     register = reg.read("lanes/LANES.md")
@@ -206,9 +214,14 @@ def test_120_item_1_a_rewrite_cut_short_leaves_the_register_whole(reg, act, cut)
     reg.cut_cat(cut)
     result = reg.run(*ACTS[act], LANES_LANE="repoX-1")
     assert result.returncode == 5, (result.stdout, result.stderr)
-    assert reg.read("lanes/LANES.md") == register
     assert reg.head() == before
     assert reg.published("lanes/LANES.md") == register
+    if cut == "write and restore fail":
+        assert "IT MAY NOW BE TRUNCATED" in result.stderr
+        assert "checkout -- lanes/LANES.md" in result.stderr
+        assert "UNCHANGED" not in result.stderr
+        return
+    assert reg.read("lanes/LANES.md") == register
     if cut.startswith("copy"):
         assert "could not be copied whole" in result.stderr
     else:

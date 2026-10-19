@@ -490,7 +490,11 @@
 #      every rebase.
 #   4  the mutex could not be taken within 60s
 #   5  an edit moved more than one line and was refused — or, Amendment 15, a
-#      lane's object log could not be renamed to the row's own spelling
+#      lane's object log could not be renamed to the row's own spelling — or,
+#      #120 item 1, a register rewrite (`replace_line`, `delete_lines`) whose
+#      copy, write or result could not be proved; where the write had cut the
+#      register short its earlier bytes are put back first, and the refusal
+#      says which of the two the register holds
 #   6  git add / commit / push failed
 #   7  ANOTHER ACT GOT THERE FIRST, and this one wrote nothing. `claim`:
 #      CLAIM-LOST, another lane's claim landed on main first.
@@ -1582,6 +1586,48 @@ lane_from_text() {
 
 # --------------------------------------------------------------- file writes
 
+# THE REGISTER IS REWRITTEN IN TWO PLACES, `replace_line` AND `delete_lines`,
+# AND BOTH PROVE WHAT THEY COPIED AND WHAT LANDED (opensoft/openRepoTools#120
+# item 1, Copilot round 5 on #93). The appends below them prove their result
+# with `cmp`; the rewrites proved only the file they built, and two steps of
+# theirs were never checked at all:
+#
+#   * THE COPY. Every proof of a rewrite (the line count, `numstat`, the no-op)
+#     is made against `$pre`, a `cat` of the register into a temporary file, and
+#     that `cat` had no status. A copy that came out short (a full temporary
+#     filesystem, a read that failed part-way) made a SHORT register look like a
+#     one-line edit of itself: every proof passed and the short copy was written
+#     back as the register and committed. Measured at 5e88a2c with the copy cut
+#     at half its lines: a 156,611-byte register rewritten as 78,306, exit 0.
+#   * THE WRITE. `cat -- <out> > LANES.md` had its status read and not its
+#     result, and `>` TRUNCATES before `cat` writes a byte. A write that failed
+#     part-way left a half register behind a refusal that called it UNCHANGED,
+#     and one that came out short and said nothing was a half register
+#     committed. Even an uncommitted half register is one write from being
+#     published: the next writer in this checkout commits a dirty register as a
+#     peer's pre-existing edit (`handle_preexisting`).
+#
+# So the copy is compared with the register and the result with what was built.
+# Where the result is not what was built, the copy's bytes are put back and
+# proved before the refusal (5) says which of the two the register now holds.
+# Both still write through `cat` and a redirection, which FOLLOW a symlinked
+# register; a rename beside it would replace the link with a file.
+register_copy() {   # <copy> <what the refusal leaves as it was>
+  cat -- "$LANES_FILE" > "$1" && cmp -s -- "$LANES_FILE" "$1" ||
+    die "the register at $LANES_FILE could not be copied whole to $1, and every proof of this edit is made against that copy: a short one would make a short register look like a one-line edit of itself. Nothing was written: $2." 5
+}
+register_rewrite() {   # <the copy> <what the register becomes> <what else the refusal says>
+  cat -- "$2" > "$LANES_FILE" && cmp -s -- "$LANES_FILE" "$2" && return 0
+  if cmp -s -- "$LANES_FILE" "$1"; then
+    rgw_now="it is as it was before this edit"
+  elif cat -- "$1" > "$LANES_FILE" && cmp -s -- "$LANES_FILE" "$1"; then
+    rgw_now="the write had cut it short, and its earlier bytes have been put back and proved"
+  else
+    die "could not write the rewritten register $LANES_FILE, and the bytes it had before this edit could not be put back either: IT MAY NOW BE TRUNCATED. Restore it before any other write in $LANES_REPO, because the next one would commit it as a pre-existing edit: \`git -C $LANES_REPO diff -- $LANES_PATH\` shows what it lost, and \`git -C $LANES_REPO checkout -- $LANES_PATH\` brings back its last commit. $3" 5
+  fi
+  die "could not write the rewritten register $LANES_FILE, or what landed is not what was written: $rgw_now. $3" 5
+}
+
 # Replace line N with $2, leaving every other byte untouched. Verified with
 # `git diff --no-index --numstat` (must be exactly 1 added / 1 deleted).
 replace_line() {
@@ -1592,7 +1638,7 @@ replace_line() {
   REPLACE_LINE_NOOP=0
   TMPD="$(mktemp -d)"
   pre="$TMPD/pre"; out="$TMPD/out"
-  cat -- "$LANES_FILE" > "$pre"
+  register_copy "$pre" "its line $n is as it was and this edit is not made"
   before="$(wc -l < "$pre" | tr -d ' ')"
   {
     [ "$n" -gt 1 ] && head -n "$((n - 1))" -- "$pre"
@@ -1639,9 +1685,9 @@ replace_line() {
   # writable: the two proofs above pass (they are made against a temporary
   # file), the note says the line was rewritten, and the caller commits whatever
   # else it changed. For a rename that is the alias landing while the row it
-  # points at never moves.
-  cat -- "$out" > "$LANES_FILE" ||   # redirect FOLLOWS the symlink
-    die "the register at $LANES_FILE could not be written: its line $n is UNCHANGED and this edit is not made. Nothing else this write touched has been committed." 5
+  # points at never moves. AND ITS RESULT IS PROVED, not only its status, with
+  # the register put back where the write cut it short (#120 item 1, above).
+  register_rewrite "$pre" "$out" "Its line $n is not rewritten, and nothing else this write touched has been committed."
   note "line $n rewritten in $LANES_FILE"
 }
 
@@ -1661,7 +1707,7 @@ delete_lines() {   # <line numbers, one per line, any order>
   [ "$dl_n" -gt 0 ] || return 0
   TMPD="$(mktemp -d)"
   dl_pre="$TMPD/pre"; dl_out="$TMPD/out"
-  cat -- "$LANES_FILE" > "$dl_pre"
+  register_copy "$dl_pre" "no row was removed, the rows are in $LANES_ARCH_PATH, and the register is whole"
   dl_before="$(wc -l < "$dl_pre" | tr -d ' ')"
   # `awk -v` CARRIES ONE LINE, AND THIS LIST IS MANY — the finding `who_landing`
   # took in round 5 of A9 Addendum 4 (R-A9-11), re-made here and answered by
@@ -1697,9 +1743,10 @@ delete_lines() {   # <line numbers, one per line, any order>
     die "the removal added or rewrote lines (numstat: ${dl_stat:-none}); refusing" 5
   # The redirection follows the register symlink, but its status is still a
   # write fence. An unwritable target must not let archive-rows commit the
-  # appended archive while the source rows remain in the register.
-  cat -- "$dl_out" > "$LANES_FILE" ||
-    die "could not write the rewritten register $LANES_FILE. The archive may have been appended locally, but no commit was made; resolve that partial move before retrying." 5
+  # appended archive while the source rows remain in the register. And its
+  # RESULT is the fence as well, with the register put back where the write cut
+  # it short (#120 item 1, above `replace_line`).
+  register_rewrite "$dl_pre" "$dl_out" "The archive may have been appended locally, but no commit was made; resolve that partial move before retrying."
   note "$dl_n row(s) removed from $LANES_FILE"
 }
 

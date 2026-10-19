@@ -1225,7 +1225,7 @@ else.
 | 2 | refusal — bad arguments, the object is held, an unknown alias, a checkout that cannot be rebased, or `commit` refusing to publish local commits that are not register or handoff writes, from a checkout whose HEAD is off the branch, or that it cannot read (#194; it pushes none of them) |
 | 3 | the edit is never a permanent loss, but this attempt cannot confirm whether it also reached origin — a rebase conflict (not pushed by this attempt; a later write from this checkout may already carry it to origin, so look by content before you retry), a network timeout on a push or a pull (a hung one often already landed), or six attempts exhausted because a peer's uncommitted file blocks every rebase |
 | 4 | the mutex could not be taken within 60s |
-| 5 | an edit moved more than one line and was refused |
+| 5 | an edit moved more than one line and was refused — or a register rewrite whose copy, write or result could not be proved (#120 item 1). The copy every proof is made against is compared with the register, and what lands with what was built; where a write cut the register short, its earlier bytes are put back and proved first, and the refusal says which of the two the register holds — never "unchanged" about a register the write truncated |
 | 6 | `git add` / `commit` / `push` failed |
 | 7 | another act got there first and this one wrote nothing: `claim`'s `CLAIM-LOST` (another lane's claim landed first), and `set-lane-state` / `set-lane-tree`'s lifecycle fence (openRepoTools#91, below) |
 | 9 | `CLAIM-LOST` — issue #30's own dead-lane verdict could not be reconfirmed before a `--force` takeover's push landed: the source lane resumed, a live session now backs it up, or that could not be read at all (`claim` only). Never 7 — that code is a RIVAL's claim, and this is the same lane the takeover was granted over |
@@ -3188,7 +3188,8 @@ publishes.** Every refusal above is made in the scan, before a byte is written.
 That includes the commit of a peer's uncommitted register edit, which the act
 makes as its own `LANES(pre-existing@…)` commit: it is made only after the
 scan, so a refusal leaves HEAD where it was. A failure in the writes themselves — a log whose append could not be proved, a
-row whose rewrite touched more than one line — leaves this checkout DIRTY and
+row whose rewrite touched more than one line or could not be proved (the
+register is put back where the write cut it short, #120 item 1) — leaves this checkout DIRTY and
 the register unpublished: that is what `git status` then shows, `git checkout --
 lanes` undoes it whole, and the next run is REFUSED by the dirty-checkout guard
 rather than made twice. `migrate-state-cells` has the same shape for the same
