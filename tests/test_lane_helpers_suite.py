@@ -341,10 +341,12 @@ def _speak_past_capture(request, monkeypatch):
     `capsys` IS ASKED FOR, NOT REQUIRED. Under `-p no:capture` the fixture does
     not exist, and a parameter named `capsys` on an AUTOUSE fixture would make
     every test in this file, the liveness test among them, an ERROR for it.
-    Nothing captures there, so nothing needs suspending, and the no-op serves."""
+    Nothing captures there, so nothing needs suspending, and the no-op serves.
+    Only pytest's own `FixtureLookupError` is let go: a wider clause would read
+    a fault of some other kind as "no capture plugin" and hide it."""
     try:
         capsys = request.getfixturevalue("capsys")
-    except LookupError:   # pytest's FixtureLookupError is one
+    except pytest.FixtureLookupError:   # the capture plugin is off
         return
     monkeypatch.setitem(globals(), "_past_capture", capsys.disabled)
 
@@ -512,6 +514,8 @@ def run_wrapper_over(tmp_path, *, table=True, failing=False, inherited=None,
         status=1 if failing else 0), encoding="utf-8")
     (tmp_path / "stand_in_plugin.py").write_text(_CHILD_PLUGIN, encoding="utf-8")
     env = dict(os.environ, **(inherited or {}))
+    # THE COLOUR TESTS PIN `PY_COLORS="0"`, set below, and the escape-sequence
+    # assertion; these pops only keep a runner's own settings out of the child.
     for name in _CHILD_NOT_INHERITED:
         env.pop(name, None)
     env.update(
@@ -611,6 +615,42 @@ def test_a_stdout_that_cannot_spell_the_table_does_not_fail_a_pass(tmp_path):
     assert any(ln.endswith("a row with a dash \\u2014 in it") for ln in lines), (
         "\n".join(lines))
     assert not any("UnicodeEncodeError" in ln for ln in lines), "\n".join(lines)
+
+
+def test_a_stream_that_cannot_be_written_to_does_not_fail_a_pass(monkeypatch):
+    """`show_timings` lets an `OSError` from its write go (a full disk, a pipe
+    nobody reads): the numbers are lost and the run is not. NOTHING ELSE IN THIS
+    FILE REACHES THAT `suppress`, and with it removed every other test here
+    still passes, so this one writes into a stream that raises ENOSPC and asks
+    that the write was ATTEMPTED and that the call RETURNED.
+
+    The stream is put where `sys.stdout` is by a stand-in for `capsys.disabled()`
+    (the autouse fixture's own would hand the real stdout back), and only for the
+    write, so nothing is left behind for the fixtures that tear down after this
+    test."""
+    class Unwritable:
+        encoding = "utf-8"
+        attempts = 0
+
+        def write(self, text):
+            Unwritable.attempts += 1
+            raise OSError(28, "No space left on device")
+
+        def flush(self):
+            raise OSError(28, "No space left on device")
+
+    @contextlib.contextmanager
+    def unwritable_stdout():
+        with contextlib.redirect_stdout(Unwritable()):
+            yield
+
+    monkeypatch.setitem(globals(), "_past_capture", unwritable_stdout)
+    show_timings(subprocess.CompletedProcess(
+        ["bash", "suite.sh"], 0,
+        stdout=f"{TIMING_HEADER} (whole seconds):\n     3 s  100%  the whole run\n",
+        stderr="teardown: rm -rf of the sandbox took 0 s\n"))
+    assert Unwritable.attempts >= 1, (
+        "the block was never written to the stream, so nothing was tested")
 
 
 @WINDOWS_SKIP
