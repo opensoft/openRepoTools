@@ -2746,6 +2746,160 @@ def test_release_install_check_the_digest_step_passes_the_recorded_wheel_alone(
         assert "::error::" in out and "Traceback" not in out, transcript(done)
 
 
+#: The install check's two steps that fetch and install, by their names.
+FETCH_STEP = "fetch the wheel from TestPyPI"
+PIPX_STEP = "pipx installs the wheel into a fresh environment"
+
+#: `python`, as setup-python puts it on PATH: this interpreter.
+AS_PYTHON = "import os, sys\nos.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n"
+
+#: A `curl` that writes down each call, refuses one that is not https-only,
+#: and answers a JSON URL with `FAKE_INDEX_JSON` and any other with bytes
+#: naming the URL.
+FAKE_CURL = r'''
+import os, shutil, sys
+args = sys.argv[1:]
+with open(os.environ["FAKE_CURL_LOG"], "a", encoding="utf-8") as log:
+    log.write(" ".join(args) + "\n")
+if "--proto" not in args or args[args.index("--proto") + 1] != "=https":
+    sys.stderr.write("fake curl: a fetch that is not https-only\n")
+    sys.exit(1)
+out, url = args[args.index("-o") + 1], args[-1]
+if url.endswith("/json"):
+    shutil.copyfile(os.environ["FAKE_INDEX_JSON"], out)
+else:
+    with open(out, "wb") as handle:
+        handle.write(b"the file at " + url.encode())
+'''
+
+FETCHED_WHEEL = "openrepotools-1.1.0rc1-py3-none-any.whl"
+FILE_HOST = "https://test-files.pythonhosted.org/packages/5e/1f/" + FETCHED_WHEEL
+
+
+def listed(filename: str, digest: str, url: str) -> dict:
+    return {"filename": filename, "digests": {"sha256": digest}, "url": url}
+
+
+#: THE FETCH, RUN: `(what TestPyPI's JSON lists for the version, whether the
+#: step passes)`. It must take the one file of the wheel's name at the
+#: recorded digest, from TestPyPI's own file host, over https.
+FETCH_CASES = {
+    "listed-once-on-its-file-host": ([listed(FETCHED_WHEEL, VERIFIED, FILE_HOST)], True),
+    "listed-on-another-host": (
+        [listed(FETCHED_WHEEL, VERIFIED, "https://files.example.invalid/" + FETCHED_WHEEL)],
+        False),
+    "listed-over-plain-http": (
+        [listed(FETCHED_WHEEL, VERIFIED, FILE_HOST.replace("https:", "http:"))], False),
+    "listed-twice-at-the-digest": ([listed(FETCHED_WHEEL, VERIFIED, FILE_HOST)] * 2, False),
+    "listed-at-another-digest": (
+        [listed(FETCHED_WHEEL, ANOTHER_DIGEST, FILE_HOST)], False),
+    "another-file-at-the-digest": (
+        [listed("openrepotools-1.1.0rc1.tar.gz", VERIFIED, FILE_HOST)], False),
+    "nothing-listed": ([], False),
+}
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@pytest.mark.parametrize("which", FETCH_CASES)
+def test_release_install_check_the_fetch_takes_the_recorded_wheel_from_testpypi_s_file_host(
+        tmp_path, which):
+    """THE FETCH ON A TAG, RUN with `curl` faked (contracts/workflows.md's
+    install step 1): it reads TestPyPI's JSON for the version, then fetches
+    the one file listed under the wheel's name at the recorded digest, from
+    test-files.pythonhosted.org over https. Another host, plain http, the
+    file listed twice, another digest, another file, and nothing listed are
+    each refused before anything is fetched."""
+    entries, passes = FETCH_CASES[which]
+    index = tmp_path / "testpypi.json"
+    index.write_text(json.dumps({"info": {"name": "openrepotools"}, "urls": entries}),
+                     encoding="utf-8")
+    fakes = python_tool(tmp_path / "fakes", "curl", FAKE_CURL)
+    python_tool(fakes, "python", AS_PYTHON)
+    log = tmp_path / "curl.log"
+    values = {"VERSION": "1.1.0rc1", "WHEEL": FETCHED_WHEEL, "WHEEL_SHA256": VERIFIED,
+              "FAKE_CURL_LOG": str(log), "FAKE_INDEX_JSON": str(index)}
+    workflow = release()
+    runner = Runner(tmp_path / "work", workflow, "install", values, fakes)
+    done = runner.run(named(workflow, "install", FETCH_STEP))
+    assert (done.returncode == 0) == passes, transcript(done)
+    urls = [line.split()[-1] for line in log.read_text(encoding="utf-8").splitlines()]
+    wheel = Path(runner.env["RUNNER_TEMP"]) / "wheel" / FETCHED_WHEEL
+    if passes:
+        assert urls == ["https://test.pypi.org/pypi/openrepotools/1.1.0rc1/json",
+                        FILE_HOST], urls
+        assert wheel.read_bytes() == b"the file at " + FILE_HOST.encode()
+        assert done.stdout.strip() == f"fetched {FILE_HOST}", transcript(done)
+    else:
+        assert urls == ["https://test.pypi.org/pypi/openrepotools/1.1.0rc1/json"], (
+            f"the step fetched after refusing: {urls}")
+        assert not wheel.exists()
+
+
+#: `python -m pipx install ...`, faked: it writes down its arguments and
+#: places in `$PIPX_BIN_DIR` what `FAKE_PIPX_PLACES` names, each `link:<name>`
+#: (a link into its venv) or `file:<name>`; anything else runs this Python.
+FAKE_PIPX_PYTHON = r'''
+import os, sys
+args = sys.argv[1:]
+if args[:3] != ["-m", "pipx", "install"]:
+    os.execv(sys.executable, [sys.executable, *args])
+with open(os.environ["FAKE_PIPX_LOG"], "a", encoding="utf-8") as log:
+    log.write("\t".join(args) + "\n")
+bin_dir = os.environ["PIPX_BIN_DIR"]
+os.makedirs(bin_dir, exist_ok=True)
+for place in os.environ["FAKE_PIPX_PLACES"].split():
+    kind, _, name = place.partition(":")
+    if kind == "link":
+        os.symlink(os.environ["FAKE_PIPX_TARGET"], os.path.join(bin_dir, name))
+    else:
+        with open(os.path.join(bin_dir, name), "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\n")
+'''
+
+#: THE PIPX INSTALL, RUN: `(what pipx places in its bin directory, whether
+#: the step passes)`. One command, so one link.
+PIPX_CASES = {
+    "the-one-link": (["link:openRepoTools"], True),
+    "a-file-not-a-link": (["file:openRepoTools"], False),
+    "a-second-command": (["link:openRepoTools", "link:lane"], False),
+    "nothing-placed": ([], False),
+    "another-name": (["link:openrepotools"], False),
+}
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@pytest.mark.parametrize("which", PIPX_CASES)
+def test_release_install_check_pipx_places_the_one_link_openrepotools_and_nothing_else(
+        tmp_path, which):
+    """THE PIPX INSTALL, RUN with pipx faked (contracts/workflows.md's
+    install step 3): pipx installs the fetched wheel, wheels only, and the
+    step passes only where its bin directory holds the link `openRepoTools`
+    and nothing else. A regular file, a second command, nothing, and a link
+    of another name are each refused."""
+    places, passes = PIPX_CASES[which]
+    target = tmp_path / "venv" / "bin" / "openRepoTools"
+    target.parent.mkdir(parents=True)
+    target.write_text("#!/bin/sh\n", encoding="utf-8")
+    fakes = python_tool(tmp_path / "fakes", "python", FAKE_PIPX_PYTHON)
+    log, bin_dir = tmp_path / "pipx.log", tmp_path / "pipx-bin"
+    values = {"WHEEL": FETCHED_WHEEL, "PIPX_BIN_DIR": str(bin_dir),
+              "FAKE_PIPX_PLACES": " ".join(places), "FAKE_PIPX_LOG": str(log),
+              "FAKE_PIPX_TARGET": str(target)}
+    workflow = release()
+    runner = Runner(tmp_path / "work", workflow, "install", values, fakes)
+    done = runner.run(named(workflow, "install", PIPX_STEP))
+    assert (done.returncode == 0) == passes, transcript(done)
+    wheel = f"{runner.env['RUNNER_TEMP']}/wheel/{FETCHED_WHEEL}"
+    assert log.read_text(encoding="utf-8").splitlines() == [
+        "\t".join(["-m", "pipx", "install", "--pip-args=--only-binary=:all:", wheel])]
+    if not passes:
+        assert "::error::" in done.stdout, transcript(done)
+
+
 @NEEDS_UPSTREAM
 def test_release_install_check_installs_with_pipx_and_runs_version_and_the_offline_install():
     """STEPS 2 TO 5: pipx places the wheel's one command; `--version` names
