@@ -342,8 +342,8 @@ def test_122_an_archive_row_the_scan_cannot_take_apart_reissues_no_position(reg,
     result = add_repo_x_4(reg)
     assert result.returncode == 1, (result.stdout, result.stderr)
     assert f"line 10: {mangled}" in result.stderr
-    assert "| lane | session id |" not in result.stderr
-    assert "|---|" not in result.stderr
+    assert f"line 7: {HEADER.splitlines()[0]}" not in result.stderr
+    assert "line 8: |---|" not in result.stderr
     assert reg.head() == before
     assert "`repoX-4`" not in reg.published("lanes/LANES.md")
 

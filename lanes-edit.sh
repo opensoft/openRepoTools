@@ -3598,30 +3598,73 @@ archive_local_text() {
 
 # A retired name OR its numeric position is unavailable, even when a recut
 # suffix changes the spelling. Inspect both published and unpushed archives.
-retired_identity_hits() { # <lane>; stdout: matching retired spellings
+#
+# A LINE THE SCAN CANNOT TAKE APART IS A REFUSAL, NOT A NON-ROW (#122, Copilot
+# round 6 on #93). The scan skipped every `|` line with no backticked token, and
+# took the first backtick ANYWHERE in a line as its lane, so a retired row whose
+# lane cell a hand edit or a bad merge had mangled — `| repoX-4 | harness `<id>`
+# | …` — dropped out of the answer and add-row reissued its position: 19(b)'s
+# guarantee failing open. Every `|` line of the archive is now one of three:
+#
+#   * THE RULE: `|`, `-`, `:` and blanks only, with at least one dash;
+#   * THE HEADER: its first cell is the word `lane`, as in the header
+#     `archive_rows` writes. It is NOT found as "the line above the rule": the
+#     live register carried two rows between its header and its rule on
+#     2026-10-19, so a hand edit can part the two, and refusing a header for it
+#     would make add-row refuse on the path that creates every lane. Nor is it
+#     found by counting ` | `: the header carries six, exactly as a row does;
+#   * A ROW: its first backticked token lies wholly inside its FIRST cell. That
+#     is the token every reader here takes as the lane, `*(unnamed)* `<lane>``
+#     included (three live rows are spelled that way).
+#
+# Any other `|` line is printed with its line number, and this returns 3: a row
+# nobody can read may be the very lane being added. AND THE SCAN'S OWN STATUS
+# IS READ. The scan's status used to be that of the `sort -u` behind it, so an
+# awk that FAILED read as "no archived row matched".
+RETIRED_ROWS_AWK='
+  function key(n,   h, p) {
+    p = n; sub(/^.*-/, "", p); sub(/[A-Za-z]$/, "", p)
+    h = n; sub(/-[^-]*$/, "", h)
+    if (h == n || p !~ /^[0-9]+$/) return ""
+    return tolower(h) "-" (p + 0)
+  }
+  BEGIN { wk = key(want) }
+  substr($0, 1, 1) == "|" {
+    if ($0 ~ /^[|][-:| \t]*$/ && index($0, "-")) next
+    c = substr($0, 2); s = index(c, " | "); if (s) c = substr(c, 1, s - 1)
+    h = c; sub(/^[ \t]+/, "", h); sub(/[ \t|]+$/, "", h)
+    if (tolower(h) == "lane") next
+    p1 = index(c, "`"); p2 = p1 ? index(substr(c, p1 + 1), "`") : 0
+    if (!p1 || p2 < 2) { printf "M%sline %d: %s\n", sep, NR, $0; next }
+    t = substr(c, p1 + 1, p2 - 1)
+    if (tolower(t) == tolower(want) || (wk != "" && key(t) == wk)) printf "H%s%s\n", sep, t
+  }'
+retired_identity_hits() { # <lane>; stdout: matching retired spellings · 1 not read · 3 a line not a row
   ri_lane="$1"
   ri_pub="$(archive_text 2>/dev/null)" || return 1
   ri_local=""
   ri_local="$(archive_local_text 2>/dev/null)" || return 1
-  printf '%s\n%s\n' "$ri_pub" "$ri_local" | awk -v want="$ri_lane" '
-    function key(n,   h, p) {
-      p = n; sub(/^.*-/, "", p); sub(/[A-Za-z]$/, "", p)
-      h = n; sub(/-[^-]*$/, "", h)
-      if (h == n || p !~ /^[0-9]+$/) return ""
-      return tolower(h) "-" (p + 0)
-    }
-    BEGIN { wk = key(want) }
-    substr($0,1,1) == "|" {
-      p1 = index($0, "`"); if (!p1) next
-      r = substr($0, p1 + 1); p2 = index(r, "`"); if (!p2) next
-      t = substr(r, 1, p2 - 1)
-      if (tolower(t) == tolower(want) || (wk != "" && key(t) == wk)) print t
-    }' | LC_ALL=C sort -u
+  ri_scan=""
+  ri_scan="$(printf '%s\n' "$ri_pub" | awk -v want="$ri_lane" -v sep="$US" "$RETIRED_ROWS_AWK")" || return 1
+  ri_scan2=""
+  ri_scan2="$(printf '%s\n' "$ri_local" | awk -v want="$ri_lane" -v sep="$US" "$RETIRED_ROWS_AWK")" || return 1
+  ri_bad=""
+  ri_bad="$(printf '%s\n%s\n' "$ri_scan" "$ri_scan2" |
+    awk -v sep="$US" 'substr($0, 1, 2) == "M" sep && !seen[$0]++ { print substr($0, 3) }')" || return 1
+  if [ -n "$ri_bad" ]; then
+    note "$LANES_ARCH_PATH carries a table line that is neither its header, its rule, nor a row whose first cell holds its lane in backticks (the published copy or this checkout's):"
+    printf '%s\n' "$ri_bad" | sed -e 's/^/lanes-edit:   /' >&2
+    return 3
+  fi
+  ri_hits=""
+  ri_hits="$(printf '%s\n%s\n' "$ri_scan" "$ri_scan2" |
+    awk -v sep="$US" 'substr($0, 1, 2) == "H" sep { print substr($0, 3) }')" || return 1
+  [ -z "$ri_hits" ] || printf '%s\n' "$ri_hits" | LC_ALL=C sort -u
 }
 
 add_row_retirement_rescan() {
   ar_rebased_hits="$(retired_identity_hits "$ADD_ROW_LANE")" || {
-    note "the archive could not be read after rebase; refusing to push add-row for $ADD_ROW_LANE"
+    note "the archive could not be read after rebase, or it carries a line that is not a row (above); refusing to push add-row for $ADD_ROW_LANE"
     return 1
   }
   if [ -n "$ar_rebased_hits" ]; then
@@ -14575,9 +14618,16 @@ Nothing was written." 2
       # AND A READ THAT FAILED IS A REFUSAL, not an empty archive (round 2): the
       # whole point of this check is that a retired identity is never reissued,
       # and "I could not read the file that says which ones are retired" is not
-      # "none of them are" (Amendment 7(d)).
-      ar_arch="$(retired_identity_hits "$lane_new")" ||
-        die "$LANES_ARCH_PATH exists and could not be read, so whether '$lane_new' is a name this estate has RETIRED is not known — and a retired position is never reissued (Amendment 19(b)). A read that failed is not 'it is not retired' (Amendment 7(d)). Fix the read and re-run; nothing was written." 1
+      # "none of them are" (Amendment 7(d)). NOR IS A LINE IT COULD NOT TAKE
+      # APART (#122): that row may be this lane's own, so it is the same refusal
+      # and the same 1, naming the line.
+      ar_arch_rc=0
+      ar_arch="$(retired_identity_hits "$lane_new")" || ar_arch_rc=$?
+      case "$ar_arch_rc" in
+        0) : ;;
+        3) die "$LANES_ARCH_PATH carries a line this scan cannot take apart (above), so whether '$lane_new' is a name this estate has RETIRED is not known: a row this scan cannot take apart may be that lane's own, and a retired position is never reissued (Amendment 19(b)). A row that could not be read is not a row that is not there (Amendment 7(d)). Put the lane back in backticks in that row's first cell, or remove the line if it is no row; commit the archive (\`git -C $LANES_REPO commit -m \"<what it was>\" -- $LANES_ARCH_PATH\`), publish it where the line is on origin (\`LANES_LANE=<lane> lanes-edit.sh commit \"<what it was>\"\`), and re-run. Nothing was written." 1 ;;
+        *) die "$LANES_ARCH_PATH exists and could not be read or scanned, so whether '$lane_new' is a name this estate has RETIRED is not known — and a retired position is never reissued (Amendment 19(b)). A read that failed is not 'it is not retired' (Amendment 7(d)). Fix the read and re-run; nothing was written." 1 ;;
+      esac
       if [ -n "$ar_arch" ]; then
         die "lane '$lane_new' is RETIRED: its row is in $LANES_ARCH_PATH, spelled $(printf '%s\n' "$ar_arch" | tr '\n' ' ')— and a retired position is NEVER REISSUED (Amendment 19(b)). That lane's object log is $(log_path_for "$lane_new") and it is append-only, so a second lane under this name would write its life into the first one's file and every read of that log would answer for two lanes at once. Take a free position instead — \`lanes --prefix <repo>\` prints the next one and the line that takes it. Nothing was written." 2
       fi
@@ -17078,12 +17128,13 @@ EOF
     printf '%s\n' "$rr_row"
     ;;
 
-  # 0 with archived spellings, 8 absent, 1 when either archive cannot be read.
+  # 0 with archived spellings, 8 absent, 1 when either archive cannot be read
+  # or carries a line that is not a row (#122, named above the refusal).
   retired-identity)
     lane="${1-}"; [ -n "$lane" ] || die "usage: retired-identity <lane>" 2
     check_lane_name "$lane"
     log_sync
-    rr_hits="$(retired_identity_hits "$lane")" || die "could not read the lane archive" 1
+    rr_hits="$(retired_identity_hits "$lane")" || die "could not read the lane archive, or it carries a line that is not a row (above)" 1
     [ -n "$rr_hits" ] || exit 8
     printf '%s\n' "$rr_hits"
     ;;

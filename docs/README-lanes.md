@@ -3252,7 +3252,15 @@ fail closed rather than answer, and for the same reason. The first three refuse
 `add-row` refuses a lane name the archive holds, so `lane-start <repo> <n>`
 cannot reissue one by hand either. It also refuses (exit **1**) where the
 published register cannot be read, rather than read that as "no such row":
-otherwise a row this checkout has not pulled would be added a second time. **Rule 9 holds either way** — a row is
+otherwise a row this checkout has not pulled would be added a second time.
+And it refuses (exit **1**) an archive that carries a `|` line it cannot take
+apart, naming each such line by its number (#122). A line counts only if it is
+the table's header (its first cell is `lane`), its `|---|` rule, or a row whose
+first cell holds its lane in backticks; any other line may be the very lane
+being added. The header is found by that first cell, because a ` | ` count
+cannot tell it from a row (both carry six), and a hand edit can part it from its
+rule. An archive scan that **failed** is a refusal too, never "no match".
+**Rule 9 holds either way** — a row is
 one `git show` away — so the archive is for a register a person wants shorter,
 and never a requirement.
 
