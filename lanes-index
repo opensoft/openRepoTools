@@ -47,9 +47,12 @@ generation below the one its rows were written at writes nothing for that lane
 (`reconcile` takes the lane as it now stands, and says so); a lane whose
 inventory is there and could not be read keeps its rows and gets one marker
 row, with no path and a branch no git ref can be (#173), which `export
---worktrees` writes back as the source's own `UNREAD` line; and the source's own
-row carries a fingerprint of the whole table as its compare-and-swap token and a
-sync generation that only counts up.
+--worktrees` writes back as the source's own `UNREAD` line; a read whose LANE
+LISTING was not whole - the helper's `PARTIAL` line: its register, its archive,
+the list of its logs or a log could not be read - writes nothing at all (#173
+item c1), since a lane it could not name is not a lane with no trees; and the
+source's own row carries a fingerprint of the whole table as its
+compare-and-swap token and a sync generation that only counts up.
 `lanes-edit.sh` nudges `sync --source inventory` after every inventory write.
 Nothing that acts reads this table either: `lane-reconcile`, `lane-start`,
 `lane-end` and the sweep read the sidecars and the disk.
@@ -1910,7 +1913,17 @@ def collect_inventory() -> tuple[dict, dict]:
     """Every tree the inventory names, keyed `<lane>:<path>` (a second tree of
     one lane with the same path `<lane>:<path><US><n>`), and every lane whose
     inventory is there and could not be read - whose rows are KEPT, never taken
-    for a lane with no trees (Amendment 7(d))."""
+    for a lane with no trees (Amendment 7(d)).
+
+    A READ WHOSE LANE LISTING WAS NOT WHOLE IS NO ANSWER AT ALL
+    (opensoft/openRepoTools#173 item c1). The helper lists the lanes out of the
+    register, the archive and the object logs, and where one of those reads
+    failed it says so in a `PARTIAL <workstation> <why>` line beside the rows it
+    did reach. A lane it could not name is not a lane with no trees, and which
+    lanes those are is exactly what the read does not know - so nothing is
+    written from it, as nothing is from a listing that could not be read at
+    all: the index stays at the last whole read, which `synced <UTC>` dates. An
+    indexer older than this line refuses it too, as a line it does not read."""
     proc = _helper_run(["worktrees", "--all"], 600, "the worktree inventory")
     if proc.returncode == 8:
         return {}, {}
@@ -1923,6 +1936,11 @@ def collect_inventory() -> tuple[dict, dict]:
         if not line:
             continue
         fields = line.split(US)
+        if fields[0] == "PARTIAL" and len(fields) >= 3:
+            raise StoreUnusable("unread", f"the lane listing `lanes-edit.sh worktrees --all` "
+                                f"reads the inventory through was not whole - {fields[2]} - so "
+                                f"a lane it could not name would read as a lane with no "
+                                f"worktrees and its rows would be removed (R22, Amendment 7(d))")
         if fields[0] == "UNREAD" and len(fields) >= 4:
             unread[fields[2]] = fields[3]
             continue
@@ -2040,7 +2058,10 @@ def run_inventory(mode: str, requested: str | None, dry_run: bool) -> int:
     # aside or replaced - and a `sync` writes nothing for that lane rather than
     # roll its rows back. `reconcile` is the act that takes the source as it now
     # stands, and it says so. A lane whose inventory could not be read keeps its
-    # rows in either: a read that failed is never an answer.
+    # rows in either: a read that failed is never an answer. (A read whose LANE
+    # LISTING was not whole never gets this far: `collect_inventory` refuses it,
+    # in either act, because which lanes it could not name is what it does not
+    # know - #173 item c1.)
     held: dict = {}
     for lane, why in unread.items():
         held[lane] = f"its inventory is there and could not be read ({why})"

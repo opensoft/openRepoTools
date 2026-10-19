@@ -14397,6 +14397,7 @@ LRC_PAIRED
 #        <generation> <operation> <writer_live> <last_seen_utc> <last_commit>
 #        <dirty> <unpushed> <provenance>
 #   UNREAD <workstation> <lane> <why>
+#   PARTIAL <workstation> <why>
 #
 # IT READS WHAT #97 WROTE AND NOTHING THAT IT DID NOT. The lanes are the
 # listing's own (`lanes_rows --all --closed`, so a closed or dormant lane's
@@ -14430,20 +14431,74 @@ LRC_PAIRED
 # not a tree at all; only a whole record's path is known absolute. A count that is
 # `unknown` is empty — an INTEGER column has no word for it.
 #
+# AND THE LISTING ITSELF IS SAID TO BE WHOLE OR NOT (opensoft/openRepoTools#173
+# item c1, Copilot's fourth review of #171). Its lanes are the names three
+# reads give — the register's rows, the archive's rows and the object logs'
+# file names — and each lane's trees are found under the control root its
+# log's `dir` places. `lanes_rows` is a listing a person reads in front of a
+# launch, so it may not refuse: where one of those reads fails it SAYS so on
+# stderr (the log listing not even that) and lists what the others gave. Taken
+# as whole, that made a lane whose only row is in an archive that could not be
+# read a lane with no trees — and `lanes-index sync` removed its rows; with all
+# three unread the listing was EMPTY and this said 8, "none", and the sync
+# removed every row. So for the whole listing — a named lane is read by its
+# name, which no listing gives — each of those reads is asked here too, and a
+# failed one is ONE `PARTIAL` line: the rows beside it are every tree this read
+# reached, a lane it could not name is NOT a lane with no worktrees (R22,
+# Amendment 7(d)), and the indexer writes nothing over it. The register is
+# asked BEFORE the listing, so a read that succeeds is the cached text the
+# listing then reads; the logs AFTER it, out of the warnings its own read of
+# them left (`state_events`), and where those could not be kept whether a log
+# failed is not known, which is said the same way. An empty listing over a
+# failed read is that line alone, and never 8.
+#
 # The rows are sorted bytewise, which is the order the index's copy is written
 # in too: the two reads of one inventory are the same bytes.
-#   0 rows · 8 none · 1 the lane listing could not be read
+#   0 rows, with a PARTIAL line where the listing was not whole · 8 none ·
+#   1 the lane listing could not be read
 worktree_rows() {   # [<canonical lane>]
   wr_one="${1-}"; wr_out=""
   wr_live_ok=1
   live_session_ids >/dev/null 2>&1 || wr_live_ok=0
+  wr_partial=""
+  if [ -z "$wr_one" ]; then
+    register_text_checked >/dev/null 2>&1 ||
+      wr_partial="the register $LANES_PATH could not be read"
+    archive_text >/dev/null 2>&1 ||
+      wr_partial="${wr_partial:+$wr_partial; }the archive $LANES_ARCH_PATH could not be read"
+    # `known_lanes`' OWN TWO READS, which print what they could and answer 0
+    # either way, because the listing unions them with the register.
+    if have_remote_ref; then
+      git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_LOG_PREFIX" >/dev/null 2>&1 ||
+        wr_partial="${wr_partial:+$wr_partial; }the object logs under origin/$LANES_BRANCH:$LANES_LOG_PREFIX could not be listed"
+    elif [ -e "$LANES_LOG_DIR" ] && ! ls -- "$LANES_LOG_DIR" >/dev/null 2>&1; then
+      wr_partial="${wr_partial:+$wr_partial; }the log directory $LANES_LOG_DIR is there and could not be listed"
+    fi
+  fi
   wr_lanes=""; wr_lrc=0
   if [ -n "$wr_one" ]; then
     wr_lanes="$(lanes_rows --lane "$wr_one" --closed)" || wr_lrc=$?
   else
     wr_lanes="$(lanes_rows --all --closed)" || wr_lrc=$?
   fi
-  case "$wr_lrc" in 0) : ;; 8) return 8 ;; *) return 1 ;; esac
+  case "$wr_lrc" in
+    0) : ;;
+    8) [ -n "$wr_partial" ] || return 8 ;;
+    *) return 1 ;;
+  esac
+  if [ -z "$wr_one" ] && [ "$wr_lrc" = 0 ]; then
+    wr_ulogs=""; wr_urc=0
+    if [ -n "$SE_WARN_FILE" ] && [ -f "$SE_WARN_FILE" ]; then
+      wr_ulogs="$(sed -n -e 's/^lanes-edit: unreadable log: \(.*\) — git could not read it.*$/\1/p' "$SE_WARN_FILE" 2>/dev/null)" || wr_urc=1
+    else
+      wr_urc=1
+    fi
+    if [ "$wr_urc" != 0 ]; then
+      wr_partial="${wr_partial:+$wr_partial; }whether every object log could be read is not known, because the warnings of their read could not be kept"
+    elif [ -n "$wr_ulogs" ]; then
+      wr_partial="${wr_partial:+$wr_partial; }these object logs could not be read: $(printf '%s\n' "$wr_ulogs" | tr '\n' ' ' | sed -e 's/ $//')"
+    fi
+  fi
   wr_tab="$(printf '\t')"
   while IFS="$wr_tab" read -r wr_l wr_st wr_w wr_pf wr_win wr_sid wr_dir wr_obj wr_age wr_restart wr_home wr_fk wr_loc wr_rest; do
     [ -n "${wr_l:-}" ] || continue
@@ -14560,6 +14615,8 @@ WR_TREES
   done <<WR_LANES
 $wr_lanes
 WR_LANES
+  [ -z "$wr_partial" ] || wr_out="${wr_out}PARTIAL$US$WS$US$wr_partial
+"
   [ -n "$wr_out" ] || return 8
   printf '%s' "$wr_out" | LC_ALL=C sort
   return 0
@@ -18401,7 +18458,9 @@ EOF
   # them reads the sidecars and the disk, and this is a listing.
   #
   # Local by default, as `lanes` is: `--fetch` refreshes the register first.
-  #   0 rows · 8 none · 2 a lane name refused (Amendment 15) · 64 usage · 1 a read failed
+  #   0 rows (`--all`: with one PARTIAL line where the lane listing they were
+  #   read through was not whole, #173) · 8 none · 2 a lane name refused
+  #   (Amendment 15) · 64 usage · 1 a read failed
   worktrees)
     wt_lane=""; wt_all=0; wt_index=0; wt_fetch=0
     wt_usage="worktrees [<lane> | --all] [--index] [--fetch]"

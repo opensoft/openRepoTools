@@ -3822,6 +3822,28 @@ whole table as its compare-and-swap token and a sync count that only goes up. A
 container with no `LANES_WORKSTATION` syncs nothing (exit 2): a source named for
 a container's own id is one no restart finds again.
 
+**A lane listing that is not whole writes nothing** (opensoft/openRepoTools#173
+item c1). The inventory is read through the lane listing, whose lanes are the
+names three reads give — the register's rows, the archive's and the object
+logs' — and each lane's trees are under the control root its log's `dir`
+places. Where the register, the archive, the list of the logs or any one
+published log could not be read — or whether one could not is NOT KNOWN,
+because no temporary file could keep the warnings of their read —
+`lanes-edit.sh worktrees --all` prints the rows it did reach and one line more,
+`PARTIAL <workstation> <why>`; over a listing those reads left empty it is that
+line alone, never the **8** of "none". A lane such a read could not name is not
+a lane with no worktrees, and which lanes those are is exactly what it does not
+know, so `sync` and `reconcile --source inventory` write NOTHING over it — not
+the lanes it did list either — and exit **1**, `unread: the lane listing …
+was not whole - <why> - …`, which `status` shows as the last error. The table
+stays the last whole read, dated by its `synced <UTC>`, and the first sync over
+a whole listing writes what moved meanwhile. Holding only the lanes the read
+could not name would have needed a marker for each of them, one for the listing
+itself — a first sync has no rows to hold — and a one-lane `--index` read that
+knew of it. An indexer from before #173's item c1 refuses the line too, as one
+it does not read. A read of one NAMED lane goes by that name, which no listing
+gives, and never prints `PARTIAL`.
+
 **The nudge.** Every inventory write — `set-lane-state`, `set-lane-tree`, the
 lifecycle follow after a `STARTED`, `RESUMED`, `ENDED` or `RETIRED`, and a
 rename's move of the control root — starts the same detached `lanes-index sync`
@@ -3840,7 +3862,11 @@ Postgres nobody else writes) prints exactly the source read, while a shared one
 adds the other workstations' rows among them. Every row is a last observation: the current truth of a lane is `lanes-edit.sh lane-reconcile
 <lane>`, which reads the disk — and the sidecars — of the workstation it runs
 on and of no other, so the footer says to run it ON THE WORKSTATION the lane's
-rows name (#173): Raven's listing of Eagle's rows is answered on Eagle.
+rows name (#173): Raven's listing of Eagle's rows is answered on Eagle. A
+`PARTIAL` line prints as `(every lane)` and `lane listing NOT WHOLE: <why>`,
+and the footer says that a lane missing from such a listing is NOT a lane with
+no worktrees — the listing's own form of an `UNREAD` lane's `inventory NOT
+READ` line.
 
 **What never reads it.** No act: not `lane-reconcile` — there is no
 `lane-reconcile --index`, by Amendment 14(b) — not `lane-start`, `lane-end`,
