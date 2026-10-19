@@ -2126,7 +2126,7 @@ poll_writer() {   # <path>
 	return 0
 }
 
-# ------------------------------------------------ 3a. A TRIAD'S LEGS (T018)
+# ------------------------------------------------ 3b. A TRIAD'S LEGS (T018)
 #
 # opensoft/openRepoTools#186, plan task T018. THE LANE'S CHECKOUT IS AN
 # ASSEMBLY when its own `project.yaml` declares a leg other than itself — the
