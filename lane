@@ -871,10 +871,19 @@ EOF
 			*)
 				gl_rc=0
 				LANES_NO_FETCH=1 "$LANES_EDIT" register-row "$gl_name" >/dev/null 2>&1 || gl_rc=$?
+				# THE PUBLISHED ROW IS ONLY ONE OF TWO (#138 item 13, Copilot round 19
+				# on #93): a lane whose `add-row` or session stamp is committed here
+				# and not yet pushed already owns its window name, and `register-row`
+				# answers 8 for it. The target-row validation above asks both copies;
+				# so does this, and a local read that failed is not "no row".
+				if [ "$gl_rc" = 8 ]; then
+					gl_rc=0
+					"$LANES_EDIT" register-row-local "$gl_name" >/dev/null 2>&1 || gl_rc=$?
+				fi
 				case "$gl_rc" in
 				0) die "window $W_SESS:$W_ID is named $gl_name, which has its own lane row. Renaming it to $R_LANE would take another lane's tmux address; nothing was renamed or attached." 2 ;;
 				8) : ;;
-				*) die "whether window name $gl_name belongs to another lane could not be read (exit $gl_rc). Nothing was renamed or attached." 2 ;;
+				*) die "whether window name $gl_name belongs to another lane could not be read from the published or the local register (exit $gl_rc). Nothing was renamed or attached." 2 ;;
 				esac ;;
 			esac
 		fi

@@ -58,7 +58,9 @@
 #                                        (attribution: $LANES_LANE, else the
 #                                         "lane <name>" the text itself names)
 #   lanes-edit.sh [--no-sweep|--sweep] add-row            "<full | row |>"
-#   lanes-edit.sh                      commit             "<message>"         # commit a hand edit
+#   lanes-edit.sh                      commit             "<message>"         # commit a hand edit; with
+#                                         nothing staged, publish the stranded
+#                                         register and handoff commits (#194)
 #   lanes-edit.sh                      migrate-state-cells [--yes]            # Amendment 13(e), once
 #   lanes-edit.sh                      retire-rows        <lane>… [--reason "<why>"] [--writer <lane>]
 #   lanes-edit.sh                      archive-rows       <repo> [--yes]      # Amendment 19(d)
@@ -360,6 +362,7 @@
 #                                 [--dirty <n>] [--unpushed <n>] [--writer <uuid>] \
 #                                 [--generation <n>] [--operation <id>]
 #   lanes-edit.sh lane-tree-now   <worktree path>
+#   lanes-edit.sh project-legs    <checkout>     # an assembly's legs, by path (T018)
 #   lanes-edit.sh lane-reconcile  <lane>
 #   lanes-edit.sh worktrees       [<lane> | --all] [--index] [--fetch]
 #   lanes-edit.sh pathspec-check  <path>...          # opensoft/openRepoTools#162
@@ -424,7 +427,7 @@
 #   may write the marker's vocabulary into a row at all.
 #
 # EXIT CODES — every subcommand, one table, no two meanings on one number
-#   0  done
+#   0  done (and #194's publish whose queue `pull --rebase` emptied)
 #   1  environment (no register, no writer)
 #   2  refusal: bad arguments, the object is held, an unknown alias, a
 #      checkout that cannot be rebased, — Amendment 15 — a register holding
@@ -432,7 +435,10 @@
 #      `canon-lane` refuse until 15(d)'s merge, or AMENDMENT 12's BLOCKED
 #      PROMPT, or — opensoft/openRepoTools#162 — a commit whose pathspec
 #      would stage bytecode, a cache or a virtual environment
-#      (`commit_push`, `pathspec-check`). SEVEN MEANINGS ON ONE NUMBER, and they
+#      (`commit_push`, `pathspec-check`), or — #194 — `commit` refusing to
+#      publish local commits that are not register or handoff writes, from a
+#      checkout whose HEAD is off the branch, or that it cannot read
+#      (`cp_publish_fence`), and pushes none of them. EIGHT MEANINGS ON ONE NUMBER, and they
 #      stay readable only because of where each can occur: bad arguments to a
 #      subcommand that predates Amendment 11; `register-row`'s "not lane-shaped";
 #      AN UNKNOWN SUBCOMMAND (the `*)` arm below), which is how a caller detects
@@ -1102,6 +1108,15 @@ LANES_PATH="${LANES_PATH:-$(git -C "${LANES_DIR:-.}" rev-parse --show-prefix 2>/
 # lane's claim landed first.
 CP_PATHS=("$LANES_PATH")
 CP_AFTER_REBASE=""
+# Set by `commit` alone, and never taken from the environment: with nothing
+# staged, commit_push publishes the local commits ahead of origin for that one
+# write and for no other (#194).
+CP_PUBLISH_AHEAD=0
+# A publish's push sends the commit its fence read, `<sha>:refs/heads/<branch>`;
+# empty, every push sends the branch as it stands, as it always has (#194).
+CP_PUSH_SPEC=""
+CP_FENCE_TIP=""
+CP_FENCE_AHEAD=0
 
 # die "<message>" [<exit code>] — the MESSAGE is $1 alone. It used to be "$*",
 # which joined the exit code on to the end of every refusal that passed one:
@@ -1608,7 +1623,9 @@ replace_line() {
   # nothing staged and says so on its own line, and every one of the four
   # callers (`set-row-state`, `append-session-id`, `replace-in-row` and
   # `migrate-state-cells`) wanted the file to SAY something rather than to
-  # differ from what it said.
+  # differ from what it said. Nor does it push: a write with nothing staged
+  # publishes nothing, whatever this shared checkout has queued ahead of
+  # origin; only `commit` does that, and only what its path filter passes (#194).
   if cmp -s -- "$pre" "$out"; then
     REPLACE_LINE_NOOP=1
     note "line $n of $LANES_FILE is already exactly what this write asked for — nothing rewritten, and nothing to commit"
@@ -1832,9 +1849,10 @@ refuse_dirty_checkout() {
     *)     note "an object-log write is ordered against other lanes by landing on main, and 'pull --rebase'"
            note "refuses on any unstaged tracked change — so this write cannot be ordered safely here." ;;
   esac
-  note "RECOVERY — whoever wrote those files commits them, then re-run:"
+  note "RECOVERY — whoever wrote those files commits them:"
   note "  lanes/LANES.md   LANES_LANE=<lane> lanes-edit.sh commit \"<what you wrote>\""
   note "  anything else    git -C $LANES_REPO commit -m \"handoff(<lane>@<workstation>): <what>\" -- <path>"
+  note "then re-run the refused $rd_what: its own push publishes their commits with it (#194)."
   die "refusing to $rd_what on a checkout that cannot be rebased" 2
 }
 
@@ -1981,6 +1999,114 @@ BRT_EOF
   printf 'Nothing was staged or committed. Unstage or delete those paths, then re-run.'
 }
 
+# #194, AS #214's ADVERSARIAL CHECK HARDENED IT — WHAT `commit` MAY PUBLISH
+# WITH NOTHING STAGED, read from the objects the push will send and nothing
+# else. Three ordinary checkout states got a deletion past the first fence,
+# which read `git log --name-status origin/<b>..HEAD`:
+#
+#   * A MERGE's own changes: `log` prints no diff for a merge, so a deletion
+#     made while resolving one passed unread. A merge or root commit refuses.
+#   * HEAD ON ANOTHER BRANCH: the fence read HEAD and the push sent
+#     `refs/heads/<b>`. The range is the branch, and HEAD must be it, because
+#     `pull --rebase` moves HEAD and the push moves the branch.
+#   * A LOCAL BRANCH NAMED `origin/<b>`, which shadows the tracking ref. Both
+#     ends of the range are spelled in full.
+#
+# The reads are plumbing (`rev-list`, `diff-tree --raw`), which no `color.*` or
+# `diff.ignoreSubmodules` reshapes, under `--no-replace-objects`, so a replace
+# ref cannot show the fence one commit while the push sends another. A change
+# passes only as an ADDED or MODIFIED REGULAR FILE under the register's own
+# directory (`$LANES_PREFIX`, derived, as every path of the register's is) or
+# `handoffs/`, and never as bytecode, a cache or an environment (#162's list).
+# A deletion, a type change, a symlink or a gitlink refuses, and so does a path
+# anywhere else. IT IS A PATH AND KIND FILTER: it vouches for where a change
+# lands and what it is, never for whose it is (it reads no subject, author or
+# trailer), so another lane's register write passes it. That includes lane
+# tooling's own lane rename,
+# which deletes a log to re-add it: a deletion is the one change origin cannot
+# get back, and the fence keeps one rule for it. A read or a classification
+# that fails refuses too (2), because it proves nothing.
+#
+# Two guards have a test each (lane openRepoShape-2's SHOULD 4). `--no-renames`
+# reads a rename as the deletion it is: read as an `R` line, the refusal would
+# name a rename and not the path origin loses. And the register's directories
+# are matched with their trailing `/`, so `lanes-archive/` beside `lanes/` is
+# not inside it.
+#
+# It leaves CP_FENCE_TIP at the commit it read and CP_FENCE_AHEAD at how many
+# it read, and the publish pushes exactly that commit (`<sha>:refs/heads/<b>`).
+# A commit another lane makes in this shared checkout between the read and the
+# push stays local.
+cp_publish_fence() {
+  cpf_ref="refs/heads/$LANES_BRANCH"
+  cpf_head="$(git -C "$LANES_REPO" symbolic-ref -q HEAD 2>/dev/null || :)"
+  [ "$cpf_head" = "$cpf_ref" ] || die "refusing to publish: HEAD is ${cpf_head:-detached}, not $cpf_ref, and the push sends $cpf_ref while \`pull --rebase\` moves HEAD, so what would be published is not what HEAD shows, and nothing was pushed (#194). Whoever moved this shared checkout off $LANES_BRANCH puts it back; never reset or check out over their work." 2
+  cpf_rc=0
+  cpf_base="$(git --no-replace-objects -C "$LANES_REPO" rev-parse -q --verify "refs/remotes/origin/$LANES_BRANCH^{commit}")" || cpf_rc=$?
+  cpf_tip="$(git --no-replace-objects -C "$LANES_REPO" rev-parse -q --verify "$cpf_ref^{commit}")" || cpf_rc=$?
+  cpf_revs="$(git --no-replace-objects -C "$LANES_REPO" rev-list --parents "$cpf_base..$cpf_tip")" || cpf_rc=$?
+  cpf_odd="$(printf '%s\n' "$cpf_revs" | awk 'NF > 0 && NF != 2 { printf "  %s %s\n", substr($1, 1, 12), (NF > 2 ? "is a merge commit" : "is a root commit") }')" || cpf_rc=$?
+  cpf_pairs="$(printf '%s\n' "$cpf_revs" | awk 'NF == 2')" || cpf_rc=$?
+  # `diff-tree --stdin` SKIPS A COMMIT IT CANNOT READ and still exits 0, and
+  # prints no header for an empty diff unless told `--always`: so every commit
+  # handed to it must come back as a header, or the read refuses.
+  cpf_raw=""; cpf_n=0
+  if [ -n "$cpf_pairs" ]; then
+    cpf_n="$(printf '%s\n' "$cpf_pairs" | awk 'END { print NR }')" || cpf_rc=$?
+    cpf_raw="$(printf '%s\n' "$cpf_pairs" | git --no-replace-objects -C "$LANES_REPO" -c core.quotePath=false diff-tree --stdin --always -r --no-renames --raw --ignore-submodules=none)" || cpf_rc=$?
+  fi
+  cpf_reg="${LANES_PREFIX:+${LANES_PREFIX%/}/}"; cpf_logp="${LANES_LOG_PREFIX:+${LANES_LOG_PREFIX%/}/}"
+  cpf_bad="$(printf '%s\n' "$cpf_raw" | awk -F '\t' -v want="$cpf_n" -v reg="$cpf_reg" -v logp="$cpf_logp" \
+      -v reg_path="$LANES_PATH" -v alias_path="$LANES_ALIASES_PATH" '
+    function inside(p) {
+      return (reg != "" && index(p, reg) == 1) || (logp != "" && index(p, logp) == 1) ||
+             index(p, "handoffs/") == 1 || p == reg_path || p == alias_path
+    }
+    function bytecode(p,   n, part, i) {
+      if (p ~ /\.py[co]$/) return 1
+      n = split(p, part, "/")
+      for (i = 1; i <= n; i++)
+        if (part[i] == "__pycache__" || part[i] == ".pytest_cache" || part[i] == ".mypy_cache" ||
+            part[i] == ".ruff_cache" || part[i] == "node_modules" || part[i] == ".venv" ||
+            part[i] == "venv" || part[i] == "site-packages") return 1
+      return 0
+    }
+    NF == 0 { next }
+    NF == 1 && $1 ~ /^[0-9a-f]+$/ { c = substr($1, 1, 12); seen++; next }
+    { split($1, f, " "); st = f[5]; mode = f[2]
+      if (!(NF == 2 && (st == "A" || st == "M") && (mode == "100644" || mode == "100755") && inside($2) && !bytecode($2)))
+        printf "  %s %s %s %s\n", c, st, mode, $2 }
+    END { if (seen != want) exit 3 }')" || cpf_rc=$?
+  [ "$cpf_rc" = 0 ] || die "git could not read, or this helper could not classify, the local commits on $cpf_ref ahead of refs/remotes/origin/$LANES_BRANCH, so whether they are \`commit\`'s to publish is unknown; nothing was pushed (#194)" 2
+  if [ -n "$cpf_odd$cpf_bad" ]; then
+    note "of the local commits on $cpf_ref ahead of origin/$LANES_BRANCH, these are not register or handoff writes (a merge or root commit, or a change that is not an added or modified regular file under ${LANES_PREFIX:-the register directory} or handoffs/):"
+    [ -z "$cpf_odd" ] || printf '%s\n' "$cpf_odd" >&2
+    [ -z "$cpf_bad" ] || printf '%s\n' "$cpf_bad" >&2
+    die "refusing to publish: \`commit\` pushes only register and handoff writes (#194), so nothing was pushed. A lane rename (Amendment 16) deletes and re-adds its log and is refused here too; the next register write from this checkout carries it. Anything else, whoever queued it publishes it; never reset it away. Read them: git -C $LANES_REPO log --stat refs/remotes/origin/$LANES_BRANCH..$cpf_ref" 2
+  fi
+  CP_FENCE_TIP="$cpf_tip"
+  CP_FENCE_AHEAD="$cpf_n"
+}
+
+# The publish's CP_AFTER_REBASE: `pull --rebase` has rewritten the queue onto
+# what origin holds now, and may have taken in a commit made since the first
+# read, so the fence reads it again and the push is pinned to what it read.
+# THE PULL CAN EMPTY THE QUEUE (lane openRepoShape-2, #214 6243280936): origin
+# may hold every queued commit already, by content under other shas, because
+# another workstation made the same edit or a peer's write carried it. The
+# rebase drops each one, and a push would send origin its own tip and print
+# "pushed". So the publish ends here, exit 0, as the no-op it now is, and it
+# says so. Only `commit` installs this hook, and this commit_push is its last
+# act, so the exit is that return.
+cp_publish_refence() {
+  cp_publish_fence
+  if [ "$CP_FENCE_AHEAD" = 0 ]; then
+    note "origin/${LANES_BRANCH} already holds every commit this publish listed: \`pull --rebase\` found each one there by content and dropped it, so none is left to push and no push was sent (#194)"
+    exit 0
+  fi
+  CP_PUSH_SPEC="$CP_FENCE_TIP:refs/heads/$LANES_BRANCH"
+}
+
 # commit_push "<subject>" [<pathspec>...] — the pathspecs default to the
 # register alone, which is every caller that predates Amendment 7. A LANDING
 # or LANDED writes TWO (the register and the lane's log) so that both halves
@@ -2054,11 +2180,47 @@ commit_push() {
     [ -z "$cp_byte" ] || die "$(bytecode_refusal_text "$cp_byte")" 2
     git -C "$LANES_REPO" -c "$CP_EXACT" add -- ${cp_add[@]+"${cp_add[@]}"} || die "git add failed" 6
   fi
+  # #194 — NOTHING STAGED IS NOT NOTHING TO PUBLISH, FOR `commit` ALONE. A
+  # write the push loop below could not get out (a peer's uncommitted file
+  # blocking the rebase, six rejected pushes) leaves its edit as a LOCAL commit,
+  # and the RECOVERY printed for it is to re-run `commit` once the way is clear.
+  # Returning here sent that re-run home with exit 0 and the commit still local.
+  # So `commit`, the one caller that sets CP_PUBLISH_AHEAD, still takes the push
+  # loop (its lock, the dirty-elsewhere guard, the retries) whenever the branch
+  # holds commits `origin/$LANES_BRANCH` does not, as of the last fetch; no such
+  # ref reads as none. Every other write with nothing to stage stays the no-op it
+  # always was and reaches no network: a repeated `set-row-state` must not turn
+  # into a push of whatever this SHARED checkout has queued (the #214 review
+  # measured exactly that deleting `scripts/link-estates` on origin).
+  #
+  # AND `commit` PUBLISHES ONLY REGISTER AND HANDOFF WRITES, and only what it read:
+  # `cp_publish_fence` (above) reads the queue on the branch the push sends and
+  # refuses the whole publish (2) for anything that is not a register or
+  # handoff write. The push is pinned to the commit the fence read, and every
+  # `pull --rebase` reads it again (CP_AFTER_REBASE) and re-pins it.
+  cp_publish=0
   if git -C "$LANES_REPO" -c "$CP_EXACT" diff --cached --quiet -- "${CP_PATHS[@]}"; then
-    note "nothing staged for ${CP_PATHS[*]} — no commit made"
-    return 0
+    cp_ahead="$(git --no-replace-objects -C "$LANES_REPO" --no-pager log --oneline "refs/remotes/origin/$LANES_BRANCH..refs/heads/$LANES_BRANCH" 2>/dev/null || :)"
+    if [ -z "$cp_ahead" ]; then
+      note "nothing staged for ${CP_PATHS[*]} — no commit made"
+      return 0
+    fi
+    cp_n="$(printf '%s\n' "$cp_ahead" | awk 'END { print NR }')"
+    if [ "$CP_PUBLISH_AHEAD" != 1 ]; then
+      note "nothing staged for ${CP_PATHS[*]} — no commit made; the $cp_n local commit(s) ahead of origin/$LANES_BRANCH stay local. \`lanes-edit.sh commit\` would publish all of them, so read \`git -C $LANES_REPO cherry -v origin/$LANES_BRANCH HEAD\` first: another lane's commits are its own to publish"
+      return 0
+    fi
+    cp_publish_fence
+    note "nothing staged for ${CP_PATHS[*]} — no commit made; pushing the $cp_n local commit(s) origin/$LANES_BRANCH does not have, up to ${CP_FENCE_TIP:0:12}:"
+    printf '%s\n' "$cp_ahead" | head -n 10 >&2 || :
+    [ "$cp_n" -le 10 ] || note "  … and $((cp_n - 10)) more"
+    CP_PUSH_SPEC="$CP_FENCE_TIP:refs/heads/$LANES_BRANCH"
+    CP_AFTER_REBASE=cp_publish_refence
+    cp_publish=1
   fi
-  if [ -n "$cp_ren" ]; then
+  if [ "$cp_publish" = 1 ]; then
+    :   # nothing of this write's own to commit: straight on to the push
+  elif [ -n "$cp_ren" ]; then
     cp_staged="$(git -C "$LANES_REPO" -c "$CP_EXACT" diff --cached --name-only)"
     cp_extra=""
     while IFS= read -r cp_s; do
@@ -2082,7 +2244,7 @@ EOF
   else
     git -C "$LANES_REPO" -c "$CP_EXACT" commit -q -m "$msg" -- "${CP_PATHS[@]}" || die "git commit failed" 6
   fi
-  note "committed: $msg"
+  [ "$cp_publish" = 1 ] || note "committed: $msg"
   if ! remote_has_branch; then
     if ! git_net -C "$LANES_REPO" push -q -u origin "$LANES_BRANCH"; then
       [ "$GIT_TIMED_OUT" = 1 ] && git_timeout_die "git push -u origin $LANES_BRANCH"
@@ -2111,7 +2273,7 @@ EOF
       note "WARNING: this checkout has uncommitted changes to files OTHER than the register — not this invocation's:"
       printf '  %s\n' $others >&2
       note "skipping 'pull --rebase' (it refuses on any unstaged tracked change) and pushing straight out"
-      if git_net -C "$LANES_REPO" push -q origin "$LANES_BRANCH"; then
+      if git_net -C "$LANES_REPO" push -q origin "${CP_PUSH_SPEC:-$LANES_BRANCH}"; then
         LANES_INDEX_NUDGE=1
         note "pushed origin/$LANES_BRANCH (attempt $attempt, no pull — see the warning above)"
         return 0
@@ -2121,7 +2283,9 @@ EOF
       if [ "$attempt" -ge 6 ]; then
         note "RECOVERY: their author commits those files (a handoff: handoff(<lane>@<workstation>): <what>),"
         note "  then re-run: LANES_LANE=<lane> lanes-edit.sh commit \"<what you wrote>\"  — your edit is already"
-        note "  a local commit here: git -C $LANES_REPO log --oneline origin/$LANES_BRANCH..HEAD"
+        note "  a local commit here. If $LANES_PATH is clean, that re-run makes no commit of its own and"
+        note "  pushes the local commits this lists (#194), refusing (2) and pushing nothing unless every one"
+        note "  is a register or handoff write: git -C $LANES_REPO log --oneline origin/$LANES_BRANCH..HEAD"
         die "could not push origin/$LANES_BRANCH: behind the remote, and a peer's uncommitted file blocks the rebase. Nothing was lost — your commit is local." 3
       fi
     elif git_net -C "$LANES_REPO" pull --rebase -q origin "$LANES_BRANCH"; then
@@ -2131,7 +2295,7 @@ EOF
       if [ -n "${CP_AFTER_REBASE:-}" ]; then
         "$CP_AFTER_REBASE" || return $?
       fi
-      if git_net -C "$LANES_REPO" push -q origin "$LANES_BRANCH"; then
+      if git_net -C "$LANES_REPO" push -q origin "${CP_PUSH_SPEC:-$LANES_BRANCH}"; then
         LANES_INDEX_NUDGE=1
         note "pushed origin/$LANES_BRANCH (attempt $attempt)"
         return 0
@@ -2185,8 +2349,13 @@ EOF
       note "  git -C $LANES_REPO fetch origin $LANES_BRANCH || echo FETCH-FAILED   # if that printed FETCH-FAILED, STOP and retry — a stale or unreachable origin proves nothing either way"
       note "  git -C $LANES_REPO cherry origin/$LANES_BRANCH $cp_sha | grep -c '^+'   # BY CONTENT, not by sha: a peer's rebase changes the hash but git cherry still finds the same patch"
       note "  if that printed 0, STOP — reset or redo now would write it a second time."
+      note "  git -C $LANES_REPO rev-parse HEAD   # if this is not $cp_sha, STOP: the checkout moved after this abort, and the lines below no longer describe it"
+      note "  git -C $LANES_REPO cherry -v origin/$LANES_BRANCH HEAD   # WHOSE: one '+' line per local commit origin lacks, which is what the reset below drops"
+      note "  if any '+' line is not your own write, STOP and take it to the lane its subject names; a LANES(concurrent@…) or"
+      note "  LANES(pre-existing@…) capture names no lane, so it is NOT yours. Never reset, stash or overwrite a peer's work:"
+      note "  the reset below drops EVERY '+' commit in this checkout, theirs with yours, and origin holds no copy of any of them (#194)."
       note "  git -C $LANES_REPO diff origin/$LANES_BRANCH..HEAD -- ${CP_PATHS[*]}   # only if it is not there: read back exactly what you wrote"
-      note "  git -C $LANES_REPO reset --hard origin/$LANES_BRANCH                # then drop the local commits (NOTE: also drops any"
+      note "  git -C $LANES_REPO reset --hard origin/$LANES_BRANCH                # only if every '+' line is yours: drop the local commits (NOTE: also drops any"
       note "                                                          # uncommitted peer edit in this checkout)"
       note "  then re-read LANES.md and redo the edit with lanes-edit.sh, on top of the peer's version."
       die "rebase conflict on origin/$LANES_BRANCH — not pushed by this attempt; a later write from this checkout may already carry it, so look before you retry." 3
@@ -2641,8 +2810,18 @@ log_path_for() { printf '%s%s.md\n' "$LANES_LOG_PREFIX" "$1"; }
 # asserts the parse itself as well, on every platform. Dropping `--` would hand
 # a directory whose name begins with `-` back to `ls` as flags and change
 # nothing else.
+#
+# AND IT RETURNS 1 WHERE THE DIRECTORY IS THERE AND COULD NOT BE LISTED (#138
+# item 9). It was `ls … 2>/dev/null | awk`, whose status is the awk's, so an
+# unreadable directory answered "no log of any case" — which `retire_rows`' scan
+# took as a lane with no log, and its write loop then failed on that directory
+# after the scan had passed. A missing directory is still no log, and 0.
 log_files_named_ci() {   # <lane> — every existing log file for it, whatever its case
-  ls -- "$LANES_LOG_DIR" 2>/dev/null | awk -v want="$1" -v d="$LANES_LOG_DIR" '
+  lfn_ls=""
+  if [ -e "$LANES_LOG_DIR" ]; then
+    lfn_ls="$(ls -- "$LANES_LOG_DIR" 2>/dev/null)" || return 1
+  fi
+  printf '%s\n' "$lfn_ls" | awk -v want="$1" -v d="$LANES_LOG_DIR" '
     BEGIN { w = tolower(want) ".md" }
     tolower($0) == w { print d "/" $0 }'
 }
@@ -3097,11 +3276,17 @@ remote_log_events() {
   fi
   [ "$NO_GIT" = 1 ] && { log_events; return 0; }
   git -C "$LANES_REPO" rev-parse --verify -q "origin/$LANES_BRANCH" >/dev/null 2>&1 || { log_events; return 0; }
+  # A LOG THE TREE NAMES AND `show` CANNOT READ IS SAID, by path (#138 item
+  # 11). The parser's status is the pipeline's, so the failure left no trace:
+  # the lane simply had no lines, which the listing reads as DORMANT. The line
+  # reaches the person through `state_events`' warnings, and `lanes_rows` reads
+  # it back out of that file by its fixed prefix.
   git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_LOG_PREFIX" 2>/dev/null \
   | while IFS= read -r rf; do
       [ -n "$rf" ] || continue
       case "${rf##*/}" in README.md) continue ;; esac
       git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$rf" 2>/dev/null | parse_log_stream "$rf"
+      [ "${PIPESTATUS[0]}" = 0 ] || note "unreadable log: $rf — git could not read it, so none of its lines are in this read"
     done
 }
 
@@ -3189,7 +3374,14 @@ lane_log_events() {
     # indexed commit: no lines, exactly as a `git show` of a missing path.
     command grep -Fqx -- "$ll_rel" "$LANES_IDX_DIR/logs" 2>/dev/null || return 0
     awk -F"$US" -v p="$ll_rel" '$10 == p' "$LANES_IDX_DIR/events"
-    awk -v p="unreadable: $ll_rel:" 'index($0, p) == 1' "$LANES_IDX_DIR/warn" >&2 2>/dev/null || :
+    # THAT LOG'S WARNINGS AND THE COUNT THAT CLOSES THEM (opensoft/openRepoTools#166
+    # item 3): the source read runs LOG_AWK over this one file, whose END says
+    # how many lines it could not read. The export writes that line after each
+    # log's own warnings, so it is the line straight after this log's last one.
+    awk -v p="unreadable: $ll_rel:" '
+      index($0, p) == 1 { print; mine = 1; next }
+      mine && /^[0-9]+ unreadable line[(]s[)] above/ { print }
+      { mine = 0 }' "$LANES_IDX_DIR/warn" >&2 2>/dev/null || :
     return 0
   elif have_remote_ref; then
     git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$ll_rel" 2>/dev/null | parse_log_stream "$ll_rel"
@@ -3260,11 +3452,16 @@ register_text_checked() {
   rt_c="${SE_CACHE_FILE:+$SE_CACHE_FILE.register}"
   if [ -n "$rt_c" ] && [ -s "$rt_c" ]; then cat -- "$rt_c"; return; fi
   rt_txt=""; rt_rc=0
-  if have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null; then
-    rt_txt="$(git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null)" || rt_rc=$?
-  else
-    rt_txt="$(cat -- "$LANES_FILE")" || rt_rc=$?
-  fi
+  # WHETHER THE REGISTER IS PUBLISHED IS `register_published`'s answer, the
+  # tree's (#138 item 18, the review of #230): asked with `cat-file -e`, a
+  # missing or corrupt blob was "not published" and this checkout's copy was
+  # read in its place — an answer, where #67's rule above makes it a 1.
+  rt_prc=0; register_published || rt_prc=$?
+  case "$rt_prc" in
+    0) rt_txt="$(git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null)" || rt_rc=$? ;;
+    8) rt_txt="$(cat -- "$LANES_FILE")" || rt_rc=$? ;;
+    *) rt_rc=1 ;;
+  esac
   if [ "$rt_rc" != 0 ]; then
     printf '%s\n' "$rt_txt"
     return 1
@@ -3278,6 +3475,23 @@ register_text_checked() {
   printf '%s\n' "$LANES_REGISTER_CACHE"
 }
 register_text() { register_text_checked || :; }
+
+# IS THE REGISTER PUBLISHED? 0 yes, 8 no (or there is no `origin/<branch>`), 1
+# the tree could not be listed. THE TREE ANSWERS AND NEVER THE BLOB (#138 item
+# 18, the review of #230): `cat-file -e` fails for a blob that is missing or
+# corrupt exactly as for a path origin does not have, so a register origin has
+# and git could not read was "not published", and `register_text` answered with
+# this checkout's copy — the seam, `next-free` and `add-row` all read that as
+# the published register. `retire_rows` asks a lane's log the same way (item 17).
+# THE PATH IS AN ARGUMENT, the register's by default: `archive_text` asks it of
+# the archive, which had the same `cat-file -e` and the same fallback.
+register_published() {   # [<path relative to LANES_REPO>]
+  have_remote_ref || return 8
+  rp_tree=""
+  rp_tree="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "${1:-$LANES_PATH}" 2>/dev/null)" || return 1
+  [ -n "$rp_tree" ] || return 8
+  return 0
+}
 
 # ------------------------- AMENDMENT 19(d): THE ARCHIVE IS PART OF THE READ
 #
@@ -3298,18 +3512,40 @@ archive_text() {
   # AMENDMENT 14 — under `--index`, the archive's rows where the indexed commit
   # carried an archive; where it carried none, the same local fallback below.
   if [ -n "$LANES_IDX_DIR" ] && [ -f "$LANES_IDX_DIR/archive" ]; then cat -- "$LANES_IDX_DIR/archive"; return 0; fi
-  if [ -z "$LANES_IDX_DIR" ] && have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_ARCH_PATH" 2>/dev/null; then
-    # A published archive that cannot be rendered cannot be replaced with a
-    # possibly stale local copy: that copy may omit a retired position.
-    if git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_ARCH_PATH" 2>/dev/null; then return 0; fi
-    note "the published $LANES_ARCH_PATH exists but could not be read — a local copy cannot prove it contains every published retired position"
-    return 1
+  # A published archive that cannot be rendered cannot be replaced with a
+  # possibly stale local copy: that copy may omit a retired position. WHETHER
+  # IT IS PUBLISHED IS THE TREE'S ANSWER (the re-review of #230): asked with
+  # `cat-file -e`, an archive blob git could not read was "not published", the
+  # local copy answered, and a retired position was offered and reissued.
+  if [ -z "$LANES_IDX_DIR" ]; then
+    at_prc=0; register_published "$LANES_ARCH_PATH" || at_prc=$?
+    case "$at_prc" in
+      0) if git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_ARCH_PATH" 2>/dev/null; then return 0; fi
+         note "the published $LANES_ARCH_PATH exists but could not be read — a local copy cannot prove it contains every published retired position"
+         return 1 ;;
+      8) : ;;
+      *) note "the tree of origin/$LANES_BRANCH could not be listed, so whether $LANES_ARCH_PATH is published is not known — and a local copy cannot stand in for it"
+         return 1 ;;
+    esac
   fi
   # AND THE LOCAL COPY IS THE SAME RULE ONE RUNG DOWN: a file that is THERE and
   # will not open is a read that FAILED, and its rows hold positions. Saying
   # nothing here would put a retired `<repo>-<n>` back on offer.
+  archive_local_text
+}
+
+# THIS CHECKOUT'S ARCHIVE: its text, nothing where there is none, and 1 where
+# the path is THERE AND IS NOT A REGULAR FILE (#138 item 7) as well as where it
+# will not open. Asked with `-f` alone, a directory, a FIFO or a broken symlink
+# read as no archive and its retired positions came back on offer; `cat` on the
+# FIFO would have blocked besides. `archive_text`'s last rung and
+# `retired_identity_hits`' second read are both this.
+archive_local_text() {
   if [ -f "$LANES_ARCH_FILE" ]; then
     cat -- "$LANES_ARCH_FILE" 2>/dev/null || return 1
+  elif [ -e "$LANES_ARCH_FILE" ] || [ -L "$LANES_ARCH_FILE" ]; then
+    note "$LANES_ARCH_PATH is there and is not a regular file, so the retired positions it should hold cannot be read"
+    return 1
   fi
   return 0
 }
@@ -3320,9 +3556,7 @@ retired_identity_hits() { # <lane>; stdout: matching retired spellings
   ri_lane="$1"
   ri_pub="$(archive_text 2>/dev/null)" || return 1
   ri_local=""
-  if [ -f "$LANES_ARCH_FILE" ]; then
-    ri_local="$(cat -- "$LANES_ARCH_FILE" 2>/dev/null)" || return 1
-  fi
+  ri_local="$(archive_local_text 2>/dev/null)" || return 1
   printf '%s\n%s\n' "$ri_pub" "$ri_local" | awk -v want="$ri_lane" '
     function key(n,   h, p) {
       p = n; sub(/^.*-/, "", p); sub(/[A-Za-z]$/, "", p)
@@ -4727,14 +4961,20 @@ row_cell() { printf '%s\n' "$1" | awk -F'|' -v i="$2" '{print $i}'; }
 # its triple FIRST and then say what is wrong, in its own shape, so it takes the
 # spellings from here and makes the refusal itself. One parse, three readings,
 # and no second rule about what a lane name is.
+#
+# AND IT RETURNS 1 WHERE THE PUBLISHED REGISTER COULD NOT BE READ (#138 item
+# 18): the pipeline's status is the awk's, so a failed read was "no such row".
+# It reads `register_text_checked` (#67), whose status `register_text` drops,
+# and keeps both statuses; every caller that does not check them is unchanged.
 rows_named_ci() {   # <typed name>
-  register_text | awk -v want="$1" '
+  register_text_checked | awk -v want="$1" '
     substr($0,1,1) == "|" {
       p1 = index($0, "`"); if (p1 == 0) next
       rest = substr($0, p1 + 1); p2 = index(rest, "`"); if (p2 == 0) next
       t = substr(rest, 1, p2 - 1)
       if (tolower(t) == tolower(want)) print t
     }'
+  [ "${PIPESTATUS[0]}${PIPESTATUS[1]}" = 00 ]
 }
 
 # ====================================================== AMENDMENT 16 =======
@@ -5223,6 +5463,70 @@ project_legs_file() {
       gsub(/^'"'"'|'"'"'$/, "", v)
       if (v != "") print v
     }' "$1"
+}
+
+# ------------------------------------------- an assembly's legs, by path
+#
+# opensoft/openRepoTools#186, plan task T018 — WHERE A TRIAD'S LEGS ARE CHECKED
+# OUT, for the lane tooling that has to look inside one: `lane-worktrees`' sweep,
+# its daily report and its `add`, `lane-handoff`'s writer poll, and
+# `lane-reconcile` below. A checkout IS AN ASSEMBLY when its own `project.yaml`
+# declares a leg other than itself — the standard's own rule (openRepoShape's
+# `templates/assembly-root/project.yaml`: a top-level `legs:` list of `- role:` /
+# `repository:` / `path:`, the assembly's own leg at `path: "."`). A checkout
+# with no such file, or one naming no leg but itself, is every single
+# repository, and every reader asks it nothing more than it did before.
+#
+# THE READING IS `lane-start`'s RUNG 5, LINE FOR LINE, and never a second
+# grammar: rung 5 resolves ONE leg's path for the home it is given, and this
+# prints every leg the block declares, as `<repository><TAB><path>`. The seven
+# lines that decide what a leg is are byte-identical to that reader's, and
+# `tests/test_triad_lane_tooling.py` holds them so. As there, ONLY `repository:`
+# and `path:` are read, and only as navigation: the manifest CONFERS NOTHING,
+# and `role:` is never read.
+project_leg_paths_file() {   # <manifest>
+  [ -f "$1" ] || return 1
+  awk '
+      /^[A-Za-z_][A-Za-z0-9_]*:/ { inlegs = ($0 ~ /^legs:/); repo = ""; path = ""; next }
+      !inlegs { next }
+      /^[ \t]*-[ \t]/ { repo = ""; path = "" }
+      /^[ \t]+repository:[ \t]*/ { v = $0; sub(/^[ \t]+repository:[ \t]*/, "", v)
+        sub(/[ \t]+$/, "", v); gsub(/^"|"$/, "", v); gsub(/^'"'"'|'"'"'$/, "", v); repo = v }
+      /^[ \t]+path:[ \t]*/ { v = $0; sub(/^[ \t]+path:[ \t]*/, "", v)
+        sub(/[ \t]+$/, "", v); gsub(/^"|"$/, "", v); gsub(/^'"'"'|'"'"'$/, "", v); path = v }
+      repo != "" && path != "" { print repo "\t" path; repo = ""; path = "" }' "$1"
+}
+
+# THE LEGS OF ONE CHECKOUT, one a line: `<repository><TAB><path as
+# declared><TAB><where it is checked out>`, the last being the declared path
+# resolved against the checkout as rung 5 resolves it. The assembly's own `.`
+# is left out: it IS the checkout. 0 with legs; 8 with none — no
+# `project.yaml`, or one naming no leg but the checkout itself; 1 where the
+# manifest is there and could not be read, which is never "no legs" (R22,
+# Amendment 7(d)).
+assembly_legs() {   # <checkout>
+  al_dir="${1-}"; al_dir="${al_dir%/}"; al_rows=""; al_out=""; al_tab="$(printf '\t')"
+  [ -n "$al_dir" ] || return 8
+  al_m="$al_dir/project.yaml"
+  [ -e "$al_m" ] || [ -L "$al_m" ] || return 8
+  { [ -f "$al_m" ] && [ -r "$al_m" ]; } || return 1
+  al_rows="$(project_leg_paths_file "$al_m")" || return 1
+  while IFS="$al_tab" read -r al_repo al_path; do
+    al_path="${al_path%/}"
+    case "$al_path" in
+      ''|.|./.) continue ;;
+      /*) al_abs="$al_path" ;;
+      ./*) al_abs="$al_dir/${al_path#./}" ;;
+      *) al_abs="$al_dir/$al_path" ;;
+    esac
+    al_out="$al_out$al_repo$al_tab$al_path$al_tab$al_abs
+"
+  done <<AL_ROWS
+$al_rows
+AL_ROWS
+  [ -n "$al_out" ] || return 8
+  printf '%s' "$al_out"
+  return 0
 }
 
 # Manifests are looked for where the estate keeps them: one level under
@@ -7568,6 +7872,36 @@ lanes_rows() {
   else
     lr_facts="$(state_events 2>/dev/null | lane_row_facts)"
   fi
+  # AND A PUBLISHED LOG THAT COULD NOT BE READ IS NOT A LANE WITH NO LOG (#138
+  # item 11). A lane absent from the facts is DORMANT below, and a log whose
+  # `git show` failed gave no lines; `remote_log_events` names each such log,
+  # and those lanes are fenced out of the class here. Without the warnings file
+  # (no temporary file could be made) no read can be told from a failed one, so
+  # no row is classed dormant at all.
+  lr_unread=" "; lr_unread_ok=1; lr_unread_paths=""
+  if [ -z "$lr_one" ] && [ -z "$LANES_IDX_DIR" ]; then
+    if [ -n "$SE_WARN_FILE" ]; then
+      lr_unread_paths="$(sed -n -e 's/^lanes-edit: unreadable log: \(.*\) — git could not read it.*$/\1/p' "$SE_WARN_FILE" 2>/dev/null)"
+      lr_unread=" $(printf '%s\n' "$lr_unread_paths" | awk 'NF { n = $0; sub(/^.*\//, "", n); sub(/\.md$/, "", n); print tolower(n) }' | tr '\n' ' ')"
+    else
+      lr_unread_ok=0
+    fi
+  fi
+  [ -z "$lr_unread_paths" ] ||
+    note "these published logs could not be read, so no lane of theirs is classed DORMANT: $(printf '%s\n' "$lr_unread_paths" | tr '\n' ' ')"
+  [ "$lr_unread_ok" = 1 ] ||
+    note "no temporary file could be made for the read's warnings, so whether any published log failed to read is not known, and no row is classed DORMANT here."
+  # AND A REGISTER THAT COULD NOT BE READ IS SAID, ONCE (the re-review of #230).
+  # Every row above came out of `register_text`, which drops the status
+  # `register_text_checked` keeps (#67), and a published register git cannot
+  # read renders as no text, so those rows simply vanished — and the sweep
+  # counted none of them. The class is withheld, which `lane-end` refuses on. A
+  # read that succeeds fills the cache every later read here takes, so the
+  # check costs one render.
+  lr_reg_ok=1
+  register_text_checked >/dev/null 2>&1 || lr_reg_ok=0
+  [ "$lr_reg_ok" = 1 ] ||
+    note "the register ($LANES_PATH, published or this checkout's) could not be read, so its rows are not in this listing, and no row is classed DORMANT here."
   # THE REGISTER AND THE LIVE RECORDS, EACH READ ONCE FOR THE WHOLE LISTING
   # (ruling 12). Both were per-lane before, and `live_session_ids` was rebuilt
   # from 564 session records for every one of them.
@@ -7638,7 +7972,16 @@ lanes_rows() {
   # disagree about the amendment's own condition. One `ls` for the whole
   # listing, matched with a `case` per lane, and lower-cased because a lane name
   # is ONE name under any case (Amendment 15).
-  lr_logfiles=" $(ls -- "$LANES_LOG_DIR" 2>/dev/null | awk '{ print tolower($0) }' | tr '\n' ' ')"
+  # AND A DIRECTORY THAT IS THERE AND CANNOT BE LISTED IS NOT ONE WITH NO LOG IN
+  # IT (#138 item 4): the fence would be empty and a lane whose only log is here
+  # classed DORMANT. It is said, and no row is classed dormant over it below.
+  lr_logfiles=""; lr_logs_rc=0
+  if [ -e "$LANES_LOG_DIR" ]; then
+    lr_logfiles="$(ls -- "$LANES_LOG_DIR" 2>/dev/null)" || lr_logs_rc=1
+  fi
+  lr_logfiles=" $(printf '%s\n' "$lr_logfiles" | awk '{ print tolower($0) }' | tr '\n' ' ')"
+  [ "$lr_logs_rc" = 0 ] ||
+    note "$LANES_LOG_DIR exists and could not be listed, so whether a row has a log this checkout has and origin has not is not known, and no row is classed DORMANT here. Fix the read and re-run before sweeping."
   if [ "$lr_live_rc" != 0 ] || [ "$lr_fork_rc" != 0 ]; then
     note "this workstation's session records could not be read, so the STATE column below is the LOG's verb alone: a lane that is live may show as IDLE or PAUSED here, and no fork of any lane is established either way. Fix the read and re-run before acting on a restart line."
   fi
@@ -7849,11 +8192,16 @@ EOF2
         # up); this is what it does about it — leaves the class unset, so the
         # row stays listed and the sweep is never offered it.
         if [ -n "$lr_row" ] && [ "$lr_lanekind" = 0 ] && [ "$lr_live_rc" = 0 ] &&
-           [ "$lr_cellrow" = 1 ]; then
+           [ "$lr_cellrow" = 1 ] && [ "$lr_logs_rc" = 0 ] && [ "$lr_unread_ok" = 1 ] &&
+           [ "$lr_reg_ok" = 1 ]; then
           lr_class=dormant
-          # A LOG THIS CHECKOUT HAS AND `origin` HAS NOT IS STILL AN OBJECT LOG.
+          # A LOG THIS CHECKOUT HAS AND `origin` HAS NOT IS STILL AN OBJECT LOG,
+          # AND SO IS ONE `origin` HAS AND GIT COULD NOT READ (item 11).
           case "$lr_logfiles" in
             *" $lr_ll.md "*) lr_class="" ;;
+          esac
+          case "$lr_unread" in
+            *" $lr_ll "*) lr_class="" ;;
           esac
           if mig_cell_is_phrase "$lr_was"; then
             case "${lr_was%% · *}" in
@@ -8202,13 +8550,26 @@ lane_position_rows() {   # 0 with the names · 1 where a source exists and could
   # `register_text` ends in a `printf` and answers 0 whatever its `git show` or
   # its `cat` did, so the status says nothing; what cannot happen is a source
   # with bytes in it rendering as nothing.
+  # AND ANY PATH THERE IS A SOURCE (#138 item 5). Under `[ -s ]` a zero-byte
+  # register — what a rewrite that failed leaves — and a broken symlink were
+  # skipped where origin has no register, and `next-free` counted the stdin
+  # rows and the archive alone. Counted as a source, either renders empty, and
+  # the check below refuses it.
   if [ -f "$LANES_FILE" ] && [ ! -r "$LANES_FILE" ]; then return 1; fi
   lpr_have=0
-  if [ -s "$LANES_FILE" ]; then lpr_have=1; fi
-  if have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null; then lpr_have=1; fi
+  if [ -e "$LANES_FILE" ] || [ -L "$LANES_FILE" ]; then lpr_have=1; fi
+  # AND THE PUBLISHED ONE IS THE TREE'S ANSWER, with `register_text`'s 1 kept
+  # (#138 item 18, the review of #230): a published register whose blob git
+  # cannot read is a source that failed, not one that is absent.
+  lpr_prc=0; register_published || lpr_prc=$?
+  case "$lpr_prc" in
+    0) lpr_have=1 ;;
+    8) : ;;
+    *) return 1 ;;
+  esac
   lpr_reg=""
   if [ "$lpr_have" = 1 ]; then
-    lpr_reg="$(register_text 2>/dev/null || :)"
+    lpr_reg="$(register_text_checked 2>/dev/null)" || return 1
     [ -n "$lpr_reg" ] || return 1
   fi
   lpr_arc=""
@@ -11148,18 +11509,13 @@ migrate_state_cells() {   # <1 = the act, 0 = the dry run>
   # `replace-in-row` landing in this checkout between the two moves the lines
   # under it, and `replace_line` then rewrites the wrong row — its one-line proof
   # holds for the line it was given, not for the row a person meant. So the scan
-  # and the write happen inside ONE hold of the lock, and the register's
-  # pre-existing edit is captured BEFORE the scan rather than after it, so what
-  # is read is what is committed.
+  # and the write happen inside ONE hold of the lock.
   #
   # THE DRY RUN TAKES NO LOCK AT ALL. It writes nothing, so a row that moves
   # under it costs a report one line of accuracy and nothing else — and a read
   # that holds the estate's one register mutex for the seconds this scan takes
   # is a read that blocks every lane's write to say what it would have done.
-  if [ "$msc_do" = 1 ]; then
-    acquire_lock
-    handle_preexisting "$LANES_PATH"
-  fi
+  [ "$msc_do" = 1 ] && acquire_lock
 
   # TWO ROWS FOR ONE LANE UNDER TWO CASES ARE 15(d)'s HAND MERGE, and both of
   # them are skipped rather than migrated into one log under a name that means
@@ -11408,9 +11764,19 @@ EOF
 
   # --------------------------------------------------------------- the write
   #
-  # THE LOCK IS ALREADY HELD and the register already captured — both were taken
-  # BEFORE the scan, so the line numbers rewritten below are the ones this
-  # invocation read (Copilot round 2 on openRepoTools#82).
+  # THE LOCK IS ALREADY HELD — it was taken BEFORE the scan, so the line numbers
+  # rewritten below are the ones this invocation read (Copilot round 2 on
+  # openRepoTools#82).
+  #
+  # AND A PEER'S REGISTER EDIT IS CAPTURED HERE, AFTER EVERY REFUSAL AND SKIP OF
+  # THE SCAN AND BEFORE THE FIRST BYTE IS WRITTEN (openRepoTools#157 item 4b).
+  # Captured before the scan, a refusal in it — the seam's, or the "nothing to
+  # migrate" one — left a `LANES(pre-existing@…)` commit behind: a refusal that
+  # wrote, which `capture_register_edit` names as the one thing it must never
+  # be. The capture commits the file's bytes and changes none of them, so what
+  # the scan read is what is committed, as it was. `retire_rows` and
+  # `archive_rows` capture at their writes for the same reason.
+  handle_preexisting "$LANES_PATH"
   #
   # EVERYTHING BELOW IS ONE COMMIT OR NONE. The archive, the appended logs and
   # the rewritten rows are made on disk first and published by the single
@@ -11910,7 +12276,16 @@ retire_rows() {   # <lane>… [--reason "<why>"] [--writer <lane>]
     die "retire-rows requires a successful fresh fetch before rewriting several rows; $LOG_SYNC_FETCH. The local origin/$LANES_BRANCH ref may be stale. Nothing was written." 1
   fi
   rr_writer="$(canon_lane "$rr_writer")" || exit 2
-  rr_uuid="$(session_for "$rr_writer" 2>/dev/null || :)"
+  # THE WRITER'S TRANSCRIPT IS THIS CHECKOUT'S ROW'S LAST ID, and the published
+  # row's only where this checkout has none (Copilot round 18 on #93, #138 item
+  # 8). `session_for` reads `$LANES_SESSION` or the PUBLISHED row, and the
+  # documented call sets only `LANES_LANE`: a writer whose newest transcript is
+  # stamped here and not yet pushed signed every append-only RETIRED line with an
+  # older id. A checkout behind origin is refused below, so this row is never
+  # the older of the two — the same reason refusal 1 reads both rows' ids.
+  rr_uuid="${LANES_SESSION:-}"
+  [ -n "$rr_uuid" ] || rr_uuid="$(session_ids_local_of_lane "$rr_writer" 2>/dev/null | tail -n1)"
+  [ -n "$rr_uuid" ] || rr_uuid="$(session_for "$rr_writer" 2>/dev/null || :)"
   valid_uuid "$rr_uuid" ||
     die "the sweeping lane $rr_writer has no transcript uuid to write: \$LANES_SESSION is unset and its row's session cell holds none. Amendment 7(b) gives the session field a transcript uuid and ONLY that, and this log is append-only, so nothing is written. Run it from the lane's own session, or pass the id: LANES_SESSION=<uuid> LANES_LANE=$rr_writer lanes-edit.sh retire-rows …" 2
   # All path cleanliness and ref fences run under the same writer lock as the
@@ -11928,8 +12303,9 @@ retire_rows() {   # <lane>… [--reason "<why>"] [--writer <lane>]
   # THE MUTEX COMES BEFORE THE SCAN, not between the scan and the write: this
   # act reads every row's LINE NUMBER and rewrites those lines by number, and a
   # peer's `add-row` landing in between moves them under it (the finding
-  # `migrate-state-cells` took in round 2 of openRepoTools#82).
-  handle_preexisting "$LANES_PATH"
+  # `migrate-state-cells` took in round 2 of openRepoTools#82). It is held from
+  # `acquire_lock` above; a peer's register edit is captured at the write, after
+  # every refusal of the scan (#157 item 4b, `migrate_state_cells`' reason).
 
   # THE LIVE READ IS FAIL-CLOSED, AND IT IS TAKEN INSIDE THE LOCK (Copilot round
   # 2 on #93). `lanes_rows` degrades to the log's verb when this workstation's
@@ -12008,15 +12384,24 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
     # sets no `pipefail`, so a `git show` that FAILED is masked by the parser
     # exiting 0 over empty input — and the lane then reads as having no
     # lane-kind line at all, which is the one answer that lets the sweep
-    # through. The object is asked for by name instead, which is `cat-file -e`
-    # and then `show` with its own status.
+    # through. The object is asked for by name instead, and then `show` with its
+    # own status.
+    # WHETHER THE PATH IS PUBLISHED IS THE TREE'S ANSWER, NOT THE BLOB'S
+    # (Copilot round 21 on #93, #138 item 17). It was `cat-file -e`, which
+    # fails for a blob that is missing or corrupt exactly as for a path that is
+    # not there, so a log the tree names and git cannot read was "no published
+    # log" and the sweep went on. `ls-tree` reads the tree alone.
     rr_pubp=""
     rr_pubp="$(log_path_ci "$rr_l")" ||
       die "lane $rr_l's object log is published twice under names that differ only by case (above) — 15(d)'s hand merge. Nothing was written." 2
-    if [ "$NO_GIT" != 1 ] && have_remote_ref &&
-       git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$rr_pubp" 2>/dev/null; then
-      git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$rr_pubp" >/dev/null 2>&1 ||
-        die "lane $rr_l's published object log ($rr_pubp) exists on origin/$LANES_BRANCH and could not be read, so whether it carries a lane-kind line is not known — and that is NOT 'it has none' (Amendment 7(d)). Nothing was written." 1
+    if [ "$NO_GIT" != 1 ] && have_remote_ref; then
+      rr_intree=""
+      rr_intree="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$rr_pubp" 2>/dev/null)" ||
+        die "the tree of origin/$LANES_BRANCH could not be listed, so whether lane $rr_l has a published object log is not known — and that is NOT 'it has none' (Amendment 7(d)). Nothing was written." 1
+      if [ -n "$rr_intree" ]; then
+        git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$rr_pubp" >/dev/null 2>&1 ||
+          die "lane $rr_l's published object log ($rr_pubp) exists on origin/$LANES_BRANCH and could not be read, so whether it carries a lane-kind line is not known — and that is NOT 'it has none' (Amendment 7(d)). Nothing was written." 1
+      fi
     fi
     rr_ev=""; rr_erc=0
     rr_ev="$(lane_log_events "$rr_l" 2>/dev/null)" || rr_erc=$?
@@ -12035,6 +12420,14 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
     # does not catch a tracked one.
     rr_lev=""
     rr_lf="$(log_file_for "$rr_l")"
+    # A LOG PATH THAT IS A SYMLINK, OR THERE AND NOT A REGULAR FILE, IS REFUSED
+    # BEFORE IT IS READ (Copilot round 18 on #93, #138 item 12). The write
+    # appends with `>>`, which follows a link: a tracked link here put the
+    # RETIRED line in whatever file it named, outside the repository, while the
+    # commit recorded only the link.
+    if [ -L "$rr_lf" ] || { [ -e "$rr_lf" ] && [ ! -f "$rr_lf" ]; }; then
+      die "lane $rr_l's object log $(log_path_for "$rr_l") is a symlink, or is there and not a regular file, in this checkout. This sweep appends to it with '>>', which writes through a link to whatever file it names while the commit records only the link. Put the log itself there as a regular file, commit that, and re-run. Nothing was written." 2
+    fi
     if [ -f "$rr_lf" ]; then
       [ -r "$rr_lf" ] ||
         die "lane $rr_l's object log $rr_lf exists in this checkout and could not be read, so whether it carries a lane-kind line is not known — and that is NOT 'it has none' (Amendment 7(d)). Nothing was written." 1
@@ -12072,7 +12465,10 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
     # smuggles into a commit that names something else. Both halves of
     # `ensure_log`'s question are asked HERE, in the scan, so the refusal comes
     # before any byte is written rather than half-way through the run.
-    rr_loc="$(log_files_named_ci "$rr_l")"
+    # AND A LOG DIRECTORY THAT CANNOT BE LISTED IS A REFUSAL HERE (#138 item 9),
+    # not a lane with no log that `ensure_log` then fails on inside the loop.
+    rr_loc="$(log_files_named_ci "$rr_l")" ||
+      die "the log directory $LANES_LOG_DIR exists and could not be listed, so whether lane $rr_l has a log of any case in this checkout is not known — and that is NOT 'it has none' (Amendment 7(d)). Nothing was written." 1
     rr_ln2="$(printf '%s' "$rr_loc" | grep -c . || :)"
     [ "$rr_ln2" -le 1 ] ||
       die "lane $rr_l has $rr_ln2 object logs in this checkout whose names differ only by case: $(printf '%s\n' "$rr_loc" | tr '\n' ' ')— one lane is ONE lane under any case (Amendment 15) and no read of it is unambiguous. Merge them by hand into $(log_file_for "$rr_l") (15(d)) and re-run. Nothing was written." 2
@@ -12136,7 +12532,9 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
   # `commit_push` at the end: a refusal in the middle leaves this checkout dirty
   # and the register unpublished, which `git status` shows and
   # `git checkout -- lanes` undoes whole. Nothing is half-published, because the
-  # commit is the only thing that publishes.
+  # commit is the only thing that publishes. A peer's register edit is
+  # committed as its own first, as `migrate_state_cells` says at its write.
+  handle_preexisting "$LANES_PATH"
   rr_paths=("$LANES_PATH")
   while IFS="$US" read -r rr_ln rr_l rr_new rr_head2 rr_tail; do
     [ -n "${rr_ln:-}" ] || continue
@@ -12210,7 +12608,6 @@ archive_rows() {   # <repo> <1 = the act, 0 = the dry run>
       esac
     fi
     acquire_lock
-    handle_preexisting "$LANES_PATH"
     # The cleanliness fence belongs INSIDE the writer lock. Another writer
     # could otherwise create or edit the archive while this act waits for it.
     # THE ARCHIVE IS NOT EXEMPT (Copilot round 4 on #93). It was, because this
@@ -12229,6 +12626,29 @@ archive_rows() {   # <repo> <1 = the act, 0 = the dry run>
     if [ -f "$LANES_ARCH_FILE" ] && [ "$NO_GIT" != 1 ] &&
        ! git -C "$LANES_REPO" ls-files --error-unmatch -- "$LANES_ARCH_PATH" >/dev/null 2>&1; then
       die "$LANES_ARCH_PATH exists in this checkout but is NOT TRACKED — somebody's uncommitted work, which this move would commit inside its own commit. Commit it first (\`git -C $LANES_REPO commit -m \"<what it is>\" -- $LANES_ARCH_PATH\`) and re-run. Nothing was written." 2
+    fi
+    # AN ARCHIVE THAT IS A SYMLINK, OR THERE AND NOT A REGULAR FILE, IS REFUSED
+    # (Copilot on #93's `afd5481`, #138 item 10). The rows are appended with
+    # `>>`, which follows a link: a tracked link here put them in whatever file
+    # it named, outside the repository, while the commit published the link and
+    # their removal from the register — the rows left the repository entirely.
+    if [ -L "$LANES_DIR/archive" ] || [ -L "$LANES_ARCH_FILE" ] ||
+       { [ -e "$LANES_ARCH_FILE" ] && [ ! -f "$LANES_ARCH_FILE" ]; }; then
+      die "$LANES_ARCH_PATH, or its directory, is a symlink — or the archive is there and not a regular file. This move appends the rows with '>>', which writes through a link to whatever file it names while the commit records the link and removes the rows from the register. Put the archive itself there as a regular file, commit it, and re-run. Nothing was written." 2
+    fi
+    # A PUBLISHED ARCHIVE THIS CHECKOUT DOES NOT HAVE IS REFUSED (Copilot on #93's
+    # `d0310f6`, #138 item 2). Out of a sparse checkout, or marked skip-worktree,
+    # the file is absent here and in nobody's dirty list, so the move created a
+    # NEW archive of only its own rows, whose commit would drop every position the
+    # published one reserves (Amendment 19(b)). Refused rather than seeded from
+    # origin: git (2.43, measured) will not stage a skip-worktree path, so a seeded
+    # archive fails at the commit after the rows have left the register here.
+    if [ "$NO_GIT" != 1 ] && have_remote_ref && [ ! -e "$LANES_ARCH_FILE" ] && [ ! -L "$LANES_ARCH_FILE" ]; then
+      ar_pubarch=""
+      ar_pubarch="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_ARCH_PATH" 2>/dev/null)" ||
+        die "the tree of origin/$LANES_BRANCH could not be listed, so whether $LANES_ARCH_PATH is published is not known — and a move that creates one beside a published one drops every position it reserves (Amendment 7(d)). Nothing was written." 1
+      [ -z "$ar_pubarch" ] ||
+        die "$LANES_ARCH_PATH is published on origin/$LANES_BRANCH and this checkout does not have it (it is outside a sparse checkout, or marked skip-worktree). A move made here would create a new archive holding only these rows, and its commit would drop every retired position the published one reserves (Amendment 19(b)). Bring it into this checkout — \`git -C $LANES_REPO sparse-checkout add ${LANES_ARCH_PATH%/*}\`, or for a skip-worktree path \`git -C $LANES_REPO update-index --no-skip-worktree $LANES_ARCH_PATH\` and \`git -C $LANES_REPO checkout -- $LANES_ARCH_PATH\` — and re-run. Nothing was written." 2
     fi
   fi
 
@@ -12324,7 +12744,10 @@ EOF
 
   # THE ARCHIVE IS WRITTEN FIRST AND THE ROWS REMOVED SECOND, for the reason
   # `delete_lines` gives: a refusal between the two leaves a copy in the archive
-  # and the register whole, and never a row in neither file.
+  # and the register whole, and never a row in neither file. A peer's register
+  # edit is committed as its own first, after every refusal above (#157 item
+  # 4b, `migrate_state_cells`' reason).
+  handle_preexisting "$LANES_PATH"
   mkdir -p -- "$LANES_DIR/archive" ||
     die "could not create $LANES_DIR/archive — the archive is written before anything is removed, so nothing has been" 6
   if [ ! -f "$LANES_ARCH_FILE" ]; then
@@ -13191,7 +13614,10 @@ lane_real_path() {   # <path>
 
 # THE LANE'S TWO WORKTREE ROOTS — the same two `lane-handoff` polls, and they
 # are here rather than there so the poll and the reconciliation cannot come to
-# disagree about where a lane keeps its writers.
+# disagree about where a lane keeps its writers. Where the lane's checkout is an
+# ASSEMBLY (T018) both also read its paired root, `<assembly>/worktrees/
+# <feature>/<each leg's path>`, which is two levels deep and per feature, so it
+# is read beside these two (`lane_reconcile`, step 4) rather than as a third.
 lane_worktree_roots() {   # <lane> <the lane's checkout>
   lwr_lane="${1-}"; lwr_dir="${2-}"
   [ -n "$lwr_dir" ] || return 0
@@ -13501,6 +13927,22 @@ EOF
   # from the two lane roots on disk. It is REPORTED and never adopted, deleted
   # or overwritten: which lane a tree belongs to is a person's to say.
   lrc_unmanaged=0
+  # A TRIAD (opensoft/openRepoTools#186, plan task T018). WHERE THE LANE'S
+  # CHECKOUT IS AN ASSEMBLY — its own `project.yaml` declares a leg other than
+  # itself, read by `assembly_legs`, the one reader every lane tool asks — what
+  # its LEGS hold is read too: the worktrees git registers in each leg's
+  # repository, which `git worktree list` in the assembly never names, and the
+  # paired feature trees `<assembly>/worktrees/<feature>/<each leg's path>`.
+  # Both are reported exactly as the checkout's own registrations and the lane
+  # roots are, and adopted, deleted or overwritten no more. A checkout with no
+  # `project.yaml` is asked nothing, so its report is what it always was; a
+  # manifest, a leg's registrations or the paired root that could not be read
+  # leaves paths nobody read, and the verdict below says so.
+  lrc_legs=""; lrc_lgrc=8; lrc_legwhy=""; lrc_tab="$(printf '\t')"
+  if [ -n "$lrc_dir" ] && [ -d "$lrc_dir" ] && { [ -e "$lrc_dir/project.yaml" ] || [ -L "$lrc_dir/project.yaml" ]; }; then
+    lrc_lgrc=0
+    lrc_legs="$(assembly_legs "$lrc_dir")" || lrc_lgrc=$?
+  fi
   if [ -n "$lrc_dir" ] && [ -d "$lrc_dir" ]; then
     # THE CHECKOUT'S OWN ROW IS NOT AN UNMANAGED TREE, AND git ANSWERS WITH THE
     # PHYSICAL PATH. A recorded `dir` reached through a symlink — which is how
@@ -13536,6 +13978,71 @@ EOF
 $(git -C "$lrc_dir" worktree list --porcelain 2>/dev/null || :)
 EOF
   fi
+  # T018: EVERY LEG'S REGISTRATIONS, beside the checkout's own. A leg that is
+  # not checked out here is an empty directory of the assembly's, where git
+  # answers the ASSEMBLY — it registers nothing of its own, so it is passed
+  # over. A leg's main worktree is listed FIRST and spelled as its git
+  # directory under the assembly's `.git/modules/`, so it is skipped by place,
+  # not by name.
+  # A LEG WITH A `.git` OF ITS OWN THAT GIT CANNOT READ is no absent leg: it is
+  # a read that failed, never an absent or a clean one (Amendment 7(d)), and
+  # passed over it was a leg this reconciliation said nothing of while the
+  # sweep counted it. So it is the sweep's rule (`probe_leg`: git's toplevel
+  # there is not the leg, and a `.git` stands in it) and the sweep's word: a
+  # TREE row `unreadable`, which requires recovery, as the sweep's `leg` row is
+  # `unreadable` and counted. It is NO `indeterminate`: the sweep counts that
+  # leg and goes on (exit 3), and a verdict it refuses on would hide the count.
+  if [ "$lrc_lgrc" = 0 ]; then
+    while IFS="$lrc_tab" read -r lrc_lrepo lrc_ldecl lrc_labs; do
+      [ -n "$lrc_labs" ] && [ -d "$lrc_labs" ] || continue
+      lrc_ltop="$(git -C "$lrc_labs" rev-parse --show-toplevel 2>/dev/null </dev/null || :)"
+      if [ -z "$lrc_ltop" ] || [ "$(lane_real_path "$lrc_ltop")" != "$(lane_real_path "$lrc_labs")" ]; then
+        { [ -e "$lrc_labs/.git" ] || [ -L "$lrc_labs/.git" ]; } || continue
+        lrc_lr="$(lane_real_path "$lrc_labs")"
+        case "$lrc_seen" in *" $lrc_labs "*|*" $lrc_lr "*) continue ;; esac
+        if [ -n "$lrc_ltop" ]; then
+          lrc_lerr="git answers $lrc_ltop there"
+        else
+          lrc_lerr="$(git -C "$lrc_labs" rev-parse --show-toplevel 2>&1 >/dev/null </dev/null \
+            | awk 'NF { sub(/^[ \t]+/, ""); sub(/[ \t]+$/, ""); print; exit }' | tr -d '\037')"
+          lrc_lerr="${lrc_lerr:-no answer}"
+        fi
+        printf 'TREE%s%s%sunreadable%s%s%sthe %s leg of %s/project.yaml%s: git could not be read through it (it has a .git of its own and git could not read it: %s), so NOTHING is assumed about it — not its own state, nor the worktrees it registers, which were not listed; a read that failed is never a clean leg (Amendment 7(d)) — read it by hand (git -C %s status) before relaunching a writer onto a tree of its repository\n' \
+          "$US" "$(tree_id_for "$lrc_labs")" "$US" "$US" "$lrc_labs" "$US" "$lrc_ldecl" "$lrc_dir" \
+          "${lrc_lrepo:+ ($lrc_lrepo)}" "$lrc_lerr" "$lrc_labs"
+        lrc_seen="$lrc_seen $lrc_labs $lrc_lr "
+        lrc_recover=$((lrc_recover + 1))
+        continue
+      fi
+      lrc_lwl=""; lrc_lwrc=0
+      lrc_lwl="$(git -C "$lrc_labs" worktree list --porcelain 2>/dev/null </dev/null)" || lrc_lwrc=$?
+      if [ "$lrc_lwrc" != 0 ]; then
+        lrc_legwhy="${lrc_legwhy:+$lrc_legwhy; }the worktrees git registers in $lrc_labs, the $lrc_ldecl leg, could not be listed (git worktree list exited $lrc_lwrc)"
+        continue
+      fi
+      lrc_first=1
+      while IFS= read -r lrc_wl; do
+        case "$lrc_wl" in worktree\ *) : ;; *) continue ;; esac
+        if [ "$lrc_first" = 1 ]; then lrc_first=0; continue; fi
+        lrc_wp="${lrc_wl#worktree }"
+        lrc_wpr="$(lane_real_path "$lrc_wp")"
+        case "$lrc_seen" in *" $lrc_wp "*|*" $lrc_wpr "*) continue ;; esac
+        if [ -d "$lrc_wp" ]; then
+          printf 'TREE%s%s%sunmanaged%s%s%sgit registers it in %s, the %s leg of %s/project.yaml (%s), and no sidecar of this lane names it; it is left exactly as it is\n' \
+            "$US" "$(tree_id_for "$lrc_wp")" "$US" "$US" "$lrc_wp" "$US" "$lrc_labs" "$lrc_ldecl" "$lrc_dir" "$lrc_lrepo"
+        else
+          printf 'TREE%s%s%sstale-registration%s%s%sgit registers it in %s, the %s leg of %s/project.yaml (%s), and the directory is gone; `git -C %s worktree prune` is a person'\''s act\n' \
+            "$US" "$(tree_id_for "$lrc_wp")" "$US" "$US" "$lrc_wp" "$US" "$lrc_labs" "$lrc_ldecl" "$lrc_dir" "$lrc_lrepo" "$lrc_labs"
+        fi
+        lrc_seen="$lrc_seen $lrc_wp $lrc_wpr "
+        lrc_unmanaged=$((lrc_unmanaged + 1))
+      done <<LRC_LEG_TREES
+$lrc_lwl
+LRC_LEG_TREES
+    done <<LRC_LEGS
+$lrc_legs
+LRC_LEGS
+  fi
   while IFS= read -r lrc_wr; do
     [ -n "$lrc_wr" ] || continue
     [ -d "$lrc_wr" ] || continue
@@ -13552,6 +14059,49 @@ EOF
   done <<EOF
 $(lane_worktree_roots "$lrc_lane" "$lrc_dir")
 EOF
+  # T018: THE PAIRED ROOT. A feature directory, and each declared leg's path
+  # under it, that holds a `.git` of its own and that nothing above named — a
+  # registration lost, or a clone where a worktree belongs. Anything else under
+  # it is the assembly's own working tree, where git answers too, so a `.git`
+  # is what makes a checkout here. A directory that cannot be listed is a read
+  # nobody made, never an empty one.
+  if [ "$lrc_lgrc" = 0 ] && [ -d "$lrc_dir/worktrees" ]; then
+    if [ ! -r "$lrc_dir/worktrees" ] || [ ! -x "$lrc_dir/worktrees" ]; then
+      lrc_legwhy="${lrc_legwhy:+$lrc_legwhy; }the assembly's paired root $lrc_dir/worktrees could not be listed"
+    else
+      for lrc_f in "$lrc_dir"/worktrees/*; do
+        [ -d "$lrc_f" ] && [ ! -L "$lrc_f" ] || continue
+        if [ ! -r "$lrc_f" ] || [ ! -x "$lrc_f" ]; then
+          lrc_legwhy="${lrc_legwhy:+$lrc_legwhy; }the assembly's feature directory $lrc_f could not be listed"
+          continue
+        fi
+        # THE FEATURE DIRECTORY ITSELF, then each declared leg's path under
+        # it — a relative one, as the standard writes them. The directory is
+        # passed through the ENVIRONMENT: `awk -v` reads escapes in a value,
+        # so a name holding `\` would come out as another path.
+        lrc_cands="$lrc_f
+$(printf '%s\n' "$lrc_legs" | LRC_F="$lrc_f" awk -F'\t' '$2 != "" && $2 !~ /^\// { p = $2; sub(/^\.\//, "", p); print ENVIRON["LRC_F"] "/" p }')"
+        while IFS= read -r lrc_c; do
+          [ -n "$lrc_c" ] && [ -d "$lrc_c" ] && [ ! -L "$lrc_c" ] || continue
+          lrc_cr="$(lane_real_path "$lrc_c")"
+          case "$lrc_seen" in *" $lrc_c "*|*" $lrc_cr "*) continue ;; esac
+          # A LEG'S DIRECTORY THAT CANNOT BE SEARCHED hides whether a `.git`
+          # stands in it: a read nobody made, never an empty directory.
+          if [ ! -x "$lrc_c" ]; then
+            lrc_legwhy="${lrc_legwhy:+$lrc_legwhy; }the assembly's paired tree directory $lrc_c could not be searched"
+            continue
+          fi
+          { [ -e "$lrc_c/.git" ] || [ -L "$lrc_c/.git" ]; } || continue
+          printf 'TREE%s%s%sunmanaged%s%s%sit sits in the assembly'\''s paired feature trees (%s/worktrees) and no sidecar of this lane names it; it is left exactly as it is\n' \
+            "$US" "$(tree_id_for "$lrc_c")" "$US" "$US" "$lrc_c" "$US" "$lrc_dir"
+          lrc_seen="$lrc_seen $lrc_c $lrc_cr "
+          lrc_unmanaged=$((lrc_unmanaged + 1))
+        done <<LRC_PAIRED
+$lrc_cands
+LRC_PAIRED
+      done
+    fi
+  fi
 
   # 5. THE VERDICT — the lifecycle word crossed with the holder, which is the
   # whole of what tells the two crash kinds apart.
@@ -13594,6 +14144,20 @@ EOF
   if [ "$lrc_drc" != 0 ] && [ "$lrc_drc" != 8 ] && [ "$lrc_v" != indeterminate ]; then
     lrc_v=indeterminate
     lrc_why="lane $lrc_lane's object log could not be read, so its coordinator directory is NOT established and neither the worktrees git registers there nor the trees on disk under its roots were inspected — no clearance is pronounced over paths nobody read (Amendment 7(d))"
+  fi
+  # T018: AN ASSEMBLY WHOSE LEGS COULD NOT BE READ is one whose leg
+  # registrations and paired trees nobody inspected — the same paths-nobody-read
+  # as an unreadable object log, and the same answer. It is said in the words
+  # `lane-worktrees`' sweep refuses with (`the legs of the assembly <dir> could
+  # not be read`), because the sweep reads this verdict FIRST and refuses on
+  # it: one fact, one spelling, whichever reader a person meets.
+  if [ "$lrc_lgrc" != 0 ] && [ "$lrc_lgrc" != 8 ] && [ "$lrc_v" != indeterminate ]; then
+    lrc_v=indeterminate
+    lrc_why="the legs of the assembly $lrc_dir could not be read (its project.yaml is there and unreadable), so which legs it declares — and the worktrees they register and the paired feature trees under $lrc_dir/worktrees — is NOT established, and no clearance is pronounced over paths nobody read (T018, Amendment 7(d))"
+  fi
+  if [ -n "$lrc_legwhy" ] && [ "$lrc_v" != indeterminate ]; then
+    lrc_v=indeterminate
+    lrc_why="lane $lrc_lane's checkout $lrc_dir is an assembly and not all of what its legs hold could be read ($lrc_legwhy), so no clearance is pronounced over paths nobody read (T018, Amendment 7(d))"
   fi
   printf 'TREES%s%s inventoried%s%s dirty or unpushed%s%s require recovery%s%s unmanaged or stale\n' \
     "$US" "$lrc_n" "$US" "$lrc_dirty" "$US" "$lrc_recover" "$US" "$lrc_unmanaged"
@@ -13838,7 +14402,10 @@ case "$cmd" in
   # RETIREMENT refusal (exit 2) naming the two acts that replace it. A
   # compatibility refusal that only fires where the register is already
   # reachable is not one.
-  session-start|guard|lane-groups|next-free|append-row-status) : ;;
+  # AND `project-legs` (T018) READS ONE `project.yaml` and nothing of the
+  # workspace, so `lane-worktrees`' daily report can ask it on a
+  # workstation where no register is configured.
+  session-start|guard|lane-groups|next-free|append-row-status|project-legs) : ;;
   *)
     if [ -z "$LANES_REPO" ] || [ -z "$LANES_DIR" ]; then
       die "$(lanes_workspace_why)" 1
@@ -14150,7 +14717,13 @@ Nothing was written." 2
         die "lane '$lane_new' is RETIRED: its row is in $LANES_ARCH_PATH, spelled $(printf '%s\n' "$ar_arch" | tr '\n' ' ')— and a retired position is NEVER REISSUED (Amendment 19(b)). That lane's object log is $(log_path_for "$lane_new") and it is append-only, so a second lane under this name would write its life into the first one's file and every read of that log would answer for two lanes at once. Take a free position instead — \`lanes --prefix <repo>\` prints the next one and the line that takes it. Nothing was written." 2
       fi
       ar_hits="$(rows_named_ci_local "$lane_new")"
-      ar_pub="$(rows_named_ci "$lane_new" 2>/dev/null || :)"
+      # THE PUBLISHED ROWS ARE READ WITH THEIR STATUS (Copilot round 21 on #93,
+      # #138 item 18). Through `|| :` a register origin has and git could not
+      # read was "no row there", and a row this checkout had not pulled was
+      # appended a second time — and landed, wherever the rebase did not clash.
+      ar_pub=""
+      ar_pub="$(rows_named_ci "$lane_new" 2>/dev/null)" ||
+        die "the published register on origin/$LANES_BRANCH could not be read, so whether '$lane_new' already has a row there is not known — and that is NOT 'it has none' (Amendment 7(d)): a row this checkout has not pulled would be added a second time. Fix the read and re-run; nothing was written." 1
       ar_all="$(printf '%s\n%s\n' "$ar_hits" "$ar_pub" | grep -v '^$' | LC_ALL=C sort -u || :)"
       ar_n="$(printf '%s' "$ar_all" | grep -c . || :)"
       ar_ln="$(printf '%s' "$ar_hits" | grep -c . || :)"
@@ -14205,6 +14778,9 @@ Nothing was written." 2
         msg="$msg + sweeps uncommitted edit to row $other"
       fi
     fi
+    # #194 — the one write that, with nothing to stage, publishes the local
+    # commits ahead of origin: it is the RECOVERY's re-run. See commit_push.
+    CP_PUBLISH_AHEAD=1
     commit_push "LANES(${LANES_LANE:-unknown}@$WS): $msg"
     ;;
 
@@ -17500,6 +18076,30 @@ EOF
     esac
     ;;
 
+  # opensoft/openRepoTools#186, plan task T018 — THE LEGS A CHECKOUT'S
+  # `project.yaml` DECLARES, by path: `assembly_legs` above, which is the one
+  # reader every lane tool asks (`lane-worktrees`' sweep, report and `add`, and
+  # `lane-handoff`'s writer poll), so no two of them can read a triad two ways.
+  # It reads one file and touches no workspace, so it answers on a workstation
+  # with no register configured too (the dispatcher exempts it).
+  #
+  #   0  <repository><TAB><path as declared><TAB><where it is checked out>, a leg a line
+  #   8  no legs: no project.yaml there, or one naming no leg but the checkout itself
+  #   1  a project.yaml is there and could not be read — which is never "no legs"
+  #  64  a usage error of this subcommand's own
+  project-legs)
+    pla="${1-}"; [ -n "$pla" ] || die "usage: project-legs <checkout>" 64
+    [ "$#" -le 1 ] || die "project-legs takes one directory: project-legs <checkout>" 64
+    case "$pla" in /*) : ;; *) die "project-legs takes an ABSOLUTE path: a relative one means whatever the calling process's directory happens to be, and that is never the checkout being asked about" 64 ;; esac
+    pla_out=""; pla_rc=0
+    pla_out="$(assembly_legs "$pla")" || pla_rc=$?
+    case "$pla_rc" in
+      0) printf '%s\n' "$pla_out" ;;
+      8) exit 8 ;;
+      *) die "${pla%/}/project.yaml is there and could not be read, so which legs that checkout declares is NOT known — which is not the same as none (R22, Amendment 7(d))" 1 ;;
+    esac
+    ;;
+
   lane-reconcile)
     lane="${1-}"; [ -n "$lane" ] || die "usage: lane-reconcile <lane>" 64
     [ "$#" -le 1 ] || die "lane-reconcile takes one lane: lane-reconcile <lane>" 64
@@ -17589,6 +18189,6 @@ EOF
     ;;
 
   *)
-    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|retire-rows|archive-rows|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|binding|request-handoff|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|duplicate-holder|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|register-row-local|retired-identity|canon-lane|resolve-home|managed-projection|lane-state|set-lane-state|lane-trees|set-lane-tree|lane-tree-now|lane-reconcile|lane-holders|legacy-restart-check|publish-handoff|restart-intent|set-restart-intent|worktrees|pathspec-check)" 2
+    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|retire-rows|archive-rows|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|binding|request-handoff|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|duplicate-holder|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|register-row-local|retired-identity|canon-lane|resolve-home|managed-projection|lane-state|set-lane-state|lane-trees|set-lane-tree|lane-tree-now|project-legs|lane-reconcile|lane-holders|legacy-restart-check|publish-handoff|restart-intent|set-restart-intent|worktrees|pathspec-check)" 2
     ;;
 esac

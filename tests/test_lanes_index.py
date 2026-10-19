@@ -508,6 +508,61 @@ def test_the_compare_and_swap_refuses_a_provenance_that_moved(estate):
     assert dump(estate.sqlite, with_utc=True) == before
 
 
+def _export_image(out: Path) -> dict:
+    return {p.name: p.read_text(encoding="utf-8") for p in sorted(out.iterdir())}
+
+
+@pytest.mark.parametrize("journal,wait", [("wal", 60.0), ("delete", 5.0)])
+def test_an_export_is_one_commits_image_when_a_sync_lands_mid_read(estate, monkeypatch,
+                                                                     journal, wait):
+    """ONE READ SNAPSHOT (opensoft/openRepoTools#166 item 1): `export` read the
+    provenance and each table as statements of their own, so a sync landing
+    between two of them wrote rows of two commits under a `meta` naming the
+    first. A sync is landed after the export's FIRST table - in WAL mode it
+    commits at once, and the export keeps its snapshot; in the rollback
+    journal it waits for the export's read lock (`wait` bounds how long this
+    case waits for it to finish first) and lands after - and the export is the
+    old commit's image or the new one, never a mix of the two."""
+    assert estate.index("sync").returncode == 0
+    conn = sqlite3.connect(str(estate.sqlite))
+    assert conn.execute(f"PRAGMA journal_mode={journal}").fetchone()[0] == journal
+    conn.close()
+    old = estate.root / "old"
+    old.mkdir()
+    assert estate.index("export", "--out", old).returncode == 0
+    assert estate.note("repoA-2", "a note a sync lands mid-export").returncode == 0
+    _as_estate(monkeypatch, estate)
+    mod = load_indexer()
+    real_rows = mod.SqliteStore.rows
+    syncs: list = []
+
+    def rows_then_a_sync(self, table, source, columns):
+        got = real_rows(self, table, source, columns)
+        if not syncs:
+            syncs.append(subprocess.Popen(
+                [sys.executable, str(INDEXER), "sync"], cwd=str(estate.root),
+                env=dict(estate.env, LANES_EDIT=str(LANES_EDIT)), stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
+            try:
+                syncs[0].wait(timeout=wait)
+            except subprocess.TimeoutExpired:
+                pass  # its commit is waiting on this export's read lock
+        return got
+
+    monkeypatch.setattr(mod.SqliteStore, "rows", rows_then_a_sync)
+    got = estate.root / "got"
+    got.mkdir()
+    assert mod.cmd_export(str(got), None) == 0
+    out, err = syncs[0].communicate(timeout=60)
+    assert syncs[0].returncode == 0 and "upserted" in out, (out, err)
+    new = estate.root / "new"
+    new.mkdir()
+    assert estate.index("export", "--out", new).returncode == 0
+    images = {"old": _export_image(old), "new": _export_image(new)}
+    assert images["old"] != images["new"], "the sync landed nothing: vacuous"
+    assert _export_image(got) in images.values(), "the export mixed two commits' rows"
+
+
 # ============================================================ the hung indexer
 
 STUB = """#!/bin/sh
@@ -702,15 +757,31 @@ def test_the_index_read_is_byte_identical_to_the_source_read(estate):
     """`--index` ANSWERS EXACTLY WHAT THE SOURCES ANSWER where the index is
     current — the listing's AGE column, which is the clock's, the one
     permitted difference — and says so on stderr. Then a write the index has
-    not followed: the lag is SAID, never refused."""
+    not followed: the lag is SAID, never refused.
+
+    STDERR TOO (opensoft/openRepoTools#166 item 3): `history repoA-1` prints
+    LOG_AWK's warnings for its log's nine unreadable lines AND the count that
+    closes them, and `history repoA-1 --index` said the nine without the
+    count. Two lines are the flag's own and are set aside on both sides: the
+    `read:` line, and `history`'s no-fetch note where the index answered - the
+    read is the index's, so that arm fetches nothing in front of it."""
     assert estate.index("sync").returncode == 0
     sha12 = estate.tip()[:12]
+
+    def told(stderr: str) -> str:
+        return "".join(line for line in stderr.splitlines(keepends=True)
+                       if not line.startswith("read: ")
+                       and "not fetching; reading origin/" not in line)
+
     for argv in READS:
         src, idx = _pair(estate, argv)
         assert idx.returncode == src.returncode, (argv, idx.stderr)
         assert AGE.sub("<AGE>", idx.stdout) == AGE.sub("<AGE>", src.stdout), argv
         assert f"read: index (sqlite) at register@{sha12}; 0 commits behind" in idx.stderr, (argv, idx.stderr)
         assert "read: " not in src.stderr
+        assert told(idx.stderr) == told(src.stderr), (argv, idx.stderr, src.stderr)
+    src, _idx = _pair(estate, ("bash", LANES_EDIT, "history", "repoA-1"))
+    assert "9 unreadable line(s) above" in src.stderr, "the fixture lost its unreadable lines: vacuous"
     assert estate.note("repoA-1", "a note the index has not seen").returncode == 0
     src, idx = _pair(estate, ("bash", LANES_EDIT, "history", "repoA-1"))
     assert idx.returncode == 0
@@ -990,14 +1061,75 @@ with open(log, "a") as handle:
 if vfile and "CREATE TABLE IF NOT EXISTS" in stdin:
     with open(vfile, "w") as handle:
         handle.write("1\n")
+
+
+def echo(text):
+    # `\echo` AS psql's OWN LEXER READS IT (opensoft/openRepoTools#166 item 4;
+    # psqlscanslash.l's `xslashquote`): words split on blanks, a quoted run
+    # taken whole, and inside the quotes `''`, `\n \t \b \r \f`, octal
+    # `\ooo` and hex `\xhh` decoded - so the marker the indexer sends is the
+    # marker its parser reads back, and a wrong escape is wrong here too.
+    words, word, quoted, i = [], "", False, 0
+    while i < len(text):
+        ch = text[i]
+        if not quoted and ch in " \t":
+            if word:
+                words.append(word)
+                word = ""
+            i += 1
+        elif ch == "'" and quoted and text[i + 1:i + 2] == "'":
+            word, i = word + "'", i + 2
+        elif ch == "'":
+            quoted, i = not quoted, i + 1
+        elif quoted and ch == "\\" and i + 1 < len(text):
+            nxt = text[i + 1]
+            octal = len(text[i + 1:i + 4]) - len(text[i + 1:i + 4].lstrip("01234567"))
+            hexes = len(text[i + 2:i + 4]) - len(text[i + 2:i + 4].lstrip("0123456789abcdefABCDEF"))
+            if nxt in "ntbrf":
+                word, i = word + {"n": "\n", "t": "\t", "b": "\b", "r": "\r", "f": "\f"}[nxt], i + 2
+            elif octal:
+                word, i = word + chr(int(text[i + 1:i + 1 + octal], 8)), i + 1 + octal
+            elif nxt == "x" and hexes:
+                word, i = word + chr(int(text[i + 2:i + 2 + hexes], 16)), i + 2 + hexes
+            else:
+                word, i = word + nxt, i + 2
+        else:
+            word, i = word + ch, i + 1
+    if word:
+        words.append(word)
+    return " ".join(words)
+
+
 for line in stdin.splitlines():
     if line.startswith("COPY (SELECT version"):
         if version:
             print(version)
     elif line.startswith("\\echo"):
-        print("\x1eLANES-INDEX-NEXT")
+        print(echo(line[len("\\echo"):]))
 sys.exit(0)
 """
+
+
+def test_the_fake_psql_decodes_echo_as_psql_does(tmp_path):
+    """THE FAKE DOES NOT HARD-CODE THE MARKER (opensoft/openRepoTools#166 item
+    4): it prints what psql would for each `\\echo`, so `\\036` arrives as byte
+    0x1E only because psql's escapes say so - and an argument that is not the
+    marker is not the marker."""
+    fake = tmp_path / "psql"
+    fake.write_text(FAKE_PSQL)
+    fake.chmod(0o755)
+    script = "\n".join([
+        "\\echo '\\036LANES-INDEX-NEXT'",
+        "\\echo 'it''s' two   words",
+        "\\echo 'a\\tb\\x41\\101\\q'",
+        "\\echo plain",
+        ""])
+    res = subprocess.run([sys.executable, str(fake), "-d", "postgresql://x@db.invalid/qa"],
+                         input=script, capture_output=True, text=True, check=False,
+                         env=dict(os.environ, FAKE_PSQL_LOG=str(tmp_path / "log")))
+    assert res.returncode == 0, res.stderr
+    assert res.stdout.split("\n") == ["\x1eLANES-INDEX-NEXT", "it's two words", "a\tbAAq",
+                                      "plain", ""], res.stdout
 
 
 def test_postgres_takes_the_writer_to_write_and_the_reader_to_read(estate):
@@ -1042,6 +1174,36 @@ def test_postgres_takes_the_writer_to_write_and_the_reader_to_read(estate):
     assert all(c["passfile"] == str(rpw) for c in calls)
     assert not any("INSERT" in c["stdin"] or "CREATE" in c["stdin"] for c in calls)
     assert "postgres" in st.stdout
+
+
+def test_a_postgres_export_is_one_repeatable_read_transaction(estate):
+    """ONE READ SNAPSHOT ON POSTGRES TOO (opensoft/openRepoTools#166 item 1):
+    each `rows()` was a `psql` session of its own. The export's provenance and
+    its five tables now go in ONE `psql` call, inside `BEGIN ISOLATION LEVEL
+    REPEATABLE READ READ ONLY` ... `COMMIT`, which is one snapshot."""
+    fake = estate.root / "pgfake"
+    fake.mkdir()
+    (fake / "psql").write_text(FAKE_PSQL)
+    (fake / "psql").chmod(0o755)
+    log = estate.root / "psql.jsonl"
+    estate.write_config("url=postgresql://lanes_writer@db.invalid/qa\n"
+                        "reader_url=postgresql://lanes_reader@db.invalid/qa\n")
+    out = estate.root / "exp"
+    out.mkdir()
+    exp = estate.index("export", "--out", out,
+                       env={"PATH": estate.path_with(fake), "FAKE_PSQL_LOG": str(log)})
+    # the fake holds no provenance, so the answer is `wiped` - read in the batch
+    assert exp.returncode == 3 and (out / "why").read_text().startswith("wiped"), exp.stderr
+    calls = [json.loads(l)["stdin"] for l in log.read_text().splitlines()]
+    reads = [c for c in calls if "FROM provenance" in c]
+    assert len(reads) == 1, calls
+    script = reads[0]
+    assert "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;" in script, script
+    begin = script.index("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;")
+    end = script.rindex("COMMIT;")
+    assert begin < script.index("FROM provenance WHERE") < end, script
+    for table in ("source_files", "lanes", "register_lines", "lane_aliases", "log_lines"):
+        assert begin < script.index(f"FROM {table} WHERE") < end, (table, script)
 
 
 def test_a_read_never_connects_with_the_writers_credential(estate):
@@ -1828,6 +1990,12 @@ def test_the_index_read_of_the_worktrees_is_the_source_read(inv):
         assert re.search(r"read: index \(sqlite\) at inventory:Eagle synced " + UTC.pattern,
                          idx.stderr), idx.stderr
         assert "read: " not in src.stderr
+        # THE FOOTER NAMES WHERE ITS ACT RUNS (opensoft/openRepoTools#173,
+        # Copilot's fourth review of #171): an index read lists other
+        # workstations' rows, and `lane-reconcile` reads only the disk and
+        # the sidecars of the workstation it runs on.
+        assert "lanes-edit.sh lane-reconcile <lane>, run ON THE WORKSTATION its rows name" \
+            in idx.stdout, idx.stdout
     (inv.run_tree / "unseen.txt").write_text("the index has not followed this\n")
     inv.ok("set-lane-tree", "repoA-1", str(inv.run_tree), "--checkout", str(inv.repo))
     src = _wt(inv, "repoA-1")
@@ -2081,6 +2249,63 @@ def test_the_inventory_source_is_this_workstations_alone(inv):
     assert both.returncode == 64
 
 
+def test_a_source_is_refused_before_the_lock_is_asked_for(estate):
+    """REFUSED WITH THE LOCK HELD TOO (opensoft/openRepoTools#173, Copilot's
+    fourth review of #171): a sync that finds the lock held leaves a mark for
+    its source and exits 0, and the holder then syncs THIS workstation's
+    source for it. So another workstation's inventory, an inventory in a
+    container with no name, and another register are refused before the lock
+    is asked for - exit 2, and no mark."""
+    import fcntl
+    state = estate.state / "openRepoTools"
+    state.mkdir(parents=True, exist_ok=True)
+    with open(state / "lanes-index.lock", "a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        other = estate.index("sync", "--source", "inventory:Raven")
+        nameless = estate.index("sync", "--source", "inventory",
+                                env={"LANES_WORKSTATION": None, "LANES_IN_CONTAINER": "1"})
+        register = estate.index("sync", "--source", "register:someone/else")
+        assert not list(state.glob("lanes-index.rerun*")), "a refused source left a mark"
+        own = estate.index("sync", "--source", "inventory")
+    assert other.returncode == 2, (other.stdout, other.stderr)
+    assert "this workstation's inventory is inventory:Eagle, not inventory:Raven" in other.stderr
+    assert nameless.returncode == 2 and "LANES_WORKSTATION" in nameless.stderr, nameless.stderr
+    assert register.returncode == 2, (register.stdout, register.stderr)
+    assert "not register:someone/else" in register.stderr
+    # NOT VACUOUS: this workstation's own source, the lock still held, marks
+    assert own.returncode == 0 and "another sync holds" in own.stdout, own.stdout
+    assert [p.name for p in state.glob("lanes-index.rerun*")] == ["lanes-index.rerun-inventory"]
+
+
+def test_a_damaged_table_under_valid_provenance_is_unusable_not_a_traceback(estate):
+    """`rows()` SPEAKS `StoreUnusable` (opensoft/openRepoTools#173, Copilot's
+    fourth review of #171): with the inventory's provenance valid and its
+    `worktrees` table gone, `status` says `rows: unread` rather than printing a
+    traceback, and `export --worktrees` leaves by the unusable path - `why`,
+    exit 3 - so the read flag says why it read the sources."""
+    assert estate.index("sync").returncode == 0
+    conn = sqlite3.connect(str(estate.sqlite))
+    conn.execute("INSERT INTO provenance (source, commit_sha, generation, indexed_utc, "
+                 "schema_version) VALUES ('inventory:Eagle', ?, 1, '2026-10-13T00:00:00Z', 1)",
+                 ("a" * 64,))
+    conn.execute("DROP TABLE worktrees")
+    conn.commit()
+    conn.close()
+    st = estate.index("status")
+    assert "Traceback" not in st.stderr, st.stderr
+    assert st.returncode == 1, (st.stdout, st.stderr)
+    assert re.search(r"rows: +unread - wiped: .*no such table: worktrees", st.stdout), st.stdout
+    out = estate.root / "exp"
+    out.mkdir()
+    exp = estate.index("export", "--out", out, "--worktrees")
+    assert "Traceback" not in exp.stderr, exp.stderr
+    assert exp.returncode == 3, (exp.returncode, exp.stderr)
+    assert (out / "why").read_text().startswith("wiped: ")
+    assert "no such table: worktrees" in (out / "why").read_text()
+    listed = estate.run("bash", LANES, "--worktrees", "--index")
+    assert "read: sources (index wiped: " in listed.stderr, listed.stderr
+
+
 def test_a_lane_bound_elsewhere_has_no_liveness_pronounced_here(inv):
     """AMENDMENT 18(b) FOR `writer_live`: a lane whose last STARTED/RESUMED bound
     it on another host cannot be pronounced not-live from here - its session
@@ -2136,6 +2361,134 @@ def test_an_inventory_that_cannot_be_read_keeps_its_rows(inv):
         listed = _wt(inv)
         assert "inventory NOT READ" in listed.stdout, listed.stdout
         assert "could not be read: that is NOT a lane with no worktrees" in listed.stdout
+        # AND THE INDEX SAYS THE ROWS ARE HELD (opensoft/openRepoTools#173): the
+        # two it kept are listed beside the NOT READ line the sidecars give,
+        # which says they are an earlier sync's - not rows freshly read.
+        idx = _wt(inv, "repoA-1", "--index")
+        assert idx.returncode == 0 and "read: index (sqlite)" in idx.stderr, idx.stderr
+        assert str(inv.run_tree) in idx.stdout and str(inv.dirty_tree) in idx.stdout, idx.stdout
+        assert re.search(r"inventory NOT READ: its trees directory \S+ is there and could not be "
+                         r"listed - the 2 row\(s\) listed for it are kept from the last sync that "
+                         r"read it", idx.stdout), idx.stdout
+    finally:
+        trees.chmod(0o755)
+    # READ AGAIN, THE MARK LEAVES: the index read is the source read once more.
+    healed = inv.sync()
+    assert healed.returncode == 0 and "0 upserted, 1 removed" in healed.stdout, healed.stdout
+    src, idx = _wt(inv, "repoA-1"), _wt(inv, "repoA-1", "--index")
+    assert (idx.returncode, idx.stdout) == (src.returncode, src.stdout), idx.stdout
+    assert "NOT READ" not in idx.stdout
+
+
+def test_a_tree_with_no_path_is_a_tree_and_not_an_unread_marker(inv):
+    """A TREE'S PATH CAN BE EMPTY (the review of #219 at ab853b1): a
+    current-schema sidecar with a `tree:` and no `path:` is a `TREE` line
+    whose path is empty, and a marker read from the empty path alone exported
+    it as `UNREAD` and counted its lane as not read. The marker is a row with
+    no path AND the branch `unreadable inventory (...)`, which no git ref can
+    be; it has a key of its own, so holding the lane never writes it over such
+    a tree; and two trees of one lane with one path are two rows, as they are
+    two lines of the source read."""
+    trees = inv.lsr / "repoM-1" / "trees"
+    for tid, branch in (("c1-nopath-x", "feat/x"), ("c2-nopath-y", "feat/y")):
+        (trees / f"{tid}.yaml").write_text("\n".join([
+            "schema: 1", "lane: repoM-1", f"tree: {tid}", "checkout: unknown",
+            f"branch: {branch}", "head: " + "3" * 40, "upstream: none", "dirty: 0",
+            "unpushed: 0", "writer: none", "generation: 0", "operation: none",
+            "observed: 2026-10-04T00:00:00Z", ""]))
+    res = inv.sync()
+    assert res.returncode == 0, res.stderr
+    src, idx = _wt(inv, "repoM-1"), _wt(inv, "repoM-1", "--index")
+    assert "read: index (sqlite)" in idx.stderr, idx.stderr
+    assert "feat/x" in src.stdout and "feat/y" in src.stdout, src.stdout
+    assert (idx.returncode, idx.stdout) == (src.returncode, src.stdout), idx.stdout
+    assert "NOT READ" not in idx.stdout
+    st = inv.e.index("status")
+    assert "rows:        7 worktree(s)\n" in st.stdout, st.stdout
+    # HELD OVER, ALL THREE STAY, the two with no path among them.
+    trees.chmod(0)
+    try:
+        if os.access(trees, os.R_OK):
+            pytest.skip("this account reads a mode-000 directory (root): nothing to prove here")
+        assert inv.sync().returncode == 0
+        idx = _wt(inv, "repoM-1", "--index")
+        assert "feat/x" in idx.stdout and "feat/y" in idx.stdout, idx.stdout
+        assert "the 3 row(s) listed for it are kept from the last sync" in idx.stdout, idx.stdout
+    finally:
+        trees.chmod(0o755)
+    healed = inv.sync()
+    assert healed.returncode == 0 and "0 upserted, 1 removed" in healed.stdout, healed.stdout
+    src, idx = _wt(inv, "repoM-1"), _wt(inv, "repoM-1", "--index")
+    assert (idx.returncode, idx.stdout) == (src.returncode, src.stdout), idx.stdout
+
+
+def test_a_tree_whose_branch_reads_like_a_marker_is_a_tree(inv):
+    """THE MARKER IS ITS KEY (the delta check of #219 at 5bf29d9): a hand-made
+    sidecar with no `path:` and a branch that begins `unreadable inventory (`
+    is a tree no git ref names, and still a tree - exported as its `TREE`
+    line and counted as a worktree - because a marker is the row keyed
+    `unread_key(<lane>)`, which no tree's key can be."""
+    tid = "c3-forged-branch"
+    (inv.lsr / "repoM-1" / "trees" / f"{tid}.yaml").write_text("\n".join([
+        "schema: 1", "lane: repoM-1", f"tree: {tid}", "checkout: unknown",
+        "branch: unreadable inventory (forged by hand)", "head: " + "4" * 40,
+        "upstream: none", "dirty: 0", "unpushed: 0", "writer: none", "generation: 0",
+        "operation: none", "observed: 2026-10-04T00:00:00Z", ""]))
+    res = inv.sync()
+    assert res.returncode == 0, res.stderr
+    src, idx = _wt(inv, "repoM-1"), _wt(inv, "repoM-1", "--index")
+    assert "read: index (sqlite)" in idx.stderr, idx.stderr
+    assert "unreadable inventory (forged by hand)" in src.stdout, src.stdout
+    assert (idx.returncode, idx.stdout) == (src.returncode, src.stdout), idx.stdout
+    assert "NOT READ" not in idx.stdout
+    st = inv.e.index("status")
+    assert "rows:        6 worktree(s)\n" in st.stdout, st.stdout
+
+
+def test_an_inventory_sync_asks_for_the_workstation_once(estate):
+    """ONE `workstation` READ A SYNC (the review of #219 at ab853b1): the
+    refusal before the lock asks `lanes-edit.sh workstation`, and a sync that
+    then takes the lock asked a second time for the same answer. It is the
+    process's own and is asked once."""
+    calls = estate.root / "helper-calls"
+    wrapper = estate.root / "lanes-edit-counting"
+    wrapper.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$1\" >> {calls}\n"
+                       f"exec bash {LANES_EDIT} \"$@\"\n")
+    wrapper.chmod(0o755)
+    res = estate.index("sync", "--source", "inventory", env={"LANES_EDIT": str(wrapper)})
+    assert res.returncode == 0, (res.stdout, res.stderr)
+    asked = calls.read_text().splitlines()
+    assert "worktrees" in asked, asked  # not vacuous: the sync took the lock and read
+    assert asked.count("workstation") == 1, asked
+
+
+def test_a_first_sync_that_cannot_read_a_lane_says_not_read_in_the_index(inv):
+    """A FIRST SYNC IS NOT AN EMPTY ANSWER (opensoft/openRepoTools#173): a lane
+    whose `trees` directory is there and cannot be listed at the FIRST sync has
+    no rows to keep, and the sync committed usable provenance with nothing for
+    it - so `lanes --index --worktrees <lane>` answered "no worktree is
+    inventoried" where the sidecars say NOT READ. The lane's marker row is
+    exported as the source's own `UNREAD` line, so the two reads are the same
+    bytes; and a replay of the same read writes nothing."""
+    trees = inv.lsr / "repoA-1" / "trees"
+    trees.chmod(0)
+    try:
+        if os.access(trees, os.R_OK):
+            pytest.skip("this account reads a mode-000 directory (root): nothing to prove here")
+        res = inv.sync()
+        assert res.returncode == 0, res.stderr
+        for args in (("repoA-1",), ()):
+            src = _wt(inv, *args)
+            idx = _wt(inv, *args, "--index")
+            assert "read: index (sqlite)" in idx.stderr, (args, idx.stderr)
+            assert "no worktree is inventoried" not in idx.stdout, (args, idx.stdout)
+            assert (idx.returncode, idx.stdout) == (src.returncode, src.stdout), (args, idx.stdout)
+            assert "inventory NOT READ" in idx.stdout, (args, idx.stdout)
+        st = inv.e.index("status")
+        assert "rows:        3 worktree(s), and 1 lane(s) whose inventory could not be read " \
+            "at the last sync" in st.stdout, st.stdout
+        again = inv.sync()
+        assert again.returncode == 0 and "nothing to write" in again.stdout, again.stdout
     finally:
         trees.chmod(0o755)
 
