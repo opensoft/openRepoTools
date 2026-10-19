@@ -1935,7 +1935,8 @@ def tag_of(version: str) -> str:
 
 
 #: contracts/workflows.md's table, row by row: `(repository, ref, version,
-#: (to-testpypi, to-pypi))`, and `None` where the build refuses.
+#: (to-testpypi, to-pypi))`, and `None` where the build refuses. The last row
+#: is a ref that is neither a tag nor a branch, which the guard refuses too.
 GUARD_ROWS = (
     [pytest.param(CODE_LEG, tag_of(v), v, ("true", "true"),
                   id=f"code-leg-a-tag-final-{v}") for v in FINALS]
@@ -1961,6 +1962,8 @@ GUARD_ROWS = (
                     id=f"code-leg-{ref_name(ref).replace('/', '-')}")
        for ref in ("refs/heads/main", "refs/heads/release/v1.1",
                    "refs/heads/feature/a-b")]
+    + [pytest.param(CODE_LEG, "refs/pull/1/merge", "1.1.0", None,
+                    id="code-leg-a-pull-request-ref")]
 )
 
 
@@ -2005,9 +2008,10 @@ def test_release_guard_build_decides_by_the_table(tmp_path, repository, ref,
                                                   version, decision):
     """FR-048, ROW BY ROW: the code leg sends a final to both indexes and a
     pre-release to TestPyPI; this repository a pre-release to TestPyPI and a
-    final nowhere, refused; any other repository is refused on a tag; and a
-    branch is the rehearsal everywhere, passing with nothing to upload. The
-    guard decides from those three variables alone and asks no forge."""
+    final nowhere, refused; any other repository is refused on a tag; a
+    branch is the rehearsal everywhere, passing with nothing to upload; and a
+    ref that is neither, a pull request's, is refused. The guard decides from
+    those three variables alone and asks no forge."""
     workflow = release()
     runner = Runner(tmp_path, workflow, "build",
                     guard_values(repository, ref, version))
