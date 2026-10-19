@@ -62,6 +62,118 @@ for f in lane-start lane-end lanes-edit.sh link-estates lane lanes lane-rename l
 done
 [ -f "$SRC_DIR/repos.tsv" ] || { echo "missing: $SRC_DIR/repos.tsv" >&2; exit 1; }
 
+# WHERE THE TIME GOES, MEASURED BEFORE ANYTHING IS CHANGED (opensoft/openRepoTools#77,
+# step 1a). The nightly runs this file for about 45 minutes and the only number
+# anybody has is the whole of it: lane 1's one instrumented run on WSL put 56% of
+# the wall in the exit trap's `rm -rf "$SANDBOX"` and 57% of the rest in two
+# sections, from ONE run, under contention, on one workstation. Nothing about a
+# CI runner's own split was ever printed, and the pytest wrapper prints this
+# file's transcript only when the suite FAILS, so a green run said nothing at
+# all. Three things, all of them reading and none of them changing what is run:
+#
+#   `section "== … =="`  prints a heading exactly as `echo` did and stamps the
+#                        clock beside it, so each section's whole-second wall
+#                        time is a row by the time the footer is reached;
+#   `section_report`     prints those rows, longest first, just before the
+#                        footer — which stays the LAST line on stdout, because
+#                        the wrapper looks for ` passed, 0 failed` there;
+#   `cleanup`            times its own `rm -rf` and says so on stderr.
+#
+# AND BOTH GO TO THE JOB'S STEP SUMMARY where CI names one. A passing run's
+# stdout and stderr are both captured by the wrapper and thrown away, so a
+# table that only reached them would be one nobody reads on the runs that
+# matter. `$GITHUB_STEP_SUMMARY` is a file the runner reads after the step, it
+# is an absolute path and survives the `HOME` and `TMPDIR` this suite moves
+# below, and a write to it that fails is a note on stderr and never a failed
+# assertion: a timing table is not a reason to turn a green run red.
+#
+# `$SECONDS` AND NOT `date +%s` OR `$EPOCHREALTIME`: it is bash's own clock, so
+# a heading costs no process (this file spawns enough of them), and it is in the
+# bash 3.2 this file is written for, which `$EPOCHREALTIME` (5.0) is not. The price
+# is whole seconds, so a row is good to one second either way — which is nothing
+# beside the sections and the teardown this is here to find. It is read as a
+# DIFFERENCE from `SUITE_T0`, because bash takes a `SECONDS` from the
+# environment as its starting value and an absolute read would carry it.
+#
+# Rows are kept as `<seconds><TAB><heading>` lines in one string, not in an
+# array: `"${rows[@]}"` on an empty array is an unbound variable under `set -u`
+# in the bash 3.2 above. The first row, `(preamble …)`, is everything before the
+# first heading — the fakes and the fixtures — and the rows add up to the clock
+# at the table exactly, because each heading closes the last one at the very
+# reading it opens its own with.
+SUITE_T0=$SECONDS
+SECTION_TAB=$'\t'
+SECTION_NAME="(preamble, before the first heading)"
+SECTION_T0=$SUITE_T0
+SECTION_ROWS=""
+TEARDOWN_SAID=""
+
+section_close() {   # <clock reading> — the open section's row, once
+  [ -n "$SECTION_NAME" ] || return 0
+  SECTION_ROWS="${SECTION_ROWS}$(($1 - SECTION_T0))${SECTION_TAB}${SECTION_NAME}"$'\n'
+  SECTION_NAME=""
+}
+
+section() {   # <== heading ==> — printed as `echo` printed it, and clocked
+  local sc_now=$SECONDS
+  section_close "$sc_now"
+  echo "$1"
+  SECTION_NAME="${1#== }"
+  SECTION_NAME="${SECTION_NAME% ==}"
+  SECTION_T0=$sc_now
+}
+
+step_summary() {   # <markdown> — appended to the job's step summary, when CI names one
+  [ -n "${GITHUB_STEP_SUMMARY:-}" ] || return 0
+  printf '%s\n' "$1" >> "$GITHUB_STEP_SUMMARY" ||
+    echo "note: could not append to GITHUB_STEP_SUMMARY ($GITHUB_STEP_SUMMARY)" >&2
+  return 0
+}
+
+section_report() {
+  local sr_now=$SECONDS sr_total sr_sorted sr_secs sr_name sr_pct sr_text="" sr_md=""
+  section_close "$sr_now"
+  sr_total=$((sr_now - SUITE_T0))
+  # Longest first, and by name within a second, so two runs of one suite print
+  # their ties in one order. `LC_ALL=C` because the headings carry em dashes and
+  # a locale's collation is not what a table of seconds is for.
+  sr_sorted="$(printf '%s' "$SECTION_ROWS" | LC_ALL=C sort -t "$SECTION_TAB" -k1,1nr -k2,2)"
+  while IFS="$SECTION_TAB" read -r sr_secs sr_name; do
+    [ -n "$sr_name" ] || continue
+    sr_pct=$(( sr_total > 0 ? sr_secs * 100 / sr_total : 0 ))
+    sr_text="${sr_text}$(printf '%6s s  %3s%%  %s' "$sr_secs" "$sr_pct" "$sr_name")"$'\n'
+    # No heading holds a `|`, which would split its cell; none ever has.
+    sr_md="${sr_md}| ${sr_secs} | ${sr_pct}% | ${sr_name} |"$'\n'
+  done <<SECTION_SORTED
+${sr_sorted}
+SECTION_SORTED
+  printf 'wall time per section, longest first (whole seconds; opensoft/openRepoTools#77):\n'
+  printf '%s' "$sr_text"
+  printf '%6s s  100%%  the whole run, from the top of this file to this table\n' "$sr_total"
+  step_summary "### Shell suite: wall time per section
+
+Whole seconds read from bash's own clock, so each row is good to one second; longest first. The sandbox teardown at exit is timed separately, below.
+
+| seconds | share | section |
+|---:|---:|---|
+${sr_md}| **${sr_total}** | 100% | **the whole run, from the top of the suite to this table** |
+"
+}
+
+teardown_report() {   # <seconds> <took|failed> — stderr, because the footer is stdout's last line
+  if [ "$2" = took ]; then
+    printf 'teardown: rm -rf of the sandbox took %s s\n' "$1" >&2
+    step_summary "### Shell suite: sandbox teardown
+
+The exit trap's \`rm -rf\` of the suite's sandbox took **$1 s** (whole seconds). It runs after the footer, so it is in none of the rows above."
+  else
+    printf 'teardown: rm -rf of the sandbox FAILED after %s s, so part of it is left behind\n' "$1" >&2
+    step_summary "### Shell suite: sandbox teardown
+
+The exit trap's \`rm -rf\` of the suite's sandbox **FAILED after $1 s** (whole seconds), so part of it is left behind. It runs after the footer, so it is in none of the rows above."
+  fi
+}
+
 SANDBOX="$(mktemp -d)"
 # Set before the traps below, so `cleanup` never reads an inherited value.
 A11T_ROOT=""
@@ -109,10 +221,31 @@ cleanup() {
   [ -n "${PART_CHILD_B:-}" ] && kill -KILL "$PART_CHILD_B" 2>/dev/null
   [ -n "${GD_DUP:-}" ] && kill "$GD_DUP" 2>/dev/null
   [ -n "${TH73_PID:-}" ] && kill "$TH73_PID" 2>/dev/null
+  # opensoft/openRepoTools#77, step 1a: THE TEARDOWN IS TIMED, both removals
+  # together, and said ONCE, by a flag. The INT and TERM handlers below call
+  # this and then `exit`, which runs the EXIT trap and so this function a second
+  # time; a second line would repeat the first, or say "took 0 s" about nothing.
+  # The flag is not "is the sandbox still there": a removal that FAILED (a
+  # directory inside it that is not writable) leaves it there, and a guard that
+  # reads that said it twice. The second call still tries the removal again,
+  # as it always did, and says nothing. And a removal that failed is said to
+  # have failed, with the seconds it took to do so, not "took": a number that
+  # reads as a teardown that finished is the one thing this line must not be.
+  local cl_t0=$SECONDS cl_ok=1
   # #180's short checkout root for the clause (c) TAIL case, which is outside
   # `$SANDBOX` wherever the run root is long.
-  [ -n "${A11T_ROOT:-}" ] && [ -d "$A11T_ROOT" ] && rm -rf -- "$A11T_ROOT"
-  [ -n "${SANDBOX:-}" ] && [ -d "$SANDBOX" ] && rm -rf -- "$SANDBOX"
+  [ -n "${A11T_ROOT:-}" ] && [ -d "$A11T_ROOT" ] && { rm -rf -- "$A11T_ROOT" || cl_ok=0; }
+  if [ -n "${SANDBOX:-}" ] && [ -d "$SANDBOX" ]; then
+    rm -rf -- "$SANDBOX" || cl_ok=0
+    if [ -z "${TEARDOWN_SAID:-}" ]; then
+      TEARDOWN_SAID=1
+      if [ "$cl_ok" = 1 ]; then
+        teardown_report "$((SECONDS - cl_t0))" took
+      else
+        teardown_report "$((SECONDS - cl_t0))" failed
+      fi
+    fi
+  fi
   return 0
 }
 # AND A SIGNAL HANDLER THAT CLEANS UP MUST ALSO EXIT. `tests/run.sh` states
@@ -1042,7 +1175,7 @@ git -C "$WIP" add -- lanes/log
 git -C "$WIP" commit -q -m "seed two object logs"
 git -C "$WIP" push -q origin main
 
-echo "== lane-start =="
+section "== lane-start =="
 
 run "$START" --help
 is   "lane-start --help exits 0" "$rc" 0
@@ -1168,7 +1301,7 @@ run "$START" repoA 6 --no-launch -- --dangerously-skip-permissions
 is   "arguments after -- reach claude" "$(launch_of "$out")" "claude --name repoA-6 --dangerously-skip-permissions"
 has  "…alongside the minted --session-id" "$out" "--session-id "
 
-echo "== lane-start: Amendment 6 — resume the row's recorded session =="
+section "== lane-start: Amendment 6 — resume the row's recorded session =="
 
 # The fallback, unchanged in shape: the row names an id this directory has no
 # transcript for, so the title is all that is left — and lane-start says so.
@@ -1233,7 +1366,7 @@ is   "--dry-run writes no register commit" "$(git -C "$WIP" rev-parse HEAD)" "$b
 is   "--dry-run leaves LANES.md byte-identical" "$(cksum < "$LANES")" "$before_sum"
 has  "--dry-run plans the exact resume" "$err" "PLAN exec claude --name repoA-12 --resume $NEW12_ID"
 
-echo "== lane-end =="
+section "== lane-end =="
 
 run "$END" --help
 is   "lane-end --help exits 0" "$rc" 0
@@ -1275,7 +1408,7 @@ is   "a lane named before the <repo>-<n> rule can still be ended" "$rc" 0
 has  "…verbatim, and retired" "$(grep '^| `browser-ui-repair`' "$LANES")" "| RETIRED · 20"
 
 
-echo "== Amendment 7: the per-lane object log =="
+section "== Amendment 7: the per-lane object log =="
 
 E="$OPENREPOTOOLS_BIN_DIR/lanes-edit.sh"
 WS_S="${LANES_WORKSTATION:-$(hostname -s)}"
@@ -2327,7 +2460,7 @@ is   "…and that fallback still refuses an open LANDING" "$rc" 2
 has  "…saying it is the pre-cutover scan" "$err" "has no object log yet (pre-cutover)"
 
 
-echo "== Addendum 5: R17–R23 =="
+section "== Addendum 5: R17–R23 =="
 
 # ------------------- R17: a LANDED closes the LANDING it answers, by (lane, PR)
 #
@@ -2588,7 +2721,7 @@ run "$E" who "opensoft/repoG#11"
 has   "a claim past the threshold says WHICH of Rule 1's discharges left it not stale" "$out" "has since written an OPENED naming it"
 hasnt "…rather than two true halves that read as a contradiction" "$out" "old, threshold ${STALE_H}h"
 
-echo "== Addendum 6: R24–R26, and the lifecycle reads =="
+section "== Addendum 6: R24–R26, and the lifecycle reads =="
 
 # ------- R24: a LANDED that NAMES a repository prefers a LANDING on that one
 #
@@ -2745,7 +2878,7 @@ is    "lane-end refuses a merge hold that only the PUBLISHED row shows" "$rc" 2
 has   "…naming the row it read it from" "$err" "the published row on origin/main"
 has   "…and it is Rule 6's word that stopped it" "$err" "the last LANDING in its state cell"
 
-echo "== Addendum 7: R29–R30 =="
+section "== Addendum 7: R29–R30 =="
 
 # ---------------- R29: the Rule 6 pairing resolves spellings through repos.tsv
 #
@@ -2948,7 +3081,7 @@ run env LANES_LANE=repoZR-1 LANES_SESSION="$ZR_ID" "$E" claim "#3" --no-github
 is    "…while the claim itself uses the home the peer recorded" "$rc" 0
 has   "…expanding '#3' against it" "$(cat "$LOGD/repoZR-1.md")" ", opensoft/repoZR#3"
 
-echo "== Addendum 8: R33–R35 =="
+section "== Addendum 8: R33–R35 =="
 
 # ---------- R33: the resume target and the RESUMED uuid are the PUBLISHED cell's
 #
@@ -3054,7 +3187,7 @@ is    "…the fragment still lists both under ## Open" \
       "$(printf '%s\n' "$out" | sed -n '/^## Open/,$p' | grep -c '^- ')" 2
 
 
-echo "== Amendment 8: swap and restart =="
+section "== Amendment 8: swap and restart =="
 
 # ------------------------------------------------------------------ swapped
 #
@@ -3290,7 +3423,7 @@ is    "…and the launch resumes the id the cell now ends on" "$out" "claude --n
 unset FAKE_TMUX_WINDOW
 rm -f "$sessions_dir/live-harness2.json"
 
-echo "== Amendment 11 hotfix: R-A11-1, --name on every branch, unknown refused =="
+section "== Amendment 11 hotfix: R-A11-1, --name on every branch, unknown refused =="
 
 # ---- R-A11-1: A LIVE SESSION THAT BELONGS TO ANOTHER ROW IS NEVER TAKEN ----
 #
@@ -4675,7 +4808,7 @@ cp -- "$WS_YAML_SAVED" "$WS_YAML"
 is   "the sandbox's own pointer file is restored for the guards below" \
      "$(sed -n 's/^path:[[:space:]]*//p' "$WS_YAML" | head -n1)" "$WIP"
 
-echo "== Amendment 11: the record's fields, and clause (h)'s reads =="
+section "== Amendment 11: the record's fields, and clause (h)'s reads =="
 
 # THE SHAPE EVERY CASE BELOW IS ABOUT, in one place: a lane whose log carries
 # clause (c)'s three sub-fields, and a live window table for the reads that
@@ -6211,7 +6344,7 @@ is   "…with the path that was named once" "$out" "$HOME/projects/xFactory/xFac
 run "$START" --dry-run opsXfactory 5
 has  "…and the next start takes it from the LOG rather than from any rung" "$err" "from the lane's log"
 
-echo "== Amendment 11: the cross-lane write clause (d) rule 1 forbids =="
+section "== Amendment 11: the cross-lane write clause (d) rule 1 forbids =="
 #
 # THE TEST THAT WOULD HAVE CAUGHT EVIDENCE 2(b), written here and owed to the
 # `opensoft/brett-wip` hotfix that `openRepoTools#24` — act 3, merged as
@@ -6336,7 +6469,7 @@ rm -f "$sessions_dir/live-vt2.json"
 rm -f "$sessions_dir/live-vt.json"
 unset FAKE_TMUX_WINDOWS
 
-echo "== Amendment 11 decision 7, as Amendment 18 Addendum 2 leaves it: \`lane <name>\` =="
+section "== Amendment 11 decision 7, as Amendment 18 Addendum 2 leaves it: \`lane <name>\` =="
 #
 # THE TWO SURFACES BRETT HEAP'S DIRECTION NAMES, and the count they met before
 # this word existed. Measured on Eagle on 2026-09-13, after the tmux server was
@@ -6703,7 +6836,7 @@ is    "…launching nothing, which is what --dry-run means" "$(cat "$FAKE_PCLAUD
 run env -u TMUX "$LANE" --dry-run repoA11-7 </dev/null
 has   "a directory with nothing to quote is printed as itself" "$out" "cd $A11_DIR"
 has   "…and the lane's own log answers for a lane with no swap record" "$out" "profile team-05a"
-echo "== Amendment 11 decision 6: \`lanes\` =="
+section "== Amendment 11 decision 6: \`lanes\` =="
 # ------- ruling 6: EVERY LANE BY DEFAULT, NARROWED INSIDE A CHECKOUT ---------
 #
 # A11 Addendum 4 ruling 6 was answered NO — clause (j)'s estate-wide default
@@ -7210,7 +7343,7 @@ hasnt "…nor the source token nothing in the estate emits" "$out" "hostname-in-
 run "$LANES_CMD" </dev/null
 hasnt "…while a run whose seam answered prints no container notice at all" "$out" "LANES_WORKSTATION"
 
-echo "== Amendment 12: the name guard and the lock =="
+section "== Amendment 12: the name guard and the lock =="
 
 # THE THREE NAMES, AND WHAT HAPPENS WHEN THEY ARE NOT ONE. Every case below
 # feeds the guard a `UserPromptSubmit` payload on stdin and reads its exit code
@@ -8271,7 +8404,7 @@ if [ -n "$GD_SAVE_WINDOWS" ]; then export FAKE_TMUX_WINDOWS="$GD_SAVE_WINDOWS"; 
 if [ -n "$GD_SAVE_WINDOW" ]; then export FAKE_TMUX_WINDOW="$GD_SAVE_WINDOW"; else unset FAKE_TMUX_WINDOW; fi
 if [ -n "$GD_SAVE_NAME" ]; then export FAKE_TMUX_WINDOW_NAME="$GD_SAVE_NAME"; else unset FAKE_TMUX_WINDOW_NAME; fi
 
-echo "== Amendment 15: a lane name is one name under any case =="
+section "== Amendment 15: a lane name is one name under any case =="
 
 # RATIFIED BY BRETT HEAP 2026-09-14T00:07:18Z, verbatim *"Ratify as drafted
 # (Recommended)"*, on his question of the day before, verbatim *"can we make
@@ -9074,7 +9207,7 @@ hasnt "…and never the one that merely sorts first" "$err" "@repoRace-3"
 has  "…with the CLAIM-LOST line pointing at that winner" \
      "$(cat "$LOGD/repoRace-1.md")" "opensoft/repoRace#7 → lane:repoRace-2"
 
-echo "== Amendment 16: a lane is renamed by one word, in one commit =="
+section "== Amendment 16: a lane is renamed by one word, in one commit =="
 
 # RATIFIED BY BRETT HEAP 2026-09-14T09:24:35Z, verbatim *"Ratify as drafted
 # (Recommended)"*, on his request of the same day, verbatim: *"we need the
@@ -10103,7 +10236,7 @@ export FAKE_TMUX_WINDOWS="$A16_SAVE_WINDOWS"
 export FAKE_TMUX_WINDOW="$A16_SAVE_WINDOW"
 export FAKE_TMUX_WINDOW_NAME="$A16_SAVE_NAME"
 
-echo "== Amendment 17: the handoff is the swap =="
+section "== Amendment 17: the handoff is the swap =="
 
 # THE ACT UNDER ITS THREE NAMES, AND THE TWO SUB-FIELDS THAT MAKE A LANE
 # RESUMABLE BY ANY AGENT. lane-collision-protocol Amendment 17, ratified
@@ -11448,7 +11581,7 @@ has   "…and \`lane <name>\` kept as the PERSON's door and not as this one" \
       "$hfsk" "IS STILL A PERSON'S DOOR AND IS NO LONGER THIS ONE"
 hasnt "…which is never \`restart <lane>\`" "$hfsk" 'respawn-pane -k -t "$pane" "restart'
 
-echo "== Amendment 18 Addendum 1: the word \`lane\`, the numbered pick, the three branches =="
+section "== Amendment 18 Addendum 1: the word \`lane\`, the numbered pick, the three branches =="
 #
 # AMENDMENT 18 ADDENDUM 1, RATIFIED 2026-09-14T14:05:54Z verbatim "ratify the
 # addendum", out of Brett Heap's two messages that morning — *"i dont understand
@@ -12754,7 +12887,7 @@ hasnt "…and never rendering the listing instead" "$out" "AVAILABLE"
 run env -C "$PICK_DIR" PATH="$LANEBIN_PATH" "$LANE" --all "" </dev/null
 is    "…and the same beside --all" "$rc" 64
 
-echo "== Amendment 13: the row is current state, the log is history =="
+section "== Amendment 13: the row is current state, the log is history =="
 
 # THE CHECKOUT IS COMMITTED FIRST, for the reason the workstation-seam section
 # below gives: the cases above leave handoff files uncommitted in the sandbox
@@ -13115,7 +13248,7 @@ is    "…and changed nothing" "$(git -C "$MIG_WIP" rev-list --count "$MIG_HEAD2
 run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells --no-such-flag
 is    "an unknown flag is a refusal, not a silent dry run" "$rc" 2
 
-echo "== Amendment 19: a closed or dormant lane leaves the listing =="
+section "== Amendment 19: a closed or dormant lane leaves the listing =="
 
 # ITS OWN WORKSPACE, for `migrate-state-cells`'s reason one section up: this
 # section RETIRES a whole repository's dormant rows and creates their logs, and
@@ -13763,7 +13896,7 @@ is    "…and its STATE stays NO LOG, never LIVE, with no live record behind it"
       "$(a19_field "$out" repo19live-1 2)" "NO LOG"
 is    "…while column 17 flags the cell for still saying it" "$(a19_field "$out" repo19live-1 17)" "LIVE"
 
-echo "== Amendment 18: ONE BINDING PER LANE — host/os/container, the ask, the wait, the force =="
+section "== Amendment 18: ONE BINDING PER LANE — host/os/container, the ask, the wait, the force =="
 
 # **A LANE HAS ONE BINDING. THE RECORD SAYS WHERE IT IS — HOST, OS, CONTAINER,
 # WINDOW — AND A SECOND PLACE ASKS THE FIRST TO HAND OFF BEFORE IT BINDS.**
@@ -14594,7 +14727,7 @@ export FAKE_TMUX_WINDOW_NAME="$BIND_SAVE_NAME"
 export FAKE_TMUX_WINDOW_INDEX="$BIND_SAVE_INDEX"
 unset LANES_HOST LANES_CONTAINER
 
-echo "== openRepoTools#91: the crash-consistent lifecycle and the worktree inventory =="
+section "== openRepoTools#91: the crash-consistent lifecycle and the worktree inventory =="
 
 # A LANE IS `RUNNING`, `SWAPPING`, `SWAPPED` OR `CLOSED`, AND WHICH OF THOSE IT
 # IS WITH NO LIVE HOLDER IS WHAT SAYS WHERE ITS SESSION STOPPED. Governed by
@@ -15409,7 +15542,7 @@ has   "…but says so first when its trees need reading" "$err" "LANE RECOVERY: 
 has   "…saying why" "$err" "need reading before a writer is relaunched"
 has   "…and naming the trees" "$err" "unreadable-sidecar"
 
-echo "== the managed-owner seam: managed ledger owns enrolled lanes; this tooling owns legacy =="
+section "== the managed-owner seam: managed ledger owns enrolled lanes; this tooling owns legacy =="
 
 # Brett Heap's ruling of 2026-10-04, verbatim: "managed ledger owns enrolled
 # lanes; #97 owns legacy — rework both". A lane the managed ledger has enrolled
@@ -15850,7 +15983,7 @@ is    "the legacy retired row alone is archived" "$rc" 0
 is    "…out of the register" "$(grep -c '^| `repoMG-12` ' "$MGM_WIP/lanes/LANES.md" || :)" 0
 is    "…and into the archive" "$(grep -c '^| `repoMG-12` ' "$MGM_WIP/lanes/archive/LANES-retired.md" || :)" 1
 
-echo "== the workstation seam: unset, every writer reads the host =="
+section "== the workstation seam: unset, every writer reads the host =="
 
 # THE OTHER HALF OF R-A9-13. Every case above this line runs with
 # `LANES_WORKSTATION=Eagle` exported at the top of this file, which is what
@@ -15940,7 +16073,7 @@ is    "…and no pane was respawned for a lane no read of it is unambiguous abou
 is    "…and no log was written for either spelling" \
       "$(ls "$LOGD" | grep -ci '^repohf-13\.md$' || :)" 0
 
-echo "== Amendment 14: the derived index is never read by an act =="
+section "== Amendment 14: the derived index is never read by an act =="
 
 # lane-collision-protocol Amendment 14, ratified by Brett Heap 2026-10-05,
 # verbatim "ratify 48" (opensoft/openRepoTools#160). The register's truth stays
@@ -16841,7 +16974,7 @@ hasnt "…the lane was never marked ready on a launch nothing proved" "$out" "$(
 has  "…the deadline is in the record for a reader in another window" "$out" "INDETERMINATE"
 
 # =========================================================================
-echo "== opensoft/openRepoTools#162: bytecode never rides a workspace commit =="
+section "== opensoft/openRepoTools#162: bytecode never rides a workspace commit =="
 #
 # A handoff's attachments were committed with a whole virtualenv's
 # `__pycache__` inside them (cause 19). `pathspec-check` is the question a
@@ -16907,7 +17040,7 @@ if [ -n "$B162_IGN" ]; then printf '%s\n' "$B162_IGN" > "$WIP/.gitignore"; else 
 git -C "$WIP" checkout -q -- .gitignore 2>/dev/null || :
 
 # =========================================================================
-echo "== opensoft/openRepoTools#163: lane-end's close-out gate, and lane-worktrees add =="
+section "== opensoft/openRepoTools#163: lane-end's close-out gate, and lane-worktrees add =="
 #
 # WORKSPACE CREATION OUTPACES WORKSPACE CLOSEOUT, and #163 is both ends of it.
 # `lane-worktrees add` makes a lane's worktree AND records it in the lane's #97
@@ -17294,6 +17427,35 @@ is   "…and every log it did create is inside the sandbox workspace" \
 is   "the liveness fixture was still running when the run ended" \
      "$(kill -0 "$LIVE_PID" 2>/dev/null && printf alive || printf gone)" alive
 
+# THE SECTION CLOCK READS EVERY HEADING, asserted HERE, at the foot, and not
+# above the guards: it must run after the last section has opened, or a section
+# added where the next one naturally goes (just above `nothing real touched`)
+# would be counted in the file and not yet in the clock, and turn this red for
+# nothing. It is two readings, and it reads this file and its clock, not a
+# fixture, so the liveness assertion above is still the last one about the RUN.
+# opensoft/openRepoTools#77, step 1a. A heading printed with a bare `echo`
+# prints exactly as it always did and is NOT clocked, so its seconds would
+# silently join the section before it and the table below would blame the
+# wrong one. First, no heading is spelled with `echo` any more, at any indent
+# and in either quote. Second, by the last heading's start the clock holds one
+# row for each `section` heading in the file — the preamble's, plus every
+# heading's but the open one's — which also proves none of them sits in a
+# branch this run skipped. `grep -c` reads a FILE here, which always exists: it
+# prints `0` and exits 1 on no match, so the `|| :` only keeps the status quiet.
+sc_bare_re="^[[:space:]]*echo[[:space:]]+[\"']== "
+is    "every == heading in this suite goes through section, so each is clocked" \
+      "$(grep -cE "$sc_bare_re" "$SELF" || :)" 0
+is    "…and the clock holds one row per heading by the last heading's start" \
+      "$(printf '%s' "$SECTION_ROWS" | awk 'END { print NR + 0 }')" \
+      "$(grep -c '^section "== ' "$SELF" || :)"
+
+# THE TABLE OF opensoft/openRepoTools#77, step 1a: every section's wall time,
+# longest first, and the same table in the job's step summary. It is printed
+# HERE, above the rule, because the footer below must stay the LAST line on
+# stdout — the pytest wrapper looks for ` passed, 0 failed` in the transcript
+# and its failure message quotes the last line — and the teardown, which
+# happens after the footer by nature, is said on stderr by `cleanup`.
+section_report
 echo "----"
 if [ "$pending_n" != 0 ]; then
   printf '%s PENDING — owed to a commit landing in another repository, not a failure:\n' "$pending_n"
