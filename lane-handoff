@@ -2221,13 +2221,27 @@ fi
 # poll looked everywhere it looks. A tree this handoff then cannot place is
 # another matter (`writer_checkout`): it is named, not recorded, and the lane
 # stays SWAPPING for it, as for any tree no checkout can be vouched for.
+#
+# SO IS A LEG DIRECTORY THIS ACCOUNT CANNOT SEARCH (#255, openRepoShape-2's
+# SHOULD on #246): whether a `.git` stands in it cannot be tested, and the
+# `.git` test fails there exactly as for a leg that is not checked out, so
+# the leg was passed over IN SILENCE while an unpushed commit of this lane's
+# could be in it. It takes the same path, in the same words as the sweep's
+# `probe_leg` and `lane-reconcile`. A leg directory that is not there at all
+# is still passed over (`-d`), as a leg that is not checked out.
 legs_unreadable=""; legs_unreadable_count=0
 if [ "$legs_state" = known ]; then
 	while IFS="$tab" read -r lg_repo lg_decl lg_abs; do
 		[ -n "$lg_abs" ] && [ -d "$lg_abs" ] || continue
 		lg_top="$(git -C "$lg_abs" rev-parse --show-toplevel 2>/dev/null </dev/null || :)"
 		if [ -z "$lg_top" ] || [ "$(physical_of "$lg_top")" != "$(physical_of "$lg_abs")" ]; then
-			{ [ -e "$lg_abs/.git" ] || [ -L "$lg_abs/.git" ]; } || continue
+			if [ -e "$lg_abs/.git" ] || [ -L "$lg_abs/.git" ]; then
+				lg_what="it has a .git of its own and git could not read it"
+			elif [ ! -x "$lg_abs" ]; then
+				lg_what="its directory cannot be searched, so whether it has a .git of its own could not be tested, and git could not read it"
+			else
+				continue
+			fi
 			if [ -n "$lg_top" ]; then
 				lg_err="git answers $lg_top there"
 			else
@@ -2235,7 +2249,7 @@ if [ "$legs_state" = known ]; then
 					| awk 'NF { sub(/^[ \t]+/, ""); sub(/[ \t]+$/, ""); print; exit }')"
 				lg_err="${lg_err:-no answer}"
 			fi
-			lg_why="the $lg_decl leg of $dir/project.yaml${lg_repo:+ ($lg_repo)}: git could not be read through it (it has a .git of its own and git could not read it: $lg_err)"
+			lg_why="the $lg_decl leg of $dir/project.yaml${lg_repo:+ ($lg_repo)}: git could not be read through it ($lg_what: $lg_err)"
 			legs_unreadable_count=$((legs_unreadable_count + 1))
 			# `<leg> TAB <why>`, one a line: the top block writes each leg's line
 			# once the poll has said whether any tree was withheld (N1), and
@@ -2266,15 +2280,29 @@ paired_note_unread() {   # <why>
 # were read: which paired trees are already this lane's, and the checkout each
 # recorded tree was filed under (`writer_checkout`). `<path> TAB <checkout>`, one
 # a line. A checkout with no `project.yaml` never asks it.
+#
+# A ROW IS A RECORD ONLY WHERE IT IS A WHOLE SCHEMA-1 ONE (#255): its schema,
+# `lane-trees`' thirteenth field, is `1` - the schema `lane-worktrees` reads too
+# (`_discover`). Every other row keeps no field but its id, its path where the
+# file named one, and its schema (`<none>`, an unknown one, `<unreadable>`, and
+# #252's `<malformed>`), so it is no record of whose a tree is: read as one, it
+# made the paired tree it names this lane's writer on the strength of a record
+# nobody could read, and the poll then tried to file a record of its own for
+# that tree - over a malformed one, which went SWAPPED in silence, or against
+# one of another schema, which `set-lane-tree` refuses and this handoff then
+# reported as a refused write. So such a row is NAMED, by its id, its schema and
+# any path it keeps, and the lane stays SWAPPING for it, exactly as for an
+# inventory that could not be read at all; it never reaches `paired_inv`.
 if [ "$legs_state" = known ]; then
 	pi_out=""; pi_rc=0
 	pi_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-trees "$lane" 2>/dev/null </dev/null)" || pi_rc=$?
 	case "$pi_rc" in
 	0)
-		paired_inv="$(printf '%s\n' "$pi_out" | awk -F'\037' 'NF >= 2 && $2 != "" { print $2 "\t" $10 }')"
-		pi_bad="$(printf '%s\n' "$pi_out" | awk -F'\037' 'NF >= 2 && $2 == "" { printf "%s ", $1 }')"
+		paired_inv="$(printf '%s\n' "$pi_out" | awk -F'\037' 'NF >= 2 && $2 != "" && $13 == "1" { print $2 "\t" $10 }')"
+		pi_bad="$(printf '%s\n' "$pi_out" | awk -F'\037' 'NF >= 2 && ($2 == "" || $13 != "1") {
+			printf "%s%s (schema %s%s)", (n++ ? ", " : ""), $1, ($13 == "" ? "<none>" : $13), ($2 == "" ? "" : ", path " $2) }')"
 		[ -z "$pi_bad" ] ||
-			paired_note_unread "this lane's worktree inventory holds record(s) that could not be read (${pi_bad% }), so a paired tree only they name could not be told from another lane's" ;;
+			paired_note_unread "this lane's worktree inventory holds record(s) that could not be read ($pi_bad), so a paired tree only they name could not be told from another lane's" ;;
 	8) : ;;
 	*) paired_note_unread "this lane's worktree inventory could not be read (\`$LANES_EDIT lane-trees $lane\` exited $pi_rc), so a paired tree only it names could not be told from another lane's" ;;
 	esac
