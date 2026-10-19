@@ -700,6 +700,20 @@ def tagged_origin(where: Path, tags: Tuple[str, ...]) -> Tuple[Path, str, Dict[s
     return checkout, commit, objects
 
 
+def a_checkout(where: Path) -> Tuple[Path, str]:
+    """A repository on this filesystem with one commit, a tracked file and a
+    `.gitignore` that ignores `*.log`: a checkout as a build step finds it.
+    Returns it and its commit."""
+    home, checkout = where / "home", where / "checkout"
+    checkout.mkdir(parents=True)
+    fixture_git(home, checkout, "init", "--quiet")
+    (checkout / "tracked.txt").write_text("the commit's own\n", encoding="utf-8")
+    (checkout / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    fixture_git(home, checkout, "add", "tracked.txt", ".gitignore")
+    fixture_git(home, checkout, "commit", "--quiet", "-m", "the release commit")
+    return checkout, fixture_git(home, checkout, "rev-parse", "HEAD")
+
+
 # --- HEAD, as git holds it -------------------------------------------------------
 
 @functools.lru_cache(maxsize=1)
@@ -1163,6 +1177,80 @@ def test_release_build_the_environments_step_refuses_an_environment_without_its_
             f"::error::the {refused} environment")], transcript(done)
 
 
+#: The build step's two builds, faked: `$RUNNER_TEMP/tools/bin/python -m build
+#: ... --outdir <dir> .` writes each name in its tree's `build-names` into
+#: `<dir>`, with its tree's `build-output` bytes, and writes down where it ran
+#: and with which SOURCE_DATE_EPOCH.
+FAKE_BUILD = r'''
+import os, sys
+args = sys.argv[1:]
+with open(os.environ["FAKE_BUILD_LOG"], "a", encoding="utf-8") as log:
+    log.write("\t".join([os.getcwd(), os.environ.get("SOURCE_DATE_EPOCH", "<unset>"),
+                         " ".join(args)]) + "\n")
+out = args[args.index("--outdir") + 1]
+os.makedirs(out, exist_ok=True)
+with open("build-output", "rb") as handle:
+    data = handle.read()
+with open("build-names", encoding="utf-8") as handle:
+    names = handle.read().split()
+for name in names:
+    with open(os.path.join(out, name), "wb") as handle:
+        handle.write(data)
+'''
+
+BUILT = "openrepotools-1.1.0-py3-none-any.whl"
+
+#: THE BUILD STEP, RUN: `(the first build's bytes and names, the second's,
+#: whether the step passes)`.
+BUILD_CASES = {
+    "two-builds-one-file": ((b"the wheel", [BUILT]), (b"the wheel", [BUILT]), True),
+    "two-builds-two-files": ((b"the wheel", [BUILT]), (b"another wheel", [BUILT]), False),
+    "a-build-of-another-name": (
+        (b"the wheel", [BUILT]), (b"the wheel", ["openrepotools-1.1.0-py3-none-any.zip"]),
+        False),
+    "a-build-of-two-files": (
+        (b"the wheel", [BUILT]), (b"the wheel", [BUILT, "openrepotools-1.1.0.tar.gz"]),
+        False),
+}
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@pytest.mark.skipif(shutil.which("sha256sum") is None or shutil.which("cmp") is None,
+                    reason="the build step runs GNU's sha256sum and cmp")
+@pytest.mark.parametrize("which", BUILD_CASES)
+def test_release_build_the_build_step_compares_the_two_builds_byte_for_byte(tmp_path, which):
+    """THE BUILD STEP, RUN, with the backend faked (FR-030): it builds once in
+    each extraction, at the commit's own time, and passes two builds that
+    are one file; two builds of different bytes (its `cmp`), a build of
+    another name, and a build that leaves two files are each refused."""
+    first, second, passes = BUILD_CASES[which]
+    checkout, commit = a_checkout(tmp_path / "git")
+    trees = [tmp_path / "a" / "openRepoTools", tmp_path / "b" / "elsewhere" / "v1.1.0-src"]
+    for tree, (data, names) in zip(trees, (first, second)):
+        tree.mkdir(parents=True)
+        (tree / "build-output").write_bytes(data)
+        (tree / "build-names").write_text("\n".join(names) + "\n", encoding="utf-8")
+    log = tmp_path / "build.log"
+    values = {"VERSION": "1.1.0", "GITHUB_SHA": commit, "TREE_A": str(trees[0]),
+              "TREE_B": str(trees[1]), "FAKE_BUILD_LOG": str(log)}
+    workflow = release()
+    runner = Runner(tmp_path / "work", workflow, "build", values)
+    python_tool(Path(runner.env["RUNNER_TEMP"]) / "tools" / "bin", "python", FAKE_BUILD)
+    done = runner.run(named(workflow, "build", BUILD_STEP), cwd=checkout)
+    assert (done.returncode == 0) == passes, transcript(done)
+    when = fixture_git(tmp_path / "git" / "home", checkout, "log", "-1", "--format=%ct", commit)
+    builds = [line.split("\t") for line in log.read_text(encoding="utf-8").splitlines()]
+    temp = runner.env["RUNNER_TEMP"]
+    assert builds[0] == [str(trees[0]), when,
+                         f"-m build --wheel --no-isolation --outdir {temp}/dist-a ."], builds
+    if passes or which == "two-builds-two-files":
+        assert [b[:2] for b in builds] == [[str(trees[0]), when], [str(trees[1]), when]], builds
+    if not passes:
+        assert "::error::" in done.stdout, transcript(done)
+
+
 # --- the ref step and the branch step: the rehearsal rule ------------------------
 
 REHEARSAL_BRANCHES = ["refs/heads/l3-rehearsal-v1.1.0", "refs/heads/main",
@@ -1394,9 +1482,10 @@ def test_release_build_the_branch_step_answers_from_the_forge_s_compare(tmp_path
 
 #: A `gh` that answers the gate's reads as the forge does, from `FORGE_DATA`:
 #: a commit's `tests.yml` runs (`actions/runs`, or `actions/workflows/<file>/
-#: runs`, honouring `head_sha` and `event` where the query names them) and a
-#: run's jobs (`actions/runs/<id>/jobs`). `--jq '.<key>[]'` answers one object
-#: per line, as gh does; no `--jq` answers the page.
+#: runs`, honouring `head_sha` and `event` where the query names them, as the
+#: API does, unless `FORGE_IGNORES` names one) and a run's jobs
+#: (`actions/runs/<id>/jobs`). `--jq '.<key>[]'` answers one object per line,
+#: as gh does; no `--jq` answers the page.
 RUNS_FORGE = r'''
 import json, os, re, sys, urllib.parse
 args = sys.argv[1:]
@@ -1419,8 +1508,9 @@ elif runs:
     key, rows = "workflow_runs", data["runs"]
     if runs.group(1):
         rows = [r for r in rows if r["path"].rsplit("/", 1)[-1] == runs.group(1)]
+    ignored = os.environ.get("FORGE_IGNORES", "").split(",")
     for name in ("head_sha", "event"):
-        if name in params:
+        if name in params and name not in ignored:
             rows = [r for r in rows if r[name] == params[name]]
 else:
     sys.stderr.write("gh: Not Found (HTTP 404)\n")
@@ -1510,6 +1600,17 @@ def test_release_build_the_gate_decides_from_the_runs_jobs(tmp_path, which):
     another workflow's do not count, and a job missing, skipped, running or
     newest-failed refuses, naming that job."""
     runs, jobs, passes, names = GATE_CASES[which]
+    done = run_gate(tmp_path, runs, jobs)
+    assert (done.returncode == 0) == passes, transcript(done)
+    if names:
+        assert names in done.stdout + done.stderr, (
+            f"the refusal does not name {names}:\n{transcript(done)}")
+
+
+def run_gate(tmp_path: Path, runs: list, jobs: dict,
+             ignores: str = "") -> subprocess.CompletedProcess:
+    """Step 6 under `RUNS_FORGE`, holding `runs` and their `jobs`, and
+    ignoring the query parameters `ignores` names."""
     workflow = release()
     data = tmp_path / "forge.json"
     data.write_text(json.dumps({"runs": runs, "jobs": {str(k): v for k, v
@@ -1519,13 +1620,37 @@ def test_release_build_the_gate_decides_from_the_runs_jobs(tmp_path, which):
     values = {"GITHUB_REPOSITORY": CODE_LEG, "GITHUB_SHA": GATE_SHA,
               "VERSION": "1.1.0", "FORGE_DATA": str(data),
               "FORGE_LOG": str(tmp_path / "forge.log"),
-              "FORGE_REPOSITORY": CODE_LEG}
+              "FORGE_REPOSITORY": CODE_LEG, "FORGE_IGNORES": ignores}
     runner = Runner(tmp_path / "work", workflow, "build", values, forge)
-    done = runner.run(named(workflow, "build", GATE_STEP))
+    return runner.run(named(workflow, "build", GATE_STEP))
+
+
+#: STEP 6 UNDER A FORGE THAT RETURNS EVERY COMMIT'S RUNS, whatever the query
+#: asks: `(the runs and their jobs, whether the step passes)`. So the step's
+#: own `head_sha` filter is what keeps another commit's runs out.
+GATE_UNFILTERED_CASES = {
+    "another-commit-s-green-run-alone": (
+        [a_run(1, head_sha="d" * 40)], {1: the_four()}, False),
+    "this-commit-s-green-run-and-another-s-red-one": (
+        [a_run(1), a_run(2, head_sha="d" * 40)],
+        {1: the_four("2026-10-18T17:00:00Z"),
+         2: the_four("2026-10-18T18:00:00Z", package={"conclusion": "failure"})}, True),
+}
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@pytest.mark.parametrize("which", GATE_UNFILTERED_CASES)
+def test_release_build_the_gate_counts_this_commit_s_runs_whatever_the_forge_returns(
+        tmp_path, which):
+    """STEP 6 KEEPS TO THE COMMIT ITSELF (FR-029): under a forge that answers
+    `head_sha=` with every commit's runs, another commit's green run does
+    not pass this one, and another commit's newer red run does not refuse
+    it."""
+    runs, jobs, passes = GATE_UNFILTERED_CASES[which]
+    done = run_gate(tmp_path, runs, jobs, ignores="head_sha")
     assert (done.returncode == 0) == passes, transcript(done)
-    if names:
-        assert names in done.stdout + done.stderr, (
-            f"the refusal does not name {names}:\n{transcript(done)}")
 
 
 @NEEDS_UPSTREAM
@@ -1987,6 +2112,7 @@ NO_RELEASE_CARRIES = {
     "repository-a-b-c": {"REPOSITORY": "a/b/c"},
     "repository-with-a-quote": {"REPOSITORY": 'opensoft/open"RepoTools'},
     "repository-empty": {"REPOSITORY": ""},
+    "a-tag-of-another-version": {"TAG": "v1.1.1"},
 }
 
 
@@ -2115,6 +2241,61 @@ def test_release_stamp_writer_writes_neither_copy_until_both_are_checked(
     assert done.returncode != 0, transcript(done)
     assert [copy.read_bytes() for copy in copies] == texts, (
         "the writer refused the second copy and wrote the first anyway")
+
+
+#: A FILESYSTEM THAT DOES NOT KEEP WHAT WAS WRITTEN: the heredoc at `argv[1]`
+#: runs as `python3 -` runs it, with the rest of argv as its own, except that
+#: a file read again after this run wrote it comes back one character short.
+LOSSY_READ_BACK = r'''
+import builtins, io, sys
+code, sys.argv = sys.argv[1], ["-", *sys.argv[2:]]
+real_open, written = builtins.open, set()
+
+
+def lossy_open(path, mode="r", *args, **kwargs):
+    if "w" in mode:
+        written.add(str(path))
+        return real_open(path, mode, *args, **kwargs)
+    handle = real_open(path, mode, *args, **kwargs)
+    if str(path) not in written:
+        return handle
+    with handle:
+        return io.StringIO(handle.read()[:-1])
+
+
+builtins.open = lossy_open
+with real_open(code, encoding="utf-8") as handle:
+    source = handle.read()
+exec(compile(source, "<stdin>", "exec"), {"__name__": "__main__"})
+'''
+
+
+@NEEDS_UPSTREAM
+def test_release_stamp_writer_reads_each_copy_back_and_refuses_one_that_is_not_what_it_wrote(
+        tmp_path):
+    """AFTER WRITING, EACH COPY IS READ AGAIN (contracts/stamp.md, "After
+    writing"): on a filesystem that comes back one character short of what
+    was written, the writer refuses, naming the copy, rather than build from
+    a stamp it cannot vouch for."""
+    copies = [tmp_path / side / "src" / "openrepotools" / "_release.py" for side in "ab"]
+    for copy in copies:
+        copy.parent.mkdir(parents=True)
+        copy.write_bytes(STAMP.read_bytes())
+    work = tmp_path / "run"
+    work.mkdir()
+    (work / "heredoc.py").write_text(
+        heredoc(run_text(named(release(), "build", STAMP_STEP))), encoding="utf-8")
+    (work / "lossy.py").write_text(LOSSY_READ_BACK, encoding="utf-8")
+    env = clean_environ(work / "home")
+    env["PYTHONUTF8"] = "1"
+    env.update(release_values(RELEASES["the-code-leg-s-v1.1.0"]))
+    done = subprocess.run([sys.executable, "-I", str(work / "lossy.py"),
+                           str(work / "heredoc.py"), *map(str, copies)],
+                          capture_output=True, text=True, check=False,
+                          stdin=subprocess.DEVNULL, env=env, cwd=str(work),
+                          timeout=STEP_TIMEOUT)
+    assert done.returncode != 0, transcript(done)
+    assert f"::error::{copies[0]} reads back as" in done.stderr, transcript(done)
 
 
 @NEEDS_UPSTREAM
@@ -3603,6 +3784,45 @@ def test_release_install_check_the_3_9_step_refuses_a_payload_command_that_does_
                 if line.startswith("::error::") and names in line], transcript(done)
 
 
+# --- every job's steps, in order -----------------------------------------------------
+
+#: EACH JOB'S WHOLE STEP LIST, IN ORDER, each step by a prefix of its label
+#: (its name, or the action it uses): so a step inserted anywhere, named or
+#: not, fails here, as does one moved or dropped. An inserted step could undo
+#: a check before it (a step after the stamp writer that rewrote the stamp,
+#: say) while every check still passes on its own.
+STEP_ORDER = {
+    "build": ["actions/checkout", "actions/setup-python",
+              "the version is X.Y.Z or X.Y.ZrcN", *BUILD_STEPS,
+              "actions/upload-artifact"],
+    "testpypi": ["the repository guard (FR-048) again", "actions/download-artifact",
+                 DIST_STEP, APPROVAL_STEP, TAG_AGAIN_STEP, EMPTY_INDEX_STEP,
+                 "pypa/gh-action-pypi-publish", SERVED_STEP],
+    "install": ["actions/checkout", "actions/setup-python", FETCH_STEP,
+                "take the build's own wheel", WHEEL_DIGEST_STEP,
+                "pipx from its hash lock", PIPX_STEP, VERSION_STEP,
+                "an offline --install beside pipx's link",
+                "on macOS, the offline --install again",
+                "on Python 3.9, the installed payload's own"],
+    "pypi": ["the repository guard (FR-048) again", "actions/download-artifact",
+             DIST_STEP, APPROVAL_STEP, TAG_AGAIN_STEP, EMPTY_INDEX_STEP,
+             "pypa/gh-action-pypi-publish", SERVED_STEP],
+}
+
+
+@NEEDS_UPSTREAM
+@pytest.mark.parametrize("name", JOBS)
+def test_release_upload_each_job_runs_exactly_its_steps_in_order(name):
+    """EVERY STEP OF EVERY JOB, IN ORDER, AND NO OTHER (contracts/workflows.md):
+    the job's steps are `STEP_ORDER`'s, one for one."""
+    labels = [label(step) for step in steps_of(release(), name)]
+    wanted = STEP_ORDER[name]
+    assert len(labels) == len(wanted) and all(
+        found.startswith(prefix) for found, prefix in zip(labels, wanted)), (
+        f"the {name} job's steps are:\n  " + "\n  ".join(labels)
+        + "\nand `STEP_ORDER` holds:\n  " + "\n  ".join(wanted))
+
+
 # --- what the workflow reads ----------------------------------------------------------
 
 #: What the code leg will not hold (FR-046): the spec trees and the front-door
@@ -3682,7 +3902,11 @@ HEADER_CARRIES = (
     # push of the tag itself is rejected ("trying to write non-commit object")
     "4. APPROVE `testpypi`, Brett Heap's act. The install check then runs on "
     "its three legs; approve `pypi` once it has passed.",
-    "git push origin 'vX.Y.0^{commit}:refs/heads/release/vX.Y'")
+    "git push origin 'vX.Y.0^{commit}:refs/heads/release/vX.Y'",
+    # the ref step's fetch needs the code leg public
+    "opensoft/openRepoTools-code STAYS PUBLIC: the ref step fetches the tag "
+    "from it with no credentials, as the model does, and the migration "
+    "creates it public.")
 
 
 @NEEDS_UPSTREAM
