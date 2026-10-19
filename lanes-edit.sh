@@ -1638,6 +1638,8 @@ lane_from_text() {
 # it renamed beside `$TMPD` instead (a rename needs no free space).
 REG_WRITTEN_HERE=""
 REG_COMMITTED_HERE=""
+DL_SAYS_UNCHANGED=""
+DL_SAYS_AFTER_WRITE=""
 reg_wrote() {   # <what this act has written in this checkout, not committed>
   REG_WRITTEN_HERE="$REG_WRITTEN_HERE, $1"
 }
@@ -1767,7 +1769,13 @@ delete_lines() {   # <line numbers, one per line, any order>
   [ "$dl_n" -gt 0 ] || return 0
   TMPD="$(mktemp -d)"
   dl_pre="$TMPD/pre"; dl_out="$TMPD/out"
-  register_copy "$dl_pre" "no row was removed, the rows are in $LANES_ARCH_PATH, and the register is whole"
+  # WHAT A REFUSAL HERE SAYS ABOUT THE ROWS IS THE CALLER'S (the delta review of
+  # #263, NIT). archive-rows' sentences are the default: its rows are already in
+  # the archive. add-row's take-back passes its own, because there the row is
+  # add-row's committed one and no archive is involved.
+  dl_unchanged="${DL_SAYS_UNCHANGED:-no row was removed, the rows are in $LANES_ARCH_PATH, and the register is whole}"
+  dl_after_write="${DL_SAYS_AFTER_WRITE:-The archive may have been appended locally, but $(reg_committed); resolve that partial move before retrying.}"
+  register_copy "$dl_pre" "$dl_unchanged"
   dl_before="$(wc -l < "$dl_pre" | tr -d ' ')"
   # `awk -v` CARRIES ONE LINE, AND THIS LIST IS MANY — the finding `who_landing`
   # took in round 5 of A9 Addendum 4 (R-A9-11), re-made here and answered by
@@ -1793,7 +1801,7 @@ delete_lines() {   # <line numbers, one per line, any order>
     BEGIN { k = split(ENVIRON["LANES_DROP_LINES"], a, "\n")
             for (i = 1; i <= k; i++) if (a[i] != "") drop[a[i] + 0] = 1 }
     !(NR in drop)' "$dl_pre" > "$dl_out"; then
-    die "the pass that removes $dl_n row(s) from $LANES_FILE failed, so what the register would become is not known — and that is not an empty register (Amendment 7(d)). Nothing was removed; the rows are in $LANES_ARCH_PATH and the register is whole." 5
+    die "the pass that removes $dl_n row(s) from $LANES_FILE failed, so what the register would become is not known — and that is not an empty register (Amendment 7(d)). The register is as it was: $dl_unchanged." 5
   fi
   dl_after="$(wc -l < "$dl_out" | tr -d ' ')"
   [ "$dl_after" -eq "$((dl_before - dl_n))" ] ||
@@ -1806,7 +1814,7 @@ delete_lines() {   # <line numbers, one per line, any order>
   # appended archive while the source rows remain in the register. And its
   # RESULT is the fence as well, with the register put back where the write cut
   # it short (#120 item 1, above `replace_line`).
-  register_rewrite "$dl_pre" "$dl_out" "The archive may have been appended locally, but $(reg_committed); resolve that partial move before retrying."
+  register_rewrite "$dl_pre" "$dl_out" "$dl_after_write"
   note "$dl_n row(s) removed from $LANES_FILE"
 }
 
@@ -3779,14 +3787,32 @@ add_row_retirement_rescan() {
   # "origin already has the row" would be wrong the other way: an add-row
   # commit that SURVIVED beside a peer's identical row at another place would
   # be kept, and published by the next write as a second copy.
-  ar_diff="$(git --no-replace-objects --no-pager -C "$LANES_REPO" -c "$CP_EXACT" diff --no-color --no-ext-diff --no-textconv -U0 "refs/remotes/origin/$LANES_BRANCH" -- "$LANES_PATH" 2>/dev/null)" || {
+  #
+  # AND THE LINE IS COUNTED WHATEVER CONTEXT THE DIFF CARRIES (the delta review
+  # of #263, S3). `-U0` does not hold on its own: a `GIT_DIFF_OPTS=-u3` in the
+  # environment overrides it outright, and a user's `diff.interHunkContext`
+  # fuses two nearby changes into one hunk with the lines between them as
+  # context. The parse counted only `+` lines, so a hunk carrying context put
+  # the row at the wrong line, the line check refused, nothing was taken back,
+  # and the next ordinary write published the row add-row had refused (M1
+  # again; measured with each of the two). So both: this one diff runs with
+  # `GIT_DIFF_OPTS` unset and `diff.interHunkContext=0` (a `-c` on the command
+  # line outranks every config file and `GIT_CONFIG_*` in the environment), and
+  # the parse advances its new-file line on every line of a hunk but a removed
+  # one (`-`) or git's "\ No newline" note, so whatever context still arrives
+  # is counted where it stands. The `unset` is inside the command
+  # substitution's own subshell, and so touches nothing after it.
+  ar_diff="$(unset GIT_DIFF_OPTS; git --no-replace-objects --no-pager -C "$LANES_REPO" -c "$CP_EXACT" -c diff.interHunkContext=0 diff --no-color --no-ext-diff --no-textconv -U0 "refs/remotes/origin/$LANES_BRANCH" -- "$LANES_PATH" 2>/dev/null)" || {
     note "$ar_why; and this checkout's register could not be compared with origin/$LANES_BRANCH's, so whether a copy of the rejected row here is this add-row's or a peer's is not known. Nothing was taken back: read \`git -C $LANES_REPO log -p origin/$LANES_BRANCH..HEAD -- $LANES_PATH\` and remove this add-row's row before any later push"
     return 1
   }
   ar_lines="$(printf '%s\n' "$ar_diff" | AR_ROW="$ADD_ROW_TEXT" LC_ALL=C awk '
     /^@@ / { h = $0; sub(/^@@ -[0-9,]+ [+]/, "", h); sub(/[ ,].*$/, "", h); n = h + 0; inh = 1; next }
     !inh { next }
-    substr($0, 1, 1) == "+" { if (substr($0, 2) == ENVIRON["AR_ROW"]) print n; n++ }
+    { c = substr($0, 1, 1) }
+    c == "-" || c == "\\" { next }
+    c == "+" && substr($0, 2) == ENVIRON["AR_ROW"] { print n }
+    { n++ }
   ')" || {
     note "$ar_why; and the diff of this checkout's register against origin/$LANES_BRANCH's could not be read, so nothing was taken back: remove this add-row's row before any later push"
     return 1
@@ -3808,9 +3834,14 @@ add_row_retirement_rescan() {
     note "$ar_why; and line $ar_line of $LANES_FILE, where the diff puts the rejected row, does not hold it exactly, so nothing was taken back: the local add-row commit must be repaired before any later push"
     return 1
   }
-  REG_COMMITTED_HERE="this act HAS committed its row for lane $ADD_ROW_LANE, locally and unpushed, and could not take it back: remove that row from $LANES_PATH and commit that before any other write in $LANES_REPO, because the next one would publish it"
+  # A REFUSAL OF THE TAKE-BACK ITSELF SAYS ADD-ROW'S TRUTH (the delta review of
+  # #263, NIT): `delete_lines`' own sentences are archive-rows' — "the rows are
+  # in the archive", "the archive may have been appended" — and false here.
+  REG_COMMITTED_HERE="this act HAS committed its row for lane $ADD_ROW_LANE, locally and unpushed"
+  DL_SAYS_UNCHANGED="no row was removed, so that row is still in it and in that commit. Remove it from $LANES_PATH and commit that before any other write in $LANES_REPO, because the next one would publish it"
+  DL_SAYS_AFTER_WRITE="Its row for lane $ADD_ROW_LANE was not taken back, and this act HAS committed it, locally and unpushed: with the register whole, remove that row from $LANES_PATH and commit that before any other write in $LANES_REPO, because the next one would publish it."
   delete_lines "$ar_line"
-  REG_COMMITTED_HERE=""
+  REG_COMMITTED_HERE=""; DL_SAYS_UNCHANGED=""; DL_SAYS_AFTER_WRITE=""
   git -C "$LANES_REPO" -c "$CP_EXACT" add -- "$LANES_PATH" || return 1
   git -C "$LANES_REPO" -c "$CP_EXACT" commit -q -m "LANES($ADD_ROW_LANE@$WS): $ar_subject" -- "$LANES_PATH" || return 1
   note "$ar_why; the rejected row was removed in a compensating LOCAL commit, so no later write publishes it. Neither commit was pushed."

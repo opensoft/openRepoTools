@@ -3278,7 +3278,13 @@ Where add-row has already committed its row when a peer's archive arrives in its
 local commit, as a peer's retirement does, so no later write publishes it. It
 removes only the copy this checkout's register adds over origin's: where a peer
 published the same row first, the rebase drops add-row's commit, and the copy
-left is the peer's, so nothing is taken back.
+left is the peer's, so nothing is taken back. It finds that copy's line in a
+diff it asks for with no context: `GIT_DIFF_OPTS` unset and
+`diff.interHunkContext=0`, either of which would otherwise add context to
+`-U0`. Any context that still arrives is counted where it stands. Where the
+take-back itself cannot rewrite the register, the refusal says that add-row has
+committed its row, locally and unpushed, and that it must be removed before any
+other write in that checkout publishes it.
 
 **One such line refuses every lane, not only its own.** `lanes-edit.sh
 retired-identity <lane>`, the check `lane-start` makes before it launches,

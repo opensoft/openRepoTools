@@ -354,12 +354,19 @@ def add_repo_x_4(reg: Register) -> subprocess.CompletedProcess:
     return reg.run("add-row", NEW_ROW.rstrip("\n"), LANES_LANE="repoX-4")
 
 
-def peer_pushes_during_pull(reg: Register, tmp_path: Path, changes: dict[str, str]) -> Path:
+def peer_pushes_during_pull(reg: Register, tmp_path: Path, changes: dict[str, str], *,
+                            diff_log: Path | None = None, diff_context: int | None = None) -> Path:
     """The shell suite's `repo19race` shape. A peer clone commits `changes`
     (a path and its whole new text each, one commit each, in order) now, and a
     `git` first on PATH pushes them the moment the writer's own checkout runs
     its first `pull`: after add-row has committed its row, before it pushes.
-    Returns the mark the shim leaves; the caller removes the shim."""
+    Returns the mark the shim leaves; the caller removes the shim.
+
+    The same shim sees add-row's take-back diff (the register's `-U0` diff
+    against origin's). `diff_log` records how each was called, the
+    `GIT_DIFF_OPTS` it saw and its arguments; `diff_context` runs it with that
+    much context instead, as any source of context the take-back cannot turn
+    off would."""
     peer = tmp_path / "peer"
     reg.raw_git("clone", "-q", str(reg.origin), str(peer))
     for rel, text in changes.items():
@@ -370,6 +377,15 @@ def peer_pushes_during_pull(reg: Register, tmp_path: Path, changes: dict[str, st
     real = shutil.which("git", path=os.environ.get("PATH"))
     mark = tmp_path / "raced"
     shim = reg.fakebin / "git"
+    take_back = ""
+    if diff_log is not None:
+        take_back += f"""  printf '%s\\t%s\\n' "${{GIT_DIFF_OPTS-<unset>}}" "$*" >> '{diff_log}'\n"""
+    if diff_context is not None:
+        take_back += (f'  a=(); for x in "$@"; do if [ "$x" = -U0 ]; then a+=(-U{diff_context}); '
+                      'else a+=("$x"); fi; done; set -- "${a[@]}"\n')
+    if take_back:
+        take_back = ('case " $* " in *" -U0 refs/remotes/origin/main -- "*)\n'
+                     + take_back + "  ;;\nesac\n")
     shim.write_text(f"""#!/usr/bin/env bash
 if [ "${{1-}}" = -C ] && [ "${{3-}}" = pull ] && [ ! -e '{mark}' ]; then
   case "${{2-}}" in */wip)
@@ -377,7 +393,7 @@ if [ "${{1-}}" = -C ] && [ "${{3-}}" = pull ] && [ ! -e '{mark}' ]; then
     '{real}' -C '{peer}' push -q origin main || exit 1 ;;
   esac
 fi
-exec '{real}' "$@"
+{take_back}exec '{real}' "$@"
 """)
     shim.chmod(0o755)
     return mark
@@ -541,28 +557,102 @@ def test_122_a_refusal_after_the_rebase_takes_back_its_own_row_beside_a_peers_co
 
 
 @PROC_FD
-def test_122_a_take_back_that_cannot_rewrite_says_add_row_has_committed(reg, tmp_path):
+@pytest.mark.parametrize("cut", ["copy", "write"])
+def test_122_a_take_back_that_cannot_rewrite_says_add_row_has_committed(reg, tmp_path, cut):
     """The delta review of #263, on the wording: where the take-back itself
     cannot rewrite the register, add-row HAS committed its row (locally, not
     pushed), and the refusal says so and how to remove it, never that this
-    act has committed nothing."""
+    act has committed nothing. And in add-row's own words (delta review 3's
+    NIT): `delete_lines`' sentences are archive-rows' ("the rows are in" the
+    archive, "the archive may have been appended"), and false here."""
     archive = a_good_archive(reg)
     mark = peer_pushes_during_pull(reg, tmp_path, {
         ARCHIVE: archive + RESCAN_REFUSALS["a line the scan cannot take apart"][0]})
-    copies = tmp_path / "copies"
-    # The register's SECOND copy into a `pre` is cut: add-row's own append
-    # makes the first, the take-back's `delete_lines` the second.
-    reg.shim("cat", 'if [ "${1-}" = -- ] && case "${2-}" in */lanes/LANES.md) true ;; *) false ;; esac && '
-                    'case "$(readlink "/proc/$$/fd/1" 2>/dev/null)" in */pre) true ;; *) false ;; esac; then\n'
-                    f"  echo copy >> '{copies}'\n"
-                    f"  if [ \"$(grep -c . '{copies}')\" -ge 2 ]; then n=$(wc -l < \"$2\"); head -n $((n / 2)) -- \"$2\"; exit 1; fi\n"
-                    "fi")
+    if cut == "copy":
+        copies = tmp_path / "copies"
+        # The register's SECOND copy into a `pre` is cut: add-row's own append
+        # makes the first, the take-back's `delete_lines` the second.
+        reg.shim("cat", 'if [ "${1-}" = -- ] && case "${2-}" in */lanes/LANES.md) true ;; *) false ;; esac && '
+                        'case "$(readlink "/proc/$$/fd/1" 2>/dev/null)" in */pre) true ;; *) false ;; esac; then\n'
+                        f"  echo copy >> '{copies}'\n"
+                        f"  if [ \"$(grep -c . '{copies}')\" -ge 2 ]; then n=$(wc -l < \"$2\"); head -n $((n / 2)) -- \"$2\"; exit 1; fi\n"
+                        "fi")
+    else:
+        # The take-back's rewrite is the one write from an `out` add-row makes.
+        reg.cut_cat("write fails")
     result = add_repo_x_4(reg)
     (reg.fakebin / "git").unlink()
     (reg.fakebin / "cat").unlink()
     assert mark.exists(), "the peer never raced the pull"
     assert result.returncode == 5, (result.stdout, result.stderr)
-    assert "this act HAS committed its row for lane repoX-4" in result.stderr
+    if cut == "copy":
+        assert "this act HAS committed its row for lane repoX-4" in result.stderr
+    else:
+        assert "have been put back and proved" in result.stderr
+        assert "Its row for lane repoX-4 was not taken back, and this act HAS committed it" in result.stderr
+    assert "from lanes/LANES.md and commit that before any other write in " in result.stderr
+    for archive_rows_words in ("the rows are in", "The archive may have been appended", "resolve that partial move"):
+        assert archive_rows_words not in result.stderr
     assert "this act has committed nothing" not in result.stderr
     assert "add row" in reg.git("log", "--format=%s", "origin/main..HEAD")
     assert "`repoX-4`" not in reg.published("lanes/LANES.md")
+
+
+#: What is set up before add-row runs (the delta review of #263, S3): each is a
+#: way context reaches the take-back's diff, or a hunk where the row is not the
+#: first line of it.
+CONTEXT_CASES = [
+    "GIT_DIFF_OPTS=-u3 in add-row's environment",
+    "diff.interHunkContext=3 beside an unpushed edit one row above the end",
+    "context the diff carries anyway, beside that edit",
+    "another lane's unpushed row just above",
+]
+
+
+@pytest.mark.parametrize("case", CONTEXT_CASES)
+def test_122_a_take_back_finds_its_row_whatever_context_the_diff_carries(reg, tmp_path, case):
+    """The delta review of #263, S3: `-U0` alone does not keep context out of
+    the take-back's diff. A `GIT_DIFF_OPTS=-u3` overrides it, and a user's
+    `diff.interHunkContext` fuses a nearby change's hunk with the row's, the
+    lines between them as context. The parse counted only `+` lines, so the
+    row was put at the wrong line, the line check refused, nothing was taken
+    back, and the next ordinary write published the row add-row had refused (M1
+    again). The diff now runs with neither, and the parse counts every line of
+    a hunk but a removed one, so context that arrives anyway (a shim, here) is
+    counted where it stands, and so is a second added row in the same hunk."""
+    archive = a_good_archive(reg)
+    extra = {"LANES_LANE": "repoX-4"}
+    diff_log = tmp_path / "take-back-diff"
+    context = None
+    if case.startswith("GIT_DIFF_OPTS"):
+        extra["GIT_DIFF_OPTS"] = "-u3"
+    elif case.startswith("another lane"):
+        reg.write("lanes/LANES.md", reg.read("lanes/LANES.md")
+                  + row("repoX-5", OLD_ID, "another lane's row, not pushed", "2026-10-19"))
+        reg.commit("another lane's row, not pushed")
+    else:
+        if case.startswith("diff.interHunkContext"):
+            (reg.home / ".gitconfig").write_text("[diff]\n\tinterHunkContext = 3\n", encoding="utf-8")
+        else:
+            context = 3
+        reg.write("lanes/LANES.md", reg.read("lanes/LANES.md").replace(
+            "another repository's row 29 |", "another repository's row 29, edited here |"))
+        reg.commit("an edit one row above the end, not pushed")
+    mark = peer_pushes_during_pull(reg, tmp_path, {
+        ARCHIVE: archive + RESCAN_REFUSALS["a line the scan cannot take apart"][0]},
+        diff_log=diff_log, diff_context=context)
+    result = reg.run("add-row", NEW_ROW.rstrip("\n"), **extra)
+    (reg.fakebin / "git").unlink()
+    assert mark.exists(), "the peer never raced the pull"
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    after = reg.run("set-row-state", "repoX-2", "PAUSED · the next unrelated write", LANES_LANE="repoX-1")
+    assert after.returncode == 0, (after.stdout, after.stderr)
+    assert reg.published("lanes/LANES.md").count("`repoX-4`") == 0, result.stderr
+    assert "removed in a compensating LOCAL commit" in result.stderr
+    # How the one take-back diff was asked for: with no GIT_DIFF_OPTS and no
+    # inter-hunk context, whatever add-row's environment and config held.
+    calls = diff_log.read_text(encoding="utf-8").splitlines()
+    assert len(calls) == 1, calls
+    seen_opts, args = calls[0].split("\t", 1)
+    assert seen_opts == "<unset>", calls
+    assert " -c diff.interHunkContext=0 diff " in f" {args} ", calls
