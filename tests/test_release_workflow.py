@@ -1821,9 +1821,19 @@ def a_missing_member(member: str) -> Callable[[dict, str], None]:
 
 
 def an_extra_member(member: str, data: bytes) -> Callable[[dict, str], None]:
+    """`member`, where `{info}` is the `.dist-info/` prefix, added."""
     def change(members: dict, info: str) -> None:
-        assert member not in members, f"the case is wrong: {member} is HEAD's"
-        members[member] = (data, 0o644)
+        name = member.format(info=info)
+        assert name not in members, f"the case is wrong: {name} is HEAD's"
+        members[name] = (data, 0o644)
+    return change
+
+
+def a_dist_info_file_with(name: str, more: bytes) -> Callable[[dict, str], None]:
+    """The `.dist-info/` file `name` with `more` after its last line."""
+    def change(members: dict, info: str) -> None:
+        data, mode = members[info + name]
+        members[info + name] = (data + more, mode)
     return change
 
 
@@ -1837,11 +1847,13 @@ def a_line_more_in_the_stamp(members: dict, info: str) -> None:
 
 #: THE SYNTHETIC WHEELS THAT ARE NOT THE COMMIT'S: contracts/workflows.md's
 #: four, then one for each other check the step makes (contracts/wheel.md's
-#: checks 2 to 5, and the run's values). Each is `(what its refusal must
-#: name, the change to the wheel as built, the mode HEAD gives the file
-#: changed, the run's values where they are not the release's)`.
+#: checks 2 to 5, the metadata, the entry points, and the run's values).
+#: Each is `(what its refusal must name, the change to the wheel as built,
+#: the mode HEAD gives the file changed, the run's values where they are not
+#: the release's)`.
 NOT_THE_COMMITS = {
-    "no-licenses-LICENSE": ("LICENSE", no_license, None, None),
+    "no-licenses-LICENSE": ("licenses/LICENSE, so the commit's LICENSE is not in it",
+                            no_license, None, None),
     "a-payload-byte-changed": ("lanes-edit.sh", a_changed_byte("lanes-edit.sh"),
                                None, None),
     "a-payload-mode-0755-made-0644": (
@@ -1864,6 +1876,15 @@ NOT_THE_COMMITS = {
     "a-run-of-another-repository": (
         f"'REPOSITORY': '{THIS_REPOSITORY}'", None, None,
         {"GITHUB_REPOSITORY": THIS_REPOSITORY}),
+    "metadata-naming-a-dependency": (
+        "'Requires-Dist': ['requests']",
+        a_dist_info_file_with("METADATA", b"Requires-Dist: requests\n"), None, None),
+    "a-second-console-script": (
+        "'lane': 'openrepotools.cli:main'",
+        a_dist_info_file_with("entry_points.txt", b"lane = openrepotools.cli:main\n"),
+        None, None),
+    "a-sixth-dist-info-file": (
+        "INSTALLER", an_extra_member("{info}INSTALLER", b"pip\n"), None, None),
 }
 
 
@@ -1907,10 +1928,11 @@ def test_release_build_the_wheel_check_refuses_a_wheel_that_is_not_the_commit_s(
     with its mode changed either way; then a `licenses/LICENSE` that is not
     the commit's, a module with a byte changed, a payload file missing, a
     member nothing puts in the wheel, a stamp whose bytes are not the
-    committed file stamped though its five values are the release's, and the
-    wheel as built checked in a run of another repository. Each fails, and
-    among the lines it prints beyond the wheel as built's is one naming what
-    is wrong."""
+    committed file stamped though its five values are the release's, the
+    wheel as built checked in a run of another repository, metadata that
+    names a dependency, a second console script, and a sixth `.dist-info/`
+    file. Each fails, and among the lines it prints beyond the wheel as
+    built's is one naming what is wrong."""
     names, change, head_mode, run = NOT_THE_COMMITS[which]
     if head_mode is not None:
         assert head()[1][names][0] == head_mode, (
