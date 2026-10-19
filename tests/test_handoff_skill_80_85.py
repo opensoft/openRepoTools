@@ -22,9 +22,10 @@ such a why before step 1, as `lane-handoff` does right after reading its
 arguments, and step 4 sanitizes the why as `lane-handoff`'s `sanitize` does.
 
 THE BLOCKS ARE RUN, NOT READ. They are found with
-`tests/test_skill_shell_blocks.py`'s own fence reader (imported, not copied)
-and run under `bash` and under `zsh -f` where one is installed, because a
-session's Bash tool runs a skill's block under the user's own shell.
+`tests/test_skill_shell_blocks.py`'s own fence reader and run in
+`tests/test_handoff_skill_72_80.py`'s sandbox (both imported, not copied),
+under `bash` and under `zsh -f` where one is installed, because a session's
+Bash tool runs a skill's block under the user's own shell.
 `lane-handoff`'s side of every comparison is ITS OWN code: its `sanitize`
 function, its kind-word lines and its register-line template, cut out of the
 file. So the two cannot drift apart with this file still green. Every case
@@ -41,7 +42,6 @@ or the network.
 
 from __future__ import annotations
 
-import os
 import re
 import shutil
 import stat
@@ -52,6 +52,8 @@ from typing import Dict, List, NamedTuple, Optional
 import pytest
 
 from conftest import REPO, WINDOWS_SKIP
+from test_handoff_skill_72_80 import SHELLS
+from test_handoff_skill_72_80 import Sandbox as SkillSandbox
 from test_skill_shell_blocks import SHELL_TAGS, Block, fenced_blocks
 
 pytestmark = [WINDOWS_SKIP, pytest.mark.skipif(
@@ -59,12 +61,6 @@ pytestmark = [WINDOWS_SKIP, pytest.mark.skipif(
 
 SKILL = REPO / "skills/handoff/SKILL.md"
 LANE_HANDOFF = REPO / "lane-handoff"
-
-SHELLS = [
-    pytest.param("bash", id="bash"),
-    pytest.param("zsh", id="zsh", marks=pytest.mark.skipif(
-        shutil.which("zsh") is None, reason="no zsh here")),
-]
 
 LANE = "repoHS-1"
 WS = "Eagle"
@@ -160,37 +156,25 @@ class Call(NamedTuple):
     argv: List[str]
 
 
-class Sandbox:
+class Sandbox(SkillSandbox):
+    """`tests/test_handoff_skill_72_80.py`'s sandbox: its private `PATH`, its
+    explicit environment and its `run` under `bash` or `zsh -f`. On top of it
+    go a helper stub that records every argument, a `tmux` that answers
+    nothing and a `date` that answers `NOW`."""
+
     def __init__(self, root: Path) -> None:
-        self.root = root
-        self.bin = root / "bin"
-        self.bin.mkdir()
+        super().__init__(root)
         self.calls_dir = root / "calls"
         self.calls_dir.mkdir()
-        (root / "home").mkdir()
-        (root / "tmp").mkdir()
-        self.helper = self.bin / "lanes-edit.sh"
         for name, body in (("lanes-edit.sh", STUB),
                            ("tmux", "#!/bin/sh\nexit 1\n"),
                            ("date", f"#!/bin/sh\nprintf '%s\\n' '{NOW}'\n")):
             tool = self.bin / name
             tool.write_text(body, encoding="utf-8")
             tool.chmod(tool.stat().st_mode | stat.S_IXUSR)
-        dirs: List[str] = [str(self.bin)]
-        for tool in ("bash", "zsh"):
-            found = shutil.which(tool)
-            if found and os.path.dirname(found) not in dirs:
-                dirs.append(os.path.dirname(found))
-        for fallback in ("/usr/bin", "/bin"):
-            if fallback not in dirs:
-                dirs.append(fallback)
-        self.env: Dict[str, str] = {
-            "HOME": str(root / "home"), "PATH": os.pathsep.join(dirs),
-            "TMPDIR": str(root / "tmp"), "LC_ALL": "C", "TZ": "UTC",
-            "STUB_CALLS": str(self.calls_dir),
-        }
+        self.env["STUB_CALLS"] = str(self.calls_dir)
 
-    def calls(self) -> List[Call]:
+    def recorded(self) -> List[Call]:
         out = []
         for path in sorted(self.calls_dir.iterdir()):
             fields = path.read_bytes().decode("utf-8").split("\0")[:-1]
@@ -198,19 +182,7 @@ class Sandbox:
         return out
 
     def writes(self, verb: str) -> List[Call]:
-        return [c for c in self.calls() if c.argv and c.argv[0] == verb]
-
-    def run(self, shell: str, script: str,
-            extra: Optional[Dict[str, str]] = None) -> subprocess.CompletedProcess:
-        env = dict(self.env)
-        env.update(extra or {})
-        argv = [shutil.which(shell) or shell]
-        if shell == "zsh":
-            argv.append("-f")
-        return subprocess.run([*argv, "-c", script], cwd=str(self.root),
-                              env=env, capture_output=True, text=True,
-                              stdin=subprocess.DEVNULL, check=False,
-                              timeout=60)
+        return [c for c in self.recorded() if c.argv and c.argv[0] == verb]
 
 
 @pytest.fixture
@@ -261,7 +233,7 @@ def _lane_handoff_writes(box: Sandbox, why: str,
 
 def _the_one(box: Sandbox, verb: str) -> Call:
     found = box.writes(verb)
-    assert len(found) == 1, (verb, box.calls())
+    assert len(found) == 1, (verb, box.recorded())
     return found[0]
 
 
@@ -296,11 +268,11 @@ def test_no_write_records_a_template_placeholder(box: Sandbox,
     `<placeholder>`: what the template showed a reader is never what the
     block records."""
     _step4(box, shell, "a usage reset")
-    left = [(c.argv[0], arg) for c in box.calls() if c.argv[0] in WRITES
+    left = [(c.argv[0], arg) for c in box.recorded() if c.argv[0] in WRITES
             for arg in c.argv if PLACEHOLDER.search(arg)]
     assert not left, f"a write recorded the template's placeholder: {left}"
-    assert [c.argv[0] for c in box.calls() if c.argv[0] in WRITES] == \
-        list(WRITES), box.calls()
+    assert [c.argv[0] for c in box.recorded() if c.argv[0] in WRITES] == \
+        list(WRITES), box.recorded()
 
 
 def test_no_shell_block_carries_the_placeholders_80_item_7_names() -> None:
@@ -359,7 +331,7 @@ def test_a_line_break_reaches_neither_one_line_write(box: Sandbox,
     carriage return."""
     _step4(box, shell, "a\r\nb\rc\nd — e")
     assert _the_one(box, "log").argv[-1] == "a; b; c; d; e kind unknown"
-    broken = [(c.argv[0], arg) for c in box.calls() if c.argv[0] in WRITES
+    broken = [(c.argv[0], arg) for c in box.recorded() if c.argv[0] in WRITES
               for arg in c.argv if "\n" in arg or "\r" in arg]
     assert not broken, f"a write was handed a line break (#85): {broken}"
 
@@ -398,7 +370,7 @@ def test_a_why_carrying_a_line_break_is_refused_at_the_door(
     assert "the why is ONE line" in LANE_HANDOFF.read_text(encoding="utf-8"), (
         "lane-handoff's own door no longer says the why is ONE line: the two "
         "refusals were written to say the same thing")
-    assert box.calls() == []
+    assert box.recorded() == []
 
 
 PASSED_WHYS = {
