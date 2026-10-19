@@ -237,9 +237,9 @@ gh api repos/opensoft/openRepoTools/contents/openRepoTools \
     -H 'Accept: application/vnd.github.raw' | bash -s -- --install
 ```
 
-A workstation uses ONE install route or the other, never both, until
-opensoft/workBenches#165 lets workBenches' `scripts/setup-estate-commands.sh`
-accept pipx's link (Brett Heap's decision of 2026-10-18).
+A workstation uses ONE install route or the other, never both — pipx's `openrepotools`
+or workBenches' `./setup.sh` — until opensoft/workBenches#165 lets its
+`scripts/setup-estate-commands.sh` accept pipx's link (Brett Heap's decision of 2026-10-18).
 
 `--install` places SEVENTEEN files (SIXTEEN beside pipx's link, below) into
 `~/.local/bin` — `openRepoTools`, `park`, `resume`, `status`, `lane`, `lanes`,
