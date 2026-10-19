@@ -3163,7 +3163,12 @@ HEADER_CARRIES = (
     "--notes-file <spec>/docs/release-notes/v<version>.md",
     "release/vX.Y", "annotated", "cherry-pick -x", "HOLD", "LANDED",
     "l3-rehearsal-v1.1.0", "tests.yml", "opensoft/openRepoTools-code",
-    "opensoft/openRepoTools", "pypi.org publisher", "testpypi", "pypi")
+    "opensoft/openRepoTools", "pypi.org publisher", "testpypi", "pypi",
+    # the procedure's approvals, and the branch cut at the tag's commit: a
+    # push of the tag itself is rejected ("trying to write non-commit object")
+    "4. APPROVE `testpypi`, Brett Heap's act. The install check then runs on "
+    "its three legs; approve `pypi` once it has passed.",
+    "git push origin 'vX.Y.0^{commit}:refs/heads/release/vX.Y'")
 
 
 @NEEDS_UPSTREAM
@@ -3182,7 +3187,82 @@ def test_release_header_carries_the_six_releasing_sections_in_order():
 @NEEDS_UPSTREAM
 @pytest.mark.parametrize("phrase", HEADER_CARRIES)
 def test_release_header_says_what_releasing_needs(phrase):
-    """The procedure's commands verbatim, the branch and tag policy's terms,
-    the rehearsal branch, both repositories and both environments, and the
-    missing pypi.org publisher, the second line of defence."""
+    """The procedure's commands verbatim, its approval step, the branch and
+    tag policy's terms, the rehearsal branch, both repositories and both
+    environments, and the missing pypi.org publisher, the second line of
+    defence."""
     assert phrase in header(), f"the RELEASING header never says {phrase!r}"
+
+
+#: A row of the guard's table as release.yml writes it, in the header and
+#: above step 1: who, on which ref, which version, and what is uploaded.
+TABLE_ROW = re.compile(
+    r"(opensoft/openRepoTools-code|opensoft/openRepoTools|any other repository"
+    r"|any repository)\s+(a tag|a branch)\s+(X\.Y\.ZrcN|X\.Y\.Z|any)\s+(\S.*)")
+TABLE_OUTCOMES = {"TestPyPI, then PyPI": ("true", "true"),
+                  "TestPyPI alone": ("true", "false"), "refused": None,
+                  "nothing: the rehearsal": ("false", "false"),
+                  "neither: the rehearsal": ("false", "false")}
+
+
+def guard_tables() -> List[Tuple[int, Dict[Tuple[str, str, str], Optional[Tuple[str, str]]]]]:
+    """Each run of comment lines in release.yml that are rows of the guard's
+    table: its first line's number, and `{(who, ref, version): (to-testpypi,
+    to-pypi)}`, `None` where the row says refused."""
+    tables: list = []
+    rows: Optional[dict] = None
+    for number, line in enumerate(WORKFLOW.read_text(encoding="utf-8").splitlines(), 1):
+        text = line.strip()
+        found = TABLE_ROW.fullmatch(text[1:].strip()) if text.startswith("#") else None
+        if not found:
+            rows = None
+            continue
+        if rows is None:
+            rows = {}
+            tables.append((number, rows))
+        key, outcome = found.group(1, 2, 3), found.group(4)
+        assert key not in rows, f"line {number} writes the row {key} again"
+        assert outcome in TABLE_OUTCOMES, f"line {number}: {outcome!r}"
+        rows[key] = TABLE_OUTCOMES[outcome]
+    return tables
+
+
+def table_key(repository: str, ref: str, version: str) -> Optional[Tuple[str, str, str]]:
+    """The table row a guard case falls under, or None for a ref that is
+    neither a tag nor a branch, which the table does not list."""
+    if ref.startswith("refs/heads/"):
+        return ("any repository", "a branch", "any")
+    if not ref.startswith("refs/tags/"):
+        return None
+    if repository in (CODE_LEG, THIS_REPOSITORY):
+        return (repository, "a tag", "X.Y.ZrcN" if "rc" in version else "X.Y.Z")
+    return ("any other repository", "a tag", "any")
+
+
+@NEEDS_UPSTREAM
+def test_release_header_s_guard_table_is_the_guard_s_own_decisions():
+    """THE TABLE IS THE GUARD (FR-048): release.yml writes the guard's table
+    twice, in the header's WHERE RELEASES COME FROM and above step 1, and each
+    row says what `GUARD_ROWS`, which the guard is run under, decides for
+    every case that falls under it. Every row has a case, and every case on
+    a tag or a branch has its row."""
+    lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
+    start = next(n for n, line in enumerate(lines, 1) if re.match(r"^on\s*:", line))
+    tables = guard_tables()
+    assert [number < start for number, _ in tables] == [True, False], (
+        f"the guard's table is written at lines {[n for n, _ in tables]}, not "
+        f"once in the header (before line {start}) and once above step 1")
+    for number, rows in tables:
+        reached = set()
+        for case in GUARD_ROWS:
+            repository, ref, version, decision = case.values
+            key = table_key(repository, ref, version)
+            if key is None:
+                continue
+            assert key in rows, f"the table at line {number} has no row {key}"
+            assert rows[key] == decision, (
+                f"the table at line {number} says {key} gives {rows[key]}, and "
+                f"the guard decides {decision} for {case.id}")
+            reached.add(key)
+        assert reached == set(rows), (
+            f"rows at line {number} no guard case reaches: {set(rows) - reached}")
