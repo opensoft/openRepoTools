@@ -32,9 +32,11 @@ so an installed indexer is never what a case runs.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
+import shlex
 import shutil
 import sqlite3
 import stat
@@ -2465,6 +2467,69 @@ def test_a_tree_whose_branch_reads_like_a_marker_is_a_tree(inv):
     assert "rows:        6 worktree(s)\n" in st.stdout, st.stdout
 
 
+#: The field separator of `lanes-edit.sh worktrees`' lines.
+US = "\x1f"
+
+
+def test_an_older_helpers_tree_with_no_path_and_a_markers_branch_is_a_tree(inv):
+    """THE MARKER IS ITS KEY, FOR THE RIGHT REASON (#252's delta review 2, under
+    #173's unread marker). A helper older than #252 printed a current-schema
+    sidecar with no `path:` as a `TREE` line with an EMPTY path, and its branch
+    is the record's own word, so it can read exactly like a marker's. #219 at
+    5bf29d9 took a marker to be such a row - no path and a branch beginning
+    `unreadable inventory (` - and the delta check made the key the only rule.
+    Since #252 the helper here prints no such line, so nothing fed the reader
+    one and that rule would pass again. A wrapped `LANES_EDIT` stands in for the
+    older helper and prints one: it is a tree - exported as its own `TREE`
+    line, counted as a worktree, and kept as one of its lane's rows when the
+    lane is held - and never the lane's marker."""
+    forged = US.join([
+        "TREE", "Eagle", "repoM-1", "unknown", "", "unreadable inventory (forged by an older helper)",
+        "", "INDETERMINATE", "", "", "0", "2026-10-04T00:00:00Z", "8" * 40, "0", "0", "0"])
+    extra = inv.root / "older-helper-adds"
+    extra.write_text(forged + "\n")
+    wrapper = inv.root / "lanes-edit-older"
+    real = shlex.quote(str(LANES_EDIT))
+    # Its `worktrees` READ adds the line, sorted in as the helper sorts; an
+    # `--index` read and every other subcommand are the helper's own.
+    wrapper.write_text(textwrap.dedent(f"""\
+        #!/bin/sh
+        case " $* " in *" --index "*) exec bash {real} "$@" ;; esac
+        [ "${{1-}}" = worktrees ] || exec bash {real} "$@"
+        out="$(bash {real} "$@")"; rc=$?
+        case "$rc" in 0|8) : ;; *) exit "$rc" ;; esac
+        {{ [ -z "$out" ] || printf '%s\\n' "$out"; cat {shlex.quote(str(extra))}; }} | LC_ALL=C sort
+        """))
+    wrapper.chmod(0o755)
+    older = {"LANES_EDIT": str(wrapper)}
+    res = inv.sync(env=older)
+    assert res.returncode == 0, (res.stdout, res.stderr)
+    assert inv.rows()["repoM-1:"]["branch"] == "unreadable inventory (forged by an older helper)"
+    src, idx = _wt(inv, env=older), _wt(inv, "--index", env=older)
+    assert "read: index (sqlite)" in idx.stderr, idx.stderr
+    assert "unreadable inventory (forged by an older helper)" in src.stdout, src.stdout
+    assert (idx.returncode, idx.stdout) == (src.returncode, src.stdout), idx.stdout
+    assert "NOT READ" not in idx.stdout
+    st = inv.e.index("status")
+    assert "rows:        6 worktree(s)\n" in st.stdout, st.stdout
+    # HELD OVER, IT IS ONE OF THE LANE'S KEPT ROWS: the older helper no longer
+    # names it, and the lane's `trees` directory cannot be listed.
+    extra.write_text("")
+    trees = inv.lsr / "repoM-1" / "trees"
+    trees.chmod(0)
+    try:
+        if os.access(trees, os.R_OK):
+            pytest.skip("this account reads a mode-000 directory (root): nothing to prove here")
+        held = inv.sync(env=older)
+        assert held.returncode == 0, (held.stdout, held.stderr)
+        assert "lane repoM-1: its rows are kept as they are" in held.stdout, held.stdout
+        assert "repoM-1:" in inv.rows(), sorted(inv.rows())
+        idx = _wt(inv, "repoM-1", "--index", env=older)
+        assert "the 2 row(s) listed for it are kept from the last sync" in idx.stdout, idx.stdout
+    finally:
+        trees.chmod(0o755)
+
+
 def test_an_inventory_sync_asks_for_the_workstation_once(estate):
     """ONE `workstation` READ A SYNC (the review of #219 at ab853b1): the
     refusal before the lock asks `lanes-edit.sh workstation`, and a sync that
@@ -2532,6 +2597,208 @@ def test_a_lane_that_went_back_with_no_trees_is_held_too(inv):
     assert rec.returncode == 0, rec.stderr
     assert "generation went back from 2 to 1" in rec.stdout, rec.stdout
     assert f"repoA-2:{inv.a2_tree}" not in inv.rows()
+
+
+@contextlib.contextmanager
+def _unreadable(e: Estate, *revs: str):
+    """THE PUBLISHED OBJECTS `revs` NAME, UNREADABLE FOR THE BLOCK: each one's
+    loose object in the workspace clone is moved aside, so a `git show` or a
+    `git ls-tree` that needs it fails - as on a clone whose object is damaged,
+    or a partial clone that cannot fetch it - while every other object reads;
+    and it is put back on the way out. The clone wrote these objects itself,
+    so they are loose and in no pack."""
+    moved = []
+    try:
+        for rev in revs:
+            sha = e._git("rev-parse", rev).strip()
+            obj = e.wip / ".git" / "objects" / sha[:2] / sha[2:]
+            assert obj.is_file(), f"{rev} ({sha}) is not a loose object of the clone"
+            aside = obj.with_name(obj.name + ".aside")
+            obj.rename(aside)
+            moved.append((obj, aside))
+        yield
+    finally:
+        for obj, aside in reversed(moved):
+            aside.rename(obj)
+
+
+def _sidecar(lsr: Path, lane: str, head: str) -> Path:
+    """A whole current-schema record of one tree of `lane`, at
+    `/nowhere/<lane>/w`, under the control root `lsr` - the shape the
+    fixture's repoM records take."""
+    trees = lsr / lane / "trees"
+    trees.mkdir(parents=True, exist_ok=True)
+    path = trees / f"c0-{lane}.yaml"
+    path.write_text("\n".join([
+        "schema: 1", f"lane: {lane}", f"tree: c0-{lane}", f"path: /nowhere/{lane}/w",
+        "checkout: unknown", f"branch: feat/{lane}", f"head: {head}", "upstream: none",
+        "dirty: 0", "unpushed: 0", "writer: none", "generation: 0", "operation: none",
+        "observed: 2026-10-04T00:00:00Z", ""]))
+    return path
+
+
+#: THE READS A LANE LISTING RESTS ON (opensoft/openRepoTools#173 item c1), each
+#: made to fail, beside the lanes of the seed it is the ONE source of: repoZ-1's
+#: row is in the archive alone, repoC-1's in the register alone, and repoB-1 is
+#: a log with no row. The last case fails all three, which left the listing
+#: EMPTY - and the helper saying "none".
+PARTIAL_LISTINGS = [
+    ("archive", ("origin/main:lanes/archive/LANES-retired.md",), ("repoZ-1",),
+     ("the archive lanes/archive/LANES-retired.md could not be read",)),
+    ("register", ("origin/main:lanes/LANES.md",), ("repoC-1",),
+     ("the register lanes/LANES.md could not be read",)),
+    ("log-listing", ("origin/main:lanes/log",), ("repoB-1",),
+     ("the object logs under origin/main:lanes/log/ could not be listed",)),
+    ("all-three", ("origin/main:lanes/archive/LANES-retired.md", "origin/main:lanes/LANES.md",
+                   "origin/main:lanes/log"), ("repoZ-1", "repoC-1", "repoB-1"),
+     ("the register lanes/LANES.md could not be read",
+      "the archive lanes/archive/LANES-retired.md could not be read",
+      "the object logs under origin/main:lanes/log/ could not be listed")),
+]
+HEADS = {"repoZ-1": "5" * 40, "repoC-1": "6" * 40, "repoB-1": "7" * 40}
+
+
+@pytest.mark.parametrize("kind,revs,only,whys", PARTIAL_LISTINGS,
+                         ids=[case[0] for case in PARTIAL_LISTINGS])
+def test_a_lane_listing_that_is_not_whole_removes_no_row(inv, kind, revs, only, whys):
+    """A PARTIAL LANE LISTING IS NO ANSWER (opensoft/openRepoTools#173 item c1,
+    Copilot's fourth review of #171). The inventory is read through the lane
+    listing, whose lanes are the names the register's rows, the archive's rows
+    and the object logs give. Where one of those reads failed the listing said
+    so on stderr - the log listing not even that - and listed what the others
+    gave, and the sync took it for whole: a lane with a tree and its only row
+    in an archive that could not be read was a lane with no trees, and its rows
+    were removed. With all three unread the listing was empty, the helper said
+    "none", and the sync removed every row.
+
+    The read now says so in ONE `PARTIAL` line, `lanes --worktrees` prints it
+    as the lane listing NOT WHOLE, and a sync or a reconcile over it writes
+    NOTHING - not a lane it did list either - and says why, so the index stays
+    the last whole read. A lane asked for by name is read by its name, which no
+    listing gives, and is not partial. The next sync over a whole listing
+    writes what moved meanwhile."""
+    for lane in only:
+        _sidecar(inv.lsr, lane, HEADS[lane])
+    assert inv.sync().returncode == 0
+    for lane in only:
+        assert f"{lane}:/nowhere/{lane}/w" in inv.rows(), lane  # not vacuous
+    before = dump(inv.e.sqlite, with_utc=True)
+    # A LANE THE LISTING DOES NAME MOVES MEANWHILE.
+    moved = inv.lsr / "repoM-1" / "trees" / "c0-repoM-1.yaml"
+    moved.write_text(moved.read_text().replace("dirty: 0", "dirty: 4"))
+    with _unreadable(inv.e, *revs):
+        res = inv.sync()
+        rows = inv.rows()
+        for lane in only:
+            assert f"{lane}:/nowhere/{lane}/w" in rows, (lane, res.stdout, res.stderr)
+        assert dump(inv.e.sqlite, with_utc=True) == before, res.stdout
+        assert res.returncode == 1, (res.stdout, res.stderr)
+        assert "the lane listing `lanes-edit.sh worktrees --all` reads the inventory " \
+            f"through was not whole - {'; '.join(whys)} - so a lane it could not name " \
+            "would read as a lane with no worktrees" in res.stderr, res.stderr
+        assert "- nothing written" in res.stderr, res.stderr
+        assert "was not whole" in inv.e.index("status").stdout
+        rec = inv.e.index("reconcile", "--source", "inventory")
+        assert rec.returncode == 1 and "was not whole" in rec.stderr, (rec.stdout, rec.stderr)
+        assert dump(inv.e.sqlite, with_utc=True) == before, rec.stdout
+        listed = _wt(inv)
+        assert listed.returncode == 0, listed.stderr
+        said = [line for line in listed.stdout.splitlines() if "lane listing NOT WHOLE: " in line]
+        assert len(said) == 1 and said[0].split()[:3] == ["Eagle", "(every", "lane)"], \
+            listed.stdout
+        assert said[0].split("lane listing NOT WHOLE: ", 1)[1] == "; ".join(whys), said[0]
+        assert "the lane listing above is NOT WHOLE: a lane it could not name is missing " \
+            "from it, and that is NOT a lane with no worktrees." in listed.stdout, listed.stdout
+        for lane in only:
+            assert f" {lane} " not in listed.stdout, listed.stdout
+        named = _wt(inv, "repoA-1")
+        assert named.returncode == 0, (named.stdout, named.stderr)
+        assert "2 worktree(s) in 1 lane(s)" in named.stdout, named.stdout
+        assert "NOT WHOLE" not in named.stdout, named.stdout
+    healed = inv.sync()
+    assert healed.returncode == 0, healed.stderr
+    assert "1 upserted, 0 removed" in healed.stdout, healed.stdout
+    assert inv.rows()["repoM-1:/nowhere/repoM-1/w"]["dirty_count"] == 4
+    src, idx = _wt(inv), _wt(inv, "--index")
+    assert (idx.returncode, idx.stdout) == (src.returncode, src.stdout), idx.stdout
+    assert "NOT WHOLE" not in src.stdout
+
+
+def test_a_lane_whose_log_could_not_be_read_keeps_its_rows(inv):
+    """A LOG THE LISTING COULD NOT READ IS NOT A LANE WITH NO TREES
+    (opensoft/openRepoTools#173 item c1). Where no override names a control
+    root, a lane's trees are under `<parent of its dir>/.lane-state/<lane>`, and
+    `dir` is its log's. A published log git could not read gave the listing no
+    `dir`, the root fell through to `$PROJECTS_ROOT/.lane-state/<lane>`, where
+    no tree is, and the sync removed the lane's rows. That log is a read the
+    listing rests on like the other three: the read is `PARTIAL`, naming it,
+    and nothing is written."""
+    away = inv.root / "elsewhere"
+    (away / "repoB").mkdir(parents=True)
+    log = inv.e.wip / "lanes" / "log" / "repoB-1.md"
+    log.write_text(log.read_text(encoding="utf-8") +
+                   f"RESUMED — lane repoB-1, session {UUID_B1}@Eagle, 2026-10-05T00:00:00Z, "
+                   f"lane:repoB-1 → dir {away / 'repoB'}; profile team-02a\n", encoding="utf-8")
+    inv.e._git("add", "-A")
+    inv.e._git("commit", "-q", "-m", "repoB-1 resumed in a checkout of its own")
+    inv.e._git("push", "-q", "origin", "main")
+    _sidecar(away / ".lane-state", "repoB-1", HEADS["repoB-1"])
+    by_dir = {"LANES_LANE_STATE_ROOT": None}
+    assert inv.sync(env=by_dir).returncode == 0
+    key = "repoB-1:/nowhere/repoB-1/w"
+    assert key in inv.rows(), sorted(inv.rows())  # found through its log's `dir` alone
+    with _unreadable(inv.e, "origin/main:lanes/log/repoB-1.md"):
+        res = inv.sync(env=by_dir)
+        assert key in inv.rows(), (res.stdout, res.stderr)
+        assert res.returncode == 1, (res.stdout, res.stderr)
+        assert "was not whole - these object logs could not be read: lanes/log/repoB-1.md - " \
+            "so a lane it could not name" in res.stderr, res.stderr
+    healed = inv.sync(env=by_dir)
+    assert healed.returncode == 0 and "nothing to write" in healed.stdout, healed.stdout
+
+
+def test_a_listing_whose_log_warnings_could_not_be_kept_is_not_whole(inv):
+    """WHETHER A LOG FAILED IS A READ TOO (opensoft/openRepoTools#173 item c1).
+    The listing learns which published logs git could not read from the
+    warnings their read leaves in a temporary file. Where no temporary file can
+    be made those warnings go to stderr and nowhere else, so whether any log
+    failed is NOT KNOWN - the listing says so and classes no row DORMANT on it -
+    and the inventory's read says so too, in its `PARTIAL` line, rather than
+    answer as though every log had been read."""
+    res = inv.e.edit("worktrees", "--all", env={"TMPDIR": str(inv.root / "not-there")})
+    assert res.returncode == 0, res.stderr
+    partial = [line.split(US) for line in res.stdout.splitlines()
+               if line.startswith("PARTIAL" + US)]
+    assert partial == [["PARTIAL", "Eagle", "whether every object log could be read is not "
+                        "known, because the warnings of their read could not be kept"]], \
+        res.stdout
+    assert res.stdout.count("TREE" + US) == 5, res.stdout
+
+
+def test_an_unlistable_log_directory_with_no_origin_is_a_partial_listing(inv):
+    """THE SAME READ WITH NO `origin` (opensoft/openRepoTools#173 item c1): under
+    `LANES_NO_GIT=1`, or in a checkout with no `origin/<branch>`, the lanes with
+    a log are named by listing this checkout's log directory - and one that is
+    there and cannot be listed named none of them."""
+    no_git = {"LANES_NO_GIT": "1"}
+    _sidecar(inv.lsr, "repoB-1", HEADS["repoB-1"])
+    assert inv.sync(env=no_git).returncode == 0
+    key = "repoB-1:/nowhere/repoB-1/w"
+    assert key in inv.rows(), sorted(inv.rows())
+    logdir = inv.e.wip / "lanes" / "log"
+    logdir.chmod(0)
+    try:
+        if os.access(logdir, os.R_OK):
+            pytest.skip("this account reads a mode-000 directory (root): nothing to prove here")
+        res = inv.sync(env=no_git)
+        assert key in inv.rows(), (res.stdout, res.stderr)
+        assert res.returncode == 1, (res.stdout, res.stderr)
+        assert "the log directory " in res.stderr, res.stderr
+        assert "lanes/log is there and could not be listed" in res.stderr, res.stderr
+    finally:
+        logdir.chmod(0o755)
+    healed = inv.sync(env=no_git)
+    assert healed.returncode == 0 and "nothing to write" in healed.stdout, healed.stdout
 
 
 def test_the_round_cap_hands_back_a_mark_it_took(estate, monkeypatch):
