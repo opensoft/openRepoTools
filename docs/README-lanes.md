@@ -1,7 +1,7 @@
 # `lanes/LANES.md` — how the estate lane register is stored, and the commands that write it
 
 **THE TOOLING LIVES HERE; THE DATA LIVES IN YOUR WORKSPACE REPOSITORY.**
-Amendment 9, 2026-09-13. This manual and the four commands it describes —
+Amendment 9, 2026-09-13. This manual and the commands it then described —
 `lanes-edit.sh`, `lane-start`, `lane-end` and `link-estates` — came to
 `opensoft/openRepoTools` from `opensoft/brett-wip` with their history, because
 a `<user>-wip` is a person's DATA and its own rules file says so: "No secrets
@@ -73,7 +73,7 @@ workstation**.
 | the object logs | `<the checkout>/lanes/log/<lane>.md` — one per lane (Amendment 7) |
 | the alias table | two layers: `repos.tsv` shipped by openRepoTools and installed beside the commands, then `<the checkout>/lanes/repos.tsv` where you keep an override (Amendment 9(b)) |
 | who places the symlinks | `link-estates`, an installed command. It places the handoffs links, the register link and the `lanes-edit.sh` link — **and no longer the two `~/.local/bin` ones**, which `--install` owns |
-| who installs all of it | `openRepoTools --install` (thirteen files, idempotent, all-or-nothing) |
+| who installs all of it | `openRepoTools --install` (every command and the alias table, idempotent, all-or-nothing) |
 | the lane alias table | `<the checkout>/lanes/aliases.tsv` — `<old><TAB><new><TAB><UTC>`, written by `lane-rename` and by nothing else, resolved by every reader that takes a lane name (Amendment 16(e)) |
 
 Why `main` of the workspace repository and not the aggregation's: the
@@ -94,7 +94,22 @@ files — `pull --rebase` refuses outright on any unstaged tracked change — an
 pushes straight out instead, warning and naming the files. If the push is also
 rejected (the remote moved), it stops with exit 3, leaves your edit as a local
 commit, and prints the recovery: the owner of that file commits it, then you
-re-run `lanes-edit.sh commit`.
+re-run `lanes-edit.sh commit`. If `lanes/LANES.md` is clean, that re-run makes
+no commit of its own and pushes the local commits origin does not have yet,
+through the same loop, guard and retries (#194). It reads that queue on
+`refs/heads/main`, the branch the push sends, with HEAD required to be on it,
+and pushes exactly the commit it read. It refuses with 2 and pushes nothing
+unless every queued commit is a non-merge commit whose every change is an added
+or modified regular file under `lanes/` or `handoffs/`, and never bytecode, a
+cache or an environment. That refuses a merge, a deletion (a lane rename's
+included), a type change, a symlink, a gitlink and any other path. It is a
+path filter, not an ownership check: another lane's register write passes it,
+so read `git cherry -v origin/main HEAD` before you publish a shared queue.
+Only `commit` publishes that queue: any other write with nothing to stage
+leaves it local, and with nothing ahead `commit` is the no-op it always was.
+When `pull --rebase` finds every queued commit on origin already, by content
+under other shas, it drops them all. The publish then says so and exits 0
+without a push.
 
 ## THE ONE HAZARD — `sed -i` DESTROYS THE SYMLINK
 
@@ -205,7 +220,17 @@ dangling commit by rebasing it onto a newer base, which changes its hash, so
 actually published. `git -C <the workspace checkout> cherry origin/main <your
 commit> | grep -c '^+'` compares by patch instead and still finds it; 0 means
 it is already there, in which case STOP. Only once fetch succeeded AND this
-prints something other than 0 do you read your edit back with
+prints something other than 0 do you check that `git -C <the workspace
+checkout> rev-parse HEAD` is still the commit the recovery named; if the checkout
+has moved since the abort, STOP. Then list WHOSE the commits are, with
+`git -C <the workspace checkout> cherry -v origin/main HEAD`: one `+` line per
+local commit origin lacks, which is exactly what a reset drops, and in a shared
+checkout not every one is yours. If any `+` line is not your own write, STOP and
+take it to the lane its subject names. A `LANES(concurrent@…)` or
+`LANES(pre-existing@…)` capture names no lane, so it is not yours either. Never
+reset, stash or overwrite a peer's work: `reset --hard` drops EVERY `+` commit
+in the checkout, theirs with yours, and origin holds no copy of any of them
+(#194). Only when every `+` line is yours do you read your edit back with
 `git -C <the workspace checkout> diff origin/main..HEAD -- lanes/LANES.md`,
 then `git -C <the workspace checkout> reset --hard origin/main` and redo it on
 top of the peer's version.
@@ -291,7 +316,7 @@ a row exists.
 canonical** (Amendment 15, in force 2026-09-14T00:07:18Z). `lane-start
 openxfactory 2` and `lane-start openXfactory 2` are the same lane: every lookup
 of a name — the row, the object log, the tmux window, the session name,
-`LANES_LANE`, and every `<lane>` argument of the four commands — compares
+`LANES_LANE`, and every `<lane>` argument of the commands here — compares
 case-insensitively, and the row's own spelling is what the window is renamed to,
 what the launch is `--name`d with, what the log file is called, and what every
 line and stamp writes. A name typed in another case RESOLVES to it and is never
@@ -303,9 +328,10 @@ register already holds two rows differing only by case, **every writer refuses,
 naming both**, until they are merged by hand — 15(d): the newer row's session
 id(s) appended to the older row's session cell, in order, and the newer row
 removed in the SAME commit, whose message names both spellings. `lanes-edit.sh
-canon-lane <name>` is that resolver as a read, and the one all four commands
-share: **0** with the canonical spelling (the typed one where no row matches, so
-`add-row` can still create a lane), **2** for the pair, **64** usage — and that
+canon-lane <name>` is that resolver as a read, and the one the commands share
+rather than each keeping its own: **0** with the canonical spelling (the typed
+one where no row matches, so `add-row` can still create a lane), **2** for the
+pair, **64** usage — and that
 2 is RELAYED by `lane-start`, `lane-end` and `lane` rather than carried past,
 because the pair may be on `origin/<branch>` while this checkout still holds one
 row. `add-row` asks the published register as well as this copy of it for the
@@ -390,7 +416,9 @@ manual.
    the stamp — and it is what this run resumes and stamps. There is no flag for
    it and there could not be one: the id does not exist until the session does.
    The act is `lane-start --no-launch <repo> <n>` run **in** that window, which
-   is what the SessionStart hook's block asks the new session to do;
+   is what the SessionStart hook's block asks the new session to do. (The one
+   caller already *inside* that session, the name guard, names it with `--bind
+   <uuid>` — its binding mode, below — and that flag is the guard's alone);
 3c. `--confirm`, when it was passed and this window is not already named for
    the lane: the **triple** — the window, the session live in it, the row — and
    the question `Take lane <lane> in this window? [y/N]`. Before the rename and
@@ -492,6 +520,21 @@ manual.
 five and prints the `claude` command on **stdout** instead of running it —
 that is the hook a launcher uses, and it is the only thing either script ever
 writes to stdout.
+
+**`--bind <uuid>` is the name guard's binding mode, and nobody else's**
+(openRepoTools#70). The guard passes it on a person's choice `2` at its offer
+(see *The offer* below), naming the transcript of the session live in that
+window. Step 3b then takes that session even where ANOTHER row records its uuid
+— veto 1 answered by the person's `2`, which is the yes clause (h) rule 4 asks
+for — and appends it to the session cell (anchored on the published last id, or
+on `none recorded` / `pending — set by the session's first act` where the cell
+has no uuid) before the stamp. The row's stamp, the lane's `RESUMED` log line
+and the handoff's Rule 3 stamp all name **that** uuid, never the id the row
+would otherwise have resumed. It binds or it refuses, exit **2**, before
+anything is written: it is given only with `--no-launch`, never with `--fresh`
+or `--agent`, its `<uuid>` must be a transcript uuid and the session live in
+this window, and a window still named for another lane is refused — veto 2
+stands. No command printed for a person to type carries it.
 
 The env column records the Claude **profile** (`team-05b`), which is the thing
 that actually varies between lanes on one workstation; `WSL2` in the older
@@ -680,6 +723,7 @@ unambiguously at the first space after it; payload sub-fields are separated by
 |---|---|
 | issue | `CLAIMED`, `RELEASED`, `TAKEOVER ← <stale claim URL>`, `CLOSED → owner/repo#pr` |
 | PR | `OPENED ← owner/repo#i [owner/repo#j …]`, `LANDING`, `LANDED → <sha>`, `WITHDRAWN`, `CLOSED` |
+| issue or PR | `TAKEOVER ← lane:<dispossessed lane>` |
 | lane | `STARTED`, `PAUSED`, `RESUMED`, `ENDED`, `RETIRED` |
 | narrative | `NOTED`, `RULED [→ <object>]` (Amendment 13(b)) |
 | race | `CLAIM-LOST → lane:<other>` |
@@ -1176,9 +1220,9 @@ else.
 
 | code | meaning |
 |---|---|
-| 0 | done |
+| 0 | done, including `commit`'s publish of a queue that `pull --rebase` emptied because origin already held every commit in it by content (#194; it says so, and sends no push) |
 | 1 | environment — no register, no writer |
-| 2 | refusal — bad arguments, the object is held, an unknown alias, a checkout that cannot be rebased |
+| 2 | refusal — bad arguments, the object is held, an unknown alias, a checkout that cannot be rebased, or `commit` refusing to publish local commits that are not register or handoff writes, from a checkout whose HEAD is off the branch, or that it cannot read (#194; it pushes none of them) |
 | 3 | the edit is never a permanent loss, but this attempt cannot confirm whether it also reached origin — a rebase conflict (not pushed by this attempt; a later write from this checkout may already carry it to origin, so look by content before you retry), a network timeout on a push or a pull (a hung one often already landed), or six attempts exhausted because a peer's uncommitted file blocks every rebase |
 | 4 | the mutex could not be taken within 60s |
 | 5 | an edit moved more than one line and was refused |
@@ -1755,7 +1799,12 @@ DOES record — while a second live process now holds the one transcript
 Amendment 18(h) says exactly one may. `lanes-edit.sh duplicate-holder <lane>`
 finds it in the PROCESS TABLE instead (`pgrep -f` for a live `--fork-session`,
 then `ps -o pid=,ppid=,args= -p` per candidate — portable across GNU and
-BSD/macOS), matched against every id this lane's row has ever carried, and
+BSD/macOS), matched against every id this lane's row has ever carried by the
+`--resume` value read whole, a directory with a space in it included
+(opensoft/openRepoTools#76: `ps` joins the argv with spaces and quotes nothing,
+so the value runs to the first `.jsonl` that ends an argument, and a value with
+a space in it counts only as one absolute path, starting with `/` and holding
+no ` /`, by Brett Heap's ruling of 2026-10-18 on PR #205), and
 excludes the lane's own live holder (`live_holder`, the same implementation
 `live-holder` already calls) **and the harness's own companion of it** —
 Amendment 8 ruling (g)'s `kind: bg` record carrying the same id in the same
@@ -1765,11 +1814,12 @@ tree that cannot be read for that test is a read that failed, never "no
 companion", and a register that cannot be read is never "no duplicate": the
 row's ids are the whole search, so it exits 1 and names the read
 (opensoft/openRepoTools#67). `lane-end <lane> --retire <pid>` tries `forks`
-first and this second, and on a match here it TERMs the pair — the
-`bg-pty-host` parent and its child — and reports the pids it signalled; it
-refuses, naming the reason, when the pid given is the lane's own live session
-rather than the duplicate. Before this the retirement was a bare `kill -TERM`,
-outside every tool this estate has.
+first and this second, and on a match here it TERMs the `bg-pty-host` parent
+and EVERY child of it that resumes the same transcript, not only the first
+(opensoft/openRepoTools#86), reports each pid it signalled, and says RETIRED
+only once every one of them is gone; it refuses, naming the reason, when the
+pid given is the lane's own live session rather than the duplicate. Before this
+the retirement was a bare `kill -TERM`, outside every tool this estate has.
 
 ### The workstation's name
 
@@ -2101,6 +2151,13 @@ every command is filled in, never `<repo> <n>`.
 | the window's name matches TWO rows differing only by case | refuses naming both spellings and the merge, which is a person's act (Amendment 15(d)) |
 | not inside tmux at all | refuses: a lane RUNS in a tmux window named for it (Rule 4, Amendment 2) |
 
+**A lane named before Rule 4's `<repo>-<n>` form has no `<repo> <n>` to fill
+in**, and nothing in the register, the window or the session says where its
+checkout is. Rows 1, 5 and 6 then say so in the offer's own words (below) and
+print the offer's own line, `lane-start [--no-launch] --dir <that lane's
+checkout> <lane>`: the checkout is yours to supply, and a bare `--dir <path>` is
+never printed as though it were a command (openRepoTools#73).
+
 ### The lock
 
 Under the projects root the session name is **not the person's to set freely; it
@@ -2216,24 +2273,35 @@ with a `<path>` placeholder in it: the move is
 the path filled in, and the offer is kept. On choice `2` the **window is renamed first** and that order is
 load-bearing: `lane-start`'s step 3b veto 2 refuses to take the session live in
 a window named for another lane, which after choice `2` is exactly what this
-window is — without the rename the lane would be started and stamped with this
-transcript left out of its session cell.
+window is — without the rename `lane-start --bind` refuses, because its binding
+mode answers veto 1 and never veto 2.
 
-**And the LAST write of choice `2` is the guard's own**, because `lane-start`
-may not make it: its step 3b **veto 1** never takes a uuid that belongs to
-ANOTHER row (Amendment 11 clause (d) rule 1), and after the rename this uuid
-still belongs to the lane being left. So `lane-start` mints a fresh id for the
-new lane and the person's own transcript stays out of the cell — and the next
-prompt then finds a lane window whose row does not name this transcript and
-refuses, with a cure that vetoes for the same reason and changes nothing. A
-blocking hook that refuses for ever, on a state it created by obeying the
-person, is the worst outcome this surface has, so after `lane-start` returns
-the guard appends this uuid to the new lane's cell itself — with `lane-start`'s
-own anchor discipline, the PUBLISHED last id, so a stale copy of the row
-refuses rather than writing a cell that no longer matches. That is not a hole
-in veto 1: the veto exists for the take nobody asked for, and clause (h) rule
-4's limit is that the lock never moves a uuid between rows **without the person
-saying so** — here they have, in the answer given at this very prompt.
+**And choice `2` runs `lane-start` in its binding mode, `--no-launch --bind
+<this uuid>`** (openRepoTools#70). Its step 3b **veto 1** never takes a uuid
+that belongs to ANOTHER row (Amendment 11 clause (d) rule 1), and after the
+rename this uuid still belongs to the lane being left. Without an answer to that
+veto `lane-start` left the person's own transcript out of the new lane's cell —
+and the next prompt then found a lane window whose row did not name this
+transcript and refused, with a cure that vetoed for the same reason and changed
+nothing. A blocking hook that refuses for ever, on a state it created by obeying
+the person, is the worst outcome this surface has. So the guard used to append
+this uuid to the cell itself after `lane-start` returned — by which time
+`lane-start` had taken the destination row's ordinary resume path and stamped
+the row, the lane's log and the handoff `RESUMED` by the id **that row already
+had**, under `--no-launch`, about a conversation nobody was in. `--bind` is the
+person's `2` handed to `lane-start`: it appends this uuid to the cell first,
+with its own anchor discipline (the PUBLISHED last id, so a stale copy of the
+row refuses rather than writing a cell that no longer matches), and every stamp
+it writes names this uuid. The guard makes no register write of its own for it
+any more: it reads the cell back and says it ends on this uuid, or prints the
+act that puts it there where `lane-start`'s append could not land — a copy of
+the row older than the published one, or a cell carrying no uuid and neither
+`none recorded` nor the `pending` line. Its old write is not kept behind that as
+a fallback, because it used the same anchor and would have refused in exactly
+the same places. That is not a hole in veto 1: the veto exists for the take
+nobody asked for, and clause (h) rule 4's limit is that the lock never moves a
+uuid between rows **without the person saying so** — here they have, in the
+answer given at this very prompt.
 
 ### The duplicate read (Amendment 18(h))
 
@@ -2252,6 +2320,14 @@ profile's `sessions/` (Amendment 8, ruling (g) — *"records that share a
 what tells it from a second live process, not the profile: one profile can
 resume one transcript twice — no move, no swap, one command — and the
 interactive record that makes is 18(h)'s own case.
+
+**The companion is the harness's relation, not the asker's.** Where the asking
+window carries no record of the transcript at all — `lane-end --retire` typed
+in a bare shell or in another lane's window — it is read off the **lane's live
+window record** instead: the interactive record in a window tmux resolves and
+agrees with, and a `kind: bg` record in that record's profile is its companion
+from any window. Only one profile may answer; two live windows in two profiles
+on one transcript leave every row `unrelated`, as before (openRepoTools#73).
 
 `lanes-edit.sh transcript-holders <uuid>` is the read, and three surfaces share
 it rather than implementing the rule three times:
@@ -2273,7 +2349,14 @@ it rather than implementing the rule three times:
   half of the live session, not a rival to it.
 
 A window is matched by **id AND session name** (Amendment 11(h)'s agreement
-rule) because tmux reuses window ids once a window is gone.
+rule) because tmux reuses window ids once a window is gone. **A silent tmux is
+not a dead window**: where that read comes back empty, a second, untargeted
+question (`tmux display-message -p '#{session_name}'`) asks whether a server
+answers here at all. Only a window a server that answers does not have is
+`(gone)`; one tmux did not answer about is `(no answer)`, and like `(not
+asked)` it **protects** the process in it, so `--retire` refuses the lane's own
+pid while tmux is down or unreachable rather than handing Amendment 6(d)'s
+retitle to the conversation that IS the lane (openRepoTools#73).
 
 ### The `SessionStart` block's own line (clause (f))
 
@@ -2807,7 +2890,7 @@ Historical `ready` intents do not control an ordinary resume.
 The pane is respawned with `lane-handoff --supervise --lane <lane> --operation
 <id>`, **by absolute path**, because a respawned pane's `PATH` is whatever the
 person's shell profile makes of it. It is a MODE of a command that is already
-installed and not a thirteenth word: Amendment 18 Addendum 2 (i-8) is explicit
+installed and not one more word: Amendment 18 Addendum 2 (i-8) is explicit
 that *"no word is kept on `PATH` for it alone"*, which is the ground on which
 `restart` was taken off `PATH` in the first place.
 
@@ -3049,7 +3132,9 @@ once). Per dormant row:
   `RETIRED — lane <lane>, session <the sweeping session's uuid>@<ws>, <UTC>,
   lane:<lane> → retired-dormant by lane <writer>; reason <why>; was: <the state
   cell's head, verbatim, capped at 240>`. The session field is the **writer's**
-  transcript uuid (7(b)), and the row's own last words are carried into the log
+  transcript uuid (7(b)): `$LANES_SESSION`, else the last id of **this
+  checkout's** row for the writer, else the published row's, so a transcript
+  stamped here and not yet pushed is the one written. The row's own last words are carried into the log
   so that nothing the row said is lost when the row stops saying it;
 * the row's state cell becomes `RETIRED · <UTC> · <why>; was: <head>`. Clause
   (c) writes that cell as `RETIRED <UTC> · <why> · was: <head>`, which is four
@@ -3067,7 +3152,11 @@ is not dormant**); and a repository with no dormant row — *nothing to do is
 said, not done* (exit **8**). Any one of them refuses the **whole run**, before
 a byte is written, because it is one commit and therefore one decision. It also
 refuses a session-record read that failed: *"a read that failed is not 'nothing
-is live'"*.
+is live'"*. So does a listing that **withheld the class** (exit **1**). The
+listing withholds it where it could not list this checkout's log directory, or
+had nowhere to keep its warnings about published logs it could not read, and it
+says so. Counting zero there would be "nothing to do" about rows nobody could
+class.
 
 It refuses six more things for the reason every writer here refuses them — a
 half-written act is worse than no act: a checkout **behind** `origin` or dirty
@@ -3081,13 +3170,24 @@ file nothing can correct; and a `--reason` carrying a `|`, a second ` · ` or a
 newline, which is refused as the **argument** it is (capped at 180 characters,
 because the row's own last words go in beside it).
 
+It also refuses what a write would go **through** (exit **2**): a lane's log
+path that is a symlink, or is there and not a regular file. The append's `>>`
+would follow the link and put the RETIRED line outside the repository while the
+commit records only the link. And it refuses the reads that **failed**
+(exit **1**), because a failed read is not "it has none":
+* a published log that the tree names and git cannot read;
+* a log directory that cannot be listed;
+* a published register that cannot be read (the seam's read, before every row).
+
 It touches **no file outside the register and the logs**. A retired row records
 that a lane is finished; worktrees, branches and handoffs stay exactly where
 they are.
 
 **Nothing is half-PUBLISHED, because the commit is the only thing that
 publishes.** Every refusal above is made in the scan, before a byte is written.
-A failure in the writes themselves — a log whose append could not be proved, a
+That includes the commit of a peer's uncommitted register edit, which the act
+makes as its own `LANES(pre-existing@…)` commit: it is made only after the
+scan, so a refusal leaves HEAD where it was. A failure in the writes themselves — a log whose append could not be proved, a
 row whose rewrite touched more than one line — leaves this checkout DIRTY and
 the register unpublished: that is what `git status` then shows, `git checkout --
 lanes` undoes it whole, and the next run is REFUSED by the dirty-checkout guard
@@ -3107,14 +3207,40 @@ each lane moved. The archive is written **first** and the rows removed second,
 so a refusal between the two leaves a copy in the archive and the register
 whole, never a row in neither file.
 
+Before anything is written, `--yes` refuses (exit **2**) in two cases:
+* an archive, or archive directory, that is a **symlink**, or an archive path
+  that is there and **not a regular file**. The append would follow the link,
+  and the rows would leave the repository while the commit removed them from
+  the register.
+* a **published archive this checkout does not have**, because it is outside a
+  sparse checkout or marked skip-worktree. A new archive made here would hold
+  only these rows, and its commit would drop every position the published one
+  reserves.
+
+As in the sweep, a peer's register edit is committed only after these checks.
+
 Nothing reads a row differently for having moved: the listing reads the archive
 beside the register (so `lanes --closed` still shows those rows) and so does
 every reader of the next free position — and a published archive that cannot be
 *rendered* is a REFUSAL that says so, never a fallback to this checkout's copy,
 which may lack a retired position the published one holds: read as absent, or
-from that copy, it would put a retired position back on offer. `add-row` refuses a lane
-name the archive holds, so `lane-start <repo> <n>` cannot reissue one by hand
-either. **Rule 9 holds either way** — a row is
+from that copy, it would put a retired position back on offer. Five more reads
+fail closed rather than answer, and for the same reason. The first three refuse
+(exit **1**); the listing withholds the class for the last two:
+* a local archive path that is there and not a regular file;
+* a register path that renders empty (a zero-byte register, or a broken
+  symlink);
+* a published register whose blob git cannot read. Whether the register or a
+  log is published is the TREE's answer, never `cat-file -e`'s, which fails for
+  an unreadable blob as for an absent path.
+* a published log git cannot read: the listing names it and never classes that
+  lane DORMANT;
+* a log directory it cannot list: the listing classes no row DORMANT at all.
+
+`add-row` refuses a lane name the archive holds, so `lane-start <repo> <n>`
+cannot reissue one by hand either. It also refuses (exit **1**) where the
+published register cannot be read, rather than read that as "no such row":
+otherwise a row this checkout has not pulled would be added a second time. **Rule 9 holds either way** — a row is
 one `git show` away — so the archive is for a register a person wants shorter,
 and never a requirement.
 
@@ -3528,10 +3654,17 @@ The flag is typed per invocation — **never** taken from the environment or a
 configuration. It replaces the **published** reads (the register, the archive,
 the alias table, the logs) and nothing else, so the live session records, tmux
 and this checkout's own files are read as they are without it. Where the index
-is current the answer is **byte for byte the source read's**, the clock's
-columns aside (the listing's AGE and its "last heard from origin" age, computed
-the same way at the moment of the read). One line on stderr says which was
-read:
+is current the answer is **byte for byte the source read's**, on stderr as on
+stdout — the warnings for a log's unreadable lines and the count that closes
+them included (opensoft/openRepoTools#166) — the clock's columns aside (the
+listing's AGE and its "last heard from origin" age, computed the same way at
+the moment of the read). Stderr carries the flag's OWN lines besides: the
+`read:` line below, and for `history` the `LANES_NO_FETCH=1 — not fetching …`
+note, because where the index answers that arm fetches nothing in front of it.
+And it is **one commit's image**: `lanes-index export` reads the provenance and
+every table in ONE read snapshot — a SQLite read transaction, a Postgres
+`REPEATABLE READ READ ONLY` one — so a sync landing mid-read is in the answer
+whole or not at all (#166). One line on stderr says which was read:
 
 ```text
 read: index (sqlite) at register@1a2b3c4d5e6f; 0 commits behind
@@ -3653,19 +3786,41 @@ reader, its snapshot through `lane-state`'s and its owner through
 that is `lane-reconcile`'s act. Nothing is recomputed: `dirty` and `unpushed`
 are what the handoff saw, and `LAST SEEN` says when.
 
-**Rows follow the inventory.** Keyed by (source, `<lane>:<path>`) and versioned
-by a digest of the row and its provenance, so a replay writes nothing; a tree
+**Rows follow the inventory.** Keyed by (source, `<lane>:<path>`) — a second
+tree of one lane with the same path (two with no `path:`, say) as
+`<lane>:<path><US><n>`, numbered from 2 in the read's sorted order, and a lane's
+unread marker as `<lane>:<US>unread` — and versioned by a digest of the row and
+its provenance, so a replay writes nothing (a change that reorders two trees of
+one path moves both keys, and that sync upserts both); a tree
 the inventory no longer names — removed at landing, or by a sweep's disposition
 — leaves in the same sync. The provenance moves only forward **per lane**: a
 `sync` that reads a lane's lifecycle generation below the one its rows were
 written at (a snapshot moved aside and begun again) writes nothing for that lane
 and says so, and `reconcile --source inventory` is the act that takes the lane
 as it now stands. A lane whose `trees` directory is there and cannot be listed
-keeps its rows — it is not a lane with no worktrees. The source's own row
-carries a fingerprint of the whole table as its compare-and-swap token and a
-sync count that only goes up. A container with no `LANES_WORKSTATION` syncs
-nothing (exit 2): a source named for a container's own id is one no restart
-finds again.
+keeps its rows — it is not a lane with no worktrees — and gets ONE MARKER ROW,
+keyed `<lane>:<US>unread`, with no `path` and the `branch` `unreadable inventory
+(<why>)` — the key is what makes it one, because a tree's path can be empty (a
+sidecar with no `path:`) and a hand-made sidecar's branch can read the same —
+which the `--index` read prints as the same `inventory NOT READ` line the sidecars
+give (opensoft/openRepoTools#173): a FIRST sync that cannot read a lane has no
+rows to keep and is still not an empty answer, and rows held over from an
+earlier sync are said to be, on that line. The marker leaves with the first
+sync that reads the lane, and `lanes-index status` counts it apart from the
+worktrees. The schema stays 1, so an indexer from before #173 sharing a
+Postgres store reads a marker as a tree: its `export --worktrees` prints it as
+a `TREE` line with an empty path and that branch, and its `status` counts it as
+a worktree. An older and a newer indexer syncing ONE store each converge to their
+own view of the same inventory — no duplicate rows and no growth — and they
+rewrite it on every sync only where a lane has two trees with the same path,
+which the older one keys as one; with none, an unreadable lane included, a sync
+after the first writes nothing. A store written by #219's unlanded heads
+(`f00ee58`, `ab853b1`) keeps their marker, keyed `<lane>:`, as a kept row while
+that lane stays unreadable, and it clears at the first sync that reads the lane.
+The source's own row carries a fingerprint of the
+whole table as its compare-and-swap token and a sync count that only goes up. A
+container with no `LANES_WORKSTATION` syncs nothing (exit 2): a source named for
+a container's own id is one no restart finds again.
 
 **The nudge.** Every inventory write — `set-lane-state`, `set-lane-tree`, the
 lifecycle follow after a `STARTED`, `RESUMED`, `ENDED` or `RETIRED`, and a
@@ -3683,7 +3838,9 @@ answer. Where the table is current, this workstation's rows are the same bytes
 either way — and a store only this workstation syncs into (SQLite, or a
 Postgres nobody else writes) prints exactly the source read, while a shared one
 adds the other workstations' rows among them. Every row is a last observation: the current truth of a lane is `lanes-edit.sh lane-reconcile
-<lane>`, which reads the disk, and the footer says so.
+<lane>`, which reads the disk — and the sidecars — of the workstation it runs
+on and of no other, so the footer says to run it ON THE WORKSTATION the lane's
+rows name (#173): Raven's listing of Eagle's rows is answered on Eagle.
 
 **What never reads it.** No act: not `lane-reconcile` — there is no
 `lane-reconcile --index`, by Amendment 14(b) — not `lane-start`, `lane-end`,
@@ -3930,6 +4087,7 @@ lane    <lane> <state> <holder> <holder uuid> <binding> <verdict>
 refused <why>                                   (only when refused)
 tree    <disposition> <retire|-> <path> <branch> <head> <why>
 <kind>  <disposition> <retire|-> <path> <detail> <bytes> <why>     (branch, scratch, cache, sandbox, link)
+leg     <disposition> <retire|-> <path> <branch> <head> <why>    (an assembly's checkouts only, T018)
 summary <to retire> <trees> <live> <foreign>
 ```
 
@@ -3958,6 +4116,175 @@ line could not be written, which stops the rest; each failure is in
 the table and in `DISPOSITION.md`, which is written even when an error no read
 caught stops the run), and **2** when the self-check refused a removal; usage
 is 64, a `--live` path that names no tree included.
+
+### A triad: its legs, their worktrees and the paired trees (T018)
+
+**Plan task T018 of the triad migration (opensoft/openRepoTools#186).** A lane's
+checkout is an **assembly** when its own `project.yaml` declares a leg other than
+itself — the standard's rule, as openRepoShape's `templates/assembly-root/project.yaml`
+writes it: a top-level `legs:` list of `- role:` / `repository:` / `path:`, the
+assembly's own leg at `path: "."`. One reader answers it for every lane tool:
+
+```sh
+lanes-edit.sh project-legs <checkout>   # <repository> TAB <path as declared> TAB <where it is checked out>
+```
+
+It is `lane-start`'s rung-5 reading of `legs:`, line for line (a test holds the two
+equal), and reads `repository:` and `path:` only — the manifest confers nothing,
+and `role:` is never read. 0 with legs; 8 with none (no `project.yaml`, or one naming
+no leg but the checkout itself); 1 where the manifest is there and cannot be read,
+which is never "no legs"; 64 usage. It touches no workspace.
+
+**Why the sweep needed it.** A leg is a submodule: its `.git` is a file,
+`git -C <assembly> worktree list` names none of its worktrees, and a feature's
+trees in the standard's three-leg layout, `<assembly>/worktrees/<feature>/{spec,code}`,
+are worktrees of the LEGS' repositories. So a code tree was invisible to the sweep,
+to `lane-end`'s gate, to the handoff's poll and to the daily report unless it had
+been recorded with the code leg as its checkout — and a lane with unpushed work in
+one passed `lane-end`.
+
+**Where the lane's checkout is an assembly**, `lane-worktrees sweep` also:
+
+* reads every leg, and every dependency nested in one (an initialized submodule of
+  the leg's own, as `code/upstream/openRepoShape` will be), as a **`leg` row** —
+  `clean`, `dirty`, `unpushed`, `dirty+unpushed`, `absent` (not checked out here)
+  or `unreadable`. A leg is the assembly's, shared by every lane the assembly
+  homes, as the assembly's own checkout is: **no `--yes` acts on a leg
+  checkout** (its branches are another matter: see `--branches` below). It is
+  COUNTED (exit 3, and `lane-end`'s gate) only where its HEAD's own `Lane:` trailer
+  is this lane's and it holds edits or commits origin lacks — the rule the sweep
+  already applies to `.claude/worktrees` — or where it could not be read; one
+  that holds another lane's work, or nobody's, is listed and counted for nobody;
+* lists the worktrees git registers in **every leg** — a FOREIGN row names the leg
+  it is registered in — so a tree recorded with the leg as its checkout is the
+  lane's as any recorded tree is;
+* takes **`<assembly>/worktrees`** as a root: a tree there that the lane's
+  inventory does not record is the lane's by its HEAD's own `Lane:` trailer and by
+  nothing else, because the paired root, like `.claude/worktrees`, is per feature
+  and not per lane — and `lane-handoff` records a tree there only on that rule, or
+  where the lane's own writers file names it (below), so the inventory does not
+  take in other lanes' trees; a standalone clone there
+  is FOREIGN; the root, a feature directory or a leg's directory under it that
+  cannot be listed or searched refuses, exit **2**;
+* with `--branches`, makes each leg's branches rows like the checkout's own, each
+  naming its leg, and **`--yes` deletes a merged lane branch there exactly as it
+  does in the checkout** — bundling first any commits only its reflog names, and
+  deleting its origin branch too where the row says `delete+remote`. No `--yes`
+  acts on a leg *checkout*. With `--fetch` (and under `--yes`), it asks each leg's
+  origin.
+
+A manifest, or a leg's own submodule list, that cannot be read refuses, exit
+**2**. **A checkout with no `project.yaml` is asked nothing** — no helper call, no
+read, no row — so a single repository's sweep, gate, handoff, report and `add` are
+byte for byte what they were; `tests/test_triad_lane_tooling.py` holds every one of
+them to the output `c45a452`'s tools printed.
+
+**`lane-end`'s gate** counts a `leg` row marked `retire` as a "leg checkout" it
+names, with the remedy a person's (commit and push from inside it; no `--yes` is
+offered when legs are all it counted), and lists a leg that holds work and is not
+this lane's below the table as NOT counted — whether the gate passes or not.
+
+**`lane-handoff` and `lane-reconcile` (T018 (b)).** Where the lane's checkout is an
+assembly, `lane-handoff` also looks in the **paired root**:
+`<assembly>/worktrees/<feature>` and `<feature>/<each declared leg's path>`, at every
+directory there with a `.git` of its own. The paired root is per feature and not per
+lane — every lane the assembly homes keeps its feature trees there — so the handoff
+takes a tree there as this lane's on the sweep's terms and on no wider ones. It
+**polls and records a paired tree only where one of three things holds**:
+
+* this lane's inventory already names it;
+* its HEAD's own last `Lane:` trailer is this lane's, on a commit origin's default
+  branch lacks — the sweep's own rule for that root;
+* the `--writers-file` names it, because a writer with nothing committed yet has no
+  trailer to be found by.
+
+Those trees are in the WRITERS block and its count. **Every other checkout there is
+another lane's, or nobody's**: one line in the top block under a heading of its own,
+outside WRITERS — `- PAIRED ROOT, not this lane's: <path> — branch …`, with its last
+commit and its HEAD's own trailer, which is what finds its lane. It is not counted, not
+recorded, and never a writer for the next session to relaunch; its own lane's handoff
+records it. So one lane's `lane-end` never refuses on another lane's paired work, and
+its `sweep --yes` never acts on it. This is option (a) of the pre-PR review's M1, as
+lane 1 ruled on 2026-10-17 (#186, comment 6240800023, item 1; the analysis's §7 item
+12): a handoff that recorded every paired tree made other
+lanes' trees the running lane's inventory, and a tree two lanes' inventories both name
+is `keep`, counted, in both sweeps.
+
+Every tree it polls is **recorded under the checkout it belongs to**. A worktree of a
+leg's repository (a paired tree, or one `lane-worktrees add --checkout
+<assembly>/code` made under the lane's root) is recorded under that leg, the path
+`project-legs` prints and `add` records. A tree the inventory already records under a
+checkout of the tree's own repository keeps it: a dependency nested in a leg
+(`--checkout <assembly>/code/upstream/<dep>`) is no declared leg. Any other tree keeps
+the lane's `dir`, as before. A leg that is not checked out here (never initialized, or
+deinitialized) names no tree. A leg with a `.git` of its own that git cannot read is
+`unreadable`, the sweep's word: one `- UNREADABLE LEG: …` line in WRITERS and a note on
+stderr, and counted on stderr's `legs: N of the assembly's legs under <dir> unreadable`
+line, never in WRITERS' `(N found)`. The lane is not held `SWAPPING` for the leg
+itself. A polled tree that could then be of that leg's repository is one it cannot
+place: its common git directory lies inside the assembly or its git directory (a
+leg's `.git/modules/<leg>`) and is no readable leg's and not the assembly's own, or
+the inventory records it under the unreadable leg. Such a tree is named, marked
+`(NOT recorded)` in its WRITERS line, and not recorded, so the checkout `add` recorded
+stays, and the lane stays `SWAPPING` for that tree. The `UNREADABLE LEG` line says how
+many trees were withheld, or that none was. A tree of any other repository, such as a
+worktree of an unrelated repository in the lane's own root, is recorded under the
+lane's `dir`, as when every leg reads. A tree with a `.git` of its own that git cannot
+read at all (a damaged `.git/modules/<leg>` takes every worktree of that leg with it)
+is listed in WRITERS and counted, marked `(NOT recorded)` and `UNREADABLE`, never
+recorded, and the lane stays `SWAPPING` for it. A checkout with no `project.yaml`
+naming a leg passes over such a tree, as it always did. A worktree
+a leg registers anywhere else is not polled
+as a writer, just as the checkout's own registrations elsewhere are not;
+`lanes-edit.sh lane-reconcile` reports it. The reconciliation reads what the legs hold
+beside what the checkout holds. Every worktree git registers in a checked-out leg that
+no sidecar names is a `TREE` row: `unmanaged`, or `stale-registration` where its
+directory is gone, naming the leg. A checkout in the paired root that nothing else named
+is `unmanaged`. A leg with a `.git` of its own that git cannot read is a `TREE` row
+`unreadable` that requires recovery: the sweep's rule and word for its `leg` row, which
+it counts. The verdict is not `indeterminate` for it, so the sweep still lists and
+counts that leg. Nothing is adopted, deleted or overwritten.
+
+**A `project.yaml` that cannot be read is never "no legs".** `lane-handoff` still
+completes (`R-A11-11`), but it does not poll the paired root. It says so in the top
+block's WRITERS section (`- NOT POLLED: …`), files no sidecar for a tree it cannot
+place (a tree of the lane's own repository is still recorded), and leaves the lane
+`SWAPPING`. The reconciliation's verdict is `indeterminate`, said in the words the
+sweep refuses with ("the legs of the assembly `<dir>` could not be read"): the sweep
+reads that verdict first and refuses on it, exit **2**. The verdict is `indeterminate`
+too where a leg's registrations, the paired root or a feature directory under it
+cannot be listed, or a leg's directory under a feature cannot be searched. For the
+same directories, and where the lane's inventory cannot be read (which paired trees it
+names would then be unknown), `lane-handoff` gives the same three signs: a
+`- NOT POLLED: …` line in WRITERS, a note on stderr, and the lane left `SWAPPING`.
+**A checkout with no `project.yaml` is asked nothing**, and one whose
+`project.yaml` names no leg but itself is asked only `project-legs`, which answers 8.
+The handoff's output, top block and inventory, and the reconciliation, are byte for
+byte what they were. `tests/test_triad_lane_tooling_handoff.py` holds them to the
+output `c45a452`'s tools printed, on a repository laid out to look like a triad: a
+submodule's worktree under `worktrees/<feature>/code`, and a tree recorded with the
+submodule as its checkout.
+
+**A parked paired tree is not the lane's to the sweep — a gap lane 1 has ruled on, and
+not yet closed (docs/triad-lane-tooling-analysis.md §7, item 11).** On 2026-10-17 (#186,
+comment 6240800023, item 2) lane 1 ruled that park's WIP commit carries a `Lane: <lane>`
+trailer and that `resume` records the tree it rebuilds with `lanes-edit.sh
+set-lane-tree`. Both are workBenches changes and neither has landed, so what follows
+holds until they do. The sweep and `lane-end`'s gate
+give a tree under `<assembly>/worktrees` to a lane by its HEAD's own `Lane:` trailer
+and by nothing else, unless the lane's inventory names it. `make park` commits a dirty
+leg tree as `wip: park <UTC time> — lane <lane>`, with no trailer, and `resume`
+soft-resets those commits, leaving the work uncommitted on the commit below them. So a
+parked or resumed paired tree is a FOREIGN row of `lane-worktrees sweep <lane>
+--dry-run` ("… its HEAD carries no Lane: trailer of this lane's as its own"), counted
+for nobody, and a gate that passes says nothing of it. **Before `lane-end` in an
+assembly**, run that dry run and read every FOREIGN row under `<assembly>/worktrees`:
+one whose HEAD, or whose branch's upstream, is a `wip: park … — lane <this lane>`
+commit, or that holds uncommitted edits, may be this lane's parked work. Land it or
+hand it over first, or record it with `lanes-edit.sh set-lane-tree <lane> <path>
+--checkout <assembly>/<leg>` so the gate counts it. `lane-handoff` does not record it
+for you: on the sweep's terms it records a paired tree with no trailer of the lane's
+only where the inventory or the writers file already names it.
 
 ### Two protocol lines this act assumes (proposed for the amendment that ratifies it)
 
@@ -4011,6 +4338,25 @@ A tree made any other way — a brief's own `git worktree add`, the harness's
 `isolation: worktree` — is still legal git and is FOREIGN to every sweep until
 `lanes-edit.sh set-lane-tree <lane> <path>` records it.
 
+**In a triad (T018), a tree of a leg is made from the leg** — the guidance of
+docs/triad-lane-tooling-analysis.md §4.4, proposal 1:
+
+```sh
+lane-worktrees add <lane> <slice> --checkout <assembly>/code
+```
+
+Where the lane's checkout is an assembly (its `project.yaml` declares a leg other
+than itself, read by `lanes-edit.sh project-legs`), a tree made from any checkout of
+a leg's repository — the leg itself, or a worktree of it, a paired
+`<assembly>/worktrees/<feature>/code` included — is recorded with **the leg** as its
+checkout (`<assembly>/<path>`), which every reader of the inventory enumerates; the
+note names the leg, and says so where the checkout given was a worktree of it. Made
+from the assembly itself (no `--checkout`), the tree is a worktree of the assembly,
+whose legs a worktree does not check out: `add` makes it as before and says that its
+legs are empty there, naming the `--checkout <assembly>/<leg>` that makes a leg's
+tree. A lane whose checkout has no `project.yaml` is asked nothing, and its `add` is
+what it always was. A manifest that cannot be read refuses, exit **2**, nothing made.
+
 ### The estate report — `sweep --all --dry-run --report`
 
 The net under every actor that never runs `lane-end`: **creation outpacing
@@ -4035,8 +4381,9 @@ lane-worktrees sweep --all --dry-run --report [--estate <dir>] [--post <file> | 
 |---|---|
 | FOREIGN repositories | a CLONE inside a worktree container (`.lane-worktrees/<lane>`, `.claude/worktrees`, `worktrees`, `<x>-worktrees`), and a second clone of an origin the estate already has a checkout of: path, size, last commit, owner (the last `Lane:` trailer), and LOAD-BEARING with its dependents where something leans on it |
 | Orphaned worktrees of ENDED lanes | trees an inventory records, and directories under `.lane-worktrees/<lane>`, of a lane whose snapshot is `CLOSED` or whose log's last lane line is `ENDED` or `RETIRED` — with the sweep that retires them. Empty beside a record it could not read — a lane snapshot, an inventory, the register's lines, a directory the walk could not list — it says "none found in what could be read", never "none" (#170 B8); a failure that is no lane record (an ignored-file listing, say) is still a row of the last section but leaves "none" as it is (#179); so does Awaiting disposition |
-| Unmerged branches | local branches of every checkout with no upstream, a gone upstream, a diverged one, or unpushed commits: tip, state, age, owner, and whether a worktree holds it. Never deleted; `main`, `master` and `rescue/*` are not listed |
+| Unmerged branches | local branches of every checkout — and of every leg of an assembly (T018) — with no upstream, a gone upstream, a diverged one, or unpushed commits: tip, state, age, owner, and whether a worktree holds it. Never deleted; `main`, `master` and `rescue/*` are not listed |
 | Root main divergence | a checkout whose local `main` is ahead of `origin/main`; where every changed path is under `handoffs/` or `lanes/`, the remedy is Amendment 4's — those live in the workspace repository and are pushed per write |
+| Assembly legs with uncommitted or unpublished work | **only where the estate holds an assembly with a leg checked out** (T018): every leg of a canonical checkout whose `project.yaml` declares legs, holding dirty or untracked paths or a HEAD no origin ref holds, or that could not be read — each named with its assembly. A leg is a submodule (its `.git` a file), so it was never a canonical checkout; it is now read as a checkout of its own here, and in the three branch sections, whose leg rows end with `the <path> leg of <assembly>` |
 | Awaiting disposition | a `rescue/*` branch (local or on origin) and a DIRTY inventory tree whose git directory has been still for `aging_days` (14), with owner and age |
 | Caches and sandboxes | `--include-caches`' and `--include-sandboxes`' rows across every lane, by size |
 | Ignored directories over `ignored_report_mb` | every ignored directory of every repository at or over 50 MB (`du -sk`) |
@@ -4213,8 +4560,8 @@ link-estates                                          # repoints ~/projects/xFac
 ```
 
 **You are not asked to remember it: `--install` refuses** (A9 Addendum 4,
-R-A9-12). In its planning phase, before any of the twenty-seven artifacts is placed,
-it walks all thirteen targets and dies naming every one that is not a regular file,
+R-A9-12). In its planning phase, before any of its artifacts is placed, it walks
+every target in the bin directory and dies naming every one that is not a regular file,
 what it is, and the one `rm` that clears them. `cp` FOLLOWS A SYMLINK, so an
 install over these would leave the two commands UNINSTALLED — the targets stay
 links — and would write the post-move bytes into `opensoft/brett-wip`'s working

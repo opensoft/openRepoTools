@@ -22,6 +22,7 @@ import os
 import re
 import shutil
 import subprocess
+from collections import namedtuple
 from pathlib import Path
 
 import pytest
@@ -1089,8 +1090,8 @@ def test_the_readme_carries_the_two_line_onboarding_chain():
 
 def test_no_document_offers_a_windows_powershell_twin():
     """NATIVE WINDOWS PARKS NOTHING, and saying otherwise is worse than saying
-    nothing. All three files here are bash; there is no `Invoke-WebRequest`
-    two-liner and no PowerShell twin to point at, so on Windows the way in is
+    nothing. No command here has a PowerShell twin, and there is no
+    `Invoke-WebRequest` two-liner to point at, so on Windows the way in is
     WSL2 — which both documents say, once each."""
     for name in ("README.md", "AGENTS.md"):
         text = doc(name).read_text(encoding="utf-8")
@@ -1956,9 +1957,27 @@ def test_agents_md_is_short_enough_to_be_read():
     lines; placed under the test block, which the patch rewrites, they made it
     fail at `AGENTS.md:224` (lane openRepoTools-3's candidate review; #193
     item 2).
+
+    323 -> 330 HERE, on 2026-10-18, for #243's decision on item 2 (Brett
+    Heap's word, "fix #242 and #243"): one family laid out twice is NOT
+    de-duplicated, and AGENTS.md says so instead. Seven lines, a blank and six,
+    under the opening paragraph of "Driving `park <Name>`, ...": a family's
+    folder named for its repository and one named for its display `name:` are
+    both found, as two estates; parking both writes ONE record key, the
+    family's `id:`, so the later park replaces the first one's member blocks;
+    keep only the folder named for the repository, where `make siblings` moves
+    a holder. An agent that does not know it parks both and loses one layout's
+    members from the record.
+    THE ASSEMBLY'S 347 DOES NOT MOVE HERE, although the 316 entry makes it this
+    count plus T006's twenty-four. Its file does not exist yet, and
+    `assembly-0001` no longer applies to today's AGENTS.md: hunks 6 and 8 fail
+    on `main` without these lines, and with them the same hunks apply and fail,
+    at offsets seven lines further on. The re-cut that makes the assembly's
+    file again sets its cap, and `tests/test_test_roots.py` holds 347 until
+    then.
     """
     lines = doc("AGENTS.md").read_text().splitlines()
-    cap = 323 if ROOTS.assembly is None else 347
+    cap = 330 if ROOTS.assembly is None else 347
     assert len(lines) <= cap, f"AGENTS.md is {len(lines)} lines; the cap is {cap}"
 
 
@@ -2640,6 +2659,319 @@ def test_the_exit_code_table_carries_every_code_the_file_exits_with():
     assert "64" in documented, "64 is the code every Amendment 11 read uses"
 
 
+#: THE THREE CAUSES OF EXIT 3, as `lanes-edit.sh`'s exit-code table and the
+#: manual's copy of it give them, and what ties each cause to the `die` that
+#: reports it (opensoft/openRepoTools#68 item 5).
+#:
+#: A DIE IS TIED TO ITS CAUSE BY WHERE IT SITS AND NEVER BY WHAT IT SAYS. #68
+#: item 3 rewords `git_timeout_die`'s message and the act 2 `commit_publish`
+#: rewrites the push loop's, and a rule that found each die by a run of its own
+#: words would go blind at the first rewording that keeps the meaning (the
+#: first version of this rule did: it found the rebase conflict's die by the
+#: text `rebase conflict on origin/$LANES_BRANCH`). So:
+#:
+#:   * `function`: the cause owns every `die … 3` inside that function —
+#:     `git_timeout_die`, which exists to report one thing;
+#:   * `marker`: else the cause owns a `die … 3` that follows its marker
+#:     nearer than any other cause's marker, inside the same function — the
+#:     `dirty_elsewhere` guard that skips the pull and pushes straight out
+#:     (a peer's uncommitted file), and the `git_net … pull` call, after which
+#:     the rebase conflict's die sits (its `else` arm, reached when that call
+#:     fails). Neither is the function's name, so renaming `commit_push` leaves
+#:     the rule standing; and the marker is a CALL, not a word, because the
+#:     peer branch's own `note` says "skipping 'pull --rebase'" a few lines
+#:     above its die.
+#:
+#: What a die and each row that documents its cause must keep saying is
+#: `concept`: one word-group per cause, loose enough that rewording keeps
+#: passing ("timed out", "timeout" and "time-out" are one concept) and tight
+#: enough that a row which drops the cause fails. `scoped` is the wording #32
+#: put on the one cause whose die could be read as a claim about origin.
+#:
+#: A FOURTH CAUSE is a new row in this tuple and a new clause in BOTH rows — and
+#: a fourth `die … 3` with no row is exactly what the rule below refuses.
+_Exit3Cause = namedtuple("_Exit3Cause", "name function marker concept scoped")
+_EXIT_3_CAUSES = (
+    _Exit3Cause(
+        "a network timeout", "git_timeout_die", None,
+        re.compile(r"\btime[ds]?[ -]?out", re.I), None),
+    _Exit3Cause(
+        "six attempts blocked by a peer's uncommitted file", None,
+        re.compile(r"\bdirty_elsewhere\b"),
+        re.compile(r"\b(?:uncommitted|dirty)\b", re.I), None),
+    _Exit3Cause(
+        "a rebase conflict", None,
+        re.compile(r"\bgit_net\b[^\n]*\bpull\b"),
+        re.compile(r"\brebase\W+conflict", re.I),
+        re.compile(r"\bnot pushed by this attempt", re.I)),
+)
+
+#: A `die` whose message is one quoted literal and whose last word is `3`; a
+#: `\"` inside the message is read whole. A message that holds a command
+#: substitution with quotes of its own is NOT read by this, so `_exit_3_dies`
+#: also counts every line that ends `… 3` after a closing quote and compares:
+#: a `die` of that shape this cannot read is a finding. What stays out of its
+#: reach is a `die` whose exit code is not a literal `3` on the line that closes
+#: the message: the code held in a variable, or a `3` on a backslash-continued
+#: line of its own.
+_DIE_EXIT_3 = re.compile(r'\bdie "((?:[^"\\]|\\.)*)"[ \t]+3\b', re.S)
+_ENDS_IN_EXIT_3 = re.compile(
+    r'''["'][ \t]+3(?=\s*(?:$|;|\|\||&&|\)|\}|#))''', re.M)
+
+#: A SENTENCE THAT CLAIMS THE EDIT NEVER REACHED ORIGIN. Exit 3 is the code for
+#: "this attempt cannot confirm whether it also reached origin" (#32): a hung
+#: push often landed, and an aborted pull is no proof the commit stayed local
+#: in a checkout every lane shares. "not pushed BY THIS ATTEMPT" is the one
+#: true form of the claim, and is the one form this lets through.
+_NOTHING_REACHED_ORIGIN = re.compile(
+    r"\bnothing (?:was |has been )?pushed\b"
+    r"|\bnot (?:been )?pushed\b(?! by this attempt)"
+    r"|\bnever (?:been )?pushed\b"
+    r"|\b(?:never|not|nothing) reach(?:ed)? origin\b", re.I)
+
+
+def _function_around(code: str, at: int):
+    """`(name, offset of its body)` of the shell function whose body holds
+    offset `at` of `code`, or None where `at` is outside every function. A
+    function ends at the first line after its header that is a `}` alone in
+    column 0, which is how `lanes-edit.sh` closes every one of them (the `}'`
+    that closes a multi-line awk program inside one is not that line)."""
+    headers = list(re.finditer(r"^([A-Za-z_]\w*)\(\) *\{", code[:at], re.M))
+    if not headers:
+        return None
+    header = headers[-1]
+    if re.search(r"^\}[ \t]*(?:#.*)?$", code[header.end():at], re.M):
+        return None
+    return header.group(1), header.end()
+
+
+def _exit_3_cause_of(code: str, at: int):
+    """The cause in `_EXIT_3_CAUSES` that the `die` at offset `at` of `code`
+    reports, or None where nothing anchors it to one."""
+    around = _function_around(code, at)
+    if around is None:
+        return None
+    name, body = around
+    for cause in _EXIT_3_CAUSES:
+        if cause.function == name:
+            return cause
+    nearest, nearest_at = None, -1
+    for cause in _EXIT_3_CAUSES:
+        if cause.marker is None:
+            continue
+        hits = [m.start() for m in cause.marker.finditer(code, body, at)]
+        if hits and hits[-1] > nearest_at:
+            nearest, nearest_at = cause, hits[-1]
+    return nearest
+
+
+#: Every mention of `git_timeout_die` but its definition (`git_timeout_die() {`),
+#: each read as a call; and what may stand before a command on its line.
+_GIT_TIMEOUT_MENTION = re.compile(r"\bgit_timeout_die\b(?!\s*\()")
+_AT_COMMAND_START = re.compile(r"(?:^|&&|\|\||[;|({]|\b(?:then|do|else))\s*$")
+
+
+def _timeout_operations(code: str):
+    """`(operations, findings)`: the network operations every call of
+    `git_timeout_die` names (`push`, `pull`, ...), read off the words that
+    follow the call on its line: a quoted command "for the reader"
+    (`git_timeout_die "git push origin $B"`), a bare or quoted operation word
+    (`git_timeout_die push "git push origin $B"`), or both. A timeout row that
+    names a push and a pull is right until a call names a fetch.
+
+    EVERY MENTION OF THE NAME BUT ITS DEFINITION IS READ AS A CALL, and a call
+    whose shape this cannot read is a finding that says exactly that. It is
+    never "nothing calls it", which would be false of a call spelled in a shape
+    the reader did not expect (#68 item 3 may hand it the operation as a word
+    of its own)."""
+    operations, findings = set(), []
+    mentions = list(_GIT_TIMEOUT_MENTION.finditer(code))
+    if not mentions:
+        findings.append(
+            "lanes-edit.sh has no call of `git_timeout_die` (every mention of "
+            "it but its definition is read as one), so the timeout cause both "
+            "rows document can never fire")
+    for mention in mentions:
+        line = code.count("\n", 0, mention.start()) + 1
+        head = code.rfind("\n", 0, mention.start()) + 1
+        tail = code.find("\n", mention.end())
+        rest = code[mention.end():tail if tail != -1 else len(code)]
+        if not _AT_COMMAND_START.search(code[head:mention.start()]):
+            findings.append(
+                f"lanes-edit.sh:{line} mentions `git_timeout_die` somewhere "
+                "other than the start of a command, a shape this rule cannot "
+                "read as a call, so it cannot tell which network operation it "
+                "is called for. Make it the first word of a command; if it is "
+                "only a mention in a string, leave the name out of the string")
+            continue
+        words = []
+        for token in (_commands_on(rest) or [[]])[0]:
+            if token.startswith("#"):
+                break
+            words.append(token)
+        text = " ".join(words)
+        named = set(re.findall(r"\b(push|pull|fetch|clone)\w*", text))
+        if not named:
+            findings.append(
+                f"lanes-edit.sh:{line} calls `git_timeout_die` with {text!r}, "
+                "which names no network operation (push, pull, fetch or clone) "
+                "as a bare word or in a quoted command, so the rows cannot be "
+                "held to it")
+        operations |= named
+    return operations, findings
+
+
+def _exit_3_dies(src: str):
+    """`(dies, operations, findings)` for the text of `lanes-edit.sh`: every
+    `die "…" 3` as `(cause, line, message)`, the network operations
+    `git_timeout_die` is called for, and everything about the DIES themselves
+    that is wrong. The line numbers are the file's own (a whole-line comment is
+    blanked, not removed), and no comment is read as code."""
+    code = "\n".join("" if line.lstrip().startswith("#") else line
+                     for line in src.splitlines())
+
+    def line_of(offset: int) -> int:
+        return code.count("\n", 0, offset) + 1
+
+    dies, findings = [], []
+    read = list(_DIE_EXIT_3.finditer(code))
+    for m in read:
+        message = re.sub(r"\s+", " ", m.group(1))
+        cause = _exit_3_cause_of(code, m.start())
+        if cause is None:
+            around = _function_around(code, m.start())
+            findings.append(
+                f"lanes-edit.sh:{line_of(m.start())} has a `die … 3` in "
+                f"{around[0] if around else 'no function'} that none of the "
+                "documented causes explains, so the exit-code table and the "
+                "manual have no clause for it. Document it in BOTH rows, then "
+                f"add it to `_EXIT_3_CAUSES`: {message!r}")
+            continue
+        dies.append((cause, line_of(m.start()), message))
+    read_ends = {m.end() for m in read}
+    for m in _ENDS_IN_EXIT_3.finditer(code):
+        if m.end() not in read_ends:
+            findings.append(
+                f"lanes-edit.sh:{line_of(m.start())} ends in `… 3`, but this "
+                "rule cannot read it as a `die \"…\" 3` (a message holding a "
+                "command substitution with quotes of its own?), so it cannot "
+                "be held to the rows. Spell the message as one quoted literal")
+    for cause, line, message in dies:
+        said = _NOTHING_REACHED_ORIGIN.search(message)
+        if said:
+            findings.append(
+                f"lanes-edit.sh:{line}: the exit-3 die for {cause.name} claims "
+                f"that nothing reached origin ({said.group(0)!r}), where a "
+                "push may already have landed (#32)")
+        if not cause.concept.search(message):
+            findings.append(
+                f"lanes-edit.sh:{line}: the exit-3 die in the branch for "
+                f"{cause.name} does not name that cause, so the row that "
+                f"documents it describes a message nobody prints: {message!r}")
+        if cause.scoped and not cause.scoped.search(message):
+            findings.append(
+                f"lanes-edit.sh:{line}: the exit-3 die for {cause.name} lost "
+                "its attempt-scoped wording (\"not pushed by this attempt\"), "
+                f"the one form of that claim #32 found true: {message!r}")
+    for cause in _EXIT_3_CAUSES:
+        if not any(found is cause for found, _, _ in dies):
+            findings.append(
+                f"no `die … 3` reports {cause.name}, which both rows document: "
+                "either the cause is gone from the code and the rows are stale, "
+                "or its die moved where nothing anchors it (see "
+                "`_EXIT_3_CAUSES`)")
+    operations, more = _timeout_operations(code)
+    return dies, operations, findings + more
+
+
+def _flattened(text: str) -> str:
+    """`text` as one run of words, however the source wrapped it. A row that
+    wraps onto a comment-continuation line puts a literal `#` back-to-back
+    with the next word once newlines alone are collapsed, so the leading `#`
+    (`lanes-edit.sh`'s own comment marker; a no-op on the manual's markdown,
+    which never starts a line with one) goes from every line FIRST, and a
+    phrase that wraps still reads as one run of words."""
+    lines = (re.sub(r"^#\s*", "", line) for line in text.splitlines())
+    return re.sub(r"\s+", " ", " ".join(lines)).strip()
+
+
+def _exit_3_row_of_the_table(table: str) -> str:
+    """The exit-3 row of `lanes-edit.sh`'s table: from its `#   3  ` header to
+    the next row's, continuation lines and all; the empty string if none."""
+    heads = list(re.finditer(r"^#\s+(\d+)\s{2}", table, re.M))
+    for index, head in enumerate(heads):
+        if head.group(1) == "3":
+            stop = heads[index + 1].start() if index + 1 < len(heads) else len(table)
+            return table[head.start():stop]
+    return ""
+
+
+def _exit_3_row_of_the_manual(section: str) -> str:
+    """The manual's exit-3 row, one markdown line; the empty string if none."""
+    row = re.search(r"^\|\s*3\s*\|.*$", section, re.M)
+    return row.group(0) if row else ""
+
+
+def _exit_3_row_findings(name: str, whole: str, row: str, operations) -> list[str]:
+    """What is wrong with ONE document's exit-3 row: `whole` is all the text
+    of the document that is held to the old claim, `row` is the exit-3 row
+    alone, both flattened."""
+    findings = []
+    if "nothing was pushed" in whole or "nothing pushed" in whole:
+        findings.append(
+            f"{name} still claims that nothing reached origin on exit 3, which "
+            "an aborted pull does not prove (#32)")
+    if not row:
+        findings.append(f"{name} has no exit-3 row")
+        return findings
+    said = _NOTHING_REACHED_ORIGIN.search(row)
+    if said:
+        findings.append(
+            f"{name}'s exit-3 row claims that nothing reached origin "
+            f"({said.group(0)!r}), where a push may already have landed (#32)")
+    for cause in _EXIT_3_CAUSES:
+        if not cause.concept.search(row):
+            findings.append(
+                f"{name}'s exit-3 row no longer names {cause.name}, a cause "
+                "the code's `die … 3` still reports. Exit 3 is \"no two "
+                "meanings on one number\", so a code with three causes has to "
+                "name all three (#50 rounds 3 and 4, 5203261904 and "
+                "5203455553)")
+        if cause.scoped and not cause.scoped.search(row):
+            findings.append(
+                f"{name}'s exit-3 row lost the attempt-scoped wording for "
+                f"{cause.name} (\"not pushed by this attempt\")")
+    for operation in sorted(operations):
+        if not re.search(rf"\b{operation}", row, re.I):
+            findings.append(
+                f"{name}'s exit-3 row never names a {operation}, which "
+                "`git_timeout_die` is called for: a timeout on it ends in "
+                "exit 3")
+    return findings
+
+
+def _exit_3_findings(src: str, manual: str | None = None) -> list[str]:
+    """Every way the exit-3 `die`s of `src` (the text of `lanes-edit.sh`), its
+    exit-code table and — when given — the manual's copy of that table
+    disagree. Empty when they agree. The code's half comes first and alone
+    when there is no manual: a standalone code leg has none (#186, T009)."""
+    dies, operations, findings = _exit_3_dies(src)
+    start = src.index("# EXIT CODES — every subcommand, one table")
+    end = src.index("# --no-sweep", start)
+    table = src[start:end]
+    findings += _exit_3_row_findings(
+        "lanes-edit.sh's exit-code table", _flattened(table),
+        _flattened(_exit_3_row_of_the_table(table)), operations)
+    if manual is not None:
+        heading = manual.index("### Exit codes")
+        section = manual[heading:manual.index(
+            "3 to 6 are the codes this helper already used", heading)]
+        findings += _exit_3_row_findings(
+            "docs/README-lanes.md's copy of the table", _flattened(manual),
+            _flattened(_exit_3_row_of_the_manual(section)), operations)
+    return findings
+
+
 def test_the_exit_3_documentation_agrees_with_the_die_message_it_describes():
     """Copilot's review of PR #50 (5202640056): the `die` for exit 3 picked up
     attempt-scoped wording (#32) — *"not pushed by this attempt; a later
@@ -2669,59 +3001,280 @@ def test_the_exit_3_documentation_agrees_with_the_die_message_it_describes():
     Round 4 (5203455553) found this test's own gap in THAT check: it looked
     for the bare word "timeout" only, which the round-3 wording ("timeout on
     the push itself") already satisfied while omitting `git_timeout_die`'s
-    OTHER call site — a timed-out `git pull --rebase` (lanes-edit.sh:1166) —
-    entirely. Checking for "timeout" alone would keep passing even if a push
-    is all either row ever names again; "push" and "pull" are now checked
-    for too, so the row has to cover both keywords or the test catches it.
+    OTHER call site — a timed-out `git pull --rebase` (`commit_push`'s
+    `git_timeout_die "git pull --rebase …"`) — entirely. Checking for
+    "timeout" alone would keep passing even if a push is all either row ever
+    names again; "push" and "pull" are now checked for too, so the row has to
+    cover both keywords or the test catches it.
+
+    ROUND 5 (5203628254) AND #68 ITEM 5: the gap that was left. Of the three
+    `die "…" 3` in `lanes-edit.sh` — `git_timeout_die`'s own (:1894 at main
+    08e7550), the six-attempts one in `commit_push`'s dirty-checkout branch
+    (:2125) and the rebase conflict's (:2192) — this test read ONE, and the
+    two rows only for the WORDS timeout, push, pull and peer's somewhere in
+    the code's whole table text, not even in its exit-3 row. So either of the
+    other two dies could say anything, "nothing was pushed" included, where a
+    push may already have landed, and this test stayed green. It now reads
+    EVERY `die … 3` and holds each to both rows. What ties a die to its cause
+    (where it sits, so that a rewording that keeps the meaning cannot blind the
+    rule: #68 item 3 will reword, and so will the act 2 `commit_publish`) and
+    what each die and row must keep saying are written at `_EXIT_3_CAUSES`
+    above. A `die … 3` no cause explains is a finding: a fourth cause needs a
+    clause in BOTH rows before it ships.
+
+    The rule is `_exit_3_findings`; its own regression cases, one red per
+    mutation and one green per rewording that keeps the meaning, are the
+    `EXIT_3_*` tables below it, run on a fixture and not on this file's text.
     """
     src = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
-    m = re.search(r'die "(rebase conflict on origin/\$LANES_BRANCH[^"]*)" 3\b', src)
-    assert m, "no exit-3 die message found in lanes-edit.sh to check the docs against"
-    die_text = m.group(1)
-    assert "not pushed by this attempt" in die_text, (
-        "the exit-3 die message itself no longer names the attempt-scoped "
-        f"wording the table and the manual are checked against: {die_text!r}")
-    start = src.index("# EXIT CODES — every subcommand, one table")
-    end = src.index("# --no-sweep", start)
-    table = src[start:end]
-    def flatten(text):
-        # A row that wraps onto a comment-continuation line puts a literal
-        # `#` back-to-back with the next word once newlines alone are
-        # collapsed — strip the leading `#` (lanes-edit.sh's own comment
-        # marker; a no-op on docs/README-lanes.md's markdown lines, which
-        # never start with one) from every line FIRST, so a phrase that
-        # wraps still reads as one run of words, not one broken by a stray
-        # `#`.
-        lines = (re.sub(r"^#\s*", "", ln) for ln in text.splitlines())
-        return re.sub(r"\s+", " ", " ".join(lines)).strip()
-
-    def holds_exit_3(name, whole, rows, attempt):
-        assert "nothing was pushed" not in whole and "nothing pushed" not in whole, (
-            f"{name} still claims exit 3 means nothing reached origin, which "
-            "an aborted pull does not prove (#32)")
-        assert attempt in rows, (
-            f"{name}'s exit-3 row no longer names the attempt-scoped wording")
-        for cause in ("timeout", "push", "pull", "peer's"):
-            assert cause in rows, (
-                f"{name} no longer names a {cause!r} cause, part of exit 3's "
-                "other two causes (#50 rounds 3 and 4, 5203261904 and "
-                "5203455553) — `git_timeout_die` fires for a push OR a pull "
-                "timeout (lanes-edit.sh:1112/1141/1160 and :1166), and this "
-                "table claims to be \"no two meanings on one number\", so a "
-                "code with three causes has to name all three or it is back "
-                "to being wrong")
-
     # THE CODE'S TABLE FIRST, THEN THE MANUAL (#186, T009): in a standalone
     # code leg the manual is the spec leg's, and the table's half of every
     # claim above is asserted before that absence ends the test.
-    table_flat = flatten(table)
-    holds_exit_3("lanes-edit.sh's own exit-code table", table_flat, table_flat,
-                 "not pushed BY THIS ATTEMPT")
+    findings = _exit_3_findings(src)
+    assert not findings, (
+        "lanes-edit.sh's exit-3 `die` messages and its exit-code table do not "
+        "agree (opensoft/openRepoTools#68 item 5):\n  " + "\n  ".join(findings))
     manual = doc("docs/README-lanes.md").read_text(encoding="utf-8")
-    manual_start = manual.index("### Exit codes")
-    manual_end = manual.index("3 to 6 are the codes this helper already used", manual_start)
-    holds_exit_3("docs/README-lanes.md's copy of it", flatten(manual),
-                 flatten(manual[manual_start:manual_end]), "not pushed by this attempt")
+    findings = _exit_3_findings(src, manual)
+    assert not findings, (
+        "the exit-3 `die` messages, the code's table and the manual's copy of "
+        "it do not agree (opensoft/openRepoTools#68 item 5):\n  "
+        + "\n  ".join(findings))
+
+
+#: A FIXTURE FOR THE RULE ABOVE, shaped like the three places exit 3 is raised
+#: and the two rows that document it, and carrying the decoys that fooled
+#: simpler rules: a `die … 3` in a comment, and a `note` that says "skipping
+#: 'pull --rebase'" a few lines above the peer branch's die.
+EXIT_3_SOURCE = '''\
+# EXIT CODES — every subcommand, one table
+#   0  done
+#   3  the edit is never a permanent loss, but this attempt cannot confirm
+#      whether it also reached origin. THREE CAUSES:
+#      a rebase conflict (not pushed BY THIS ATTEMPT; look by content first);
+#      a network timeout on a push OR a pull (a hung one often landed);
+#      or six attempts exhausted because a peer's own uncommitted file blocks
+#      every rebase.
+#   4  the mutex could not be taken within 60s
+# --no-sweep is not an exit code
+# die "a decoy in a comment, which nothing runs" 3
+git_timeout_die() {   # <the command, for the reader>
+  release_lock
+  die "timed out after ${GIT_TIMEOUT}s on '$1' — your commit is local; nothing was lost." 3
+}
+commit_push() {
+  while [ "$attempt" -le 6 ]; do
+    others="$(dirty_elsewhere)"
+    if [ -n "$others" ]; then
+      note "skipping 'pull --rebase' and pushing straight out"
+      git_net push -q origin "$BRANCH" && return 0
+      [ "$GIT_TIMED_OUT" = 1 ] && git_timeout_die "git push origin $BRANCH"
+      if [ "$attempt" -ge 6 ]; then
+        die "could not push origin/$BRANCH: behind the remote, and a peer's uncommitted file blocks the rebase. Nothing was lost — your commit is local." 3
+      fi
+    elif git_net pull --rebase -q origin "$BRANCH"; then
+      git_net push -q origin "$BRANCH" && return 0
+      [ "$GIT_TIMED_OUT" = 1 ] && git_timeout_die "git push origin $BRANCH"
+    else
+      [ "$GIT_TIMED_OUT" = 1 ] && git_timeout_die "git pull --rebase origin $BRANCH"
+      die "rebase conflict on origin/$BRANCH — not pushed by this attempt; a later write from this checkout may already carry it, so look before you retry." 3
+    fi
+  done
+  die "could not push origin/$BRANCH after 6 attempts" 6
+}
+'''
+
+EXIT_3_MANUAL = '''\
+### Exit codes
+
+| code | meaning |
+|---|---|
+| 0 | done |
+| 3 | the edit is never a permanent loss, but this attempt cannot confirm whether it also reached origin — a rebase conflict (not pushed by this attempt; look by content first), a network timeout on a push or a pull (a hung one often landed), or six attempts exhausted because a peer's uncommitted file blocks every rebase |
+| 4 | the mutex could not be taken within 60s |
+
+3 to 6 are the codes this helper already used; 7 and 8 were free.
+'''
+
+
+def _a_fourth_die(message: str) -> str:
+    """A FOURTH FUNCTION WITH AN EXIT-3 DIE, to append to the fixture's source."""
+    return "index_open() {\n  die \"" + message + "\" 3\n}\n"
+
+
+#: Each row is (why, where, old, new, what the findings must say): `old` is
+#: replaced by `new` in the fixture's `code` or `manual`, and the rule must
+#: refuse the result, in the words of the last column.
+EXIT_3_REFUSED = [
+    ("the timeout die says nothing was pushed", "code",
+     "your commit is local; nothing was lost.",
+     "your commit is local; nothing was pushed.",
+     "claims that nothing reached origin"),
+    ("the peer's-file die says nothing was pushed", "code",
+     "Nothing was lost — your commit is local.",
+     "Nothing was pushed — your commit is local.",
+     "claims that nothing reached origin"),
+    ("the conflict die drops its attempt-scoped wording", "code",
+     "not pushed by this attempt; a later write",
+     "not pushed to origin; a later write",
+     "attempt-scoped"),
+    ("the conflict die no longer says what failed", "code",
+     "rebase conflict on origin/$BRANCH — not pushed",
+     "the pull failed on origin/$BRANCH — not pushed",
+     "does not name that cause"),
+    ("the timeout die no longer says it timed out", "code",
+     "timed out after ${GIT_TIMEOUT}s on '$1' — your commit",
+     "failed on '$1' — your commit",
+     "does not name that cause"),
+    ("the peer's-file die no longer says what blocks the rebase", "code",
+     "and a peer's uncommitted file blocks the rebase",
+     "and the rebase is blocked",
+     "does not name that cause"),
+    ("a fourth die in a function no row documents", "code",
+     'die "could not push origin/$BRANCH after 6 attempts" 6\n}\n',
+     'die "could not push origin/$BRANCH after 6 attempts" 6\n}\n'
+     + _a_fourth_die("the index is gone"),
+     "none of the documented causes explains"),
+    ("a fourth die whose message holds a command substitution", "code",
+     'die "could not push origin/$BRANCH after 6 attempts" 6\n}\n',
+     'die "could not push origin/$BRANCH after 6 attempts" 6\n}\n'
+     + _a_fourth_die('$(describe "the index")'),
+     "cannot read"),
+    ("a fourth die in the push loop's success branch", "code",
+     '      git_net push -q origin "$BRANCH" && return 0\n'
+     '      [ "$GIT_TIMED_OUT" = 1 ] && git_timeout_die "git push origin $BRANCH"\n'
+     '    else\n',
+     '      git_net push -q origin "$BRANCH" && return 0\n'
+     '      [ "$GIT_TIMED_OUT" = 1 ] && git_timeout_die "git push origin $BRANCH"\n'
+     '      die "the push raced six times" 3\n'
+     '    else\n',
+     "does not name that cause"),
+    ("the timeout die now exits 6, so no die reports a timeout", "code",
+     "nothing was lost.\" 3\n}",
+     "nothing was lost.\" 6\n}",
+     "no `die … 3` reports a network timeout"),
+    ("a call site names a network operation no row names", "code",
+     'git_timeout_die "git pull --rebase origin $BRANCH"',
+     'git_timeout_die "git fetch origin $BRANCH"',
+     "never names a fetch"),
+    ("a call site names no network operation at all", "code",
+     'git_timeout_die "git pull --rebase origin $BRANCH"',
+     'git_timeout_die "the network call"',
+     "names no network operation"),
+    ("a call hands git_timeout_die a bare operation word no row names", "code",
+     'git_timeout_die "git pull --rebase origin $BRANCH"',
+     'git_timeout_die fetch "the network call"',
+     "never names a fetch"),
+    ("a mention of git_timeout_die the reader cannot place as a call", "code",
+     "  release_lock\n",
+     "  release_lock\n  note \"git_timeout_die has released the lock\"\n",
+     "cannot read as a call"),
+    ("the table's row loses the timeout cause", "code",
+     "#      a network timeout on a push OR a pull (a hung one often landed);\n",
+     "#      a network failure on a push OR a pull (a hung one often landed);\n",
+     "no longer names a network timeout"),
+    ("the table's row loses the peer's-file cause", "code",
+     "#      or six attempts exhausted because a peer's own uncommitted file blocks\n"
+     "#      every rebase.\n",
+     "#      or one more thing.\n",
+     "no longer names six attempts blocked by a peer's uncommitted file"),
+    ("the table's row loses the pull", "code",
+     "a network timeout on a push OR a pull (a hung one often landed)",
+     "a network timeout on a push (a hung one often landed)",
+     "never names a pull"),
+    ("the table's row loses its attempt-scoped wording", "code",
+     "not pushed BY THIS ATTEMPT; look by content first",
+     "look by content first",
+     "lost the attempt-scoped wording"),
+    ("the table's row says the edit did not reach origin", "code",
+     "whether it also reached origin. THREE CAUSES:",
+     "whether it also reached origin; if it did not reach origin, retry. THREE CAUSES:",
+     "claims that nothing reached origin"),
+    ("the table says nothing was pushed", "code",
+     "#   0  done\n",
+     "#   0  done, and on a refusal nothing was pushed\n",
+     "still claims that nothing reached origin"),
+    ("the manual's row says nothing was pushed", "manual",
+     "cannot confirm whether it also reached origin",
+     "cannot confirm — nothing was pushed",
+     "claims that nothing reached origin"),
+    ("the manual's row is gone", "manual",
+     "| 3 | the edit",
+     "| 13 | the edit",
+     "has no exit-3 row"),
+]
+
+#: Each row is (why, where, old, new): a rewording that keeps the meaning, which
+#: the rule must let through.
+EXIT_3_ACCEPTED = [
+    ("the timeout die is reworded and still says timeout", "code",
+     "timed out after ${GIT_TIMEOUT}s on '$1' — your commit is local; nothing was lost.",
+     "git hit its ${GIT_TIMEOUT}s timeout on '$1'; your commit is local and nothing was lost."),
+    ("the peer's-file die says dirty and not uncommitted", "code",
+     "a peer's uncommitted file blocks the rebase. Nothing was lost — your commit is local.",
+     "another writer's dirty file blocks the rebase. Nothing was lost; your commit is still local."),
+    ("the conflict die keeps its wording and moves its clauses", "code",
+     "a later write from this checkout may already carry it, so look before you retry",
+     "so look before you retry: a later write from this checkout may already carry it"),
+    ("the function that holds the push loop is renamed", "code",
+     "commit_push() {", "commit_publish() {"),
+    ("a call hands git_timeout_die the operation as a bare word", "code",
+     'git_timeout_die "git pull --rebase origin $BRANCH"',
+     'git_timeout_die pull "the rebase on origin/$BRANCH"'),
+    ("two spaces stand before the exit code", "code",
+     "nothing was lost.\" 3\n}", "nothing was lost.\"  3\n}"),
+    ("a comment trails the exit code", "code",
+     "nothing was lost.\" 3\n}", "nothing was lost.\" 3   # the mutex is already released\n}"),
+    ("the table wraps the attempt-scoped phrase onto a continuation line", "code",
+     "not pushed BY THIS ATTEMPT;", "not pushed BY THIS\n#      ATTEMPT;"),
+    ("the manual spells time-out and names each operation", "manual",
+     "a network timeout on a push or a pull",
+     "a network time-out on a push or on a pull"),
+]
+
+
+def _exit_3_fixture(where: str, old: str, new: str) -> tuple[str, str]:
+    """`(code, manual)` of the fixture with `old` replaced by `new` in `where`."""
+    code, manual = EXIT_3_SOURCE, EXIT_3_MANUAL
+    target = code if where == "code" else manual
+    assert target.count(old) == 1, (
+        f"the fixture's {where} no longer holds exactly one {old!r}, so this "
+        "case would pass or fail without testing what it names")
+    target = target.replace(old, new)
+    return (target, manual) if where == "code" else (code, target)
+
+
+def test_the_exit_3_rule_is_green_on_the_fixture_it_is_mutated_from():
+    assert _exit_3_findings(EXIT_3_SOURCE, EXIT_3_MANUAL) == []
+
+
+@pytest.mark.parametrize("why,where,old,new,finding", EXIT_3_REFUSED,
+                         ids=[row[0] for row in EXIT_3_REFUSED])
+def test_the_exit_3_rule_is_red_on_a_die_or_a_row_that_disagrees(
+        why, where, old, new, finding):
+    """RED: each case plants one disagreement in the fixture — a die that
+    claims nothing reached origin, a die or a row that lost its cause, a
+    fourth die no row documents — and the rule must name it, in words that
+    say WHICH check refused. A case that passed for the wrong reason would
+    teach nothing: the last column is what the findings must hold."""
+    code, manual = _exit_3_fixture(where, old, new)
+    findings = _exit_3_findings(code, manual)
+    assert any(finding in each for each in findings), (
+        f"the exit-3 rule did not refuse ({why}) in the words {finding!r}; "
+        f"it said: {findings}")
+
+
+@pytest.mark.parametrize("why,where,old,new", EXIT_3_ACCEPTED,
+                         ids=[row[0] for row in EXIT_3_ACCEPTED])
+def test_the_exit_3_rule_is_green_on_a_rewording_that_keeps_the_meaning(
+        why, where, old, new):
+    """GREEN: #68 item 3 and the act 2 `commit_publish` will reword these
+    messages, so a rule anchored to the words of one would fail on the first
+    change that is only a change of words. The die is tied to its cause by
+    where it sits, and the rows by what they name."""
+    code, manual = _exit_3_fixture(where, old, new)
+    assert _exit_3_findings(code, manual) == [], (
+        f"the exit-3 rule refused a rewording that keeps the meaning ({why})")
 
 
 #: ADOPTION ACT 0, AND THE ONE SHA THAT IS IT. `opensoft/brett-wip#5` merged
@@ -3111,7 +3664,7 @@ def test_the_root_carries_the_line_ending_rule():
     place against the bytes already there with `cmp`, and its own tests compare
     an installed copy to this checkout's file byte for byte. Git for Windows'
     installer default is `core.autocrlf=true`; a checkout made under it turns
-    every `\\n` in these four bash files into `\\r\\n`, and the comparison is
+    every `\\n` in the shipped bash files into `\\r\\n`, and the comparison is
     then about line endings rather than about content. The rule normalises text
     to LF in the object store on check-in and checks it out as LF on every
     platform, whatever `core.autocrlf` says — so nobody has to be told a git
@@ -3174,35 +3727,142 @@ _OPTIONS_WITH_ARGUMENTS = {
 }
 
 
-def _shell_tokens(text: str) -> list[str]:
-    """Split one shell command into tokens, keeping a quoted run together.
+#: THE TOKENS THAT END ONE COMMAND ON A LINE AND BEGIN THE NEXT, as
+#: `_shell_tokens` hands them back: each is a token of its own, cut out of
+#: the line only where the shell reads it as syntax, and never out of a
+#: quoted run.
+_COMMAND_SEPARATORS = frozenset({"|", ";", "&", "(", ")", "$(", "`"})
+
+
+def _shell_tokens(text: str, opened: str = "") -> tuple[list[str], bool]:
+    """Split one line of shell into tokens, keeping a quoted run together and
+    handing every command separator back as a token of its own. Returns the
+    tokens, and whether the line ENDS inside a quoted run.
 
     Deliberately small: it expands nothing and does not care what a token
-    MEANS. All it has to answer is "is this token exactly `--`, and did an
-    operand come before it".
+    MEANS. All it has to answer is "is this token exactly `--`, did an operand
+    come before it, and was that in the same command".
+
+    `opened` starts the line inside a quoted run of that kind, `'` or `"`: the
+    second reading `_commands_on` gives a line that may close a quote an
+    earlier line opened.
+
+    THE LINE IS TOKENIZED BEFORE IT IS CUT, AND NOT THE OTHER WAY ROUND
+    (opensoft/openRepoTools#54). The cut used to be a bare regular-expression
+    split of the raw text at every `|`, `;`, `&`, `(`, `)`, `$(` and backtick,
+    and a pattern is text. `grep -v 'not fetching; reading origin/' -- "$f"`
+    came apart at the `;` inside its own quotes, neither half held both the
+    operand and the `--` after it, and the check called a real BSD failure
+    clean — in a shipped command, the same line #53 had just fixed in a skill.
+    A quoted message that happened to hold `; grep x -- y` was the same cut
+    the other way: a finding in a string nothing runs.
+
+    So a separator is one only OUTSIDE a quoted run, and only where the shell
+    reads it as one: `|`, `;`, `&`, `(` and `)` outside every quote, and the
+    two that open a nested command, `$(` and a backtick, inside a
+    double-quoted run as well — `out="$(sed -n 'p' -- "$f")"` is a command
+    inside an assignment, and its quotes start afresh, so the `$(` and the
+    `)` that closes it are tracked to know where the outer double quote
+    resumes. A single-quoted run holds no syntax at all, and a backslash makes
+    the next character plain text either way.
     """
     tokens: list[str] = []
     current: list[str] = []
-    quote, started = "", False
-    for ch in text:
-        if quote:
+    started = False
+    # What encloses the character being read, innermost last: "'" or '"' for a
+    # quoted run, "$(", "(" or "`" for a command nested inside the line.
+    stack: list[str] = [opened] if opened else []
+
+    def end_token() -> None:
+        nonlocal current, started
+        if started:
+            tokens.append("".join(current))
+        current, started = [], False
+
+    index = 0
+    while index < len(text):
+        ch = text[index]
+        inside = stack[-1] if stack else ""
+        step = 1
+        if inside == "'":
             current.append(ch)
-            if ch == quote:
-                quote = ""
-            continue
-        if ch in "'\"":
-            quote, started = ch, True
+            if ch == "'":
+                stack.pop()
+        elif ch == "\\":
+            current.append(text[index:index + 2])
+            started, step = True, 2
+        elif inside == '"' and ch == '"':
             current.append(ch)
+            stack.pop()
+        elif ch == "`" and inside == "`":
+            end_token()
+            tokens.append(ch)
+            stack.pop()
+        elif ch == "`" or text.startswith("$(", index):
+            opener = "`" if ch == "`" else "$("
+            end_token()
+            tokens.append(opener)
+            stack.append(opener)
+            step = len(opener)
+        elif inside == '"':
+            current.append(ch)
+        elif ch in "'\"":
+            stack.append(ch)
+            current.append(ch)
+            started = True
         elif ch.isspace():
-            if started:
-                tokens.append("".join(current))
-            current, started = [], False
+            end_token()
+        elif ch == "(":
+            end_token()
+            tokens.append(ch)
+            stack.append(ch)
+        elif ch == ")":
+            end_token()
+            tokens.append(ch)
+            if inside in ("$(", "("):
+                stack.pop()
+        elif ch in "|;&":
+            end_token()
+            tokens.append(ch)
         else:
             started = True
             current.append(ch)
-    if started:
-        tokens.append("".join(current))
-    return tokens
+        index += step
+    end_token()
+    return tokens, bool(stack) and stack[-1] in ("'", '"')
+
+
+def _commands_on(line: str) -> list[list[str]]:
+    """The tokens of `line`, cut into one list per command at every separator
+    token — so a quoted pattern stays whole in the command that passes it.
+
+    A QUOTE CAN SPAN LINES, AND THIS READS ONE LINE AT A TIME. A line that
+    ends inside a quoted run is the first line of such a quote or its last,
+    and the line alone cannot say which. Read from outside every quote, a LAST
+    line's closing quote opens one instead, and the command after it goes into
+    a single token — `}' | LC_ALL=C sort | awk -v s="$US" '{ … }')"`, the
+    tail of a multi-line awk program in `lanes-edit.sh`, would lose its second
+    `awk` that way. So such a line is read again from inside a single-quoted
+    run and from inside a double-quoted one, and the commands of every reading
+    are checked; a line that closes every quote it opens is read once.
+    """
+    def cut(tokens: list[str]) -> list[list[str]]:
+        commands: list[list[str]] = [[]]
+        for token in tokens:
+            if token in _COMMAND_SEPARATORS:
+                commands.append([])
+            else:
+                commands[-1].append(token)
+        return commands
+
+    tokens, ends_quoted = _shell_tokens(line)
+    commands = cut(tokens)
+    if ends_quoted:
+        for quote in ("'", '"'):
+            commands += [command
+                         for command in cut(_shell_tokens(line, quote)[0])
+                         if command not in commands]
+    return commands
 
 
 def _end_of_options_after_an_operand(text: str) -> list[str]:
@@ -3225,8 +3885,7 @@ def _end_of_options_after_an_operand(text: str) -> list[str]:
     for line in text.splitlines():
         if line.lstrip().startswith("#"):
             continue
-        for piece in re.split(r"[|;&()]|\$\(|`", line):
-            tokens = _shell_tokens(piece)
+        for tokens in _commands_on(line):
             for start, token in enumerate(tokens):
                 tool = token.rsplit("/", 1)[-1]
                 if tool not in _OPTIONS_WITH_ARGUMENTS:
@@ -3272,6 +3931,74 @@ def test_no_shipped_bash_ends_its_options_after_an_operand(name):
         f"{name} passes `--` AFTER an operand, which BSD's `getopt` reads as a "
         f"FILENAME (macOS: `sed: --: No such file or directory`). Put the "
         f"script behind `-e` instead:\n  " + "\n  ".join(bad))
+
+
+#: LINES THE END-OF-OPTIONS RULE MUST REFUSE, each with a separator inside a
+#: quoted run (opensoft/openRepoTools#54). The cut over the raw text took
+#: every one of them apart at that separator and called it clean. Each row is
+#: (why, line).
+LATE_END_OF_OPTIONS_REFUSED = [
+    ("#54's own line, a semicolon inside the pattern",
+     "grep -v 'not fetching; reading origin/' -- \"$local_err_file\" >&2 || :"),
+    ("a pipe inside an alternation",
+     "grep -E 'PARKED|RESUMED' -- \"$log\""),
+    ("an ampersand inside a sed replacement",
+     "sed -n 's/^lane: /[&]/p' -- \"$file\""),
+    ("parentheses inside a double-quoted pattern",
+     'grep -n "^cut_to_line()" -- "$f"'),
+    ("a semicolon inside an awk program",
+     "awk '{ n++; print n }' -- \"$f\""),
+    ("a backtick inside a single-quoted pattern",
+     "grep -F 'run `lane`' -- \"$f\""),
+    ("a nested command inside double quotes, its pattern quoted afresh",
+     "out=\"$(grep 'a;b' -- \"$f\")\""),
+    ("the last line of a multi-line awk program, then a second call",
+     "}' | LC_ALL=C sort | awk '{ print; }' -- \"$f\")\""),
+]
+
+#: LINES IT MUST ACCEPT: a separator inside a quoted run that the raw cut
+#: turned into a call nothing makes. Each row is (why, line).
+LATE_END_OF_OPTIONS_ACCEPTED = [
+    ("a message that quotes the shape, after a semicolon",
+     "note \"the stderr filter is gone; grep 'pattern' -- file was its shape\""),
+    ("a single-quoted command line, after a double ampersand",
+     "printf '%s\\n' 'cd \"$dir\" && grep pattern -- file'"),
+    ("a single-quoted usage line, after a pipe",
+     "usage='lanes | grep \"x\" -- file'"),
+    ("parentheses inside a double-quoted message",
+     "echo \"(sed 's/x/y/' -- f)\""),
+    ("backticks inside a single-quoted message",
+     "printf '%s\\n' 'run `sed s/a/b/ -- f` by hand'"),
+    ("a correct call whose -e pattern holds a semicolon and a call",
+     "grep -v -e 'x; sed s/a/b/ -- y' -- \"$f\""),
+]
+
+
+@pytest.mark.parametrize("why,line", LATE_END_OF_OPTIONS_REFUSED,
+                         ids=[why for why, _ in LATE_END_OF_OPTIONS_REFUSED])
+def test_the_end_of_options_rule_sees_a_call_whose_quotes_hold_a_separator(
+        why, line):
+    """RED: a quoted pattern, program or nested command keeps its separators
+    to itself (opensoft/openRepoTools#54). `lanes` shipped the first row's
+    line while this rule called it clean — the `;` inside the pattern cut the
+    call in two before the tokenizer saw its `--` — so every row here is one
+    the raw-text cut let through, and the line is tokenized before it is cut.
+    """
+    assert _end_of_options_after_an_operand(line), (
+        f"the rule let this through ({why}): {line!r}")
+
+
+@pytest.mark.parametrize("why,line", LATE_END_OF_OPTIONS_ACCEPTED,
+                         ids=[why for why, _ in LATE_END_OF_OPTIONS_ACCEPTED])
+def test_the_end_of_options_rule_finds_no_call_inside_a_quoted_string(
+        why, line):
+    """GREEN: text inside quotes is a string, not a command, whatever
+    separators it holds. The raw-text cut began a new command at each of them,
+    so the words after one read as a call with its `--` too late — a finding
+    in a line nothing runs, which teaches a reader to stop trusting the rule.
+    """
+    assert _end_of_options_after_an_operand(line) == [], (
+        f"the rule refused this ({why}): {line!r}")
 
 
 @pytest.mark.parametrize("name", ALL_BASH)
@@ -3349,11 +4076,11 @@ def test_no_shipped_bash_opens_a_case_inside_a_command_substitution(name):
     not' ;; esac)` against `did not` - twice, and green on every GNU runner.
 
     A `bash -n` ON A GNU RUNNER PARSES IT, which is why this is a text rule
-    rather than a parse gate: all twelve files already pass `bash -n` in CI,
-    and the macOS job is the only place the defect exists. The fix is one line
-    each time - hoist the `case` above the assertion and read the variable it
-    sets - so the rule is held for every bash file this repository ships
-    rather than for the two that were found.
+    rather than a parse gate: every file in `ALL_BASH` already passes `bash -n`
+    under the Linux bash CI runs, and bash 3.2 is the only place the defect
+    exists. The fix is one line each time - hoist the `case` above the
+    assertion and read the variable it sets - so the rule is held for every
+    bash file this repository ships rather than for the two that were found.
 
     Only the same-line form is matched. A `case` inside a multi-line `$(` ...
     `)` is the same defect and wants the same hoist, but a line-level regex is

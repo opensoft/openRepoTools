@@ -27,8 +27,11 @@
 #                                        # trees, branches, scratch and caches
 #                                        # stay where they are, and the row and
 #                                        # the ENDED line say so (#163)
-#   lane-end <lane> --retire <pid|uuid>  # retire a live FORK (pid or uuid) or a
-#                                        # DUPLICATE (pid); ends nothing
+#   lane-end <lane> --retire <pid|uuid>  # retire a live FORK: writes nothing and
+#                                        # kills nothing
+#   lane-end <lane> --retire <pid>       # a DUPLICATE of the lane's id: TERMs a
+#                                        # background holder's pair, only reports
+#                                        # any other; the row is not written
 #   lane-end --retire-dormant <repo> [--reason "<why>"] [--yes]
 #                                        # the DORMANT rows of one repository,
 #                                        # dry run by default; --yes is ONE
@@ -70,10 +73,12 @@
 #                           process under an id the row DOES record, found in
 #                           the PROCESS TABLE (opensoft/openRepoTools#39) — is
 #                           a background wrapper nobody is answering a prompt
-#                           in, so this act TERMs the pair (the bg-pty-host
-#                           parent and its child, never the lane's own live
-#                           session, which it refuses to touch) and reports
-#                           the pids it signalled. Named by the PARENT or
+#                           in, so this act TERMs the bg-pty-host parent and
+#                           EVERY child of it that resumes this transcript
+#                           (opensoft/openRepoTools#86; never the lane's own
+#                           live session, which it refuses to touch), reports
+#                           each pid it signalled, and says RETIRED only once
+#                           every one is gone. Named by the PARENT or any
 #                           CHILD PID and never by the transcript uuid
 #                           (Copilot round 9, PR #61) — the same reason a
 #                           DUPLICATE below never is: the uuid IS the row's
@@ -208,6 +213,10 @@
 #       <lane>/`, that the table does not name as a tree, scratch or a cache is
 #       RESIDUE - ignored leftovers the sweep's rows never reach - and refuses
 #       even where the sweep answered 0, as a cache row does.
+#   Where the lane's checkout is an ASSEMBLY (T018, opensoft/openRepoTools#186)
+#   the sweep also prints a `leg` row per leg checkout: one it counts is named
+#   as a leg checkout whose remedy is a person's — no sweep acts on a leg — and
+#   one that holds work and is not this lane's is listed and NOT counted.
 #   `--inventory-only` is the one way past it, and `--sweep` is not built.
 #
 # THE HANDOFF FRAGMENT
@@ -235,6 +244,11 @@
 #   2  refusal — bad arguments, no row (or two), something still in flight, or
 #      the close-out gate: the lane's trees, branches, scratch, caches or
 #      residue still on disk, or the sweep refusing the lane
+#   8  nothing there. `--retire-dormant`: no lane of that repository is
+#      recorded, or none of its rows is DORMANT. `--retire <pid|uuid>`: nothing
+#      of any kind is live for the lane
+#   130, 143  stopped by INT or TERM (128 plus the signal): the run ends where
+#      the signal found it and removes its temporary file, never resumes
 #
 # ENVIRONMENT
 #   LANES_FILE  default <the workspace repository>/lanes/LANES.md
@@ -540,7 +554,16 @@ LANE_WORKTREES="${LANE_WORKTREES:-$(lane_worktrees_default)}"
 
 LE_TMP=""
 cleanup() { [ -n "${LE_TMP:-}" ] && rm -f -- "$LE_TMP"; return 0; }
-trap cleanup EXIT INT TERM
+# A SIGNAL ENDS THE RUN, AND `cleanup` RUNS ON THE WAY OUT. `cleanup` returns
+# rather than exits, so the one trap `cleanup EXIT INT TERM` ran it and then
+# RESUMED the script at the next command — harmless while nothing was left to
+# delete, and a fail-open once the sweep's capture file is `LE_TMP`: the
+# resumed script read the deleted file as an empty note and went on to write
+# (#138 item 6, the delta review of fe6e38a). The codes are the shell's own,
+# 128 plus the signal, and the EXIT trap does the removing once.
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 note() { printf '%s: %s\n' "$prog" "$*" >&2; }
 step() { printf '%s: %s\n' "$prog" "$*" >&2; }
@@ -706,20 +729,38 @@ if [ -n "$retire_dormant" ]; then
   # would count zero dormant rows and exit 8 announcing that none are dormant,
   # which is a reason it has not got. The stream is passed through either way:
   # it is the person's.
+  # AND THE CAPTURE IS NOT OPTIONAL (#138 item 6, the review of `dbbb117`).
+  # Where `mktemp` cannot make the file, the read ran with its stderr
+  # uncaptured and `rd_err` stayed empty, so the sentence above never reached
+  # the check below that refuses on it and the sweep went on over a fact that
+  # was not read. Not being able to read the read's notes is not their absence.
   rd_rc=0
   rd_err=""
-  rd_errf="$(mktemp "${TMPDIR:-/tmp}/lane-end-sweep.XXXXXX" 2>/dev/null || printf '')"
-  if [ -n "$rd_errf" ]; then
-    rd_rows="$("$LANES_EDIT" lanes --fetch --closed --prefix "$retire_dormant" 2>"$rd_errf")" || rd_rc=$?
-    rd_err="$(cat "$rd_errf" 2>/dev/null || printf '')"
-    printf '%s' "$rd_err" >&2
-    rm -f -- "$rd_errf"
-  else
-    rd_rows="$("$LANES_EDIT" lanes --fetch --closed --prefix "$retire_dormant")" || rd_rc=$?
-  fi
+  # `LE_TMP` IS WHAT `cleanup` REMOVES ON EVERY EXIT, and it is assigned from
+  # the `mktemp` itself so that no signal can land between the file existing
+  # and `cleanup` knowing its name. The note is relayed on stderr, and where
+  # that write fails — a closed or full stderr — `set -e` leaves before a plain
+  # `rm` below is reached and the capture file stayed in `$TMPDIR`.
+  LE_TMP="$(mktemp "${TMPDIR:-/tmp}/lane-end-sweep.XXXXXX" 2>/dev/null || printf '')"
+  rd_errf="$LE_TMP"
+  [ -n "$rd_errf" ] ||
+    die "no temporary file could be made to capture the read's own notes, so whether this workstation's session records could be read was never established — and DORMANT is 'no object log AND no live session here'. The rows are not counted over a fact that was not read (Amendment 7(d)). Fix \$TMPDIR (full, gone or not writable) and re-run. Nothing was written." 1
+  rd_rows="$("$LANES_EDIT" lanes --fetch --closed --prefix "$retire_dormant" 2>"$rd_errf")" || rd_rc=$?
+  # AND A CAPTURE THAT CANNOT BE READ BACK IS NOT AN EMPTY ONE: the empty note
+  # is the one that never refuses.
+  rd_err="$(cat -- "$rd_errf")" ||
+    die "the capture of the read's own notes could not be read back, so whether this workstation's session records could be read was never established — and DORMANT is 'no object log AND no live session here'. The rows are not counted over a fact that was not read (Amendment 7(d)). Nothing was written." 1
+  printf '%s' "$rd_err" >&2
+  rm -f -- "$rd_errf"
   case "$rd_err" in
     *"session records could not be read"*)
       die "this workstation's session records could not be read (the read says so above), so whether any of $retire_dormant's rows has a LIVE session here was never established — and DORMANT is 'no object log AND no live session here'. The rows are not counted over a fact that was not read (Amendment 7(d)). Fix the read and re-run; nothing was written." 1 ;;
+    # AND WHERE THE READ CLASSED NO ROW AT ALL BECAUSE A READ FAILED — the log
+    # directory, the published logs' warnings, or the register itself (#138
+    # items 4 and 11, the reviews of #230): counting zero here was this
+    # command's "there is nothing to do", exit 8, about rows nobody could class.
+    *"no row is classed DORMANT here"*)
+      die "the read could not establish which of $retire_dormant's rows are dormant (it says why above), so it classed none of them DORMANT — and that is NOT 'none of them are' (Amendment 7(d)). Fix the read and re-run; nothing was written." 1 ;;
   esac
   case "$rd_rc" in
     0) : ;;
@@ -858,10 +899,10 @@ if [ -z "${LANES_FILE:-}" ]; then die "$(lanes_workspace_why)" 1; fi
 # ------------------------- AMENDMENT 15: THE ROW'S SPELLING IS THE LANE'S NAME
 #
 # **A lane name is one name under any case** (ratified 2026-09-14T00:07:18Z),
-# and `lanes-edit.sh canon-lane` is the ONE resolver all four commands share —
-# for the reason Amendment 11 clause (h) gives every other read here: four
-# implementations of "which row is this name's" is how the four would come to
-# disagree about it.
+# and `lanes-edit.sh canon-lane` is the ONE resolver the commands share rather
+# than each keeping its own — for the reason Amendment 11 clause (h) gives every
+# other read here: an implementation of "which row is this name's" in each
+# command is how they would come to disagree about it.
 #
 # `2` IS TWO ANSWERS AND ONE OF THEM IS A REFUSAL (Copilot round 4 on
 # openRepoTools#41). It is what a helper predating this amendment spends on an
@@ -1102,14 +1143,14 @@ LIVE
     esac
   fi
 
-  dh_parent=""; dh_child=""; dh_uuid=""
+  dh_parent=""; dh_children=""; dh_uuid=""
   if [ -z "$fk_sid" ] && [ "$dh_rc" = 0 ]; then
     # `IFS=$'\037'`, NEVER A TAB: `duplicate-holder`'s child field is
     # DOCUMENTED empty for a parent with no confirmable fork-session child
     # (lanes-edit.sh's own `duplicate_holder_pids`, "the child slot stays
     # empty"), and a bare tab is IFS-whitespace to `read` — two adjacent tabs
     # either side of that empty field collapse into one delimiter exactly as
-    # repeated spaces do, shifting the uuid into `dr_child` and leaving
+    # repeated spaces do, shifting the uuid into the child field and leaving
     # `dr_uuid` empty. Measured on e4f9054's CI (`tests-no-submodule`): a
     # partly-retired duplicate's still-alive child was reported as
     # `pid <uuid> (child): gone` and its genuinely-killed parent as
@@ -1127,11 +1168,20 @@ LIVE
     # The uuid form stays reserved for a title-based FORK above, whose id is
     # one the row does NOT record and so cannot repeat across rows the way a
     # duplicate holder's row-recorded id can.
-    while IFS=$'\037' read -r dr_parent dr_child dr_uuid; do
+    #
+    # THE CHILD FIELD IS A LIST (opensoft/openRepoTools#86): every child
+    # `duplicate_holder_pids` verified, space-separated, where it used to name
+    # only the first. The target is compared with EACH pid in it, by equality,
+    # never by a substring of the list, so `--retire=<two pids>` names none.
+    while IFS=$'\037' read -r dr_parent dr_children dr_uuid; do
       [ -n "${dr_parent:-}" ] || continue
-      if [ "$dr_parent" = "$retire_target" ] \
-         || { [ -n "$dr_child" ] && [ "$dr_child" = "$retire_target" ]; }; then
-        dh_parent="$dr_parent"; dh_child="$dr_child"; dh_uuid="$dr_uuid"
+      dr_hit=0
+      if [ "$dr_parent" = "$retire_target" ]; then dr_hit=1; fi
+      for dr_c in $dr_children; do
+        if [ "$dr_c" = "$retire_target" ]; then dr_hit=1; fi
+      done
+      if [ "$dr_hit" = 1 ]; then
+        dh_parent="$dr_parent"; dh_children="$dr_children"; dh_uuid="$dr_uuid"
         break
       fi
     done <<DUPES
@@ -1149,9 +1199,14 @@ DUPES
     # `duplicate-holder`'s own exclusion already keeps a live `dh_parent` from
     # ever equalling `lh_pid`, so this is the residual, cheap check for the
     # child slot alone (a `pgrep -P` result coinciding with the lane's own
-    # pid would be bizarre, but the fence costs nothing to keep).
-    if [ -n "$lh_pid" ] && { [ "$lh_pid" = "$dh_parent" ] || [ "$lh_pid" = "$dh_child" ]; }; then
-      die "pid $lh_pid is lane $LANE's own live session (session $lh_sid, ${lh_verdict:-here}) — Amendment 18(h) refuses to retire the one process a lane's binding actually is. Retire the OTHER pid of the pair ($prog $LANE --retire <pid>), or end the lane itself." 2
+    # pid would be bizarre, but the fence costs nothing to keep). Every child
+    # in the slot is asked, not only the first (opensoft/openRepoTools#86).
+    if [ -n "$lh_pid" ]; then
+      for dh_c in $dh_parent $dh_children; do
+        if [ "$lh_pid" = "$dh_c" ]; then
+          die "pid $lh_pid is lane $LANE's own live session (session $lh_sid, ${lh_verdict:-here}) — Amendment 18(h) refuses to retire the one process a lane's binding actually is. Retire the OTHER pid of the pair ($prog $LANE --retire <pid>), or end the lane itself." 2
+        fi
+      done
     fi
 
     # AMENDMENT 18(h) — A DUPLICATE HOLDER IS TERMED, NOT ONLY NAMED. Unlike
@@ -1167,7 +1222,9 @@ DUPES
     # scoped to this lane's own ids), and never the pid just proved above to
     # be the lane's own.
     if (( dry_run )); then
-      note "--dry-run: would send TERM to pid $dh_parent (bg-pty-host)${dh_child:+ and pid $dh_child (child)} — lane $LANE's duplicate holder of transcript $dh_uuid. Nothing sent."
+      dh_c_said=""
+      for dh_c in $dh_children; do dh_c_said="$dh_c_said and pid $dh_c (child)"; done
+      note "--dry-run: would send TERM to pid $dh_parent (bg-pty-host)$dh_c_said — lane $LANE's duplicate holder of transcript $dh_uuid. Nothing sent."
       exit 0
     fi
     # RE-VALIDATED IMMEDIATELY BEFORE EACH SIGNAL, not trusted from the read
@@ -1188,9 +1245,48 @@ DUPES
     # THE ACTUAL `--resume` VALUE, NOT A GLOB THAT CAN SPAN OTHER ARGUMENTS
     # (Copilot round 5, PR #61): `*"--resume"*"/$uuid.jsonl"*` matches
     # `--resume /other.jsonl --label /<uuid>.jsonl` too, since `*` between
-    # them freely crosses argument boundaries. The token immediately after
-    # `--resume ` — up to the next space or the end of argv — is what the
-    # harness actually resumed, and that is the only thing compared now.
+    # them freely crosses argument boundaries. The value right after
+    # `--resume ` is what the harness actually resumed, and that is the only
+    # thing compared.
+    #
+    # READ WHOLE, SPACES AND ALL (opensoft/openRepoTools#76). `ps -o args=`
+    # joins the argv with spaces and quotes nothing, so the cut this used to
+    # make at the first space (`${v%% *}`) turned `--resume /home/Jane
+    # Doe/…/<uuid>.jsonl` into `/home/jane`, read a still-matching duplicate
+    # as "argv no longer matched", and withheld its TERM. The value now ends
+    # at the first `.jsonl` that ends an argument (followed by a space or by
+    # the end of the line), which keeps round 5's case above reading
+    # `/other.jsonl`, and a value with a word opening `--` inside it is
+    # refused as a later option rather than a directory. A value with a
+    # space in it must be one absolute path, starting with `/` and holding no
+    # ` /`, or it is refused too (Brett Heap's ruling of 2026-10-18 on PR
+    # #205): a bare session id followed by a prompt naming this transcript, or
+    # a `<uuid>.jsonl.bak` followed by a word that reaches it through ` /`,
+    # would otherwise be read as one value ending in `/<uuid>.jsonl` and TERMed
+    # here. Not every `<uuid>.jsonl.bak` form is refused: one followed by a
+    # later word that does not begin with `/` still reads as that value. This
+    # is `lanes-edit.sh`'s `dhp_resume_value`, the rule discovery already
+    # applied to this pid, word for word, and its comment there gives that
+    # limit and the others of reading a flattened argv at all; the two must
+    # stay the same rule. It sets `dh_rv` in this shell rather than printing
+    # it.
+    dh_resume_value() {   # <flattened argv, lowercased> — sets dh_rv
+      dh_rv=""
+      case "${1-}" in *"--resume "*) : ;; *) return 0 ;; esac
+      dh_rv_rest="${1#*--resume }"
+      while :; do
+        case "$dh_rv_rest" in *.jsonl*) : ;; *) dh_rv=""; return 0 ;; esac
+        dh_rv="${dh_rv}${dh_rv_rest%%.jsonl*}.jsonl"
+        dh_rv_rest="${dh_rv_rest#*.jsonl}"
+        case "$dh_rv_rest" in "" | " "*) break ;; esac
+      done
+      case "$dh_rv" in *" --"*) dh_rv="" ;; esac
+      case "$dh_rv" in *" "*)
+        case "$dh_rv" in /*) : ;; *) dh_rv="" ;; esac
+        case "$dh_rv" in *" /"*) dh_rv="" ;; esac
+      esac
+      return 0
+    }
     dh_uuid_lc="$(printf '%s' "$dh_uuid" | tr 'A-F' 'a-f')"
     dh_p_match=0
     dh_p_args="$(ps -o args= -p "$dh_parent" 2>/dev/null | tr 'A-F' 'a-f')" || dh_p_args=""
@@ -1202,8 +1298,8 @@ DUPES
     # false one out the same way `--resume ` already rules out
     # `--resume-file` beside it.
     case "$dh_p_args" in *"--fork-session "*"--resume "*)
-      dh_p_resume="${dh_p_args#*--resume }"; dh_p_resume="${dh_p_resume%% *}"
-      case "$dh_p_resume" in */"$dh_uuid_lc.jsonl") dh_p_match=1 ;; esac
+      dh_resume_value "$dh_p_args"
+      case "$dh_rv" in */"$dh_uuid_lc.jsonl") dh_p_match=1 ;; esac
     esac
     # THE SIGNAL'S OWN EXIT STATUS, KEPT APART FROM "DID ARGV MATCH" (Copilot
     # round 11, PR #61): folding both into one `dh_p_sent` flag and
@@ -1217,20 +1313,24 @@ DUPES
     if [ "$dh_p_match" = 1 ]; then
       kill -TERM "$dh_parent" 2>/dev/null && dh_p_killed=1
     fi
-    dh_c_match=1
-    dh_c_killed=1
-    if [ -n "$dh_child" ]; then
+    # EVERY CHILD IN THE SLOT, NOT ONLY THE FIRST (opensoft/openRepoTools#86):
+    # each is rechecked and signalled on its own, and its two bits are kept
+    # beside its pid as `<pid>:<match><killed>` for the report below, so one
+    # child's verdict is never read as another's.
+    dh_c_state=""
+    for dh_c in $dh_children; do
       dh_c_match=0
       dh_c_killed=0
-      dh_c_args="$(ps -o args= -p "$dh_child" 2>/dev/null | tr 'A-F' 'a-f')" || dh_c_args=""
+      dh_c_args="$(ps -o args= -p "$dh_c" 2>/dev/null | tr 'A-F' 'a-f')" || dh_c_args=""
       case "$dh_c_args" in *"--fork-session "*"--resume "*)
-        dh_c_resume="${dh_c_args#*--resume }"; dh_c_resume="${dh_c_resume%% *}"
-        case "$dh_c_resume" in */"$dh_uuid_lc.jsonl") dh_c_match=1 ;; esac
+        dh_resume_value "$dh_c_args"
+        case "$dh_rv" in */"$dh_uuid_lc.jsonl") dh_c_match=1 ;; esac
       esac
       if [ "$dh_c_match" = 1 ]; then
-        kill -TERM "$dh_child" 2>/dev/null && dh_c_killed=1
+        kill -TERM "$dh_c" 2>/dev/null && dh_c_killed=1
       fi
-    fi
+      dh_c_state="$dh_c_state $dh_c:$dh_c_match$dh_c_killed"
+    done
     # VERIFIED GONE, NOT ASSUMED FROM `kill`'S OWN STATUS (Copilot round 4, PR
     # #61): that status conflates "already gone" (fine — the goal was never
     # the signal, it was the duplicate not existing) with "no permission"
@@ -1283,23 +1383,28 @@ DUPES
       return 1
     }
     dh_p_gone=1; dh_settle_gone "$dh_parent" || dh_p_gone=0
-    dh_c_gone=1
-    if [ -n "$dh_child" ]; then
-      dh_c_gone=1; dh_settle_gone "$dh_child" || dh_c_gone=0
-    fi
     dh_p_msg="gone"
     [ "$dh_p_gone" = 1 ] || dh_p_msg="STILL ALIVE, TERM withheld: argv no longer matched"
     [ "$dh_p_gone" = 1 ] || [ "$dh_p_match" = 0 ] || [ "$dh_p_killed" = 1 ] || dh_p_msg="STILL ALIVE, TERM NOT SENT: the signal itself failed (check ownership/permissions) — this is not the process ignoring TERM, it never received one"
     [ "$dh_p_gone" = 1 ] || [ "$dh_p_match" = 0 ] || [ "$dh_p_killed" = 0 ] || dh_p_msg="STILL ALIVE despite TERM delivered"
     note "pid $dh_parent (bg-pty-host): $dh_p_msg"
-    if [ -n "$dh_child" ]; then
+    # EVERY CHILD MUST BE GONE FOR THIS TO SAY RETIRED (opensoft/openRepoTools#86):
+    # one child still alive, whichever it is, makes this a partial retirement
+    # and the refusal below, never a RETIRED over a process still holding the
+    # transcript.
+    dh_c_all_gone=1
+    for dh_c_tok in $dh_c_state; do
+      dh_c="${dh_c_tok%%:*}"; dh_c_bits="${dh_c_tok#*:}"
+      dh_c_match="${dh_c_bits%?}"; dh_c_killed="${dh_c_bits#?}"
+      dh_c_gone=1; dh_settle_gone "$dh_c" || dh_c_gone=0
+      [ "$dh_c_gone" = 1 ] || dh_c_all_gone=0
       dh_c_msg="gone"
       [ "$dh_c_gone" = 1 ] || dh_c_msg="STILL ALIVE, TERM withheld: argv no longer matched"
       [ "$dh_c_gone" = 1 ] || [ "$dh_c_match" = 0 ] || [ "$dh_c_killed" = 1 ] || dh_c_msg="STILL ALIVE, TERM NOT SENT: the signal itself failed (check ownership/permissions) — this is not the process ignoring TERM, it never received one"
       [ "$dh_c_gone" = 1 ] || [ "$dh_c_match" = 0 ] || [ "$dh_c_killed" = 0 ] || dh_c_msg="STILL ALIVE despite TERM delivered"
-      note "pid $dh_child (child): $dh_c_msg"
-    fi
-    if [ "$dh_p_gone" = 1 ] && [ "$dh_c_gone" = 1 ]; then
+      note "pid $dh_c (child): $dh_c_msg"
+    done
+    if [ "$dh_p_gone" = 1 ] && [ "$dh_c_all_gone" = 1 ]; then
       step "RETIRED lane $LANE's duplicate holder of transcript $dh_uuid (Amendment 18(h))"
       note "The lane itself is untouched: its row, and its own live session if it has one, are unaffected."
       exit 0
@@ -1386,8 +1491,13 @@ DUPES
         # holders`' own `duplicate` case, "any record at all in ANOTHER
         # profile's sessions/", which this PR's own repoGD fixture already
         # exercises). Built in its own pass because a row's verdict alone
-        # cannot answer this from OUTSIDE any bound window: every row here
-        # reads `unrelated` in that case, `companion` included.
+        # cannot answer this from OUTSIDE any bound window wherever no ONE
+        # live window answers for the transcript. `transcript_holders` now
+        # reads the companion off the LANE's live window record from any
+        # window (openRepoTools#73, item 2) — but where tmux is silent, the
+        # session is in no window, or two live windows in two profiles carry
+        # it, every row still reads `unrelated`, `companion` included, and
+        # `duplicate_holder_pids` applies this very rule, so it stays.
         dup_int_profs=""
         while IFS=$'\037' read -r ip_pid ip_kind ip_tgt ip_prof ip_where ip_verdict ip_file; do
           [ -n "${ip_pid:-}" ] || continue
@@ -1398,8 +1508,12 @@ DUPES
           [ -n "${dr_pid:-}" ] || continue
           # A WINDOW THAT COULD NOT BE ASKED ABOUT IS UNKNOWN AND NOT DEAD
           # (Amendment 18(b)): `(not asked)` — no tmux here, or a record with
-          # no `<@id>` in it — PROTECTS the process, and only a `(gone)` this
-          # server actually refuted makes it retirable.
+          # no `<@id>` in it — PROTECTS the process, and so does `(no
+          # answer)` — tmux installed and its server silent, which used to
+          # come back `(gone)` and let `--retire <the lane's own pid>` print
+          # 6(d)'s retitle for the conversation that IS the lane
+          # (openRepoTools#73, item 1). Only a `(gone)` this server actually
+          # refuted makes it retirable.
           case "$dr_where" in
             "window "*"(gone)") dr_own=0 ;;
             "window "*) dr_own=1 ;;
@@ -1439,10 +1553,11 @@ DUPES
             # rather than falling through to "neither" and naming nothing.
             #
             # `$dr_is_comp` (Copilot rounds 9 AND 10, PR #61), NOT `dr_verdict`
-            # ALONE: the verdict is `companion` only when `lane-end` runs from
-            # WITHIN the lane's own bound window (the one context where
-            # `th_here_prof` is set at all) — run the ordinary way, a plain
-            # script, every row here verdicts `unrelated` instead, `companion`
+            # ALONE: the verdict is `companion` when `lane-end` runs from
+            # WITHIN the lane's own bound window, or — since openRepoTools#73 —
+            # from anywhere ONE live window answers for the transcript; where
+            # none does (tmux silent, no window, two live windows in two
+            # profiles) every row here verdicts `unrelated` instead, `companion`
             # included, and round 9's first fix read `dr_kind = bg` alone as
             # the fallback signal — which ALSO excluded a genuine `kind: bg`
             # duplicate in a DIFFERENT profile (`transcript_holders`' own
@@ -1477,9 +1592,17 @@ DUPES
   # THE WINDOW'S OWN SESSION IS REFUSED BY NAME, and the refusal names the act
   # that DOES end a lane, because an operator who typed this meant one of the
   # two and there is no third thing to mean.
+  # AND WHERE TMUX DID NOT ANSWER, IT SAYS THAT INSTEAD (openRepoTools#73,
+  # item 1): `(no answer)` protects the process because its window could not be
+  # read at all, which is not the same as having read it and found the lane, so
+  # the refusal names the silence rather than claiming what it could not see.
   if [ -z "$fk_sid" ] && [ -z "$dh_parent" ] && [ -n "$dup_pid" ]; then
     case " $dup_own " in
       *" $dup_pid "*)
+        case "$dup_where" in
+          *"(no answer)")
+            die "pid $dup_pid carries lane $LANE's own transcript in $dup_where, and tmux did not answer at all — its server is down, or unreachable from here — so whether that window is still there could not be read. A window nobody could ask about is NOT a dead one (Amendment 18(b)), and the process in it may be the session that IS the lane, so nothing is named. Re-run this where tmux answers; to end the lane, run: $prog $LANE" 2 ;;
+        esac
         die "pid $dup_pid IS lane $LANE's own live session, in its own window ($dup_where) — not a duplicate of it. Retiring the session that IS the lane is how a lane loses the conversation it is, so nothing is named. To end the lane, run: $prog $LANE   ·   to retire a duplicate, pass ITS pid (\`$LANES_EDIT transcript-holders $dup_id\` lists every live process carrying this transcript)." 2 ;;
     esac
   fi
@@ -1517,9 +1640,12 @@ DUPES
     fi
     if [ -n "${dh_rows:-}" ]; then
       note "the live duplicate holders of lane $LANE's transcript, by PROCESS TABLE, are:"
-      printf '%s\n' "$dh_rows" | while IFS=$'\037' read -r dr_parent dr_child dr_uuid; do
+      printf '%s\n' "$dh_rows" | while IFS=$'\037' read -r dr_parent dr_children dr_uuid; do
         [ -n "${dr_parent:-}" ] || continue
-        note "  pid $dr_parent (bg-pty-host)${dr_child:+, pid $dr_child (child)}  transcript $dr_uuid"
+        # Every child in the slot, each named on its own (#86).
+        dr_c_said=""
+        for dr_c in $dr_children; do dr_c_said="$dr_c_said, pid $dr_c (child)"; done
+        note "  pid $dr_parent (bg-pty-host)$dr_c_said  transcript $dr_uuid"
       done
     else
       note "no live duplicate holder of lane $LANE's transcript is in the process table either (Amendment 18(h), opensoft/openRepoTools#39); \`$LANES_EDIT duplicate-holder $LANE\` is the read that names them."
@@ -1720,6 +1846,18 @@ scrub_cell() {
 # the second exactly an instant, and a third part after it. That is
 # `mig_cell_is_phrase`'s rule in `lanes-edit.sh`; the states are the
 # amendment's own list, and this is the second place that list is written.
+# THE LINE KEEPS DECISION O1's GRAMMAR TOO (opensoft/openRepoTools#90, part
+# (a); Copilot's last review of #82). `set-row-state` refuses a line of more
+# than 240 characters or one carrying `|` or CR/LF, so a cell with any of them
+# was not written by it, and narrowing there dropped its prose from the scan
+# all the same: an open LANDING in that prose closed the lane. That cell is
+# scanned whole, like a diary. The cap is in CHARACTERS and `${#x}` is BYTES in
+# a C locale, where a line of `—` and `→` inside it would read as past it and
+# a lane merely waiting for a LANDING would be held by it: past 240, a line
+# that is valid UTF-8 is recounted with its continuation bytes taken out, the
+# same number in every locale. Text that is not valid UTF-8 has continuation
+# bytes that follow nothing and are no characters, so it keeps the first count,
+# which can only over-count, and an over-count reads more of the cell.
 cell_for_scan() {   # <state cell> — the part of it that says where the lane is
   cfs="$1"
   case "$cfs" in
@@ -1737,6 +1875,24 @@ cell_for_scan() {   # <state cell> — the part of it that says where the lane i
       case "$cfs_three" in
         '' | *' · '*) printf '%s' "$cfs"; return 0 ;;
       esac
+      # O1's OWN RULES FOR THE LINE, which `mig_cell_is_phrase` does not test
+      # and `set-row-state` does (#90): no `|`, no CR/LF, at most 240 characters.
+      case "$cfs_three" in
+        *'|'* | *$'\n'* | *$'\r'*) printf '%s' "$cfs"; return 0 ;;
+      esac
+      # `iconv -c` drops what is not UTF-8, and its exit status is not to be
+      # trusted (musl's is 0 either way), so the text is UTF-8 when it comes
+      # back unchanged; with no `iconv` it never does. A count that cannot be
+      # made is a long line, and BSD `wc` pads, hence the `tr`.
+      cfs_len="${#cfs_three}"
+      if [ "$cfs_len" -gt 240 ]; then
+        cfs_utf8="$(printf '%s' "$cfs_three" | iconv -c -f UTF-8 -t UTF-8 2>/dev/null)" || :
+        if [ "$cfs_utf8" = "$cfs_three" ]; then
+          cfs_len="$(printf '%s' "$cfs_three" | LC_ALL=C tr -d '\200-\277' | wc -c | tr -d ' ')" ||
+            cfs_len=241
+        fi
+      fi
+      [ "$cfs_len" -le 240 ] || { printf '%s' "$cfs"; return 0; }
       cfs_ok=0
       case "$cfs_one" in
         LIVE|PAUSED|LANDED|ENDED|RETIRED|'HANDED OFF'|MIGRATED) cfs_ok=1 ;;
@@ -1971,6 +2127,7 @@ fi
 
 gate_holder=""; gate_refused=""; gate_lines=""; gate_named=""
 gate_trees=0; gate_branches=0; gate_scratch=0; gate_caches=0; gate_residue=0; gate_foreign=0
+gate_legs=0; gate_leg_lines=""   # T018: an assembly's leg checkouts, counted and listed
 gate_person=0     # counted rows `--yes` leaves too: a person's to settle
 gate_lf='
 '
@@ -2012,6 +2169,25 @@ while IFS="$TAB" read -r g_kind g_a g_b g_c g_d g_e g_f; do
       gate_named="${gate_named}$(gate_real "$g_path")${gate_lf}"
       gate_caches=$((gate_caches + 1))
       gate_lines="${gate_lines}  cache    ${g_a}  ${g_path}  (${g_e:-0} bytes)${gate_lf}" ;;
+    # T018 (opensoft/openRepoTools#186): A LEG CHECKOUT OF AN ASSEMBLY — only
+    # where the lane's checkout is one; a single repository prints no such row.
+    # The sweep counts it (`retire`) where its HEAD's own Lane: trailer is this
+    # lane's and it holds work origin lacks or edits no commit carries, or
+    # where it could not be read; one that holds work and is not this lane's
+    # is listed below the table and counted for nobody, as the assembly's own
+    # checkout is. No sweep acts on one, so its remedy is a person's.
+    leg)
+      g_path="$(printf '%b' "${g_c:-}")"
+      g_head="${g_e:-?}"
+      if [ "${g_b:-}" = retire ]; then
+        gate_legs=$((gate_legs + 1))
+        gate_lines="${gate_lines}  leg      ${g_a}  ${g_path}  [${g_d:-?} ${g_head:0:12}]${gate_lf}             ${g_f:-}${gate_lf}"
+      else
+        case "${g_a:-}" in
+          clean | absent) : ;;
+          *) gate_leg_lines="${gate_leg_lines}  leg      ${g_a}  ${g_path}  [${g_d:-?} ${g_head:0:12}]${gate_lf}             ${g_f:-}${gate_lf}" ;;
+        esac
+      fi ;;
   esac
 done <<GATE
 $gate_out
@@ -2073,6 +2249,7 @@ gate_part "$gate_branches" "branch(es)"
 gate_part "$gate_scratch" "scratch dir(s)"
 gate_part "$gate_caches" "cache(s)"
 gate_part "$gate_residue" "residue path(s)"
+gate_part "$gate_legs" "leg checkout(s)"
 
 # THE VERDICT. 0 passes only with nothing named and nothing unread beside it;
 # 3 and 2 never pass; anything else is the gate nobody read.
@@ -2096,6 +2273,10 @@ fi
 
 if [ "$gate_pass" = 1 ]; then
   step "close-out gate: nothing of lane $LANE's is left on disk ($gate_shown --dry-run answered 0)"
+  if [ -n "$gate_leg_lines" ]; then
+    note "the assembly's leg checkout(s) below hold work that is not this lane's by its HEAD's own Lane: trailer; they are listed and NOT counted, as the assembly's own checkout is not:"
+    printf '%s' "$gate_leg_lines" >&2
+  fi
   if [ "$inventory_only" = 1 ]; then
     note "--inventory-only changed nothing: the close-out gate passed, so the lane ends as any other does"
   fi
@@ -2114,6 +2295,10 @@ else
       *)     note "lane $LANE is NOT ended: the close-out gate could not be read — \`$gate_shown --dry-run --porcelain\` exited $gate_rc, and a read that failed is never an answer (Amendment 7(d))." ;;
     esac
     if [ -n "$gate_lines" ]; then printf '%s' "$gate_lines" >&2; fi
+    if [ -n "$gate_leg_lines" ]; then
+      note "and the assembly's leg checkout(s) below hold work that is not this lane's by its HEAD's own Lane: trailer; they are listed and NOT counted:"
+      printf '%s' "$gate_leg_lines" >&2
+    fi
     if [ "$gate_foreign" -gt 0 ]; then
       note "($gate_foreign FOREIGN tree(s) beside these are not this lane's, and were not counted.)"
     fi
@@ -2129,6 +2314,9 @@ else
     gate_act=0
     if [ "$gate_rc" = 3 ]; then gate_act=1; fi
     if [ "$gate_rc" = 0 ] && [ "$gate_caches" -gt 0 ]; then gate_act=1; fi
+    # T018: A LEG IS NO SWEEP'S TO RETIRE, so where legs are all that is
+    # counted the act offered is the person's, not `--yes`.
+    if [ "$gate_legs" -gt 0 ] && [ $((gate_trees + gate_branches + gate_scratch + gate_caches)) = 0 ]; then gate_act=0; fi
     if [ "$gate_act" = 1 ]; then
       note "the one act that retires them (--yes removes only what is on origin or in a bundle, never a live writer's tree):"
       if [ "$gate_holder" = live ]; then
@@ -2142,6 +2330,9 @@ else
     fi
     if [ "$gate_residue" -gt 0 ]; then
       note "residue is no sweep's to retire: move it to \${XDG_STATE_HOME:-~/.local/state}/openRepoTools/lanes/$LANE/scratch/ or remove it by hand"
+    fi
+    if [ "$gate_legs" -gt 0 ]; then
+      note "a leg checkout is the assembly's and no sweep acts on one: commit and push its work from inside it (git -C <leg> status, git -C <leg> push), then end the lane again"
     fi
     note "or end the lane and leave them where they are, in its inventory, with the reason written down:"
     note "  $prog $LANE$rflag$fflag --inventory-only"
