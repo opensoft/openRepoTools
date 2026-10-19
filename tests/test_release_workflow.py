@@ -3997,8 +3997,7 @@ TABLE_ROW = re.compile(
     r"|any repository)\s+(a tag|a branch)\s+(X\.Y\.ZrcN|X\.Y\.Z|any)\s+(\S.*)")
 TABLE_OUTCOMES = {"TestPyPI, then PyPI": ("true", "true"),
                   "TestPyPI alone": ("true", "false"), "refused": None,
-                  "nothing: the rehearsal": ("false", "false"),
-                  "neither: the rehearsal": ("false", "false")}
+                  "nothing: the rehearsal": ("false", "false")}
 
 
 def guard_tables() -> List[Tuple[int, Dict[Tuple[str, str, str], Optional[Tuple[str, str]]]]]:

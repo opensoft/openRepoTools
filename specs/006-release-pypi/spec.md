@@ -279,9 +279,9 @@ workflow's stamp writer.
    refuses before any approval is asked, and nothing is uploaded (FR-048).
 9. **Given** an upload job and no approval for its environment, **When** the
    run reaches it, **Then** the job waits, and nothing is uploaded.
-9. **Given** the macOS leg of the install check, **When** it reruns
-   `--install` under `/bin/bash`, **Then** it prints a `BASH_VERSION` of 3.2,
-   and the install succeeds with the same skip and count lines.
+10. **Given** the macOS leg of the install check, **When** it reruns
+    `--install` under `/bin/bash`, **Then** it prints a `BASH_VERSION` of
+    3.2, and the install succeeds with the same skip and count lines.
 
 ---
 
@@ -605,7 +605,9 @@ passages, and the absence of the pipx route.
   - it runs one release at a time, and never cancels one in progress;
   - it is adapted from openRepoShape v1.1.0's (`190133d`), taking over that
     workflow's checks as they are, except where design.md Decision 10 names
-    a difference.
+    a difference, and holding more where FR-029 and contracts/workflows.md
+    ask for it: the gate on `tests.yml`'s four jobs, the build's full-history
+    checkout with its submodule, and the tag fetch without `--depth`.
 - **FR-029**: The build MUST refuse unless every one of these holds:
   - the version is a final `X.Y.Z` other than `0.0.0`, or a pre-release
     `X.Y.ZrcN` bound for TestPyPI;
