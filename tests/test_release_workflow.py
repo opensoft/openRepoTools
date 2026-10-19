@@ -79,6 +79,7 @@ import base64
 import difflib
 import functools
 import hashlib
+import http.server
 import json
 import os
 import re
@@ -87,6 +88,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import threading
 import zipfile
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -2401,6 +2403,195 @@ def test_release_upload_both_jobs_run_the_same_checks_after_their_guards():
     for a, b in zip(mine, theirs):
         assert a.get("run") == b.get("run"), label(a)
     assert "test.pypi.org" not in json.dumps(job(workflow, "pypi"))
+
+
+# --- the index checks, run against a fake index ----------------------------------------
+
+#: The two index checks around each upload, by their names, and the JSON API
+#: each upload job reads.
+EMPTY_INDEX_STEP = "the index holds no file of this version but the verified wheel"
+SERVED_STEP = "the index serves exactly the verified wheel"
+JSON_BASES = {"testpypi": "https://test.pypi.org/pypi/openrepotools/",
+              "pypi": "https://pypi.org/pypi/openrepotools/"}
+
+#: The verified wheel, its digest, and what else an index can hold.
+INDEX_VERSION = "1.1.0"
+INDEX_WHEEL = f"openrepotools-{INDEX_VERSION}-py3-none-any.whl"
+INDEX_SDIST = f"openrepotools-{INDEX_VERSION}.tar.gz"
+VERIFIED = "5e" * 32
+ANOTHER_DIGEST = "a7" * 32
+SERVED = (200, [(INDEX_WHEEL, VERIFIED, False)])
+NOT_YET = (404, [])
+
+#: THE CLOCK, the one other thing faked: `time.sleep` writes down what it was
+#: asked and returns at once, so 20 reads 15 seconds apart take no time. It is
+#: a `sitecustomize` on the step's PYTHONPATH, so the step's script runs as
+#: it is written.
+CLOCK = '''import os, time
+
+
+def sleep(seconds, _log=os.environ["FAKE_CLOCK_LOG"]):
+    with open(_log, "a", encoding="utf-8") as log:
+        log.write(f"{seconds}\\n")
+
+
+time.sleep = sleep
+'''
+
+
+class FakeIndex:
+    """AN INDEX'S JSON API ON 127.0.0.1: the `n`th read gets `answers[n]`,
+    and every read after the last answer gets the last again. Each answer is
+    `(status, files)`, a file `(filename, sha256, yanked)`. Every read's path
+    is written down in `reads`."""
+
+    def __init__(self, answers: list) -> None:
+        self.answers, self.reads = list(answers), []
+        index = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                status, files = index.answers[min(len(index.reads),
+                                                  len(index.answers) - 1)]
+                index.reads.append(self.path)
+                body = json.dumps(
+                    {"info": {"name": "openrepotools"},
+                     "urls": [{"filename": name, "digests": {"sha256": digest},
+                               "yanked": yanked}
+                              for name, digest, yanked in files]}
+                    if status == 200 else {"message": f"HTTP {status}"}).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args) -> None:
+                pass
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.base = (f"http://127.0.0.1:{self.server.server_address[1]}"
+                     "/pypi/openrepotools/")
+        self.thread = threading.Thread(target=self.server.serve_forever,
+                                       daemon=True)
+
+    def __enter__(self) -> "FakeIndex":
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+
+
+def run_index_step(tmp_path: Path, name: str, prefix: str, answers: list
+                   ) -> Tuple[subprocess.CompletedProcess, List[str], List[str]]:
+    """Job `name`'s step `prefix`, run under the Runner with the job's own
+    `INDEX`, the build's record and `JSON_BASE` the fake index's. Returns the
+    run, the paths read, and the sleeps asked for."""
+    workflow = release()
+    assert (job(workflow, name).get("env") or {}).get("JSON_BASE") == JSON_BASES[name], (
+        f"the {name} job reads {job(workflow, name).get('env')}")
+    clock = tmp_path / "clock"
+    clock.mkdir()
+    (clock / "sitecustomize.py").write_text(CLOCK, encoding="utf-8")
+    log = tmp_path / "clock.log"
+    with FakeIndex(answers) as index:
+        values = {"VERSION": INDEX_VERSION, "WHEEL": INDEX_WHEEL,
+                  "WHEEL_SHA256": VERIFIED, "JSON_BASE": index.base,
+                  "no_proxy": "*", "NO_PROXY": "*", "PYTHONPATH": str(clock),
+                  "FAKE_CLOCK_LOG": str(log)}
+        runner = Runner(tmp_path / "work", workflow, name, values)
+        done = runner.run(named(workflow, name, prefix))
+        reads = list(index.reads)
+    sleeps = log.read_text(encoding="utf-8").split() if log.exists() else []
+    return done, reads, sleeps
+
+
+#: BEFORE THE UPLOAD (FR-031, the lead's ruling, design.md Open Questions
+#: item 15): `(what the index answers, whether the step passes)`. A 404 is a
+#: version with no file yet, and a version listed with no file holds no file
+#: either; the verified wheel at its digest, not yanked, is a re-run after an
+#: upload that went through. Every other file refuses, and so does an index
+#: that answers with an error.
+EMPTY_INDEX_CASES = {
+    "no-file-of-the-version-yet": (NOT_YET, True),
+    "the-verified-wheel-at-its-digest": (SERVED, True),
+    "the-version-listed-with-no-file": ((200, []), True),
+    "the-verified-wheel-yanked": ((200, [(INDEX_WHEEL, VERIFIED, True)]), False),
+    "the-wheel-s-name-at-another-digest": (
+        (200, [(INDEX_WHEEL, ANOTHER_DIGEST, False)]), False),
+    "another-file-beside-the-verified-wheel": (
+        (200, [(INDEX_WHEEL, VERIFIED, False),
+               (INDEX_SDIST, ANOTHER_DIGEST, False)]), False),
+    "another-file-alone": ((200, [(INDEX_SDIST, ANOTHER_DIGEST, False)]), False),
+    "an-index-error": ((503, []), False),
+    "a-refusal-other-than-404": ((403, []), False),
+}
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@pytest.mark.parametrize("which", EMPTY_INDEX_CASES)
+@pytest.mark.parametrize("name", sorted(UPLOADS))
+def test_release_upload_the_empty_index_check_passes_no_file_or_the_verified_wheel_alone(
+        tmp_path, name, which):
+    """THE EMPTY-INDEX CHECK, RUN against a fake index, in each upload job:
+    it reads the version's JSON once, passes a 404, a version with no file
+    and the verified wheel already there at its digest, not yanked, and
+    refuses the wheel yanked, the wheel's name at another digest, any other
+    file, and an index that answers with an error."""
+    answer, passes = EMPTY_INDEX_CASES[which]
+    done, reads, _ = run_index_step(tmp_path, name, EMPTY_INDEX_STEP, [answer])
+    assert (done.returncode == 0) == passes, transcript(done)
+    assert reads == [f"/pypi/openrepotools/{INDEX_VERSION}/json"], reads
+    if not passes and answer[0] == 200:
+        assert "::error::" in done.stdout + done.stderr, transcript(done)
+
+
+#: AFTER THE UPLOAD: `(what the index answers, read by read, whether the step
+#: passes, how many reads it makes)`. It reads until the index serves exactly
+#: the verified wheel, through a 404, an empty listing or a server error, up
+#: to 20 reads, and refuses the wheel yanked, any other file and a client
+#: error at once.
+SERVED_CASES = {
+    "served-at-the-first-read": ([SERVED], True, 1),
+    "not-yet-then-served": ([NOT_YET, SERVED], True, 2),
+    "an-empty-listing-then-served": ([(200, []), SERVED], True, 2),
+    "a-server-error-then-served": ([(503, []), SERVED], True, 2),
+    "served-at-the-twentieth-read": ([NOT_YET] * 19 + [SERVED], True, 20),
+    "served-only-after-twenty-reads": ([NOT_YET] * 20 + [SERVED], False, 20),
+    "another-file-beside-it-every-time": (
+        [(200, [(INDEX_WHEEL, VERIFIED, False),
+                (INDEX_SDIST, ANOTHER_DIGEST, False)])], False, 20),
+    "another-digest-every-time": (
+        [(200, [(INDEX_WHEEL, ANOTHER_DIGEST, False)])], False, 20),
+    "served-yanked": ([(200, [(INDEX_WHEEL, VERIFIED, True)])], False, 1),
+    "a-refusal-other-than-404": ([(403, [])], False, 1),
+}
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@pytest.mark.parametrize("which", SERVED_CASES)
+@pytest.mark.parametrize("name", sorted(UPLOADS))
+def test_release_upload_the_served_check_reads_until_the_verified_wheel_is_served(
+        tmp_path, name, which):
+    """THE SERVED-DIGEST CHECK, RUN against a fake index, in each upload job:
+    it keeps reading, 15 seconds apart, up to 20 reads, until the index
+    serves exactly the verified wheel, and passes then; it refuses an index
+    that never does, the wheel yanked, and a client error."""
+    answers, passes, count = SERVED_CASES[which]
+    done, reads, sleeps = run_index_step(tmp_path, name, SERVED_STEP, answers)
+    assert (done.returncode == 0) == passes, transcript(done)
+    assert reads == [f"/pypi/openrepotools/{INDEX_VERSION}/json"] * count, (
+        f"{len(reads)} reads, not {count}: {reads}")
+    assert set(sleeps) <= {"15"}, sleeps
+    if passes:
+        assert len(sleeps) == count - 1, sleeps
 
 
 # --- the install check ---------------------------------------------------------------
