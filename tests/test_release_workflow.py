@@ -1752,6 +1752,20 @@ def test_release_stamp_writer_refuses_a_file_already_stamped(tmp_path):
     assert [copy.read_bytes() for copy in more] == [stamped_text] * 2
 
 
+def a_stamp_the_writer_refuses(which: str) -> bytes:
+    """The committed stamp made into one the writer must refuse: already
+    stamped, with a `TAG = ""` written twice, or with no `DIGEST = ""`."""
+    text = STAMP.read_text(encoding="utf-8")
+    if which == "already-stamped":
+        return stamped(text, RELEASES["the-code-leg-s-v1.1.0"]).encode("utf-8")
+    lines = text.split("\n")
+    if which == "a-line-twice":
+        lines.insert(lines.index('TAG = ""'), 'TAG = ""')
+    else:
+        lines.remove('DIGEST = ""')
+    return "\n".join(lines).encode("utf-8")
+
+
 @NEEDS_UPSTREAM
 @pytest.mark.parametrize("which", ["a-line-twice", "a-line-missing"])
 def test_release_stamp_writer_refuses_a_file_that_is_not_the_committed_stamp(
@@ -1759,17 +1773,64 @@ def test_release_stamp_writer_refuses_a_file_that_is_not_the_committed_stamp(
     """EACH COMMITTED LINE EXACTLY ONCE (contracts/stamp.md, "A count other
     than one refuses"): a `TAG = ""` written twice, or a `DIGEST = ""` that
     is not there, is refused, and neither file is written."""
-    lines = STAMP.read_text(encoding="utf-8").split("\n")
-    if which == "a-line-twice":
-        at = lines.index('TAG = ""')
-        lines.insert(at, 'TAG = ""')
-    else:
-        lines.remove('DIGEST = ""')
-    text = "\n".join(lines).encode("utf-8")
+    text = a_stamp_the_writer_refuses(which)
     done, copies = write_stamp(release(), tmp_path,
                                RELEASES["the-code-leg-s-v1.1.0"], [text, text])
     assert done.returncode != 0, transcript(done)
     assert [copy.read_bytes() for copy in copies] == [text, text]
+
+
+@NEEDS_UPSTREAM
+@pytest.mark.parametrize("which", ["already-stamped", "a-line-twice",
+                                   "a-line-missing"])
+def test_release_stamp_writer_writes_neither_copy_until_both_are_checked(
+        tmp_path, which):
+    """BOTH ARE STAMPED AND CHECKED BEFORE EITHER IS WRITTEN (release.yml's
+    step 10, after contracts/stamp.md's "Checks before writing"): the
+    committed stamp as the first copy and one the writer refuses as the
+    second, and the writer refuses with both copies as they were. A writer
+    that wrote each copy as it checked it would leave the first extraction
+    stamped and the second not."""
+    texts = [STAMP.read_bytes(), a_stamp_the_writer_refuses(which)]
+    done, copies = write_stamp(release(), tmp_path,
+                               RELEASES["the-code-leg-s-v1.1.0"], texts)
+    assert done.returncode != 0, transcript(done)
+    assert [copy.read_bytes() for copy in copies] == texts, (
+        "the writer refused the second copy and wrote the first anyway")
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@pytest.mark.parametrize("which", RELEASES)
+def test_release_stamp_writer_step_as_github_runs_it_stamps_the_run_s_repository(
+        tmp_path, which):
+    """STEP 10, THE WHOLE STEP, RUN AS GITHUB RUNS IT (contracts/stamp.md,
+    "Input"): its bash sets `TAG`, `COMMIT` and `REPOSITORY` from `$VERSION`,
+    `$GITHUB_SHA` and `$GITHUB_REPOSITORY`, and its heredoc writes them, so
+    both extractions' stamps name the run's own repository, in this
+    repository, in the code leg and in a fork alike, and nothing the script
+    sets after its `export` replaces it."""
+    release_ = RELEASES[which]
+    workflow = release()
+    trees = [tmp_path / "a" / "openRepoTools",
+             tmp_path / "b" / "elsewhere" / f"v{release_['VERSION']}-src"]
+    copies = [tree / "src" / "openrepotools" / "_release.py" for tree in trees]
+    for copy in copies:
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_bytes(STAMP.read_bytes())
+    values = {"VERSION": release_["VERSION"], "GITHUB_SHA": release_["COMMIT"],
+              "GITHUB_REPOSITORY": release_["REPOSITORY"],
+              "DIGEST": release_["DIGEST"], "TREE_A": str(trees[0]),
+              "TREE_B": str(trees[1])}
+    runner = Runner(tmp_path / "work", workflow, "build", values)
+    done = runner.run(named(workflow, "build", STAMP_STEP))
+    assert done.returncode == 0, transcript(done)
+    want = stamped(STAMP.read_text(encoding="utf-8"), release_).encode("utf-8")
+    for copy in copies:
+        assert copy.read_bytes() == want, (
+            f"{copy} is not the committed stamp with {release_}:\n"
+            f"{copy.read_text(encoding='utf-8')}")
 
 
 @NEEDS_UPSTREAM
