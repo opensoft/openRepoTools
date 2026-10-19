@@ -64,8 +64,8 @@ causes, and [stamp.md](stamp.md) gives each reason's cause:
 
 - `cannot be read (<detail>)`, for example `cannot be read (it is a
   directory)`;
-- `is partial: <detail>`, for example `is partial: COMMIT is set and DIGEST
-  is empty`;
+- `is partial: <detail>`, for example `is partial: VERSION, TAG, COMMIT and
+  REPOSITORY are set, but DIGEST is empty`;
 - `is malformed: <detail>`, for example `is malformed: TAG is v1.2.0, not
   v1.1.0`, or `is malformed: line 4 has a carriage return`.
 
