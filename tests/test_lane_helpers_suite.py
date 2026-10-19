@@ -508,13 +508,21 @@ def test_a_passing_suite_shows_its_timings_in_pytests_own_output(tmp_path):
 @WINDOWS_SKIP
 @pytest.mark.skipif(shutil.which("bash") is None,
                     reason="the lane helpers and their suite are bash")
-def test_a_failing_suite_says_its_transcript_once_and_no_second_table(tmp_path):
+def test_a_failing_suite_prints_no_timings_block_beside_its_transcript(tmp_path):
     proc, lines = run_wrapper_over(tmp_path, failing=True)
     assert proc.returncode != 0, "\n".join(lines)
-    # In the assertion message, which holds the whole transcript: once.
-    assert lines_ending(lines, "the slow section") == 1, "\n".join(lines)
-    assert lines_ending(lines, "teardown: rm -rf of the sandbox took 3 s") == 1, (
+    # The transcript is in the assertion message, and that it is THERE is all
+    # that is counted: how many times pytest repeats the message is not this
+    # file's to pin. Its short summary prints the whole message where `CI` is
+    # set in the environment (GitHub's runners set it, and the child inherits
+    # it) and the first line anywhere else, so a count of one held on a
+    # workstation and read two on the runner.
+    assert lines_ending(lines, "the slow section") >= 1, "\n".join(lines)
+    assert lines_ending(lines, "teardown: rm -rf of the sandbox took 3 s") >= 1, (
         "\n".join(lines))
+    # What is pinned is that the wrapper said nothing of its own: every block
+    # `show_timings` prints opens with its lead line, which names the run a
+    # PASS.
     assert not any("its own clock" in ln for ln in lines), (
         "a failing run printed the passing run's lead line:\n" + "\n".join(lines))
 
