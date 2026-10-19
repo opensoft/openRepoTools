@@ -96,9 +96,9 @@ def field(out: str, key: str) -> list:
 
 
 def handoff(b: Bench, lane: str, cwd: Path, why: str = "t018 handoff",
-            *flags: str) -> subprocess.CompletedProcess:
+            *flags: str, env: dict | None = None) -> subprocess.CompletedProcess:
     return b.tool("lane-handoff", "--lane", lane, "--transcript", "none", "--agent", "claude",
-                  *flags, why, cwd=cwd)
+                  *flags, why, cwd=cwd, env=env)
 
 
 def writers_file(b: Bench, lane: str, rows: dict) -> Path:
@@ -787,6 +787,148 @@ def test_t018_a_leg_tree_add_made_is_withheld_where_the_legs_git_is_an_empty_dir
     assert "(NOT recorded)" not in top_block(b, "triad-1")
     assert "lifecycle: SWAPPED" in proc.stdout, proc.stdout
     assert inventory(b, "triad-1") == want
+
+
+# ===================================================================== #280
+
+#: A `lanes-edit.sh` that is the bench's own for every verb but `lane-state`, and
+#: answers that one in TWO PIECES - the `state` line, a pause, then the rest of
+#: the snapshot - as the real one's builtin `printf` can when its reader is quick
+#: enough to see the first piece before the second is written. `real` is the
+#: bench's copy, `calls` the file each `lane-state` call is logged to, and `path`
+#: the bench's own PATH, which it puts back before it runs anything: the command
+#: it serves has an `awk` of its own in front (see `quick_awk`).
+SLOW_LANE_STATE = """#!/bin/sh
+PATH='{path}'
+real='{real}'
+if [ "$1" = lane-state ]; then
+    printf '%s\\n' "$*" >> '{calls}'
+    out="$("$real" "$@")"
+    rc=$?
+    if [ "$rc" != 0 ]; then
+        [ -z "$out" ] || printf '%s\\n' "$out"
+        exit "$rc"
+    fi
+    first="$(printf '%s\\n' "$out" | sed -n 1p)"
+    rest="$(printf '%s\\n' "$out" | sed 1d)"
+    printf '%s\\n' "$first"
+    sleep 0.3
+    printf '%s\\n' "$rest"
+    exit 0
+fi
+exec "$real" "$@"
+"""
+
+#: `lane-handoff`'s lifecycle read as it was written before #280: the producer
+#: piped into an `awk` that exits at its first match, under `pipefail`.
+OLD_LIFECYCLE_READ = r'''set -uo pipefail
+rc=0
+now="$("$1" lane-state "$2" 2>/dev/null | awk -F"\t" '$1 == "state" { print $2; exit }')" || rc=$?
+printf '%s %s\n' "$now" "$rc"
+'''
+
+
+def quick_awk(b: Bench) -> str:
+    """A PATH, for ONE command, whose `awk` hands each record to its program as
+    it arrives. mawk - the awk of Debian and Ubuntu - reads until its buffer is
+    full or its input ends before it hands over a first record (more than 300 KB
+    and at most 1 MB, measured with mawk 1.3.4 20240123), so where it is the awk
+    the old pipeline cannot race on a snapshot of 600 bytes, whatever the
+    producer does; gawk and the one-true-awk hand a record over at once, and so
+    does `mawk -W interactive`.
+    The shim is `mawk -W interactive` where the system's awk is mawk, and the
+    system's own otherwise."""
+    real = shutil.which("awk", path=b.env["PATH"])
+    assert real, "no awk on the bench's PATH"
+    said = subprocess.run([real, "-W", "version"], capture_output=True, text=True,
+                          stdin=subprocess.DEVNULL)
+    flags = "-W interactive " if (said.stdout + said.stderr).startswith("mawk") else ""
+    shim = b.root / "quick-awk" / "awk"
+    shim.parent.mkdir()
+    shim.write_text(f"#!/bin/sh\nexec '{real}' {flags}\"$@\"\n")
+    shim.chmod(0o755)
+    return os.pathsep.join([str(shim.parent), b.env["PATH"]])
+
+
+def slow_lane_state(b: Bench) -> tuple:
+    """THE PRODUCER THAT OUTLIVES ITS READER, as the environment of ONE command
+    (the quick `awk` in front, `$LANES_EDIT` the two-piece wrapper), and the file
+    the wrapper logs each `lane-state` call to."""
+    wrapper = b.root / "slow-lane-state" / "lanes-edit.sh"
+    wrapper.parent.mkdir()
+    calls = wrapper.parent / "calls"
+    wrapper.write_text(SLOW_LANE_STATE.format(path=b.env["PATH"], real=b.bin / "lanes-edit.sh",
+                                              calls=calls))
+    wrapper.chmod(0o755)
+    return {"LANES_EDIT": str(wrapper), "PATH": quick_awk(b), "LANES_NO_FETCH": "1"}, calls
+
+
+def lane_state(b: Bench, lane: str) -> dict:
+    proc = b.tool("lanes-edit.sh", "lane-state", lane)
+    assert proc.returncode == 0, proc.stderr
+    return dict(ln.split("\t", 1) for ln in proc.stdout.splitlines() if "\t" in ln)
+
+
+@NEEDS_UPSTREAM
+def test_280_a_lifecycle_read_whose_producer_writes_after_the_filter_exits_is_still_a_read(triad):
+    """#280: `lane-handoff` read the lane's lifecycle as `lane-state | awk '$1 ==
+    "state" { print $2; exit }'` under `set -o pipefail`, and that `awk` exits at
+    the first line. A producer that writes once more after that dies of SIGPIPE -
+    the real one's builtin `printf` hands a multi-line snapshot to the pipe in
+    pieces, and a reader quick enough sees the first before the last is written -
+    so the substitution's status was 141, the handoff said "the lane lifecycle
+    could not be read" and recorded no RUNNING -> SWAPPING -> SWAPPED transition
+    (CI run 39322387035, which passed one prefix down and in every run before
+    it). The race is held here EVERY time, by a `lane-state` that prints its
+    `state` line, waits 0.3 s and prints the rest. THE PREMISE FIRST: the old
+    shape of the read, run on that producer, gives `RUNNING 141`. Then the
+    handoff reads the snapshot whole and takes the status from `lane-state`
+    alone, so it records the transition as it does when the producer is quick."""
+    b, t = triad
+    a = t["assembly"]
+    env, calls = slow_lane_state(b)
+    old = b.run("bash", "-c", OLD_LIFECYCLE_READ, "_", env["LANES_EDIT"], "triad-1", env=env)
+    assert (old.returncode, old.stdout) == (0, "RUNNING 141\n"), (old.stdout, old.stderr)
+    calls.write_text("")        # the premise logged a call of its own
+
+    proc = handoff(b, "triad-1", a, "t280 handoff", env=env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "lane-state triad-1" in calls.read_text().splitlines(), \
+        "the handoff never read the lifecycle through the wrapper"
+    assert "the lane lifecycle could not be read" not in proc.stderr, proc.stderr
+    assert "exited 141" not in proc.stderr, proc.stderr
+    assert "lifecycle: RUNNING -> SWAPPING (generation " in proc.stderr, proc.stderr
+    assert "lifecycle: SWAPPING -> SWAPPED (generation " in proc.stderr, proc.stderr
+    assert "lifecycle: SWAPPED" in proc.stdout, proc.stdout
+    assert lane_state(b, "triad-1")["state"] == "SWAPPED"
+
+
+@NEEDS_UPSTREAM
+def test_280_a_swapping_lane_read_the_same_way_still_names_the_operation_it_supersedes(triad):
+    """#280, the second read: a lane still recorded SWAPPING is read once more
+    for the operation that never finished, through the same pipeline, and the
+    handoff names it in the note that says it supersedes it. Read whole and
+    parsed afterwards, that operation comes out of a producer that writes in two
+    pieces too, and the lane ends SWAPPED under a new operation."""
+    b, t = triad
+    a = t["assembly"]
+    env, calls = slow_lane_state(b)
+    took = b.tool("lanes-edit.sh", "set-lane-state", "triad-1", "SWAPPING", "--expect", "RUNNING",
+                  "--operation", "op-stuck-280")
+    assert took.returncode == 0, took.stderr
+    assert lane_state(b, "triad-1")["operation"] == "op-stuck-280"
+
+    proc = handoff(b, "triad-1", a, "t280 handoff", env=env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "lane-state triad-1" in calls.read_text().splitlines(), \
+        "the handoff never read the lifecycle through the wrapper"
+    assert "the lane lifecycle could not be read" not in proc.stderr, proc.stderr
+    assert ("lane triad-1 is still recorded SWAPPING from operation op-stuck-280, which never "
+            "finished") in proc.stderr, proc.stderr
+    assert "lifecycle: SWAPPING -> SWAPPING (generation " in proc.stderr, proc.stderr
+    assert "lifecycle: SWAPPING -> SWAPPED (generation " in proc.stderr, proc.stderr
+    after = lane_state(b, "triad-1")
+    assert after["state"] == "SWAPPED" and after["operation"] != "op-stuck-280", after
 
 
 # ===================================================== the single repository
