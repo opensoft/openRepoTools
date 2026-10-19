@@ -6,10 +6,28 @@ THE RELEASE IS HELD OFFLINE. The workflow builds the wheel, uploads it to
 TestPyPI, checks the install on three legs and uploads it to PyPI, and
 nothing here runs it. What can be held with no network is the file itself,
 read with the PINNED standard's `repo_shape.load_yaml` (research R9), and the
-scripts it carries: every one whose outcome decides what is built or
-uploaded is RUN here, as GitHub runs a step, under a fake `gh` that answers as
-the forge does. contracts/workflows.md's `release.yml` list is the
-specification, one prefix per part of it (plan.md, "The test layout"):
+scripts it carries. Most of the scripts whose outcome decides what is built,
+uploaded or installed are RUN here, as GitHub runs a step, under fakes that
+answer as the forge, the index, `curl`, the build and pipx do:
+
+- in the build job, the version check and the repository guard, the ref,
+  branch, clean-checkout, environments, gate and digest steps, the stamp
+  writer, the build step's byte-for-byte compare, and the wheel check;
+- in each upload job, the guard again, the approval and tag re-checks, and
+  both index checks;
+- in the install check, the fetch from TestPyPI, the digest step, pipx's
+  install and its one link, `--version`, and the 3.9 leg's compile.
+
+SEVEN ARE STILL READ ONLY AS TEXT, by their commands: the build's tool
+install from its hash lock, its two `git archive` extractions and its record
+of the wheel; each upload job's dist step; and the install check's install
+of pipx from its hash lock, its offline `--install`, and the macOS rerun,
+which is held to the offline `--install` line for line but for the lines it
+names.
+Every job's whole step list is pinned in order (`STEP_ORDER`).
+
+contracts/workflows.md's `release.yml` list is the specification, one prefix
+per part of it (plan.md, "The test layout"):
 
 - `test_release_trigger_*`: a dispatch with `version` is the only trigger, no
   permission is granted at the top, one release runs at a time, and the input
@@ -18,20 +36,25 @@ specification, one prefix per part of it (plan.md, "The test layout"):
   hatchling at `pyproject.toml`'s pin, and pipx 1.11.1 below Python 3.10 and
   1.17.8 from 3.10;
 - `test_release_build_*`: the build job's checkout, pins, steps and order;
-  the ref step and the branch step held to the rehearsal rule; the gate on
-  `tests.yml`'s four jobs and the digest step, each run under a forge, the
-  digest step also in a copy of the checkout whose standard or pin names
-  another definition; step 13's wheel check run on synthetic wheels made from
-  HEAD's blobs; and the digest label, one literal in the installer, the pin
-  and the standard;
+  the ref step, run on a branch and on tags a forge and a `file://` origin
+  hold, and the branch step, held to the rehearsal rule; the clean step run
+  on a checkout moved or dirtied, the environments step under a forge, the
+  gate on `tests.yml`'s four jobs and the digest step, each run under a
+  forge, the digest step also in a copy of the checkout whose standard or
+  pin names another definition; the build step run with a fake build;
+  step 13's wheel check run on synthetic wheels made from HEAD's blobs; and
+  the digest label, one literal in the installer, the pin and the standard;
 - `test_release_stamp_writer_*`: the build's own stamp writer, run on a copy
   of the committed stamp and read back by `--version` from a `package_tree`;
 - `test_release_guard_build_*` and `test_release_guard_upload_*` (FR-048):
   the repository guard, run under each row of contracts/workflows.md's table,
   and each upload job's own first step;
-- `test_release_upload_*`: the four jobs' permissions, the two environments,
-  the two conditions, and each upload job's checks around the pinned action;
-- `test_release_install_check_*`: the three legs and what each runs;
+- `test_release_upload_*`: the four jobs' permissions and step lists, the
+  two environments, the two conditions, and each upload job's checks around
+  the pinned action, the approval and tag re-checks run under a forge and
+  the index checks under a fake index;
+- `test_release_install_check_*`: the three legs and what each runs, its
+  fetch, digest, pipx, `--version` and 3.9 steps run;
 - `test_release_reads_*`: no step reads what the code leg will not hold;
 - `test_release_header_*`: the RELEASING header's six sections, in order.
 
@@ -1110,6 +1133,41 @@ def test_release_build_the_checkout_and_both_environments_are_read_before_the_bu
     for word in ("testpypi", "pypi", "required_reviewers", "custom_branch_policies",
                  "deployment-branch-policies", "v*"):
         assert word in environments, f"the environments step never reads {word}"
+
+
+#: STEP 4, RUN: `(what is done to the checkout, whether HEAD is the run's
+#: commit, whether the step passes)`.
+CLEAN_CASES = {
+    "this-commit-and-clean": (None, True, True),
+    "another-commit-checked-out": (None, False, False),
+    "a-tracked-file-changed": (("tracked.txt", "changed\n"), True, False),
+    "a-file-added": (("added.txt", "new\n"), True, False),
+    "an-ignored-file-added": (("build.log", "ignored\n"), True, False),
+}
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@pytest.mark.parametrize("which", CLEAN_CASES)
+def test_release_build_the_clean_step_refuses_a_moved_or_dirty_checkout(tmp_path, which):
+    """STEP 4, RUN, in a repository on this filesystem (FR-029: "the checkout
+    is that commit, and it is clean"): it passes the run's commit with
+    nothing changed, and refuses another commit, a tracked file changed, a
+    file added, and an ignored file added."""
+    change, at_the_run_s_commit, passes = CLEAN_CASES[which]
+    checkout, commit = a_checkout(tmp_path / "git")
+    if change is not None:
+        (checkout / change[0]).write_text(change[1], encoding="utf-8")
+    values = {"GITHUB_SHA": commit if at_the_run_s_commit else "e" * 40}
+    workflow = release()
+    runner = Runner(tmp_path / "work", workflow, "build", values)
+    done = runner.run(named(workflow, "build", CLEAN_STEP), cwd=checkout)
+    assert (done.returncode == 0) == passes, transcript(done)
+    if not passes:
+        assert "::error::" in done.stdout, transcript(done)
+        if change is not None:
+            assert change[0] in done.stdout, transcript(done)
 
 
 def an_environment(reviewers: Tuple[str, ...] = ("brettheap",),
