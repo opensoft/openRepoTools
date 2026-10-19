@@ -3357,7 +3357,14 @@ lane_log_events() {
     # indexed commit: no lines, exactly as a `git show` of a missing path.
     command grep -Fqx -- "$ll_rel" "$LANES_IDX_DIR/logs" 2>/dev/null || return 0
     awk -F"$US" -v p="$ll_rel" '$10 == p' "$LANES_IDX_DIR/events"
-    awk -v p="unreadable: $ll_rel:" 'index($0, p) == 1' "$LANES_IDX_DIR/warn" >&2 2>/dev/null || :
+    # THAT LOG'S WARNINGS AND THE COUNT THAT CLOSES THEM (opensoft/openRepoTools#166
+    # item 3): the source read runs LOG_AWK over this one file, whose END says
+    # how many lines it could not read. The export writes that line after each
+    # log's own warnings, so it is the line straight after this log's last one.
+    awk -v p="unreadable: $ll_rel:" '
+      index($0, p) == 1 { print; mine = 1; next }
+      mine && /^[0-9]+ unreadable line[(]s[)] above/ { print }
+      { mine = 0 }' "$LANES_IDX_DIR/warn" >&2 2>/dev/null || :
     return 0
   elif have_remote_ref; then
     git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$ll_rel" 2>/dev/null | parse_log_stream "$ll_rel"

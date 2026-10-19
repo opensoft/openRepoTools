@@ -3556,10 +3556,17 @@ The flag is typed per invocation — **never** taken from the environment or a
 configuration. It replaces the **published** reads (the register, the archive,
 the alias table, the logs) and nothing else, so the live session records, tmux
 and this checkout's own files are read as they are without it. Where the index
-is current the answer is **byte for byte the source read's**, the clock's
-columns aside (the listing's AGE and its "last heard from origin" age, computed
-the same way at the moment of the read). One line on stderr says which was
-read:
+is current the answer is **byte for byte the source read's**, on stderr as on
+stdout — the warnings for a log's unreadable lines and the count that closes
+them included (opensoft/openRepoTools#166) — the clock's columns aside (the
+listing's AGE and its "last heard from origin" age, computed the same way at
+the moment of the read). Stderr carries the flag's OWN lines besides: the
+`read:` line below, and for `history` the `LANES_NO_FETCH=1 — not fetching …`
+note, because where the index answers that arm fetches nothing in front of it.
+And it is **one commit's image**: `lanes-index export` reads the provenance and
+every table in ONE read snapshot — a SQLite read transaction, a Postgres
+`REPEATABLE READ READ ONLY` one — so a sync landing mid-read is in the answer
+whole or not at all (#166). One line on stderr says which was read:
 
 ```text
 read: index (sqlite) at register@1a2b3c4d5e6f; 0 commits behind
@@ -3681,19 +3688,41 @@ reader, its snapshot through `lane-state`'s and its owner through
 that is `lane-reconcile`'s act. Nothing is recomputed: `dirty` and `unpushed`
 are what the handoff saw, and `LAST SEEN` says when.
 
-**Rows follow the inventory.** Keyed by (source, `<lane>:<path>`) and versioned
-by a digest of the row and its provenance, so a replay writes nothing; a tree
+**Rows follow the inventory.** Keyed by (source, `<lane>:<path>`) — a second
+tree of one lane with the same path (two with no `path:`, say) as
+`<lane>:<path><US><n>`, numbered from 2 in the read's sorted order, and a lane's
+unread marker as `<lane>:<US>unread` — and versioned by a digest of the row and
+its provenance, so a replay writes nothing (a change that reorders two trees of
+one path moves both keys, and that sync upserts both); a tree
 the inventory no longer names — removed at landing, or by a sweep's disposition
 — leaves in the same sync. The provenance moves only forward **per lane**: a
 `sync` that reads a lane's lifecycle generation below the one its rows were
 written at (a snapshot moved aside and begun again) writes nothing for that lane
 and says so, and `reconcile --source inventory` is the act that takes the lane
 as it now stands. A lane whose `trees` directory is there and cannot be listed
-keeps its rows — it is not a lane with no worktrees. The source's own row
-carries a fingerprint of the whole table as its compare-and-swap token and a
-sync count that only goes up. A container with no `LANES_WORKSTATION` syncs
-nothing (exit 2): a source named for a container's own id is one no restart
-finds again.
+keeps its rows — it is not a lane with no worktrees — and gets ONE MARKER ROW,
+keyed `<lane>:<US>unread`, with no `path` and the `branch` `unreadable inventory
+(<why>)` — the key is what makes it one, because a tree's path can be empty (a
+sidecar with no `path:`) and a hand-made sidecar's branch can read the same —
+which the `--index` read prints as the same `inventory NOT READ` line the sidecars
+give (opensoft/openRepoTools#173): a FIRST sync that cannot read a lane has no
+rows to keep and is still not an empty answer, and rows held over from an
+earlier sync are said to be, on that line. The marker leaves with the first
+sync that reads the lane, and `lanes-index status` counts it apart from the
+worktrees. The schema stays 1, so an indexer from before #173 sharing a
+Postgres store reads a marker as a tree: its `export --worktrees` prints it as
+a `TREE` line with an empty path and that branch, and its `status` counts it as
+a worktree. An older and a newer indexer syncing ONE store each converge to their
+own view of the same inventory — no duplicate rows and no growth — and they
+rewrite it on every sync only where a lane has two trees with the same path,
+which the older one keys as one; with none, an unreadable lane included, a sync
+after the first writes nothing. A store written by #219's unlanded heads
+(`f00ee58`, `ab853b1`) keeps their marker, keyed `<lane>:`, as a kept row while
+that lane stays unreadable, and it clears at the first sync that reads the lane.
+The source's own row carries a fingerprint of the
+whole table as its compare-and-swap token and a sync count that only goes up. A
+container with no `LANES_WORKSTATION` syncs nothing (exit 2): a source named for
+a container's own id is one no restart finds again.
 
 **The nudge.** Every inventory write — `set-lane-state`, `set-lane-tree`, the
 lifecycle follow after a `STARTED`, `RESUMED`, `ENDED` or `RETIRED`, and a
@@ -3711,7 +3740,9 @@ answer. Where the table is current, this workstation's rows are the same bytes
 either way — and a store only this workstation syncs into (SQLite, or a
 Postgres nobody else writes) prints exactly the source read, while a shared one
 adds the other workstations' rows among them. Every row is a last observation: the current truth of a lane is `lanes-edit.sh lane-reconcile
-<lane>`, which reads the disk, and the footer says so.
+<lane>`, which reads the disk — and the sidecars — of the workstation it runs
+on and of no other, so the footer says to run it ON THE WORKSTATION the lane's
+rows name (#173): Raven's listing of Eagle's rows is answered on Eagle.
 
 **What never reads it.** No act: not `lane-reconcile` — there is no
 `lane-reconcile --index`, by Amendment 14(b) — not `lane-start`, `lane-end`,
