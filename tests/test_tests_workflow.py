@@ -890,8 +890,9 @@ def test_tests_yml_header_comment_names_both_push_branches_and_four_jobs():
 
 
 def test_tests_yml_holds_no_digest_of_its_own():
-    """The build lock is the one record of tomli's digests (research R12):
-    no `--hash=sha256:` and no 64-digit hex string anywhere in the file."""
+    """tests.yml holds no digest of tomli's. The build lock's entry is copied
+    at run time, and the pipx lock carries the same entry (research R12): no
+    `--hash=sha256:` and no 64-digit hex string anywhere in the file."""
     text = WORKFLOW.read_text(encoding="utf-8")
     assert not re.search(r"--hash[= ]sha256:", text), "tests.yml holds a --hash"
     digests = re.findall(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])",

@@ -197,12 +197,12 @@ jobs:
           } >> "$GITHUB_ENV"
 
       # THE TEST TOOLS, tomli FIRST AND BY HASH (research R12). The step copies
-      # the build lock's whole tomli entry, its requirement line and every
-      # hash line under it, into a file of its own and installs that, wheels
-      # only, so this file holds no digest and the lock stays the one record
-      # of tomli's. On 3.9 the package's tests read `pyproject.toml` with it.
-      # Then pytest at the other jobs' pin, which keeps that tomli: it meets
-      # pytest's own requirement below Python 3.11.
+      # the build lock's whole tomli entry, its requirement line and every hash
+      # line under it, into a file of its own and installs that, wheels only, so
+      # this file holds no digest. The pipx lock carries the same entry, and
+      # step 7 installs it after this, so the package's tests run on that tomli,
+      # which on 3.9 reads `pyproject.toml`. Then pytest at the other jobs' pin
+      # keeps that tomli: it meets pytest's own requirement below Python 3.11.
       - name: the test tools, tomli by hash from the build lock, then pytest
         run: |
           set -euo pipefail
