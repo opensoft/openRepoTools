@@ -94,7 +94,22 @@ files — `pull --rebase` refuses outright on any unstaged tracked change — an
 pushes straight out instead, warning and naming the files. If the push is also
 rejected (the remote moved), it stops with exit 3, leaves your edit as a local
 commit, and prints the recovery: the owner of that file commits it, then you
-re-run `lanes-edit.sh commit`.
+re-run `lanes-edit.sh commit`. If `lanes/LANES.md` is clean, that re-run makes
+no commit of its own and pushes the local commits origin does not have yet,
+through the same loop, guard and retries (#194). It reads that queue on
+`refs/heads/main`, the branch the push sends, with HEAD required to be on it,
+and pushes exactly the commit it read. It refuses with 2 and pushes nothing
+unless every queued commit is a non-merge commit whose every change is an added
+or modified regular file under `lanes/` or `handoffs/`, and never bytecode, a
+cache or an environment. That refuses a merge, a deletion (a lane rename's
+included), a type change, a symlink, a gitlink and any other path. It is a
+path filter, not an ownership check: another lane's register write passes it,
+so read `git cherry -v origin/main HEAD` before you publish a shared queue.
+Only `commit` publishes that queue: any other write with nothing to stage
+leaves it local, and with nothing ahead `commit` is the no-op it always was.
+When `pull --rebase` finds every queued commit on origin already, by content
+under other shas, it drops them all. The publish then says so and exits 0
+without a push.
 
 ## THE ONE HAZARD — `sed -i` DESTROYS THE SYMLINK
 
@@ -205,7 +220,17 @@ dangling commit by rebasing it onto a newer base, which changes its hash, so
 actually published. `git -C <the workspace checkout> cherry origin/main <your
 commit> | grep -c '^+'` compares by patch instead and still finds it; 0 means
 it is already there, in which case STOP. Only once fetch succeeded AND this
-prints something other than 0 do you read your edit back with
+prints something other than 0 do you check that `git -C <the workspace
+checkout> rev-parse HEAD` is still the commit the recovery named; if the checkout
+has moved since the abort, STOP. Then list WHOSE the commits are, with
+`git -C <the workspace checkout> cherry -v origin/main HEAD`: one `+` line per
+local commit origin lacks, which is exactly what a reset drops, and in a shared
+checkout not every one is yours. If any `+` line is not your own write, STOP and
+take it to the lane its subject names. A `LANES(concurrent@…)` or
+`LANES(pre-existing@…)` capture names no lane, so it is not yours either. Never
+reset, stash or overwrite a peer's work: `reset --hard` drops EVERY `+` commit
+in the checkout, theirs with yours, and origin holds no copy of any of them
+(#194). Only when every `+` line is yours do you read your edit back with
 `git -C <the workspace checkout> diff origin/main..HEAD -- lanes/LANES.md`,
 then `git -C <the workspace checkout> reset --hard origin/main` and redo it on
 top of the peer's version.
@@ -698,6 +723,7 @@ unambiguously at the first space after it; payload sub-fields are separated by
 |---|---|
 | issue | `CLAIMED`, `RELEASED`, `TAKEOVER ← <stale claim URL>`, `CLOSED → owner/repo#pr` |
 | PR | `OPENED ← owner/repo#i [owner/repo#j …]`, `LANDING`, `LANDED → <sha>`, `WITHDRAWN`, `CLOSED` |
+| issue or PR | `TAKEOVER ← lane:<dispossessed lane>` |
 | lane | `STARTED`, `PAUSED`, `RESUMED`, `ENDED`, `RETIRED` |
 | narrative | `NOTED`, `RULED [→ <object>]` (Amendment 13(b)) |
 | race | `CLAIM-LOST → lane:<other>` |
@@ -1194,9 +1220,9 @@ else.
 
 | code | meaning |
 |---|---|
-| 0 | done |
+| 0 | done, including `commit`'s publish of a queue that `pull --rebase` emptied because origin already held every commit in it by content (#194; it says so, and sends no push) |
 | 1 | environment — no register, no writer |
-| 2 | refusal — bad arguments, the object is held, an unknown alias, a checkout that cannot be rebased |
+| 2 | refusal — bad arguments, the object is held, an unknown alias, a checkout that cannot be rebased, or `commit` refusing to publish local commits that are not register or handoff writes, from a checkout whose HEAD is off the branch, or that it cannot read (#194; it pushes none of them) |
 | 3 | the edit is never a permanent loss, but this attempt cannot confirm whether it also reached origin — a rebase conflict (not pushed by this attempt; a later write from this checkout may already carry it to origin, so look by content before you retry), a network timeout on a push or a pull (a hung one often already landed), or six attempts exhausted because a peer's uncommitted file blocks every rebase |
 | 4 | the mutex could not be taken within 60s |
 | 5 | an edit moved more than one line and was refused |
@@ -3106,7 +3132,9 @@ once). Per dormant row:
   `RETIRED — lane <lane>, session <the sweeping session's uuid>@<ws>, <UTC>,
   lane:<lane> → retired-dormant by lane <writer>; reason <why>; was: <the state
   cell's head, verbatim, capped at 240>`. The session field is the **writer's**
-  transcript uuid (7(b)), and the row's own last words are carried into the log
+  transcript uuid (7(b)): `$LANES_SESSION`, else the last id of **this
+  checkout's** row for the writer, else the published row's, so a transcript
+  stamped here and not yet pushed is the one written. The row's own last words are carried into the log
   so that nothing the row said is lost when the row stops saying it;
 * the row's state cell becomes `RETIRED · <UTC> · <why>; was: <head>`. Clause
   (c) writes that cell as `RETIRED <UTC> · <why> · was: <head>`, which is four
@@ -3124,7 +3152,11 @@ is not dormant**); and a repository with no dormant row — *nothing to do is
 said, not done* (exit **8**). Any one of them refuses the **whole run**, before
 a byte is written, because it is one commit and therefore one decision. It also
 refuses a session-record read that failed: *"a read that failed is not 'nothing
-is live'"*.
+is live'"*. So does a listing that **withheld the class** (exit **1**). The
+listing withholds it where it could not list this checkout's log directory, or
+had nowhere to keep its warnings about published logs it could not read, and it
+says so. Counting zero there would be "nothing to do" about rows nobody could
+class.
 
 It refuses six more things for the reason every writer here refuses them — a
 half-written act is worse than no act: a checkout **behind** `origin` or dirty
@@ -3138,13 +3170,24 @@ file nothing can correct; and a `--reason` carrying a `|`, a second ` · ` or a
 newline, which is refused as the **argument** it is (capped at 180 characters,
 because the row's own last words go in beside it).
 
+It also refuses what a write would go **through** (exit **2**): a lane's log
+path that is a symlink, or is there and not a regular file. The append's `>>`
+would follow the link and put the RETIRED line outside the repository while the
+commit records only the link. And it refuses the reads that **failed**
+(exit **1**), because a failed read is not "it has none":
+* a published log that the tree names and git cannot read;
+* a log directory that cannot be listed;
+* a published register that cannot be read (the seam's read, before every row).
+
 It touches **no file outside the register and the logs**. A retired row records
 that a lane is finished; worktrees, branches and handoffs stay exactly where
 they are.
 
 **Nothing is half-PUBLISHED, because the commit is the only thing that
 publishes.** Every refusal above is made in the scan, before a byte is written.
-A failure in the writes themselves — a log whose append could not be proved, a
+That includes the commit of a peer's uncommitted register edit, which the act
+makes as its own `LANES(pre-existing@…)` commit: it is made only after the
+scan, so a refusal leaves HEAD where it was. A failure in the writes themselves — a log whose append could not be proved, a
 row whose rewrite touched more than one line — leaves this checkout DIRTY and
 the register unpublished: that is what `git status` then shows, `git checkout --
 lanes` undoes it whole, and the next run is REFUSED by the dirty-checkout guard
@@ -3164,14 +3207,40 @@ each lane moved. The archive is written **first** and the rows removed second,
 so a refusal between the two leaves a copy in the archive and the register
 whole, never a row in neither file.
 
+Before anything is written, `--yes` refuses (exit **2**) in two cases:
+* an archive, or archive directory, that is a **symlink**, or an archive path
+  that is there and **not a regular file**. The append would follow the link,
+  and the rows would leave the repository while the commit removed them from
+  the register.
+* a **published archive this checkout does not have**, because it is outside a
+  sparse checkout or marked skip-worktree. A new archive made here would hold
+  only these rows, and its commit would drop every position the published one
+  reserves.
+
+As in the sweep, a peer's register edit is committed only after these checks.
+
 Nothing reads a row differently for having moved: the listing reads the archive
 beside the register (so `lanes --closed` still shows those rows) and so does
 every reader of the next free position — and a published archive that cannot be
 *rendered* is a REFUSAL that says so, never a fallback to this checkout's copy,
 which may lack a retired position the published one holds: read as absent, or
-from that copy, it would put a retired position back on offer. `add-row` refuses a lane
-name the archive holds, so `lane-start <repo> <n>` cannot reissue one by hand
-either. **Rule 9 holds either way** — a row is
+from that copy, it would put a retired position back on offer. Five more reads
+fail closed rather than answer, and for the same reason. The first three refuse
+(exit **1**); the listing withholds the class for the last two:
+* a local archive path that is there and not a regular file;
+* a register path that renders empty (a zero-byte register, or a broken
+  symlink);
+* a published register whose blob git cannot read. Whether the register or a
+  log is published is the TREE's answer, never `cat-file -e`'s, which fails for
+  an unreadable blob as for an absent path.
+* a published log git cannot read: the listing names it and never classes that
+  lane DORMANT;
+* a log directory it cannot list: the listing classes no row DORMANT at all.
+
+`add-row` refuses a lane name the archive holds, so `lane-start <repo> <n>`
+cannot reissue one by hand either. It also refuses (exit **1**) where the
+published register cannot be read, rather than read that as "no such row":
+otherwise a row this checkout has not pulled would be added a second time. **Rule 9 holds either way** — a row is
 one `git show` away — so the archive is for a register a person wants shorter,
 and never a requirement.
 
@@ -3530,10 +3599,17 @@ The flag is typed per invocation — **never** taken from the environment or a
 configuration. It replaces the **published** reads (the register, the archive,
 the alias table, the logs) and nothing else, so the live session records, tmux
 and this checkout's own files are read as they are without it. Where the index
-is current the answer is **byte for byte the source read's**, the clock's
-columns aside (the listing's AGE and its "last heard from origin" age, computed
-the same way at the moment of the read). One line on stderr says which was
-read:
+is current the answer is **byte for byte the source read's**, on stderr as on
+stdout — the warnings for a log's unreadable lines and the count that closes
+them included (opensoft/openRepoTools#166) — the clock's columns aside (the
+listing's AGE and its "last heard from origin" age, computed the same way at
+the moment of the read). Stderr carries the flag's OWN lines besides: the
+`read:` line below, and for `history` the `LANES_NO_FETCH=1 — not fetching …`
+note, because where the index answers that arm fetches nothing in front of it.
+And it is **one commit's image**: `lanes-index export` reads the provenance and
+every table in ONE read snapshot — a SQLite read transaction, a Postgres
+`REPEATABLE READ READ ONLY` one — so a sync landing mid-read is in the answer
+whole or not at all (#166). One line on stderr says which was read:
 
 ```text
 read: index (sqlite) at register@1a2b3c4d5e6f; 0 commits behind
@@ -3655,19 +3731,41 @@ reader, its snapshot through `lane-state`'s and its owner through
 that is `lane-reconcile`'s act. Nothing is recomputed: `dirty` and `unpushed`
 are what the handoff saw, and `LAST SEEN` says when.
 
-**Rows follow the inventory.** Keyed by (source, `<lane>:<path>`) and versioned
-by a digest of the row and its provenance, so a replay writes nothing; a tree
+**Rows follow the inventory.** Keyed by (source, `<lane>:<path>`) — a second
+tree of one lane with the same path (two with no `path:`, say) as
+`<lane>:<path><US><n>`, numbered from 2 in the read's sorted order, and a lane's
+unread marker as `<lane>:<US>unread` — and versioned by a digest of the row and
+its provenance, so a replay writes nothing (a change that reorders two trees of
+one path moves both keys, and that sync upserts both); a tree
 the inventory no longer names — removed at landing, or by a sweep's disposition
 — leaves in the same sync. The provenance moves only forward **per lane**: a
 `sync` that reads a lane's lifecycle generation below the one its rows were
 written at (a snapshot moved aside and begun again) writes nothing for that lane
 and says so, and `reconcile --source inventory` is the act that takes the lane
 as it now stands. A lane whose `trees` directory is there and cannot be listed
-keeps its rows — it is not a lane with no worktrees. The source's own row
-carries a fingerprint of the whole table as its compare-and-swap token and a
-sync count that only goes up. A container with no `LANES_WORKSTATION` syncs
-nothing (exit 2): a source named for a container's own id is one no restart
-finds again.
+keeps its rows — it is not a lane with no worktrees — and gets ONE MARKER ROW,
+keyed `<lane>:<US>unread`, with no `path` and the `branch` `unreadable inventory
+(<why>)` — the key is what makes it one, because a tree's path can be empty (a
+sidecar with no `path:`) and a hand-made sidecar's branch can read the same —
+which the `--index` read prints as the same `inventory NOT READ` line the sidecars
+give (opensoft/openRepoTools#173): a FIRST sync that cannot read a lane has no
+rows to keep and is still not an empty answer, and rows held over from an
+earlier sync are said to be, on that line. The marker leaves with the first
+sync that reads the lane, and `lanes-index status` counts it apart from the
+worktrees. The schema stays 1, so an indexer from before #173 sharing a
+Postgres store reads a marker as a tree: its `export --worktrees` prints it as
+a `TREE` line with an empty path and that branch, and its `status` counts it as
+a worktree. An older and a newer indexer syncing ONE store each converge to their
+own view of the same inventory — no duplicate rows and no growth — and they
+rewrite it on every sync only where a lane has two trees with the same path,
+which the older one keys as one; with none, an unreadable lane included, a sync
+after the first writes nothing. A store written by #219's unlanded heads
+(`f00ee58`, `ab853b1`) keeps their marker, keyed `<lane>:`, as a kept row while
+that lane stays unreadable, and it clears at the first sync that reads the lane.
+The source's own row carries a fingerprint of the
+whole table as its compare-and-swap token and a sync count that only goes up. A
+container with no `LANES_WORKSTATION` syncs nothing (exit 2): a source named for
+a container's own id is one no restart finds again.
 
 **The nudge.** Every inventory write — `set-lane-state`, `set-lane-tree`, the
 lifecycle follow after a `STARTED`, `RESUMED`, `ENDED` or `RETIRED`, and a
@@ -3685,7 +3783,9 @@ answer. Where the table is current, this workstation's rows are the same bytes
 either way — and a store only this workstation syncs into (SQLite, or a
 Postgres nobody else writes) prints exactly the source read, while a shared one
 adds the other workstations' rows among them. Every row is a last observation: the current truth of a lane is `lanes-edit.sh lane-reconcile
-<lane>`, which reads the disk, and the footer says so.
+<lane>`, which reads the disk — and the sidecars — of the workstation it runs
+on and of no other, so the footer says to run it ON THE WORKSTATION the lane's
+rows name (#173): Raven's listing of Eagle's rows is answered on Eagle.
 
 **What never reads it.** No act: not `lane-reconcile` — there is no
 `lane-reconcile --index`, by Amendment 14(b) — not `lane-start`, `lane-end`,
