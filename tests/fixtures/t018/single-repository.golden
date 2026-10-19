@@ -1,0 +1,297 @@
+=== add --dry-run ===
+exit 0
+--- stdout
+<HOME>/projects/.lane-worktrees/repoS-1/inv
+--- stderr
+lane-worktrees: DRY RUN, nothing was made: git -C <HOME>/projects/repoS worktree add --no-track -b inv <HOME>/projects/.lane-worktrees/repoS-1/inv <HEX>; then lanes-edit.sh set-lane-tree repoS-1 <HOME>/projects/.lane-worktrees/repoS-1/inv --checkout <HOME>/projects/repoS
+
+=== add ===
+exit 0
+--- stdout
+<HOME>/projects/.lane-worktrees/repoS-1/inv
+--- stderr
+lane-worktrees: made <HOME>/projects/.lane-worktrees/repoS-1/inv on branch inv at <HEX> in <HOME>/projects/repoS; recorded in lane repoS-1's inventory as <TREE-ID>
+
+=== sweep porcelain ===
+exit 3
+--- stdout
+lane	repoS-1	RUNNING	none	-	here	ungraceful-stop
+tree	wip-rescue+remove	retire	<HOME>/projects/.lane-worktrees/repoS-1/inv	inv	<HEX>	1 dirty or untracked path(s): a WIP commit on a rescue branch, pushed, then removed
+tree	foreign	-	<HOME>/projects/elsewhere	elsewhere	<HEX>	not in lane repoS-1's inventory (#97); registered in the lane's checkout
+tree	live	retire	<HOME>/projects/repoS/.claude/worktrees/tr	tr	<HEX>	a live writer owns it: not in the inventory and active <N> min ago (foreign trees quiet for 24 h only); not in #97's inventory - the lane's by its branch's Lane: trailer
+branch	list	retire	old-work	<HEX> · 1 ahead/0 behind origin/main · last commit <DATE> (<N> d) · owner repoS-1	0	unmerged (not a GitHub origin); upstream origin/main is ahead: a person disposes of it (push it to rescue/repoS-1/..., or a word) - never deleted
+scratch	archive+remove	retire	<HOME>/projects/.lane-worktrees/repoS-1/notes-scratch	-	<N>	lane scratch: tar and sha256 under the sweeps directory, then removed
+cache	remove	-	<HOME>/projects/.lane-worktrees/repoS-1/inv/__pycache__	-	<N>	a dependency cache or bytecode: it holds no work and is rebuilt
+summary	4	3	1	1
+--- stderr
+
+=== sweep table ===
+exit 3
+--- stdout
+lane-worktrees sweep repoS-1 - DRY RUN - nothing is changed; --yes performs it
+  lane: state RUNNING · holder none · binding here (eagle/none) · verdict ungraceful-stop
+  checkout: <HOME>/projects/repoS · inventory 1 tree(s) · origin as of the last fetch
+  merged means: the register's LANDED line for the branch's PR, or gh's MERGED (gh: LANES_NO_GITHUB=1)
+
+TREES
+  wip-rescue+remove      <HOME>/projects/.lane-worktrees/repoS-1/inv
+                           inv <HEX> · 1 dirty or untracked path(s): a WIP commit on a rescue branch, pushed, then removed
+  foreign                <HOME>/projects/elsewhere
+                           elsewhere <HEX> · not in lane repoS-1's inventory (#97); registered in the lane's checkout
+  live                   <HOME>/projects/repoS/.claude/worktrees/tr
+                           tr <HEX> · a live writer owns it: not in the inventory and active <N> min ago (foreign trees quiet for 24 h only); not in #97's inventory - the lane's by its branch's Lane: trailer
+
+BRANCHES (--branches)
+  list                   old-work
+                           <HEX> · 1 ahead/0 behind origin/main · last commit <DATE> (<N> d) · owner repoS-1 · unmerged (not a GitHub origin); upstream origin/main is ahead: a person disposes of it (push it to rescue/repoS-1/..., or a word) - never deleted
+
+SCRATCH (--include-scratch)
+  archive+remove         <HOME>/projects/.lane-worktrees/repoS-1/notes-scratch · <SIZE>
+                           lane scratch: tar and sha256 under the sweeps directory, then removed
+
+CACHES (--include-caches)
+  remove                 <HOME>/projects/.lane-worktrees/repoS-1/inv/__pycache__ · <SIZE>
+                           a dependency cache or bytecode: it holds no work and is rebuilt
+
+SUMMARY: 3 tree(s): 4 to retire · 1 live · 1 foreign
+--- stderr
+
+=== lane-reconcile ===
+exit 0
+--- stdout
+ROOT<HOME>/projects/.lane-state/repoS-1
+STATERUNNINGgeneration 1operation op-seedowner <HEX>-1111-4180-8180-<HEX>updated <UTC>
+HOLDERnone
+BINDINGhereeagle/none
+TREE<TREE-ID>dirty<HOME>/projects/.lane-worktrees/repoS-1/invbranch inv head <HEX> upstream none 1 dirty 0 unpushed; observed 0/0 at <UTC>; head was <HEX> and is <HEX>
+TREE<TREE-ID>unmanaged<HOME>/projects/elsewheregit registers it in <HOME>/projects/repoS and no sidecar of this lane names it; it is left exactly as it is
+TREE<TREE-ID>unmanaged<HOME>/projects/repoS/.claude/worktrees/trgit registers it in <HOME>/projects/repoS and no sidecar of this lane names it; it is left exactly as it is
+TREES1 inventoried1 dirty or unpushed0 require recovery2 unmanaged or stale
+VERDICTungraceful-stopthe lane is recorded RUNNING and no verified holder is live: the session stopped before any handoff began, so nothing was polled, refreshed or recorded — inspect every tree below before relaunching a writer
+--- stderr
+
+=== lane-end refused ===
+exit 2
+--- stdout
+--- stderr
+lane-end: in-flight read from lanes/log/repoS-1.md (exact), not from the state cell
+lane-end: lane repoS-1 is NOT ended: the close-out gate (opensoft/openRepoTools#163) found what is still the lane's: 2 tree(s) and 1 branch(es) and 1 scratch dir(s) and 1 cache(s)
+  tree     wip-rescue+remove  <HOME>/projects/.lane-worktrees/repoS-1/inv  [inv <HEX>]
+             git status --ignored: 1 changed; 0 untracked; 2 ignored (.env __pycache__/)
+             1 dirty or untracked path(s): a WIP commit on a rescue branch, pushed, then removed
+  tree     live  <HOME>/projects/repoS/.claude/worktrees/tr  [tr <HEX>]
+             git status --ignored: clean, nothing ignored in it either
+             a live writer owns it: not in the inventory and active <N> min ago (foreign trees quiet for 24 h only); not in #97's inventory - the lane's by its branch's Lane: trailer
+  branch   list  old-work  <HEX> · 1 ahead/0 behind origin/main · last commit <DATE> (<N> d) · owner repoS-1
+             unmerged (not a GitHub origin); upstream origin/main is ahead: a person disposes of it (push it to rescue/repoS-1/..., or a word) - never deleted
+  scratch  archive+remove  <HOME>/projects/.lane-worktrees/repoS-1/notes-scratch  (<N> bytes)
+             lane scratch: tar and sha256 under the sweeps directory, then removed
+  cache    remove  <HOME>/projects/.lane-worktrees/repoS-1/inv/__pycache__  (<N> bytes)
+lane-end: (1 FOREIGN tree(s) beside these are not this lane's, and were not counted.)
+lane-end: the table, which changes nothing:
+lane-end:   lane-worktrees sweep repoS-1 --branches --include-scratch --include-caches
+lane-end: the one act that retires them (--yes removes only what is on origin or in a bundle, never a live writer's tree):
+lane-end:   lane-worktrees sweep repoS-1 --branches --include-scratch --include-caches --yes
+lane-end:   (2 row(s) above marked keep, live, load-bearing or list are left by --yes as well: each says why, and settling it is a person's)
+lane-end: or end the lane and leave them where they are, in its inventory, with the reason written down:
+lane-end:   lane-end repoS-1 --inventory-only
+
+=== lane-end refused: row and log ===
+| `repoS-1` | harness `<HEX>-1111-4180-8180-<HEX>` | Eagle / test / brett | <UTC> | none | handoffs/repoS-1.md | LIVE · <UTC> · working |
+STARTED — lane repoS-1, session <HEX>-1111-4180-8180-<HEX>@Eagle, <UTC>, lane:repoS-1 → home opensoft/repoS; dir <HOME>/projects/repoS; host eagle; container none; os linux
+=== add (manifest, no leg) ===
+exit 0
+--- stdout
+<HOME>/projects/.lane-worktrees/repoP-1/w
+--- stderr
+lane-worktrees: made <HOME>/projects/.lane-worktrees/repoP-1/w on branch w at <HEX> in <HOME>/projects/repoP; recorded in lane repoP-1's inventory as <TREE-ID>
+
+=== sweep porcelain (manifest, no leg) ===
+exit 3
+--- stdout
+lane	repoP-1	RUNNING	none	-	here	ungraceful-stop
+tree	push+remove	retire	<HOME>/projects/.lane-worktrees/repoP-1/w	w	<HEX>	origin has no w: pushed as is, then removed
+summary	1	1	0	0
+--- stderr
+
+=== lane-handoff ===
+exit 0
+--- stdout
+
+WRITER <HOME>/projects/repoS/.claude/worktrees/tr — branch tr, last commit <HEX> trailer work
+  git status --short: 0 dirty
+  git log @{u}..: 1 unpushed
+    <HEX> trailer work
+
+WRITER <HOME>/projects/.lane-worktrees/repoS-1/inv — branch inv, last commit <HEX> inv work
+  git status --short: 1 dirty
+     M i.txt
+  git log @{u}..: 0 unpushed
+
+READY — restart with: pclaude --lane repoS-1 <profile>
+  record: PAUSED lane:repoS-1 → swap; dir <HOME>/projects/repoS; workstation Eagle; agent claude; transcript none; kind unknown
+  agent claude, transcript none (lane-start --agent claude resumes it)
+  lifecycle: SWAPPED (generation 2, operation <OPERATION>) — lanes-edit.sh lane-reconcile repoS-1
+  inventory: 2 worktree(s) recorded — lanes-edit.sh lane-trees repoS-1
+--- stderr
+lane-handoff: lane=repoS-1 workstation=Eagle
+lanes-edit: LANES_NO_FETCH=1 — not fetching; reading origin/main as the ref already stands here
+lane-handoff: lane=repoS-1 workstation=Eagle
+lane-handoff: lifecycle: RUNNING -> SWAPPING (generation 2, operation <OPERATION>)
+lane-handoff: writers polled: 2 under <HOME>/projects/repoS
+lane-handoff: handoff refreshed: <HOME>/projects/wip/handoffs/repoS-1.md (+15 lines at the head)
+lane-handoff: handoff commit: handoff(repoS-1@Eagle): PAUSED
+lane-handoff: handoff pushed to origin/main
+lanes-edit: 1 line appended to <HOME>/projects/wip/lanes/log/repoS-1.md
+lanes-edit: committed: LOG(repoS-1@Eagle): PAUSED lane:repoS-1
+lanes-edit: pushed origin/main (attempt 1)
+lane-handoff: object log: PAUSED lane:repoS-1 → swap; dir <HOME>/projects/repoS; workstation Eagle; agent claude; transcript none; kind unknown
+lane-handoff: lifecycle: SWAPPING -> SWAPPED (generation 2, operation <OPERATION>)
+
+=== lane-handoff: top block ===
+Lane: repoS-1 (profile unknown, session <HEX>-1111-4180-8180-<HEX>) — single-use resume prompt: stamp RESUMED-by before acting (lane-collision-protocol rule 3)
+
+## RESUME PROMPT — PAUSED <UTC> (t018 handoff), agent claude, transcript none, kind unknown — the count decides: this handoff cannot know whether the process survived
+
+**FIRST ACTS, in order.** (1) You are lane `repoS-1`, checkout `<HOME>/projects/repoS`. Stamp this block RESUMED before anything else (Rule 3, single use) — `lane-start --no-launch <repo> <n>` in this window writes it. (2) Read AGENTS.md, then this block. (3) COUNT THE LIVE WRITERS before relaunching anything — the WRITERS section below is a list to COUNT, not a list to relaunch (Amendment 17 Addendum 1 (i)). ONE WORKTREE, ONE WRITER (k): a worktree is one writer's for as long as that writer is live, a relaunch onto a live writer's worktree is the writers' form of Amendment 18(h)'s second binding, and where you find one made you retire the newer before either commits. THIS HANDOFF CANNOT KNOW WHICH KIND FOLLOWED IT: a plain handoff may be followed by a `/clear` in this process or by a relaunch, so nothing below assumes either — the count is the answer. Older sections below are history.
+
+**STATE at <UTC>.** Handed off by `lane-handoff` on Eagle: t018 handoff. Agent `claude`, transcript `none`. Kind `unknown`: the act that follows this record was not this command's to know (`kind unknown`, Addendum 1 (h)) — the restart line below is one of the two, and a `/clear` typed here is the other.
+
+**WRITERS at <UTC>** (2 found under `<HOME>/projects/repoS`) — FIRST count the live writers: `ListAgents` in Claude, the agent's equivalent elsewhere. A writer still live OWNS its worktree: do not relaunch it; one message telling it that its in-flight call died and who the coordinator now is, is enough. Relaunch only a writer that is NOT live, from where it stands — `git status` and `git log @{u}..` in its worktree, then its brief. WHERE THE COUNT AND THIS LIST DISAGREE, THE COUNT WINS: this list is what the paused session expected, the count is what is true.
+
+- `<HOME>/projects/repoS/.claude/worktrees/tr` — branch `tr`, last commit `<HEX> trailer work`, 0 dirty, 1 unpushed; brief: (fill in: the brief this writer was given)
+- `<HOME>/projects/.lane-worktrees/repoS-1/inv` — branch `inv`, last commit `<HEX> inv work`, 1 dirty, 0 unpushed; brief: (fill in: the brief this writer was given)
+
+=== lane-handoff: inventory ===
+exit 0
+--- stdout
+<TREE-ID><HOME>/projects/.lane-worktrees/repoS-1/invinv<HEX>none10<HEX>-1111-4180-8180-<HEX><UTC><HOME>/projects/repoS2<OPERATION>1
+<TREE-ID><HOME>/projects/repoS/.claude/worktrees/trtr<HEX>origin/main01<HEX>-1111-4180-8180-<HEX><UTC><HOME>/projects/repoS2<OPERATION>1
+--- stderr
+
+=== sweep porcelain after the handoff ===
+exit 3
+--- stdout
+lane	repoS-1	SWAPPED	none	-	free	resumable
+tree	wip-rescue+remove	retire	<HOME>/projects/.lane-worktrees/repoS-1/inv	inv	<HEX>	1 dirty or untracked path(s): a WIP commit on a rescue branch, pushed, then removed
+tree	push+remove	retire	<HOME>/projects/repoS/.claude/worktrees/tr	tr	<HEX>	origin has no tr: pushed as is, then removed
+tree	foreign	-	<HOME>/projects/elsewhere	elsewhere	<HEX>	not in lane repoS-1's inventory (#97); registered in the lane's checkout
+branch	list	retire	old-work	<HEX> · 1 ahead/0 behind origin/main · last commit <DATE> (<N> d) · owner repoS-1	0	unmerged (not a GitHub origin); upstream origin/main is ahead: a person disposes of it (push it to rescue/repoS-1/..., or a word) - never deleted
+scratch	archive+remove	retire	<HOME>/projects/.lane-worktrees/repoS-1/notes-scratch	-	<N>	lane scratch: tar and sha256 under the sweeps directory, then removed
+cache	remove	-	<HOME>/projects/.lane-worktrees/repoS-1/inv/__pycache__	-	<N>	a dependency cache or bytecode: it holds no work and is rebuilt
+summary	4	3	0	1
+--- stderr
+
+=== lane-end passes ===
+exit 0
+--- stdout
+## Done (RELEASED, CLAIM-LOST, CLOSED, LANDED)
+
+- nothing recorded as done in this lane's log
+
+## Open (CLAIMED, TAKEOVER, OPENED, LANDING, WITHDRAWN)
+
+- nothing open
+--- stderr
+lane-end: in-flight read from lanes/log/repoS-2.md (exact), not from the state cell
+lane-end: close-out gate: nothing of lane repoS-2's is left on disk (lane-worktrees sweep repoS-2 --branches --include-scratch --include-caches --dry-run answered 0)
+lanes-edit: line 6 rewritten in <HOME>/projects/wip/lanes/LANES.md
+lanes-edit: state cell REPLACED: 39 chars → 85 chars
+lanes-edit: committed: LANES(repoS-2@Eagle): state · ENDED · lane-end on Eagle: window closing; NOTHING IN FLIGHT
+lanes-edit: pushed origin/main (attempt 1)
+lane-end: row closed: ENDED
+lanes-edit: 1 line appended to <HOME>/projects/wip/lanes/log/repoS-2.md
+lanes-edit: committed: LOG(repoS-2@Eagle): ENDED lane:repoS-2
+lanes-edit: pushed origin/main (attempt 1)
+lane-end: object log: ENDED
+
+=== lane-end passes: row and log ===
+| `repoS-2` | harness `<HEX>-1111-4180-8180-<HEX>` | Eagle / test / brett | <UTC> | none | handoffs/repoS-2.md | ENDED · <UTC> · lane-end on Eagle: window closing; NOTHING IN FLIGHT |
+ENDED — lane repoS-2, session <HEX>-1111-4180-8180-<HEX>@Eagle, <UTC>, lane:repoS-2 — window closing; NOTHING IN FLIGHT
+=== report ===
+exit 0
+--- stdout
+# Estate report - Eagle - <UTC>
+
+`lane-worktrees sweep --all --dry-run --report` over `<HOME>/projects`. It changed nothing.
+
+| finding | count |
+|---|---|
+| FOREIGN repositories | 0 |
+| Orphaned worktrees of ENDED lanes | 0 |
+| Unmerged branches with a missing, diverged or unpushed upstream | 5 |
+| Root main divergence | 0 |
+| Awaiting disposition (older than 14 days) | 0 |
+| Caches and sandboxes (<SIZE> in all) | 1 |
+| Ignored directories over <SIZE> | 0 |
+| Evidence-shaped paths inside the estate | 0 |
+| Sweep archives past retention (90 days) | 0 |
+| Workspace repository hygiene | 1 |
+| `status --all` findings (pin drift and tracking are reported as what they are, never counted as dirt) | 1 |
+| Records the report could not read | 0 |
+| rescue branches (all ages) | 0 |
+| the sweeps directory | <SIZE> |
+
+## FOREIGN repositories
+
+A lane creates worktrees, never clones. Each is a person's to dispose of.
+
+_none: every clone is the estate's own checkout_
+
+## Orphaned worktrees of ENDED lanes
+
+_none_
+
+## Unmerged branches with a missing, diverged or unpushed upstream
+
+Listed, never deleted: a person pushes each to rescue/<lane>/... or gives a word.
+
+- <HOME>/projects/repoP w · <HEX> · no upstream · <N> d · repoP-1 · held by a worktree
+- <HOME>/projects/repoS elsewhere · <HEX> · unpushed [ahead 1] · <N> d · repoS-9 · held by a worktree
+- <HOME>/projects/repoS inv · <HEX> · no upstream · <N> d · repoS-1 · held by a worktree
+- <HOME>/projects/repoS old-work · <HEX> · unpushed [ahead 1] · <N> d · repoS-1
+- <HOME>/projects/repoS tr · <HEX> · unpushed [ahead 1] · <N> d · repoS-1 · held by a worktree
+
+## Root main divergence
+
+_none_
+
+## Awaiting disposition (older than 14 days)
+
+_none_
+
+## Caches and sandboxes (<SIZE> in all)
+
+Removed without archiving by `--include-caches` / `--include-sandboxes`.
+
+- <HOME>/projects/.lane-worktrees/repoS-1/inv/__pycache__ · cache · <SIZE>
+
+## Ignored directories over <SIZE>
+
+_none_
+
+## Evidence-shaped paths inside the estate
+
+One evidence root per repository: ${XDG_STATE_HOME:-$HOME/.local/state}/openRepoTools/evidence/<repo>/<UTC>-<slug>/. Each is a finding to move.
+
+_none_
+
+## Sweep archives past retention (90 days)
+
+_none_
+
+## Workspace repository hygiene
+
+- <HOME>/projects/wip/.gitignore · lacks __pycache__/ *.pyc *.pyo .pytest_cache/ .mypy_cache/ .ruff_cache/ node_modules/ .venv/ venv/ site-packages/ · printf '%s\n' '__pycache__/' '*.pyc' '*.pyo' '.pytest_cache/' '.mypy_cache/' '.ruff_cache/' 'node_modules/' '.venv/' 'venv/' 'site-packages/' >> <HOME>/projects/wip/.gitignore
+
+## `status --all` findings (pin drift and tracking are reported as what they are, never counted as dirt)
+
+- repoS · a fixed finding
+
+## Records the report could not read
+
+UNKNOWN IS NEVER ABSENT: a lane snapshot, inventory or tree the report could not read is one whose findings above may be missing.
+
+_none_
+--- stderr
+
