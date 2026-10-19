@@ -3158,6 +3158,13 @@ had nowhere to keep its warnings about published logs it could not read, and it
 says so. Counting zero there would be "nothing to do" about rows nobody could
 class.
 
+A log whose **last** lane-kind line is `ENDED` or `RETIRED` is refused too,
+since a second `RETIRED` would be one more line in an append-only log. The
+refusal says the lane is **already CLOSED** and already hidden (19(b)), and that
+`lanes-edit.sh archive-rows <repo>` is the act that takes rows whose cell says
+`RETIRED` out of the register. A log whose last lane-kind line is `STARTED`,
+`PAUSED` or `RESUMED` is sent to `lane-end <lane>` instead (#120 item 3).
+
 It refuses six more things for the reason every writer here refuses them — a
 half-written act is worse than no act: a checkout **behind** `origin` or dirty
 in anything but the register; a row whose ` | ` count makes **which text is the

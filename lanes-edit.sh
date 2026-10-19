@@ -12417,8 +12417,18 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
         die "lane $rr_l's object log $rr_lf could not be parsed, so whether it carries a lane-kind line is not known (Amendment 7(d)). Nothing was written." 1
     fi
     rr_open="$(printf '%s\n%s\n' "$rr_ev" "$rr_lev" | awk -F"$US" '$3 == "STARTED" || $3 == "PAUSED" || $3 == "RESUMED" || $3 == "ENDED" || $3 == "RETIRED" { v = $3 } END { if (v != "") print v }')"
-    [ -z "$rr_open" ] ||
-      die "lane $rr_l's object log carries a $rr_open line, so it is not a dormant row — a closed lane cannot be retired twice, and a running or parked lane must be ended as itself. Nothing was written." 2
+    # THE RULE IS CLAUSE (c)'s AND STAYS: a log that CARRIES a lane-kind line is
+    # refused. THE SENTENCE FOLLOWS THE LAST ONE (#120 item 3, Copilot round 5 on
+    # #93). A log whose last lane-kind line is ENDED or RETIRED is a lane already
+    # CLOSED (19(a)), and `lane-end` is not its exit: it is told it is closed,
+    # already hidden, and which act takes a finished row out of the register.
+    case "$rr_open" in
+      '') : ;;
+      ENDED | RETIRED)
+        die "lane $rr_l's object log ends on a $rr_open line, so the lane is already CLOSED (Amendment 19(a)) and not a dormant row: \`lanes\` already hides it (19(b)), and its log is append-only, so it is not retired a second time. A closed row is the record (Rule 9) and nothing more is owed; where a person wants it out of the register, \`lanes-edit.sh archive-rows ${rr_l%-*}\` moves that repository's rows whose state cell says RETIRED (19(d)). Nothing was written." 2 ;;
+      *)
+        die "lane $rr_l's object log carries a $rr_open line as its last lane-kind line, so it is not a dormant row: a running or parked lane is a lane a person can still pick up. End it as itself when its work is done: lane-end $rr_l. Nothing was written." 2 ;;
+    esac
 
     # (c) REFUSAL 3 — THE ROW ITSELF SAYING THE LANE IS SOMEWHERE, which is the
     # same test the listing makes and is re-proved here rather than trusted
