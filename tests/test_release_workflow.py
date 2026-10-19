@@ -1998,13 +1998,18 @@ def upload_guard_params(name: str) -> list:
 
 
 def run_upload_guard(tmp_path: Path, name: str, repository: str,
-                     version: str) -> subprocess.CompletedProcess:
+                     version: str, ref: Optional[str] = None
+                     ) -> subprocess.CompletedProcess:
+    """Job `name`'s first step, its guard, on `ref`: the version's own tag
+    `refs/tags/v<version>` unless the case names another."""
     workflow = release()
     first = steps_of(workflow, name)[0]
     assert run_text(first) and "uses" not in first, (
         f"the {name} job's first step is {label(first)!r}, not its guard")
     runner = Runner(tmp_path, workflow, name,
-                    guard_values(repository, tag_of(version), version))
+                    guard_values(repository,
+                                 tag_of(version) if ref is None else ref,
+                                 version))
     return runner.run(first)
 
 
@@ -2034,6 +2039,47 @@ def test_release_guard_upload_pypi_s_first_step(tmp_path, repository, version,
     refuses outright, in case its condition is ever loosened."""
     done = run_upload_guard(tmp_path, "pypi", repository, version)
     assert (done.returncode == 0) == passes, transcript(done)
+
+
+#: What each upload job's guard passes on the version's own tag:
+#: `(job, repository, version)`.
+UPLOAD_GUARD_PASSES = [("testpypi", CODE_LEG, "1.1.0"),
+                       ("testpypi", CODE_LEG, "1.1.0rc1"),
+                       ("testpypi", THIS_REPOSITORY, "1.1.0rc1"),
+                       ("pypi", CODE_LEG, "1.1.0")]
+
+#: Every ref but `refs/tags/v<version>`, `<version>` the case's own: an
+#: upload is made from that tag alone.
+NOT_THE_VERSION_S_TAG = {
+    "a-branch": "refs/heads/main",
+    "the-rehearsal-branch": "refs/heads/l3-rehearsal-v1.1.0",
+    "a-branch-named-as-the-tag": "refs/heads/v<version>",
+    "another-version-s-tag": "refs/tags/v1.0.1",
+    "the-tag-without-its-v": "refs/tags/<version>",
+    "a-pull-request": "refs/pull/7/merge",
+    "no-ref-at-all": "",
+}
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@pytest.mark.parametrize("which", NOT_THE_VERSION_S_TAG)
+@pytest.mark.parametrize("name, repository, version", [
+    pytest.param(*case, id=f"{case[0]}-{case[1]}-{case[2]}")
+    for case in UPLOAD_GUARD_PASSES])
+def test_release_guard_upload_refuses_every_ref_but_the_version_s_own_tag(
+        tmp_path, name, repository, version, which):
+    """EACH UPLOAD JOB'S GUARD READS THE REF (FR-048: "each from its own tag
+    v<version>"), in case the job's `if:` is ever loosened. A repository and
+    a version the guard passes on `refs/tags/v<version>` are refused on a
+    branch, on a branch named as the tag, on another version's tag, on the
+    tag without its `v`, on a pull request's ref and on no ref at all."""
+    ref = NOT_THE_VERSION_S_TAG[which].replace("<version>", version)
+    own = run_upload_guard(tmp_path / "own", name, repository, version)
+    assert own.returncode == 0, transcript(own)
+    done = run_upload_guard(tmp_path / "other", name, repository, version, ref)
+    assert done.returncode != 0, f"{name}'s guard passed on {ref!r}:\n{transcript(done)}"
 
 
 # --- the jobs, their grants and their conditions ---------------------------------------
