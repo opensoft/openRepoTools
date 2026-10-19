@@ -892,15 +892,19 @@ def a_paired_tree_a_broken_record_names(b: Bench, t: dict) -> tuple:
 
 
 def assert_the_record_is_named_and_not_polled(b: Bench, t: dict, proc, fresh: Path,
-                                              sidecar: Path, before: bytes, schema: str) -> None:
+                                              sidecar: Path, before: bytes, schema: str,
+                                              path: str | None = None) -> None:
     """THE HANDOFF NAMES A RECORD IT COULD NOT READ (#255): its id, schema and
     path in the NOT POLLED note, on stderr and in the top block; the tree that
     record names is not taken as this lane's writer; nothing is filed over the
-    record; and the lane stays SWAPPING."""
+    record; and the lane stays SWAPPING. `path` is the path the record keeps
+    (the tree, unless told otherwise); `""` is a record that keeps none, which
+    the note then names by its id and schema alone."""
     a = t["assembly"]
+    kept = str(fresh) if path is None else path
     note = (f"this lane's worktree inventory holds record(s) that could not be read "
-            f"({sidecar.stem} (schema {schema}, path {fresh})), so a paired tree only they name "
-            "could not be told from another lane's")
+            f"({sidecar.stem} (schema {schema}{', path ' + kept if kept else ''})), so a paired "
+            "tree only they name could not be told from another lane's")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert note in proc.stderr, proc.stderr
     assert f"- NOT POLLED: {note}" in top_block(b, "triad-1"), top_block(b, "triad-1")
@@ -912,7 +916,8 @@ def assert_the_record_is_named_and_not_polled(b: Bench, t: dict, proc, fresh: Pa
 
 
 @NEEDS_UPSTREAM
-def test_255_an_unknown_schema_record_is_named_in_the_handoffs_not_polled_note(triad):
+@pytest.mark.parametrize("schema", ["2", "10"])
+def test_255_an_unknown_schema_record_is_named_in_the_handoffs_not_polled_note(triad, schema):
     """#255: THE INVENTORY'S UNREADABLE RECORDS WERE ONLY THE ONES WITH NO
     PATH. A record of another schema keeps its path and nothing else
     (`lane-trees`' `${ltl_s:-<none>}` row), so the handoff read it as a record
@@ -922,16 +927,18 @@ def test_255_an_unknown_schema_record_is_named_in_the_handoffs_not_polled_note(t
     of the record. Now a row whose schema - the thirteenth field - is not `1`
     is named in the NOT POLLED note and never read as a record, as the sweep
     reads it (`_discover`). Whole again, the record makes the tree this
-    lane's writer, and the lane is SWAPPED."""
+    lane's writer, and the lane is SWAPPED. THE SCHEMA IS MATCHED WHOLE: `10`
+    begins with a `1` but is not schema 1, so a rule that matched the schema by
+    its first character would read this record as a whole schema-1 one."""
     b, t = triad
     a, spec = t["assembly"], t["spec"]
     fresh, sidecar, text = a_paired_tree_a_broken_record_names(b, t)
-    sidecar.write_text("schema: 2\n" + text[len("schema: 1\n"):])
+    sidecar.write_text(f"schema: {schema}\n" + text[len("schema: 1\n"):])
     before = sidecar.read_bytes()
     row = trees_row(b, "triad-1", fresh)
-    assert row[0] == sidecar.stem and row[12] == "2" and row[9] == "", row
+    assert row[0] == sidecar.stem and row[12] == schema and row[9] == "", row
     proc = handoff(b, "triad-1", a, "a record of another schema")
-    assert_the_record_is_named_and_not_polled(b, t, proc, fresh, sidecar, before, "2")
+    assert_the_record_is_named_and_not_polled(b, t, proc, fresh, sidecar, before, schema)
 
     sidecar.write_text(text)
     proc = handoff(b, "triad-1", a, "a whole record again")
@@ -986,6 +993,69 @@ def test_255_a_malformed_record_is_named_in_the_handoffs_not_polled_note(triad):
     assert "NOT POLLED" not in proc.stdout + proc.stderr
     assert "lifecycle: SWAPPED" in proc.stdout, proc.stdout
     assert inventory(b, "triad-1") == {str(fresh): str(spec)}
+
+
+@NEEDS_UPSTREAM
+def test_255_a_record_with_a_tree_id_and_no_path_is_named_in_the_handoffs_not_polled_note(triad):
+    """#255, `pi_bad`'S EMPTY-PATH ARM: a record that files a tree id and no
+    path - #219's path-less tree - is a row with an empty path. A row with no
+    path names no tree, so it is no record of whose a tree is, whatever its
+    schema: before #252 the real `lanes-edit.sh` prints it as a WHOLE schema-1
+    row (every field but the path), which only the empty-path rule names; with
+    #252 it is `<malformed>`, which the schema rule names as well. Either way
+    the handoff names it by its id and its schema - there is no path to name -
+    takes the tree beside it for no writer of this lane's, files nothing over
+    the record, and leaves the lane SWAPPING. Whole again, the record makes the
+    tree this lane's writer."""
+    b, t = triad
+    a, spec = t["assembly"], t["spec"]
+    fresh, sidecar, text = a_paired_tree_a_broken_record_names(b, t)
+    no_path = "".join(ln for ln in text.splitlines(keepends=True) if not ln.startswith("path: "))
+    assert no_path != text and "\npath:" not in no_path, no_path
+    sidecar.write_text(no_path)
+    before = sidecar.read_bytes()
+    lt = b.tool("lanes-edit.sh", "lane-trees", "triad-1")
+    assert lt.returncode == 0, lt.stderr
+    rows = [ln.split(US) for ln in lt.stdout.splitlines() if ln.split(US)[0] == sidecar.stem]
+    assert len(rows) == 1, lt.stdout
+    row = rows[0]
+    assert row[1] == "" and row[12] in ("1", "<malformed>"), row
+    proc = handoff(b, "triad-1", a, "a record with no path")
+    assert_the_record_is_named_and_not_polled(b, t, proc, fresh, sidecar, before, row[12], path="")
+
+    sidecar.write_text(text)
+    proc = handoff(b, "triad-1", a, "a whole record again")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"WRITER {fresh} — branch 050-r" in proc.stdout, proc.stdout
+    assert "NOT POLLED" not in proc.stdout + proc.stderr
+    assert "lifecycle: SWAPPED" in proc.stdout, proc.stdout
+    assert inventory(b, "triad-1") == {str(fresh): str(spec)}
+
+
+@NEEDS_UPSTREAM
+def test_255_an_unreadable_record_is_named_in_the_handoffs_not_polled_note(triad):
+    """#255: a record file this account cannot read is a row of its own, named
+    by its file (`lane-trees`' `<unreadable>`, and no path). The handoff names
+    it in the NOT POLLED note - by its id and its schema, there being no path -
+    takes the tree beside it for no writer of this lane's, files nothing over
+    it and leaves the lane SWAPPING."""
+    b, t = triad
+    if os.geteuid() == 0:
+        pytest.skip("root reads a mode-000 file")
+    a = t["assembly"]
+    fresh, sidecar, text = a_paired_tree_a_broken_record_names(b, t)
+    before = sidecar.read_bytes()
+    sidecar.chmod(0)
+    try:
+        lt = b.tool("lanes-edit.sh", "lane-trees", "triad-1")
+        proc = handoff(b, "triad-1", a, "an unreadable record")
+    finally:
+        sidecar.chmod(0o644)
+    assert lt.returncode == 0, lt.stderr
+    rows = [ln.split(US) for ln in lt.stdout.splitlines() if ln.split(US)[0] == sidecar.stem]
+    assert len(rows) == 1 and rows[0][1] == "" and rows[0][12] == "<unreadable>", lt.stdout
+    assert_the_record_is_named_and_not_polled(b, t, proc, fresh, sidecar, before, "<unreadable>",
+                                              path="")
 
 
 # ===================================================== the single repository

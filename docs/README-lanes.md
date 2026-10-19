@@ -4094,9 +4094,14 @@ one passed `lane-end`.
   the leg's own, as `code/upstream/openRepoShape` will be), as a **`leg` row** —
   `clean`, `dirty`, `unpushed`, `dirty+unpushed`, `absent` (not checked out here,
   or not there at all) or `unreadable` (a `.git` of its own that git cannot read,
-  or a leg directory this account cannot search, #255). A leg is the assembly's,
-  shared by every lane the assembly
-  homes, as the assembly's own checkout is: **no `--yes` acts on a leg
+  or a leg directory this account cannot search, #255). A dependency nested in a
+  leg that git lists as not initialized has no row where its directory is missing,
+  or empty and searchable: it was never initialized. But git lists a dependency it
+  cannot search as not initialized too, so where its directory, or one above it,
+  cannot be searched (or it holds a `.git` that git cannot read), it is an
+  `unreadable` row, counted: a read that failed is never a clean dependency (#255).
+  A leg is the assembly's, shared by every lane the assembly homes, as the
+  assembly's own checkout is: **no `--yes` acts on a leg
   checkout** (its branches are another matter: see `--branches` below). It is
   COUNTED (exit 3, and `lane-end`'s gate) only where its HEAD's own `Lane:` trailer
   is this lane's and it holds edits or commits origin lacks — the rule the sweep
@@ -4165,7 +4170,8 @@ checkout of the tree's own repository keeps it: a dependency nested in a leg
 (`--checkout <assembly>/code/upstream/<dep>`) is no declared leg. Any other tree keeps
 the lane's `dir`, as before. A leg that is not checked out here (never initialized, or
 deinitialized) names no tree. A leg with a `.git` of its own that git cannot read, or
-a leg directory this account cannot search (#255), is `unreadable`, the sweep's word: one `- UNREADABLE LEG: …` line in WRITERS and a note on
+a leg directory this account cannot search (#255), is `unreadable`, the sweep's word:
+one `- UNREADABLE LEG: …` line in WRITERS and a note on
 stderr, and counted on stderr's `legs: N of the assembly's legs under <dir> unreadable`
 line, never in WRITERS' `(N found)`. The lane is not held `SWAPPING` for the leg
 itself. A polled tree that could then be of that leg's repository is one it cannot
@@ -4188,8 +4194,8 @@ beside what the checkout holds. Every worktree git registers in a checked-out le
 no sidecar names is a `TREE` row: `unmanaged`, or `stale-registration` where its
 directory is gone, naming the leg. A checkout in the paired root that nothing else named
 is `unmanaged`. A leg with a `.git` of its own that git cannot read, or a leg directory
-this account cannot search, is a `TREE` row
-`unreadable` that requires recovery: the sweep's rule and word for its `leg` row, which
+this account cannot search, is a `TREE` row `unreadable` that requires recovery:
+the sweep's rule and word for its `leg` row, which
 it counts. The verdict is not `indeterminate` for it, so the sweep still lists and
 counts that leg. Nothing is adopted, deleted or overwritten.
 
