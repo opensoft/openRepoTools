@@ -2390,6 +2390,47 @@ def test_release_stamp_writer_step_as_github_runs_it_stamps_the_run_s_repository
             f"{copy.read_text(encoding='utf-8')}")
 
 
+#: THE DISPATCHED REF, AS GITHUB SETS `GITHUB_REF` AND `GITHUB_REF_NAME`: a
+#: rehearsal on the version's release branch, and the version's own tag.
+STAMP_REFS = {
+    "a-branch": ("refs/heads/release/v1.1", "release/v1.1"),
+    "the-version-s-tag": ("refs/tags/v1.1.0", "v1.1.0"),
+}
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@pytest.mark.parametrize("which", STAMP_REFS)
+def test_release_stamp_writer_step_stamps_v_version_on_a_branch_and_on_the_tag(
+        tmp_path, which):
+    """THE WHOLE STEP, RUN WITH THE REF GITHUB SETS (contracts/stamp.md: a
+    stamped `TAG` is `v$VERSION`): on a branch and on the version's tag
+    alike, both extractions' stamps are the committed file with `TAG`
+    `v1.1.0`, which comes from `$VERSION` and never from the ref's name."""
+    ref, name = STAMP_REFS[which]
+    release_ = RELEASES["the-code-leg-s-v1.1.0"]
+    workflow = release()
+    trees = [tmp_path / "a" / "openRepoTools", tmp_path / "b" / "elsewhere" / "v1.1.0-src"]
+    copies = [tree / "src" / "openrepotools" / "_release.py" for tree in trees]
+    for copy in copies:
+        copy.parent.mkdir(parents=True)
+        copy.write_bytes(STAMP.read_bytes())
+    values = {"VERSION": release_["VERSION"], "GITHUB_SHA": release_["COMMIT"],
+              "GITHUB_REPOSITORY": release_["REPOSITORY"],
+              "DIGEST": release_["DIGEST"], "GITHUB_REF": ref,
+              "GITHUB_REF_NAME": name, "TREE_A": str(trees[0]),
+              "TREE_B": str(trees[1])}
+    runner = Runner(tmp_path / "work", workflow, "build", values)
+    done = runner.run(named(workflow, "build", STAMP_STEP))
+    assert done.returncode == 0, transcript(done)
+    want = stamped(STAMP.read_text(encoding="utf-8"), release_).encode("utf-8")
+    for copy in copies:
+        assert copy.read_bytes() == want, (
+            f"on {ref}, {copy} is not the committed stamp with TAG "
+            f"{release_['TAG']}:\n{copy.read_text(encoding='utf-8')}")
+
+
 @NEEDS_UPSTREAM
 def test_release_stamp_writer_step_stamps_both_extractions_with_the_run_s_repository():
     """STEP 10 (contracts/stamp.md, "Input"): the heredoc is handed the two
@@ -2903,6 +2944,60 @@ def test_release_upload_both_jobs_run_the_same_checks_after_their_guards():
     assert "test.pypi.org" not in json.dumps(job(workflow, "pypi"))
 
 
+# --- the dist step, run ---------------------------------------------------------------
+
+#: The bytes the build recorded, and other bytes under the same name.
+RECORDED_WHEEL = b"PK\x03\x04 the wheel the build job verified\n"
+OTHER_WHEEL = b"PK\x03\x04 another file under the wheel's name\n"
+
+#: WHERE A JOB TAKES THE BUILD'S WHEEL, each upload job's `dist/` and the
+#: install check's wheel directory: `(the files there, whether the step that
+#: checks them passes)`.
+WHEEL_DIGEST_CASES = {
+    "the-recorded-wheel": ({"<wheel>": RECORDED_WHEEL}, True),
+    "other-bytes-under-its-name": ({"<wheel>": OTHER_WHEEL}, False),
+    "the-recorded-wheel-and-another-file": (
+        {"<wheel>": RECORDED_WHEEL, "openrepotools-1.0.0-py3-none-any.whl":
+         RECORDED_WHEEL}, False),
+    "another-name-at-the-recorded-digest": (
+        {"openrepotools-1.0.0-py3-none-any.whl": RECORDED_WHEEL}, False),
+    "nothing": ({}, False),
+}
+
+
+def a_wheel_directory(directory: Path, files: dict, wheel: str) -> None:
+    """`directory`, holding `files`, `<wheel>` standing for `wheel`."""
+    directory.mkdir(parents=True)
+    for name, data in files.items():
+        (directory / name.replace("<wheel>", wheel)).write_bytes(data)
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@pytest.mark.skipif(shutil.which("sha256sum") is None,
+                    reason="the dist step runs GNU's sha256sum")
+@pytest.mark.parametrize("which", WHEEL_DIGEST_CASES)
+@pytest.mark.parametrize("name", sorted(UPLOADS))
+def test_release_upload_the_dist_step_passes_the_verified_wheel_alone(tmp_path, name, which):
+    """THE WHOLE DIST STEP, RUN in each upload job (FR-031: the bytes the
+    build verified, and nothing else): `dist/` holding the one file named
+    `$WHEEL`, whose sha256 is `$WHEEL_SHA256`, passes; other bytes under
+    that name, another file beside it, another name, and an empty `dist/`
+    are each refused."""
+    files, passes = WHEEL_DIGEST_CASES[which]
+    wheel = "openrepotools-1.1.0-py3-none-any.whl"
+    workspace = tmp_path / "workspace"
+    a_wheel_directory(workspace / "dist", files, wheel)
+    values = {"WHEEL": wheel, "WHEEL_SHA256": hashlib.sha256(RECORDED_WHEEL).hexdigest()}
+    workflow = release()
+    runner = Runner(tmp_path / "work", workflow, name, values)
+    done = runner.run(named(workflow, name, DIST_STEP), cwd=workspace)
+    assert (done.returncode == 0) == passes, transcript(done)
+    if passes:
+        assert done.stdout.strip() == f"dist/{wheel}: OK", transcript(done)
+
+
 # --- the re-checks at use time, run against a forge ------------------------------------
 
 #: The upload jobs' two re-checks, by their names.
@@ -3021,6 +3116,7 @@ VERIFIED = "5e" * 32
 ANOTHER_DIGEST = "a7" * 32
 SERVED = (200, [(INDEX_WHEEL, VERIFIED, False)])
 NOT_YET = (404, [])
+DROPPED = (None, [])
 
 #: THE CLOCK, the one other thing faked: `time.sleep` writes down what it was
 #: asked and returns at once, so 20 reads 15 seconds apart take no time. It is
@@ -3041,8 +3137,9 @@ time.sleep = sleep
 class FakeIndex:
     """AN INDEX'S JSON API ON 127.0.0.1: the `n`th read gets `answers[n]`,
     and every read after the last answer gets the last again. Each answer is
-    `(status, files)`, a file `(filename, sha256, yanked)`. Every read's path
-    is written down in `reads`."""
+    `(status, files)`, a file `(filename, sha256, yanked)`; the status `None`
+    closes the connection with no response at all, a connection error with
+    no HTTP status. Every read's path is written down in `reads`."""
 
     def __init__(self, answers: list) -> None:
         self.answers, self.reads = list(answers), []
@@ -3053,6 +3150,9 @@ class FakeIndex:
                 status, files = index.answers[min(len(index.reads),
                                                   len(index.answers) - 1)]
                 index.reads.append(self.path)
+                if status is None:
+                    self.close_connection = True
+                    return
                 body = json.dumps(
                     {"info": {"name": "openrepotools"},
                      "urls": [{"filename": name, "digests": {"sha256": digest},
@@ -3071,8 +3171,9 @@ class FakeIndex:
         self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
         self.base = (f"http://127.0.0.1:{self.server.server_address[1]}"
                      "/pypi/openrepotools/")
+        # a short poll, so that `shutdown` returns at once
         self.thread = threading.Thread(target=self.server.serve_forever,
-                                       daemon=True)
+                                       kwargs={"poll_interval": 0.01}, daemon=True)
 
     def __enter__(self) -> "FakeIndex":
         self.thread.start()
@@ -3100,7 +3201,7 @@ def run_index_step(tmp_path: Path, name: str, prefix: str, answers: list
         values = {"VERSION": INDEX_VERSION, "WHEEL": INDEX_WHEEL,
                   "WHEEL_SHA256": VERIFIED, "JSON_BASE": index.base,
                   "no_proxy": "*", "NO_PROXY": "*", "PYTHONPATH": str(clock),
-                  "FAKE_CLOCK_LOG": str(log)}
+                  "PYTHONDONTWRITEBYTECODE": "1", "FAKE_CLOCK_LOG": str(log)}
         runner = Runner(tmp_path / "work", workflow, name, values)
         done = runner.run(named(workflow, name, prefix))
         reads = list(index.reads)
@@ -3152,14 +3253,15 @@ def test_release_upload_the_empty_index_check_passes_no_file_or_the_verified_whe
 
 #: AFTER THE UPLOAD: `(what the index answers, read by read, whether the step
 #: passes, how many reads it makes)`. It reads until the index serves exactly
-#: the verified wheel, through a 404, an empty listing or a server error, up
-#: to 20 reads, and refuses the wheel yanked, any other file and a client
-#: error at once.
+#: the verified wheel, through a 404, an empty listing, a server error or a
+#: connection closed with no response, up to 20 reads, and refuses the wheel
+#: yanked, any other file and a client error at once.
 SERVED_CASES = {
     "served-at-the-first-read": ([SERVED], True, 1),
     "not-yet-then-served": ([NOT_YET, SERVED], True, 2),
     "an-empty-listing-then-served": ([(200, []), SERVED], True, 2),
     "a-server-error-then-served": ([(503, []), SERVED], True, 2),
+    "a-connection-error-then-served": ([DROPPED, SERVED], True, 2),
     "served-at-the-twentieth-read": ([NOT_YET] * 19 + [SERVED], True, 20),
     "served-only-after-twenty-reads": ([NOT_YET] * 20 + [SERVED], False, 20),
     "another-file-beside-it-every-time": (
@@ -3180,9 +3282,10 @@ SERVED_CASES = {
 def test_release_upload_the_served_check_reads_until_the_verified_wheel_is_served(
         tmp_path, name, which):
     """THE SERVED-DIGEST CHECK, RUN against a fake index, in each upload job:
-    it keeps reading, 15 seconds apart, up to 20 reads, until the index
-    serves exactly the verified wheel, and passes then; it refuses an index
-    that never does, the wheel yanked, and a client error."""
+    it keeps reading, 15 seconds apart, up to 20 reads, through a read that
+    fails with no HTTP status, until the index serves exactly the verified
+    wheel, and passes then; it refuses an index that never does, the wheel
+    yanked, and a client error."""
     answers, passes, count = SERVED_CASES[which]
     done, reads, sleeps = run_index_step(tmp_path, name, SERVED_STEP, answers)
     assert (done.returncode == 0) == passes, transcript(done)
@@ -3303,46 +3406,35 @@ def test_release_install_check_takes_the_wheel_by_its_digest_on_a_tag_and_a_bran
             assert (step.get("with") or {}).get("persist-credentials") is False
 
 
-#: The bytes the build recorded, and other bytes under the same name.
-RECORDED_WHEEL = b"PK\x03\x04 the wheel the build job verified\n"
-OTHER_WHEEL = b"PK\x03\x04 another file under the wheel's name\n"
-
-#: `(the files in the job's wheel directory, whether the step passes)`.
-WHEEL_DIGEST_CASES = {
-    "the-recorded-wheel": ({"<wheel>": RECORDED_WHEEL}, True),
-    "other-bytes-under-its-name": ({"<wheel>": OTHER_WHEEL}, False),
-    "the-recorded-wheel-and-another-file": (
-        {"<wheel>": RECORDED_WHEEL, "openrepotools-1.0.0-py3-none-any.whl":
-         RECORDED_WHEEL}, False),
-    "another-name-at-the-recorded-digest": (
-        {"openrepotools-1.0.0-py3-none-any.whl": RECORDED_WHEEL}, False),
-    "nothing": ({}, False),
-}
-
-
 @NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
 @pytest.mark.parametrize("which", WHEEL_DIGEST_CASES)
 def test_release_install_check_the_digest_step_passes_the_recorded_wheel_alone(
         tmp_path, which):
-    """THE STEP, RUN (contracts/workflows.md's install step 1): its heredoc,
-    over the job's wheel directory, passes the one file named `$WHEEL` whose
-    sha256 is `$WHEEL_SHA256`, and refuses other bytes under that name,
-    another file beside it, another name, and nothing at all, so the install
-    check never runs a file the build did not verify."""
+    """THE WHOLE STEP, RUN (contracts/workflows.md's install step 1), its
+    bash line and its heredoc, with `python` this interpreter: over the job's
+    wheel directory it passes the one file named `$WHEEL` whose sha256 is
+    `$WHEEL_SHA256`, and refuses other bytes under that name, another file
+    beside it, another name, and nothing at all, so the install check never
+    runs a file the build did not verify."""
     files, passes = WHEEL_DIGEST_CASES[which]
     wheel = "openrepotools-1.1.0rc1-py3-none-any.whl"
-    temp = tmp_path / "runner-temp"
-    (temp / "wheel").mkdir(parents=True)
-    for name, data in files.items():
-        (temp / "wheel" / name.replace("<wheel>", wheel)).write_bytes(data)
-    values = {"RUNNER_TEMP": str(temp), "WHEEL": wheel,
-              "WHEEL_SHA256": hashlib.sha256(RECORDED_WHEEL).hexdigest()}
-    step = named(release(), "install", WHEEL_DIGEST_STEP)
-    done = run_heredoc(step, tmp_path / "run", [], values, cwd=tmp_path)
+    digest = hashlib.sha256(RECORDED_WHEEL).hexdigest()
+    workflow = release()
+    fakes = python_tool(tmp_path / "fakes", "python", AS_PYTHON)
+    runner = Runner(tmp_path / "work", workflow, "install",
+                    {"WHEEL": wheel, "WHEEL_SHA256": digest}, fakes)
+    a_wheel_directory(Path(runner.env["RUNNER_TEMP"]) / "wheel", files, wheel)
+    done = runner.run(named(workflow, "install", WHEEL_DIGEST_STEP))
     assert (done.returncode == 0) == passes, transcript(done)
-    if not passes:
-        out = done.stdout + done.stderr
-        assert "::error::" in out and "Traceback" not in out, transcript(done)
+    out = done.stdout + done.stderr
+    assert "Traceback" not in out, transcript(done)
+    if passes:
+        assert done.stdout.strip() == f"{wheel}: sha256 {digest}, the recorded digest", (
+            transcript(done))
+    else:
+        assert "::error::" in out, transcript(done)
 
 
 #: The install check's two steps that fetch and install, by their names.
@@ -3758,9 +3850,9 @@ def test_release_install_check_the_version_step_passes_this_release_s_five_lines
 
 
 #: A heredoc run by this Python as if it were another release of Python:
-#: `sys.version_info` and `sys.version` say `<version>`, and nothing else is
-#: changed. The 3.9 leg's step refuses any Python but 3.9, and the suite runs
-#: on a current one.
+#: `sys.version_info` and `sys.version` say `<version>`, `sys.argv` is
+#: `["-"]`, as under `python3 -`, and nothing else is changed. The 3.9 leg's
+#: step refuses any Python but 3.9, and the suite runs on a current one.
 AS_ANOTHER_PYTHON = r'''
 import sys
 code, version = sys.argv[1], sys.argv[2]
@@ -4041,6 +4133,7 @@ def test_release_header_s_guard_table_is_the_guard_s_own_decisions():
     row says what `GUARD_ROWS`, which the guard is run under, decides for
     every case that falls under it. Every row has a case, and every case on
     a tag or a branch has its row."""
+    release()
     lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
     start = next(n for n, line in enumerate(lines, 1) if re.match(r"^on\s*:", line))
     tables = guard_tables()
