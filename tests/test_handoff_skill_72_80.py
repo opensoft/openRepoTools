@@ -12,14 +12,20 @@ rung is the workstation's NEWEST SWAP: a different lane, which the skill then
 renames the window for and writes a PAUSED record and a restart command about.
 `lane-handoff`'s own `sread` tells the two apart by the helper's words (#47
 round 2); the skill now does the same, and an old helper's unknown-subcommand
-2 still falls through as it did.
+2 still falls through as it did. And because only rung 1 reads its name
+through the resolver, the bound name is then read through `canon-lane` and
+the same fence whichever rung answered, as `lane-handoff` does after its rungs
+(the independent review of #260): a case twin bound by `window-lane` or by
+the newest swap refuses there too.
 
 #80 ITEM 4 — A `<session>:<index>` CHECKED BY A PREFIX GLOB. Step 4 held the
 live `#S:#I` and the launcher's `WORKBENCHES_CLAUDE_WINDOW_REF` to
 `case "$win" in *:[0-9]*)`, so `s:1junk` passed and went into the append-only
 `window` sub-field, where `window-lane` can never resolve it. Both checks are
 now the whole-string `[[ "$win" =~ ^.+:[0-9]+$ ]]` the `<@id>` beside them
-already used.
+already used, and because that regex's `.` matches a line break, a value
+carrying a newline or a carriage return is dropped beside each check:
+`log PAUSED` would refuse the whole record over it.
 
 THE BLOCKS ARE RUN, NOT READ. They are found the way
 `tests/test_skill_shell_blocks.py` finds them (its own fence reader, imported
@@ -27,7 +33,9 @@ rather than copied), cut by the same two ranges the shell suite's
 `sfence_probe` and `skill_win_of` cut, and run under `bash` and under `zsh -f`
 where one is installed, because a session's Bash tool runs a skill's block
 under the user's own shell. Every RED case below fails against the block as it
-stood at 08e7550 and passes with the fix; the rest pin what did not change.
+stood at 08e7550 and passes with the fix, and the review round's cases (the
+lower rungs, `canon-lane`'s answers and a line break before the index) fail
+against c9d681f as well; the rest pin what did not change.
 
 NOTHING HERE READS THE CALLER'S ENVIRONMENT. A lane window exports
 `WORKBENCHES_CLAUDE_WINDOW_REF`, `_WINDOW_ID`, `TMUX` and the `LANES_*` seams,
@@ -220,7 +228,8 @@ def test_an_exit_2_carrying_amendment_15d_stops_the_skill(box: Sandbox,
         "the fence fell through on Amendment 15(d)'s refusal and the skill "
         f"carried on with an empty answer (#72 item 8):\n{proc.stdout}")
     assert proc.returncode == 2, (proc.returncode, proc.stderr)
-    assert "REFUSED" in proc.stderr and "Amendment 15(d)" in proc.stderr, proc.stderr
+    assert "REFUSED" in proc.stderr, proc.stderr
+    assert "Amendment 15(d)" in proc.stderr, proc.stderr
     assert "some-verb" in proc.stderr, "the refusal must name the read"
     assert "differ only by case for 'repo-1'" in proc.stderr, (
         "the helper's own words must be relayed")
@@ -265,8 +274,36 @@ def test_every_other_code_reads_as_it_did(box: Sandbox, shell: str,
 
 
 STEP1_TMUX = (
-    "tmux() { case \"$*\" in *'#W'*) printf 'repo-1\\n' ;; "
+    "tmux() { case \"$*\" in *'#W'*) printf '%s\\n' \"$STUB_WINDOW\" ;; "
     "*window_id*) printf '@5\\n' ;; *'#S:#I'*) printf 's:1\\n' ;; esac; }\n")
+
+SWAP_ROW = "other-7\t2026-10-18T00:00:00Z\n"
+
+#: Amendment 15(d)'s words for the lane rungs 2 and 3 bind below.
+WORDS_15D_OTHER = WORDS_15D.replace("repo-1", "other-7").replace(
+    "Repo-1", "Other-7")
+
+#: The two rungs below the window name, each answering `other-7` for a window
+#: named `zsh` — which the register has no row for (`register-row` 8). This is
+#: the shape the independent review of #260 measured.
+LOWER_RUNGS = {
+    "rung-2-window-lane": {"register-row": Verb(8),
+                           "window-lane": Verb(0, "other-7\n")},
+    "rung-3-swapped": {"register-row": Verb(8), "window-lane": Verb(8),
+                       "swapped": Verb(0, SWAP_ROW)},
+}
+
+
+def _step1(box: Sandbox, shell: str, window: str,
+           verbs: Dict[str, Verb]) -> subprocess.CompletedProcess:
+    box.stub(dict(verbs, workstation=Verb(0, "Eagle\tconfigured\n")))
+    script = (f"L={shlex.quote(str(box.helper))}\n" + sread_fence() +
+              STEP1_TMUX + step1_block())
+    return box.run(shell, script, {"STUB_WINDOW": window})
+
+
+def _verbs(box: Sandbox) -> List[str]:
+    return [line.split("|", 1)[1].split()[0] for line in box.logged()]
 
 
 @pytest.mark.parametrize("shell", SHELLS)
@@ -278,23 +315,82 @@ def test_step_1_does_not_bind_the_newest_swap_over_a_case_twin_row(
     "this window is not a lane", ask `window-lane` (8, none) and then take the
     workstation's NEWEST SWAP, `other-7`: a different lane, printed as this
     one. Now step 1 stops before any rung below the refusal is asked."""
-    box.stub({
-        "workstation": Verb(0, "Eagle\tconfigured\n"),
+    proc = _step1(box, shell, "repo-1", {
         "register-row": Verb(2, "", WORDS_15D),
         "window-lane": Verb(8),
-        "swapped": Verb(0, "other-7\t2026-10-18T00:00:00Z\n"),
+        "swapped": Verb(0, SWAP_ROW),
     })
-    script = (f"L={shlex.quote(str(box.helper))}\n" + sread_fence() +
-              STEP1_TMUX + step1_block())
-    proc = box.run(shell, script)
     assert "lane=" not in proc.stdout, (
         "step 1 bound a lane over Amendment 15(d)'s refusal (#72 item 8):\n"
         f"{proc.stdout}")
     assert proc.returncode == 2, (proc.returncode, proc.stderr)
     assert "Amendment 15(d)" in proc.stderr, proc.stderr
-    verbs = [line.split("|", 1)[1].split()[0] for line in box.logged()]
-    assert "window-lane" not in verbs and "swapped" not in verbs, (
+    assert "window-lane" not in _verbs(box), (
         f"a rung below the refusal was asked: {box.logged()}")
+    assert "swapped" not in _verbs(box), (
+        f"a rung below the refusal was asked: {box.logged()}")
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("rung", sorted(LOWER_RUNGS))
+def test_step_1_refuses_a_case_twin_lane_whichever_rung_bound_it(
+        box: Sandbox, shell: str, rung: str) -> None:
+    """RED at c9d681f (the review of #260). Rung 1 is refused through
+    `register-row`, but rungs 2 and 3 answer with a record's lane field and the
+    swap row's first cell, which nothing read through the resolver: a lane
+    whose register holds `other-7` and `Other-7` bound from either, and step 1
+    printed `lane=other-7` and exited 0. The bound name is now read through
+    `canon-lane` and the fence, as `lane-handoff` does after its rungs, so
+    Amendment 15(d)'s 2 refuses there whichever rung answered."""
+    proc = _step1(box, shell, "zsh", dict(
+        LOWER_RUNGS[rung], **{"canon-lane": Verb(2, "", WORDS_15D_OTHER)}))
+    assert "lane=" not in proc.stdout, (
+        f"step 1 bound a case-twin lane from {rung} (#72 item 8, the review "
+        f"of #260):\n{proc.stdout}")
+    assert proc.returncode == 2, (proc.returncode, proc.stderr)
+    assert "Amendment 15(d)" in proc.stderr, proc.stderr
+    assert "canon-lane" in proc.stderr, "the refusal must name the read"
+    assert "1|canon-lane other-7" in box.logged(), box.logged()
+
+
+class CanonCase(NamedTuple):
+    verb: Verb
+    returncode: int
+    lane: Optional[str]      # the `lane=` line step 1 prints, None for none
+
+
+CANON_CASES = {
+    # The register row's spelling replaces the bound one.
+    "row-spelling": CanonCase(Verb(0, "Other-7\n"), 0, "Other-7"),
+    # A read that failed stops the skill (66 is an alias table that could not
+    # be read, which `canon-lane` carries rather than flattening to 2).
+    "failed-66": CanonCase(Verb(66, "", "lanes-edit: aliases.tsv COULD NOT "
+                                "BE READ\n"), 1, None),
+    "same-name": CanonCase(Verb(0, "other-7\n"), 0, "other-7"),
+    "old-helper-2": CanonCase(Verb(2, "", WORDS_OLD), 0, "other-7"),
+}
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("case", sorted(CANON_CASES))
+def test_step_1_reads_the_bound_name_through_canon_lane(
+        box: Sandbox, shell: str, case: str) -> None:
+    """What `canon-lane`'s other answers do to a lane rung 3 bound: the
+    register row's spelling replaces the bound one, a failed read stops the
+    skill like every failed read through the fence, and an answer naming the
+    same lane or an old helper's 2 leaves `other-7` as it was. Every case is
+    RED at c9d681f, where `canon-lane` was never asked; `row-spelling` and
+    `failed-66` also printed a different answer there."""
+    want = CANON_CASES[case]
+    proc = _step1(box, shell, "zsh", dict(
+        LOWER_RUNGS["rung-3-swapped"], **{"canon-lane": want.verb}))
+    assert proc.returncode == want.returncode, (proc.returncode, proc.stderr)
+    if want.lane is None:
+        assert "lane=" not in proc.stdout, proc.stdout
+        assert "failed (exit 66)" in proc.stderr, proc.stderr
+    else:
+        assert proc.stdout.splitlines()[-1] == f"lane={want.lane}", proc.stdout
+    assert "1|canon-lane other-7" in box.logged(), box.logged()
 
 
 @pytest.mark.parametrize("shell", SHELLS)
@@ -302,16 +398,14 @@ def test_step_1_still_falls_through_an_old_helpers_2(box: Sandbox,
                                                      shell: str) -> None:
     """The fall-through the fence keeps: a `register-row` that exits 2 as an
     old helper's unknown subcommand is "no answer", and step 1 goes on to the
-    newest swap exactly as it did before the fix."""
-    box.stub({
-        "workstation": Verb(0, "Eagle\tconfigured\n"),
+    newest swap exactly as it did before the fix. That helper has no
+    `canon-lane` either (the stub's unknown-subcommand 2), and the swap's name
+    is kept."""
+    proc = _step1(box, shell, "repo-1", {
         "register-row": Verb(2, "", WORDS_OLD),
         "window-lane": Verb(8),
-        "swapped": Verb(0, "other-7\t2026-10-18T00:00:00Z\n"),
+        "swapped": Verb(0, SWAP_ROW),
     })
-    script = (f"L={shlex.quote(str(box.helper))}\n" + sread_fence() +
-              STEP1_TMUX + step1_block())
-    proc = box.run(shell, script)
     assert proc.returncode == 0, (proc.returncode, proc.stderr)
     assert proc.stdout.splitlines()[-1] == "lane=other-7", proc.stdout
 
@@ -334,6 +428,12 @@ WIN_CASES = {
     "live-junk-falls-to-env": WinCase("s:1junk", "", "s:4", "", "s:4"),
     "no-session-part": WinCase(":1", "", "", "", ""),
     "env-ref-newline": WinCase("", "", "s:1\njunk", "", ""),
+    # RED at c9d681f too (the review of #260): the regex's `.` matches a line
+    # break, so a ref with one BEFORE the index passed it, and `log PAUSED`
+    # refuses a payload carrying a newline or a carriage return.
+    "env-ref-newline-before-index": WinCase("", "", "junk\ns:1", "", ""),
+    "live-ref-newline-falls-to-env": WinCase("junk\ns:1", "", "s:4", "", "s:4"),
+    "env-ref-carriage-return": WinCase("", "", "junk\rs:1", "", ""),
     # Unchanged: digits after the LAST colon, no index at all, and the
     # `<@id>` beside it, which was already checked whole.
     "last-colon": WinCase("s:1:2", "", "", "", "s:1:2"),

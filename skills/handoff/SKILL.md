@@ -68,10 +68,12 @@ L=~/projects/xFactory/lanes-edit.sh
 # not be read is not "this window is not a lane", and step 4 would then write a
 # PAUSED record, a stamp and a restart command for a lane this window is not.
 #
-# IT IS `/restart`'s `lread` WITH ONE DIFFERENCE, STATED RATHER THAN LEFT TO BE
-# FOUND: step 4's `dir` read does NOT come through here, because this fence
+# IT IS `/restart`'s `lread` WITH TWO DIFFERENCES, STATED RATHER THAN LEFT TO
+# BE FOUND. Step 4's `dir` read does NOT come through here, because this fence
 # STOPS and that read may not — `R-A11-11`, *a swap is never left unwritten*.
-# It drops the sub-field and names the read instead, where it stands.
+# It drops the sub-field and names the read instead, where it stands. And an
+# exit 2 carrying Amendment 15(d)'s words is a REFUSAL here (the last paragraph
+# below), where `lread` still reads every 2 as no answer.
 #
 # IT SETS A VARIABLE RATHER THAN PRINTING ITS ANSWER, and that is load-bearing:
 # a refusal inside `$( )` kills only the substitution's subshell and the skill
@@ -198,12 +200,32 @@ if [[ -z "$lane" ]]; then
     [[ "$candidate" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] && lane="$candidate"
   fi
 fi
+# ONE NAME UNDER ANY CASE, WHICHEVER RUNG ANSWERED (Amendment 15; #72 item 8).
+# Rung 1 reads the window's name through `register-row`, which resolves it
+# through `canon_lane` and so refuses a register holding two rows that differ
+# only by case. Rungs 2 and 3 answer with a record's lane field and the swap
+# row's first cell, and nothing above reads either through the resolver, so a
+# lane a case twin makes ambiguous bound from them. The bound name is therefore
+# read once more, here, through `canon-lane` and the fence — `lane-handoff`'s
+# own step after its rungs — before anything is renamed or written. Its 15(d)
+# exit 2 refuses through the fence, an old helper's 2 keeps the name as it is,
+# a read that failed stops the skill as every failed read does, and its answer
+# is the register row's spelling, which the rename, the record and the restart
+# line then carry. It is NOT a check that the lane has a row: `canon_lane`
+# answers a name no row matches with the name as typed.
+if [[ -n "$lane" ]]; then
+  sread lane_canon "'this lane has no row'" canon-lane "$lane"
+  [[ "$lane_canon" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] && lane="$lane_canon"
+fi
 printf 'lane=%s\n' "${lane:-<none>}"
 ```
 
 The window name answers first, the window's own RECORD second and the workstation's newest swap third —
 the launcher's own order, with Amendment 11 clause (b)'s new zero-question step in the middle, so the skill
-and the launcher never disagree about which lane this is. Then make the other two names match it, mechanically:
+and the launcher never disagree about which lane this is. Whichever of the three answered, the name is then
+read once more through `canon-lane`, as `lane-handoff` does: a register holding two rows for it that differ
+only by case refuses there, and the row's own spelling is the name used below. Then make the other two names
+match it, mechanically:
 
 - window name ≠ lane → `tmux rename-window "$lane"`;
 - Claude session name ≠ lane → type `/rename <lane>` (Amendment 2: the session name is the lane's
@@ -521,11 +543,16 @@ fi
 # can never resolve it: a live `#S:#I` always ends in an index, which is digits.
 # So the value is held to `^.+:[0-9]+$`, the same form as the `<@id>` test
 # below — a session part that is not empty, then digits and nothing else after
-# the last `:`.
+# the last `:`. AND IT CARRIES NO LINE BREAK: the regex's `.` matches a newline,
+# so `junk<LF>s:1` passes it, and `log PAUSED` refuses a payload carrying a
+# newline or a carriage return — the whole record, not the sub-field. So a
+# value with either is dropped here, beside each regex check.
 win="$(tmux display-message -p '#S:#I' 2>/dev/null)"
 [[ "$win" =~ ^.+:[0-9]+$ ]] || win=""
+case "$win" in *$'\n'*|*$'\r'*) win="" ;; esac
 [[ -n "$win" ]] || win="${WORKBENCHES_CLAUDE_WINDOW_REF:-}"
 [[ "$win" =~ ^.+:[0-9]+$ ]] || win=""
+case "$win" in *$'\n'*|*$'\r'*) win="" ;; esac
 wid="$(tmux display-message -p '#{window_id}' 2>/dev/null)"
 [[ "$wid" =~ ^@[0-9]+$ ]] || wid="${WORKBENCHES_CLAUDE_WINDOW_ID:-}"
 # AN `<@id>` IS `@<digits>` AND NOTHING ELSE (F-X13(a), A11 Addendum 4 ruling 10).
