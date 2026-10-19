@@ -348,7 +348,7 @@ index does not serve.
 
 ## Phase 9: Polish & cross-cutting concerns
 
-- [ ] T025 [O] Run quickstart.md's steps 1 to 8 on a workstation, as detailed below — files: `specs/006-release-pypi/quickstart.md` — verify: `bash tests/run.sh`
+- [X] T025 [O] Run quickstart.md's steps 1 to 8 on a workstation, as detailed below — files: `specs/006-release-pypi/quickstart.md`, `specs/006-release-pypi/plan.md`, `specs/006-release-pypi/contracts/cli-output.md` (the last two added by the lead's ruling, #228 comment 6255121743) — verify: `bash tests/run.sh`
   - the wheel built twice and compared;
   - the built-wheel tests, with no skip;
   - the pipx install into a temporary home;
