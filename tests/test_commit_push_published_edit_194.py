@@ -250,7 +250,7 @@ def test_the_printed_recovery_publishes_the_edit_it_stranded(box):
 
     rerun = box.helper("commit", SUBJECT)
     assert rerun.returncode == 0, rerun.stderr
-    assert "pushed origin/main" in rerun.stderr and "confirmed by a read-back" in rerun.stderr
+    assert "pushed origin/main (attempt 1)" in rerun.stderr, rerun.stderr
     assert box.wgit("rev-parse", "HEAD") == box.ogit("rev-parse", "main")
     assert _row(LANE, "LIVE · edited by hand") in box.origin_file(REGISTER)
     assert "a peer's line, mid-write" not in box.origin_file(PEER_HANDOFF), "never carried"

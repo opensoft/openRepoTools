@@ -2822,9 +2822,14 @@ cp_why_unconfirmed() {   # <cp_confirm's status>
     *) printf 'origin/%s, read back, does not hold it' "$LANES_BRANCH" ;;
   esac
 }
+# THE SUCCESS NOTE KEEPS MAIN'S WORDS, `pushed origin/<b> (attempt N)`,
+# byte for byte: `lane-start`, the triad goldens and every caller that reads
+# it stay right. What changed is when it prints. Since S4 it prints only after
+# the read-back has found this commit on origin, so the word "pushed" now
+# means confirmed, and a push it cannot confirm is never this line (exit 3).
 cp_pushed() {   # <sha>
   LANES_INDEX_NUDGE=1
-  note "pushed origin/$LANES_BRANCH: $1, confirmed by a read-back (attempt $CP_ATTEMPT)"
+  note "pushed origin/$LANES_BRANCH (attempt $CP_ATTEMPT)"
 }
 # S4.3 — A PUSH IT CANNOT CONFIRM IS NEVER SUCCESS. The commit stays on HEAD;
 # the next write's S3 finds it by content either way: published, it reads as

@@ -165,7 +165,8 @@ def test_refused_push_replays_on_a_fresh_fast_forward(box: Box):
     assert result.returncode == 0, result.stderr
     err = result.stderr
     assert "push refused (attempt 1 of 6)" in err, err
-    assert "confirmed by a read-back (attempt 2)" in err, err
+    assert "pushed origin/main (attempt 2)" in err, err
+    assert "pushed origin/main (attempt 1)" not in err, "attempt 1 never pushed it"
     register = box.origin_register()
     assert "LIVE · the neighbour moved first" in register, "the peer's row is kept"
     assert _set("LIVE · the replayed write") in register, "the write was made on the new tip"
@@ -370,7 +371,7 @@ def test_unconfirmed_push_exits_3(box: Box):
     sha = box.head(c)
     assert f"pushed, not confirmed: {sha}" in result.stderr
     assert "the read-back fetch of origin main failed" in result.stderr
-    assert "confirmed by a read-back" not in result.stderr
+    assert "pushed origin/main (attempt" not in result.stderr, "never the success line"
     assert box.origin_head() == sha, "it did land: exit 3 never says it did not"
     del box.env["FAKE_NET_HOOK"]
     nxt = box.helper("log", "NOTED", f"lane:{LANE}", "the next write", *HOME_FLAG,
@@ -392,7 +393,7 @@ def test_timed_out_push_is_read_back(box: Box, landed: bool):
     sha = box.head(c)
     if landed:
         assert result.returncode == 0, result.stderr
-        assert f"pushed origin/main: {sha}, confirmed by a read-back" in result.stderr
+        assert "pushed origin/main (attempt 1)" in result.stderr
         assert box.origin_head() == sha
     else:
         assert result.returncode == 3, result.stderr
@@ -538,7 +539,7 @@ def test_publish_act_is_exempt_from_unpushed_only(box: Box, row):
     if row is None:
         assert result.returncode == 0, result.stderr
         assert box.origin_head() == shas[-1]
-        assert f"pushed origin/main: {shas[-1]}, confirmed by a read-back" in result.stderr
+        assert "pushed origin/main (attempt 1)" in result.stderr
         assert box.unpublished(c) == []
     else:
         assert result.returncode == 2, result.stderr
