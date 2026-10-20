@@ -473,7 +473,8 @@ over as they are. It differs in these places:
     `HOME`, and compares the skip and count lines exactly.
   - On macOS, the leg reruns `--install` with `PATH="/bin:$PATH"` so that
     `/bin/bash` 3.2 runs, and prints `BASH_VERSION`.
-  - On 3.9, the leg runs `py_compile` on `lanes-index` and `lane-worktrees`.
+  - On 3.9, the leg compiles `lanes-index` and `lane-worktrees` with
+    `compile()`, which writes no bytecode.
 - **The release notes.** `release.yml` reads none (Decision 11).
 
 ### 11. The release notes stay in the spec leg, and no release step reads them (N3)
@@ -675,9 +676,9 @@ Ruled on T013's report, so numbered after item 13:
 ### Resolved by the lead, 2026-10-18, on T020
 
 The lead ruled on T020's first doubt. The item below is resolved by the
-lead, 2026-10-18.
+lead, 2026-10-18, and numbered after item 14.
 
-13. **The upload jobs' empty-index check is the model's form.** Resolved by
+15. **The upload jobs' empty-index check is the model's form.** Resolved by
     the lead, 2026-10-18.
     - Before the upload, the index holds no file of the version but the
       verified wheel at its recorded digest. A 404 passes. The verified

@@ -1379,18 +1379,19 @@ jobs:
           cat "$RUNNER_TEMP/version.out"
 
       # OFFLINE, IN A HOME OF ITS OWN, BESIDE PIPX'S LINK, SET UP AS
-      # `tests.yml`'s `package` job sets up its own (FR-016, FR-032), so the
-      # two cannot drift. `--install`, run through the link, places the
-      # other sixteen commands, the skills and the command files, leaves the
-      # link to pipx, and says so in the two lines below, exactly. `env -i`
-      # hands it nothing of the runner's environment but what is named on
-      # its line: a fresh HOME, the bin directory pipx's link is in, a
-      # repository that cannot resolve, and a PATH whose first directory
-      # holds a `gh` and a `curl` that both fail, so anything that fetched
-      # would fail. The receipt has 28 rows, a full install's 29 less the
-      # link, and the link is as pipx left it. The link's fingerprint is
-      # taken by this leg's Python, because the macOS leg's `stat` and
-      # `sha256sum` are not GNU's.
+      # `tests.yml`'s `package` job sets up its own (FR-016, FR-032): the two
+      # scripts are one, line for line, but for the link's fingerprint, and
+      # `tests/test_release_workflow.py` holds them so. `--install`, run
+      # through the link, places the other sixteen commands, the skills and
+      # the command files, leaves the link to pipx, and says so in the two
+      # lines below, exactly. `env -i` hands it nothing of the runner's
+      # environment but what is named on its line: a fresh HOME, the bin
+      # directory pipx's link is in, a repository that cannot resolve, and a
+      # PATH whose first directory holds a `gh` and a `curl` that both fail,
+      # so anything that fetched would fail. The receipt has 28 rows, a full
+      # install's 29 less the link, and the link is as pipx left it. The
+      # link's fingerprint is taken by this leg's Python, because the macOS
+      # leg's `stat` and `sha256sum` are not GNU's.
       - name: an offline --install beside pipx's link
         run: |
           set -euo pipefail
