@@ -2540,11 +2540,21 @@ def _export_worktrees(out_dir: str, cfg: dict, unusable) -> int:
     with open(os.path.join(out_dir, "worktrees"), "w", encoding="utf-8", newline="") as handle:
         for line in lines:
             handle.write(line + "\n")
+    # AND THE LAST SYNC'S ERROR, WHERE THIS WORKSTATION RECORDED ONE (N2 of the
+    # review of #289): a sync that wrote nothing - a lane listing that was not
+    # whole, among others - leaves the table and its `synced` time as they
+    # were, and only `status` said why. A fifth field, which a reader from
+    # before it ignores. Another workstation's error is in its own record and
+    # not here, so a shared store's other sources never carry one.
+    recorded = read_status()
     with open(os.path.join(out_dir, "meta"), "w", encoding="utf-8", newline="") as handle:
         handle.write(f"store={cfg['store']}\n")
         for prov in sorted(provs, key=lambda p: str(p["source"])):
+            entry = recorded.get(prov["source"])
+            error = entry.get("last_error") if isinstance(entry, dict) else ""
+            error = " ".join(str(error or "").split())
             handle.write(f"inventory\t{prov['source']}\t{prov['indexed_utc']}\t"
-                         f"{prov.get('generation')}\n")
+                         f"{prov.get('generation')}" + (f"\t{error}" if error else "") + "\n")
     return 0
 
 

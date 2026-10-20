@@ -2498,7 +2498,11 @@ index_open() {   # [worktrees]
   fi
   io_store="$(sed -n -e 's/^store=//p' "$io_dir/meta" | head -n 1)"
   if [ "$io_kind" = worktrees ]; then
-    io_at="$(awk -F'\t' '$1 == "inventory" { printf "%s%s synced %s", (n++ ? "; " : ""), $2, $3 }' "$io_dir/meta")"
+    # A FIFTH FIELD IS THE LAST SYNC'S ERROR, where this workstation's own
+    # record of it has one (N2 of the review of #289): a sync that refused a
+    # listing that was not whole left the table as it was, and `synced` alone
+    # did not say that a later sync had failed, or why.
+    io_at="$(awk -F'\t' '$1 == "inventory" { printf "%s%s synced %s%s", (n++ ? "; " : ""), $2, $3, ($5 != "" ? " (its last sync failed: " $5 ")" : "") }' "$io_dir/meta")"
     LANES_WT_IDX_DIR="$io_dir"
     printf 'read: index (%s) at %s\n' "${io_store:-unknown}" "${io_at:-no inventory source}" >&2
     return 0
@@ -3287,7 +3291,18 @@ remote_log_events() {
   # the lane simply had no lines, which the listing reads as DORMANT. The line
   # reaches the person through `state_events`' warnings, and `lanes_rows` reads
   # it back out of that file by its fixed prefix.
-  git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_LOG_PREFIX" 2>/dev/null \
+  # AND A LIST OF THE LOGS THAT COULD NOT BE MADE IS SAID THE SAME WAY (the
+  # review of #289, SHOULD-1(a)). Piped straight into the loop, a failed
+  # `ls-tree` was no logs at all: every lane lost its events - its `dir` among
+  # them - in silence. `worktree_rows` reads this line back out of the same
+  # warnings, and because the events are built once per process, it speaks for
+  # the very read every lane's `dir` came from.
+  rl_list=""
+  if ! rl_list="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_LOG_PREFIX" 2>/dev/null)"; then
+    note "unlisted logs: $LANES_LOG_PREFIX on origin/$LANES_BRANCH — git could not list them, so no log's lines are in this read"
+    return 0
+  fi
+  printf '%s\n' "$rl_list" \
   | while IFS= read -r rf; do
       [ -n "$rf" ] || continue
       case "${rf##*/}" in README.md) continue ;; esac
@@ -3510,11 +3525,21 @@ register_published() {   # [<path relative to LANES_REPO>]
 # that is the ordinary case rather than an error.
 #
 # It is NOT cached the way `register_text` is: this file is the small one (the
-# rows nobody reads day to day), and it is read once per listing.
+# rows nobody reads day to day), and a write that rescans it after its rebase
+# (`add-row`'s `retired_identity_hits`) must read it as it now stands, which a
+# cache kept for the process would not. ONE LISTING PINS IT, and only for its
+# own reads: `worktree_rows` reads the archive once, and where that read
+# succeeded, `PIN_ARCHIVE` hands its text to every read of the listing it then
+# makes - so the archive the listing names lanes from IS the one it checked (the
+# review of opensoft/openRepoTools#289, SHOULD-1(b): a read that failed only
+# after the check left the archive's lanes out of a listing taken as whole).
 LANES_ARCH_NAME="LANES-retired.md"
 LANES_ARCH_PATH="${LANES_ARCH_PATH:-${LANES_PREFIX}archive/$LANES_ARCH_NAME}"
 LANES_ARCH_FILE="${LANES_ARCH_FILE:-$LANES_DIR/archive/$LANES_ARCH_NAME}"
+PIN_ARCHIVE=0
+PIN_ARCHIVE_TEXT=""
 archive_text() {
+  if [ "$PIN_ARCHIVE" = 1 ]; then printf '%s' "$PIN_ARCHIVE_TEXT"; return 0; fi
   # AMENDMENT 14 — under `--index`, the archive's rows where the indexed commit
   # carried an archive; where it carried none, the same local fallback below.
   if [ -n "$LANES_IDX_DIR" ] && [ -f "$LANES_IDX_DIR/archive" ]; then cat -- "$LANES_IDX_DIR/archive"; return 0; fi
@@ -3879,6 +3904,12 @@ home_of_lane() {
   printf '%s\n' "${hol_c:-$hol_h}"
 }
 
+# `PIN_LOGS` IS THE ONE LISTING'S OWN LIST OF THE PUBLISHED LOGS, exactly as
+# `PIN_ARCHIVE` is its archive: `worktree_rows` lists them once, and where that
+# succeeded the listing names its lanes from that list and not from a second
+# `ls-tree` that could fail after it (the review of #289, SHOULD-1(b)).
+PIN_LOGS=0
+PIN_LOGS_TEXT=""
 known_lanes() {
   if [ -n "$LANES_IDX_DIR" ]; then
     while IFS= read -r kl_f; do
@@ -3889,8 +3920,10 @@ known_lanes() {
     done < "$LANES_IDX_DIR/logs"
     return 0
   fi
-  if have_remote_ref; then
-    git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_LOG_PREFIX" 2>/dev/null \
+  if [ "$PIN_LOGS" = 1 ] || have_remote_ref; then
+    { if [ "$PIN_LOGS" = 1 ]; then printf '%s' "$PIN_LOGS_TEXT"
+      else git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_LOG_PREFIX" 2>/dev/null
+      fi; } \
     | while IFS= read -r kl_f; do
         [ -n "$kl_f" ] || continue
         kl_n="${kl_f##*/}"
@@ -14445,12 +14478,20 @@ LRC_PAIRED
 # name, which no listing gives — each of those reads is asked here too, and a
 # failed one is ONE `PARTIAL` line: the rows beside it are every tree this read
 # reached, a lane it could not name is NOT a lane with no worktrees (R22,
-# Amendment 7(d)), and the indexer writes nothing over it. The register is
-# asked BEFORE the listing, so a read that succeeds is the cached text the
-# listing then reads; the logs AFTER it, out of the warnings its own read of
-# them left (`state_events`), and where those could not be kept whether a log
-# failed is not known, which is said the same way. An empty listing over a
-# failed read is that line alone, and never 8.
+# Amendment 7(d)), and the indexer writes nothing over it. The register, the
+# archive and the list of the logs are asked BEFORE the listing, and a read
+# that succeeds is the very text the listing then reads - the register's out of
+# its cache, the other two pinned for the listing alone (`PIN_ARCHIVE`,
+# `PIN_LOGS`), so no read that fails after the check can thin a listing taken
+# as whole (the review of #289, SHOULD-1). The logs themselves are asked AFTER
+# it, out of the warnings the events' own read of them left (`state_events`,
+# built once per process): a log it could not read, and a list of the logs it
+# could not make, which is the read every lane's `dir` comes from; where those
+# warnings could not be kept, whether a log failed is not known, which is said
+# the same way. With no `origin`, the log directory is asked as the trees' is
+# below, and its files are still read twice: docs/README-lanes.md says what
+# that leaves. An empty listing over a failed read is that line alone, and
+# never 8.
 #
 # The rows are sorted bytewise, which is the order the index's copy is written
 # in too: the two reads of one inventory are the same bytes.
@@ -14461,18 +14502,35 @@ worktree_rows() {   # [<canonical lane>]
   wr_live_ok=1
   live_session_ids >/dev/null 2>&1 || wr_live_ok=0
   wr_partial=""
+  wr_unlisted="the object logs under origin/$LANES_BRANCH:$LANES_LOG_PREFIX could not be listed"
   if [ -z "$wr_one" ]; then
     register_text_checked >/dev/null 2>&1 ||
       wr_partial="the register $LANES_PATH could not be read"
-    archive_text >/dev/null 2>&1 ||
+    # THE ARCHIVE AND THE LOG LIST ARE PINNED, NOT ONLY ASKED (SHOULD-1(b)):
+    # each read that succeeds here is the text every read of the listing below
+    # is handed, as the register's is its cache. `x` keeps the text's last
+    # newline through the substitution.
+    wr_pin=""
+    if wr_pin="$(archive_text 2>/dev/null && printf x)"; then
+      PIN_ARCHIVE_TEXT="${wr_pin%x}"; PIN_ARCHIVE=1
+    else
       wr_partial="${wr_partial:+$wr_partial; }the archive $LANES_ARCH_PATH could not be read"
+    fi
     # `known_lanes`' OWN TWO READS, which print what they could and answer 0
-    # either way, because the listing unions them with the register.
+    # either way, because the listing unions them with the register. WITH NO
+    # `origin`, A DIRECTORY THAT IS THERE IS ASKED AS THE TREES' IS BELOW: `ls`
+    # lists an `r--` one, whose files no glob can then open (N1 of the review).
     if have_remote_ref; then
-      git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_LOG_PREFIX" >/dev/null 2>&1 ||
-        wr_partial="${wr_partial:+$wr_partial; }the object logs under origin/$LANES_BRANCH:$LANES_LOG_PREFIX could not be listed"
-    elif [ -e "$LANES_LOG_DIR" ] && ! ls -- "$LANES_LOG_DIR" >/dev/null 2>&1; then
-      wr_partial="${wr_partial:+$wr_partial; }the log directory $LANES_LOG_DIR is there and could not be listed"
+      wr_pin=""
+      if wr_pin="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_LOG_PREFIX" 2>/dev/null && printf x)"; then
+        PIN_LOGS_TEXT="${wr_pin%x}"; PIN_LOGS=1
+      else
+        wr_partial="${wr_partial:+$wr_partial; }$wr_unlisted"
+      fi
+    elif [ -e "$LANES_LOG_DIR" ] || [ -L "$LANES_LOG_DIR" ]; then
+      if [ ! -d "$LANES_LOG_DIR" ] || [ ! -r "$LANES_LOG_DIR" ] || [ ! -x "$LANES_LOG_DIR" ]; then
+        wr_partial="${wr_partial:+$wr_partial; }the log directory $LANES_LOG_DIR is there and could not be listed"
+      fi
     fi
   fi
   wr_lanes=""; wr_lrc=0
@@ -14481,22 +14539,34 @@ worktree_rows() {   # [<canonical lane>]
   else
     wr_lanes="$(lanes_rows --all --closed)" || wr_lrc=$?
   fi
+  PIN_ARCHIVE=0; PIN_ARCHIVE_TEXT=""; PIN_LOGS=0; PIN_LOGS_TEXT=""
   case "$wr_lrc" in
     0) : ;;
     8) [ -n "$wr_partial" ] || return 8 ;;
     *) return 1 ;;
   esac
   if [ -z "$wr_one" ] && [ "$wr_lrc" = 0 ]; then
-    wr_ulogs=""; wr_urc=0
+    wr_ulogs=""; wr_urc=0; wr_ulist=""
     if [ -n "$SE_WARN_FILE" ] && [ -f "$SE_WARN_FILE" ]; then
       wr_ulogs="$(sed -n -e 's/^lanes-edit: unreadable log: \(.*\) — git could not read it.*$/\1/p' "$SE_WARN_FILE" 2>/dev/null)" || wr_urc=1
+      # THE EVENTS' OWN LIST OF THE LOGS (SHOULD-1(a)): where it failed, no
+      # lane has the `dir` its trees are found under.
+      wr_ulist="$(sed -n -e '/^lanes-edit: unlisted logs: /p' "$SE_WARN_FILE" 2>/dev/null)" || wr_urc=1
     else
       wr_urc=1
     fi
     if [ "$wr_urc" != 0 ]; then
       wr_partial="${wr_partial:+$wr_partial; }whether every object log could be read is not known, because the warnings of their read could not be kept"
-    elif [ -n "$wr_ulogs" ]; then
-      wr_partial="${wr_partial:+$wr_partial; }these object logs could not be read: $(printf '%s\n' "$wr_ulogs" | tr '\n' ' ' | sed -e 's/ $//')"
+    else
+      if [ -n "$wr_ulist" ]; then
+        case "; $wr_partial; " in
+          *"; $wr_unlisted; "*) : ;;
+          *) wr_partial="${wr_partial:+$wr_partial; }$wr_unlisted" ;;
+        esac
+      fi
+      if [ -n "$wr_ulogs" ]; then
+        wr_partial="${wr_partial:+$wr_partial; }these object logs could not be read: $(printf '%s\n' "$wr_ulogs" | tr '\n' ' ' | sed -e 's/ $//')"
+      fi
     fi
   fi
   wr_tab="$(printf '\t')"
