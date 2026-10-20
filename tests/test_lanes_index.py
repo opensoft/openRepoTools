@@ -2867,6 +2867,7 @@ def test_an_unlistable_log_directory_with_no_origin_is_a_partial_listing(inv, mo
 SHOW_ARCHIVE = "show origin/main:lanes/archive/LANES-retired.md "
 SHOW_REGISTER = "show origin/main:lanes/LANES.md "
 LIST_LOGS = "ls-tree --name-only origin/main -- lanes/log/ "
+SHOW_LOG_B1 = "show origin/main:lanes/log/repoB-1.md "
 
 
 def test_the_listing_names_lanes_from_the_archive_it_checked(inv):
@@ -2915,6 +2916,58 @@ def test_a_log_list_that_fails_after_the_check_removes_no_row(inv, last):
     assert healed.returncode == 0 and "nothing to write" in healed.stdout, healed.stdout
 
 
+def test_a_lanes_log_that_fails_after_the_listing_removes_no_row(inv):
+    """A LANE'S `dir` IS READ ONCE, BY THE LISTING (review r2 of #289,
+    SHOULD-A, its probe C1). Where no override names a control root, a lane's
+    trees are under the root its log's `dir` places, and the listing reads
+    that `dir` out of the events. The list of the lane's trees and its
+    lifecycle snapshot then worked the root out again, each reading the lane's
+    log a second time, and a `git show` that failed there was thrown away: the
+    root fell to `$PROJECTS_ROOT/.lane-state`, where nothing is, the lane read
+    as one with no trees, and the sync removed its rows. Both now take the
+    listing's `dir`, so the read that could fail is not made. The lane has a
+    snapshot here because, with none, a snapshot asked under the wrong root
+    answers what the right one would."""
+    by_dir, key = _a_lane_found_through_its_log(inv)
+    put = inv.e.edit("set-lane-state", "repoB-1", "RUNNING", "--operation", "op-test-b1",
+                     env=by_dir)
+    assert put.returncode == 0, put.stderr
+    assert inv.sync(env=by_dir).returncode == 0
+    assert inv.rows()[key]["lifecycle"] == "RUNNING", inv.rows()[key]  # read through `dir` too
+    before = dump(inv.e.sqlite, with_utc=True)
+    shim, log = _git_shim(inv, SHOW_LOG_B1, first=2, last=2)
+    res = inv.sync(env={**by_dir, **shim})
+    calls = _shim_calls(log)
+    assert calls and calls[0].startswith("1 "), calls  # the listing's own read: not vacuous
+    assert key in inv.rows(), (res.stdout, res.stderr, calls)
+    assert dump(inv.e.sqlite, with_utc=True) == before, (res.stdout, res.stderr, calls)
+    assert "kept as they are" not in res.stdout, (res.stdout, calls)  # and no lane held over it
+    if res.returncode == 1:  # refused over the read that failed, saying why
+        assert "was not whole - " in res.stderr, res.stderr
+    else:
+        assert res.returncode == 0 and "nothing to write" in res.stdout, (res.stdout, res.stderr)
+
+
+def test_the_listing_names_the_lane_whose_log_sorts_last(inv):
+    """THE LAST NAME IN THE LIST OF THE LOGS IS A LANE TOO (review r2 of #289,
+    NIT-2, its mutant mNoSentinel). The list the check made is handed to the
+    listing with its last newline kept, because `while read` drops a last line
+    that has none - and a lane whose log sorts last, with no row in the
+    register or the archive, would go unnamed from a listing taken as whole.
+    The seed's last log, repoM-2's, has a row; repoY-1 has a log alone."""
+    uid = "99999999-0001-4000-8000-000000009001"
+    inv.e.commit_paths({"lanes/log/repoY-1.md":
+                        f"STARTED — lane repoY-1, session {uid}@Eagle, 2026-10-04T00:00:00Z, "
+                        f"lane:repoY-1 → home opensoft/repoY; dir /work/repoY\n"},
+                       "repoY-1 has a log alone, and it sorts last")
+    names = inv.e._git("ls-tree", "--name-only", "origin/main", "--", "lanes/log/").split()
+    assert names[-1] == "lanes/log/repoY-1.md", names  # the LAST name: not vacuous
+    _sidecar(inv.lsr, "repoY-1", "8" * 40)
+    res = inv.sync()
+    assert res.returncode == 0, res.stderr
+    assert "repoY-1:/nowhere/repoY-1/w" in inv.rows(), (res.stdout, sorted(inv.rows()))
+
+
 def test_the_register_is_asked_before_the_listing(inv):
     """THE REGISTER IS ASKED BEFORE THE LISTING READS IT (the review of #289,
     SHOULD-2, its probe P3). A register read that succeeds is cached, and the
@@ -2947,7 +3000,9 @@ def test_the_index_read_says_its_last_sync_failed(inv):
     table and its `synced` time as they were, and `lanes --index --worktrees`
     said only that time: a table no later sync could write read as a current
     one. The read's line now carries this workstation's last error beside its
-    source, as `status` does, until a sync writes again."""
+    source, as `status` does and under the name `status` gives it - a refused
+    `reconcile --dry-run` records one too (review r2's NIT-1) - until a sync
+    succeeds again."""
     _sidecar(inv.lsr, "repoZ-1", HEADS["repoZ-1"])
     assert inv.sync().returncode == 0
     with _unreadable(inv.e, "origin/main:lanes/archive/LANES-retired.md"):
@@ -2955,7 +3010,7 @@ def test_the_index_read_says_its_last_sync_failed(inv):
     idx = _wt(inv, "--all", "--index")
     assert idx.returncode == 0, idx.stderr
     assert re.search(r"read: index \(sqlite\) at inventory:Eagle synced " + UTC.pattern +
-                     r" \(its last sync failed: " + UTC.pattern + r" unread: the lane listing "
+                     r" \(last error: " + UTC.pattern + r" unread: the lane listing "
                      r"`lanes-edit\.sh worktrees --all` reads the inventory through was not "
                      r"whole - the archive lanes/archive/LANES-retired\.md could not be read - ",
                      idx.stderr), idx.stderr
@@ -2963,7 +3018,7 @@ def test_the_index_read_says_its_last_sync_failed(inv):
     again = _wt(inv, "--all", "--index")
     assert re.search(r"read: index \(sqlite\) at inventory:Eagle synced " + UTC.pattern + r"\n",
                      again.stderr), again.stderr
-    assert "last sync failed" not in again.stderr, again.stderr
+    assert "(last error: " not in again.stderr, again.stderr
 
 
 def test_the_round_cap_hands_back_a_mark_it_took(estate, monkeypatch):
