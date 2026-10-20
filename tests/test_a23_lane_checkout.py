@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -352,3 +353,82 @@ def test_lane_checkout_verb_reads_and_creates(box: Box):
     assert again.returncode == 0 and again.stdout.strip() == str(box.checkout(LANE))
     usage = box.helper("lane-checkout")
     assert usage.returncode == 64
+
+
+def _fake(path: Path, text: str) -> Path:
+    path.write_text(text, encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def _creation_bench(box: Box, clone_body: str) -> dict:
+    """The heartbeat's minute as a second (a `sleep` first on PATH that turns
+    `sleep 60` into `sleep 1`), and a `LANES_GIT` whose clone runs
+    `clone_body` first: so a heartbeat beats while the clone runs."""
+    real_sleep, real_git = shutil.which("sleep"), shutil.which("git")
+    _fake(box.fakebin / "sleep", f"""#!/usr/bin/env bash
+if [ "$*" = 60 ]; then exec '{real_sleep}' 1; fi
+exec '{real_sleep}' "$@"
+""")
+    slow = _fake(box.root / "slow-clone-git", f"""#!/usr/bin/env bash
+case " $* " in *" clone "*)
+{clone_body}
+;; esac
+exec '{real_git}' "$@"
+""")
+    return {"LANES_GIT": str(slow)}
+
+
+def test_a_creation_lock_that_vanished_is_not_made_again(box: Box):
+    """MUST 4, at the creation lock: its first touch and its heartbeat refresh
+    it and never make one. The lock directory is moved away by the first touch
+    that names it, as the clone begins; nothing is made in its place then, nor
+    by any heartbeat while the clone runs, and the write still lands."""
+    lock = box.lanes_root / f".{LANE}.lock"
+    mark = box.root / "taken"
+    real_touch = shutil.which("touch")
+    _fake(box.fakebin / "touch", f"""#!/usr/bin/env bash
+case " $* " in *'{lock}'*)
+  if [ ! -e '{mark}' ]; then : > '{mark}'; mv '{lock}' '{lock}.gone'; fi ;;
+esac
+exec '{real_touch}' "$@"
+""")
+    extra = _creation_bench(box, f"  '{shutil.which('sleep')}' 3")
+    result = box.stamp(LANE, "past a vanished creation lock", **extra)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert mark.exists(), "the creation lock was taken away under its holder"
+    assert not lock.exists() and not lock.is_symlink(), \
+        "nothing was made in its place, by the first touch or by a heartbeat"
+    assert " · past a vanished creation lock |" in box.origin_register()
+
+
+def test_the_creation_lock_is_refreshed_while_the_clone_runs(box: Box):
+    """NIT 5: a clone may take its whole budget, ten minutes or more, and a
+    waiter in another container takes a creation lock that has not moved for
+    ten. So the holder refreshes it while the clone runs: aged to twenty
+    minutes as the clone begins, it is fresh again before the clone ends."""
+    lock = box.lanes_root / f".{LANE}.lock"
+    seen = box.root / "seen"
+    old = int(time.time()) - 20 * 60
+    real_touch, real_sleep = shutil.which("touch"), shutil.which("sleep")
+    extra = _creation_bench(box, f"""  '{real_touch}' -c -d '@{old}' '{lock}'
+  '{real_sleep}' 4
+  if [ -n "$(find '{lock}' -maxdepth 0 -mmin -1 2>/dev/null)" ]; then echo fresh > '{seen}'; else echo stale > '{seen}'; fi""")
+    result = box.stamp(LANE, "a slow first clone", **extra)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert seen.read_text(encoding="utf-8").strip() == "fresh", \
+        "the creation lock was refreshed while the clone ran"
+
+
+@pytest.mark.parametrize("name", ["repoCK/1", "repoCK 1"])
+def test_a_name_the_log_cannot_carry_is_refused_though_an_alias_maps_it(tmp_path: Path, name: str):
+    """The typed name is checked BEFORE `canon_lane` reads with it, not only
+    the canonical one after: a hand-made `aliases.tsv` row that maps a name no
+    log file can carry onto a real lane lets no write through under it."""
+    box = Box(tmp_path, rows=("repoCK-1",), aliases=f"{name}\trepoCK-1\t2026-10-17T00:00:00Z\n")
+    head = box.origin_head()
+    result = box.stamp(name, "never written")
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "is not a lane name" in result.stderr, result.stderr
+    assert not box.lanes_root.exists(), "nothing was created for that name"
+    assert box.origin_head() == head

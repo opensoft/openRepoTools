@@ -634,3 +634,22 @@ def test_a_routed_sweep_refuses_over_a_peer_edit_in_W_and_captures_nothing(reg):
     assert reg.head() == before and reg.read("lanes/LANES.md") == edited
     assert reg.raw_git("--git-dir", str(reg.origin), "rev-parse", "main").strip() == published
     assert not (reg.tmp / "wip-lanes").exists()
+
+
+def test_item_9_refuses_in_the_scan_under_the_opt_in_too(reg):
+    """MUST 5's seam, under the routing: with `LANES_ROUTE_WRITES=1` the
+    sweep still writes through `wip`, where the case puts its fault, and so
+    still refuses in the scan. Had the fixture left W at `wip`, the sweep
+    would go through `<wip>-lanes/repoX-1/`, never see the fault, and push."""
+    logs = reg.wip / "lanes" / "log"
+    before = reg.head()
+    logs.chmod(0)
+    try:
+        result = reg.sweep("repoX-2", LANES_ROUTE_WRITES="1")
+    finally:
+        logs.chmod(0o755)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert "exists and could not be listed" in result.stderr
+    assert reg.head() == before
+    assert reg.dirty() == ""
+    assert not (reg.tmp / "wip-lanes").exists(), "no lane checkout was made beside wip"

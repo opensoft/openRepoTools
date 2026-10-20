@@ -424,3 +424,18 @@ def test_an_explicit_LANES_REPO_still_needs_a_lane(box: Box):
     assert result.returncode == 2, (result.stdout, result.stderr)
     assert "no lane, no write" in result.stderr and "LANES_LANE=<lane>" in result.stderr
     assert box.origin_head() == head
+
+
+def test_S5_refuses_a_checkout_whose_git_directory_is_W(box: Box):
+    """SHOULD 3, the second clause: a checkout whose `.git` names W's — a
+    linked worktree of W, or a gitfile view like the shell suite's — commits
+    into W's own refs although its top level is not W, so S5 refuses it."""
+    view = box.root / "a-view-of-W"
+    view.mkdir()
+    (view / ".git").write_text(f"gitdir: {box.w / '.git'}\n", encoding="utf-8")
+    shutil.copytree(box.w / "lanes", view / "lanes")
+    head, w_before = box.origin_head(), box.w_state()
+    result = box.helper("set-row-state", LANE, "LIVE · never written", LANES_REPO=str(view))
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "readers' copy" in result.stderr and "Amendment 23 S5" in result.stderr, result.stderr
+    assert_nothing_written(box, head, w_before)
