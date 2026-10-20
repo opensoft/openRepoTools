@@ -39,6 +39,22 @@ printf 'FAKE %s REFUSED: %s -- this suite reaches no real surface\\n' "${0##*/}"
 exit 90
 """
 
+#: `LANES_GIT`: every NETWORK call the helper makes, logged one per line, then
+#: an optional hook (`FAKE_NET_HOOK`, run as `<hook> <op> <git args…>`), then the
+#: real git. The hook decides: exit 0 runs the real git; exit 97 means the hook
+#: ran git itself and the call succeeded; any other exit is the call's own
+#: (a failure). `<op>` is the git subcommand: fetch, push, ls-remote or clone.
+NET_GIT = """#!/usr/bin/env bash
+op=""
+for a in "$@"; do case "$a" in fetch|push|pull|ls-remote|clone) op="$a"; break ;; esac; done
+printf '%s %s\\n' "$op" "$*" >> "$FAKE_NET_LOG"
+if [ -n "${FAKE_NET_HOOK:-}" ]; then
+  rc=0; "$FAKE_NET_HOOK" "$op" "$@" || rc=$?
+  case "$rc" in 0) : ;; 97) exit 0 ;; *) exit "$rc" ;; esac
+fi
+exec git "$@"
+"""
+
 
 def register_text(rows) -> str:
     return HEADER + "".join(f"{r}\n" for r in rows)
@@ -149,6 +165,69 @@ class RegisterBox:
         self.write(self.seed, rel, text)
         self.commit(self.seed, f"a peer writes {rel}", rel)
         self.git("-C", str(self.seed), "push", "-q", "origin", "main")
+
+    def peer_edits(self, rel: str, old: str, new: str, message: str = "") -> None:
+        """The seed clone, brought up to date, replaces `old` with `new` in one
+        file and publishes it: another writer's commit landing first."""
+        self.git("-C", str(self.seed), "pull", "-q", "--ff-only", "origin", "main")
+        path = self.seed / rel
+        text = path.read_text(encoding="utf-8")
+        assert text.count(old) == 1, (rel, old)
+        path.write_text(text.replace(old, new), encoding="utf-8")
+        self.commit(self.seed, message or f"a peer edits {rel}", rel)
+        self.git("-C", str(self.seed), "push", "-q", "origin", "main")
+
+    # ------------------------------------------------------------- the seam
+    def seam(self, name: str = "c") -> Path:
+        """A clone of origin named by the explicit `LANES_REPO` (S2.1, the
+        test seam): every write of this box then goes through it, in place."""
+        checkout = self.clone(self.root / name)
+        self.env["LANES_REPO"] = str(checkout)
+        return checkout
+
+    def use_net(self, hook: str = "") -> Path:
+        """Route the helper's network calls through `NET_GIT`, logged to
+        `self.net_log`; `hook` is the body of `FAKE_NET_HOOK`, if any."""
+        shim = self.fakebin / "net-git"
+        shim.write_text(NET_GIT, encoding="utf-8")
+        shim.chmod(0o755)
+        self.net_log = self.root / "net.log"
+        self.net_log.write_text("", encoding="utf-8")
+        self.env["LANES_GIT"] = str(shim)
+        self.env["FAKE_NET_LOG"] = str(self.net_log)
+        if hook:
+            body = self.fakebin / "net-hook"
+            body.write_text("#!/usr/bin/env bash\n" + hook, encoding="utf-8")
+            body.chmod(0o755)
+            self.env["FAKE_NET_HOOK"] = str(body)
+        return shim
+
+    def net_ops(self) -> list:
+        """The network operations the helper made, in order."""
+        return [line.split(" ", 1)[0] for line in
+                self.net_log.read_text(encoding="utf-8").splitlines()]
+
+    def snapshot(self, checkout: Path) -> tuple:
+        """Everything a refusal must leave as it was: HEAD and the branch it
+        is on, the index, the working tree, and origin's tip."""
+        c = ["-C", str(checkout)]
+        return (self.git(*c, "rev-parse", "HEAD").strip(),
+                self.git(*c, "symbolic-ref", "-q", "HEAD", check=False).strip(),
+                self.git(*c, "status", "--porcelain", "--untracked-files=all"),
+                self.git(*c, "diff"),
+                self.git(*c, "diff", "--cached"),
+                self.origin_head())
+
+    @staticmethod
+    def lock_of(checkout: Path) -> Path:
+        return checkout / "lanes" / ".lanes-edit.lock"
+
+    def unpublished(self, checkout: Path) -> list:
+        """`git cherry -v origin/main HEAD`'s `+` lines: what origin lacks."""
+        self.git("-C", str(checkout), "fetch", "-q", "origin")
+        return [line for line in self.git("-C", str(checkout), "cherry", "-v",
+                                          "refs/remotes/origin/main", "HEAD").splitlines()
+                if line.startswith("+")]
 
     # ------------------------------------------------------------- the helper
     def cmd(self, *args: str) -> list:
