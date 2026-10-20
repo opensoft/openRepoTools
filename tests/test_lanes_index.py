@@ -2773,15 +2773,11 @@ def test_a_lane_listing_that_is_not_whole_removes_no_row(inv, kind, revs, only, 
     assert "NOT WHOLE" not in src.stdout
 
 
-def test_a_lane_whose_log_could_not_be_read_keeps_its_rows(inv):
-    """A LOG THE LISTING COULD NOT READ IS NOT A LANE WITH NO TREES
-    (opensoft/openRepoTools#173 item c1). Where no override names a control
-    root, a lane's trees are under `<parent of its dir>/.lane-state/<lane>`, and
-    `dir` is its log's. A published log git could not read gave the listing no
-    `dir`, the root fell through to `$PROJECTS_ROOT/.lane-state/<lane>`, where
-    no tree is, and the sync removed the lane's rows. That log is a read the
-    listing rests on like the other three: the read is `PARTIAL`, naming it,
-    and nothing is written."""
+def _a_lane_found_through_its_log(inv: Inventory) -> tuple[dict, str]:
+    """repoB-1 RESUMED in a checkout of its own, whose `dir` only its log
+    records, with one tree under `<parent of that dir>/.lane-state` - synced
+    with no override naming a control root, so the tree is found through the
+    log's `dir` alone. Returns that environment and the tree's row key."""
     away = inv.root / "elsewhere"
     (away / "repoB").mkdir(parents=True)
     log = inv.e.wip / "lanes" / "log" / "repoB-1.md"
@@ -2796,6 +2792,19 @@ def test_a_lane_whose_log_could_not_be_read_keeps_its_rows(inv):
     assert inv.sync(env=by_dir).returncode == 0
     key = "repoB-1:/nowhere/repoB-1/w"
     assert key in inv.rows(), sorted(inv.rows())  # found through its log's `dir` alone
+    return by_dir, key
+
+
+def test_a_lane_whose_log_could_not_be_read_keeps_its_rows(inv):
+    """A LOG THE LISTING COULD NOT READ IS NOT A LANE WITH NO TREES
+    (opensoft/openRepoTools#173 item c1). Where no override names a control
+    root, a lane's trees are under `<parent of its dir>/.lane-state/<lane>`, and
+    `dir` is its log's. A published log git could not read gave the listing no
+    `dir`, the root fell through to `$PROJECTS_ROOT/.lane-state/<lane>`, where
+    no tree is, and the sync removed the lane's rows. That log is a read the
+    listing rests on like the other three: the read is `PARTIAL`, naming it,
+    and nothing is written."""
+    by_dir, key = _a_lane_found_through_its_log(inv)
     with _unreadable(inv.e, "origin/main:lanes/log/repoB-1.md"):
         res = inv.sync(env=by_dir)
         assert key in inv.rows(), (res.stdout, res.stderr)
@@ -2891,20 +2900,7 @@ def test_a_log_list_that_fails_after_the_check_removes_no_row(inv, last):
     the rows. The names now come from the list the check made, and the
     events' own list, where it fails, says so: the read is `PARTIAL` and
     nothing is written."""
-    away = inv.root / "elsewhere"
-    (away / "repoB").mkdir(parents=True)
-    log = inv.e.wip / "lanes" / "log" / "repoB-1.md"
-    log.write_text(log.read_text(encoding="utf-8") +
-                   f"RESUMED — lane repoB-1, session {UUID_B1}@Eagle, 2026-10-05T00:00:00Z, "
-                   f"lane:repoB-1 → dir {away / 'repoB'}; profile team-02a\n", encoding="utf-8")
-    inv.e._git("add", "-A")
-    inv.e._git("commit", "-q", "-m", "repoB-1 resumed in a checkout of its own")
-    inv.e._git("push", "-q", "origin", "main")
-    _sidecar(away / ".lane-state", "repoB-1", HEADS["repoB-1"])
-    by_dir = {"LANES_LANE_STATE_ROOT": None}
-    assert inv.sync(env=by_dir).returncode == 0
-    key = "repoB-1:/nowhere/repoB-1/w"
-    assert key in inv.rows(), sorted(inv.rows())  # found through its log's `dir` alone
+    by_dir, key = _a_lane_found_through_its_log(inv)
     before = dump(inv.e.sqlite, with_utc=True)
     env, shim_log = _git_shim(inv, LIST_LOGS, first=2, last=last)
     res = inv.sync(env={**by_dir, **env})
