@@ -472,6 +472,59 @@ follow-up this change had filed and deferred:
   nothing unmanaged or stale, and the report it prints names the binding when
   it is neither here nor free.
 
+## Decisions taken on the filed findings #113, #114 and #115
+
+### 26. Every read the reconciliation rests on has a status, and a failed one is never an empty one
+
+#113's three remaining reads, and the one beside its second that 8.12 left:
+the holder ids (#67's `session_ids_checked`: a published register or this
+checkout's copy that could not be read is `HOLDER unknown` and so
+`indeterminate`, never an empty id set `live_holder` answers 8 for);
+`branch.<b>.remote` (the `case` its `merge` sibling already had, so a failed
+read is `lane_tree_now`'s 3, never the local upstream `./<merge>`); `git
+worktree list --porcelain` in the lane's checkout; and `lane-trees`' 10 for an
+inventory directory that cannot be listed. The last two, and a lane root that
+cannot be listed or searched, leave trees nobody read, so each makes the
+verdict `indeterminate` and is named in it. A per-record failure stays a row
+counted toward recovery, as `unreadable-sidecar` is, and leaves the verdict as
+it was — the line T018 draws for an unreadable leg. A recorded directory that is NO
+repository registers nothing, and that alone is an absence — `lane-worktrees`'
+`no_repository`, #170 G5's rule — so the two readers of one checkout agree.
+
+### 27. An inventory fence names an operation that must still be open
+
+#114 offered two exits: require `SWAPPING` while an observation is filed under
+an operation, or invalidate the operation id at finalization. The first refuses
+a write this change's own suite makes on purpose — a lane `RUNNING` after a
+resume records under its current generation and operation (repoRC-5, section
+11(c)) — and the second changes what `SWAPPED` writes, which decision 13 and
+`lane-handoff`'s finalizer read back. So the fence refuses where the lane reads
+`SWAPPED`: every other transition advances the generation, which already
+refuses an older pair, and `SWAPPED` is the one state in which a matching pair
+names a FINISHED operation. Exit 7, as every fence refusal is; an observation
+under no transition is an unfenced `set-lane-tree`.
+
+### 28. A record of the known schema is valid only when it is whole
+
+#115. `lane_sidecar_schema_ok` keeps its name and its callers, and now asks of
+a record of the current schema every key its writer writes, the shapes the
+readers decide with, and the id a tree record's file gives it. Both writers
+have written exactly those keys since #97 landed, so no released record fails.
+A malformed record takes the unknown schema's path everywhere: refused by every
+writer (1), `lane-state` 10 and `MALFORMED` in the reconciliation (no new exit
+code — 10 already means *there, and nothing could be read out of it*), and a
+`<malformed>` row of `lane-trees` that `lane-reconcile` reports as
+`malformed-sidecar`. `lane_sidecar_put` asks the same of its temporary file
+before the rename, and `set-lane-tree` refuses with 64 a count that is not one
+or a field that is only blanks, so no writer files a record its own readers
+would refuse. Which kind of record a file is comes from where it is filed, and
+the snapshot's `*/lane-state.yaml` is asked first: `*` matches `/`, so a tree's
+`*/trees/*.yaml` would also match a snapshot under any directory named `trees`,
+and no tree file is named `lane-state.yaml` (its id is `c<cksum>-…`). A record's
+`lane:` is required but not compared with the lane it is filed under, because
+`rename-lane` moves the control root and leaves that line naming the old lane
+until the next write (`lane_state_rename`); its readers do not key on it.
+
 ## Risks / Trade-offs
 
 - **[Risk] Lane-first discovery conflicts with feature-first Speckit paths** → Use a sidecar index over shape-governed paths; do not move governed trees.

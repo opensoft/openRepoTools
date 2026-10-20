@@ -453,12 +453,12 @@ hashes: the committer differs, so the hashes do.
 
 | # | Patch (branch, head) | sha256 | Leg | Applies to | Rehearsed result | Re-applied tree (T011) | At T014 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | `patches/t006/assembly-0001-…front-door…` (root-guidance `041a273`) | `cd69c2a9…c5d096` | assembly | split `69b8924` | `3361812` | — (the three stack, below) | **applies as-is** onto the real split, after the frozen source's root files are checked unchanged |
+| 1 | `patches/t006/assembly-0001-…front-door…` (root-guidance `041a273`) | `cd69c2a9…c5d096` | assembly | split `69b8924` | `3361812` | — (the three stack, below) | **applies as-is** onto the real split, after the frozen source's root files are checked unchanged. *Superseded 2026-10-19: the file at this path is re-cut, sha256 `2ec48bbf…eaead7`, because the root files did change (#227, #237 and #228 rewrote the lines seven of its hunks stand on), so this row's file no longer applies to them (`gate-b-status-2026-10-09.md`, checklist line 17).* |
 | 2 | `patches/t006/assembly-0002-Bump-spec-leg-to-39c18877e042…` | `574c0df1…3647f9` | assembly | `3361812` | `1024f18` | — | **regenerated**: `bump-leg.py` against the real spec commit |
 | 3 | `patches/t006/assembly-0003-Bump-code-leg-to-6169e8e96164…` | `a7f8521b…ec14aa` | assembly | `1024f18` | `3e87e39` | 1–3: `6eb8145e…`, as recorded | **regenerated**: `bump-leg.py` against the real code commit |
 | 4 | `patches/t006/code-0001-…own-front-door…` | `74b98ff9…2ae1ec1` | code | code `73b04d6` | `6169e8e` | `ca65c3b9…`, as recorded | **applies as-is** |
 | 5 | `patches/t006/spec-0001-…own-front-door…` | `c11070f0…8210b3` | spec | spec `593250d` | `39c1887` | `10256135…`, as recorded | **applies as-is** |
-| 6 | `patches/t010-code-leg-tests-workflow.patch` (ci `cc7c7a1`) | `7ee3c6d0…786c3b` | code | code `73b04d6` | `b95d667` | alone: exit 0; on #4: exit 0 (`007509d2…`) | **applies as-is**; its env names mean something once PR #190 is in the code |
+| 6 | `patches/t010-code-leg-tests-workflow.patch` (ci `cc7c7a1`) | `7ee3c6d0…786c3b` | code | code `73b04d6` | `b95d667` | alone: exit 0; on #4: exit 0 (`007509d2…`) | **applies as-is**; its env names mean something once PR #190 is in the code. *Superseded 2026-10-19: the file at this path is regenerated, sha256 `1406ead3…ef6d56`, against the `tests.yml` #228's PR 2 leaves (blob `2cfa173`), because #227 and #209 rewrote `tests.yml` and this row's file (base blob `e27bc64`) no longer applies (`gate-b-status-2026-10-09.md`, checklist lines 32 and 33).* |
 | 7 | `patches/t010-assembly-exact-pin-job.patch` | `6ee09f00…74670b` | assembly | split `69b8924` (proof commit `386be81` sat on the rehearsal-only bump `6ccdaf8`) | `386be81` | alone: exit 0 (`c37aa4f0…`); on #1–3: exit 0 (`b351c8e9…`) | **applies as-is** (a new file); `bash code/tests/run.sh` with `OPENREPOTOOLS_COMPOSED=1` needs PR #190 in the code leg |
 | — | T007's assembly root `openRepoTools` entry point | — | assembly | — | — | — | **absent**: no `004-migrate-to-triad-installer` on origin; PR #191's body says it will be recorded there |
 | — | the rehearsal-only bump `6ccdaf8` (code leg to `8ebf4ec`, PR #190 on `73b04d6`) | not a patch file | assembly | — | — | — | **regenerated**, like #2–3 |
@@ -479,6 +479,13 @@ hashes: the committer differs, so the hashes do.
 - **spec:** #5 alone.
 
 This is a text-level check only. **No test ran on the stacked candidate.**
+
+*Superseded 2026-10-19:* the counts, the stacking and the `git diff --check` results above are for the files
+of that date. #1 is re-cut and #6 regenerated (their rows say why), and neither earlier file applies to the
+root files and `tests.yml` that #228's series leaves. The inventory has an eighth file,
+`patches/t009-assembly-caps.patch` (code leg, sha256 `2dd4aac2…b2bbe5`), which goes on after #4 and #6 and sets
+the assembly-root length caps the re-cut `assembly-0001` needs. The statuses now are in
+`gate-b-status-2026-10-09.md`, checklist lines 17, 32, 33, 40 and 46.
 
 Corrected (F20; lane 2's verification, #186 comment 6082370012):
 - "As recorded" holds for the T006 trees (#1–#3 as a stack, #4, #5). Nothing recorded a
@@ -509,8 +516,8 @@ in `root-guidance-2026-10-08.md` are on main since #192 (`1abee1d`).
 
 | Follow-up (where named) | Patch, branch or PR | Owner | State at 20:30Z |
 | --- | --- | --- | --- |
-| T006's five patches (the table above) | `patches/t006/`, on main since #192 | lane 1 (T006) | reviewed: LAND (5464893559). #2, #3 and the bump `6ccdaf8` regenerate at T014 |
-| T010's two patches (the table above) | `004-migrate-to-triad-ci` `d28e2cc` | lane 1 (T010) | no review verdict posted; lane 3's reviewer has resumed (#186 comment 6088703549). Both are authored by the fixture identity, to carry a real author at T014 (#186 comment 6082068576, finding 9). *Corrected 2026-10-11 (lane 3's 5481348731 on #196, item 7): the verdict came after this record's origin read. It is #186 comment 6089801221 (2026-10-09T21:47Z), on `d28e2cc`: both patches apply (to run C, and the code-leg patch also to `f87fd5a`), and the code leg's `tests.yml` keeps everything the gate reads. It is fit for evidence-3, with #180 to settle before the composed job is relied on, because `composed.yml` runs the suite through `run.sh` (its finding 13). It repeats the author point: give both patches a real author at T014.* |
+| T006's five patches (the table above) | `patches/t006/`, on main since #192 | lane 1 (T006) | reviewed: LAND (5464893559). #2, #3 and the bump `6ccdaf8` regenerate at T014. *Superseded 2026-10-19: the review covers the earlier `assembly-0001`. The re-cut has none yet; its review is the independent review of the cutover-patches PR (branch `004-triad-cutover-patches`).* |
+| T010's two patches (the table above) | `004-migrate-to-triad-ci` `d28e2cc` | lane 1 (T010) | no review verdict posted; lane 3's reviewer has resumed (#186 comment 6088703549). Both are authored by the fixture identity, to carry a real author at T014 (#186 comment 6082068576, finding 9). *Corrected 2026-10-11 (lane 3's 5481348731 on #196, item 7): the verdict came after this record's origin read. It is #186 comment 6089801221 (2026-10-09T21:47Z), on `d28e2cc`: both patches apply (to run C, and the code-leg patch also to `f87fd5a`), and the code leg's `tests.yml` keeps everything the gate reads. It is fit for evidence-3, with #180 to settle before the composed job is relied on, because `composed.yml` runs the suite through `run.sh` (its finding 13). It repeats the author point: give both patches a real author at T014.* *Superseded 2026-10-19: that verdict covers the earlier code-leg patch. The regenerated one has no review yet.* |
 | T007's assembly entry point | `004-migrate-to-triad-installer` `51993a4` | lane 1 (T007) | CHANGES REQUIRED (5471121210, T3) |
 | T007/T008's code side | #191 `13cc752` | lane 1 (T007) | LAND with conditions (5471121210); next head `fdc5f18` announced. Open there: the parent-directory walk (delta 4, which `fdc5f18` answers per lane 1) and the hygiene test passing by spelling (delta 5) |
 | #190's manual guard (#193 item 1) | in #190 since `b50f197` | lane 1 (T009) | resolved: landed with #190 |
@@ -620,6 +627,9 @@ resolved mapping and a passing compatibility test matrix" (plan.md). Against tha
      verdict came after this record's origin read. It is #186 comment 6089801221
      (2026-10-09T21:47Z): fit for evidence-3, with #180 to settle before the composed
      job is relied on (its finding 13).*
+   - *Superseded 2026-10-19:* lane 3's #192 review covers the earlier `assembly-0001`, and #186 comment
+     6089801221 the earlier code-leg patch. The re-cut, the regenerated patch and
+     `patches/t009-assembly-caps.patch` have no review yet (the notes under section 5's tables).
 5. **Mapping.** Main carries run B's plan, source `e43b243`, which survives only as
    `refs/pull/188/head`. Run C's plan, source `837928a`, is in #192, unlanded.
 

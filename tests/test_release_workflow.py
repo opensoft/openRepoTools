@@ -76,8 +76,10 @@ here reads `specs/`, which goes to the spec leg at the cutover.
 from __future__ import annotations
 
 import base64
+import difflib
 import functools
 import hashlib
+import http.server
 import json
 import os
 import re
@@ -86,6 +88,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import threading
 import zipfile
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -1551,13 +1554,20 @@ def no_license(members: dict, info: str) -> None:
                                   mode)
 
 
-def a_changed_byte(rel: str) -> Callable[[dict, str], None]:
+def a_changed_member(member: str) -> Callable[[dict, str], None]:
+    """`member`, where `{info}` is the `.dist-info/` prefix, with its middle
+    byte changed."""
     def change(members: dict, info: str) -> None:
-        data, mode = members[layout.PAYLOAD_PREFIX + rel]
+        name = member.format(info=info)
+        data, mode = members[name]
         middle = len(data) // 2
-        members[layout.PAYLOAD_PREFIX + rel] = (
+        members[name] = (
             data[:middle] + bytes([data[middle] ^ 0x20]) + data[middle + 1:], mode)
     return change
+
+
+def a_changed_byte(rel: str) -> Callable[[dict, str], None]:
+    return a_changed_member(layout.PAYLOAD_PREFIX + rel)
 
 
 def a_changed_mode(rel: str, mode: int) -> Callable[[dict, str], None]:
@@ -1567,29 +1577,74 @@ def a_changed_mode(rel: str, mode: int) -> Callable[[dict, str], None]:
     return change
 
 
-#: contracts/workflows.md's synthetic wheels that are not the commit's, each
-#: with what its refusal must name, and the mode HEAD gives the file changed.
+def a_missing_member(member: str) -> Callable[[dict, str], None]:
+    def change(members: dict, info: str) -> None:
+        del members[member]
+    return change
+
+
+def an_extra_member(member: str, data: bytes) -> Callable[[dict, str], None]:
+    def change(members: dict, info: str) -> None:
+        assert member not in members, f"the case is wrong: {member} is HEAD's"
+        members[member] = (data, 0o644)
+    return change
+
+
+def a_line_more_in_the_stamp(members: dict, info: str) -> None:
+    """The stamp with a comment line after its last: its five assignments are
+    still the release's, and its bytes are not the committed file stamped."""
+    data, mode = members["openrepotools/_release.py"]
+    members["openrepotools/_release.py"] = (
+        data + b"# a line the committed stamp does not have\n", mode)
+
+
+#: THE SYNTHETIC WHEELS THAT ARE NOT THE COMMIT'S: contracts/workflows.md's
+#: four, then one for each other check the step makes (contracts/wheel.md's
+#: checks 2 to 5, and the run's values). Each is `(what its refusal must
+#: name, the change to the wheel as built, the mode HEAD gives the file
+#: changed, the run's values where they are not the release's)`.
 NOT_THE_COMMITS = {
-    "no-licenses-LICENSE": ("LICENSE", no_license, None),
+    "no-licenses-LICENSE": ("LICENSE", no_license, None, None),
     "a-payload-byte-changed": ("lanes-edit.sh", a_changed_byte("lanes-edit.sh"),
-                               None),
+                               None, None),
     "a-payload-mode-0755-made-0644": (
-        "link-estates", a_changed_mode("link-estates", 0o644), "100755"),
+        "link-estates", a_changed_mode("link-estates", 0o644), "100755", None),
     "a-payload-mode-0644-made-0755": (
-        "repos.tsv", a_changed_mode("repos.tsv", 0o755), "100644"),
+        "repos.tsv", a_changed_mode("repos.tsv", 0o755), "100644", None),
+    "a-licenses-LICENSE-of-other-bytes": (
+        "licenses/LICENSE", a_changed_member("{info}licenses/LICENSE"), None,
+        None),
+    "a-module-byte-changed": ("openrepotools/cli.py",
+                              a_changed_member("openrepotools/cli.py"), None,
+                              None),
+    "a-payload-file-missing": (
+        "openrepotools/payload/lanes-index",
+        a_missing_member(layout.PAYLOAD_PREFIX + "lanes-index"), None, None),
+    "a-member-nothing-puts-there": (
+        "extra.pth", an_extra_member("extra.pth", b"import os\n"), None, None),
+    "the-stamp-with-a-line-more": ("_release.py", a_line_more_in_the_stamp,
+                                   None, None),
+    "a-run-of-another-repository": (
+        f"'REPOSITORY': '{THIS_REPOSITORY}'", None, None,
+        {"GITHUB_REPOSITORY": THIS_REPOSITORY}),
 }
 
 
 def run_wheel_check(workflow: dict, work: Path, release_: dict,
-                    change: Optional[Callable[[dict, str], None]]
-                    ) -> subprocess.CompletedProcess:
+                    change: Optional[Callable[[dict, str], None]],
+                    run: Optional[dict] = None) -> subprocess.CompletedProcess:
+    """The wheel check's heredoc on the wheel as built for `release_`, with
+    `change` made to it, under the run's values: the release's, or `run`'s
+    where it names any."""
     members, info = wheel_members(release_)
     if change is not None:
         change(members, info)
     wheel = write_wheel(work / "dist" / f"openrepotools-{release_['VERSION']}"
                         "-py3-none-any.whl", members, info)
+    values = release_values(release_)
+    values.update(run or {})
     return run_heredoc(named(workflow, "build", WHEEL_CHECK_STEP), work, [wheel],
-                       release_values(release_), cwd=REPO)
+                       values, cwd=REPO)
 
 
 @NEEDS_UPSTREAM
@@ -1612,16 +1667,21 @@ def test_release_build_the_wheel_check_refuses_a_wheel_that_is_not_the_commit_s(
         tmp_path, which):
     """STEP 13 ON EACH WHEEL THAT IS NOT THE COMMIT'S (FR-002, FR-006): no
     `licenses/LICENSE`, a payload file with a byte changed, and a payload file
-    with its mode changed either way. Each fails, and among the lines it
-    prints beyond the wheel as built's is one naming what is wrong."""
-    names, change, head_mode = NOT_THE_COMMITS[which]
+    with its mode changed either way; then a `licenses/LICENSE` that is not
+    the commit's, a module with a byte changed, a payload file missing, a
+    member nothing puts in the wheel, a stamp whose bytes are not the
+    committed file stamped though its five values are the release's, and the
+    wheel as built checked in a run of another repository. Each fails, and
+    among the lines it prints beyond the wheel as built's is one naming what
+    is wrong."""
+    names, change, head_mode, run = NOT_THE_COMMITS[which]
     if head_mode is not None:
         assert head()[1][names][0] == head_mode, (
             f"the case is wrong: HEAD's {names} is not {head_mode}")
     workflow = release()
     release_ = wheel_release("1.1.0")
     good = run_wheel_check(workflow, tmp_path / "w" / "a", release_, None)
-    bad = run_wheel_check(workflow, tmp_path / "w" / "b", release_, change)
+    bad = run_wheel_check(workflow, tmp_path / "w" / "b", release_, change, run)
     assert good.returncode == 0, transcript(good)
     assert bad.returncode != 0, transcript(bad)
     assert "Traceback (most recent call last)" not in bad.stdout + bad.stderr, (
@@ -1751,6 +1811,20 @@ def test_release_stamp_writer_refuses_a_file_already_stamped(tmp_path):
     assert [copy.read_bytes() for copy in more] == [stamped_text] * 2
 
 
+def a_stamp_the_writer_refuses(which: str) -> bytes:
+    """The committed stamp made into one the writer must refuse: already
+    stamped, with a `TAG = ""` written twice, or with no `DIGEST = ""`."""
+    text = STAMP.read_text(encoding="utf-8")
+    if which == "already-stamped":
+        return stamped(text, RELEASES["the-code-leg-s-v1.1.0"]).encode("utf-8")
+    lines = text.split("\n")
+    if which == "a-line-twice":
+        lines.insert(lines.index('TAG = ""'), 'TAG = ""')
+    else:
+        lines.remove('DIGEST = ""')
+    return "\n".join(lines).encode("utf-8")
+
+
 @NEEDS_UPSTREAM
 @pytest.mark.parametrize("which", ["a-line-twice", "a-line-missing"])
 def test_release_stamp_writer_refuses_a_file_that_is_not_the_committed_stamp(
@@ -1758,17 +1832,64 @@ def test_release_stamp_writer_refuses_a_file_that_is_not_the_committed_stamp(
     """EACH COMMITTED LINE EXACTLY ONCE (contracts/stamp.md, "A count other
     than one refuses"): a `TAG = ""` written twice, or a `DIGEST = ""` that
     is not there, is refused, and neither file is written."""
-    lines = STAMP.read_text(encoding="utf-8").split("\n")
-    if which == "a-line-twice":
-        at = lines.index('TAG = ""')
-        lines.insert(at, 'TAG = ""')
-    else:
-        lines.remove('DIGEST = ""')
-    text = "\n".join(lines).encode("utf-8")
+    text = a_stamp_the_writer_refuses(which)
     done, copies = write_stamp(release(), tmp_path,
                                RELEASES["the-code-leg-s-v1.1.0"], [text, text])
     assert done.returncode != 0, transcript(done)
     assert [copy.read_bytes() for copy in copies] == [text, text]
+
+
+@NEEDS_UPSTREAM
+@pytest.mark.parametrize("which", ["already-stamped", "a-line-twice",
+                                   "a-line-missing"])
+def test_release_stamp_writer_writes_neither_copy_until_both_are_checked(
+        tmp_path, which):
+    """BOTH ARE STAMPED AND CHECKED BEFORE EITHER IS WRITTEN (release.yml's
+    step 10, after contracts/stamp.md's "Checks before writing"): the
+    committed stamp as the first copy and one the writer refuses as the
+    second, and the writer refuses with both copies as they were. A writer
+    that wrote each copy as it checked it would leave the first extraction
+    stamped and the second not."""
+    texts = [STAMP.read_bytes(), a_stamp_the_writer_refuses(which)]
+    done, copies = write_stamp(release(), tmp_path,
+                               RELEASES["the-code-leg-s-v1.1.0"], texts)
+    assert done.returncode != 0, transcript(done)
+    assert [copy.read_bytes() for copy in copies] == texts, (
+        "the writer refused the second copy and wrote the first anyway")
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@pytest.mark.parametrize("which", RELEASES)
+def test_release_stamp_writer_step_as_github_runs_it_stamps_the_run_s_repository(
+        tmp_path, which):
+    """STEP 10, THE WHOLE STEP, RUN AS GITHUB RUNS IT (contracts/stamp.md,
+    "Input"): its bash sets `TAG`, `COMMIT` and `REPOSITORY` from `$VERSION`,
+    `$GITHUB_SHA` and `$GITHUB_REPOSITORY`, and its heredoc writes them, so
+    both extractions' stamps name the run's own repository, in this
+    repository, in the code leg and in a fork alike, and nothing the script
+    sets after its `export` replaces it."""
+    release_ = RELEASES[which]
+    workflow = release()
+    trees = [tmp_path / "a" / "openRepoTools",
+             tmp_path / "b" / "elsewhere" / f"v{release_['VERSION']}-src"]
+    copies = [tree / "src" / "openrepotools" / "_release.py" for tree in trees]
+    for copy in copies:
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_bytes(STAMP.read_bytes())
+    values = {"VERSION": release_["VERSION"], "GITHUB_SHA": release_["COMMIT"],
+              "GITHUB_REPOSITORY": release_["REPOSITORY"],
+              "DIGEST": release_["DIGEST"], "TREE_A": str(trees[0]),
+              "TREE_B": str(trees[1])}
+    runner = Runner(tmp_path / "work", workflow, "build", values)
+    done = runner.run(named(workflow, "build", STAMP_STEP))
+    assert done.returncode == 0, transcript(done)
+    want = stamped(STAMP.read_text(encoding="utf-8"), release_).encode("utf-8")
+    for copy in copies:
+        assert copy.read_bytes() == want, (
+            f"{copy} is not the committed stamp with {release_}:\n"
+            f"{copy.read_text(encoding='utf-8')}")
 
 
 @NEEDS_UPSTREAM
@@ -1816,7 +1937,8 @@ def tag_of(version: str) -> str:
 
 
 #: contracts/workflows.md's table, row by row: `(repository, ref, version,
-#: (to-testpypi, to-pypi))`, and `None` where the build refuses.
+#: (to-testpypi, to-pypi))`, and `None` where the build refuses. The last row
+#: is a ref that is neither a tag nor a branch, which the guard refuses too.
 GUARD_ROWS = (
     [pytest.param(CODE_LEG, tag_of(v), v, ("true", "true"),
                   id=f"code-leg-a-tag-final-{v}") for v in FINALS]
@@ -1842,6 +1964,8 @@ GUARD_ROWS = (
                     id=f"code-leg-{ref_name(ref).replace('/', '-')}")
        for ref in ("refs/heads/main", "refs/heads/release/v1.1",
                    "refs/heads/feature/a-b")]
+    + [pytest.param(CODE_LEG, "refs/pull/1/merge", "1.1.0", None,
+                    id="code-leg-a-pull-request-ref")]
 )
 
 
@@ -1886,9 +2010,10 @@ def test_release_guard_build_decides_by_the_table(tmp_path, repository, ref,
                                                   version, decision):
     """FR-048, ROW BY ROW: the code leg sends a final to both indexes and a
     pre-release to TestPyPI; this repository a pre-release to TestPyPI and a
-    final nowhere, refused; any other repository is refused on a tag; and a
-    branch is the rehearsal everywhere, passing with nothing to upload. The
-    guard decides from those three variables alone and asks no forge."""
+    final nowhere, refused; any other repository is refused on a tag; a
+    branch is the rehearsal everywhere, passing with nothing to upload; and a
+    ref that is neither, a pull request's, is refused. The guard decides from
+    those three variables alone and asks no forge."""
     workflow = release()
     runner = Runner(tmp_path, workflow, "build",
                     guard_values(repository, ref, version))
@@ -1997,13 +2122,18 @@ def upload_guard_params(name: str) -> list:
 
 
 def run_upload_guard(tmp_path: Path, name: str, repository: str,
-                     version: str) -> subprocess.CompletedProcess:
+                     version: str, ref: Optional[str] = None
+                     ) -> subprocess.CompletedProcess:
+    """Job `name`'s first step, its guard, on `ref`: the version's own tag
+    `refs/tags/v<version>` unless the case names another."""
     workflow = release()
     first = steps_of(workflow, name)[0]
     assert run_text(first) and "uses" not in first, (
         f"the {name} job's first step is {label(first)!r}, not its guard")
     runner = Runner(tmp_path, workflow, name,
-                    guard_values(repository, tag_of(version), version))
+                    guard_values(repository,
+                                 tag_of(version) if ref is None else ref,
+                                 version))
     return runner.run(first)
 
 
@@ -2033,6 +2163,47 @@ def test_release_guard_upload_pypi_s_first_step(tmp_path, repository, version,
     refuses outright, in case its condition is ever loosened."""
     done = run_upload_guard(tmp_path, "pypi", repository, version)
     assert (done.returncode == 0) == passes, transcript(done)
+
+
+#: What each upload job's guard passes on the version's own tag:
+#: `(job, repository, version)`.
+UPLOAD_GUARD_PASSES = [("testpypi", CODE_LEG, "1.1.0"),
+                       ("testpypi", CODE_LEG, "1.1.0rc1"),
+                       ("testpypi", THIS_REPOSITORY, "1.1.0rc1"),
+                       ("pypi", CODE_LEG, "1.1.0")]
+
+#: Every ref but `refs/tags/v<version>`, `<version>` the case's own: an
+#: upload is made from that tag alone.
+NOT_THE_VERSION_S_TAG = {
+    "a-branch": "refs/heads/main",
+    "the-rehearsal-branch": "refs/heads/l3-rehearsal-v1.1.0",
+    "a-branch-named-as-the-tag": "refs/heads/v<version>",
+    "another-version-s-tag": "refs/tags/v1.0.1",
+    "the-tag-without-its-v": "refs/tags/<version>",
+    "a-pull-request": "refs/pull/7/merge",
+    "no-ref-at-all": "",
+}
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@pytest.mark.parametrize("which", NOT_THE_VERSION_S_TAG)
+@pytest.mark.parametrize("name, repository, version", [
+    pytest.param(*case, id=f"{case[0]}-{case[1]}-{case[2]}")
+    for case in UPLOAD_GUARD_PASSES])
+def test_release_guard_upload_refuses_every_ref_but_the_version_s_own_tag(
+        tmp_path, name, repository, version, which):
+    """EACH UPLOAD JOB'S GUARD READS THE REF (FR-048: "each from its own tag
+    v<version>"), in case the job's `if:` is ever loosened. A repository and
+    a version the guard passes on `refs/tags/v<version>` are refused on a
+    branch, on a branch named as the tag, on another version's tag, on the
+    tag without its `v`, on a pull request's ref and on no ref at all."""
+    ref = NOT_THE_VERSION_S_TAG[which].replace("<version>", version)
+    own = run_upload_guard(tmp_path / "own", name, repository, version)
+    assert own.returncode == 0, transcript(own)
+    done = run_upload_guard(tmp_path / "other", name, repository, version, ref)
+    assert done.returncode != 0, f"{name}'s guard passed on {ref!r}:\n{transcript(done)}"
 
 
 # --- the jobs, their grants and their conditions ---------------------------------------
@@ -2157,14 +2328,25 @@ def test_release_upload_pypi_waits_for_testpypi_and_every_install_leg():
         "build", "testpypi", "install"}
 
 
+#: EACH UPLOAD JOB'S CHECK OF THE ARTIFACT AGAINST THE BUILD'S RECORD, the
+#: model's own step: found by its name, and holding the one command that
+#: compares the file's sha256 with the recorded one. No bare "sha256" will
+#: do, because the index steps read `["sha256"]` from the JSON too.
+DIST_STEP = "dist holds the wheel the build job verified, and nothing else"
+DIST_SHA256 = 'echo "$WHEEL_SHA256  dist/$WHEEL" | sha256sum --strict -c -'
+
+
 def before_publish_checks() -> list:
     """What each upload job reads before the upload, by what its script
-    asks: the artifact, its sha256, the environment's rules and this run's
-    approval again, the tag again, and the index's JSON for the version."""
+    asks: the artifact, its sha256 (the dist step, by its name and its
+    command), the environment's rules and this run's approval again, the tag
+    again, and the index's JSON for the version."""
     return [
         ("the build's artifact",
          lambda s: str(s.get("uses", "")).startswith("actions/download-artifact@")),
-        ("the wheel's sha256 against the build's", lambda s: "sha256" in run_text(s)),
+        ("the wheel's sha256 against the build's",
+         lambda s: (str(s.get("name", "")) == DIST_STEP
+                    and DIST_SHA256 in commands(run_text(s)))),
         ("the environment's rules, again",
          lambda s: "deployment-branch-policies" in run_text(s)),
         ("this run's approval", lambda s: "approvals" in run_text(s)),
@@ -2221,6 +2403,195 @@ def test_release_upload_both_jobs_run_the_same_checks_after_their_guards():
     for a, b in zip(mine, theirs):
         assert a.get("run") == b.get("run"), label(a)
     assert "test.pypi.org" not in json.dumps(job(workflow, "pypi"))
+
+
+# --- the index checks, run against a fake index ----------------------------------------
+
+#: The two index checks around each upload, by their names, and the JSON API
+#: each upload job reads.
+EMPTY_INDEX_STEP = "the index holds no file of this version but the verified wheel"
+SERVED_STEP = "the index serves exactly the verified wheel"
+JSON_BASES = {"testpypi": "https://test.pypi.org/pypi/openrepotools/",
+              "pypi": "https://pypi.org/pypi/openrepotools/"}
+
+#: The verified wheel, its digest, and what else an index can hold.
+INDEX_VERSION = "1.1.0"
+INDEX_WHEEL = f"openrepotools-{INDEX_VERSION}-py3-none-any.whl"
+INDEX_SDIST = f"openrepotools-{INDEX_VERSION}.tar.gz"
+VERIFIED = "5e" * 32
+ANOTHER_DIGEST = "a7" * 32
+SERVED = (200, [(INDEX_WHEEL, VERIFIED, False)])
+NOT_YET = (404, [])
+
+#: THE CLOCK, the one other thing faked: `time.sleep` writes down what it was
+#: asked and returns at once, so 20 reads 15 seconds apart take no time. It is
+#: a `sitecustomize` on the step's PYTHONPATH, so the step's script runs as
+#: it is written.
+CLOCK = '''import os, time
+
+
+def sleep(seconds, _log=os.environ["FAKE_CLOCK_LOG"]):
+    with open(_log, "a", encoding="utf-8") as log:
+        log.write(f"{seconds}\\n")
+
+
+time.sleep = sleep
+'''
+
+
+class FakeIndex:
+    """AN INDEX'S JSON API ON 127.0.0.1: the `n`th read gets `answers[n]`,
+    and every read after the last answer gets the last again. Each answer is
+    `(status, files)`, a file `(filename, sha256, yanked)`. Every read's path
+    is written down in `reads`."""
+
+    def __init__(self, answers: list) -> None:
+        self.answers, self.reads = list(answers), []
+        index = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                status, files = index.answers[min(len(index.reads),
+                                                  len(index.answers) - 1)]
+                index.reads.append(self.path)
+                body = json.dumps(
+                    {"info": {"name": "openrepotools"},
+                     "urls": [{"filename": name, "digests": {"sha256": digest},
+                               "yanked": yanked}
+                              for name, digest, yanked in files]}
+                    if status == 200 else {"message": f"HTTP {status}"}).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args) -> None:
+                pass
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.base = (f"http://127.0.0.1:{self.server.server_address[1]}"
+                     "/pypi/openrepotools/")
+        self.thread = threading.Thread(target=self.server.serve_forever,
+                                       daemon=True)
+
+    def __enter__(self) -> "FakeIndex":
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+
+
+def run_index_step(tmp_path: Path, name: str, prefix: str, answers: list
+                   ) -> Tuple[subprocess.CompletedProcess, List[str], List[str]]:
+    """Job `name`'s step `prefix`, run under the Runner with the job's own
+    `INDEX`, the build's record and `JSON_BASE` the fake index's. Returns the
+    run, the paths read, and the sleeps asked for."""
+    workflow = release()
+    assert (job(workflow, name).get("env") or {}).get("JSON_BASE") == JSON_BASES[name], (
+        f"the {name} job reads {job(workflow, name).get('env')}")
+    clock = tmp_path / "clock"
+    clock.mkdir()
+    (clock / "sitecustomize.py").write_text(CLOCK, encoding="utf-8")
+    log = tmp_path / "clock.log"
+    with FakeIndex(answers) as index:
+        values = {"VERSION": INDEX_VERSION, "WHEEL": INDEX_WHEEL,
+                  "WHEEL_SHA256": VERIFIED, "JSON_BASE": index.base,
+                  "no_proxy": "*", "NO_PROXY": "*", "PYTHONPATH": str(clock),
+                  "FAKE_CLOCK_LOG": str(log)}
+        runner = Runner(tmp_path / "work", workflow, name, values)
+        done = runner.run(named(workflow, name, prefix))
+        reads = list(index.reads)
+    sleeps = log.read_text(encoding="utf-8").split() if log.exists() else []
+    return done, reads, sleeps
+
+
+#: BEFORE THE UPLOAD (FR-031, the lead's ruling, design.md Open Questions
+#: item 15): `(what the index answers, whether the step passes)`. A 404 is a
+#: version with no file yet, and a version listed with no file holds no file
+#: either; the verified wheel at its digest, not yanked, is a re-run after an
+#: upload that went through. Every other file refuses, and so does an index
+#: that answers with an error.
+EMPTY_INDEX_CASES = {
+    "no-file-of-the-version-yet": (NOT_YET, True),
+    "the-verified-wheel-at-its-digest": (SERVED, True),
+    "the-version-listed-with-no-file": ((200, []), True),
+    "the-verified-wheel-yanked": ((200, [(INDEX_WHEEL, VERIFIED, True)]), False),
+    "the-wheel-s-name-at-another-digest": (
+        (200, [(INDEX_WHEEL, ANOTHER_DIGEST, False)]), False),
+    "another-file-beside-the-verified-wheel": (
+        (200, [(INDEX_WHEEL, VERIFIED, False),
+               (INDEX_SDIST, ANOTHER_DIGEST, False)]), False),
+    "another-file-alone": ((200, [(INDEX_SDIST, ANOTHER_DIGEST, False)]), False),
+    "an-index-error": ((503, []), False),
+    "a-refusal-other-than-404": ((403, []), False),
+}
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@pytest.mark.parametrize("which", EMPTY_INDEX_CASES)
+@pytest.mark.parametrize("name", sorted(UPLOADS))
+def test_release_upload_the_empty_index_check_passes_no_file_or_the_verified_wheel_alone(
+        tmp_path, name, which):
+    """THE EMPTY-INDEX CHECK, RUN against a fake index, in each upload job:
+    it reads the version's JSON once, passes a 404, a version with no file
+    and the verified wheel already there at its digest, not yanked, and
+    refuses the wheel yanked, the wheel's name at another digest, any other
+    file, and an index that answers with an error."""
+    answer, passes = EMPTY_INDEX_CASES[which]
+    done, reads, _ = run_index_step(tmp_path, name, EMPTY_INDEX_STEP, [answer])
+    assert (done.returncode == 0) == passes, transcript(done)
+    assert reads == [f"/pypi/openrepotools/{INDEX_VERSION}/json"], reads
+    if not passes and answer[0] == 200:
+        assert "::error::" in done.stdout + done.stderr, transcript(done)
+
+
+#: AFTER THE UPLOAD: `(what the index answers, read by read, whether the step
+#: passes, how many reads it makes)`. It reads until the index serves exactly
+#: the verified wheel, through a 404, an empty listing or a server error, up
+#: to 20 reads, and refuses the wheel yanked, any other file and a client
+#: error at once.
+SERVED_CASES = {
+    "served-at-the-first-read": ([SERVED], True, 1),
+    "not-yet-then-served": ([NOT_YET, SERVED], True, 2),
+    "an-empty-listing-then-served": ([(200, []), SERVED], True, 2),
+    "a-server-error-then-served": ([(503, []), SERVED], True, 2),
+    "served-at-the-twentieth-read": ([NOT_YET] * 19 + [SERVED], True, 20),
+    "served-only-after-twenty-reads": ([NOT_YET] * 20 + [SERVED], False, 20),
+    "another-file-beside-it-every-time": (
+        [(200, [(INDEX_WHEEL, VERIFIED, False),
+                (INDEX_SDIST, ANOTHER_DIGEST, False)])], False, 20),
+    "another-digest-every-time": (
+        [(200, [(INDEX_WHEEL, ANOTHER_DIGEST, False)])], False, 20),
+    "served-yanked": ([(200, [(INDEX_WHEEL, VERIFIED, True)])], False, 1),
+    "a-refusal-other-than-404": ([(403, [])], False, 1),
+}
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@pytest.mark.parametrize("which", SERVED_CASES)
+@pytest.mark.parametrize("name", sorted(UPLOADS))
+def test_release_upload_the_served_check_reads_until_the_verified_wheel_is_served(
+        tmp_path, name, which):
+    """THE SERVED-DIGEST CHECK, RUN against a fake index, in each upload job:
+    it keeps reading, 15 seconds apart, up to 20 reads, until the index
+    serves exactly the verified wheel, and passes then; it refuses an index
+    that never does, the wheel yanked, and a client error."""
+    answers, passes, count = SERVED_CASES[which]
+    done, reads, sleeps = run_index_step(tmp_path, name, SERVED_STEP, answers)
+    assert (done.returncode == 0) == passes, transcript(done)
+    assert reads == [f"/pypi/openrepotools/{INDEX_VERSION}/json"] * count, (
+        f"{len(reads)} reads, not {count}: {reads}")
+    assert set(sleeps) <= {"15"}, sleeps
+    if passes:
+        assert len(sleeps) == count - 1, sleeps
 
 
 # --- the install check ---------------------------------------------------------------
@@ -2290,13 +2661,20 @@ def test_release_install_check_reads_pypi_alone_and_installs_pipx_from_its_lock(
     assert not any(problems.values()), problems
 
 
+#: THE INSTALL CHECK'S OWN CHECK OF THE WHEEL IT TOOK, by its name: on a tag
+#: and on a branch alike, the one file it holds must have the sha256 the build
+#: job recorded before anything from it runs.
+WHEEL_DIGEST_STEP = "the wheel is the one the build job verified"
+
+
 @NEEDS_UPSTREAM
 def test_release_install_check_takes_the_wheel_by_its_digest_on_a_tag_and_a_branch():
     """STEP 1: on a tag the wheel comes from TestPyPI, on a branch it is the
     build's artifact, and in both cases its sha256 is checked before
-    anything from it runs. Only the intended steps are conditional: those
-    two, and the macOS and Python 3.9 legs' own; and the checkout keeps no
-    credentials."""
+    anything from it runs: `WHEEL_DIGEST_STEP`, with no `if:`, comes after
+    both and before pipx installs the wheel, and the test after this one
+    runs it. Only the intended steps are conditional: those two, and the
+    macOS and Python 3.9 legs' own; and the checkout keeps no credentials."""
     workflow = release()
     steps = install_steps(workflow)
     kinds = {}
@@ -2311,11 +2689,61 @@ def test_release_install_check_takes_the_wheel_by_its_digest_on_a_tag_and_a_bran
     assert "test.pypi.org" in run_text(fetch), label(fetch)
     assert str(take.get("uses", "")).startswith("actions/download-artifact@")
     after = max(kinds["a-tag"][0], kinds["a-branch"][0])
-    assert [s for s in steps[after + 1:] if "if" not in s
-            and "sha256" in run_text(s)], "the wheel's sha256 is not checked"
+    check = named(workflow, "install", WHEEL_DIGEST_STEP)
+    at = where(workflow, "install", check)
+    assert at > after and "if" not in check, (
+        f"{label(check)!r} is step {at}, conditional or before the wheel is "
+        f"taken (step {after})")
+    installs = [i for i, s in enumerate(steps)
+                if re.search(r"\bpipx install\b", run_text(s))]
+    assert installs and at < min(installs), (
+        f"pipx installs the wheel (steps {installs}) before {label(check)!r} "
+        f"(step {at}) checks its sha256")
     for step in steps:
         if str(step.get("uses", "")).startswith("actions/checkout@"):
             assert (step.get("with") or {}).get("persist-credentials") is False
+
+
+#: The bytes the build recorded, and other bytes under the same name.
+RECORDED_WHEEL = b"PK\x03\x04 the wheel the build job verified\n"
+OTHER_WHEEL = b"PK\x03\x04 another file under the wheel's name\n"
+
+#: `(the files in the job's wheel directory, whether the step passes)`.
+WHEEL_DIGEST_CASES = {
+    "the-recorded-wheel": ({"<wheel>": RECORDED_WHEEL}, True),
+    "other-bytes-under-its-name": ({"<wheel>": OTHER_WHEEL}, False),
+    "the-recorded-wheel-and-another-file": (
+        {"<wheel>": RECORDED_WHEEL, "openrepotools-1.0.0-py3-none-any.whl":
+         RECORDED_WHEEL}, False),
+    "another-name-at-the-recorded-digest": (
+        {"openrepotools-1.0.0-py3-none-any.whl": RECORDED_WHEEL}, False),
+    "nothing": ({}, False),
+}
+
+
+@NEEDS_UPSTREAM
+@pytest.mark.parametrize("which", WHEEL_DIGEST_CASES)
+def test_release_install_check_the_digest_step_passes_the_recorded_wheel_alone(
+        tmp_path, which):
+    """THE STEP, RUN (contracts/workflows.md's install step 1): its heredoc,
+    over the job's wheel directory, passes the one file named `$WHEEL` whose
+    sha256 is `$WHEEL_SHA256`, and refuses other bytes under that name,
+    another file beside it, another name, and nothing at all, so the install
+    check never runs a file the build did not verify."""
+    files, passes = WHEEL_DIGEST_CASES[which]
+    wheel = "openrepotools-1.1.0rc1-py3-none-any.whl"
+    temp = tmp_path / "runner-temp"
+    (temp / "wheel").mkdir(parents=True)
+    for name, data in files.items():
+        (temp / "wheel" / name.replace("<wheel>", wheel)).write_bytes(data)
+    values = {"RUNNER_TEMP": str(temp), "WHEEL": wheel,
+              "WHEEL_SHA256": hashlib.sha256(RECORDED_WHEEL).hexdigest()}
+    step = named(release(), "install", WHEEL_DIGEST_STEP)
+    done = run_heredoc(step, tmp_path / "run", [], values, cwd=tmp_path)
+    assert (done.returncode == 0) == passes, transcript(done)
+    if not passes:
+        out = done.stdout + done.stderr
+        assert "::error::" in out and "Traceback" not in out, transcript(done)
 
 
 @NEEDS_UPSTREAM
@@ -2334,6 +2762,145 @@ def test_release_install_check_installs_with_pipx_and_runs_version_and_the_offli
             and "offline.invalid/sentinel" in t
             and "(a link into pipx's openrepotools environment)" in t
             and "and 1 left to pipx" in t], "no step checks the offline install"
+
+
+#: THE OFFLINE `--install` IS `tests.yml`'s OWN (the comment above the
+#: release's step): the install check's script and the `package` job's are
+#: one script, line for line, but for the two places that fingerprint pipx's
+#: link. `tests.yml` takes the fingerprint with GNU's `stat -c` and
+#: `sha256sum`, and the release, whose macOS leg has neither, with the leg's
+#: Python. Each difference allowed, in order: `(tests.yml's lines,
+#: release.yml's lines)`.
+FINGERPRINT_LINES = (
+    (['before="$(stat -c %i "$link") $(readlink "$link") $(sha256sum < "$link")"'],
+     ["fingerprint='import hashlib, os, sys; p = sys.argv[1]; "
+      "print(os.lstat(p).st_ino, os.readlink(p), "
+      "hashlib.sha256(open(p, \"rb\").read()).hexdigest())'",
+      'before="$(python3 -I -c "$fingerprint" "$link")"']),
+    (['if [ ! -L "$link" ] ||',
+      '    [ "$(stat -c %i "$link") $(readlink "$link") $(sha256sum < "$link")"'
+      ' != "$before" ]; then'],
+     ['if [ ! -L "$link" ] || [ "$(python3 -I -c "$fingerprint" "$link")"'
+      ' != "$before" ]; then']),
+)
+
+#: THE macOS RERUN IS THE SAME SCRIPT AGAIN (FR-032): the release's offline
+#: `--install`, run a second time under Apple's `/bin/bash` 3.2, and different
+#: only where it must be. Each difference allowed, in order: `(the offline
+#: --install's lines, the macOS rerun's lines)`. Its own home and offline
+#: directory; the bash it runs under, which must print a `BASH_VERSION` of
+#: 3.2; `/bin` first on the `--install`'s PATH; its own output files; and
+#: refusals that name that bash. The skip line, the count line, the receipt's
+#: 28 rows and the link's fingerprint are the offline --install's own.
+MACOS_RERUN_LINES = (
+    (['home="$RUNNER_TEMP/install-home"',
+      'offline="$RUNNER_TEMP/offline-bin"'],
+     ['home="$RUNNER_TEMP/install-home-bin-bash"',
+      'offline="$RUNNER_TEMP/offline-bin-bin-bash"']),
+    ([],
+     ['# shellcheck disable=SC2016',
+      'version="$(env -i PATH="/bin:$offline:$PIPX_BIN_DIR:$PATH" bash -c '
+      '\'printf "%s\\n" "$BASH_VERSION"\')"',
+      'echo "BASH_VERSION $version, from the bash first on PATH=/bin:..."',
+      'case "$version" in',
+      '  3.2.*) ;;',
+      '  *)',
+      '    echo "::error::the bash first on a PATH that begins with /bin is '
+      '$version, not Apple\'s 3.2"',
+      '    exit 1',
+      '    ;;',
+      'esac']),
+    (['env -i HOME="$home" PATH="$offline:$PIPX_BIN_DIR:$PATH" \\'],
+     ['env -i HOME="$home" PATH="/bin:$offline:$PIPX_BIN_DIR:$PATH" \\']),
+    (['    "$link" --install > "$RUNNER_TEMP/install.out" 2> '
+      '"$RUNNER_TEMP/install.err" ||',
+      '    status=$?',
+      'cat "$RUNNER_TEMP/install.out"',
+      'cat "$RUNNER_TEMP/install.err" >&2'],
+     ['    "$PIPX_BIN_DIR/openRepoTools" --install > '
+      '"$RUNNER_TEMP/install-bin-bash.out" \\',
+      '    2> "$RUNNER_TEMP/install-bin-bash.err" || status=$?',
+      'cat "$RUNNER_TEMP/install-bin-bash.out"',
+      'cat "$RUNNER_TEMP/install-bin-bash.err" >&2']),
+    (['  echo "::error::the offline --install exited $status"'],
+     ['  echo "::error::the offline --install under /bin/bash $version exited '
+      '$status"']),
+    (['  seen="$(grep -cFx -e "$line" "$RUNNER_TEMP/install.out" || true)"'],
+     ['  seen="$(grep -cFx -e "$line" "$RUNNER_TEMP/install-bin-bash.out" || '
+      'true)"']),
+    (['    echo "::error::--install printed this line $seen times, not once: '
+      '$line"'],
+     ['    echo "::error::--install under /bin/bash $version printed this line '
+      '$seen times, not once: $line"']),
+    (['  echo "::error::--install wrote no receipt at $receipt"'],
+     ['  echo "::error::--install under /bin/bash $version wrote no receipt at '
+      '$receipt"']),
+    (['  echo "::error::the receipt has $lines lines and $rows rows, not 28: a '
+      'full install\'s 29 less pipx\'s link"'],
+     ['  echo "::error::under /bin/bash $version the receipt has $lines lines '
+      'and $rows rows, not 28"']),
+    (['  echo "::error::--install changed pipx\'s link at $link"'],
+     ['  echo "::error::--install under /bin/bash $version changed pipx\'s link '
+      'at $link"']),
+)
+
+#: The offline `--install` step, in either file: the one step of its job, with
+#: no `if:`, that runs `--install` against the sentinel repository.
+SENTINEL = re.compile(r"\bOPENREPOTOOLS_REPO=[\"']?offline\.invalid/sentinel")
+
+
+def offline_install_step(steps: list, whose: str) -> dict:
+    found = [s for s in steps if SENTINEL.search(run_text(s)) and "if" not in s]
+    if len(found) != 1:
+        pytest.fail(f"{whose} has {len(found)} unconditional steps that run "
+                    "--install against offline.invalid/sentinel, not one: "
+                    f"{[label(s) for s in found]}", pytrace=False)
+    return found[0]
+
+
+def assert_one_script_but(theirs: dict, ours: dict, allowed: tuple,
+                          names: Tuple[str, str], beside: tuple) -> None:
+    """`ours` is `theirs` with the same keys but `beside`, and its script is
+    `theirs`'s, line for line, but for `allowed`'s pairs, in order."""
+    keys = {k: v for k, v in ours.items() if k not in beside}
+    assert keys == {k: v for k, v in theirs.items() if k not in beside}, (
+        f"{names[1]}'s step and {names[0]}'s differ beside their scripts: "
+        f"{ours} against {theirs}")
+    mine, its = run_text(ours).split("\n"), run_text(theirs).split("\n")
+    matcher = difflib.SequenceMatcher(a=its, b=mine, autojunk=False)
+    found = [(its[i1:i2], mine[j1:j2])
+             for tag, i1, i2, j1, j2 in matcher.get_opcodes() if tag != "equal"]
+    assert found == [(list(a), list(b)) for a, b in allowed], (
+        f"{names[1]} is not {names[0]} but for the lines this test names:\n"
+        + "\n".join(difflib.unified_diff(its, mine, names[0], names[1],
+                                         lineterm="", n=0)))
+
+
+@NEEDS_UPSTREAM
+def test_release_install_check_the_offline_installs_are_one_script_but_for_named_lines():
+    """THE THREE COPIES CANNOT DRIFT (FR-016, FR-032). The install check's
+    offline `--install` is `tests.yml`'s `package` job's, line for line, with
+    the same keys beside its script, but for `FINGERPRINT_LINES`. Its macOS
+    rerun under `/bin/bash` 3.2 is that offline `--install` again, with the
+    same keys but its `if:`, but for `MACOS_RERUN_LINES`. Each difference is
+    named there. So a count line, a skip line or a receipt count changed in
+    one copy alone fails here, before a release tests what `tests.yml` never
+    did and burns the version on TestPyPI, and so does a rerun that no
+    longer requires 3.2."""
+    steps = install_steps(release())
+    ours = offline_install_step(steps, "release.yml's install job")
+    package = (standard().load_yaml(TESTS_WORKFLOW).get("jobs") or {}).get("package")
+    if not isinstance(package, dict) or not isinstance(package.get("steps"), list):
+        pytest.fail("tests.yml has no `package` job with steps", pytrace=False)
+    theirs = offline_install_step(package["steps"], "tests.yml's package job")
+    assert_one_script_but(theirs, ours, FINGERPRINT_LINES,
+                          ("tests.yml", "release.yml"), ("name", "run"))
+    reruns = [s for s in steps if condition_kind(s.get("if")) == "macos"
+              and SENTINEL.search(run_text(s))]
+    assert len(reruns) == 1, [label(s) for s in reruns]
+    assert_one_script_but(ours, reruns[0], MACOS_RERUN_LINES,
+                          ("the offline --install", "the macOS rerun"),
+                          ("name", "run", "if"))
 
 
 #: `/bin` put first on `PATH`: for one command (`PATH="/bin:..." command`),
@@ -2382,6 +2949,144 @@ def test_release_install_check_the_3_9_leg_compiles_the_two_python_commands():
     assert [s for s in steps if "compile(" in run_text(s)
             and "lanes-index" in run_text(s) and "lane-worktrees" in run_text(s)
             and "payload" in run_text(s)], [label(s) for s in steps]
+
+
+#: The install check's `--version` step, by its name.
+VERSION_STEP = "openRepoTools --version names this release, line for line"
+
+#: The release the run is (contracts/stamp.md's names), and each stamp the
+#: installed package may carry instead, with whether the step passes it.
+VERSION_RUN = dict(RELEASES["an-rc-rehearsal-here"])
+VERSION_CASES = {
+    "this-release": ({}, True),
+    "another-digest": ({"DIGEST": "1" * 64}, False),
+    "another-commit": ({"COMMIT": "a" * 40}, False),
+    "another-repository": ({"REPOSITORY": CODE_LEG}, False),
+    "another-version": ({"VERSION": "1.1.0rc2", "TAG": "v1.1.0rc2"}, False),
+    "unstamped": (None, False),
+}
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@pytest.mark.parametrize("which", VERSION_CASES)
+def test_release_install_check_the_version_step_passes_this_release_s_five_lines_alone(
+        tmp_path, which):
+    """THE `--version` STEP, RUN (contracts/workflows.md's install step 4):
+    `$PIPX_BIN_DIR/openRepoTools` is the installed package's own entry,
+    which execs bash on its payload as pipx's console script does, and its
+    `--version` must be this run's five lines, the digest's among them. A
+    package stamped with another digest, commit, repository or version, or
+    unstamped, is refused."""
+    changes, passes = VERSION_CASES[which]
+    stamp = (layout.stamp_text() if changes is None
+             else layout.stamp_text(**dict(VERSION_RUN, **changes)))
+    payload = layout.package_tree(tmp_path / "venv", stamp=stamp)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    entry = bin_dir / "openRepoTools"
+    entry.write_text("#!/bin/sh\nexec bash "
+                     f"{shlex.quote(str(payload / 'openRepoTools'))} \"$@\"\n",
+                     encoding="utf-8")
+    entry.chmod(0o755)
+    workflow = release()
+    values = {"VERSION": VERSION_RUN["VERSION"],
+              "GITHUB_REPOSITORY": VERSION_RUN["REPOSITORY"],
+              "GITHUB_SHA": VERSION_RUN["COMMIT"],
+              "DIGEST": VERSION_RUN["DIGEST"], "PIPX_BIN_DIR": str(bin_dir)}
+    runner = Runner(tmp_path / "work", workflow, "install", values)
+    done = runner.run(named(workflow, "install", VERSION_STEP))
+    assert (done.returncode == 0) == passes, transcript(done)
+    if passes:
+        assert done.stdout == STAMPED_VERSION.format(**VERSION_RUN), transcript(done)
+    else:
+        assert "::error::" in done.stdout, transcript(done)
+
+
+#: A heredoc run by this Python as if it were another release of Python:
+#: `sys.version_info` and `sys.version` say `<version>`, and nothing else is
+#: changed. The 3.9 leg's step refuses any Python but 3.9, and the suite runs
+#: on a current one.
+AS_ANOTHER_PYTHON = r'''
+import sys
+code, version = sys.argv[1], sys.argv[2]
+sys.version = f"{version} (the suite's {sys.version.split()[0]}, read as {version})"
+sys.version_info = tuple(int(part) for part in version.split(".")) + ("final", 0)
+sys.argv = ["-"]
+with open(code, encoding="utf-8") as handle:
+    source = handle.read()
+exec(compile(source, "<stdin>", "exec"), {"__name__": "__main__"})
+'''
+
+
+def with_two_pythons(home: Path) -> None:
+    layout.pipx_venv(home, "1.11.1")
+    layout.package_tree(home / "venvs" / "openrepotools", "python3.10")
+
+
+def with_lanes_index_broken(home: Path) -> None:
+    layout.pipx_venv(home, "1.11.1")
+    payload = home / "venvs/openrepotools/lib/python3.9/site-packages/openrepotools/payload"
+    (payload / "lanes-index").write_bytes(b"def broken(:\n")
+
+
+def with_lane_worktrees_missing(home: Path) -> None:
+    layout.pipx_venv(home, "1.11.1")
+    payload = home / "venvs/openrepotools/lib/python3.9/site-packages/openrepotools/payload"
+    (payload / "lane-worktrees").unlink()
+
+
+#: `(the Python the step is run as, the pipx home it reads, whether it
+#: passes, what its refusal names)`.
+COMPILE_CASES = {
+    "the-payload-as-built": ("3.9.25", lambda home: layout.pipx_venv(home, "1.11.1"),
+                             True, None),
+    "lanes-index-does-not-compile": ("3.9.25", with_lanes_index_broken, False,
+                                     "lanes-index"),
+    "lane-worktrees-missing": ("3.9.25", with_lane_worktrees_missing, False,
+                               "lane-worktrees"),
+    "no-payload-directory": ("3.9.25", lambda home: home.mkdir(parents=True),
+                             False, "not one payload directory"),
+    "two-payload-directories": ("3.9.25", with_two_pythons, False,
+                                "not one payload directory"),
+    "not-python-3.9": ("3.12.3", lambda home: layout.pipx_venv(home, "1.11.1"),
+                       False, "not 3.9"),
+}
+
+
+@NEEDS_UPSTREAM
+@pytest.mark.parametrize("which", COMPILE_CASES)
+def test_release_install_check_the_3_9_step_refuses_a_payload_command_that_does_not_compile(
+        tmp_path, which):
+    """THE 3.9 LEG'S STEP, RUN (FR-032), on a pipx home laid out as pipx
+    1.11.1 leaves it: it passes the payload as built, and refuses, naming
+    why, a `lanes-index` that does not compile, a `lane-worktrees` that is
+    missing, no payload directory or two, and any Python but 3.9. The step
+    is run by this Python, reading as the Python the case names."""
+    version, lay_out, passes, names = COMPILE_CASES[which]
+    steps = [s for s in install_steps(release())
+             if condition_kind(s.get("if")) == "python-3.9"]
+    assert len(steps) == 1, [label(s) for s in steps]
+    home = tmp_path / "pipx-home"
+    lay_out(home)
+    work = tmp_path / "run"
+    work.mkdir()
+    (work / "heredoc.py").write_text(heredoc(run_text(steps[0])), encoding="utf-8")
+    (work / "as-another-python.py").write_text(AS_ANOTHER_PYTHON, encoding="utf-8")
+    env = clean_environ(work / "home")
+    env.update(PYTHONUTF8="1", PIPX_HOME=str(home))
+    done = subprocess.run([sys.executable, "-I", str(work / "as-another-python.py"),
+                           str(work / "heredoc.py"), version],
+                          capture_output=True, text=True, check=False,
+                          stdin=subprocess.DEVNULL, env=env, cwd=str(work),
+                          timeout=STEP_TIMEOUT)
+    assert (done.returncode == 0) == passes, transcript(done)
+    out = done.stdout + done.stderr
+    assert "Traceback" not in out, transcript(done)
+    if names:
+        assert [line for line in out.splitlines()
+                if line.startswith("::error::") and names in line], transcript(done)
 
 
 # --- what the workflow reads ----------------------------------------------------------
@@ -2458,7 +3163,12 @@ HEADER_CARRIES = (
     "--notes-file <spec>/docs/release-notes/v<version>.md",
     "release/vX.Y", "annotated", "cherry-pick -x", "HOLD", "LANDED",
     "l3-rehearsal-v1.1.0", "tests.yml", "opensoft/openRepoTools-code",
-    "opensoft/openRepoTools", "pypi.org publisher", "testpypi", "pypi")
+    "opensoft/openRepoTools", "pypi.org publisher", "testpypi", "pypi",
+    # the procedure's approvals, and the branch cut at the tag's commit: a
+    # push of the tag itself is rejected ("trying to write non-commit object")
+    "4. APPROVE `testpypi`, Brett Heap's act. The install check then runs on "
+    "its three legs; approve `pypi` once it has passed.",
+    "git push origin 'vX.Y.0^{commit}:refs/heads/release/vX.Y'")
 
 
 @NEEDS_UPSTREAM
@@ -2477,7 +3187,82 @@ def test_release_header_carries_the_six_releasing_sections_in_order():
 @NEEDS_UPSTREAM
 @pytest.mark.parametrize("phrase", HEADER_CARRIES)
 def test_release_header_says_what_releasing_needs(phrase):
-    """The procedure's commands verbatim, the branch and tag policy's terms,
-    the rehearsal branch, both repositories and both environments, and the
-    missing pypi.org publisher, the second line of defence."""
+    """The procedure's commands verbatim, its approval step, the branch and
+    tag policy's terms, the rehearsal branch, both repositories and both
+    environments, and the missing pypi.org publisher, the second line of
+    defence."""
     assert phrase in header(), f"the RELEASING header never says {phrase!r}"
+
+
+#: A row of the guard's table as release.yml writes it, in the header and
+#: above step 1: who, on which ref, which version, and what is uploaded.
+TABLE_ROW = re.compile(
+    r"(opensoft/openRepoTools-code|opensoft/openRepoTools|any other repository"
+    r"|any repository)\s+(a tag|a branch)\s+(X\.Y\.ZrcN|X\.Y\.Z|any)\s+(\S.*)")
+TABLE_OUTCOMES = {"TestPyPI, then PyPI": ("true", "true"),
+                  "TestPyPI alone": ("true", "false"), "refused": None,
+                  "nothing: the rehearsal": ("false", "false"),
+                  "neither: the rehearsal": ("false", "false")}
+
+
+def guard_tables() -> List[Tuple[int, Dict[Tuple[str, str, str], Optional[Tuple[str, str]]]]]:
+    """Each run of comment lines in release.yml that are rows of the guard's
+    table: its first line's number, and `{(who, ref, version): (to-testpypi,
+    to-pypi)}`, `None` where the row says refused."""
+    tables: list = []
+    rows: Optional[dict] = None
+    for number, line in enumerate(WORKFLOW.read_text(encoding="utf-8").splitlines(), 1):
+        text = line.strip()
+        found = TABLE_ROW.fullmatch(text[1:].strip()) if text.startswith("#") else None
+        if not found:
+            rows = None
+            continue
+        if rows is None:
+            rows = {}
+            tables.append((number, rows))
+        key, outcome = found.group(1, 2, 3), found.group(4)
+        assert key not in rows, f"line {number} writes the row {key} again"
+        assert outcome in TABLE_OUTCOMES, f"line {number}: {outcome!r}"
+        rows[key] = TABLE_OUTCOMES[outcome]
+    return tables
+
+
+def table_key(repository: str, ref: str, version: str) -> Optional[Tuple[str, str, str]]:
+    """The table row a guard case falls under, or None for a ref that is
+    neither a tag nor a branch, which the table does not list."""
+    if ref.startswith("refs/heads/"):
+        return ("any repository", "a branch", "any")
+    if not ref.startswith("refs/tags/"):
+        return None
+    if repository in (CODE_LEG, THIS_REPOSITORY):
+        return (repository, "a tag", "X.Y.ZrcN" if "rc" in version else "X.Y.Z")
+    return ("any other repository", "a tag", "any")
+
+
+@NEEDS_UPSTREAM
+def test_release_header_s_guard_table_is_the_guard_s_own_decisions():
+    """THE TABLE IS THE GUARD (FR-048): release.yml writes the guard's table
+    twice, in the header's WHERE RELEASES COME FROM and above step 1, and each
+    row says what `GUARD_ROWS`, which the guard is run under, decides for
+    every case that falls under it. Every row has a case, and every case on
+    a tag or a branch has its row."""
+    lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
+    start = next(n for n, line in enumerate(lines, 1) if re.match(r"^on\s*:", line))
+    tables = guard_tables()
+    assert [number < start for number, _ in tables] == [True, False], (
+        f"the guard's table is written at lines {[n for n, _ in tables]}, not "
+        f"once in the header (before line {start}) and once above step 1")
+    for number, rows in tables:
+        reached = set()
+        for case in GUARD_ROWS:
+            repository, ref, version, decision = case.values
+            key = table_key(repository, ref, version)
+            if key is None:
+                continue
+            assert key in rows, f"the table at line {number} has no row {key}"
+            assert rows[key] == decision, (
+                f"the table at line {number} says {key} gives {rows[key]}, and "
+                f"the guard decides {decision} for {case.id}")
+            reached.add(key)
+        assert reached == set(rows), (
+            f"rows at line {number} no guard case reaches: {set(rows) - reached}")
