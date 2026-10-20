@@ -406,14 +406,21 @@ def test_the_creation_lock_is_refreshed_while_the_clone_runs(box: Box):
     """NIT 5: a clone may take its whole budget, ten minutes or more, and a
     waiter in another container takes a creation lock that has not moved for
     ten. So the holder refreshes it while the clone runs: aged to twenty
-    minutes as the clone begins, it is fresh again before the clone ends."""
+    minutes as the clone begins, it is fresh again before the clone ends.
+    The clone waits for that, up to 30 s, rather than a fixed 4 s inside which
+    a beat must land (the re-check of #282's cases, R3-2): the head ends at
+    the first beat, and a holder with no heartbeat still reads stale."""
     lock = box.lanes_root / f".{LANE}.lock"
     seen = box.root / "seen"
     old = int(time.time()) - 20 * 60
     real_touch, real_sleep = shutil.which("touch"), shutil.which("sleep")
     extra = _creation_bench(box, f"""  '{real_touch}' -c -d '@{old}' '{lock}'
-  '{real_sleep}' 4
-  if [ -n "$(find '{lock}' -maxdepth 0 -mmin -1 2>/dev/null)" ]; then echo fresh > '{seen}'; else echo stale > '{seen}'; fi""")
+  state=stale
+  for _ in $(seq 150); do
+    if [ -n "$(find '{lock}' -maxdepth 0 -mmin -1 2>/dev/null)" ]; then state=fresh; break; fi
+    '{real_sleep}' 0.2
+  done
+  echo "$state" > '{seen}'""")
     result = box.stamp(LANE, "a slow first clone", **extra)
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert seen.read_text(encoding="utf-8").strip() == "fresh", \
