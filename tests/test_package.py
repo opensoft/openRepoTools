@@ -27,10 +27,11 @@ FOUR GROUPS, ONE PREFIX EACH (plan.md, "The test layout"), so that a task's
   `openRepoTools` with the person's arguments unchanged and with neither
   signal Python ignores at start-up still ignored, and must refuse, running
   nothing, where there is no `bash`, a `PATH` whose last entry is a file
-  included (design.md Decision 3 as amended on 2026-10-18, FR-003, FR-004).
+  included, and where the `bash` on PATH cannot be run (design.md Decision 3
+  as amended on 2026-10-18, FR-003, FR-004; #256).
 
 THE HELPERS ARE THE SUITE'S OWN. `command_env`, `placement_temporaries`,
-`path_without`, `SLOW_TOOLS` and `NEEDS_JQ` come from
+`path_without`, `SLOW_TOOLS`, `NEEDS_JQ` and `NOT_ROOT` come from
 `tests/test_openrepotools_command.py`, `installer_function` from
 `tests/test_install_by_rename.py`, and the layouts from
 `tests/package_layout.py`.
@@ -38,6 +39,7 @@ THE HELPERS ARE THE SUITE'S OWN. `command_env`, `placement_temporaries`,
 
 from __future__ import annotations
 
+import errno
 import os
 import re
 import shlex
@@ -56,8 +58,9 @@ import pytest
 from conftest import REPO, WINDOWS_SKIP
 from package_layout import PAYLOAD_PREFIX, console_script, package_tree
 from test_install_by_rename import installer_function
-from test_openrepotools_command import (NEEDS_JQ, SLOW_TOOLS, command_env,
-                                        path_without, placement_temporaries)
+from test_openrepotools_command import (NEEDS_JQ, NOT_ROOT, SLOW_TOOLS,
+                                        command_env, path_without,
+                                        placement_temporaries)
 
 try:
     import tomllib as TOML
@@ -103,6 +106,13 @@ WHEEL_VARIABLE = "OPENREPOTOOLS_TEST_WHEEL"
 #: entry module's own, so it has no blank line before it.
 NO_BASH = ("REFUSED: openRepoTools needs bash, and there is no bash on this "
            "PATH. Nothing ran.")
+
+#: The entry module's refusal for a `bash` that is on PATH and cannot be run
+#: (#256): NO_BASH's form, one line with no blank line before it, and the
+#: reason the system gave in the braces. A test fills it from `os.strerror`,
+#: so that it holds no platform's wording of an errno.
+UNRUNNABLE_BASH = ("REFUSED: openRepoTools needs bash, and the bash on this "
+                   "PATH cannot be run ({why}). Nothing ran.")
 
 NEEDS_BASH = pytest.mark.skipif(shutil.which("bash") is None,
                                 reason="openRepoTools is a bash script")
@@ -1006,6 +1016,148 @@ def test_entry_with_no_bash_and_path_ending_in_a_file_refuses_exactly(
         f"not the exact no-bash refusal:\n{said(result)}")
     assert list(home.iterdir()) == [], (
         "something ran, and placed files, with no bash on PATH")
+
+
+#: THE WAYS A `bash` THAT IS ON PATH CAN FAIL TO RUN (#256), each with what
+#: `os.execvp` raises for it, as an exception's name and its errno. The first
+#: two are the issue's, and both are `PermissionError`: a file with no execute
+#: bit, and a directory that cannot be searched. The third is a file that has
+#: the execute bit and is no program, whose error is a bare `OSError`, so that
+#: the refusal is held to be every `OSError`'s and not one subclass's.
+UNRUNNABLE_BASHES = {
+    "no-execute-bit": ("PermissionError", errno.EACCES),
+    "unsearchable-directory": ("PermissionError", errno.EACCES),
+    "not-a-program": ("OSError", errno.ENOEXEC),
+}
+
+
+def unrunnable_bash(directory: Path, kind: str, record: Path) -> None:
+    """Make `directory` hold a `bash` of `kind`, one that cannot be run.
+
+    It starts as `recording_bash`, which writes `record` if it is ever run.
+    `no-execute-bit` takes the file's execute bits away, and
+    `unsearchable-directory` takes the directory's search bit, so the kernel
+    cannot reach a file that is otherwise runnable. `not-a-program` leaves the
+    file executable and gives it no `#!` line, so the kernel has no
+    interpreter for it. A directory made unsearchable is the CALLER'S to make
+    searchable again: nothing can remove what it cannot search.
+    """
+    shim = recording_bash(directory, record)
+    if kind == "no-execute-bit":
+        shim.chmod(0o644)
+    elif kind == "unsearchable-directory":
+        directory.chmod(0o600)
+    else:
+        shim.write_text("a file named bash, and not a program: it has no "
+                        "`#!` line\n", encoding="utf-8")
+
+
+def execvp_error(installed: Installed,
+                 path: str) -> subprocess.CompletedProcess:
+    """`os.execvp("bash", …)` as the console script's own interpreter makes
+    it on `path` alone. Where it raises, the run prints the exception's name
+    and its errno's name on one line and exits 0.
+
+    A case built from what `execvp` raises asks this first, so that it cannot
+    pass by reaching another arm of the entry module than the one it was
+    written for. Where `execvp` finds a `bash` that runs, the probe becomes
+    that `bash`, runs `exit 97` and prints nothing.
+    """
+    return subprocess.run(
+        [str(installed.python), "-I", "-c",
+         "import errno, os\n"
+         "try:\n"
+         "    os.execvp('bash', ['bash', '-c', 'exit 97'])\n"
+         "except OSError as error:\n"
+         "    print(type(error).__name__, errno.errorcode[error.errno])\n"],
+        capture_output=True, text=True, check=False,
+        stdin=subprocess.DEVNULL, env={"PATH": path})
+
+
+@pytest.mark.parametrize("kind", [
+    "no-execute-bit",
+    pytest.param("unsearchable-directory", marks=NOT_ROOT),
+    "not-a-program"])
+@WINDOWS_SKIP
+def test_entry_with_a_bash_it_cannot_run_refuses_exactly_and_runs_nothing(
+        installed, tmp_path, kind):
+    """#256: A `bash` ON PATH THAT CANNOT BE RUN IS A REFUSAL TOO, AND
+    NOTHING ELSE HAPPENS.
+
+    PATH holds that one `bash` and nothing else, as in the issue's own run: a
+    file with no execute bit, a directory that cannot be searched (root can
+    search any, so that case skips there), or an executable file that is no
+    program. `os.execvp` goes on past an entry it cannot run, and with none
+    left it raises the FIRST error that was not "not found": `PermissionError`
+    for the first two, and a bare `OSError` for the third. The case is
+    checked first, in the console script's own interpreter, so this cannot
+    pass by reaching the no-bash arm. Then the console script must print
+    `UNRUNNABLE_BASH` exactly, with the reason the system gave, on stderr,
+    and exit 2, as with no `bash` on any `PATH`: not a traceback and exit 1.
+    The `--install` asked for places nothing and prints nothing, because
+    nothing ran.
+    """
+    name, number = UNRUNNABLE_BASHES[kind]
+    directory = tmp_path / kind
+    record = tmp_path / "bash-was-run"
+    home = tmp_path / "home"
+    home.mkdir()
+    try:
+        unrunnable_bash(directory, kind, record)
+        probe = execvp_error(installed, str(directory))
+        assert (probe.returncode, probe.stdout) == (
+            0, f"{name} {errno.errorcode[number]}\n"), (
+            "the case is wrong: on this PATH execvp does not raise "
+            f"{name} ({errno.errorcode[number]}):\n{said(probe)}")
+        result = run_entry(installed.script, "--install", home=home,
+                           env={"PATH": str(directory)}, cwd=tmp_path)
+    finally:
+        if directory.is_dir():
+            directory.chmod(0o700)
+    assert (result.returncode, result.stdout, result.stderr) == (
+        2, "", UNRUNNABLE_BASH.format(why=os.strerror(number)) + "\n"), (
+        "not the exact refusal for a bash that cannot be run:\n"
+        f"{said(result)}")
+    assert list(home.iterdir()) == [], (
+        "something ran, and placed files, with a bash that cannot be run")
+    assert not record.exists(), "the bash that cannot be run was run"
+
+
+@WINDOWS_SKIP
+def test_entry_goes_past_a_bash_it_cannot_run_to_one_it_can(
+        installed, tmp_path):
+    """#256: A RUNNABLE `bash` LATER ON PATH IS UNAFFECTED, because
+    `os.execvp` goes on to it.
+
+    The refusal is for where no `bash` can be run, so a person whose PATH
+    lists a `bash` that cannot be run ahead of one that can must never meet
+    it: the exec is the runnable one's, with the person's arguments. The
+    first is a mode-644 file, and the case is checked first, in the console
+    script's own interpreter, so this holds the entry module to the order
+    `execvp` takes and not to a check of its own on the first `bash` it
+    finds.
+    """
+    first = tmp_path / "first-on-path"
+    never = tmp_path / "never-run"
+    unrunnable_bash(first, "no-execute-bit", never)
+    record = tmp_path / "bash-was-given"
+    second = recording_bash(tmp_path / "second-on-path", record).parent
+    probe = execvp_error(installed, str(first))
+    assert (probe.returncode, probe.stdout) == (
+        0, "PermissionError EACCES\n"), (
+        "the case is wrong: on its first entry execvp does not raise "
+        f"PermissionError (EACCES):\n{said(probe)}")
+    home = tmp_path / "home"
+    home.mkdir()
+    result = run_entry(installed.script, "--version", home=home,
+                       env={"PATH": f"{first}{os.pathsep}{second}"},
+                       cwd=tmp_path)
+    assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), (
+        "the console script did not go on to the runnable bash:\n"
+        f"{said(result)}")
+    assert record.is_file() and read_record(record)[1][1:] == ["--version"], (
+        "the runnable bash was not run with the person's arguments")
+    assert not never.exists(), "the bash that cannot be run was run"
 
 
 #: What `wip_shape_ref` reaches only when there is no pin beside the
