@@ -628,6 +628,9 @@ def test_a_hung_indexer_delays_no_writer_beyond_the_fork(estate):
             f"the nudge: a thirty-second indexer is delaying the writer")
         assert _wait_for(Path(str(mark) + ".stdin"), 5.0)
         assert Path(str(mark) + ".stdin").read_text().strip() == "eof"
+        # THE STUB WRITES `.stdin` BEFORE `.argv` (the review of #289): seen
+        # the instant `.stdin` is, `.argv` may not be there yet.
+        assert _wait_for(Path(str(mark) + ".argv"), 5.0)
         assert Path(str(mark) + ".argv").read_text().strip() == "sync"
         assert "lanes-index" not in nudged.stdout + nudged.stderr
     finally:
@@ -2622,6 +2625,46 @@ def _unreadable(e: Estate, *revs: str):
             aside.rename(obj)
 
 
+def _git_shim(inv: Inventory, match: str, first: int,
+              last: int | None = None) -> tuple[dict, Path]:
+    """A `git` FOR ONE CALL'S ENVIRONMENT THAT FAILS SOME CALLS AND ONLY THOSE:
+    each call whose arguments contain `match` is counted and logged, the
+    `first`th to the `last`th of them (every later one where `last` is None)
+    exit 128 as git does on an object it could not read, and every call -
+    those among them - is otherwise the real git. A failure `_unreadable`
+    cannot make: one that comes and goes between two reads of the same object.
+    Returns the environment to run with and the log of the counted calls."""
+    real = shutil.which("git", path=inv.e.env["PATH"])
+    assert real, "no git on PATH"
+    shim = inv.root / "git-shim"
+    shim.mkdir(exist_ok=True)
+    (shim / "git").write_text(textwrap.dedent("""\
+        #!/bin/sh
+        case " $* " in
+          *"$SHIM_MATCH"*)
+            n=0
+            [ -f "$SHIM_LOG" ] && n=$(wc -l < "$SHIM_LOG" | tr -d ' ')
+            n=$((n + 1))
+            printf '%s %s\\n' "$n" "$*" >> "$SHIM_LOG"
+            if [ "$n" -ge "$SHIM_FIRST" ] && [ "$n" -le "$SHIM_LAST" ]; then
+              echo "fatal: the test's git shim fails call $n" >&2
+              exit 128
+            fi ;;
+        esac
+        exec @REAL@ "$@"
+        """).replace("@REAL@", shlex.quote(real)))
+    (shim / "git").chmod(0o755)
+    log = inv.root / "git-shim.log"
+    if log.exists():
+        log.unlink()
+    return {"PATH": inv.e.path_with(shim), "SHIM_MATCH": match, "SHIM_LOG": str(log),
+            "SHIM_FIRST": str(first), "SHIM_LAST": str(last or 999999)}, log
+
+
+def _shim_calls(log: Path) -> list[str]:
+    return log.read_text().splitlines() if log.exists() else []
+
+
 def _sidecar(lsr: Path, lane: str, head: str) -> Path:
     """A whole current-schema record of one tree of `lane`, at
     `/nowhere/<lane>/w`, under the control root `lsr` - the shape the
@@ -2701,6 +2744,12 @@ def test_a_lane_listing_that_is_not_whole_removes_no_row(inv, kind, revs, only, 
         rec = inv.e.index("reconcile", "--source", "inventory")
         assert rec.returncode == 1 and "was not whole" in rec.stderr, (rec.stdout, rec.stderr)
         assert dump(inv.e.sqlite, with_utc=True) == before, rec.stdout
+        # A DRY RUN IS REFUSED THE SAME WAY, rather than show as removals the
+        # rows of the lanes the read could not name (N4 of the review of #289).
+        dry = inv.e.index("reconcile", "--source", "inventory", "--dry-run")
+        assert dry.returncode == 1, (dry.stdout, dry.stderr)
+        assert f"was not whole - {'; '.join(whys)} - " in dry.stderr, dry.stderr
+        assert "removed" not in dry.stdout, dry.stdout
         listed = _wt(inv)
         assert listed.returncode == 0, listed.stderr
         said = [line for line in listed.stdout.splitlines() if "lane listing NOT WHOLE: " in line]
@@ -2775,21 +2824,25 @@ def test_a_listing_whose_log_warnings_could_not_be_kept_is_not_whole(inv):
     assert res.stdout.count("TREE" + US) == 5, res.stdout
 
 
-def test_an_unlistable_log_directory_with_no_origin_is_a_partial_listing(inv):
+@pytest.mark.parametrize("mode", [0o000, 0o400], ids=["mode-000", "mode-400"])
+def test_an_unlistable_log_directory_with_no_origin_is_a_partial_listing(inv, mode):
     """THE SAME READ WITH NO `origin` (opensoft/openRepoTools#173 item c1): under
     `LANES_NO_GIT=1`, or in a checkout with no `origin/<branch>`, the lanes with
     a log are named by listing this checkout's log directory - and one that is
-    there and cannot be listed named none of them."""
+    there and cannot be listed named none of them. NOR CAN ONE THAT CANNOT BE
+    SEARCHED (N1 of the review of #289): `ls` lists an `r--` directory, and
+    then not one of its files could be opened."""
     no_git = {"LANES_NO_GIT": "1"}
     _sidecar(inv.lsr, "repoB-1", HEADS["repoB-1"])
     assert inv.sync(env=no_git).returncode == 0
     key = "repoB-1:/nowhere/repoB-1/w"
     assert key in inv.rows(), sorted(inv.rows())
     logdir = inv.e.wip / "lanes" / "log"
-    logdir.chmod(0)
+    logdir.chmod(mode)
     try:
-        if os.access(logdir, os.R_OK):
-            pytest.skip("this account reads a mode-000 directory (root): nothing to prove here")
+        if os.access(logdir, os.R_OK) and os.access(logdir, os.X_OK):
+            pytest.skip(f"this account lists and searches a mode-{mode:03o} directory (root): "
+                        f"nothing to prove here")
         res = inv.sync(env=no_git)
         assert key in inv.rows(), (res.stdout, res.stderr)
         assert res.returncode == 1, (res.stdout, res.stderr)
@@ -2799,6 +2852,122 @@ def test_an_unlistable_log_directory_with_no_origin_is_a_partial_listing(inv):
         logdir.chmod(0o755)
     healed = inv.sync(env=no_git)
     assert healed.returncode == 0 and "nothing to write" in healed.stdout, healed.stdout
+
+
+#: The calls the listing's reads make, as the shim sees them (`" $* "`).
+SHOW_ARCHIVE = "show origin/main:lanes/archive/LANES-retired.md "
+SHOW_REGISTER = "show origin/main:lanes/LANES.md "
+LIST_LOGS = "ls-tree --name-only origin/main -- lanes/log/ "
+
+
+def test_the_listing_names_lanes_from_the_archive_it_checked(inv):
+    """THE ARCHIVE THE LISTING READS IS THE ONE IT CHECKED (the review of #289,
+    SHOULD-1(b), its probe P2). The read asked whether the archive could be
+    read and the listing then read it again, four times, for its rows: an
+    archive that read for the check and failed after it left out every lane
+    whose only row it holds, from a listing taken as whole, and the sync
+    removed their rows. The check's read is now the listing's: a failure after
+    it is never read at all."""
+    _sidecar(inv.lsr, "repoZ-1", HEADS["repoZ-1"])
+    assert inv.sync().returncode == 0
+    key = "repoZ-1:/nowhere/repoZ-1/w"
+    assert key in inv.rows(), sorted(inv.rows())
+    env, log = _git_shim(inv, SHOW_ARCHIVE, first=2)
+    res = inv.sync(env=env)
+    calls = _shim_calls(log)
+    assert calls and calls[0].startswith("1 "), calls  # the shim saw the read: not vacuous
+    assert key in inv.rows(), (res.stdout, res.stderr, calls)
+    assert res.returncode == 0 and "nothing to write" in res.stdout, (res.stdout, res.stderr)
+
+
+@pytest.mark.parametrize("last", [2, None], ids=["the-next-read", "every-later-read"])
+def test_a_log_list_that_fails_after_the_check_removes_no_row(inv, last):
+    """THE LIST OF THE LOGS, TOO (the review of #289, SHOULD-1, its probe P11).
+    It was listed for the check, again for the listing's names and again for
+    the events, out of which every lane's `dir` comes - and where no override
+    names a control root, a lane's trees are found under its `dir`. A later
+    list that failed was a listing with no lane named by a log alone, or with
+    no `dir` for any lane - the read even said "none" - and the sync removed
+    the rows. The names now come from the list the check made, and the
+    events' own list, where it fails, says so: the read is `PARTIAL` and
+    nothing is written."""
+    away = inv.root / "elsewhere"
+    (away / "repoB").mkdir(parents=True)
+    log = inv.e.wip / "lanes" / "log" / "repoB-1.md"
+    log.write_text(log.read_text(encoding="utf-8") +
+                   f"RESUMED — lane repoB-1, session {UUID_B1}@Eagle, 2026-10-05T00:00:00Z, "
+                   f"lane:repoB-1 → dir {away / 'repoB'}; profile team-02a\n", encoding="utf-8")
+    inv.e._git("add", "-A")
+    inv.e._git("commit", "-q", "-m", "repoB-1 resumed in a checkout of its own")
+    inv.e._git("push", "-q", "origin", "main")
+    _sidecar(away / ".lane-state", "repoB-1", HEADS["repoB-1"])
+    by_dir = {"LANES_LANE_STATE_ROOT": None}
+    assert inv.sync(env=by_dir).returncode == 0
+    key = "repoB-1:/nowhere/repoB-1/w"
+    assert key in inv.rows(), sorted(inv.rows())  # found through its log's `dir` alone
+    before = dump(inv.e.sqlite, with_utc=True)
+    env, shim_log = _git_shim(inv, LIST_LOGS, first=2, last=last)
+    res = inv.sync(env={**by_dir, **env})
+    calls = _shim_calls(shim_log)
+    assert len(calls) >= 2 and calls[0].startswith("1 "), calls  # a later list failed
+    assert key in inv.rows(), (res.stdout, res.stderr, calls)
+    assert dump(inv.e.sqlite, with_utc=True) == before, res.stdout
+    assert res.returncode == 1, (res.stdout, res.stderr, calls)
+    assert "was not whole - the object logs under origin/main:lanes/log/ could not be " \
+        "listed - so a lane it could not name" in res.stderr, res.stderr
+    healed = inv.sync(env=by_dir)
+    assert healed.returncode == 0 and "nothing to write" in healed.stdout, healed.stdout
+
+
+def test_the_register_is_asked_before_the_listing(inv):
+    """THE REGISTER IS ASKED BEFORE THE LISTING READS IT (the review of #289,
+    SHOULD-2, its probe P3). A register read that succeeds is cached, and the
+    listing reads the cache; asked after the listing, the check would make a
+    read of its own - and a register that failed for the listing and read for
+    the check was a listing taken as whole without every lane whose only row
+    is the register's. Here the FIRST read fails and every later one reads:
+    that first read is the check's, so the read is `PARTIAL` - conservatively,
+    as the listing's own read would have been whole - and nothing is
+    written."""
+    _sidecar(inv.lsr, "repoC-1", HEADS["repoC-1"])
+    assert inv.sync().returncode == 0
+    key = "repoC-1:/nowhere/repoC-1/w"
+    assert key in inv.rows(), sorted(inv.rows())
+    before = dump(inv.e.sqlite, with_utc=True)
+    env, log = _git_shim(inv, SHOW_REGISTER, first=1, last=1)
+    res = inv.sync(env=env)
+    calls = _shim_calls(log)
+    assert len(calls) >= 2, calls  # the first read failed and a later one read
+    assert key in inv.rows(), (res.stdout, res.stderr, calls)
+    assert dump(inv.e.sqlite, with_utc=True) == before, res.stdout
+    assert res.returncode == 1, (res.stdout, res.stderr, calls)
+    assert "was not whole - the register lanes/LANES.md could not be read - so a lane it " \
+        "could not name" in res.stderr, res.stderr
+
+
+def test_the_index_read_says_its_last_sync_failed(inv):
+    """A SYNC THAT WROTE NOTHING IS SAID BY THE INDEX READ TOO (N2 of the
+    review of #289). A sync that refuses a listing that is not whole leaves the
+    table and its `synced` time as they were, and `lanes --index --worktrees`
+    said only that time: a table no later sync could write read as a current
+    one. The read's line now carries this workstation's last error beside its
+    source, as `status` does, until a sync writes again."""
+    _sidecar(inv.lsr, "repoZ-1", HEADS["repoZ-1"])
+    assert inv.sync().returncode == 0
+    with _unreadable(inv.e, "origin/main:lanes/archive/LANES-retired.md"):
+        assert inv.sync().returncode == 1
+    idx = _wt(inv, "--all", "--index")
+    assert idx.returncode == 0, idx.stderr
+    assert re.search(r"read: index \(sqlite\) at inventory:Eagle synced " + UTC.pattern +
+                     r" \(its last sync failed: " + UTC.pattern + r" unread: the lane listing "
+                     r"`lanes-edit\.sh worktrees --all` reads the inventory through was not "
+                     r"whole - the archive lanes/archive/LANES-retired\.md could not be read - ",
+                     idx.stderr), idx.stderr
+    assert inv.sync().returncode == 0
+    again = _wt(inv, "--all", "--index")
+    assert re.search(r"read: index \(sqlite\) at inventory:Eagle synced " + UTC.pattern + r"\n",
+                     again.stderr), again.stderr
+    assert "last sync failed" not in again.stderr, again.stderr
 
 
 def test_the_round_cap_hands_back_a_mark_it_took(estate, monkeypatch):
