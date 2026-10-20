@@ -60,8 +60,8 @@ the shared checkout.
 | Input | Where | Identity |
 | --- | --- | --- |
 | Run C's rehearsed arrangement | private prep `work-20261008/rehearsal` (read-only) | source `837928a`, split `69b8924`, spec `593250d`, code `73b04d6`, nested openRepoShape `7f84ca4` |
-| T006 patches (5) | `004-migrate-to-triad-root-guidance` `041a273` | each blob equals `465fa6d`'s; sha256 `cd69c2a9…`, `574c0df1…`, `a7f8521b…`, `74b98ff9…`, `c11070f0…`, as `gate-ab-evidence` records |
-| T010 patches (2) | `004-migrate-to-triad-ci` `cc7c7a1` (r1); the branch is at `d28e2cc` for r2, with both patch blobs unchanged | code `tests.yml` `7ee3c6d0…`; assembly `composed.yml` `6ee09f00…` |
+| T006 patches (5) | `004-migrate-to-triad-root-guidance` `041a273` | each blob equals `465fa6d`'s; sha256 `cd69c2a9…`, `574c0df1…`, `a7f8521b…`, `74b98ff9…`, `c11070f0…`, as `gate-ab-evidence` records. *Superseded 2026-10-19: `cd69c2a9…` is the earlier `assembly-0001`; the file at its path is re-cut, sha256 `2ec48bbf…eaead7` (`gate-b-status-2026-10-09.md`, checklist line 17).* |
+| T010 patches (2) | `004-migrate-to-triad-ci` `cc7c7a1` (r1); the branch is at `d28e2cc` for r2, with both patch blobs unchanged | code `tests.yml` `7ee3c6d0…`; assembly `composed.yml` `6ee09f00…`. *Superseded 2026-10-19: `7ee3c6d0…` is the earlier code-leg patch; the file at its path is regenerated, sha256 `1406ead3…ef6d56` (`gate-b-status-2026-10-09.md`, checklist line 32).* |
 | T007 entry point | `004-migrate-to-triad-installer` `51993a4` | `t007-assembly-entry-point.patch` `361c037d…`, as `installer-2026-10-08.md` records |
 | PR #190 | r2: `b50f197` (on origin as `feat/test-roots-manual-guard`, a fast-forward of the PR head). r1: `dbc6837` | r2: 4 commits on `c4864ac`: `c139e88`, `e3a76b5`, `dbc6837`, `b50f197` |
 | PR #191 | r2: `13cc752`, Linux CI green. r1: `2411f40` | r2: 5 commits on `c4864ac`: `6337a52`, `e406e0e`, `ecd7aa4`, `2411f40`, `13cc752` |
@@ -107,6 +107,13 @@ and none was dropped.**
 | 17 | assembly | `bump-leg.py --leg code --to 4dbcf6c…` | exit 0 | **`5d92962`** | **`d263907a`** |
 
 Steps 12–16 are r1's commits, reused: none of their inputs moved. Step 17 is new.
+
+*Superseded 2026-10-19 (steps 11 and 13):* those steps applied the earlier code-leg
+`t010-code-leg-tests-workflow.patch` (`7ee3c6d0…`) and the earlier `assembly-0001` (`cd69c2a9…`), and their
+results stand as recorded. The files at those paths are now the regenerated and the re-cut ones
+(`1406ead3…ef6d56`, `2ec48bbf…eaead7`), made against the files #228's series leaves, so these two results are
+not results for them. A third code-leg patch, T009's `t009-assembly-caps.patch` (`2dd4aac2…b2bbe5`), goes on
+after steps 10 and 11 and sets the assembly-root length caps the re-cut needs.
 
 What was checked at each step:
 
@@ -259,7 +266,8 @@ None of those jobs is composed.
 *2026-10-13, F2's decision.*
 - **Decided on 2026-10-11: the test gives.** #193 item 14 was settled by lane 1's
   decision (#186 comment 6103665910, 00:16Z), as #195's writer recommended in 6103460962.
-  T006's `assembly-0001` is unchanged.
+  T006's `assembly-0001` is unchanged. *(Superseded 2026-10-19: it is re-cut since, for the root files
+  #228's series leaves, and not because of this decision.)*
 - **Implemented in #195 at `e378871`.** At an assembly root,
   `test_agents_md_names_the_pin_rules` now expects `code/upstream/openRepoShape` and
   `git -C code submodule update --init upstream/openRepoShape`, taking the prefix from
@@ -294,6 +302,10 @@ run has one.
   entry point, #190 at `b50f197` and #191 at `13cc752` stack onto run C with no conflict
   and no resolution. That is the stack `gate-ab-evidence` section 5 only checked as
   text.
+  *Superseded 2026-10-19:* that holds for the files of that date on run C. The earlier `assembly-0001` and
+  code-leg `tests.yml` patch no longer apply to #228's files, and their replacements have been tried in
+  scratch trees and layouts only, not in a candidate built through the adoption tool
+  (`gate-b-status-2026-10-09.md`, checklist lines 17 and 32).
 - **The result is a valid triad.** It bootstraps and validates: legs at their pins, both
   digests recomputed, all 11 copied shape files intact, and `composed.yml`'s own
   context and validator steps green.
@@ -476,6 +488,10 @@ full composed suite is redone once, at the frozen source, for Gate C.
 | code | + T006 `code-0001` (`6e4761b`) + T010 `tests.yml` | **`9c112769d4311675b4eee89852cf7e51384bfb4b`** | **`e53dfa62`**; pinned digest `268cd8ca6dcb5cd35a1c7060ee112399d060db41bba9d4b0ed4a08bcdb10dd0b` |
 | spec | unchanged | **`9e1d006`** | `10256135` |
 | assembly | `69b8924` + `assembly-0001` (`4f1e522`) + `composed.yml` (`738857c`) + T007 v3 (`325131e`) + `bump-leg.py` spec (`23439bb`) and code | **`3891943274f74b6c87683153e35ee9a961b5b1eb`** | **`fd997c3d`** |
+
+*Superseded 2026-10-19:* r3's code row applied the earlier code-leg `tests.yml` patch, and its assembly row the
+earlier `assembly-0001`; the paths now hold the regenerated and the re-cut files (the note under section 2's
+apply table).
 
 What was checked:
 - **The code leg is #191's final head.** All 51 code-leg paths that `8246983` carries
