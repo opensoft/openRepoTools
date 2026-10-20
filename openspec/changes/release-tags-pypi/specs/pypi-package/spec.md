@@ -422,10 +422,18 @@ publisher for `opensoft/openRepoTools` stays as a second line of defence.
 - **THEN** the build refuses before any approval is asked, and both upload
   jobs refuse if they are ever reached
 
-#### Scenario: The index already holds the version
+#### Scenario: The index already holds a file of the version other than the verified wheel
 
 - **WHEN** the index already holds a file of the version being uploaded
+  other than the verified wheel at its recorded digest, or holds that wheel
+  yanked
 - **THEN** the upload job refuses before uploading
+
+#### Scenario: The index already holds the verified wheel
+
+- **WHEN** the index holds only the verified wheel at its recorded digest,
+  not yanked, as after an upload that went through
+- **THEN** the upload job does not refuse, and its upload adds nothing new
 
 ### Requirement: The install check
 

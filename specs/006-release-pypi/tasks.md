@@ -271,7 +271,7 @@ environments exist.
 
 ### Tests for User Story 5 (write first; they MUST fail before T019 to T021)
 
-- [ ] T018 [US5] [O] Write `tests/test_release_workflow.py`. It loads `release.yml` with the pinned `load_yaml`, skipping without the submodule, and holds contracts/workflows.md's `release.yml` list under these prefixes, as detailed below — files: `tests/test_release_workflow.py` — verify: `bash tests/run.sh --collect-only -q -k test_release_`
+- [X] T018 [US5] [O] Write `tests/test_release_workflow.py`. It loads `release.yml` with the pinned `load_yaml`, skipping without the submodule, and holds contracts/workflows.md's `release.yml` list under these prefixes, as detailed below — files: `tests/test_release_workflow.py` — verify: `bash tests/run.sh --collect-only -q -k test_release_`
   - `test_release_trigger_`, `test_release_build_`, `test_release_upload_`, `test_release_install_check_`, `test_release_header_` and `test_release_reads_`;
   - `test_release_stamp_writer_`: the heredoc, extracted as the model's `heredoc()` does, is run on a copy of the committed stamp and read back by `--version` from a `package_tree`. The step must refuse a file already stamped, and a value no release carries;
   - `test_release_lock_`, for both locks: one version per entry, by sha256; hatchling equal to `pyproject.toml`'s pin; pipx 1.11.1 below Python 3.10 and 1.17.8 from 3.10.
@@ -285,12 +285,12 @@ environments exist.
 
 ### Implementation for User Story 5
 
-- [ ] T019 [US5] [O] Create `.github/workflows/release.yml`'s shape and its `build` job, adapted from openRepoShape v1.1.0 (`190133d`) step for step, as detailed below — files: `.github/workflows/release.yml` — verify: `actionlint .github/workflows/release.yml && bash tests/run.sh -k 'test_release_trigger_ or test_release_build_ or test_release_stamp_writer_ or test_release_lock_ or test_release_reads_ or test_release_guard_build_'`
+- [X] T019 [US5] [O] Create `.github/workflows/release.yml`'s shape and its `build` job, adapted from openRepoShape v1.1.0 (`190133d`) step for step, as detailed below — files: `.github/workflows/release.yml` — verify: `actionlint .github/workflows/release.yml && bash tests/run.sh -k 'test_release_trigger_ or test_release_build_ or test_release_stamp_writer_ or test_release_lock_ or test_release_reads_ or test_release_guard_build_'`
   - the shape: `workflow_dispatch` with `version`, `permissions: {}`, the `release` concurrency group without cancelling, `bash` by default, and `VERSION` and `PYTHONUTF8` in `env`;
   - contracts/workflows.md's build steps 1 to 14, with design.md Decision 10's differences: `X.Y.ZrcN` accepted; the stamp's `REPOSITORY` from `GITHUB_REPOSITORY`; the digest-definition assertion against the literal and the pin; the payload blob and mode check; and the repository guard of step 1 (FR-048), with its `to-testpypi` and `to-pypi` outputs;
   - the model's rehearsal rule in steps 2 and 3 (FR-029): on a branch, the tag and branch-membership checks pass as a rehearsal, and every other step runs;
   - every action pinned by a full commit.
-- [ ] T020 [US5] [O] Add `release.yml`'s `testpypi`, `install` and `pypi` jobs per contracts/workflows.md, as detailed below — files: `.github/workflows/release.yml` — verify: `actionlint .github/workflows/release.yml && bash tests/run.sh -k 'test_release_upload_ or test_release_install_check_ or test_release_reads_ or test_release_guard_'`
+- [X] T020 [US5] [O] Add `release.yml`'s `testpypi`, `install` and `pypi` jobs per contracts/workflows.md, as detailed below — files: `.github/workflows/release.yml` — verify: `actionlint .github/workflows/release.yml && bash tests/run.sh -k 'test_release_upload_ or test_release_install_check_ or test_release_reads_ or test_release_guard_'`
   - the order: TestPyPI, then the three-leg install check, then PyPI;
   - `id-token: write` on the two upload jobs alone, each in its environment, on a `v*` tag. Each upload job gets exactly `id-token: write`, `actions: read` and `contents: read`, and `install` gets `contents: read`;
   - the re-reads, the empty-index check and the served-digest check, around `pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33`;
@@ -299,7 +299,7 @@ environments exist.
     - `testpypi` runs only when `needs.build.outputs.to-testpypi == 'true'`, and its first step runs the guard again;
     - `pypi` runs only when `needs.build.outputs.to-pypi == 'true'`, so it is skipped in an rc rehearsal;
     - `pypi`'s first step refuses anything but a final in `opensoft/openRepoTools-code`, so in `opensoft/openRepoTools` it refuses outright.
-- [ ] T021 [US5] [O] Write `release.yml`'s header, RELEASING, in contracts/workflows.md's six sections, as detailed below — files: `.github/workflows/release.yml` — verify: `actionlint .github/workflows/release.yml && bash tests/run.sh -k test_release_`
+- [X] T021 [US5] [O] Write `release.yml`'s header, RELEASING, in contracts/workflows.md's six sections, as detailed below — files: `.github/workflows/release.yml` — verify: `actionlint .github/workflows/release.yml && bash tests/run.sh -k test_release_`
   - the procedure on Brett Heap's word, with the tag message's form, and the `gh release create` step after PyPI serves the version;
   - #850's branch and tag policy:
     - the trunk;

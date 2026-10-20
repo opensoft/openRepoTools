@@ -473,7 +473,8 @@ over as they are. It differs in these places:
     `HOME`, and compares the skip and count lines exactly.
   - On macOS, the leg reruns `--install` with `PATH="/bin:$PATH"` so that
     `/bin/bash` 3.2 runs, and prints `BASH_VERSION`.
-  - On 3.9, the leg runs `py_compile` on `lanes-index` and `lane-worktrees`.
+  - On 3.9, the leg compiles `lanes-index` and `lane-worktrees` with
+    `compile()`, which writes no bytecode.
 - **The release notes.** `release.yml` reads none (Decision 11).
 
 ### 11. The release notes stay in the spec leg, and no release step reads them (N3)
@@ -671,6 +672,31 @@ Ruled on T013's report, so numbered after item 13:
       only that bullet and when the README PR of step 6 can open. It also
       adds README's one-route sentence, in feature 006's README task. It
       changes none of the code, delta specs or decisions here.
+
+### Resolved by the lead, 2026-10-18, on T020
+
+The lead ruled on T020's first doubt. The item below is resolved by the
+lead, 2026-10-18, and numbered after item 14.
+
+15. **The upload jobs' empty-index check is the model's form.** Resolved by
+    the lead, 2026-10-18.
+    - Before the upload, the index holds no file of the version but the
+      verified wheel at its recorded digest. A 404 passes. The verified
+      wheel already there at that digest, not yanked, passes, and the
+      upload (`skip-existing`) adds nothing new. A file of any other name,
+      the wheel's name at another digest, or the verified wheel yanked
+      refuses the job before the upload (Decision 10).
+    - FR-031 stands as written: "The index MUST hold no other file of that
+      version before the upload, and MUST serve exactly the recorded digest
+      after it". FR-028 stands too: the model's checks, as they are.
+    - The reason: the strict form, the index holding no file at all, would
+      make "Re-run failed jobs" impossible after an upload that went
+      through but whose served-digest check timed out.
+    - Three places said the strict form, and now say this one:
+      `contracts/workflows.md`'s `testpypi` bullet on TestPyPI's JSON,
+      spec.md's User Story 5, acceptance scenario 5, and the `pypi-package`
+      delta spec's scenario for an index that already holds a file of the
+      version.
 
 ### Still open
 
