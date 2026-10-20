@@ -2482,10 +2482,88 @@ def test_readme_is_short_enough_to_be_read():
     lockstep-invariant section the leg pins' `resync_runbook:` names
     (`README.md#the-lockstep-invariant`) and the three-repository front door.
     Today's single repository keeps 486.
+
+    486 -> 505 HERE, on 2026-10-18
+    (opensoft/openRepoTools #228, feature 006, T024), for what a workstation
+    with pipx's link reads. Twenty lines, each one a thing a person MEETS: the
+    version paragraph, 3 -> 7 (FR-043), which said "no version number" and
+    now says that a release is an annotated tag, that the version comes only
+    from the tag, and what `--version` prints stamped, unstamped and from a
+    checkout; the one sentence that a workstation uses one install route or
+    the other until workBenches#165 lets its `setup-estate-commands.sh`
+    accept pipx's link, with its blank (FR-047, Brett Heap's decision of this
+    day), 4; the paragraph that says what `--install` does beside that link,
+    with its blank, 7; the sixteen-of-seventeen pointer on the file count and
+    the one-link-skipped sentence in the symlink passage, 1 and 1; and the
+    count invariant's twenty-eight placed, one left to pipx and 28 receipt
+    rows, 3 (FR-044). No pipx install route is added (FR-045). Every dated
+    entry above stays.
+    THE ASSEMBLY'S 510 DOES NOT MOVE HERE, although the 2026-10-08 entry makes
+    it this count plus T006's twenty-four, which would be 529. Its file does
+    not exist yet, and the README part of `assembly-0001` no longer applies to
+    today's README, at three hunks: the one at `README.md:237`, which adds the
+    assembly's install sentence, fails against this entry's own rewrite of the
+    file-count sentence; the one at `README.md:260`, which moves `tests/run.sh`
+    under `code/`, fails against this entry's one-link-skipped sentence in the
+    symlink passage; and the one at `README.md:300`, which does the same for
+    `commands/swap.md`, fails against #237's (#247's) rewrite of the count
+    paragraph. None of the three can be counted at this head, so
+    529 would be arithmetic over a patch that does not apply. The re-cut that
+    makes the assembly's file again sets its cap, as the 2026-10-18 AGENTS.md
+    entry above says for its 347, and `tests/test_test_roots.py` holds 510
+    until then.
     """
     lines = doc("README.md").read_text().splitlines()
-    cap = 486 if ROOTS.assembly is None else 510
+    cap = 505 if ROOTS.assembly is None else 510
     assert len(lines) <= cap, f"README.md is {len(lines)} lines; the cap is {cap}"
+
+
+def test_readme_says_what_a_release_is_and_offers_no_package_route():
+    """What T024 put in README is held here, because the line cap is the only
+    thing that bites otherwise (the review of PR 4 of #228, S2: a README
+    that offered the pipx route, dropped the one-route sentence, took back
+    "no version number" or counted 17 of 17 beside pipx's link, each stayed
+    green).
+
+    SC-009 and FR-045: README names no package route. No line holds `pipx
+    install` or `pip install` before `openrepotools` in any spelling of the
+    name, which is the check T024's own verify makes once, and makes only for
+    the lower-case `pipx install openrepotools`. FR-047: the install section
+    cites opensoft/workBenches#165. FR-043: the version paragraph holds the
+    three first lines `--version` prints, stamped, unstamped and from a
+    checkout, spelled as `contracts/cli-output.md` gives them. FR-044: the
+    count line beside pipx's link and the count invariant's receipt rows.
+
+    FR-045's later PR (the change's tasks.md 6.4) rewrites this test: it adds
+    the pipx route, so the first assertion goes with it, and the other three
+    follow the text it moves."""
+    text = doc("README.md").read_text(encoding="utf-8")
+
+    route = re.compile(r"(?i)\bpipx?\s+install\b.*\bopenrepotools\b")
+    offered = [line for line in text.splitlines() if route.search(line)]
+    assert not offered, (
+        "README.md offers a package route, which FR-045 and SC-009 forbid "
+        f"until the workBenches condition holds: {offered}")
+
+    install = re.search(r"(?ms)^## Install\n(.*?)(?=^## )", text)
+    assert install, "README.md has no `## Install` section"
+    assert "opensoft/workBenches#165" in install.group(1), (
+        "README.md's install section does not cite opensoft/workBenches#165, "
+        "which FR-047 requires beside the one-route sentence")
+
+    stamped = "openRepoTools <version> (<repository> @ <commit>)"
+    paragraphs = [" ".join(p.split()) for p in re.split(r"\n\s*\n", text)]
+    version = [p for p in paragraphs if stamped in p]
+    assert version, f"README.md has no paragraph holding `{stamped}`"
+    for first_line in (stamped, "openRepoTools 0.0.0 (an unstamped package)",
+                       "openRepoTools (<repo> @ <ref>)"):
+        assert first_line in version[0], (
+            f"README.md's version paragraph does not hold `{first_line}`")
+
+    for count in ("16 of 17 placed in <dir>, and 1 left to pipx",
+                  "28 receipt rows"):
+        assert count in text, (
+            f"README.md does not say `{count}` beside pipx's link (FR-044)")
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
