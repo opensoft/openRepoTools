@@ -507,3 +507,33 @@ def test_a_sidecar_act_in_a_W_that_is_a_lane_checkout_refuses(box: Box, how: str
     assert "Unset LANES_WORKSPACE_ROOT" in result.stderr, result.stderr
     assert not Path(f"{c}-lanes").exists(), "nothing locked beside the lane checkout"
     assert not (box.state / LANE / "lane-state.yaml").exists(), "nothing written"
+
+
+# ----------------------------------------------------- fix round 2 (#282's re-review)
+
+@pytest.mark.parametrize("line", ["{pid} " + ME, "{pid}"], ids=["pid-container-host", "pid-only"])
+def test_without_the_opt_in_a_live_holder_is_aged_out_at_ten_minutes(box: Box, line: str):
+    """N1: without `LANES_ROUTE_WRITES` the lock is W's, which every lane
+    shares, and main ages out any lock over ten minutes old, whoever holds it:
+    a holder stopped by Ctrl-Z, or stuck in a D-state git, blocks every lane
+    for ten minutes and no longer. The write takes it over at once and lands,
+    and the holder itself is left running. (Under the opt-in a live holder is
+    never aged out: `test_live_holder_is_not_aged_out`.)"""
+    w_lock = box.w / "lanes" / ".lanes-edit.lock"
+    holder = subprocess.Popen(["sleep", "300"])
+    try:
+        hold(w_lock, line.format(pid=holder.pid), age_minutes=11)
+        started = time.monotonic()
+        result = box.stamp("past a quiet holder", LANES_ROUTE_WRITES="", timeout=120)
+        took = time.monotonic() - started
+        assert holder.poll() is None, "the holder itself is left running"
+    finally:
+        holder.kill()
+        holder.wait()
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert took < 30, f"it took the lock over at once, not after its minute's wait: {took:.0f}s"
+    assert f"taking over {w_lock}" in result.stderr, result.stderr
+    assert f"(pid {holder.pid}) is alive but has not refreshed it for over ten minutes" in result.stderr
+    assert " · past a quiet holder |" in box.origin_register()
+    assert not w_lock.exists(), "the writer released the lock it took over"
+    assert not box.lanes_root.exists(), "and no lane checkout or <W>-lanes/ was made"

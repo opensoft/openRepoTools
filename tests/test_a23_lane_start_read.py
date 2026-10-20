@@ -155,12 +155,21 @@ exec '{real}' "$@"
     assert second.returncode == 0, second.stderr
 
 
-def _end(box: Sandbox, *args: str) -> subprocess.CompletedProcess:
+#: lane-end prints this line, its in-flight read of the lane's log, only after
+#: the register follow-up, so a case whose end must go on past the follow-up's
+#: note asserts it (the re-check of #282's cases, R3-1). The end's exit is its
+#: own later write's, so it cannot simply be asserted 0.
+GOES_ON = "in-flight read from lanes/log/"
+#: The re-check's R3-2: the slowest new cases run inside 300 s, not 120 or 180.
+SLOW = 300
+
+
+def _end(box: Sandbox, *args: str, timeout: int = 180) -> subprocess.CompletedProcess:
     for name in ("lane-end", "lane-worktrees"):
         shutil.copy2(REPO / name, box.bin / name)
         (box.bin / name).chmod(0o755)
     return subprocess.run([str(box.bin / "lane-end"), LANE, *args], env=box.env,
-                          capture_output=True, text=True, timeout=180, check=False)
+                          capture_output=True, text=True, timeout=timeout, check=False)
 
 
 def _started_in_W(tmp_path: Path, short_root: Path, *, checkout_first: bool = False):
@@ -213,6 +222,7 @@ def test_a_checkout_that_cannot_be_made_is_said_and_the_end_goes_on(tmp_path, sh
     assert "own register checkout could not be made" in end.stderr, end.stderr
     assert "so this command reads W's register" in end.stderr, end.stderr
     assert "has no row for lane" not in end.stderr, end.stderr
+    assert GOES_ON in end.stderr, end.stderr
     assert not checkout.exists()
 
 
@@ -250,7 +260,7 @@ def test_a_held_creation_lock_is_said_and_the_start_goes_on(tmp_path, short_root
     box, checkout = _started_in_W(tmp_path, short_root)
     box.env["LANES_ROUTE_WRITES"] = "1"
     with _CreationLockHeld(box, checkout):
-        second = box.start(window_name=LANE)
+        second = box.start(window_name=LANE, timeout=SLOW)
     assert "own register checkout could not be made" in second.stderr, second.stderr
     assert "exited 4" in second.stderr, second.stderr
     assert "so this command reads W's register" in second.stderr
@@ -263,9 +273,10 @@ def test_a_held_creation_lock_is_said_and_the_end_goes_on(tmp_path, short_root):
     box, checkout = _started_in_W(tmp_path, short_root)
     box.env["LANES_ROUTE_WRITES"] = "1"
     with _CreationLockHeld(box, checkout):
-        end = _end(box)
+        end = _end(box, timeout=SLOW)
     assert "own register checkout could not be made" in end.stderr, end.stderr
     assert "exited 4" in end.stderr, end.stderr
     assert "so this command reads W's register" in end.stderr
     assert "has no row for lane" not in end.stderr, end.stderr
+    assert GOES_ON in end.stderr, end.stderr
     assert not checkout.exists()

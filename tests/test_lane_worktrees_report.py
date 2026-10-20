@@ -720,3 +720,27 @@ def test_a_lanes_register_checkout_is_reported_and_never_foreign(tmp_path):
     assert f"{lane_checkout} · lane repoA-1 ·" in registers, registers
     assert "1 commit(s) origin/main lacks" in registers
     assert "cherry -v origin/main" in registers
+
+
+def test_a_W_that_is_a_lane_checkout_lists_its_siblings_as_register_checkouts(tmp_path):
+    """The re-review of #282, SHOULD 5: Eagle's lane windows resolve W to
+    their own checkout, `brett-wip-lanes/<lane>/`, and lane-start runs this
+    report from there. Its lanes home is then its parent, as lanes-edit.sh's
+    `lanes_home_check` reads a `*-lanes` one, so both lanes' checkouts are
+    register checkouts and neither is FOREIGN."""
+    e = LW.Estate(tmp_path)
+    ws_origin = e.root / "workspace.git"
+    w = e.projects / "brett-wip"
+    e.git("clone", "-q", ws_origin, w, cwd=e.root)
+    mine = e.projects / "brett-wip-lanes" / "repoA-1"
+    other = e.projects / "brett-wip-lanes" / "repoB-1"
+    for c in (mine, other):
+        e.git("clone", "-q", ws_origin, c, cwd=e.root)
+    e.workspace = str(mine)
+    proc = report(e)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    foreign = section(proc.stdout, "FOREIGN repositories")
+    assert str(mine) not in foreign and str(other) not in foreign, foreign
+    registers = section(proc.stdout, "Register checkouts (Amendment 23 S1)")
+    assert f"{mine} · lane repoA-1 ·" in registers, registers
+    assert f"{other} · lane repoB-1 ·" in registers, registers

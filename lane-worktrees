@@ -5525,6 +5525,13 @@ class Report:
         # that lane's writes; listing it here told a person to dispose of it.
         wroot = self.helper.workspace_root() if self.helper.path else ""
         lanes_home = real(wroot) + "-lanes" if wroot else ""
+        # AND A W THAT IS ITSELF A LANE CHECKOUT (the re-review of #282, SHOULD
+        # 5): Eagle's lane windows resolve W to their own `<X>-lanes/<lane>/`,
+        # and lane-start runs this report from there. Its lanes home is then its
+        # parent, as lanes-edit.sh's `lanes_home_check` reads a `*-lanes` one.
+        home = os.path.dirname(real(wroot)) if wroot else ""
+        if len(os.path.basename(home)) > len("-lanes") and home.endswith("-lanes"):
+            lanes_home = home
         registers = []
         for c in clones:
             if lanes_home and os.path.dirname(real(c)) == lanes_home:

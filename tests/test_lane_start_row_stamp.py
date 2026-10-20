@@ -203,11 +203,11 @@ class Sandbox:
         self.git("-C", str(path), "remote", "add", "origin",
                  "https://github.com/opensoft/repoZ.git")
 
-    def start(self, *args: str, window_name: str) -> subprocess.CompletedProcess:
+    def start(self, *args: str, window_name: str, timeout: int = 120) -> subprocess.CompletedProcess:
         return subprocess.run([str(self.bin / "lane-start"), "repoZ", "1",
                                "--no-launch", *args],
                               env=dict(self.env, FAKE_TMUX_WINDOW_NAME=window_name),
-                              capture_output=True, text=True, timeout=120,
+                              capture_output=True, text=True, timeout=timeout,
                               check=False)
 
     def stamp_line(self) -> str:
