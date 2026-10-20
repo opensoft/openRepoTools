@@ -355,6 +355,19 @@ def test_lane_checkout_verb_reads_and_creates(box: Box):
     assert usage.returncode == 64
 
 
+def test_without_the_opt_in_both_variables_naming_W_are_no_refusal(box: Box):
+    """R4-2: both variables at the `path:` workspace.yaml names is W itself,
+    not a lane checkout, and without the opt-in no write goes anywhere else
+    than W. `lane-checkout` took it for a refusal (2) all the same, naming an
+    opt-in that is off. It answers as it does with `LANES_REPO` unset: no
+    checkout there yet (8), and nothing made."""
+    absent = box.helper("lane-checkout", LANE, LANES_ROUTE_WRITES="",
+                        LANES_WORKSPACE_ROOT=str(box.w), LANES_REPO=str(box.w))
+    assert absent.returncode == 8 and absent.stdout == "", (absent.stdout, absent.stderr)
+    assert "W itself" not in absent.stderr and "Amendment 23 S5" not in absent.stderr, absent.stderr
+    assert not box.lanes_root.exists(), "the read made no checkout"
+
+
 def _fake(path: Path, text: str) -> Path:
     path.write_text(text, encoding="utf-8")
     path.chmod(0o755)
