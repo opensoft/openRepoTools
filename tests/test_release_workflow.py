@@ -117,6 +117,7 @@ import os
 import re
 import shlex
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -3129,6 +3130,12 @@ SERVED = (200, [(INDEX_WHEEL, VERIFIED, False)])
 NOT_YET = (404, [])
 DROPPED = (None, [])
 
+#: A READ THAT FAILS WITH A `URLError` AND NO HTTP STATUS, which a dropped
+#: connection is not (that one is a `ConnectionError`, which urllib does not
+#: wrap): the index redirects the read to a port nobody listens on, urllib
+#: follows it, and its connection is refused.
+REFUSED = (302, [])
+
 #: THE CLOCK, the one other thing faked: `time.sleep` writes down what it was
 #: asked and returns at once, so 20 reads 15 seconds apart take no time. It is
 #: a `sitecustomize` on the step's PYTHONPATH, so the step's script runs as
@@ -3150,10 +3157,16 @@ class FakeIndex:
     and every read after the last answer gets the last again. Each answer is
     `(status, files)`, a file `(filename, sha256, yanked)`; the status `None`
     closes the connection with no response at all, a connection error with
-    no HTTP status. Every read's path is written down in `reads`."""
+    no HTTP status, and the status 302 (`REFUSED`) redirects the read to a
+    port nobody listens on. Every read's path is written down in `reads`."""
 
     def __init__(self, answers: list) -> None:
         self.answers, self.reads = list(answers), []
+        # a port nobody listens on: bound, so that no one else takes it, and
+        # never listening, so that a connection to it is refused
+        self.parked = socket.socket()
+        self.parked.bind(("127.0.0.1", 0))
+        self.nobody_listens = f"http://127.0.0.1:{self.parked.getsockname()[1]}/"
         index = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -3171,6 +3184,8 @@ class FakeIndex:
                               for name, digest, yanked in files]}
                     if status == 200 else {"message": f"HTTP {status}"}).encode()
                 self.send_response(status)
+                if status == REFUSED[0]:
+                    self.send_header("Location", index.nobody_listens)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
@@ -3194,6 +3209,7 @@ class FakeIndex:
         self.server.shutdown()
         self.server.server_close()
         self.thread.join()
+        self.parked.close()
 
 
 def run_index_step(tmp_path: Path, name: str, prefix: str, answers: list
@@ -3264,15 +3280,16 @@ def test_release_upload_the_empty_index_check_passes_no_file_or_the_verified_whe
 
 #: AFTER THE UPLOAD: `(what the index answers, read by read, whether the step
 #: passes, how many reads it makes)`. It reads until the index serves exactly
-#: the verified wheel, through a 404, an empty listing, a server error or a
-#: connection closed with no response, up to 20 reads, and refuses the wheel
-#: yanked, any other file and a client error at once.
+#: the verified wheel, through a 404, an empty listing, a server error, a
+#: connection closed with no response or a connection refused, up to 20 reads,
+#: and refuses the wheel yanked, any other file and a client error at once.
 SERVED_CASES = {
     "served-at-the-first-read": ([SERVED], True, 1),
     "not-yet-then-served": ([NOT_YET, SERVED], True, 2),
     "an-empty-listing-then-served": ([(200, []), SERVED], True, 2),
     "a-server-error-then-served": ([(503, []), SERVED], True, 2),
     "a-connection-error-then-served": ([DROPPED, SERVED], True, 2),
+    "a-refused-connection-then-served": ([REFUSED, SERVED], True, 2),
     "served-at-the-twentieth-read": ([NOT_YET] * 19 + [SERVED], True, 20),
     "served-only-after-twenty-reads": ([NOT_YET] * 20 + [SERVED], False, 20),
     "another-file-beside-it-every-time": (
@@ -3294,9 +3311,10 @@ def test_release_upload_the_served_check_reads_until_the_verified_wheel_is_serve
         tmp_path, name, which):
     """THE SERVED-DIGEST CHECK, RUN against a fake index, in each upload job:
     it keeps reading, 15 seconds apart, up to 20 reads, through a read that
-    fails with no HTTP status, until the index serves exactly the verified
-    wheel, and passes then; it refuses an index that never does, the wheel
-    yanked, and a client error."""
+    fails with no HTTP status (a connection closed with no response, or one
+    refused, which urllib raises as a `URLError` that has no status), until
+    the index serves exactly the verified wheel, and passes then; it refuses
+    an index that never does, the wheel yanked, and a client error."""
     answers, passes, count = SERVED_CASES[which]
     done, reads, sleeps = run_index_step(tmp_path, name, SERVED_STEP, answers)
     assert (done.returncode == 0) == passes, transcript(done)
@@ -3305,6 +3323,10 @@ def test_release_upload_the_served_check_reads_until_the_verified_wheel_is_serve
     assert set(sleeps) <= {"15"}, sleeps
     if passes:
         assert len(sleeps) == count - 1, sleeps
+    if REFUSED in answers:
+        assert "<urlopen error" in done.stdout, (
+            "a refused read is a `URLError`, which the step prints as "
+            f"`<urlopen error ...>`:\n{transcript(done)}")
 
 
 # --- the install check ---------------------------------------------------------------
