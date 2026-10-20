@@ -47,17 +47,17 @@
 #   `cat`, `cut`, `head`, `tail`, `grep`, `python open(...,'a')` are all safe.
 #
 # USAGE
-#   lanes-edit.sh [--no-sweep|--sweep] verify-row         <lane>
-#   lanes-edit.sh [--no-sweep|--sweep] set-row-state      <lane> "<STATE> · <one line>"
-#   lanes-edit.sh [--no-sweep|--sweep] replace-in-row     <lane> "<old>" "<new>" ["<why>"]
-#   lanes-edit.sh [--no-sweep|--sweep] append-session-id  <lane> "<anchor>" "<text to append>" ["<why>"]
+#   lanes-edit.sh [--no-sweep]         verify-row         <lane>
+#   lanes-edit.sh [--no-sweep]         set-row-state      <lane> "<STATE> · <one line>"
+#   lanes-edit.sh [--no-sweep]         replace-in-row     <lane> "<old>" "<new>" ["<why>"]
+#   lanes-edit.sh [--no-sweep]         append-session-id  <lane> "<anchor>" "<text to append>" ["<why>"]
 #                                        (the anchor is matched INSIDE THE
 #                                         SESSION CELL and nowhere else, and the
 #                                         text is appended at the END of it)
-#   lanes-edit.sh [--no-sweep|--sweep] append-line        "<text>"            # LANDING/LANDED lines
+#   lanes-edit.sh [--no-sweep]         append-line        "<text>"            # LANDING/LANDED lines
 #                                        (attribution: $LANES_LANE, else the
 #                                         "lane <name>" the text itself names)
-#   lanes-edit.sh [--no-sweep|--sweep] add-row            "<full | row |>"
+#   lanes-edit.sh [--no-sweep]         add-row            "<full | row |>"
 #   lanes-edit.sh                      commit             "<message>"         # commit a hand edit; with
 #                                         nothing staged, publish the stranded
 #                                         register and handoff commits (#194)
@@ -574,27 +574,20 @@
 #      shape (#115): nothing can be read out of it as a snapshot, so it is
 #      the same answer, and the message says which of the two it is.
 #
-# --no-sweep (DEFAULT, added 2026-09-09 after 0d84d34/a1f2438 swept another
-#   lane's uncommitted hand edit into an unrelated commit): every mutating
-#   subcommand checks, before making its own edit, whether LANES.md is
-#   already dirty. If it is, that content is someone else's — never this
-#   invocation's — so it is committed FIRST, on its own, as
-#   `LANES(pre-existing@<workstation>): capture an uncommitted registry edit
-#   (row <lane>)`, before this invocation's own edit is made and committed.
-#   A WARNING (with `git diff --stat` and the first 200 chars of every
-#   changed line) always prints first. This never fails the call — the
-#   write still goes through. Amendment 7's `log`, `claim` and `release` take
-#   the same capture for the REGISTER between the two halves of their
-#   dirty-checkout guard, which is why a peer's half-written `lanes/LANES.md`
-#   does not refuse them (Addendum 3, R11); any OTHER modified tracked file
-#   still does, and is refused before the capture rather than after it.
-# --sweep — the old behaviour: leave the pre-existing content staged so it
-#   lands inside this invocation's own commit. Still warns exactly as above,
-#   and appends " + sweeps uncommitted edit to row <lane>" to the commit
-#   subject, so the sweep is never silent.
+# --no-sweep is accepted and changes nothing. It named the default of the
+#   capture that came in on 2026-09-09 after 0d84d34/a1f2438 swept another
+#   lane's uncommitted hand edit into an unrelated commit: a writer that found
+#   LANES.md already dirty committed that content first, as its own
+#   `LANES(pre-existing@<workstation>)` commit. AMENDMENT 23 S3 STEP 4
+#   WITHDRAWS THE CAPTURE (ratified choice 9): a pending hand edit of the
+#   register refuses every writer (2, nothing written) but `commit`, which
+#   carries it across the fast-forward and commits it as its own act.
+# --sweep is withdrawn with it, and refused (2) for every verb but the two
+#   hooks: it left that content staged, to land inside this invocation's
+#   own commit.
 # `commit` has no edit of its own to separate from a pre-existing one — its
-#   job IS to wrap whatever is already dirty. It instead warns and appends
-#   the same " + sweeps uncommitted edit to row <lane>" note when the dirty
+#   job IS to wrap whatever is already dirty. It warns and appends
+#   " + sweeps uncommitted edit to row <lane>" to its subject when the dirty
 #   content touches a row other than the caller's own $LANES_LANE.
 #
 # ENVIRONMENT
@@ -2036,10 +2029,10 @@ append_text_line() {
   # was meant — and only then refused: `append changed line count by 2`, exit
   # 5, the file left modified and uncommitted. What came next was worse than
   # the refusal. A dirty object log is refused by every later writer in that
-  # checkout; a dirty REGISTER is committed by the next one, as a peer's
-  # `pre-existing` edit (`handle_preexisting`) — measured in `lane-handoff`'s own
-  # flow, where the row flip right after the refused PAUSED line committed the
-  # two lines. A carriage return is refused with it: `wc -l` does not count one, so it
+  # checkout; a dirty REGISTER was committed by the next one, as a peer's
+  # `pre-existing` edit (the capture Amendment 23 S3 withdrew) — measured in
+  # `lane-handoff`'s own flow, where the row flip right after the refused PAUSED
+  # line committed the two lines. A carriage return is refused with it: `wc -l` does not count one, so it
   # passed the proof and put a line no reader splits the same way into a file
   # nothing rewrites. `write_event` has refused both since R21; this is the
   # same gate in the one function every append goes through, which is the
@@ -2111,61 +2104,6 @@ remote_has_branch() {
   return 0
 }
 
-# Every TRACKED file in this checkout that differs from HEAD — staged or not,
-# and whatever pathspec the caller happens to be writing. That is exactly the
-# set `git pull --rebase` refuses on. `git status --porcelain` reports the same
-# thing, with rename records and path quoting to parse first; these two
-# plumbing reads answer the same question unambiguously, and neither reports an
-# untracked file, which does not block a rebase.
-tracked_dirty() {
-  { git -C "$LANES_REPO" --no-pager diff --name-only 2>/dev/null
-    git -C "$LANES_REPO" --no-pager diff --name-only --cached 2>/dev/null
-  } | LC_ALL=C sort -u
-}
-
-# AMENDMENT 7 — `log`, `claim` and `release` REFUSE a checkout that cannot be
-# rebased. $1 names the act; every remaining argument is a pathspec THIS write
-# is about to append to and is therefore exempt.
-#
-# `lanes/LANES.md` is the one exemption that is not a pathspec of the write:
-# it is CAPTURED rather than refused, by capture_register_edit below, and the
-# guard is then re-run against the checkout that capture left behind. See
-# there for why (Addendum 3, R11).
-#
-# The guard is computed over the WHOLE checkout, and from the same set the
-# write will use, because the first version of it was not: `claim` measured
-# "dirty elsewhere" against (log + LANES.md) while a CLAIMED writes the log
-# alone, so a dirty `lanes/LANES.md` — the one dirty file this repository
-# actually has, at ~500 register commits a day — passed the guard and then took
-# commit_push's Amendment 5(d) branch, which skips `pull --rebase` and with it
-# the rescan that decides the race. Two lanes ended up holding one object with
-# no CLAIM-LOST. The guard and the write must never disagree about what this
-# invocation is writing.
-refuse_dirty_checkout() {
-  rd_what="$1"; shift
-  [ "$NO_GIT" = 1 ] && return 0
-  git -C "$LANES_REPO" rev-parse --git-dir >/dev/null 2>&1 || return 0
-  if [ "$#" -gt 0 ]; then
-    rd_others="$(tracked_dirty | grep -v -x -F -- "$(printf '%s\n' "$@")" || :)"
-  else
-    rd_others="$(tracked_dirty)"
-  fi
-  [ -n "$rd_others" ] || return 0
-  note "this checkout has uncommitted changes to tracked files that are not this $rd_what's:"
-  printf '  %s\n' $rd_others >&2
-  case "$rd_what" in
-    claim) note "a claim is decided by which CLAIMED lands on main first, and 'pull --rebase' refuses on any"
-           note "unstaged tracked change — so the race cannot be run safely here." ;;
-    *)     note "an object-log write is ordered against other lanes by landing on main, and 'pull --rebase'"
-           note "refuses on any unstaged tracked change — so this write cannot be ordered safely here." ;;
-  esac
-  note "RECOVERY — whoever wrote those files commits them:"
-  note "  lanes/LANES.md   LANES_LANE=<lane> lanes-edit.sh commit \"<what you wrote>\""
-  note "  anything else    git -C $LANES_REPO commit -m \"handoff(<lane>@<workstation>): <what>\" -- <path>"
-  note "then re-run the refused $rd_what: its own push publishes their commits with it (#194)."
-  die "refusing to $rd_what on a checkout that cannot be rebased" 2
-}
-
 # ==================================================== AMENDMENT 23 S3 =======
 #
 # BEFORE THE EDIT: FETCH, CHECK, FAST-FORWARD — OR REFUSE WITH NOTHING WRITTEN.
@@ -2198,7 +2136,10 @@ refuse_dirty_checkout() {
 #   7. A PENDING CHANGE TO A PATH THIS WRITE COMMITS (S3 step 4, ratified
 #      choice 9, and the same reason for every pathspec of the write): a
 #      pathspec commit would carry it under this write's subject. The register
-#      refuses every verb but `commit`, which CARRIES it across (`carry`).
+#      refuses every verb but `commit`, which CARRIES it across (`carry`): a
+#      row edit whose own lines origin left alone applies again even where
+#      origin changed the row beside it, and anything else applies with its
+#      full context or is refused and kept in a file.
 #   8. The fast-forward. git refuses rather than overwrite an uncommitted
 #      change, and that refusal is S3's, naming the file. An unstaged change
 #      to another tracked file that origin did not touch is NOT a refusal
@@ -3155,67 +3096,6 @@ warn_dirty() {
   git -C "$LANES_REPO" --no-pager diff -- "${CP_PATHS[@]}" 2>/dev/null | awk '/^[+-][^+-]/ {print substr($0,1,200)}' >&2
 }
 
-# Called by every mutating subcommand BEFORE it makes its own edit. If
-# LANES.md is already dirty at that point, that content is someone else's —
-# a peer's hand edit, or a helper run interrupted before it could push —
-# never this invocation's. Always warns. In the default --no-sweep mode it
-# commits that content now, as its own attributed commit, so it can never
-# land combined with this invocation's edit (the 0d84d34 / a1f2438
-# incidents: another lane's row edit landed inside an unrelated commit with
-# no trace of whose it was). In --sweep mode it leaves the content staged
-# for this invocation's own commit and sets PRE_DIRTY_LANES so the caller
-# can annotate its commit subject.
-#
-# Sets PRE_DIRTY_LANES to the affected lane list in --sweep mode; empty
-# otherwise (nothing left to annotate — it was already committed separately).
-handle_preexisting() {
-  PRE_DIRTY_LANES=""
-  if [ "$#" -gt 0 ]; then CP_PATHS=("$@"); else CP_PATHS=("$LANES_PATH"); fi
-  [ "$NO_GIT" = 1 ] && return 0
-  git -C "$LANES_REPO" diff --quiet -- "${CP_PATHS[@]}" 2>/dev/null && return 0
-  lanes="$(identify_changed_lanes)"; lanes="${lanes:-unknown}"
-  note "WARNING: LANES.md already has uncommitted changes before this edit (row: $lanes) — not this invocation's"
-  warn_dirty
-  if [ "$SWEEP_MODE" = "sweep" ]; then
-    PRE_DIRTY_LANES="$lanes"
-    note "SWEEP_MODE=sweep — leaving it staged; it will land inside this invocation's own commit, annotated"
-  else
-    git -C "$LANES_REPO" add -- "${CP_PATHS[@]}"
-    git -C "$LANES_REPO" commit -q -m "LANES(pre-existing@$WS): capture an uncommitted registry edit (row $lanes)" -- "${CP_PATHS[@]}" || :
-    note "captured pre-existing edit (row $lanes) as its own commit"
-  fi
-  return 0
-}
-
-# R11 (Addendum 3, 2026-09-11) — a peer's uncommitted REGISTER edit is
-# CAPTURED, not refused. `lanes/LANES.md` is dirty in this shared checkout for
-# much of the day — the register takes ~500 commits a day and a half-written
-# row is what one of them looks like a second before it lands — so refusing
-# every `claim`, `log` and `release` on it would push lanes to stop using the
-# tool, and the pre-existing capture already exists precisely to make that
-# state safe to rebase over. So: capture FIRST, exactly as every register
-# write has done since --no-sweep (the warning included), and let the guard
-# re-test the checkout afterwards.
-#
-# Only when the register is NOT one of this write's own pathspecs: a LANDING
-# or a LANDED commits it itself, and the ordinary handle_preexisting call
-# covers it there, --sweep included. There is nothing to sweep a register edit
-# INTO when this commit does not touch the register, so this capture is always
-# its own commit whatever --sweep says.
-#
-# It is reached only AFTER write_event's first guard, so it never commits on
-# behalf of a write that is about to refuse: a checkout dirty in anything ELSE
-# is refused before the lock and before this runs, and a refusal that had
-# already committed a peer's register edit would be a refusal that wrote.
-capture_register_edit() {
-  case " $* " in *" $LANES_PATH "*) return 0 ;; esac
-  cre_mode="$SWEEP_MODE"
-  SWEEP_MODE="no-sweep"
-  handle_preexisting "$LANES_PATH"
-  SWEEP_MODE="$cre_mode"
-  return 0
-}
-
 # ======================================================== Amendment 7 ======
 #
 # THE PER-LANE OBJECT LOG.
@@ -3529,7 +3409,7 @@ ensure_log() {
     if [ "$el_pub" != "$(log_path_for "$lane")" ] && [ "${el_from##*/}" != "${el_pub##*/}" ]; then
       el_here="and this checkout does not have it"
       [ -n "$el_from" ] && el_here="while this checkout has ${LANES_LOG_PREFIX}${el_from##*/} instead — a case-only rename whose commit never landed"
-      die "lane ${lane}'s object log is published as $el_pub $el_here: the row spells the lane $lane, so the log is $(log_path_for "$lane") (Amendment 15), and writing one here now would leave TWO files for one lane. Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run; the rename then happens once, inside this write's own commit. Nothing was written." 2
+      die "lane ${lane}'s object log is published as $el_pub $el_here: the row spells the lane $lane, so the log is $(log_path_for "$lane") (Amendment 15), and writing one here now would leave TWO files for one lane. Re-run the write: it fast-forwards this checkout to origin's tip under its lock first (Amendment 23 S3), and the rename then happens once, inside its own commit. Nothing was written." 2
     fi
   fi
   if [ -n "$el_from" ] && [ "$el_from" != "$lf" ]; then
@@ -12101,14 +11981,20 @@ migrate_state_cells() {   # <1 = the act, 0 = the dry run>
   # of those rewrites is made on a base origin has moved past, and S4 replays
   # the whole act or keeps it on HEAD — never a rebase of several rows.
   log_sync
+  # AMENDMENT 23 S3: THE ACT TAKES ITS LOCK AND S3 UNDER IT BEFORE THE BEHIND
+  # TEST, so the test below reads a checkout already at origin's tip and can
+  # fire only for the dry run, which takes no lock and moves nothing.
+  if [ "$msc_do" = 1 ]; then
+    acquire_lock
+    checkout_sync "migrate-state-cells" "${LANES_LANE:-}" write "$LANES_PATH"
+  fi
   if [ "$NO_GIT" != 1 ] && have_remote_ref; then
-    msc_behind="$(git -C "$LANES_REPO" rev-list --count "HEAD..origin/$LANES_BRANCH" 2>/dev/null || printf '')"
+    msc_behind="$(git -C "$LANES_REPO" rev-list --count "HEAD..refs/remotes/origin/$LANES_BRANCH" 2>/dev/null || printf '')"
     case "$msc_behind" in
       '' | 0) : ;;
-      *) die "this checkout is $msc_behind commit(s) behind origin/$LANES_BRANCH. The migration rewrites EVERY row and every lane's log in ONE commit, so it is made against the published register or not at all. Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run. Nothing was written." 2 ;;
+      *) die "this checkout is $msc_behind commit(s) behind origin/$LANES_BRANCH. The migration rewrites EVERY row and every lane's log in ONE commit, so it is made against the published register or not at all. The act itself fast-forwards first, under its lock (Amendment 23 S3); for this dry run, \`git -C $LANES_REPO merge --ff-only origin/$LANES_BRANCH\`, and re-run. Nothing was written." 2 ;;
     esac
   fi
-  refuse_dirty_checkout "migrate-state-cells" "$LANES_PATH"
 
   # THE MUTEX COMES BEFORE THE SCAN, NOT BETWEEN THE SCAN AND THE WRITE (Copilot
   # round 2 on openRepoTools#82). This act reads every row's LINE NUMBER and its
@@ -12122,7 +12008,7 @@ migrate_state_cells() {   # <1 = the act, 0 = the dry run>
   # under it costs a report one line of accuracy and nothing else — and a read
   # that holds the estate's one register mutex for the seconds this scan takes
   # is a read that blocks every lane's write to say what it would have done.
-  [ "$msc_do" = 1 ] && acquire_lock
+  # (The act's lock is taken above, before S3 and the behind test.)
 
   # TWO ROWS FOR ONE LANE UNDER TWO CASES ARE 15(d)'s HAND MERGE, and both of
   # them are skipped rather than migrated into one log under a name that means
@@ -12234,10 +12120,9 @@ EOF
           elif [ "$NO_GIT" != 1 ] && ! git -C "$LANES_REPO" ls-files --error-unmatch -- "$msc_rel" >/dev/null 2>&1; then
             # AN UNTRACKED LOG IS SOMEBODY'S UNCOMMITTED WORK, AND THIS ACT WOULD
             # COMMIT IT (Copilot round 2 on openRepoTools#82). A log that is
-            # TRACKED and dirty is already refused for the whole run by
-            # `refuse_dirty_checkout` above, which exempts the register alone and
-            # reads staged and unstaged alike; an untracked file is in neither of
-            # those lists, so appending to it here would put a peer's first lines
+            # TRACKED and dirty is refused before the first byte, by S3's
+            # `cs_own_pending` on every log this act writes; an untracked file
+            # is in no diff at all, so appending to it here would put a peer's first lines
             # into this migration's one commit under this migration's message.
             # The row is skipped and the file named, exactly as the other five
             # reasons are, and its cell keeps every character.
@@ -12375,15 +12260,14 @@ EOF
   # rewritten below are the ones this invocation read (Copilot round 2 on
   # openRepoTools#82).
   #
-  # AND A PEER'S REGISTER EDIT IS CAPTURED HERE, AFTER EVERY REFUSAL AND SKIP OF
-  # THE SCAN AND BEFORE THE FIRST BYTE IS WRITTEN (openRepoTools#157 item 4b).
-  # Captured before the scan, a refusal in it — the seam's, or the "nothing to
-  # migrate" one — left a `LANES(pre-existing@…)` commit behind: a refusal that
-  # wrote, which `capture_register_edit` names as the one thing it must never
-  # be. The capture commits the file's bytes and changes none of them, so what
-  # the scan read is what is committed, as it was. `retire_rows` and
-  # `archive_rows` capture at their writes for the same reason.
-  handle_preexisting "$LANES_PATH"
+  # AND EVERY PATH THIS ACT COMMITS IS ASKED AGAIN, AFTER EVERY REFUSAL AND SKIP
+  # OF THE SCAN AND BEFORE THE FIRST BYTE IS WRITTEN (Amendment 23 S3 step 4;
+  # openRepoTools#157 item 4b's place). A pending change to the register, a log
+  # or the archive refuses with nothing written: a pathspec commit would carry
+  # it under this act's subject. `retire_rows` and `archive_rows` ask at their
+  # writes for the same reason. (The `LANES(pre-existing@…)` capture that stood
+  # here is withdrawn, ratified choice 9.)
+  cs_own_pending "migrate-state-cells" "${LANES_LANE:-}" "$LANES_PATH" "${LANES_LOG_PREFIX%/}" "${LANES_PREFIX}archive"
   #
   # EVERYTHING BELOW IS ONE COMMIT OR NONE. The archive, the appended logs and
   # the rewritten rows are made on disk first and published by the single
@@ -12392,8 +12276,8 @@ EOF
   # leaves this checkout DIRTY and the register unpublished, which is what
   # `git status` then shows and `git checkout -- lanes` undoes whole. Nothing is
   # half-published, because the commit is the only thing that publishes; and a
-  # re-run on a checkout still holding that half is REFUSED by
-  # `refuse_dirty_checkout` above rather than made twice.
+  # re-run on a checkout still holding that half is REFUSED by S3 (the
+  # register's pending edit, or `cs_own_pending` above) rather than made twice.
   mkdir -p -- "$LANES_DIR/archive" || die "could not create $LANES_DIR/archive — the archive is written BEFORE anything else changes, so nothing has been" 6
   # A `>` REDIRECT, WHICH FOLLOWS A SYMLINK, and the source read whole first:
   # this copy is the file's state before this act and it is one of the three
@@ -12898,21 +12782,21 @@ retire_rows() {   # <lane>… [--reason "<why>"] [--writer <lane>]
   # All path cleanliness and ref fences run under the same writer lock as the
   # scan. A peer can otherwise alter a target log while this act waits.
   acquire_lock
+  checkout_sync "retire-rows" "$rr_writer" write "$LANES_PATH"   # Amendment 23 S3
   if [ "$NO_GIT" != 1 ] && have_remote_ref; then
-    rr_behind="$(git -C "$LANES_REPO" rev-list --count "HEAD..origin/$LANES_BRANCH" 2>/dev/null || printf '')"
+    rr_behind="$(git -C "$LANES_REPO" rev-list --count "HEAD..refs/remotes/origin/$LANES_BRANCH" 2>/dev/null || printf '')"
     case "$rr_behind" in
       '' | 0) : ;;
-      *) die "this checkout is $rr_behind commit(s) behind origin/$LANES_BRANCH. The sweep is ONE commit over several rows and several logs, so it is made against the published register or not at all. Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run. Nothing was written." 2 ;;
+      *) die "this checkout is $rr_behind commit(s) behind origin/$LANES_BRANCH. The sweep is ONE commit over several rows and several logs, so it is made against the published register or not at all, and origin moved after this write's fast-forward under its lock (Amendment 23 S3): re-run it, and it starts from origin's new tip. Nothing was written." 2 ;;
     esac
   fi
-  refuse_dirty_checkout "retire-rows" "$LANES_PATH"
 
   # THE MUTEX COMES BEFORE THE SCAN, not between the scan and the write: this
   # act reads every row's LINE NUMBER and rewrites those lines by number, and a
   # peer's `add-row` landing in between moves them under it (the finding
   # `migrate-state-cells` took in round 2 of openRepoTools#82). It is held from
-  # `acquire_lock` above; a peer's register edit is captured at the write, after
-  # every refusal of the scan (#157 item 4b, `migrate_state_cells`' reason).
+  # `acquire_lock` above; every path this sweep commits is asked again at the
+  # write, after every refusal of the scan (`migrate_state_cells`' reason).
 
   # THE LIVE READ IS FAIL-CLOSED, AND IT IS TAKEN INSIDE THE LOCK (Copilot round
   # 2 on #93). `lanes_rows` degrades to the log's verb when this workstation's
@@ -13085,9 +12969,8 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
     # AN UNTRACKED LOG IS SOMEBODY'S UNCOMMITTED WORK, AND THIS ACT WOULD
     # COMMIT IT — the finding `migrate-state-cells` took in round 2 of
     # openRepoTools#82, and this sweep has the same shape. A TRACKED log that is
-    # dirty is already refused for the whole run by `refuse_dirty_checkout`
-    # above, which exempts the register alone; an untracked file is in neither
-    # of its lists, so appending here would put a peer's first lines into this
+    # dirty is refused before the first byte by S3's `cs_own_pending`; an
+    # untracked file is in no diff at all, so appending here would put a peer's first lines into this
     # sweep's one commit under this sweep's message. (A dormant row usually has
     # no log at all — but a migrated one has a log of NOTED lines, and that is
     # the file this meets.)
@@ -13101,7 +12984,7 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
     # tree for the same answer.
     rr_pub="$rr_pubp"
     if [ "${rr_pub##*/}" != "$(log_path_for "$rr_l")" ] && [ "$rr_pub" != "$(log_path_for "$rr_l")" ] && [ "$rr_ln2" = 0 ]; then
-      die "lane $rr_l's object log is published as $rr_pub and this checkout does not have it: writing one here now would leave TWO files for one lane (Amendment 15). Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run. Nothing was written." 2
+      die "lane $rr_l's object log is published as $rr_pub and this checkout does not have it: writing one here now would leave TWO files for one lane (Amendment 15), and origin moved after this write's fast-forward under its lock (Amendment 23 S3): re-run it, and it starts from origin's new tip. Nothing was written." 2
     fi
 
     # THE LINE AND THE CELL, BOTH BUILT AND BOTH CHECKED BEFORE ANYTHING IS
@@ -13139,9 +13022,9 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
   # `commit_publish` at the end: a refusal in the middle leaves this checkout dirty
   # and the register unpublished, which `git status` shows and
   # `git checkout -- lanes` undoes whole. Nothing is half-published, because the
-  # commit is the only thing that publishes. A peer's register edit is
-  # committed as its own first, as `migrate_state_cells` says at its write.
-  handle_preexisting "$LANES_PATH"
+  # commit is the only thing that publishes. Every path it commits is asked
+  # again first, as `migrate_state_cells` says at its write (S3 step 4).
+  cs_own_pending "retire-rows" "$rr_writer" "$LANES_PATH" "${LANES_LOG_PREFIX%/}"
   rr_paths=("$LANES_PATH")
   while IFS="$US" read -r rr_ln rr_l rr_new rr_head2 rr_tail; do
     [ -n "${rr_ln:-}" ] || continue
@@ -13207,24 +13090,25 @@ archive_rows() {   # <repo> <1 = the act, 0 = the dry run>
     if [ "$NO_GIT" != 1 ] && [ "$LOG_SYNC_FETCH" != yes ]; then
       die "archive-rows requires a successful fresh fetch before moving rows; $LOG_SYNC_FETCH. The local origin/$LANES_BRANCH ref may be stale. Nothing was written." 1
     fi
-    if [ "$NO_GIT" != 1 ] && have_remote_ref; then
-      ar_behind="$(git -C "$LANES_REPO" rev-list --count "HEAD..origin/$LANES_BRANCH" 2>/dev/null || printf '')"
-      case "$ar_behind" in
-        '' | 0) : ;;
-        *) die "this checkout is $ar_behind commit(s) behind origin/$LANES_BRANCH. The move is ONE commit carrying the register and the archive, so it is made against the published register or not at all. Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run. Nothing was written." 2 ;;
-      esac
-    fi
-    acquire_lock
     # The cleanliness fence belongs INSIDE the writer lock. Another writer
     # could otherwise create or edit the archive while this act waits for it.
-    # THE ARCHIVE IS NOT EXEMPT (Copilot round 4 on #93). It was, because this
-    # act writes it — but `handle_preexisting` captures the REGISTER alone, so a
-    # tracked edit somebody else left in the archive rode into this commit under
-    # this act's message. And it is what makes a half-done move safe: if the
-    # append lands and `delete_lines` or the commit does not, the archive is
-    # dirty and the next run REFUSES by name instead of appending the same rows
-    # a second time.
-    refuse_dirty_checkout "archive-rows" "$LANES_PATH"
+    # So the lock, then S3 under it, then the behind test, which S3's
+    # fast-forward leaves nothing to find but a race (Amendment 23 S3).
+    acquire_lock
+    checkout_sync "archive-rows" "${LANES_LANE:-}" write "$LANES_PATH"
+    if [ "$NO_GIT" != 1 ] && have_remote_ref; then
+      ar_behind="$(git -C "$LANES_REPO" rev-list --count "HEAD..refs/remotes/origin/$LANES_BRANCH" 2>/dev/null || printf '')"
+      case "$ar_behind" in
+        '' | 0) : ;;
+        *) die "this checkout is $ar_behind commit(s) behind origin/$LANES_BRANCH. The move is ONE commit carrying the register and the archive, so it is made against the published register or not at all, and origin moved after this write's fast-forward under its lock (Amendment 23 S3): re-run it, and it starts from origin's new tip. Nothing was written." 2 ;;
+      esac
+    fi
+    # THE ARCHIVE IS NOT EXEMPT (Copilot round 4 on #93): a tracked edit
+    # somebody else left in it would ride into this commit under this act's
+    # message. And it is what makes a half-done move safe: if the append lands
+    # and `delete_lines` or the commit does not, the archive is dirty and the
+    # next run REFUSES by name (S3 step 4, `cs_own_pending` at the write)
+    # instead of appending the same rows a second time.
     # THE SAME RULE FOR THE ARCHIVE ITSELF: an untracked one is a file this act
     # did not create, and appending to it would commit somebody else's lines
     # inside this move (openRepoTools#82, round 2). An archive this act creates
@@ -13351,10 +13235,10 @@ EOF
 
   # THE ARCHIVE IS WRITTEN FIRST AND THE ROWS REMOVED SECOND, for the reason
   # `delete_lines` gives: a refusal between the two leaves a copy in the archive
-  # and the register whole, and never a row in neither file. A peer's register
-  # edit is committed as its own first, after every refusal above (#157 item
-  # 4b, `migrate_state_cells`' reason).
-  handle_preexisting "$LANES_PATH"
+  # and the register whole, and never a row in neither file. Every path this
+  # move commits is asked again first, after every refusal above (S3 step 4,
+  # `migrate_state_cells`' reason).
+  cs_own_pending "archive-rows" "${LANES_LANE:-}" "$LANES_PATH" "$LANES_ARCH_PATH"
   mkdir -p -- "$LANES_DIR/archive" ||
     die "could not create $LANES_DIR/archive — the archive is written before anything is removed, so nothing has been" 6
   if [ ! -f "$LANES_ARCH_FILE" ]; then
@@ -13576,7 +13460,7 @@ lane_is_managed_owned() {   # <canonical lane>
 # AND THIS CHECKOUT'S ROW, NOT ONLY THE PUBLISHED ONE (Copilot round 2 and 3 on
 # openRepoTools#97). The read above is the published register's (R19), and every
 # legacy row writer rewrites the row in THIS checkout: one ahead of origin, or
-# holding an edit `handle_preexisting` is about to capture, can carry managed-owner
+# holding a hand edit `commit` is about to carry, can carry managed-owner
 # vocabulary the published row does not. Two copies that disagree on ownership
 # are UNKNOWN, never legacy (Amendment 7(d)). A checkout with no register file
 # has no row here to rewrite, and the published read has already answered.
@@ -16087,9 +15971,9 @@ Nothing was written." 2
     text="${1-}"; [ -n "$text" ] || die "usage: append-line \"<text>\"" 2
     # ONE LINE, REFUSED A NEWLINE BEFORE THE LOCK (opensoft/openRepoTools#85).
     # `append_text_line` refuses it too, and before it writes — but that is
-    # after `acquire_lock` and `handle_preexisting`, which can COMMIT a peer's
-    # uncommitted register edit before this act's own write. A refusal that has
-    # already committed something is a refusal that wrote, so the verb asks
+    # after `acquire_lock` and S3, which fetches and fast-forwards this
+    # checkout before this act's own write. A refusal should leave the checkout
+    # as this command found it, so the verb asks
     # first, exactly where `write_event` asks for `log`: the checkout is left
     # as this command found it. `lane-handoff`'s file-level PAUSED line is the
     # caller that met it, with a `why` carrying a newline.
@@ -16221,7 +16105,7 @@ Nothing was written." 2
         ar_more=""
         [ "$ar_n" -gt 1 ] && ar_more=" Those $ar_n rows differ only by case and are themselves the refusal: merge them into one row first (Amendment 15(d))."
         ar_where="Use set-row-state / replace-in-row on the row that is there."
-        [ "$ar_ln" = 0 ] && ar_where="That row is on origin/$LANES_BRANCH and this checkout has not pulled it, so adding one here would make two the moment this push rebases. Pull first — \`git -C $LANES_REPO pull --rebase\` — then use set-row-state / replace-in-row on the row that is there."
+        [ "$ar_ln" = 0 ] && ar_where="That row is on origin/$LANES_BRANCH and not yet in this checkout, so adding one here would make two the moment this push lands. Use set-row-state / replace-in-row on the row that is there: each fast-forwards this checkout to it first (Amendment 23 S3)."
         die "lane '$lane_new' already has a row, spelled $(printf '%s\n' "$ar_all" | tr '\n' ' ')— a lane name is ONE name under any case (Amendment 15(a)), so a row under another case IS that lane's row and this would be a second one. $ar_where$ar_more" 2
       fi
     fi
@@ -16424,8 +16308,10 @@ Nothing was written." 2
     # whichever commit lands on `main` first. The loser's push is refused, S4
     # drops its commit and runs it again on origin's new tip, and there it meets
     # its own refusals — a row under `<new>`, a published log — with nothing
-    # written.
+    # written. S3 runs under the lock first, so every read below is of a
+    # checkout at origin's tip (Amendment 23 S3).
     acquire_lock
+    checkout_sync "rename lane $rl_old" "$rl_old" write "$LANES_PATH"
 
     # Refuse a spelling-only rename before probing both roots: on a
     # case-insensitive filesystem they are the same intent, whose stored lane
@@ -16460,7 +16346,7 @@ Nothing was written." 2
     fi
     if [ "$rl_ln" = 0 ]; then
       if [ "$rl_on" = 1 ]; then
-        die "lane $rl_old's row is on origin/$LANES_BRANCH and this checkout has not pulled it, so the row this rename must rewrite is not here — and a rename that appended a second row would be the very duplicate Amendment 15(a) refuses. Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run. Nothing was written." 2
+        die "lane $rl_old's row is on origin/$LANES_BRANCH and not in this checkout, so the row this rename must rewrite is not here — and a rename that appended a second row would be the very duplicate Amendment 15(a) refuses. Origin moved after this write's fast-forward under its lock (Amendment 23 S3): re-run it, and it starts from origin's new tip. Nothing was written." 2
       fi
       die "the register has no row for lane '$rl_old', in any case (Amendment 15(a)) and through no alias (Amendment 16(e)). A rename moves a row that exists; \`lanes --all\` lists the ones that do. Nothing was written." 2
     fi
@@ -16593,8 +16479,8 @@ EOF
         die "lane $rl_old's object log at $rl_log_old is not a regular file. An append-only log is read whole for the rollback copy and appended to in place, and neither can be done to that — a FIFO there would block this write, and its lock, indefinitely. Nothing was written." 2
       fi
       # AND GIT MUST ALREADY KNOW IT (Copilot round 6 on openRepoTools#81).
-      # `refuse_dirty_checkout` reads `tracked_dirty`, which reports no untracked
-      # file, so a peer's uncommitted `lanes/log/<old>.md` walked past it — and
+      # The old guard read tracked files alone, and S3's own-path test reads a
+      # diff, which holds no untracked file either: a peer's uncommitted `lanes/log/<old>.md` walked past it — and
       # this rename would MOVE that file to a path it always stages, committing
       # somebody else's lines under its own message. Round 3 kept the old path
       # out of the pathspecs when it was untracked, which stopped `git add`
@@ -16607,7 +16493,7 @@ EOF
     if have_remote_ref; then
       rl_pub="$(log_path_ci "$rl_old")" || die "lane $rl_old's object log is published twice (above), and one lane is ONE lane under any case: its log is ONE file (Amendment 15). Merge them by hand (15(d)) and re-run. Nothing was written." 2
       if [ "$rl_pub" != "$rl_log_old_rel" ] && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$rl_pub" 2>/dev/null; then
-        die "lane $rl_old's object log is published as $rl_pub while this checkout has ${rl_log_old_rel:-no log for it at all}: a rename made from here would move one file and leave the other, which is two logs for one lane by the path \`ensure_log\` exists to close. Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run. Nothing was written." 2
+        die "lane $rl_old's object log is published as $rl_pub while this checkout has ${rl_log_old_rel:-no log for it at all}: a rename made from here would move one file and leave the other, which is two logs for one lane by the path \`ensure_log\` exists to close. Origin moved after this write's fast-forward under its lock (Amendment 23 S3): re-run it, and it starts from origin's new tip. Nothing was written." 2
       fi
     fi
 
@@ -16630,8 +16516,8 @@ EOF
       die "$LANES_ALIASES_PATH at $LANES_ALIASES_TSV is not a regular file. The alias row is appended in place and the table is read whole for the rollback copy — a FIFO there would block this write, and its lock, indefinitely. Nothing was written." 2
     fi
     # AN EXISTING UNTRACKED TABLE IS SOMEBODY'S HAND EDIT (Copilot round 5 on
-    # openRepoTools#81). `refuse_dirty_checkout` reads `tracked_dirty`, which
-    # deliberately omits untracked files — so before this estate's FIRST rename
+    # openRepoTools#81). The old guard and S3's own-path test both read diffs,
+    # which omit untracked files — so before this estate's FIRST rename
     # an untracked `lanes/aliases.tsv` walked past the guard and its contents
     # were appended to and committed inside this lane's rename. The only writer
     # of that file is this command, and this command commits what it writes, so
@@ -16654,12 +16540,11 @@ EOF
     fi
     if have_remote_ref && [ ! -f "$LANES_ALIASES_TSV" ] \
        && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_ALIASES_PATH" 2>/dev/null; then
-      die "$LANES_ALIASES_PATH is published on origin/$LANES_BRANCH and this checkout does not have it, so appending here would write a table holding only this one rename and drop every alias already published — every name renamed before today would stop resolving (Amendment 16(e)). Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run. Nothing was written." 2
+      die "$LANES_ALIASES_PATH is published on origin/$LANES_BRANCH and this checkout does not have it, so appending here would write a table holding only this one rename and drop every alias already published — every name renamed before today would stop resolving (Amendment 16(e)). Origin moved after this write's fast-forward under its lock (Amendment 23 S3): re-run it, and it starts from origin's new tip. Nothing was written." 2
     fi
 
-    # THE ROW, AND ITS TWO CELLS. Read before the lock because nothing between
-    # here and the write changes a byte of it — `capture_register_edit` and
-    # `handle_preexisting` commit what is already there, they do not edit it.
+    # THE ROW, AND ITS TWO CELLS. Nothing between here and the write changes a
+    # byte of it: S3 has run, and the own-path test below only reads.
     rl_n="$(row_line "$rl_old")" || exit 2
     rl_row="$(sed -n -e "${rl_n}p" "$LANES_FILE")"
     case "$rl_row" in *"|"*) : ;; *) die "lane $rl_old's row (line $rl_n) has no '|' at all; refusing to touch it. Nothing was written." 2 ;; esac
@@ -16827,10 +16712,10 @@ EOF
     rl_h_touch=0
     [ -n "$rl_h_rel" ] && [ -f "$rl_hfile" ] && rl_h_touch=1
     # AND AN UNTRACKED HANDOFF IS SOMEBODY'S UNCOMMITTED WORK (Copilot round 6).
-    # It is a pathspec of this commit the moment it exists, and `tracked_dirty`
-    # never reports it, so another lane's half-written handoff would be stamped
-    # and committed under this rename's message — which is the one thing
-    # `--no-sweep` was made the default for.
+    # It is a pathspec of this commit the moment it exists, and no diff — the
+    # old guard's or S3's own-path test — reports it, so another lane's
+    # half-written handoff would be stamped and committed under this rename's
+    # message, the thing the old `--no-sweep` default was made to stop.
     if [ "$rl_h_touch" = 1 ] && [ "$NO_GIT" != 1 ] \
        && ! git -C "$LANES_REPO" ls-files --error-unmatch -- "$rl_h_rel" >/dev/null 2>&1; then
       die "the handoff at $rl_h_rel exists here and git does not track it, so its lines have never been committed by anyone — and this rename would stamp it, move it and commit it under its own message. Whoever wrote it commits it first: \`git -C $LANES_REPO add -- $rl_h_rel && git -C $LANES_REPO commit -m \"handoff(<lane>@<workstation>): <what>\"\`. Nothing was written." 2
@@ -16854,29 +16739,13 @@ EOF
       rl_paths+=("$rl_h_rel_new")
       [ "$rl_hmove" = 1 ] && rl_paths+=("$rl_h_rel")
     fi
-    # THE ALIAS TABLE IS NOT EXEMPT FROM THE DIRTY-CHECKOUT REFUSAL (Copilot
-    # round 4 on openRepoTools#81). Every pathspec handed here is exempted, and
-    # `lanes/aliases.tsv` has ONE writer — this command — so a dirty one is not
-    # the ordinary mid-write state `lanes/LANES.md` is in half the day and there
-    # is no capture for it: exempted and uncaptured, a peer's half-finished
-    # rename would be appended to and swept into this lane's commit. So it is
-    # left OUT of the exemption list and the generic refusal names it.
-    rl_exempt=()
-    for rl_p in ${rl_paths[@]+"${rl_paths[@]}"}; do
-      [ "$rl_p" = "$LANES_ALIASES_PATH" ] && continue
-      rl_exempt+=("$rl_p")
-    done
-    refuse_dirty_checkout "rename lane $rl_old" ${rl_exempt[@]+"${rl_exempt[@]}"} "$LANES_PATH"
-    # THE CAPTURE IS GIVEN THE REGISTER AND NOTHING ELSE (Copilot round 3 on
-    # openRepoTools#81). `handle_preexisting` runs `git add -- <paths>` on the
-    # branch that captures a peer's uncommitted edit, and most of this write's
-    # pathspecs DO NOT EXIST YET — the new log, the alias table, the handoff's
-    # new name — so that `git add` would fail, the capture would not happen, and
-    # a peer's half-written row would be swept into this rename's commit. The
-    # register is the only file that can be dirty here at all: every OTHER
-    # tracked change was refused one line up, which is the same reasoning
-    # `capture_register_edit` states for its own single pathspec.
-    handle_preexisting "$LANES_PATH"
+    # EVERY PATH THIS RENAME COMMITS, ASKED BEFORE THE FIRST BYTE (Amendment 23
+    # S3 step 4). A pending change to the register, either log, the alias
+    # table or the handoff refuses with nothing written: the rename is one
+    # commit by those pathspecs, and it would carry the change under its own
+    # subject. The alias table was the one path the old guard could not exempt
+    # (Copilot round 4 on openRepoTools#81); now no path of the write is.
+    cs_own_pending "rename lane $rl_old" "$rl_old" ${rl_paths[@]+"${rl_paths[@]}"}
 
     # ---- THE SNAPSHOT, BEFORE THE FIRST BYTE. Every exit path from here to the
     # commit restores it (`rename_undo`, hooked into `cleanup`), because the
@@ -17031,7 +16900,6 @@ EOF
     # behind its back would be a second, inverse change nobody asked for.
     RL_HEAD_BEFORE="$(git -C "$LANES_REPO" rev-parse HEAD 2>/dev/null || printf '')"
     rl_msg="LANES($rl_new@$WS): RENAMED lane $rl_old → $rl_new (Amendment 16) — the row, $rl_log_new_rel, the handoff and $LANES_ALIASES_PATH in one commit"
-    [ -n "$PRE_DIRTY_LANES" ] && rl_msg="$rl_msg + sweeps uncommitted edit to row $PRE_DIRTY_LANES"
     commit_publish "$rl_msg" "${rl_paths[@]}"
     rl_rc=$?
     # `commit_publish` RETURNED, so either it committed or it had nothing staged;

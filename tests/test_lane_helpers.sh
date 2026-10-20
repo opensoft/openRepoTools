@@ -1620,90 +1620,51 @@ has  "…printing who holds it" "$out" "HOLDS    lane repoE-1"
 has  "…and refusing in Rule 1's words" "$err" "stops and reports"
 hasnt "…and writing nothing to the taker's log" "$(cat "$LOGD/repoF-1.md")" "opensoft/repoE#21"
 
-# A claim is decided by which CLAIMED LANDS first, and a rebase is what makes
-# that decidable — so a checkout that cannot be rebased is refused outright.
+# AMENDMENT 23 S3, RATIFIED CHOICE 8 (#198 slice 1b). A claim used to refuse a
+# checkout with any other tracked file dirty, because that file blocked the
+# `pull --rebase` that decided the race. No writer pulls now: the race is
+# decided by push order and S4's replay, so a peer's unstaged change elsewhere
+# refuses only where the fast-forward would overwrite it.
 printf '# a peer left this here mid-write\n' >> "$WIP/handoffs/README.md"
 run env LANES_LANE=repoE-1 "$E" claim "opensoft/repoE#30" --no-github
-is   "claim refuses on a checkout that cannot be rebased" "$rc" 2
-has  "…naming the offending file" "$err" "handoffs/README.md"
-has  "…and why it matters" "$err" "the race cannot be run safely here"
+is   "a peer's file mid-write elsewhere no longer refuses a claim (choice 8)" "$rc" 0
+has  "…the claim is written to the lane's own log" "$(cat "$LOGD/repoE-1.md")" ", opensoft/repoE#30"
+is   "…and the peer's file is left exactly as it was found" "$(git -C "$WIP" status --porcelain -- handoffs/README.md | awk '{print $1}')" "M"
+hasnt "…never committed" "$(git -C "$WIP" show --name-only --format= HEAD)" "handoffs/README.md"
 git -C "$WIP" checkout -q -- handoffs/README.md
-run env LANES_LANE=repoE-1 "$E" claim "opensoft/repoE#30" --no-github
-is   "…and takes the claim once the tree is clean again" "$rc" 0
 
-# R11 (Addendum 3) — the guard TOLERATES a peer's uncommitted REGISTER edit.
-# `lanes/LANES.md` is dirty in this shared checkout for much of the day: the
-# register takes ~500 commits a day and a half-written row is what one of them
-# looks like a second before it lands, so refusing every claim on it would push
-# lanes to stop using the tool. `claim`, `release` and `log` take the helper's
-# existing pre-existing capture for the register FIRST — its own attributed
-# commit, with the same warning every register write already prints — and only
-# then re-test the checkout. What F1 fixed is untouched: the register never
-# reaches commit_push dirty, so Amendment 5(d)'s skip-the-pull branch — the one
-# that disables the rescan deciding the race — is still unreachable from all
-# three.
+# RATIFIED CHOICE 9: A PENDING HAND EDIT OF THE REGISTER REFUSES EVERY WRITER BUT
+# `commit`, with nothing written. R11 (Addendum 3) captured it instead, as a
+# `LANES(pre-existing@…)` commit of the peer's line; that capture is withdrawn
+# for every writer — the register's own pathspec writers (a LANDING) included —
+# because the edit may be a peer's in this shared checkout, and it is committed
+# by its own act.
 before_rev="$(git -C "$WIP" rev-parse HEAD)"
 printf 'a peer left this register line uncommitted\n' >> "$LANES"
 run env LANES_LANE=repoE-1 "$E" claim "opensoft/repoE#31" --no-github
-is   "a dirty lanes/LANES.md no longer refuses a claim: it is CAPTURED first" "$rc" 0
-has  "…warning that the content is not this invocation's" "$err" "not this invocation's"
-has  "…and capturing it as its own attributed commit" "$err" "captured pre-existing edit"
-has  "…while the claim itself is written to the lane's own log" "$(cat "$LOGD/repoE-1.md")" ", opensoft/repoE#31"
-is   "…leaving the register clean behind it" "$(git -C "$WIP" status --porcelain -- lanes/LANES.md | grep -c .)" 0
-is   "…as TWO commits, never one" "$(git -C "$WIP" rev-list --count "$before_rev..HEAD")" 2
-has  "…the capture the older of the two" "$(git -C "$WIP" log --format=%s "$before_rev..HEAD" | tail -n1)" "LANES(pre-existing@"
-is   "…carrying the register and nothing else" "$(git -C "$WIP" show --name-only --format= 'HEAD~1')" "lanes/LANES.md"
-has  "…and the peer's own line, attributed to nobody else" "$(git -C "$WIP" show 'HEAD~1')" "+a peer left this register line uncommitted"
-has  "…the claim the newer" "$(git -C "$WIP" log --format=%s -n1 HEAD)" "LOG(repoE-1@"
-is   "…carrying the lane's log and nothing else" "$(git -C "$WIP" show --name-only --format= HEAD)" "lanes/log/repoE-1.md"
-
-printf 'and a second peer line, still uncommitted\n' >> "$LANES"
+is   "a dirty lanes/LANES.md refuses a claim (choice 9)" "$rc" 2
+has  "…naming the act that commits it" "$err" "commit \"<what the edit is>\""
+has  "…with nothing written" "$err" "Nothing was written."
+hasnt "…and no capture" "$err" "captured pre-existing edit"
+hasnt "…so no line in the lane's log" "$(cat "$LOGD/repoE-1.md")" "opensoft/repoE#31"
+is   "…and no commit at all" "$(git -C "$WIP" rev-parse HEAD)" "$before_rev"
+is   "…the peer's register edit left exactly as it was found" "$(git -C "$WIP" status --porcelain -- lanes/LANES.md | awk '{print $1}')" "M"
 run env LANES_LANE=repoE-1 "$E" log OPENED "opensoft/repoE#32" --no-github
-is   "log takes the same capture and proceeds" "$rc" 0
-has  "…capturing the peer's line first" "$err" "captured pre-existing edit"
-has  "…and writing its own line" "$(cat "$LOGD/repoE-1.md")" ", opensoft/repoE#32"
-printf 'and a third peer line, still uncommitted\n' >> "$LANES"
-run env LANES_LANE=repoE-1 "$E" release "opensoft/repoE#31" "capture then release" --no-github
-is   "release does too" "$rc" 0
-has  "…capturing first" "$err" "captured pre-existing edit"
-has  "…and writing the RELEASED line" "$(cat "$LOGD/repoE-1.md")" ", opensoft/repoE#31 — capture then release"
-
-# …and ANYTHING ELSE is still a refusal, exit 2. That refusal is taken BEFORE
-# the lock and before the capture, so a write that refuses never leaves a
-# commit of somebody else's register line behind either.
-before_rev="$(git -C "$WIP" rev-parse HEAD)"
-printf '# a peer left this here mid-write\n' >> "$WIP/handoffs/README.md"
-printf 'and a register line at the same moment\n' >> "$LANES"
-run env LANES_LANE=repoE-1 "$E" claim "opensoft/repoE#35" --no-github
-is   "a dirty file that is NOT the register still refuses a claim" "$rc" 2
-has  "…naming it" "$err" "handoffs/README.md"
-has  "…and why it matters" "$err" "the race cannot be run safely here"
-has  "…with the recovery its own author runs" "$err" "handoff(<lane>@<workstation>)"
-hasnt "…writing nothing to the lane's log" "$(cat "$LOGD/repoE-1.md")" "opensoft/repoE#35"
-is   "…and making no commit at all" "$(git -C "$WIP" rev-parse HEAD)" "$before_rev"
-hasnt "…not even the pre-existing capture: the refusal comes first" "$err" "captured pre-existing edit"
-is   "…so the peer's register edit is left exactly as it was found" "$(git -C "$WIP" status --porcelain -- lanes/LANES.md | awk '{print $1}')" "M"
-run env LANES_LANE=repoE-1 "$E" log OPENED "opensoft/repoE#36" --no-github
-is   "log refuses on the same checkout" "$rc" 2
-run env LANES_LANE=repoE-1 "$E" release "opensoft/repoE#32" "refused, never written" --no-github
+is   "log refuses on it too" "$rc" 2
+run env LANES_LANE=repoE-1 "$E" release "opensoft/repoE#30" "refused, never written" --no-github
 is   "release refuses on it as well" "$rc" 2
-hasnt "…so the release was not written either" "$(cat "$LOGD/repoE-1.md")" "refused, never written"
-git -C "$WIP" checkout -q -- handoffs/README.md
-
-# A LANDING reaches the same place by the other road: the register is one of
-# ITS OWN pathspecs, so the ordinary handle_preexisting call captures it and
-# R11's capture stands aside. One behaviour, two routes, and the register is
-# never left dirty for commit_push either way.
+hasnt "…so the release was not written" "$(cat "$LOGD/repoE-1.md")" "refused, never written"
 run env LANES_LANE=repoE-1 "$E" log LANDING "opensoft/repoE#41" --no-github
-is   "a LANDING still writes with a dirty register: that file is one of ITS pathspecs" "$rc" 0
-has  "…capturing the peer's line as its own commit first" "$err" "captured pre-existing edit"
-run env LANES_LANE=repoE-1 "$E" log LANDED "opensoft/repoE#41" "→" "def5678"
-is   "…and its LANDED closes it again" "$rc" 0
-printf '# a peer left this here mid-write\n' >> "$WIP/handoffs/README.md"
-run env LANES_LANE=repoE-1 "$E" log LANDING "opensoft/repoE#42" --no-github
-is   "…while an UNRELATED dirty file refuses a LANDING too: the exemption is those two paths and no others" "$rc" 2
-has  "…naming it" "$err" "handoffs/README.md"
-git -C "$WIP" checkout -q -- handoffs/README.md
+is   "a LANDING, whose own pathspec the register is, refuses too" "$rc" 2
+is   "…still with no commit" "$(git -C "$WIP" rev-parse HEAD)" "$before_rev"
+run env LANES_LANE=repoE-1 "$E" commit "a peer's register line, committed by its own act"
+is   "commit is the act that commits it" "$rc" 0
+is   "…as ONE commit" "$(git -C "$WIP" rev-list --count "$before_rev..HEAD")" 1
+has  "…under its own subject" "$(git -C "$WIP" log --format=%s -n1 HEAD)" "a peer's register line, committed by its own act"
+is   "…published" "$(git -C "$WIP" rev-parse HEAD)" "$(git -C "$WIP" rev-parse refs/remotes/origin/main)"
+is   "…and the register is clean behind it" "$(git -C "$WIP" status --porcelain -- lanes/LANES.md | grep -c .)" 0
+run env LANES_LANE=repoE-1 "$E" release "opensoft/repoE#30" "released once the register is clean" --no-github
+is   "…and the release goes through once it is" "$rc" 0
 
 # --------------------------------------------------- the cross-repo warning
 
@@ -2111,9 +2072,22 @@ has  "…writing a RELEASED line carrying the reason" "$(cat "$LOGD/repoE-1.md")
 # ---------------------------------------------------------- CLAIM-LOST
 #
 # The race is decided by which CLAIMED LANDS on main first. The peer commits
-# and pushes; this lane's fetch is deferred, so its pre-check sees a main that
-# does not yet carry the peer's line — and the peer's claim arrives exactly
-# where it arrives in life: in the rebase inside its own push.
+# and does NOT push; `race-at-push`, this claim's `LANES_GIT`, pushes the
+# peer's commit at the moment this claim pushes. So the pre-check and S3's
+# fetch both read a main without the peer's line, this claim's push is refused,
+# and the replay on origin's new tip (Amendment 23 S4) rescans FIRST and finds
+# it — exactly where a rival arrives in life. (Before #198's slice 1b this used
+# `LANES_NO_FETCH=1`, which S3 now refuses for every writer: ratified choice 2.)
+cat > "$SANDBOX/race-at-push" <<'RACE'
+#!/usr/bin/env bash
+# At the helper's FIRST push only: the peer's prepared commits land first.
+case " $* " in *" push "*)
+  if [ ! -e "$RACE_MARK" ]; then : > "$RACE_MARK"; git -C "$RACE_CLONE" push -q origin main; fi ;;
+esac
+exec git "$@"
+RACE
+chmod +x "$SANDBOX/race-at-push"
+race() { env LANES_GIT="$SANDBOX/race-at-push" RACE_CLONE="$CLONE2" RACE_MARK="$SANDBOX/race.$1" "${@:2}"; }
 CLONE2="$SANDBOX/clone2"
 git clone -q "$ORIGIN" "$CLONE2" 2>/dev/null
 git -C "$CLONE2" config user.email "peer@example.invalid"
@@ -2124,10 +2098,10 @@ mkdir -p "$CLONE2/lanes/log"
 } > "$CLONE2/lanes/log/repoH-2.md"
 git -C "$CLONE2" add -- lanes/log/repoH-2.md
 git -C "$CLONE2" commit -q -m "LOG(repoH-2@Raven): CLAIMED opensoft/repoH#4"
-git -C "$CLONE2" push -q origin main
 
-run env LANES_LANE=repoH-1 LANES_NO_FETCH=1 "$E" claim "opensoft/repoH#4" --no-github
+run race h4 env LANES_LANE=repoH-1 "$E" claim "opensoft/repoH#4" --no-github
 is   "a claim whose rival landed first exits 7" "$rc" 7
+has  "…found by the replay of its refused push (Amendment 23 S4)" "$err" "push refused (attempt 1 of 6)"
 has  "…naming the lane that landed first" "$err" "another lane's claim landed on main before this one: @repoH-2"
 has  "…and citing Rule 1 rather than queueing" "$err" "stop and report"
 has  "…writing a CLAIM-LOST line in this lane's own log" "$(cat "$LOGD/repoH-1.md")" "CLAIM-LOST — lane repoH-1, session "
@@ -2136,24 +2110,22 @@ run "$E" who "opensoft/repoH#4"
 has  "…and the object is the winner's" "$out" "HOLDS    lane repoH-2"
 is   "…and the loser holds nothing" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 1
 
-# The winner is whichever rival is ALREADY on the rebased history — the one
-# that LANDED first — and never the earliest timestamp. Two rivals land during
-# one rebase window: repoH-2 lands FIRST carrying the LATER UTC.
+# The winner is whichever rival is ALREADY on origin's new tip — the one that
+# LANDED first — and never the earliest timestamp. Two rivals land at this
+# claim's push, in one push: repoH-2 FIRST in history, carrying the LATER UTC.
 LATE_UTC="$(utc_at +10M)"
 EARLY_UTC="$(utc_at +5M)"
 git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
 printf 'CLAIMED — lane repoH-2, session %s@Raven, %s, opensoft/repoH#60\n' "$DEAD_ID" "$LATE_UTC" >> "$CLONE2/lanes/log/repoH-2.md"
 git -C "$CLONE2" add -- lanes/log/repoH-2.md
 git -C "$CLONE2" commit -q -m "LOG(repoH-2@Raven): CLAIMED opensoft/repoH#60"
-git -C "$CLONE2" push -q origin main
 { printf '# lane repoH-4 — object log (lane-collision-protocol Amendment 7)\n'
   printf 'CLAIMED — lane repoH-4, session %s@Raven, %s, opensoft/repoH#60\n' "$DEAD_ID" "$EARLY_UTC"
 } > "$CLONE2/lanes/log/repoH-4.md"
 git -C "$CLONE2" add -- lanes/log/repoH-4.md
 git -C "$CLONE2" commit -q -m "LOG(repoH-4@Raven): CLAIMED opensoft/repoH#60"
-git -C "$CLONE2" push -q origin main
 
-run env LANES_LANE=repoH-1 LANES_NO_FETCH=1 "$E" claim "opensoft/repoH#60" --no-github
+run race h60 env LANES_LANE=repoH-1 "$E" claim "opensoft/repoH#60" --no-github
 is   "a claim that two rivals beat to main exits 7" "$rc" 7
 has  "…naming the one that LANDED first" "$err" "@repoH-2"
 hasnt "…never the one whose timestamp is earlier" "$err" "@repoH-4"
@@ -2189,20 +2161,29 @@ is   "--force reads staleness from origin/main too, so a four-hour-old claim wit
 has  "…in Rule 1's own words" "$err" "has since OPENED a PR naming it"
 hasnt "…and no TAKEOVER is written on a claim that is not stale" "$(cat "$LOGD/repoH-1.md")" "opensoft/repoH#51"
 
-# ------------------------- R11 and the race, in the same run (F1's own repro)
+# ------------------------- a dirty register, and then the race (F1's own repro)
 #
-# The two halves together: a rival's CLAIMED is already on `main`, and THIS
-# checkout carries a peer's half-written register line. Before F1 this sequence
-# left an unpushed local CLAIMED and two lanes holding one object; after F1 and
-# before R11 it was an exit-2 refusal on the one file this checkout is dirty in
-# most of the day. Now the capture clears the way, `pull --rebase` runs, the
-# rescan sees the rival, and the loser abandons the claim: one holder, exit 7.
-peer_log_line "CLAIMED — lane repoH-2, session $DEAD_ID@Raven, $(date -u +%Y-%m-%dT%H:%M:%SZ), opensoft/repoH#70" "CLAIMED opensoft/repoH#70"
+# F1's sequence: a rival's CLAIMED lands, and THIS checkout carries a peer's
+# half-written register line. Before F1 it left an unpushed local CLAIMED and
+# two lanes holding one object; R11 then captured the line and raced. Under
+# Amendment 23 S3 (ratified choice 9) the dirty register refuses the claim
+# before anything is read or written, and `commit` is the act that commits it;
+# the race that follows is lost by the claim, with exit 7 and one holder.
 printf 'a peer left this register line uncommitted\n' >> "$LANES"
-run env LANES_LANE=repoH-1 LANES_NO_FETCH=1 "$E" claim "opensoft/repoH#70" --no-github
-is   "a claim raced from a checkout with a dirty register still LOSES, exit 7" "$rc" 7
-has  "…having captured the peer's register line on the way" "$err" "captured pre-existing edit"
-has  "…and naming the lane whose claim landed on main first" "$err" "another lane's claim landed on main before this one: @repoH-2"
+run race h70a env LANES_LANE=repoH-1 "$E" claim "opensoft/repoH#70" --no-github
+is   "a claim from a checkout with a dirty register is refused before it races (choice 9)" "$rc" 2
+has  "…naming the act that commits the register" "$err" "commit \"<what the edit is>\""
+hasnt "…writing nothing in this lane's log" "$(cat "$LOGD/repoH-1.md")" "opensoft/repoH#70"
+is   "…and pushing nothing: the race was never reached" "$(test -e "$SANDBOX/race.h70a" && echo raced || echo quiet)" "quiet"
+run env LANES_LANE=repoH-1 "$E" commit "a peer's register line"
+is   "…the register line goes in by its own act" "$rc" 0
+git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
+printf 'CLAIMED — lane repoH-2, session %s@Raven, %s, opensoft/repoH#70\n' "$DEAD_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$CLONE2/lanes/log/repoH-2.md"
+git -C "$CLONE2" add -- lanes/log/repoH-2.md
+git -C "$CLONE2" commit -q -m "LOG(repoH-2@Raven): CLAIMED opensoft/repoH#70"
+run race h70 env LANES_LANE=repoH-1 "$E" claim "opensoft/repoH#70" --no-github
+is   "and the claim raced next LOSES, exit 7" "$rc" 7
+has  "…naming the lane whose claim landed on main first" "$err" "another lane's claim landed on main before this one: @repoH-2"
 has  "…writing CLAIM-LOST in this lane's own log" "$(cat "$LOGD/repoH-1.md")" "opensoft/repoH#70 → lane:repoH-2"
 is   "…with the register left clean" "$(git -C "$WIP" status --porcelain -- lanes/LANES.md | grep -c .)" 0
 run "$E" who "opensoft/repoH#70"
@@ -2215,17 +2196,16 @@ has  "…the one that landed first" "$out" "HOLDS    lane repoH-2"
 # change for that verdict to go stale, because a RESUMED line is the LANE's
 # own log, never an event `claim_rescan_hook`'s rival scan reads. repoT-1 is
 # dead exactly as repoL-1 (seeded above); the peer resumes it on the SAME
-# stale-pre-fetch trick the CLAIM-LOST races above use — pushed to origin
-# before this claim runs, but invisible to its own pre-check under
-# LANES_NO_FETCH=1, so the takeover is granted on knowledge that is already
-# out of date by the time its own push loop rebases onto what really landed.
+# `race-at-push` the CLAIM-LOST races above use — landed at this claim's push,
+# so the takeover is granted on knowledge that is out of date by the time the
+# replay of its refused push runs on what really landed, with the takeover it
+# decided on carried across the `exec` (Amendment 23 S4).
 git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
 printf 'RESUMED — lane repoT-1, session %s@Eagle, %s, lane:repoT-1\n' "$DEAD_ID" "$(utc_at +1M)" >> "$CLONE2/lanes/log/repoT-1.md"
 git -C "$CLONE2" add -- lanes/log/repoT-1.md
 git -C "$CLONE2" commit -q -m "LOG(repoT-1@Eagle): RESUMED"
-git -C "$CLONE2" push -q origin main
 
-run env LANES_LANE=repoT-2 LANES_NO_FETCH=1 "$E" claim "opensoft/repoT#1" --no-github --force
+run race t1 env LANES_LANE=repoT-2 "$E" claim "opensoft/repoT#1" --no-github --force
 is   "a dead-lane takeover whose source RESUMES before the push lands aborts, exit 9 (never 7, a RIVAL's own code)" "$rc" 9
 has  "…naming the lane that is alive again" "$err" "lane repoT-1 is no longer confirmed dead"
 has  "…and citing Rule 1 rather than completing the takeover" "$err" "stop and report; do not author a successor"
@@ -2241,17 +2221,16 @@ has  "…held by the revived lane itself" "$out" "HOLDS    lane repoT-1"
 # status was `awk`'s, so an unreadable log came back as an empty verdict with
 # no marker set, and the abort told the operator the log had "moved past the
 # terminal line" — which nothing had read. The peer removes repoTx-1's log
-# from origin on the same stale-pre-fetch trick, so the grant is made on the
-# old ref and the recheck after the rebase finds no log to read. It still
+# from origin at this claim's push, the same `race-at-push`, so the grant is
+# made on the old tip and the replay's recheck finds no log to read. It still
 # aborts with 9, in words that say only what was established. The log is put
 # back afterwards so no later section meets a row with no log.
 git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
 git -C "$CLONE2" rm -q -- lanes/log/repoTx-1.md
 git -C "$CLONE2" commit -q -m "fixture: repoTx-1's log is unreadable on the takeover's recheck"
-git -C "$CLONE2" push -q origin main
 TX_GONE_AT="$(git -C "$CLONE2" rev-parse HEAD)"
 
-run env LANES_LANE=repoTx-2 LANES_NO_FETCH=1 "$E" claim "opensoft/repoTx#1" --no-github --force
+run race tx1 env LANES_LANE=repoTx-2 "$E" claim "opensoft/repoTx#1" --no-github --force
 is    "a dead-lane takeover whose source log CANNOT BE READ on the recheck aborts, exit 9" "$rc" 9
 has   "…saying the dead verdict could not be reconfirmed because the log was not read" "$err" "its own object log could not be read, or yielded no lane-kind line at all"
 hasnt "…never that the log moved past its terminal line, which nobody read" "$err" "has moved past the terminal line"

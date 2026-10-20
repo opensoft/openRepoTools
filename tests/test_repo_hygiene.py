@@ -3264,6 +3264,104 @@ def test_the_exit_3_rule_is_green_on_a_rewording_that_keeps_the_meaning(
         f"the exit-3 rule refused a rewording that keeps the meaning ({why})")
 
 
+#: AMENDMENT 23 S3-S4: NO LANE WRITER PULLS (#198). A `pull --rebase` in front
+#: of a push is what stranded a write on a stale base eight times in two days;
+#: every writer now fetches and fast-forwards before the edit, and a refused
+#: push replays the one edit. Asserted for `lanes-edit.sh` in slice 1b; the
+#: handoff's writers, which still pull until their slices, join the list then.
+_NO_PULL_FILES = ("lanes-edit.sh",)
+#: A `pull` that rebases: `--rebase`, `-r` or `--rebase=…`, on a line that is
+#: not a comment.
+_PULL_REBASE = re.compile(r"\bpull\b[^\n#]*?(?:--rebase\b|\s-r\b)")
+
+
+def _pulls_with_rebase(src: str) -> list[int]:
+    """The line numbers of `src` (a shell script) that run a rebasing pull,
+    comments aside."""
+    return [n for n, line in enumerate(src.splitlines(), 1)
+            if not line.lstrip().startswith("#") and _PULL_REBASE.search(line)]
+
+
+@pytest.mark.parametrize("name", _NO_PULL_FILES)
+def test_no_lane_writer_pulls_with_rebase(name):
+    """No writer of the register rebases (Amendment 23 S3-S4). A die message
+    that still TELLS a person to `pull --rebase` counts: it is text outside a
+    comment, and it would send them to the act S3 replaced."""
+    src = (REPO / name).read_text(encoding="utf-8")
+    lines = _pulls_with_rebase(src)
+    assert not lines, (
+        f"{name} still runs or prints a rebasing pull outside a comment at "
+        f"line(s) {lines}: Amendment 23 S3 fetches and fast-forwards instead, "
+        "and S4 replays a refused push (#198)")
+
+
+@pytest.mark.parametrize("line,red", [
+    ('  git_net -C "$C" pull --rebase -q origin "$B"', True),
+    ('  git pull -q -r origin main', True),
+    ('  die "Pull first — `git -C $C pull --rebase` — and re-run." 2', True),
+    ("  # the old loop ran `pull --rebase` here", False),
+    ('  git -C "$C" merge --ff-only -q refs/remotes/origin/main', False),
+    ('  note "no writer pulls any more"', False),
+], ids=["git_net-pull", "short-flag", "a-die-that-says-it", "a-comment",
+        "the-fast-forward", "the-word-alone"])
+def test_the_no_pull_rule_reads_what_it_should(line, red):
+    assert bool(_pulls_with_rebase("x() {\n" + line + "\n}\n")) is red
+
+
+#: TEXT THAT PROMISES THE CARRY (#198 §1.10). Until S3, a commit stranded in a
+#: shared checkout was said to reach origin when "a later write from this
+#: checkout" pulled it onto its own: true by accident, and how a peer's commit
+#: was published under another lane's subject. S3 refuses every write over such
+#: a commit, so no text may promise that one will carry it. A sentence that
+#: says NO later write carries it is the truth and passes.
+_CARRY_PROMISES = (
+    re.compile(r"(?<!\bno )\b(?:later|next)\b[^.|\n]{0,60}?\b(?:write|push)\w*\b"
+               r"[^.|\n]{0,60}?\bcarr(?:y|ies)\b", re.I),
+    re.compile(r"\bmay already carry\b", re.I),
+    re.compile(r"\bown push publishes\b", re.I),
+)
+
+
+def _carry_promises(text: str, *, script: bool) -> list[str]:
+    """`<line>: <words>` for each promise of the carry in `text`; a script's
+    comments are history and are not read."""
+    found = []
+    for n, line in enumerate(text.splitlines(), 1):
+        if script and line.lstrip().startswith("#"):
+            continue
+        for rule in _CARRY_PROMISES:
+            m = rule.search(line)
+            if m:
+                found.append(f"{n}: {m.group(0)}")
+    return found
+
+
+def test_no_text_promises_the_carry():
+    """Neither `lanes-edit.sh`'s messages nor the manual say that a later write
+    will carry a stranded commit to origin (Amendment 23 S3; #198 §1.10). The
+    rule was red at #282's head `874e020`: the exit-3 die and its table row
+    ("a later write from this checkout may already carry it"), the rename
+    refusal ("the next register write from this checkout carries it") and the
+    dirty-checkout recovery ("its own push publishes their commits")."""
+    src = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
+    found = _carry_promises(src, script=True)
+    assert not found, f"lanes-edit.sh promises the carry: {found}"
+    manual = doc("docs/README-lanes.md").read_text(encoding="utf-8")
+    found = _carry_promises(manual, script=False)
+    assert not found, f"docs/README-lanes.md promises the carry: {found}"
+
+
+@pytest.mark.parametrize("text,red", [
+    ("a later write from this checkout may already carry it, so look first", True),
+    ("the next register write from this checkout carries it", True),
+    ("then re-run the refused act: its own push publishes their commits", True),
+    ("no later write carries it (Amendment 23 S3 refuses every write over it)", False),
+    ("every later write from that checkout refuses until it is published", False),
+], ids=["exit-3", "the-rename", "the-recovery", "the-negation", "the-refusal"])
+def test_the_carry_rule_reads_what_it_should(text, red):
+    assert bool(_carry_promises(text, script=False)) is red
+
+
 #: ADOPTION ACT 0, AND THE ONE SHA THAT IS IT. `opensoft/brett-wip#5` merged
 #: 2026-09-13T19:14:37Z, SQUASHED — so the PR's pre-merge head is not an
 #: ancestor of `origin/main` and names code that never landed, while the merge
