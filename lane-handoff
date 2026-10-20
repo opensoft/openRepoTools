@@ -1486,15 +1486,25 @@ lc_on=""; lc_gen=""; lc_op=""; lc_state=""; lc_inventory_missed=""
 
 lifecycle_begin() {
 	lc_on=""; lc_gen=""; lc_op=""; lc_state=""
-	lcb_now=""; lcb_rc=0
-	lcb_now="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-state "$lane" 2>/dev/null \
-		| awk -F"\t" '$1 == "state" { print $2; exit }')" || lcb_rc=$?
+	lcb_now=""; lcb_raw=""; lcb_rc=0
+	# READ WHOLE, THEN PARSE (opensoft/openRepoTools#280). This read was
+	# `lane-state | awk '… { print $2; exit }'` under `pipefail`, and that `awk`
+	# exits at the line it wants: a `lane-state` that wrote once more after it
+	# — its builtin `printf` hands a multi-line snapshot to the pipe in pieces —
+	# died of SIGPIPE, the substitution's status was 141, and the `case` below
+	# took that for a read that FAILED: "could not be read", no fence, no
+	# inventory and no RUNNING -> SWAPPING -> SWAPPED, on timing alone (CI run
+	# 39322387035). The reader had stopped listening; the read had not failed.
+	# So the status below is `lane-state`'s own, from a command nothing can end
+	# early, and the state is parsed out of what it printed afterwards.
+	lcb_raw="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-state "$lane" 2>/dev/null)" || lcb_rc=$?
 	case "$lcb_rc" in
 	0 | 8) : ;;
 	*)
 		note "the lane lifecycle could not be read (\`$LANES_EDIT lane-state $lane\` exited $lcb_rc), so this handoff records no RUNNING -> SWAPPING -> SWAPPED transition. The swap itself goes on (\`R-A11-11\`) and the PAUSED record below is unaffected."
 		return 0 ;;
 	esac
+	lcb_now="$(printf '%s\n' "$lcb_raw" | awk -F"\t" '$1 == "state" { print $2; exit }')"
 	[ -n "$lcb_now" ] || lcb_now=none
 	# AN INTERRUPTED SWAP IS TAKEN OVER, NOT COMPETED WITH. A lane still
 	# reading `SWAPPING` when a new handoff starts is one whose previous
@@ -1502,8 +1512,10 @@ lifecycle_begin() {
 	# which is precisely what refuses the old finalizer if it ever wakes up.
 	# The old operation id is named rather than lost.
 	if [ "$lcb_now" = SWAPPING ]; then
-		lcb_old="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-state "$lane" 2>/dev/null \
-			| awk -F"\t" '$1 == "operation" { print $2; exit }')"
+		# Read whole, then parsed, for the reason given above (#280); its status
+		# was never read, and the operation is only named in the note below.
+		lcb_old_raw="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-state "$lane" 2>/dev/null)"
+		lcb_old="$(printf '%s\n' "$lcb_old_raw" | awk -F"\t" '$1 == "operation" { print $2; exit }')"
 		note "lane $lane is still recorded SWAPPING from operation ${lcb_old:-unknown}, which never finished: this handoff SUPERSEDES it with a new generation, and that is what refuses the old finalizer if it ever returns. Nothing of that operation is undone here."
 	fi
 	lcb_out=""; lcb_src=0

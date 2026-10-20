@@ -44,6 +44,12 @@ What the committed patches let anyone reproduce from public inputs alone
 - `assembly-0001`, applied with `git am` to `837928a`'s six root files,
   gives section 2's 340-line `AGENTS.md` and 510-line `README.md`.
 
+*Superseded 2026-10-19 (`assembly-0001`):* the file at `patches/t006/assembly-0001-…` is re-cut, sha256
+`2ec48bbf…eaead7`. #227, #237 and #228 rewrote lines of `AGENTS.md` and `README.md` that seven of its hunks
+stand on, so the file this record measured no longer applies to the root files #228's series leaves. The
+re-cut does, and gives a 354-line `AGENTS.md` and a 529-line `README.md`. Every digest, apply result and
+line count this record gives for `assembly-0001` is the earlier file's.
+
 The exact commit IDs, the assembly tree `6eb8145e…`, bootstrap and
 `make validate` need run C's host-local arrangement. These rows exist only
 in this document:
@@ -69,6 +75,9 @@ output:
 | `code-0001-…own-front-door…` | `74b98ff97b0b9b6b…` |
 | `spec-0001-…own-front-door…` | `c11070f05a9e4611…` |
 
+*Superseded 2026-10-19:* the `assembly-0001` digest above is the earlier file's. The re-cut is
+`2ec48bbf…eaead7`. The other four digests are unchanged.
+
 Each was applied with `git am` onto its base in a fresh clone, and each
 reproduced the pushed tree exactly:
 
@@ -77,6 +86,10 @@ reproduced the pushed tree exactly:
 | assembly | exit 0 | `6eb8145e…` = `6eb8145e…` | exit 0 |
 | code | exit 0 | `ca65c3b9…` = `ca65c3b9…` | exit 0 |
 | spec | exit 0 | `10256135…` = `10256135…` | exit 0 |
+
+*Superseded 2026-10-19:* the `assembly` row is the earlier `assembly-0001`'s result. The re-cut applies to #228's
+root files instead, and gives a 354-line `AGENTS.md` and a 529-line `README.md` (the note above the first table).
+The code and spec rows are unchanged.
 
 `assembly-0002` and `-0003` are commits written by openRepoShape's
 `bump-leg.py`, and they pin the rehearsal's leg hashes. At T014 they are
