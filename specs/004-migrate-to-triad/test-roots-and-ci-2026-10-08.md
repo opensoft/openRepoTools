@@ -19,6 +19,12 @@ and `2064390` on `dbc6837`; branch `feat/test-roots-manual-guard`, `b50f197`
 on `dbc6837` (sections 6 and 9).
 **CI patches:** [patches/t010-code-leg-tests-workflow.patch](patches/t010-code-leg-tests-workflow.patch)
 and [patches/t010-assembly-exact-pin-job.patch](patches/t010-assembly-exact-pin-job.patch).
+**Superseded 2026-10-19:** the code-leg workflow patch above is regenerated at the same path, sha256
+`1406ead3…ef6d56`, against the `tests.yml` #228's PR 2 leaves (blob `2cfa173`). The earlier file (`7ee3c6d0…786c3b`,
+base `e27bc64`) stopped applying when #227 rewrote `tests.yml` (`gate-b-status-2026-10-09.md`, checklist lines 32 and 33).
+T009's assembly-root length caps are a third patch beside them,
+[patches/t009-assembly-caps.patch](patches/t009-assembly-caps.patch) (sha256 `2dd4aac2…b2bbe5`, code leg, after
+`code-0001` and the workflow patch). It sets the caps the re-cut `assembly-0001` needs, 354 and 529.
 **Rehearsed arrangement:** run C of 2026-10-08 (private prep
 `work-20261008/rehearsal`): source `main` `837928a`, assembly split
 `69b8924`, spec leg `593250d`, code leg `73b04d6`, code's nested
@@ -115,6 +121,10 @@ and P4 below, and the independent review's C5 and C6.
 - On today's layout, `AGENTS.md` stays at 316 and `README.md` at 486.
 - When an assembly root is named, the caps are 340 and 510. The difference is
   the 24 lines each that T006's `assembly-0001` adds.
+- *2026-10-19:* at an assembly root the caps are 354 and 529 now. On main they were 347 and 510. The re-cut
+  `assembly-0001` adds the same 24 lines to the 330-line `AGENTS.md` and the 505-line `README.md` that #228's
+  series leaves, and `patches/t009-assembly-caps.patch` sets the two caps to those counts in dated entries. The
+  caps with no assembly root stay 330 and 505.
 
 The dated entries cite `root-guidance-2026-10-08.md`, which is on #192's
 branch: #192 should land with or before #190, or that citation points
@@ -204,6 +214,13 @@ without the validator would accept that leg. The follow-up is in section 9.
   `e3a76b5` was green.
 
 ## 5. The two CI patches (T010)
+
+*Superseded 2026-10-19 (the code-leg patch):* the paragraph below describes the earlier file: six jobs and `-rs`
+on `tests`. #227 removed the macOS and Windows jobs. The regenerated file keeps the four jobs #228's PR 2 leaves
+(`guard-launch-mode`, `tests`, `tests-no-submodule` and `package`) and puts no `-rs` on `tests` or
+`guard-launch-mode`, by lane 1's ruling of 2026-10-19: the leg's skip reasons are read in `tests-no-submodule`.
+The `composed.yml` patch is not regenerated, and its header comments still name the removed jobs
+(`gate-b-status-2026-10-09.md`, checklist line 32).
 
 **Code leg, `.github/workflows/tests.yml`** (against run C's code leg
 `73b04d6`, whose copy is byte-identical to `main`'s). The six jobs and their
@@ -345,7 +362,8 @@ pytest, so every local run had `/usr/bin` first on `PATH`. CI is the record.
   - item 5 is the plan owner's.
 * From lane 3's 6089801221 (section 10). The patches here stay byte-identical
   as rehearsed; each item below changes them at T014/T015, not in this
-  record.
+  record. *(Superseded 2026-10-19 for the code-leg workflow patch, which is
+  regenerated: the note under the header says why.)*
   - **#180 before `exact-pins` is relied on.** Fix #180, or give the job
     `run.sh`'s pytest line with a short `TMPDIR` (finding 13 (i)).
   - **Make "never skips" a guarantee.** About forty other conditional skips
@@ -368,7 +386,8 @@ pytest, so every local run had `/usr/bin` first on `PATH`. CI is the record.
   Its own fake triad agreed with this record:
   - a split leg gives 17 = 16 named skips plus `.gitattributes`;
   - every subprocess of a composed run stayed inside its fixture;
-  - the caps reproduced against T006's `assembly-0001`.
+  - the caps reproduced against T006's `assembly-0001`. *(Superseded 2026-10-19: against the earlier file;
+    the 2026-10-19 bullet under "Length caps" in section 2 gives today's caps.)*
 * **Lane openRepoTools-3, reviewer of record:** **LAND** on `dbc6837`
   (review 5464931249). It names one defect that is best fixed before the
   squash, and two later items:
@@ -445,7 +464,7 @@ LAND on `fb77bed` (5481360555), and not landed.
 | 4 | The text test finds the guard by exact line match: a false red, never a false green | Fixed in #195 (`43ee05b`): the test now follows the `if`/`fi` nesting. |
 | 5, 6 | How the follow-ups sit on main; no outcome changes | Confirmed. The follow-ups are #195. |
 | 7 (i) | The AGENTS.md paragraph describes rather than gives a rule | Open. #195 does not change it, and it is not yet filed. |
-| 7 (ii) | The 340 → 347 assembly cap rested on a false premise | Fixed in #195 (`c7b27bc`): the paragraph moved below `assembly-0001`'s hunks, so the patch applies and gives 347. |
+| 7 (ii) | The 340 → 347 assembly cap rested on a false premise | Fixed in #195 (`c7b27bc`): the paragraph moved below `assembly-0001`'s hunks, so the patch applies and gives 347. *Superseded 2026-10-19: the earlier `assembly-0001` no longer applies after #227, #237 and #228, and the re-cut gives 354 (`patches/t009-assembly-caps.patch`).* |
 | 7 (iii) | The paragraph names only `docs/` for the spec leg | Open: #193 item 20. |
 | 8 | The nested proof covers 3 of 5 reordered tests, and asserts only the outcome | Open. The missing two are #193 item 20. That the proof checks only the outcome is not yet filed. |
 | 9 | The `--help` half of the receipt test; the refusal wording; items 3–7 and 15 | The `--help` half is #193 item 20. The rest is #195. |
