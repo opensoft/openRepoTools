@@ -2739,51 +2739,52 @@ def test_the_exit_code_table_carries_every_code_the_file_exits_with():
     assert "64" in documented, "64 is the code every Amendment 11 read uses"
 
 
-#: THE THREE CAUSES OF EXIT 3, as `lanes-edit.sh`'s exit-code table and the
-#: manual's copy of it give them, and what ties each cause to the `die` that
-#: reports it (opensoft/openRepoTools#68 item 5).
+#: THE ONE CAUSE OF EXIT 3, as `lanes-edit.sh`'s exit-code table and the
+#: manual's copy of it give it, and what ties it to the `die` that reports it
+#: (opensoft/openRepoTools#68 item 5, re-pinned by #198's slice 1b).
 #:
-#: A DIE IS TIED TO ITS CAUSE BY WHERE IT SITS AND NEVER BY WHAT IT SAYS. #68
-#: item 3 rewords `git_timeout_die`'s message and the act 2 `commit_publish`
-#: rewrites the push loop's, and a rule that found each die by a run of its own
-#: words would go blind at the first rewording that keeps the meaning (the
-#: first version of this rule did: it found the rebase conflict's die by the
-#: text `rebase conflict on origin/$LANES_BRANCH`). So:
+#: Until Amendment 23 S3-S4 exit 3 had three causes — a rebase conflict, a
+#: network timeout on a push or a pull (`git_timeout_die`), and six attempts
+#: blocked by a peer's uncommitted file — and all three were born of the
+#: `pull --rebase` that S4 removed. What is left is the one thing no writer can
+#: settle by itself: it PUSHED (or its push timed out, and a hung push often
+#: lands) and the read-back could not confirm the commit on origin. Its message
+#: is `pushed, not confirmed: <sha>`, and it is never success.
+#:
+#: A DIE IS TIED TO ITS CAUSE BY WHERE IT SITS AND NEVER BY WHAT IT SAYS:
 #:
 #:   * `function`: the cause owns every `die … 3` inside that function —
-#:     `git_timeout_die`, which exists to report one thing;
+#:     `cp_not_confirmed`, which exists to report one thing;
 #:   * `marker`: else the cause owns a `die … 3` that follows its marker
-#:     nearer than any other cause's marker, inside the same function — the
-#:     `dirty_elsewhere` guard that skips the pull and pushes straight out
-#:     (a peer's uncommitted file), and the `git_net … pull` call, after which
-#:     the rebase conflict's die sits (its `else` arm, reached when that call
-#:     fails). Neither is the function's name, so renaming `commit_push` leaves
-#:     the rule standing; and the marker is a CALL, not a word, because the
-#:     peer branch's own `note` says "skipping 'pull --rebase'" a few lines
-#:     above its die.
+#:     nearer than any other cause's marker, inside the same function. The one
+#:     cause left has none; the field stays for the next cause that needs it.
 #:
 #: What a die and each row that documents its cause must keep saying is
-#: `concept`: one word-group per cause, loose enough that rewording keeps
-#: passing ("timed out", "timeout" and "time-out" are one concept) and tight
-#: enough that a row which drops the cause fails. `scoped` is the wording #32
-#: put on the one cause whose die could be read as a claim about origin.
+#: `concept`, loose enough that rewording keeps passing ("pushed, not
+#: confirmed" and "pushed but not confirmed" are one concept) and tight enough
+#: that a row which drops the cause fails; and `named`, the commit it could not
+#: confirm (`<sha>` in a row, a variable in the die), so that the reader knows
+#: what to look for by content.
 #:
-#: A FOURTH CAUSE is a new row in this tuple and a new clause in BOTH rows — and
-#: a fourth `die … 3` with no row is exactly what the rule below refuses.
-_Exit3Cause = namedtuple("_Exit3Cause", "name function marker concept scoped")
+#: A SECOND CAUSE is a new row in this tuple and a new clause in BOTH rows — and
+#: a second `die … 3` with no row is exactly what the rule below refuses.
+_Exit3Cause = namedtuple("_Exit3Cause", "name function marker concept named")
 _EXIT_3_CAUSES = (
     _Exit3Cause(
-        "a network timeout", "git_timeout_die", None,
-        re.compile(r"\btime[ds]?[ -]?out", re.I), None),
-    _Exit3Cause(
-        "six attempts blocked by a peer's uncommitted file", None,
-        re.compile(r"\bdirty_elsewhere\b"),
-        re.compile(r"\b(?:uncommitted|dirty)\b", re.I), None),
-    _Exit3Cause(
-        "a rebase conflict", None,
-        re.compile(r"\bgit_net\b[^\n]*\bpull\b"),
-        re.compile(r"\brebase\W+conflict", re.I),
-        re.compile(r"\bnot pushed by this attempt", re.I)),
+        "a push the read-back cannot confirm", "cp_not_confirmed", None,
+        re.compile(r"\bpushed\W+(?:but\W+)?not\W+confirmed\b", re.I),
+        re.compile(r"\bnot\W+confirmed\s*:\W*(?:<sha>|\$\{?[A-Za-z_0-9@]+\}?)",
+                   re.I)),
+)
+
+#: THE CAUSES AMENDMENT 23 S3-S4 WITHDREW, each with the words a die or a row
+#: would use to name it. No die reports any of them now, so a row that still
+#: names one describes a message nobody prints.
+_EXIT_3_WITHDRAWN = (
+    ("a rebase conflict", re.compile(r"\brebase\W+conflict", re.I)),
+    ("a peer's uncommitted file blocking the rebase",
+     re.compile(r"\b(?:uncommitted|dirty)\b[^.;|]*\bblocks?\b", re.I)),
+    ("a pull", re.compile(r"\bpull\b", re.I)),
 )
 
 #: A `die` whose message is one quoted literal and whose last word is `3`; a
@@ -2799,10 +2800,10 @@ _ENDS_IN_EXIT_3 = re.compile(
     r'''["'][ \t]+3(?=\s*(?:$|;|\|\||&&|\)|\}|#))''', re.M)
 
 #: A SENTENCE THAT CLAIMS THE EDIT NEVER REACHED ORIGIN. Exit 3 is the code for
-#: "this attempt cannot confirm whether it also reached origin" (#32): a hung
-#: push often landed, and an aborted pull is no proof the commit stayed local
-#: in a checkout every lane shares. "not pushed BY THIS ATTEMPT" is the one
-#: true form of the claim, and is the one form this lets through.
+#: a push that was sent and could not be confirmed (Amendment 23 S4; #32
+#: before it): a hung push often landed, and a failed read-back is no proof the
+#: commit stayed local. "not pushed BY THIS ATTEMPT" is the one form of the
+#: claim #32 found true, and is the one form this lets through.
 _NOTHING_REACHED_ORIGIN = re.compile(
     r"\bnothing (?:was |has been )?pushed\b"
     r"|\bnot (?:been )?pushed\b(?! by this attempt)"
@@ -2845,67 +2846,10 @@ def _exit_3_cause_of(code: str, at: int):
     return nearest
 
 
-#: Every mention of `git_timeout_die` but its definition (`git_timeout_die() {`),
-#: each read as a call; and what may stand before a command on its line.
-_GIT_TIMEOUT_MENTION = re.compile(r"\bgit_timeout_die\b(?!\s*\()")
-_AT_COMMAND_START = re.compile(r"(?:^|&&|\|\||[;|({]|\b(?:then|do|else))\s*$")
-
-
-def _timeout_operations(code: str):
-    """`(operations, findings)`: the network operations every call of
-    `git_timeout_die` names (`push`, `pull`, ...), read off the words that
-    follow the call on its line: a quoted command "for the reader"
-    (`git_timeout_die "git push origin $B"`), a bare or quoted operation word
-    (`git_timeout_die push "git push origin $B"`), or both. A timeout row that
-    names a push and a pull is right until a call names a fetch.
-
-    EVERY MENTION OF THE NAME BUT ITS DEFINITION IS READ AS A CALL, and a call
-    whose shape this cannot read is a finding that says exactly that. It is
-    never "nothing calls it", which would be false of a call spelled in a shape
-    the reader did not expect (#68 item 3 may hand it the operation as a word
-    of its own)."""
-    operations, findings = set(), []
-    mentions = list(_GIT_TIMEOUT_MENTION.finditer(code))
-    if not mentions:
-        findings.append(
-            "lanes-edit.sh has no call of `git_timeout_die` (every mention of "
-            "it but its definition is read as one), so the timeout cause both "
-            "rows document can never fire")
-    for mention in mentions:
-        line = code.count("\n", 0, mention.start()) + 1
-        head = code.rfind("\n", 0, mention.start()) + 1
-        tail = code.find("\n", mention.end())
-        rest = code[mention.end():tail if tail != -1 else len(code)]
-        if not _AT_COMMAND_START.search(code[head:mention.start()]):
-            findings.append(
-                f"lanes-edit.sh:{line} mentions `git_timeout_die` somewhere "
-                "other than the start of a command, a shape this rule cannot "
-                "read as a call, so it cannot tell which network operation it "
-                "is called for. Make it the first word of a command; if it is "
-                "only a mention in a string, leave the name out of the string")
-            continue
-        words = []
-        for token in (_commands_on(rest) or [[]])[0]:
-            if token.startswith("#"):
-                break
-            words.append(token)
-        text = " ".join(words)
-        named = set(re.findall(r"\b(push|pull|fetch|clone)\w*", text))
-        if not named:
-            findings.append(
-                f"lanes-edit.sh:{line} calls `git_timeout_die` with {text!r}, "
-                "which names no network operation (push, pull, fetch or clone) "
-                "as a bare word or in a quoted command, so the rows cannot be "
-                "held to it")
-        operations |= named
-    return operations, findings
-
-
 def _exit_3_dies(src: str):
-    """`(dies, operations, findings)` for the text of `lanes-edit.sh`: every
-    `die "…" 3` as `(cause, line, message)`, the network operations
-    `git_timeout_die` is called for, and everything about the DIES themselves
-    that is wrong. The line numbers are the file's own (a whole-line comment is
+    """`(dies, findings)` for the text of `lanes-edit.sh`: every `die "…" 3`
+    as `(cause, line, message)`, and everything about the DIES themselves that
+    is wrong. The line numbers are the file's own (a whole-line comment is
     blanked, not removed), and no comment is read as code."""
     code = "\n".join("" if line.lstrip().startswith("#") else line
                      for line in src.splitlines())
@@ -2942,17 +2886,23 @@ def _exit_3_dies(src: str):
             findings.append(
                 f"lanes-edit.sh:{line}: the exit-3 die for {cause.name} claims "
                 f"that nothing reached origin ({said.group(0)!r}), where a "
-                "push may already have landed (#32)")
+                "push may already have landed (#32, Amendment 23 S4)")
         if not cause.concept.search(message):
             findings.append(
                 f"lanes-edit.sh:{line}: the exit-3 die in the branch for "
                 f"{cause.name} does not name that cause, so the row that "
                 f"documents it describes a message nobody prints: {message!r}")
-        if cause.scoped and not cause.scoped.search(message):
+        if cause.named and not cause.named.search(message):
             findings.append(
-                f"lanes-edit.sh:{line}: the exit-3 die for {cause.name} lost "
-                "its attempt-scoped wording (\"not pushed by this attempt\"), "
-                f"the one form of that claim #32 found true: {message!r}")
+                f"lanes-edit.sh:{line}: the exit-3 die for {cause.name} never "
+                "names the commit it could not confirm, so nobody can look "
+                f"for it by content: {message!r}")
+        for withdrawn, words in _EXIT_3_WITHDRAWN:
+            if words.search(message):
+                findings.append(
+                    f"lanes-edit.sh:{line}: the exit-3 die for {cause.name} "
+                    f"still names {withdrawn}, a cause Amendment 23 S3-S4 "
+                    f"withdrew with the pull: {message!r}")
     for cause in _EXIT_3_CAUSES:
         if not any(found is cause for found, _, _ in dies):
             findings.append(
@@ -2960,8 +2910,7 @@ def _exit_3_dies(src: str):
                 "either the cause is gone from the code and the rows are stale, "
                 "or its die moved where nothing anchors it (see "
                 "`_EXIT_3_CAUSES`)")
-    operations, more = _timeout_operations(code)
-    return dies, operations, findings + more
+    return dies, findings
 
 
 def _flattened(text: str) -> str:
@@ -2992,7 +2941,7 @@ def _exit_3_row_of_the_manual(section: str) -> str:
     return row.group(0) if row else ""
 
 
-def _exit_3_row_findings(name: str, whole: str, row: str, operations) -> list[str]:
+def _exit_3_row_findings(name: str, whole: str, row: str) -> list[str]:
     """What is wrong with ONE document's exit-3 row: `whole` is all the text
     of the document that is held to the old claim, `row` is the exit-3 row
     alone, both flattened."""
@@ -3000,7 +2949,8 @@ def _exit_3_row_findings(name: str, whole: str, row: str, operations) -> list[st
     if "nothing was pushed" in whole or "nothing pushed" in whole:
         findings.append(
             f"{name} still claims that nothing reached origin on exit 3, which "
-            "an aborted pull does not prove (#32)")
+            "a push that was sent and not confirmed does not prove (#32, "
+            "Amendment 23 S4)")
     if not row:
         findings.append(f"{name} has no exit-3 row")
         return findings
@@ -3014,19 +2964,18 @@ def _exit_3_row_findings(name: str, whole: str, row: str, operations) -> list[st
             findings.append(
                 f"{name}'s exit-3 row no longer names {cause.name}, a cause "
                 "the code's `die … 3` still reports. Exit 3 is \"no two "
-                "meanings on one number\", so a code with three causes has to "
-                "name all three (#50 rounds 3 and 4, 5203261904 and "
-                "5203455553)")
-        if cause.scoped and not cause.scoped.search(row):
+                "meanings on one number\", so the row has to name the one it "
+                "has (#50 rounds 3 and 4, 5203261904 and 5203455553)")
+        if cause.named and not cause.named.search(row):
             findings.append(
-                f"{name}'s exit-3 row lost the attempt-scoped wording for "
-                f"{cause.name} (\"not pushed by this attempt\")")
-    for operation in sorted(operations):
-        if not re.search(rf"\b{operation}", row, re.I):
+                f"{name}'s exit-3 row never names the commit {cause.name} "
+                "leaves on HEAD (`<sha>`), which the die prints")
+    for withdrawn, words in _EXIT_3_WITHDRAWN:
+        if words.search(row):
             findings.append(
-                f"{name}'s exit-3 row never names a {operation}, which "
-                "`git_timeout_die` is called for: a timeout on it ends in "
-                "exit 3")
+                f"{name}'s exit-3 row still names {withdrawn}, a cause "
+                "Amendment 23 S3-S4 withdrew with the pull, so it describes "
+                "a message no die prints any more")
     return findings
 
 
@@ -3035,20 +2984,20 @@ def _exit_3_findings(src: str, manual: str | None = None) -> list[str]:
     exit-code table and — when given — the manual's copy of that table
     disagree. Empty when they agree. The code's half comes first and alone
     when there is no manual: a standalone code leg has none (#186, T009)."""
-    dies, operations, findings = _exit_3_dies(src)
+    _dies, findings = _exit_3_dies(src)
     start = src.index("# EXIT CODES — every subcommand, one table")
     end = src.index("# --no-sweep", start)
     table = src[start:end]
     findings += _exit_3_row_findings(
         "lanes-edit.sh's exit-code table", _flattened(table),
-        _flattened(_exit_3_row_of_the_table(table)), operations)
+        _flattened(_exit_3_row_of_the_table(table)))
     if manual is not None:
         heading = manual.index("### Exit codes")
         section = manual[heading:manual.index(
             "3 to 6 are the codes this helper already used", heading)]
         findings += _exit_3_row_findings(
             "docs/README-lanes.md's copy of the table", _flattened(manual),
-            _flattened(_exit_3_row_of_the_manual(section)), operations)
+            _flattened(_exit_3_row_of_the_manual(section)))
     return findings
 
 
@@ -3064,43 +3013,22 @@ def test_the_exit_3_documentation_agrees_with_the_die_message_it_describes():
     file_exits_with` makes for a code missing from the table entirely.
 
     Round 2 (5203033893) found this test's own gap: it read only the table
-    and the manual, so a regression in the `die` MESSAGE ITSELF, back to
-    "nothing was pushed", left both docs unchanged and passed anyway — a
-    test that enforces two descriptions agree with each other, never that
-    either agrees with the code. The die is extracted and checked first now,
+    and the manual, so a regression in the `die` MESSAGE ITSELF left both docs
+    unchanged and passed anyway. The die is extracted and checked first now,
     so all three have to agree with the one thing that actually runs.
 
-    Round 3 (5203261904) named exit 3's other two causes (`git_timeout_die`,
-    and six push attempts exhausted against a peer's uncommitted file) that
-    this row used to leave out entirely; the row now names all three, which
-    means the phrase this test looks for can legitimately wrap onto its own
-    comment-continuation line — so the comparison text is whitespace-
-    normalized (one space, however the source wrapped it) rather than
-    matched as one literal run of characters.
+    Rounds 3 to 5 (5203261904, 5203455553, 5203628254) and #68 item 5 made it
+    read EVERY `die … 3`, tie each to its cause by where it sits, and hold
+    each to both rows, so that a rewording that keeps the meaning cannot blind
+    the rule and a die no row documents is a finding.
 
-    Round 4 (5203455553) found this test's own gap in THAT check: it looked
-    for the bare word "timeout" only, which the round-3 wording ("timeout on
-    the push itself") already satisfied while omitting `git_timeout_die`'s
-    OTHER call site — a timed-out `git pull --rebase` (`commit_push`'s
-    `git_timeout_die "git pull --rebase …"`) — entirely. Checking for
-    "timeout" alone would keep passing even if a push is all either row ever
-    names again; "push" and "pull" are now checked for too, so the row has to
-    cover both keywords or the test catches it.
-
-    ROUND 5 (5203628254) AND #68 ITEM 5: the gap that was left. Of the three
-    `die "…" 3` in `lanes-edit.sh` — `git_timeout_die`'s own (:1894 at main
-    08e7550), the six-attempts one in `commit_push`'s dirty-checkout branch
-    (:2125) and the rebase conflict's (:2192) — this test read ONE, and the
-    two rows only for the WORDS timeout, push, pull and peer's somewhere in
-    the code's whole table text, not even in its exit-3 row. So either of the
-    other two dies could say anything, "nothing was pushed" included, where a
-    push may already have landed, and this test stayed green. It now reads
-    EVERY `die … 3` and holds each to both rows. What ties a die to its cause
-    (where it sits, so that a rewording that keeps the meaning cannot blind the
-    rule: #68 item 3 will reword, and so will the act 2 `commit_publish`) and
-    what each die and row must keep saying are written at `_EXIT_3_CAUSES`
-    above. A `die … 3` no cause explains is a finding: a fourth cause needs a
-    clause in BOTH rows before it ships.
+    AMENDMENT 23 S3-S4 (#198, slice 1b) RE-PINS IT TO ONE CAUSE. The pull is
+    gone, and with it the rebase conflict, the timed-out pull, the peer's file
+    that blocked every rebase and `git_timeout_die`. What is left is a push
+    the read-back cannot confirm: `cp_not_confirmed`'s
+    `pushed, not confirmed: <sha>`. Both rows must name it and the commit, no
+    die or row may still name a withdrawn cause, and a `die … 3` anywhere
+    else — the old timeout die come back, say — is a finding.
 
     The rule is `_exit_3_findings`; its own regression cases, one red per
     mutation and one green per rewording that keeps the meaning, are the
@@ -3122,45 +3050,36 @@ def test_the_exit_3_documentation_agrees_with_the_die_message_it_describes():
         + "\n  ".join(findings))
 
 
-#: A FIXTURE FOR THE RULE ABOVE, shaped like the three places exit 3 is raised
-#: and the two rows that document it, and carrying the decoys that fooled
-#: simpler rules: a `die … 3` in a comment, and a `note` that says "skipping
-#: 'pull --rebase'" a few lines above the peer branch's die.
+#: A FIXTURE FOR THE RULE ABOVE, shaped like the one place exit 3 is raised
+#: and the two rows that document it, and carrying the decoys that could fool
+#: a simpler rule: a `die … 3` in a comment, a `note` in the caller that says
+#: "not confirmed" with no exit code, and the bound's `die … 6`, which names
+#: the commit kept on HEAD in the same words.
 EXIT_3_SOURCE = '''\
 # EXIT CODES — every subcommand, one table
-#   0  done
-#   3  the edit is never a permanent loss, but this attempt cannot confirm
-#      whether it also reached origin. THREE CAUSES:
-#      a rebase conflict (not pushed BY THIS ATTEMPT; look by content first);
-#      a network timeout on a push OR a pull (a hung one often landed);
-#      or six attempts exhausted because a peer's own uncommitted file blocks
-#      every rebase.
+#   0  done, and for a write CONFIRMED by a read-back
+#   3  PUSHED, NOT CONFIRMED: <sha>. The push was sent, or it timed out, and
+#      the read-back could not confirm the commit on origin. Never success;
+#      the commit stays on HEAD, so look for it by content.
 #   4  the mutex could not be taken within 60s
+#   6  the commit is kept on HEAD after six attempts
 # --no-sweep is not an exit code
 # die "a decoy in a comment, which nothing runs" 3
-git_timeout_die() {   # <the command, for the reader>
-  release_lock
-  die "timed out after ${GIT_TIMEOUT}s on '$1' — your commit is local; nothing was lost." 3
+cp_not_confirmed() {   # <sha> <subject> <why>
+  note "look for $1 by content before you write again"
+  die "pushed, not confirmed: $1 — $3; the commit is kept on HEAD, and this is never success" 3
 }
-commit_push() {
-  while [ "$attempt" -le 6 ]; do
-    others="$(dirty_elsewhere)"
-    if [ -n "$others" ]; then
-      note "skipping 'pull --rebase' and pushing straight out"
-      git_net push -q origin "$BRANCH" && return 0
-      [ "$GIT_TIMED_OUT" = 1 ] && git_timeout_die "git push origin $BRANCH"
-      if [ "$attempt" -ge 6 ]; then
-        die "could not push origin/$BRANCH: behind the remote, and a peer's uncommitted file blocks the rebase. Nothing was lost — your commit is local." 3
-      fi
-    elif git_net pull --rebase -q origin "$BRANCH"; then
-      git_net push -q origin "$BRANCH" && return 0
-      [ "$GIT_TIMED_OUT" = 1 ] && git_timeout_die "git push origin $BRANCH"
-    else
-      [ "$GIT_TIMED_OUT" = 1 ] && git_timeout_die "git pull --rebase origin $BRANCH"
-      die "rebase conflict on origin/$BRANCH — not pushed by this attempt; a later write from this checkout may already carry it, so look before you retry." 3
-    fi
-  done
-  die "could not push origin/$BRANCH after 6 attempts" 6
+commit_publish() {
+  git_net push -q origin "refs/heads/main:refs/heads/main"
+  if cp_confirm "$sha"; then
+    note "pushed origin/main: $sha"
+    return 0
+  fi
+  note "the read-back did not confirm $sha"
+  cp_not_confirmed "$sha" "$msg" "the read-back failed"
+}
+cp_replay() {
+  [ "$CP_ATTEMPT" -ge 6 ] && die "could not push origin/main after six attempts; the commit is kept on HEAD: $1" 6
 }
 '''
 
@@ -3169,147 +3088,134 @@ EXIT_3_MANUAL = '''\
 
 | code | meaning |
 |---|---|
-| 0 | done |
-| 3 | the edit is never a permanent loss, but this attempt cannot confirm whether it also reached origin — a rebase conflict (not pushed by this attempt; look by content first), a network timeout on a push or a pull (a hung one often landed), or six attempts exhausted because a peer's uncommitted file blocks every rebase |
+| 0 | done, and for a write confirmed by a read-back |
+| 3 | **pushed, not confirmed: `<sha>`**. The push was sent, or it timed out, and the read-back could not confirm the commit on origin. Never success; the commit stays on HEAD |
 | 4 | the mutex could not be taken within 60s |
 
 3 to 6 are the codes this helper already used; 7 and 8 were free.
 '''
 
 
-def _a_fourth_die(message: str) -> str:
-    """A FOURTH FUNCTION WITH AN EXIT-3 DIE, to append to the fixture's source."""
-    return "index_open() {\n  die \"" + message + "\" 3\n}\n"
+def _a_second_die(message: str, name: str = "index_open") -> str:
+    """A SECOND FUNCTION WITH AN EXIT-3 DIE, to append to the fixture's source."""
+    return name + "() {\n  die \"" + message + "\" 3\n}\n"
 
 
 #: Each row is (why, where, old, new, what the findings must say): `old` is
 #: replaced by `new` in the fixture's `code` or `manual`, and the rule must
 #: refuse the result, in the words of the last column.
 EXIT_3_REFUSED = [
-    ("the timeout die says nothing was pushed", "code",
-     "your commit is local; nothing was lost.",
-     "your commit is local; nothing was pushed.",
+    ("the die says nothing was pushed", "code",
+     "the commit is kept on HEAD, and this is never success",
+     "nothing was pushed; the commit is kept on HEAD",
      "claims that nothing reached origin"),
-    ("the peer's-file die says nothing was pushed", "code",
-     "Nothing was lost — your commit is local.",
-     "Nothing was pushed — your commit is local.",
-     "claims that nothing reached origin"),
-    ("the conflict die drops its attempt-scoped wording", "code",
-     "not pushed by this attempt; a later write",
-     "not pushed to origin; a later write",
-     "attempt-scoped"),
-    ("the conflict die no longer says what failed", "code",
-     "rebase conflict on origin/$BRANCH — not pushed",
-     "the pull failed on origin/$BRANCH — not pushed",
+    ("the die no longer says what it could not confirm", "code",
+     'die "pushed, not confirmed: $1 —',
+     'die "the push failed: $1 —',
      "does not name that cause"),
-    ("the timeout die no longer says it timed out", "code",
-     "timed out after ${GIT_TIMEOUT}s on '$1' — your commit",
-     "failed on '$1' — your commit",
-     "does not name that cause"),
-    ("the peer's-file die no longer says what blocks the rebase", "code",
-     "and a peer's uncommitted file blocks the rebase",
-     "and the rebase is blocked",
-     "does not name that cause"),
-    ("a fourth die in a function no row documents", "code",
-     'die "could not push origin/$BRANCH after 6 attempts" 6\n}\n',
-     'die "could not push origin/$BRANCH after 6 attempts" 6\n}\n'
-     + _a_fourth_die("the index is gone"),
+    ("the die no longer names the commit", "code",
+     'die "pushed, not confirmed: $1 —',
+     'die "pushed, not confirmed —',
+     "never names the commit"),
+    ("the die names a withdrawn cause", "code",
+     "$3; the commit is kept on HEAD,",
+     "$3, or a rebase conflict; the commit is kept on HEAD,",
+     "still names a rebase conflict"),
+    ("a second die in a function no row documents", "code",
+     "after six attempts; the commit is kept on HEAD: $1\" 6\n}\n",
+     "after six attempts; the commit is kept on HEAD: $1\" 6\n}\n"
+     + _a_second_die("the index is gone"),
      "none of the documented causes explains"),
-    ("a fourth die whose message holds a command substitution", "code",
-     'die "could not push origin/$BRANCH after 6 attempts" 6\n}\n',
-     'die "could not push origin/$BRANCH after 6 attempts" 6\n}\n'
-     + _a_fourth_die('$(describe "the index")'),
+    ("the old timeout die comes back", "code",
+     "after six attempts; the commit is kept on HEAD: $1\" 6\n}\n",
+     "after six attempts; the commit is kept on HEAD: $1\" 6\n}\n"
+     + _a_second_die("timed out on '$1' — your commit is local; nothing was "
+                     "lost.", "git_timeout_die"),
+     "in git_timeout_die that none of the documented causes explains"),
+    ("a die whose message holds a command substitution", "code",
+     "after six attempts; the commit is kept on HEAD: $1\" 6\n}\n",
+     "after six attempts; the commit is kept on HEAD: $1\" 6\n}\n"
+     + _a_second_die('$(describe "the index")'),
      "cannot read"),
-    ("a fourth die in the push loop's success branch", "code",
-     '      git_net push -q origin "$BRANCH" && return 0\n'
-     '      [ "$GIT_TIMED_OUT" = 1 ] && git_timeout_die "git push origin $BRANCH"\n'
-     '    else\n',
-     '      git_net push -q origin "$BRANCH" && return 0\n'
-     '      [ "$GIT_TIMED_OUT" = 1 ] && git_timeout_die "git push origin $BRANCH"\n'
-     '      die "the push raced six times" 3\n'
-     '    else\n',
-     "does not name that cause"),
-    ("the timeout die now exits 6, so no die reports a timeout", "code",
-     "nothing was lost.\" 3\n}",
-     "nothing was lost.\" 6\n}",
-     "no `die … 3` reports a network timeout"),
-    ("a call site names a network operation no row names", "code",
-     'git_timeout_die "git pull --rebase origin $BRANCH"',
-     'git_timeout_die "git fetch origin $BRANCH"',
-     "never names a fetch"),
-    ("a call site names no network operation at all", "code",
-     'git_timeout_die "git pull --rebase origin $BRANCH"',
-     'git_timeout_die "the network call"',
-     "names no network operation"),
-    ("a call hands git_timeout_die a bare operation word no row names", "code",
-     'git_timeout_die "git pull --rebase origin $BRANCH"',
-     'git_timeout_die fetch "the network call"',
-     "never names a fetch"),
-    ("a mention of git_timeout_die the reader cannot place as a call", "code",
-     "  release_lock\n",
-     "  release_lock\n  note \"git_timeout_die has released the lock\"\n",
-     "cannot read as a call"),
-    ("the table's row loses the timeout cause", "code",
-     "#      a network timeout on a push OR a pull (a hung one often landed);\n",
-     "#      a network failure on a push OR a pull (a hung one often landed);\n",
-     "no longer names a network timeout"),
-    ("the table's row loses the peer's-file cause", "code",
-     "#      or six attempts exhausted because a peer's own uncommitted file blocks\n"
-     "#      every rebase.\n",
-     "#      or one more thing.\n",
-     "no longer names six attempts blocked by a peer's uncommitted file"),
-    ("the table's row loses the pull", "code",
-     "a network timeout on a push OR a pull (a hung one often landed)",
-     "a network timeout on a push (a hung one often landed)",
-     "never names a pull"),
-    ("the table's row loses its attempt-scoped wording", "code",
-     "not pushed BY THIS ATTEMPT; look by content first",
-     "look by content first",
-     "lost the attempt-scoped wording"),
+    ("an exit-3 die in the caller, beside the one that owns it", "code",
+     '  note "the read-back did not confirm $sha"\n',
+     '  note "the read-back did not confirm $sha"\n'
+     '  [ -n "$sha" ] || die "pushed, not confirmed: $sha" 3\n',
+     "in commit_publish that none of the documented causes explains"),
+    ("the die now exits 6, so no die reports the cause", "code",
+     "and this is never success\" 3\n}",
+     "and this is never success\" 6\n}",
+     "no `die … 3` reports a push the read-back cannot confirm"),
+    ("the table's row loses the cause", "code",
+     "#   3  PUSHED, NOT CONFIRMED: <sha>.",
+     "#   3  THE PUSH MAY HAVE FAILED: <sha>.",
+     "no longer names a push the read-back cannot confirm"),
+    ("the table's row loses the commit", "code",
+     "#   3  PUSHED, NOT CONFIRMED: <sha>.",
+     "#   3  PUSHED, NOT CONFIRMED.",
+     "never names the commit"),
+    ("the table's row still names a rebase conflict", "code",
+     "Never success;\n",
+     "Never success; a rebase conflict is the other cause;\n",
+     "still names a rebase conflict"),
+    ("the table's row still names the peer's file", "code",
+     "Never success;\n",
+     "Never success; or a peer's uncommitted file blocks every rebase;\n",
+     "still names a peer's uncommitted file"),
+    ("the table's row still names a pull", "code",
+     "The push was sent, or it timed out,",
+     "The push was sent, or the pull timed out,",
+     "still names a pull"),
     ("the table's row says the edit did not reach origin", "code",
-     "whether it also reached origin. THREE CAUSES:",
-     "whether it also reached origin; if it did not reach origin, retry. THREE CAUSES:",
+     "could not confirm the commit on origin. Never success;",
+     "could not confirm the commit on origin; if it did not reach origin, retry. Never success;",
      "claims that nothing reached origin"),
     ("the table says nothing was pushed", "code",
-     "#   0  done\n",
+     "#   0  done, and for a write CONFIRMED by a read-back\n",
      "#   0  done, and on a refusal nothing was pushed\n",
      "still claims that nothing reached origin"),
     ("the manual's row says nothing was pushed", "manual",
-     "cannot confirm whether it also reached origin",
-     "cannot confirm — nothing was pushed",
+     "Never success; the commit stays on HEAD |",
+     "Never success; nothing was pushed |",
      "claims that nothing reached origin"),
+    ("the manual's row loses the cause", "manual",
+     "**pushed, not confirmed: `<sha>`**",
+     "**the push may have failed: `<sha>`**",
+     "no longer names a push the read-back cannot confirm"),
+    ("the manual's row still names a pull", "manual",
+     "The push was sent, or it timed out,",
+     "The push was sent, or a pull timed out,",
+     "still names a pull"),
     ("the manual's row is gone", "manual",
-     "| 3 | the edit",
-     "| 13 | the edit",
+     "| 3 | **pushed",
+     "| 13 | **pushed",
      "has no exit-3 row"),
 ]
 
 #: Each row is (why, where, old, new): a rewording that keeps the meaning, which
 #: the rule must let through.
 EXIT_3_ACCEPTED = [
-    ("the timeout die is reworded and still says timeout", "code",
-     "timed out after ${GIT_TIMEOUT}s on '$1' — your commit is local; nothing was lost.",
-     "git hit its ${GIT_TIMEOUT}s timeout on '$1'; your commit is local and nothing was lost."),
-    ("the peer's-file die says dirty and not uncommitted", "code",
-     "a peer's uncommitted file blocks the rebase. Nothing was lost — your commit is local.",
-     "another writer's dirty file blocks the rebase. Nothing was lost; your commit is still local."),
-    ("the conflict die keeps its wording and moves its clauses", "code",
-     "a later write from this checkout may already carry it, so look before you retry",
-     "so look before you retry: a later write from this checkout may already carry it"),
-    ("the function that holds the push loop is renamed", "code",
-     "commit_push() {", "commit_publish() {"),
-    ("a call hands git_timeout_die the operation as a bare word", "code",
-     'git_timeout_die "git pull --rebase origin $BRANCH"',
-     'git_timeout_die pull "the rebase on origin/$BRANCH"'),
+    ("the die says pushed but not confirmed", "code",
+     'die "pushed, not confirmed: $1 —',
+     'die "pushed but not confirmed: $1 —'),
+    ("the die names the commit by a braced variable", "code",
+     'die "pushed, not confirmed: $1 —',
+     'die "pushed, not confirmed: ${cn_sha} —'),
+    ("the die's clauses move", "code",
+     "the commit is kept on HEAD, and this is never success",
+     "this is never success, and the commit is kept on HEAD"),
+    ("the function that calls it is renamed", "code",
+     "commit_publish() {", "publish_commit() {"),
     ("two spaces stand before the exit code", "code",
-     "nothing was lost.\" 3\n}", "nothing was lost.\"  3\n}"),
+     "never success\" 3\n}", "never success\"  3\n}"),
     ("a comment trails the exit code", "code",
-     "nothing was lost.\" 3\n}", "nothing was lost.\" 3   # the mutex is already released\n}"),
-    ("the table wraps the attempt-scoped phrase onto a continuation line", "code",
-     "not pushed BY THIS ATTEMPT;", "not pushed BY THIS\n#      ATTEMPT;"),
-    ("the manual spells time-out and names each operation", "manual",
-     "a network timeout on a push or a pull",
-     "a network time-out on a push or on a pull"),
+     "never success\" 3\n}", "never success\" 3   # the lock is released by the trap\n}"),
+    ("the table wraps the cause onto a continuation line", "code",
+     "#   3  PUSHED, NOT CONFIRMED: <sha>.",
+     "#   3  PUSHED, NOT\n#      CONFIRMED: <sha>."),
+    ("the manual says pushed but not confirmed", "manual",
+     "**pushed, not confirmed: `<sha>`**",
+     "**pushed but not confirmed: `<sha>`**"),
 ]
 
 
@@ -3333,10 +3239,11 @@ def test_the_exit_3_rule_is_green_on_the_fixture_it_is_mutated_from():
 def test_the_exit_3_rule_is_red_on_a_die_or_a_row_that_disagrees(
         why, where, old, new, finding):
     """RED: each case plants one disagreement in the fixture — a die that
-    claims nothing reached origin, a die or a row that lost its cause, a
-    fourth die no row documents — and the rule must name it, in words that
-    say WHICH check refused. A case that passed for the wrong reason would
-    teach nothing: the last column is what the findings must hold."""
+    claims nothing reached origin, a die or a row that lost its cause or its
+    commit, a withdrawn cause named again, a second die no row documents — and
+    the rule must name it, in words that say WHICH check refused. A case that
+    passed for the wrong reason would teach nothing: the last column is what
+    the findings must hold."""
     code, manual = _exit_3_fixture(where, old, new)
     findings = _exit_3_findings(code, manual)
     assert any(finding in each for each in findings), (
@@ -3348,10 +3255,10 @@ def test_the_exit_3_rule_is_red_on_a_die_or_a_row_that_disagrees(
                          ids=[row[0] for row in EXIT_3_ACCEPTED])
 def test_the_exit_3_rule_is_green_on_a_rewording_that_keeps_the_meaning(
         why, where, old, new):
-    """GREEN: #68 item 3 and the act 2 `commit_publish` will reword these
-    messages, so a rule anchored to the words of one would fail on the first
-    change that is only a change of words. The die is tied to its cause by
-    where it sits, and the rows by what they name."""
+    """GREEN: a later round will reword these messages, so a rule anchored to
+    the words of one would fail on the first change that is only a change of
+    words. The die is tied to its cause by where it sits, and the rows by what
+    they name."""
     code, manual = _exit_3_fixture(where, old, new)
     assert _exit_3_findings(code, manual) == [], (
         f"the exit-3 rule refused a rewording that keeps the meaning ({why})")
