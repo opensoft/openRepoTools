@@ -204,7 +204,7 @@ def _no_fetch(box: Box, c: Path):
 def _pending_register(box: Box, c: Path):
     box.hand_edit(c, lane=NEIGHBOUR, state="LIVE · a peer's half-written cell")
     return {}, ["lanes/LANES.md holds an uncommitted edit", "which may be a peer's",
-                f"LANES_LANE={LANE} ", " commit \"<what the edit is>\""]
+                " commit \"<what the edit is>\""]
 
 
 ROWS = {
@@ -245,6 +245,9 @@ def test_every_S3_row_refuses_every_writer_with_nothing_written(box: Box, verb: 
     assert "Nothing was written." in err, err
     for phrase in words:
         assert phrase in err, (phrase, err)
+    if row == "pending-register":
+        # The recovery names the lane the write is for: `add-row`'s is the row's.
+        assert f"LANES_LANE={NEW_LANE if verb == 'add-row' else LANE} " in err, err
     assert box.snapshot(c) == before, "HEAD, the branch, the index, the tree and origin are as they were"
     assert box.w_state() == w_before, "W is untouched"
     assert not box.lock_of(c).exists(), "the lock is released"
@@ -300,16 +303,15 @@ def test_the_1312Z_shape_is_pushed(box: Box):
         box.peer_pushes(f"handoffs/repoS3/peer-{n}.md", f"peer {n}\n")
     box.peer_edits(REGISTER, _row(NEIGHBOUR, uuid=UUID2),
                    _row(NEIGHBOUR, uuid=UUID2, state="LIVE · the adjacent row, changed on origin"))
-    behind = box.git("-C", str(c), "rev-list", "--count", "HEAD..refs/remotes/origin/main").strip()
     box.git("-C", str(c), "fetch", "-q", "origin")
     assert box.git("-C", str(c), "rev-list", "--left-right", "--count",
-                   "HEAD...refs/remotes/origin/main").split() == ["0", "10"], behind
+                   "HEAD...refs/remotes/origin/main").split() == ["0", "10"]
     stamp = run_verb(box, "set-row-state")
     assert stamp.returncode == 0, stamp.stderr
     note = run_verb(box, "log")
     assert note.returncode == 0, note.stderr
     register = box.origin_register()
-    assert "LIVE · the guarded write |" in register
+    assert " · the guarded write |" in register
     assert "the adjacent row, changed on origin" in register
     assert "the guarded note" in box.origin_file(f"lanes/log/{LANE}.md")
     assert box.unpublished(c) == [], "no `+` under git cherry: nothing stranded"

@@ -1,13 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
-"""A register edit that is already a local commit is PUBLISHED by the re-run
-its own RECOVERY prints (opensoft/openRepoTools#194).
+"""A register edit that is already a local commit is PUBLISHED by the act its
+RECOVERY names (opensoft/openRepoTools#194), and by nothing else.
 
 `commit_push` returned at *"nothing staged … no commit made"* BEFORE its push
 loop. So when a peer's uncommitted file had blocked the rebase and the helper
-had exited 3 with the edit as a local commit, the RECOVERY it printed — the
-peer commits its file, then `LANES_LANE=<lane> lanes-edit.sh commit "<what you
-wrote>"` — staged nothing, exited 0 and pushed nothing. The commit stayed local
-until some later write from that checkout happened to carry it.
+had exited 3 with the edit as a local commit, the RECOVERY it printed staged
+nothing, exited 0 and pushed nothing. #214 made `commit` with nothing staged
+publish the queue, behind a fence that vouches for every commit in it.
+
+AMENDMENT 23 S3-S4 (#198, slice 1b) KEEPS THE FENCE AND CHANGES THE ROAD. No
+writer pulls: every write fetches and fast-forwards first, and refuses (2)
+over a commit origin lacks by content, naming the publish act; a peer's
+uncommitted file elsewhere no longer blocks anything (ratified choice 8). The
+publish act is exempt from that one row, lists the queue, pushes only a
+fast-forward and reads it back. The cases below that pinned the pull, the
+straight push past a peer's file and the conflict recovery are rewritten to
+the S3-S4 road; the fence's own cases stand as they were.
 
 Every run here is the real `lanes-edit.sh` in a sandbox: a bare origin, the
 workstation's shared workspace checkout `wip` that `workspace.yaml` names, and
@@ -219,82 +227,81 @@ def _line_of(stderr: str, needle: str) -> int:
 
 
 def test_the_printed_recovery_publishes_the_edit_it_stranded(box):
-    """THE ISSUE'S OWN SEQUENCE, END TO END. Origin moves on; a peer's handoff
-    is uncommitted in the shared checkout; a register write commits, cannot
-    pull, has its push rejected six times and exits 3 with the RECOVERY. The
-    peer then commits its file exactly as that RECOVERY says, and the re-run it
-    names must PUBLISH: one copy of the edit on origin, the peer's commit with
-    it, and the commit origin already had kept — not exit 0 with nothing sent.
-    """
+    """THE ISSUE'S OWN SEQUENCE, ON S3-S4'S ROAD. Origin moves on; a peer's
+    handoff is uncommitted in the shared checkout; a register edit is a local
+    commit origin lacks. The next write refuses (2) and names the publish act;
+    the publish act, run exactly as that RECOVERY says, PUBLISHES it: one copy
+    on origin, the other workstation's commit kept, no commit of its own, and
+    the peer's file neither blocking nor carried (ratified choice 8)."""
     box.peer_pushes("handoffs/repoR-1.md", "# repoR-1\n",
                     "handoff(repoR-1@Raven): another workstation's write")
     box.peer_edit_in_wip("a peer's line, mid-write")
-    box.set_state(box.wip, LANE, "LIVE · edited by hand")
+    box.wgit("fetch", "-q", "origin")
+    box.wgit("merge", "-q", "--ff-only", "refs/remotes/origin/main")
+    _stranded_edit(box)
 
-    stranded = box.helper("commit", SUBJECT)
-    assert stranded.returncode == 3, stranded.stderr
-    assert "a peer's uncommitted file blocks the rebase" in stranded.stderr
+    stranded = box.helper("log", "NOTED", f"lane:{LANE}", "a note",
+                          LANES_SESSION="0e3c9a52-6d1b-4b8e-9f3a-2a7c5d4e6f81")
+    assert stranded.returncode == 2, stranded.stderr
+    assert "1 unpublished commit(s)" in stranded.stderr
+    assert f'LANES_LANE={LANE} ' in stranded.stderr and ' commit "<what they are>"' in stranded.stderr
+    assert "the publish act" in stranded.stderr, stranded.stderr
     assert len(box.unpublished()) == 1, "the edit is a local commit and only that"
-    # The RECOVERY names the re-run and says what it does once nothing is staged.
-    assert 'LANES_LANE=<lane> lanes-edit.sh commit "<what you wrote>"' in stranded.stderr
-    assert "If lanes/LANES.md is clean, that re-run makes no commit of its own" in stranded.stderr
-    assert "pushes the local commits this lists" in stranded.stderr, stranded.stderr
 
-    box.wgit("commit", "-q", "-m", f"handoff({PEER_LANE}@Eagle): the mid-write line",
-             "--", PEER_HANDOFF)
     rerun = box.helper("commit", SUBJECT)
     assert rerun.returncode == 0, rerun.stderr
-    assert "pushed origin/main" in rerun.stderr, rerun.stderr
+    assert "pushed origin/main" in rerun.stderr and "confirmed by a read-back" in rerun.stderr
     assert box.wgit("rev-parse", "HEAD") == box.ogit("rev-parse", "main")
     assert _row(LANE, "LIVE · edited by hand") in box.origin_file(REGISTER)
-    assert "a peer's line, mid-write" in box.origin_file(PEER_HANDOFF)
+    assert "a peer's line, mid-write" not in box.origin_file(PEER_HANDOFF), "never carried"
+    assert box.wgit("diff", "--name-only").split() == [PEER_HANDOFF], "and left as it was"
     assert box.origin_file("handoffs/repoR-1.md") == "# repoR-1\n"
     subjects = box.origin_subjects()
     assert sum(s.endswith(f"): {SUBJECT}") for s in subjects) == 1, subjects
-    assert len(subjects) == 4, ("seed, the other workstation's write, the edit and "
-                                f"the peer's handoff — no commit of the re-run's own: {subjects}")
+    assert len(subjects) == 3, ("seed, the other workstation's write and the edit — no "
+                                f"commit of the publish act's own: {subjects}")
 
 
 def test_a_clean_checkout_with_nothing_ahead_is_still_a_no_op(box):
-    """TODAY'S BEHAVIOUR, KEPT. Nothing staged and nothing on HEAD that origin
-    lacks: the same note, exit 0, no commit and no network call at all."""
+    """THE NO-OP, KEPT. Nothing staged and nothing on HEAD that origin lacks:
+    the same note, exit 0 and no commit. S3's fetch is its one network call
+    (a writer reads origin before it decides), and nothing is pushed."""
     head, origin = box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")
     result = box.helper("commit", SUBJECT)
     assert result.returncode == 0, result.stderr
     assert f"nothing staged for {REGISTER} — no commit made" in result.stderr
-    assert "push" not in result.stderr, result.stderr
-    assert box.net_calls() == []
+    assert "pushed" not in result.stderr, result.stderr
+    calls = box.net_calls()
+    assert len(calls) == 1 and " fetch " in f" {calls[0]} ", calls
     assert (box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")) == (head, origin)
 
 
 def test_a_checkout_behind_origin_with_nothing_of_its_own_is_still_a_no_op(box):
     """Behind is not ahead: origin's newer commits are no local commit to
-    publish, so this is the no-op above and not a pull."""
+    publish, so this is the no-op above — no pull, and the publish act makes
+    no fast-forward either (S4)."""
     box.peer_pushes("handoffs/repoR-1.md", "# repoR-1\n", "a newer commit elsewhere")
     box.wgit("fetch", "-q", "origin")
     head = box.wgit("rev-parse", "HEAD")
     result = box.helper("commit", SUBJECT)
     assert result.returncode == 0, result.stderr
     assert f"nothing staged for {REGISTER} — no commit made" in result.stderr
-    assert box.net_calls() == []
+    assert not any(" push " in f" {c} " or " pull " in f" {c} " for c in box.net_calls())
     assert box.wgit("rev-parse", "HEAD") == head
 
 
-def test_publishing_past_a_peers_dirty_file_keeps_the_dirty_elsewhere_guard(box):
-    """The publish takes the SAME push loop a commit does, guard included: with
-    a peer's file still uncommitted it warns, names the file, skips the pull,
-    pushes straight out, and leaves that file exactly as it found it."""
-    box.set_state(box.wip, LANE, "LIVE · edited by hand")
-    box.wgit("commit", "-q", "-m", f"LANES({LANE}@Eagle): {SUBJECT}", "--", REGISTER)
+def test_publishing_past_a_peers_dirty_file_leaves_it_as_it_is(box):
+    """Amendment 23 S3, ratified choice 8: a peer's uncommitted file is no
+    longer a branch of the push loop (`dirty_elsewhere` went with the pull).
+    The publish pushes, no pull is made, and the file is left exactly as it
+    was found, on neither origin nor HEAD."""
+    _stranded_edit(box)
     box.peer_edit_in_wip("a peer's line, still mid-write")
 
     result = box.helper("commit", SUBJECT)
     assert result.returncode == 0, result.stderr
-    assert f"nothing staged for {REGISTER} — no commit made" in result.stderr
-    assert ("WARNING: this checkout has uncommitted changes to files OTHER than the register"
-            in result.stderr)
-    assert PEER_HANDOFF in result.stderr
-    assert "pushed origin/main (attempt 1, no pull" in result.stderr, result.stderr
+    assert "pushed origin/main" in result.stderr, result.stderr
+    assert "WARNING: this checkout has uncommitted changes" not in result.stderr
     calls = [f" {c} " for c in box.net_calls()]
     assert not any(" pull " in c for c in calls), calls
     assert any(" push " in c for c in calls), calls
@@ -304,94 +311,70 @@ def test_publishing_past_a_peers_dirty_file_keeps_the_dirty_elsewhere_guard(box)
     assert "still mid-write" not in box.origin_file(PEER_HANDOFF)
 
 
-def test_the_conflict_recovery_warns_that_a_reset_drops_a_peers_commits(box):
+def test_a_peers_unpushed_commit_refuses_the_write_and_is_never_reset_away(box):
     """The issue's near-loss of 2026-10-09: the conflict RECOVERY ended in
     `reset --hard origin/main`, which in a shared checkout also drops a PEER's
-    unpushed commit. The RECOVERY lists every unpublished commit by content and
-    says, before the reset, that it must not run while any of them is not the
-    reader's own — and the helper itself leaves the peer's commit in place."""
+    unpushed commit. Under S3 there is no conflict to recover from: a write
+    over a commit origin lacks refuses (2) with nothing written, lists it by
+    content, says to stop where a `+` line is not the reader's own, and names
+    the publish act or an archive followed by `reset --keep` — never
+    `reset --hard`. The peer's commit and the hand edit are left in place."""
     box.peer_edit_in_wip("a peer's handoff, committed and not yet pushed")
     box.wgit("commit", "-q", "-m", f"handoff({PEER_LANE}@Eagle): unpushed",
              "--", PEER_HANDOFF)
     peer_commit = box.wgit("rev-parse", "HEAD").strip()
-    box.set_state(box.peer, LANE, "LIVE · the peer rewrote this row")
-    box.git("-C", str(box.peer), "commit", "-q", "-am", "the same row, elsewhere")
-    box.git("-C", str(box.peer), "push", "-q", "origin", "main")
     box.set_state(box.wip, LANE, "LIVE · edited by hand")
 
     result = box.helper("commit", SUBJECT)
     err = result.stderr
-    assert result.returncode == 3, err
-    assert "REBASE CONFLICT on origin/main" in err
-    assert box.wgit("merge-base", "--is-ancestor", peer_commit, "HEAD") == ""
-
-    aborted_at = box.wgit("rev-parse", "HEAD").strip()
-    count = _line_of(err, "cherry origin/main")
-    moved = _line_of(err, f"rev-parse HEAD   # if this is not {aborted_at}, STOP")
-    listing = _line_of(err, "cherry -v origin/main HEAD")
-    warning = _line_of(err, "Never reset, stash or overwrite a peer's work")
-    drops = _line_of(err, "drops EVERY '+' commit in this checkout")
-    reset = _line_of(err, "reset --hard origin/main")
-    assert count < moved < listing < warning < drops < reset, err
-    assert f"cherry origin/main {aborted_at}" in err.splitlines()[count]
-    captures = "\n".join(err.splitlines()[listing:drops + 1])
-    assert "LANES(concurrent@" in captures, captures
-    assert "LANES(pre-existing@" in captures, captures
-    assert "names no lane, so it is NOT yours" in captures, captures
-    # NIT 5 (lane openRepoShape-2, 6243280936): the two lines that stop a
-    # reader from resetting a peer's commit away, word for word, because
-    # lane openRepoTools-5's #68 waits on these words.
+    assert result.returncode == 2, err
+    assert f"+ {peer_commit}" in err, err
+    # NIT 5 (lane openRepoShape-2, 6243280936): the line that stops a reader
+    # from resetting a peer's commit away, word for word, because lane
+    # openRepoTools-5's #68 waits on these words.
     stop = _line_of(err, "if any '+' line is not your own write, STOP and take it to the lane its subject names")
-    assert listing < stop < warning, err
-    assert "# only if every '+' line is yours" in err.splitlines()[reset], err
-
-    # The listing reads HEAD, which is what the reset acts on: a peer's commit
-    # made AFTER the abort is in it too, and the moved-checkout STOP fires.
-    later = box.queue(f"handoff({PEER_LANE}@Eagle): written after the abort", write=PEER_HANDOFF)
-    assert box.wgit("rev-parse", "HEAD").strip() != aborted_at
-    command = err.splitlines()[listing].split("lanes-edit: ", 1)[1].split("#", 1)[0].split()
-    listed = subprocess.run(command, env=box.env, capture_output=True,
-                            text=True, check=True).stdout
-    assert f"+ {peer_commit}" in listed, listed
-    assert any(line.startswith("+ ") and later in line.split()[1] for line in listed.splitlines()), listed
+    keep = _line_of(err, "reset --keep origin/main")
+    assert stop < keep, err
+    assert "reset --hard" not in err, err
+    assert "Nothing was written." in err
+    assert box.wgit("rev-parse", "HEAD").strip() == peer_commit
+    assert box.wgit("diff", "--name-only").split() == [REGISTER], "the hand edit is untouched"
 
 
-def test_the_dirty_checkout_refusal_names_the_act_to_re_run(box):
-    """`refuse_dirty_checkout`'s RECOVERY used to end in *"then re-run:"*
-    followed by two COMMIT commands, which read as if `lanes-edit.sh commit`
-    were the re-run. The authors commit their files; what is re-run is the
-    act that was refused, whose own push publishes their commits."""
+def test_a_peers_uncommitted_file_no_longer_refuses_a_write(box):
+    """`refuse_dirty_checkout`'s guard went with the pull it protected
+    (ratified choice 8): a peer's mid-write file elsewhere does not refuse a
+    write, and is neither committed nor touched by it."""
     box.peer_edit_in_wip("a peer's line, mid-write")
-    # An event names the transcript taking the act (Amendment 7(b)); without
-    # one the write refuses before it ever reads the checkout.
+    # An event names the transcript taking the act (Amendment 7(b)).
     result = box.helper("log", "NOTED", f"lane:{LANE}", "a note",
                         LANES_SESSION="0e3c9a52-6d1b-4b8e-9f3a-2a7c5d4e6f81")
-    assert result.returncode == 2, result.stderr
-    assert "RECOVERY — whoever wrote those files commits them:" in result.stderr
-    assert "then re-run the refused write NOTED" in result.stderr, result.stderr
+    assert result.returncode == 0, result.stderr
+    assert box.wgit("diff", "--name-only").split() == [PEER_HANDOFF]
+    assert "mid-write" not in box.origin_file(PEER_HANDOFF)
 
 
 @pytest.mark.parametrize("exported", [False, True], ids=["plain", "CP_PUBLISH_AHEAD-exported"])
 def test_a_no_op_write_never_publishes_what_the_checkout_queued(box, exported):
     """THE #214 REVIEW'S BLOCKER. This shared checkout holds another lane's
     unpushed commit that deletes a file outside lane tooling's trees. A write
-    whose result is the line already there must stay what it is on `main`:
-    exit 0, no network call, origin untouched. Only `commit` publishes, and
-    `CP_PUBLISH_AHEAD=1` EXPORTED changes nothing: the flag is the `commit`
-    arm's alone (lane openRepoShape-2's mutant M01 read it from the
-    environment and survived every other case)."""
+    whose result is the line already there must push nothing and leave origin
+    untouched — and under Amendment 23 S3 it refuses (2) before it edits,
+    listing that commit, since every write over a commit origin lacks does.
+    Only `commit` publishes, and `CP_PUBLISH_AHEAD=1` EXPORTED changes
+    nothing: the flag is the `commit` arm's alone (lane openRepoShape-2's
+    mutant M01 read it from the environment and survived every other case)."""
     queued = box.queue("another lane's commit: retire the tool", delete=TOOL)
     head, origin = box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")
     extra = {"CP_PUBLISH_AHEAD": "1"} if exported else {}
     result = box.helper("replace-in-row", LANE, "seeded", "seeded", **extra)
-    assert result.returncode == 0, result.stderr
-    assert box.net_calls() == [], result.stderr
+    assert result.returncode == 2, result.stderr
+    assert not any(" push " in f" {c} " for c in box.net_calls()), result.stderr
     assert (box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")) == (head, origin)
     assert box.origin_file(TOOL) == "#!/usr/bin/env bash\n"
     assert box.unpublished()[0].startswith(queued)
-    assert f"nothing staged for {REGISTER} — no commit made" in result.stderr
-    assert "stay local. `lanes-edit.sh commit` would publish all of them" in result.stderr
-    assert "another lane's commits are its own to publish" in result.stderr
+    assert "1 unpublished commit(s)" in result.stderr and f"+ {queued}" in result.stderr
+    assert "Nothing was written." in result.stderr
 
 
 def test_the_publish_counts_what_its_list_leaves_out(box):
@@ -415,9 +398,13 @@ def _stranded_edit(box: Box) -> None:
 
 
 def _refused_untouched(box: Box, result, head: str, origin: str) -> None:
+    """Refused (2) by the fence ("nothing was pushed") or by S3 before it
+    ("Nothing was written."): either way no push was sent. S3's fetch is the
+    one network call a refusal may make now."""
     assert result.returncode == 2, result.stderr
-    assert "nothing was pushed" in result.stderr, result.stderr
-    assert box.net_calls() == [], result.stderr
+    assert ("nothing was pushed" in result.stderr
+            or "Nothing was written." in result.stderr), result.stderr
+    assert not any(" push " in f" {c} " for c in box.net_calls()), result.stderr
     assert (box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")) == (head, origin)
     assert box.origin_file(TOOL) == "#!/usr/bin/env bash\n"
 
@@ -481,7 +468,8 @@ def _merge_in_queue(box: Box) -> str:
 def _head_off_branch(box: Box) -> str:
     """BYPASS 2. The fence read HEAD while the push sent `refs/heads/main`:
     with a deletion queued on local main and HEAD on a scratch branch holding a
-    register edit, the fence saw only the edit."""
+    register edit, the fence saw only the edit. S3's "not on main" row now
+    refuses it first, in the same words."""
     box.queue("another lane: retire the tool", delete=TOOL)
     box.wgit("checkout", "-q", "-b", "scratch", "origin/main")
     _stranded_edit(box)
@@ -548,15 +536,15 @@ def test_commit_refuses_a_queue_that_is_not_lane_toolings_to_publish(box, varian
     assert "pushing the" not in result.stderr
 
 
-@pytest.mark.parametrize("path", ["rebase", "straight"])
-def test_the_push_sends_the_commit_the_fence_read(box, path):
+@pytest.mark.parametrize("peer", ["clean", "a-peer-mid-write"])
+def test_the_push_sends_the_commit_the_fence_read(box, peer):
     """THE RACE. Another lane commits a deletion into this shared checkout
     after the fence read the queue and before the push: the push sends the
     commit the fence read, `<sha>:refs/heads/main`, so the late commit stays
-    local, on both roads out (the pull-and-rebase and the straight push a
-    peer's dirty file forces)."""
+    local — with or without a peer's file mid-write beside it (the straight
+    push that used to make a second road out went with the pull)."""
     _stranded_edit(box)
-    if path == "straight":
+    if peer == "a-peer-mid-write":
         box.peer_edit_in_wip("a peer mid-write")
     result = box.helper("commit", SUBJECT, FAKE_NET_RACE=TOOL)
     assert result.returncode == 0, result.stderr
@@ -567,29 +555,30 @@ def test_the_push_sends_the_commit_the_fence_read(box, path):
     assert box.wgit("rev-parse", "HEAD~1") == box.ogit("rev-parse", "main")
 
 
-def test_a_publish_the_pull_empties_says_so_and_sends_no_push(box):
-    """Lane openRepoShape-2's trap (6243280936). The queue `commit` read can
-    already be on origin by content, under other shas: here another workstation
-    made the same edit. `pull --rebase` drops it, and the push that followed
-    sent origin its own tip and printed "pushed". The re-read after the pull
-    finds nothing left, says so, sends no push and exits 0."""
+def test_a_queue_origin_already_holds_by_content_is_the_diverged_refusal(box):
+    """Lane openRepoShape-2's trap (6243280936): the queue `commit` read can
+    already be on origin by content, under other shas — here another
+    workstation made the same edit. `pull --rebase` used to drop it and push
+    origin its own tip. Under S3 there is no pull: every commit on HEAD is on
+    origin by content and HEAD is not origin's ancestor, so the checkout has
+    DIVERGED, and the publish refuses (2), naming `reset --keep`, with no
+    push and nothing moved."""
     _stranded_edit(box)
     box.set_state(box.peer, LANE, "LIVE · edited by hand")
     box.git("-C", str(box.peer), "commit", "-q", "-am", "the same edit, made elsewhere")
     box.git("-C", str(box.peer), "push", "-q", "origin", "main")
     origin = box.ogit("rev-parse", "main")
+    head = box.wgit("rev-parse", "HEAD")
 
     result = box.helper("commit", SUBJECT)
-    assert result.returncode == 0, result.stderr
-    assert "pushing the 1 local commit(s) origin/main does not have" in result.stderr
-    assert ("origin/main already holds every commit this publish listed: `pull --rebase` "
-            "found each one there by content and dropped it") in result.stderr, result.stderr
+    assert result.returncode == 2, result.stderr
+    assert "this checkout has diverged" in result.stderr, result.stderr
+    assert "reset --keep origin/main" in result.stderr
     assert "pushed origin/" not in result.stderr, result.stderr
     calls = [f" {c} " for c in box.net_calls()]
-    assert any(" pull " in c for c in calls), calls
-    assert not any(" push " in c for c in calls), calls
+    assert not any(" pull " in c or " push " in c for c in calls), calls
     assert box.ogit("rev-parse", "main") == origin
-    assert box.wgit("rev-parse", "HEAD") == origin
+    assert box.wgit("rev-parse", "HEAD") == head
     assert box.origin_subjects().count("the same edit, made elsewhere") == 1
 
 
@@ -609,8 +598,10 @@ def test_a_lane_rename_is_refused_and_told_what_carries_it(box):
     assert result.returncode == 2, result.stderr
     assert " D 000000 lanes/log/repocase-1.md" in result.stderr, result.stderr
     assert "A lane rename (Amendment 16) deletes and re-adds its log" in result.stderr
-    assert "the next register write from this checkout carries it" in result.stderr
-    assert box.net_calls() == []
+    # No later write carries it now: S3 refuses every write over it (#198).
+    assert "no later write carries it" in result.stderr
+    assert "make the rename again" in result.stderr
+    assert not any(" push " in f" {c} " for c in box.net_calls())
     assert (box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")) == (head, origin)
 
 
@@ -647,5 +638,8 @@ def test_a_queued_commit_git_cannot_read_refuses(box):
 
     result = box.helper("commit", SUBJECT)
     assert result.returncode == 2, result.stderr
-    assert "nothing was pushed" in result.stderr, result.stderr
+    # The fence's refusal, or S3's own where it is the first to read the queue.
+    assert ("nothing was pushed" in result.stderr
+            or "Nothing was written." in result.stderr), result.stderr
+    assert not any(" push " in f" {c} " for c in box.net_calls())
     assert box.ogit("rev-parse", "main") == origin

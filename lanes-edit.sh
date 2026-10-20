@@ -441,18 +441,19 @@
 #   may write the marker's vocabulary into a row at all.
 #
 # EXIT CODES — every subcommand, one table, no two meanings on one number
-#   0  done (and #194's publish whose queue `pull --rebase` emptied)
+#   0  done — and for a write, CONFIRMED: Amendment 23 S4 reads origin back
+#      and finds the commit on it before it says `pushed`
 #   1  environment (no register, no writer) — and, AMENDMENT 23 S1, a lane
 #      checkout's path that holds something other than a clone of the register
 #      (every routed write, and `lane-checkout`), which is refused and never
 #      deleted, moved or repaired; `refresh-workspace` with no W
-#   2  refusal: bad arguments, the object is held, an unknown alias, a
-#      checkout that cannot be rebased, — Amendment 15 — a register holding
+#   2  refusal: bad arguments, the object is held, an unknown alias, —
+#      Amendment 15 — a register holding
 #      two rows whose lane names differ only by case, which every writer and
 #      `canon-lane` refuse until 15(d)'s merge, or AMENDMENT 12's BLOCKED
 #      PROMPT, or — opensoft/openRepoTools#162 — a commit whose pathspec
 #      would stage bytecode, a cache or a virtual environment
-#      (`commit_push`, `pathspec-check`), or — #194 — `commit` refusing to
+#      (`commit_publish`, `pathspec-check`), or — #194 — `commit` refusing to
 #      publish local commits that are not register or handoff writes, from a
 #      checkout whose HEAD is off the branch, or that it cannot read
 #      (`cp_publish_fence`), and pushes none of them; or — AMENDMENT 23 — a
@@ -462,7 +463,15 @@
 #      checkout (S1, under the opt-in and for `lane-checkout` and
 #      `refresh-workspace`), a routed write while W's register holds an
 #      uncommitted edit (S5), and `refresh-workspace`'s skip, which changed
-#      nothing. EIGHT MEANINGS ON ONE NUMBER, and they
+#      nothing; or — AMENDMENT 23 S3, every writer, with nothing written — a
+#      checkout that cannot be brought to origin's tip: a fetch that failed
+#      (`LANES_NO_FETCH=1` is one, for a writer), an operation in progress or
+#      unmerged entries, HEAD off the branch, staged entries that are not the
+#      write's own, unpushed commits (the publish act excepted), a diverged
+#      branch, a pending change to a path the write commits (the register's,
+#      for every writer but `commit`), or a fast-forward git refused; the
+#      withdrawn `--sweep`; and the publish act over a stack origin has moved
+#      past (S4, Open question 2). EIGHT MEANINGS ON ONE NUMBER, and they
 #      stay readable only because of where each can occur: bad arguments to a
 #      subcommand that predates Amendment 11; `register-row`'s "not lane-shaped";
 #      AN UNKNOWN SUBCOMMAND (the `*)` arm below), which is how a caller detects
@@ -503,22 +512,25 @@
 #      carry both without the caller guessing, so the newer reads spend a number
 #      of their own and the older half of this file keeps 2 where it always was.
 #      Clause (h)'s table is the contract for which read uses which.
-#   3  the edit is never a permanent loss, but this attempt cannot confirm
-#      whether it also reached origin. THREE CAUSES (Copilot round 3 on #50,
-#      5203261904, naming the other two this row used to leave out): a
-#      rebase conflict this attempt could not resolve — not pushed BY THIS
-#      ATTEMPT; a later write from this checkout may already carry it to
-#      origin, so LOOK by CONTENT before you retry (round 4, 5203455553:
-#      SHA ancestry alone misses a peer's rebase of it, which changes the
-#      hash but not the patch); `git_timeout_die`'s network timeout on a
-#      push OR a pull, where a hung one often already landed; or six
-#      attempts exhausted because a peer's own uncommitted file blocks
-#      every rebase.
+#   3  PUSHED, NOT CONFIRMED: <sha> (Amendment 23 S4, its one cause). The write
+#      committed and pushed — or its push timed out, and a hung push often
+#      lands — and the read-back could not confirm the commit on origin: the
+#      fetch failed or timed out, or origin does not hold it. Never reported
+#      as success. The commit stays on HEAD, and the next write's S3 finds it
+#      by content either way: published, there is nothing to do; not, every
+#      write refuses until the publish act sends it or an archive (S6.3)
+#      takes it.
 #   4  the mutex could not be taken within 60s — or, Amendment 23 S1, a lane
 #      checkout's creation lock within the clone's budget and a minute
 #   5  an edit moved more than one line and was refused — or, Amendment 15, a
 #      lane's object log could not be renamed to the row's own spelling
-#   6  git add / commit / push failed
+#   6  git add or commit failed — or, AMENDMENT 23 S4, the commit is KEPT ON
+#      HEAD AND NAMED (sha, subject, `git show`): origin moved under six
+#      attempts (the bound, ratified choices 4 and 5), a replay's
+#      `reset --keep` refused over an uncommitted change, or a push (a
+#      write's, or the publish act's) refused with origin unmoved, which
+#      no replay can mend. Every later write from that
+#      checkout refuses under S3 until the lane publishes or archives it
 #   7  ANOTHER ACT GOT THERE FIRST, and this one wrote nothing. `claim`:
 #      CLAIM-LOST, another lane's claim landed on main first.
 #      `set-lane-state`: the lifecycle fence did not match — the state, the
@@ -1125,11 +1137,29 @@ if [ -n "${LANES__CHECKOUT_LANE:-}${LANES__PID:-}" ] && [ "${LANES__PID:-}" != "
   unset LANES__CHECKOUT_LANE LANES__PID LANES_REPO LANES_DIR LANES_FILE
 fi
 LANES_ROUTED="${LANES__CHECKOUT_LANE:-}"   # the lane, in the re-run process only
+# AMENDMENT 23 S4 — THE REPLAY'S OWN MARKERS. A refused push drops this write's
+# commit and runs this file again with the same argv (`commit_publish`), and
+# `exec` keeps the pid: `LANES__REPLAY_PID` equal to `$$` is that re-run, and
+# `LANES__ATTEMPT` its attempt (2 to 6). With any other pid they were
+# inherited and mean nothing. They are read here and UNSET AT ONCE, so no
+# process this one starts ever sees them; `claim`'s takeover decision crosses
+# the `exec` the same way. Not `LANES__PID`: an unrouted write has no routing
+# markers, and exporting one would make a child helper drop its caller's
+# `LANES_REPO`, `LANES_DIR` and `LANES_FILE` (the rule above).
+CP_ATTEMPT=1; CP_REPLAYING=0; CP_CLAIM_FROM=""; CP_CLAIM_DEAD=""
+if [ -n "${LANES__REPLAY_PID:-}" ] && [ "${LANES__REPLAY_PID:-}" = "$$" ]; then
+  CP_REPLAYING=1
+  case "${LANES__ATTEMPT:-}" in [2-6]) CP_ATTEMPT="$LANES__ATTEMPT" ;; esac
+  CP_CLAIM_FROM="${LANES__CLAIM_FROM:-}"; CP_CLAIM_DEAD="${LANES__CLAIM_DEAD:-}"
+fi
+unset LANES__REPLAY_PID LANES__ATTEMPT LANES__CLAIM_FROM LANES__CLAIM_DEAD
 # THE ROUTING IS OPT-IN UNTIL SLICE 1B (the review of opensoft/openRepoTools#282,
-# MUST 2). A lane checkout is only as fresh as its own last write until S3's
-# fetch before the edit lands, and `commit_push` rebases only after a rejected
-# push, so a checkout one commit behind wedges on its first conflicting write:
-# the stranding Amendment 23 exists to end. So without `LANES_ROUTE_WRITES=1`
+# MUST 2). Before slice 1b a lane checkout was only as fresh as its own last
+# write, and the old push loop rebased only after a rejected push, so a
+# checkout one commit behind wedged on its first conflicting write: the
+# stranding Amendment 23 exists to end. S3 now fetches and fast-forwards
+# before every edit, and the flip of this default is a question put to lane
+# openRepoTools-3 with slice 1b, not made by it. So without `LANES_ROUTE_WRITES=1`
 # every write goes through `LANES_REPO` (W by default) and every lock is that
 # checkout's, exactly as before; the re-run process is routed by definition.
 LANES_ROUTE_ON=0
@@ -1217,20 +1247,23 @@ LANES_PATH="${LANES_PATH:-$(git -C "${LANES_DIR:-.}" rev-parse --show-prefix 2>/
 
 # The pathspecs the current invocation is writing. Every subcommand that
 # predates Amendment 7 writes exactly one, the register; a LANDING or LANDED
-# writes two. CP_AFTER_REBASE is a function commit_push calls after each
-# `pull --rebase`, before it pushes — `claim` uses it to notice that another
-# lane's claim landed first.
+# writes two. (`CP_AFTER_REBASE`, the hook a `pull --rebase` called, is gone
+# with the pull: Amendment 23 S4 replays the whole verb instead.)
 CP_PATHS=("$LANES_PATH")
-CP_AFTER_REBASE=""
 # Set by `commit` alone, and never taken from the environment: with nothing
-# staged, commit_push publishes the local commits ahead of origin for that one
-# write and for no other (#194).
+# staged, commit_publish publishes the local commits ahead of origin for that
+# one write and for no other (#194; Amendment 23 S4's publish act).
 CP_PUBLISH_AHEAD=0
-# A publish's push sends the commit its fence read, `<sha>:refs/heads/<branch>`;
-# empty, every push sends the branch as it stands, as it always has (#194).
-CP_PUSH_SPEC=""
+# The publish pushes the commit its fence read, `<sha>:refs/heads/<branch>`.
 CP_FENCE_TIP=""
 CP_FENCE_AHEAD=0
+# `NAME=value` words a verb wants carried across its replay's `exec` (only
+# `claim` fills it: the takeover it decided on). Never from the environment.
+CP_REPLAY_ENV=()
+# Set by `commit`'s carry form alone: its edit is the hand edit in the working
+# tree, which no argv can make again, so a replay gives it back as the hand
+# edit it was instead of dropping it with the commit (`cp_replay`).
+CP_REPLAY_KEEPS_EDIT=0
 
 # die "<message>" [<exit code>] — the MESSAGE is $1 alone. It used to be "$*",
 # which joined the exit code on to the end of every refusal that passed one:
@@ -1431,11 +1464,11 @@ RL_PATHS_FOR_UNDO=()
 rename_undo() {
   [ "$RL_ACTIVE" = 1 ] || return 0
   RL_ACTIVE=0
-  # A COMMIT THAT EXISTS IS NOT UNDONE. The undo is armed through `commit_push`
+  # A COMMIT THAT EXISTS IS NOT UNDONE. The undo is armed through `commit_publish`
   # because that function can die before it commits anything; once it HAS
   # committed, the four moves are in that commit and restoring the working tree
   # would be an inverse change nobody asked for, on top of a commit whose own
-  # recovery `commit_push` prints. HEAD is the whole test.
+  # recovery `commit_publish` prints. HEAD is the whole test.
   if [ -n "$RL_HEAD_BEFORE" ]; then
     ru_head="$(git -C "$LANES_REPO" rev-parse HEAD 2>/dev/null || printf '')"
     if [ -n "$ru_head" ] && [ "$ru_head" != "$RL_HEAD_BEFORE" ]; then
@@ -1460,7 +1493,7 @@ rename_undo() {
   # and detach the register from git — the hazard this file's own header opens
   # with.
   [ -n "$RL_REG" ] && [ -n "$RL_SNAP" ] && [ -f "$RL_SNAP/register" ] && cat -- "$RL_SNAP/register" > "$RL_REG"
-  # AND THE INDEX WITH IT, because `commit_push` STAGES before it commits: a
+  # AND THE INDEX WITH IT, because `commit_publish` STAGES before it commits: a
   # `git add` that succeeded and a `git commit` that did not leaves the four
   # paths staged, so restoring only the working tree would leave the rename in
   # the index for the next writer to commit by accident.
@@ -1513,7 +1546,7 @@ cleanup() {
   [ -n "${LANES_IDX_DIR:-}" ] && [ -d "${LANES_IDX_DIR:-}" ] && rm -rf -- "$LANES_IDX_DIR"
   [ -n "${LANES_WT_IDX_DIR:-}" ] && [ -d "${LANES_WT_IDX_DIR:-}" ] && rm -rf -- "$LANES_WT_IDX_DIR"
   # AMENDMENT 14(d) — THE NUDGE IS THE LAST THING THIS PROCESS DOES: after the
-  # lock is released at the top of this function, and only where `commit_push` recorded a push
+  # lock is released at the top of this function, and only where `commit_publish` recorded a push
   # that landed - or, opensoft/openRepoTools#161, where an inventory writer
   # recorded a snapshot or a tree record it had just replaced. Tested here rather
   # than inside the function, because `cleanup` also runs for a process that died
@@ -1581,12 +1614,13 @@ trap 'cleanup; trap - TERM; kill -TERM $$' TERM
 #
 # AND A LOCK THIS PROCESS TOOK BEFORE AN `exec` IS STILL ITS OWN (Amendment 23
 # S4's replay re-runs the verb with the lock held). `exec` keeps the pid, and
-# the run before the `exec` exported `LANES__PID=$$`: a lock whose pid file
-# names this pid in this container, read by a process whose `LANES__PID` is its
-# own `$$`, is taken as held. Any other process that finds its own pid there —
-# a reused pid — waits like everyone else.
+# the run before the `exec` exported `LANES__PID=$$` (routing) or
+# `LANES__REPLAY_PID=$$` (the replay, `CP_REPLAYING`): a lock whose pid file
+# names this pid in this container, read by a process whose marker is its own
+# `$$`, is taken as held. Any other process that finds its own pid there — a
+# reused pid — waits like everyone else.
 lock_adopt() {
-  [ -n "${LANES__PID:-}" ] && [ "$LANES__PID" = "$$" ] || return 1
+  { [ -n "${LANES__PID:-}" ] && [ "$LANES__PID" = "$$" ]; } || [ "$CP_REPLAYING" = 1 ] || return 1
   mutex_read "$LOCK" || return 1
   [ "$MX_PID" = "$$" ] && mutex_local || return 1
   LOCK_HELD=1
@@ -1603,6 +1637,12 @@ acquire_lock() {
   lock_try 60 && return 0
   die "could not acquire $LOCK after 60s — another lanes-edit run is active (holder pid $(cat -- "$LOCK/pid" 2>/dev/null || printf 'unrecorded'))" 4
 }
+# A REPLAY HOLDS THE CHECKOUT'S LOCK FROM ITS FIRST LINE (Amendment 23 S4). The
+# run before the `exec` held it and kept it, and this run may refuse before it
+# reaches `acquire_lock` again — a rival's claim, a peer's retirement, a row
+# that no longer matches — so it is adopted here, where the exit trap releases
+# it on every way out.
+if [ "$CP_REPLAYING" = 1 ]; then lock_adopt || :; fi
 
 # ---------------------------------------------------------------- row lookup
 
@@ -1900,7 +1940,7 @@ replace_line() {
   # workstation it is a lane stamped twice in a second being told its write was
   # refused, when the register already says precisely what the caller asked for.
   #
-  # THE CALLERS ARE SAFE WITH IT: nothing is written, so `commit_push` finds
+  # THE CALLERS ARE SAFE WITH IT: nothing is written, so `commit_publish` finds
   # nothing staged and says so on its own line, and every one of the four
   # callers (`set-row-state`, `append-session-id`, `replace-in-row` and
   # `migrate-state-cells`) wanted the file to SAY something rather than to
@@ -2071,17 +2111,6 @@ remote_has_branch() {
   return 0
 }
 
-# Unstaged changes to TRACKED files OTHER than the register. New in Amendment
-# 5 and unavoidable: the register shares its checkout with handoffs/ and
-# workspaces/, which other lanes write. `git pull --rebase` refuses outright
-# on ANY unstaged tracked change, so without this the refusal would surface as
-# a bogus "REBASE CONFLICT" and the writer would be sent to a recovery that
-# does not apply. Prints the offending paths, one per line.
-dirty_elsewhere() {
-  git -C "$LANES_REPO" --no-pager diff --name-only 2>/dev/null \
-    | grep -v -x -F -- "$(printf '%s\n' "${CP_PATHS[@]}")" || :
-}
-
 # Every TRACKED file in this checkout that differs from HEAD — staged or not,
 # and whatever pathspec the caller happens to be writing. That is exactly the
 # set `git pull --rebase` refuses on. `git status --porcelain` reports the same
@@ -2184,6 +2213,7 @@ refuse_dirty_checkout() {
 # guard it replaces did — that mode publishes nothing to guard.
 CS_NO_ORIGIN_BRANCH=0
 CS_CARRY_DIFF=""
+CS_CARRY_ANCHORED=0
 cs_refuse() {   # <what> <why> [<recovery line>…]
   csr_what="$1"; csr_why="$2"; shift 2
   if [ "$#" -gt 0 ]; then
@@ -2328,6 +2358,7 @@ CS_EOF
       git -C "$cs_c" --no-pager cherry -v "$cs_trk" HEAD 2>/dev/null | grep '^+' | head -n 10 >&2 || :
       cs_refuse "$cs_what" "HEAD carries $cs_plus unpublished commit(s), and a write made on top of them would push them under its own name or strand itself behind them (Amendment 23 S3)" \
         "list them: git -C $cs_c cherry -v origin/$LANES_BRANCH HEAD" \
+        "if any '+' line is not your own write, STOP and take it to the lane its subject names; never reset, stash or overwrite a peer's work" \
         "publish them with the publish act, which pushes them and writes nothing new: LANES_LANE=${cs_lane:-<lane>} $SELF commit \"<what they are>\"   (with nothing staged and $LANES_PATH clean)" \
         "or archive them (S6.3): git -C $cs_c push origin HEAD:refs/heads/archive/${cs_lane:-<lane>}-stranded-$(date -u +%Y%m%dT%H%MZ), then git -C $cs_c reset --keep origin/$LANES_BRANCH"
     fi
@@ -2346,6 +2377,15 @@ CS_EOF
     CS_CARRY_DIFF="$cs_tmp/hand-edit-$(date -u +%Y%m%dT%H%M%SZ)-$$.diff"
     git -C "$cs_c" -c "$CP_EXACT" --no-pager diff --binary HEAD -- "$LANES_PATH" > "$CS_CARRY_DIFF" 2>/dev/null && [ -s "$CS_CARRY_DIFF" ] ||
       cs_refuse "$cs_what" "the hand edit of $LANES_PATH could not be saved to $CS_CARRY_DIFF, and it is never set aside without a copy"
+    # A ROW EDIT IS ANCHORED BY THE LINES IT REPLACES. Every hunk of a row edit
+    # removes the row's old line; where each does, the edit may be applied
+    # with no context at all, so a neighbour's row changed on origin — the
+    # register's usual day, ~500 commits of it — does not refuse an edit to
+    # another row. A hunk that only inserts has no line of its own to find,
+    # and is applied with its full context or refused.
+    CS_CARRY_ANCHORED=0
+    git -C "$cs_c" -c "$CP_EXACT" --no-pager diff -U0 HEAD -- "$LANES_PATH" 2>/dev/null |
+      awk '/^@@ / { h++; if ($2 ~ /,0$/) z++ } END { exit !(h > 0 && z == 0) }' && CS_CARRY_ANCHORED=1
     git -C "$cs_c" -c "$CP_EXACT" checkout -q HEAD -- "$LANES_PATH" 2>/dev/null ||
       cs_refuse "$cs_what" "$LANES_PATH could not be put back to HEAD's version before the fast-forward; the hand edit is untouched, and a copy of it is $CS_CARRY_DIFF"
     cs_reg_pending=""
@@ -2369,7 +2409,14 @@ CS_EOF
     fi
   fi
   if [ -n "$CS_CARRY_DIFF" ]; then
-    if ! git -C "$cs_c" apply --whitespace=nowarn -- "$CS_CARRY_DIFF" 2>"$cs_tmp/apply.err"; then
+    cs_applied=0
+    git -C "$cs_c" apply --whitespace=nowarn -- "$CS_CARRY_DIFF" 2>"$cs_tmp/apply.err" && cs_applied=1
+    if [ "$cs_applied" = 0 ] && [ "$CS_CARRY_ANCHORED" = 1 ] &&
+       git -C "$cs_c" apply -C0 --whitespace=nowarn -- "$CS_CARRY_DIFF" 2>>"$cs_tmp/apply.err"; then
+      cs_applied=1
+      note "origin changed a line beside the hand edit and none of the lines it replaces, so the edit was applied anchored by those lines alone"
+    fi
+    if [ "$cs_applied" = 0 ]; then
       cs_refuse "$cs_what" "the hand edit of $LANES_PATH no longer applies to origin's version of it, so it is KEPT in $CS_CARRY_DIFF and the register is left at origin's version (Amendment 23 S3 step 4). git said: $(head -n 3 -- "$cs_tmp/apply.err" 2>/dev/null | tr '\n' ' ')" \
         "read what you wrote: cat $CS_CARRY_DIFF" \
         "make the edit again on the register as it now is, then: LANES_LANE=${cs_lane:-<lane>} $SELF commit \"<what you wrote>\""
@@ -2390,11 +2437,12 @@ CS_EOF
 # that wanted to write a row waited behind a lock whose holder was blocked on a
 # socket, and the estate only moved again when the ssh was killed by hand.
 #
-# So every git call that touches the NETWORK — push, pull, fetch, ls-remote —
+# So every git call that touches the NETWORK — fetch, push, ls-remote, clone —
 # runs under a timeout, and a timeout is not a failure to retry: it is a
-# refusal to hold the mutex any longer. The helper aborts any rebase it started,
-# releases the lock, prints how to find out whether the push landed anyway, and
-# exits 3 with the edit safe in a local commit.
+# refusal to hold the mutex any longer. Since Amendment 23 each caller says what
+# it means there: before the edit it is S3's refusal, with nothing written; a
+# push that timed out is read back, because a hung push often landed; and a
+# read-back that cannot answer is `pushed, not confirmed`, exit 3.
 #
 # `LANES_GIT_TIMEOUT` is the budget in seconds (default 60; 0 disables the
 # bound). `LANES_GIT` is the binary, so a test can hand these calls — and ONLY
@@ -2448,23 +2496,12 @@ ws_follow() {
   return 0
 }
 
-# What a timed-out network call does. NEVER a retry: the point is to stop
-# holding the lock, and a second call to the same hung endpoint holds it twice
-# as long.
-git_timeout_die() {   # <the command, for the reader>
-  note "TIMED OUT after ${GIT_TIMEOUT}s: $1"
-  note "  Amendment 8(h): the writer does not hold the estate's mutex on a hung"
-  note "  network call. The lock is being released now, before this exits."
-  "$GIT_BIN" -C "$LANES_REPO" rebase --abort 2>/dev/null || :
-  note "  YOUR EDIT IS SAFE — it is already a local commit:"
-  "$GIT_BIN" -C "$LANES_REPO" --no-pager log --oneline "origin/$LANES_BRANCH..HEAD" 2>/dev/null | head -n 5 >&2 || :
-  note "  RECOVERY — a hung push often means it LANDED and the connection did not close,"
-  note "  so look before you push again:"
-  note "    git -C $LANES_REPO fetch origin $LANES_BRANCH && git -C $LANES_REPO log --oneline origin/$LANES_BRANCH -3"
-  note "    git -C $LANES_REPO push origin $LANES_BRANCH      # only if it is not there"
-  release_lock
-  die "timed out after ${GIT_TIMEOUT}s on '$1' — the mutex is released and your commit is local; nothing was lost." 3
-}
+# A TIMED-OUT NETWORK CALL IS NEVER RETRIED, and since Amendment 23 it never
+# dies on its own either (`git_timeout_die`, which aborted a rebase and said
+# "your commit is local", is gone with the pull it was written for). Each call
+# says what its timeout means where it is made: S3's fetch refuses before the
+# edit (`checkout_sync`), a push that timed out is READ BACK, and a read-back
+# that times out is `pushed, not confirmed` (`commit_publish`, exit 3).
 
 # BYTECODE NEVER RIDES A WORKSPACE COMMIT (opensoft/openRepoTools#162, cause
 # 19: a handoff's attachments were committed with a whole virtualenv's
@@ -2562,7 +2599,8 @@ BRT_EOF
 #     made while resolving one passed unread. A merge or root commit refuses.
 #   * HEAD ON ANOTHER BRANCH: the fence read HEAD and the push sent
 #     `refs/heads/<b>`. The range is the branch, and HEAD must be it, because
-#     `pull --rebase` moves HEAD and the push moves the branch.
+#     every read of the queue starts at HEAD and the push moves the branch.
+#     (S3 refuses a HEAD off the branch first; this stays as the fence's own.)
 #   * A LOCAL BRANCH NAMED `origin/<b>`, which shadows the tracking ref. Both
 #     ends of the range are spelled in full.
 #
@@ -2594,7 +2632,7 @@ BRT_EOF
 cp_publish_fence() {
   cpf_ref="refs/heads/$LANES_BRANCH"
   cpf_head="$(git -C "$LANES_REPO" symbolic-ref -q HEAD 2>/dev/null || :)"
-  [ "$cpf_head" = "$cpf_ref" ] || die "refusing to publish: HEAD is ${cpf_head:-detached}, not $cpf_ref, and the push sends $cpf_ref while \`pull --rebase\` moves HEAD, so what would be published is not what HEAD shows, and nothing was pushed (#194). Whoever moved this shared checkout off $LANES_BRANCH puts it back; never reset or check out over their work." 2
+  [ "$cpf_head" = "$cpf_ref" ] || die "refusing to publish: HEAD is ${cpf_head:-detached}, not $cpf_ref, and the push sends $cpf_ref while every read of the queue starts at HEAD, so what would be published is not what HEAD shows, and nothing was pushed (#194). Whoever moved this shared checkout off $LANES_BRANCH puts it back; never reset or check out over their work." 2
   cpf_rc=0
   cpf_base="$(git --no-replace-objects -C "$LANES_REPO" rev-parse -q --verify "refs/remotes/origin/$LANES_BRANCH^{commit}")" || cpf_rc=$?
   cpf_tip="$(git --no-replace-objects -C "$LANES_REPO" rev-parse -q --verify "$cpf_ref^{commit}")" || cpf_rc=$?
@@ -2636,32 +2674,36 @@ cp_publish_fence() {
     note "of the local commits on $cpf_ref ahead of origin/$LANES_BRANCH, these are not register or handoff writes (a merge or root commit, or a change that is not an added or modified regular file under ${LANES_PREFIX:-the register directory} or handoffs/):"
     [ -z "$cpf_odd" ] || printf '%s\n' "$cpf_odd" >&2
     [ -z "$cpf_bad" ] || printf '%s\n' "$cpf_bad" >&2
-    die "refusing to publish: \`commit\` pushes only register and handoff writes (#194), so nothing was pushed. A lane rename (Amendment 16) deletes and re-adds its log and is refused here too; the next register write from this checkout carries it. Anything else, whoever queued it publishes it; never reset it away. Read them: git -C $LANES_REPO log --stat refs/remotes/origin/$LANES_BRANCH..$cpf_ref" 2
+    die "refusing to publish: \`commit\` pushes only register and handoff writes (#194), so nothing was pushed. A lane rename (Amendment 16) deletes and re-adds its log and is refused here too: no later write carries it (Amendment 23 S3 refuses every write over it), so archive it (S6.3) and make the rename again. Anything else, whoever queued it publishes it; never reset it away. Read them: git -C $LANES_REPO log --stat refs/remotes/origin/$LANES_BRANCH..$cpf_ref" 2
   fi
   CP_FENCE_TIP="$cpf_tip"
   CP_FENCE_AHEAD="$cpf_n"
 }
 
-# The publish's CP_AFTER_REBASE: `pull --rebase` has rewritten the queue onto
-# what origin holds now, and may have taken in a commit made since the first
-# read, so the fence reads it again and the push is pinned to what it read.
-# THE PULL CAN EMPTY THE QUEUE (lane openRepoShape-2, #214 6243280936): origin
-# may hold every queued commit already, by content under other shas, because
-# another workstation made the same edit or a peer's write carried it. The
-# rebase drops each one, and a push would send origin its own tip and print
-# "pushed". So the publish ends here, exit 0, as the no-op it now is, and it
-# says so. Only `commit` installs this hook, and this commit_push is its last
-# act, so the exit is that return.
-cp_publish_refence() {
-  cp_publish_fence
-  if [ "$CP_FENCE_AHEAD" = 0 ]; then
-    note "origin/${LANES_BRANCH} already holds every commit this publish listed: \`pull --rebase\` found each one there by content and dropped it, so none is left to push and no push was sent (#194)"
-    exit 0
-  fi
-  CP_PUSH_SPEC="$CP_FENCE_TIP:refs/heads/$LANES_BRANCH"
-}
-
-# commit_push "<subject>" [<pathspec>...] — the pathspecs default to the
+# ==================================================== AMENDMENT 23 S4 =======
+#
+# AFTER THE EDIT: COMMIT BY PATHSPEC, PUSH, READ BACK; A REFUSED PUSH REPLAYS
+# THE ONE EDIT.
+#
+# `commit_publish` replaces `commit_push`, whose push loop pulled with rebase
+# in front of every push, captured a peer's concurrent edit, skipped the pull
+# past a peer's dirty file (Amendment 5(d)) and, on a conflict, aborted and
+# left the write a local commit that "a later write from this checkout may
+# already carry". Under S3 there is nothing to pull: the checkout was brought to
+# origin's tip under the lock, so the push is a fast-forward or it is refused.
+#
+#   1. Commit by pathspec. Nothing staged is no commit and no network — the
+#      publish act aside (`cp_publish_act`, below).
+#   2. Push the branch, no pull.
+#   3. Read back: fetch, then is the commit an ancestor of origin's tip? Yes is
+#      0 and `pushed`. No, or a fetch that failed, is 3, `pushed, not confirmed:
+#      <sha>`, never success; the next write's S3 finds it by content either
+#      way. A push that timed out is read back too.
+#   4. A refused push replays the one edit on a fresh fast-forward
+#      (`cp_replay`), six attempts in all; then the commit is kept on HEAD and
+#      named, exit 6.
+#
+# commit_publish "<subject>" [<pathspec>...] — the pathspecs default to the
 # register alone, which is every caller that predates Amendment 7. A LANDING
 # or LANDED writes TWO (the register and the lane's log) so that both halves
 # of one act land in one commit and no reader ever sees half of it.
@@ -2709,7 +2751,7 @@ cp_publish_refence() {
 # `lanes/LANES.md` and `lanes/log/<lane>.md`, spelled by the code that computes
 # them.
 CP_EXACT="core.ignorecase=false"
-commit_push() {
+commit_publish() {
   msg="$1"; shift || :
   if [ "$#" -gt 0 ]; then CP_PATHS=("$@"); else CP_PATHS=("$LANES_PATH"); fi
   [ "$NO_GIT" = 1 ] && { note "LANES_NO_GIT=1 — not committing"; return 0; }
@@ -2734,47 +2776,20 @@ commit_push() {
     [ -z "$cp_byte" ] || die "$(bytecode_refusal_text "$cp_byte")" 2
     git -C "$LANES_REPO" -c "$CP_EXACT" add -- ${cp_add[@]+"${cp_add[@]}"} || die "git add failed" 6
   fi
-  # #194 — NOTHING STAGED IS NOT NOTHING TO PUBLISH, FOR `commit` ALONE. A
-  # write the push loop below could not get out (a peer's uncommitted file
-  # blocking the rebase, six rejected pushes) leaves its edit as a LOCAL commit,
-  # and the RECOVERY printed for it is to re-run `commit` once the way is clear.
-  # Returning here sent that re-run home with exit 0 and the commit still local.
-  # So `commit`, the one caller that sets CP_PUBLISH_AHEAD, still takes the push
-  # loop (its lock, the dirty-elsewhere guard, the retries) whenever the branch
-  # holds commits `origin/$LANES_BRANCH` does not, as of the last fetch; no such
-  # ref reads as none. Every other write with nothing to stage stays the no-op it
-  # always was and reaches no network: a repeated `set-row-state` must not turn
-  # into a push of whatever this SHARED checkout has queued (the #214 review
-  # measured exactly that deleting `scripts/link-estates` on origin).
-  #
-  # AND `commit` PUBLISHES ONLY REGISTER AND HANDOFF WRITES, and only what it read:
-  # `cp_publish_fence` (above) reads the queue on the branch the push sends and
-  # refuses the whole publish (2) for anything that is not a register or
-  # handoff write. The push is pinned to the commit the fence read, and every
-  # `pull --rebase` reads it again (CP_AFTER_REBASE) and re-pins it.
-  cp_publish=0
+  # NOTHING STAGED IS NOTHING TO PUSH — FOR EVERY WRITE BUT THE PUBLISH ACT.
+  # A repeated `set-row-state` whose line is already there stays the no-op it
+  # always was and reaches no network. S3 refuses every write over an
+  # unpublished commit, so there is no queue here for it to carry either;
+  # `commit`, the one caller that sets CP_PUBLISH_AHEAD, publishes one (#194).
   if git -C "$LANES_REPO" -c "$CP_EXACT" diff --cached --quiet -- "${CP_PATHS[@]}"; then
-    cp_ahead="$(git --no-replace-objects -C "$LANES_REPO" --no-pager log --oneline "refs/remotes/origin/$LANES_BRANCH..refs/heads/$LANES_BRANCH" 2>/dev/null || :)"
-    if [ -z "$cp_ahead" ]; then
-      note "nothing staged for ${CP_PATHS[*]} — no commit made"
-      return 0
+    if [ "$CP_PUBLISH_AHEAD" = 1 ]; then
+      cp_publish_act
+      return $?
     fi
-    cp_n="$(printf '%s\n' "$cp_ahead" | awk 'END { print NR }')"
-    if [ "$CP_PUBLISH_AHEAD" != 1 ]; then
-      note "nothing staged for ${CP_PATHS[*]} — no commit made; the $cp_n local commit(s) ahead of origin/$LANES_BRANCH stay local. \`lanes-edit.sh commit\` would publish all of them, so read \`git -C $LANES_REPO cherry -v origin/$LANES_BRANCH HEAD\` first: another lane's commits are its own to publish"
-      return 0
-    fi
-    cp_publish_fence
-    note "nothing staged for ${CP_PATHS[*]} — no commit made; pushing the $cp_n local commit(s) origin/$LANES_BRANCH does not have, up to ${CP_FENCE_TIP:0:12}:"
-    printf '%s\n' "$cp_ahead" | head -n 10 >&2 || :
-    [ "$cp_n" -le 10 ] || note "  … and $((cp_n - 10)) more"
-    CP_PUSH_SPEC="$CP_FENCE_TIP:refs/heads/$LANES_BRANCH"
-    CP_AFTER_REBASE=cp_publish_refence
-    cp_publish=1
+    note "nothing staged for ${CP_PATHS[*]} — no commit made"
+    return 0
   fi
-  if [ "$cp_publish" = 1 ]; then
-    :   # nothing of this write's own to commit: straight on to the push
-  elif [ -n "$cp_ren" ]; then
+  if [ -n "$cp_ren" ]; then
     cp_staged="$(git -C "$LANES_REPO" -c "$CP_EXACT" diff --cached --name-only)"
     cp_extra=""
     while IFS= read -r cp_s; do
@@ -2792,132 +2807,173 @@ EOF
     fi
     git -C "$LANES_REPO" -c "$CP_EXACT" commit -q -m "$msg" || die "git commit failed" 6
     # THE RENAME IS DONE AND IN HEAD: the old path is no longer a pathspec of
-    # anything below, and the next `commit_push` of this run is not a rename.
+    # anything below, and the next `commit_publish` of this run is not a rename.
     CP_PATHS=(${cp_add[@]+"${cp_add[@]}"})
     LOG_RENAMED_FROM=""
   else
     git -C "$LANES_REPO" -c "$CP_EXACT" commit -q -m "$msg" -- "${CP_PATHS[@]}" || die "git commit failed" 6
   fi
-  [ "$cp_publish" = 1 ] || note "committed: $msg"
-  if ! remote_has_branch; then
-    if ! git_net -C "$LANES_REPO" push -q -u origin "$LANES_BRANCH"; then
-      [ "$GIT_TIMED_OUT" = 1 ] && git_timeout_die "git push -u origin $LANES_BRANCH"
-      die "initial push of '$LANES_BRANCH' failed" 6
+  cp_sha="$(git -C "$LANES_REPO" rev-parse HEAD 2>/dev/null)"
+  note "committed: $msg"
+
+  # ---- 2. THE PUSH: the branch as S3 left it plus this one commit, no pull.
+  cp_spec="refs/heads/$LANES_BRANCH:refs/heads/$LANES_BRANCH"
+  cp_u=""
+  [ "$CS_NO_ORIGIN_BRANCH" = 1 ] && cp_u="-u"
+  cp_prc=0
+  git_net -C "$LANES_REPO" push -q $cp_u origin "$cp_spec" || cp_prc=$?
+  cp_pto="$GIT_TIMED_OUT"
+  # ---- 3. THE READ-BACK. A push that went, or that timed out (a hung push
+  # often landed), is confirmed on origin or reported as not confirmed.
+  if [ "$cp_prc" = 0 ] || [ "$cp_pto" = 1 ]; then
+    cp_crc=0; cp_confirm "$cp_sha" || cp_crc=$?
+    [ "$cp_crc" = 0 ] && { cp_pushed "$cp_sha"; return 0; }
+    cp_not_confirmed "$cp_sha" "$msg" "$([ "$cp_pto" = 1 ] && printf 'the push timed out after %ss, and ' "$GIT_TIMEOUT")$(cp_why_unconfirmed "$cp_crc")"
+  fi
+  # ---- 4. A REFUSED PUSH. Origin is read first: the commit may be there after
+  # all; a read that fails confirms nothing.
+  cp_crc=0; cp_confirm "$cp_sha" || cp_crc=$?
+  case "$cp_crc" in
+    0) cp_pushed "$cp_sha"; return 0 ;;
+    2) cp_not_confirmed "$cp_sha" "$msg" "the push was refused, and $(cp_why_unconfirmed 2)" ;;
+  esac
+  # A REFUSAL WITH ORIGIN UNMOVED IS NOT A LOST RACE: the replay would send the
+  # same commit onto the same tip and meet the same refusal six times (a hook,
+  # a permission, a protected branch). git's own words are above; the commit
+  # is kept on HEAD and named, as at the bound.
+  if git -C "$LANES_REPO" merge-base --is-ancestor "refs/remotes/origin/$LANES_BRANCH" "$cp_sha" 2>/dev/null; then
+    note "look at it: git -C $LANES_REPO show $cp_sha"
+    note "every later write from this checkout refuses (S3's unpushed row) until it is published — LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act — or archived (S6.3) and \`git -C $LANES_REPO reset --keep origin/$LANES_BRANCH\` run."
+    die "the push of $cp_sha was refused with origin/$LANES_BRANCH unmoved, so this is no lost race and a replay would meet the same refusal; the commit is local and kept on HEAD: $cp_sha $msg" 6
+  fi
+  cp_replay "$cp_sha" "$msg"
+}
+
+# 0 when origin's `main` holds <sha>, after a fresh fetch; 1 when it does not;
+# 2 when the fetch failed. Never a guess.
+cp_confirm() {   # <sha>
+  git_net -C "$LANES_REPO" -c gc.auto=0 -c maintenance.auto=false fetch -q origin \
+    "+refs/heads/$LANES_BRANCH:refs/remotes/origin/$LANES_BRANCH" 2>/dev/null || return 2
+  git -C "$LANES_REPO" merge-base --is-ancestor "$1" "refs/remotes/origin/$LANES_BRANCH" 2>/dev/null && return 0
+  return 1
+}
+cp_why_unconfirmed() {   # <cp_confirm's status>
+  case "$1" in
+    2) [ "$GIT_TIMED_OUT" = 1 ] && printf 'the read-back fetch of origin %s timed out after %ss' "$LANES_BRANCH" "$GIT_TIMEOUT" ||
+         printf 'the read-back fetch of origin %s failed' "$LANES_BRANCH" ;;
+    *) printf 'origin/%s, read back, does not hold it' "$LANES_BRANCH" ;;
+  esac
+}
+cp_pushed() {   # <sha>
+  LANES_INDEX_NUDGE=1
+  note "pushed origin/$LANES_BRANCH: $1, confirmed by a read-back (attempt $CP_ATTEMPT)"
+}
+# S4.3 — A PUSH IT CANNOT CONFIRM IS NEVER SUCCESS. The commit stays on HEAD;
+# the next write's S3 finds it by content either way: published, it reads as
+# nothing to do; not published, as an unpushed commit, refused until the lane
+# publishes or archives it.
+cp_not_confirmed() {   # <sha> <subject> <why>
+  note "this write committed $1 ($2) and cannot say whether it reached origin/$LANES_BRANCH: $3."
+  note "LOOK, by content: git -C $LANES_REPO fetch origin $LANES_BRANCH && git -C $LANES_REPO cherry -v origin/$LANES_BRANCH HEAD"
+  note "  no line, or a '-' line for it: it is on origin, and there is nothing to do."
+  note "  a '+' line: it is not, and every later write from this checkout refuses until it is published — LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act — or archived (S6.3)."
+  die "pushed, not confirmed: $1 — $3; the commit is kept on HEAD, and this is never reported as success (Amendment 23 S4)" 3
+}
+# S4.4 AND S4.5 — A REFUSED PUSH REPLAYS THE ONE EDIT ON A FRESH FAST-FORWARD,
+# SIX ATTEMPTS IN ALL. `reset --keep` drops exactly this write's commit — S3
+# allowed no other unpublished one — and keeps every other change in the tree
+# (or refuses, naming it). Then this file runs again with the same argv and the
+# same pid, the lock adopted across the `exec`, and the verb re-reads its file
+# and re-runs its own checks on origin's new tip: never a `pull --rebase`,
+# never a rebase of a stack. At the sixth attempt the commit is kept on HEAD
+# and named, and every later write from this checkout refuses under S3 until
+# the lane publishes or archives it (ratified choices 4 and 5).
+cp_replay() {   # <sha> <subject>
+  if [ "$CP_ATTEMPT" -ge 6 ]; then
+    note "origin/$LANES_BRANCH moved under this write six times (Amendment 23 S4, ratified choice 4)."
+    note "look at it: git -C $LANES_REPO show $1"
+    note "every later write from this checkout refuses (S3's unpushed row) until it is published — LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act — or archived (S6.3) and \`git -C $LANES_REPO reset --keep origin/$LANES_BRANCH\` run."
+    die "could not push origin/$LANES_BRANCH after six attempts; the commit is local and kept on HEAD: $1 $2" 6
+  fi
+  cr_err="$(git -C "$LANES_REPO" rev-parse --absolute-git-dir 2>/dev/null)/lanes-edit/reset.err"
+  # `commit`'S CARRY FORM KEEPS ITS EDIT. Every other verb makes its edit again
+  # from its argv; `commit`'s is the hand edit, so the commit is dropped to its
+  # parent — S3's base — with the change left in the working tree, unstaged,
+  # and the re-run carries it across the fast-forward as attempt 1 did (or
+  # refuses, keeping it in a file, where it no longer applies).
+  if [ "$CP_REPLAY_KEEPS_EDIT" = 1 ]; then
+    if ! git -C "$LANES_REPO" reset -q --mixed "$1^" 2>"$cr_err" >/dev/null; then
+      note "git said: $(head -n 4 -- "$cr_err" 2>/dev/null | tr '\n' ' ')"
+      die "the push was refused because origin/$LANES_BRANCH moved, and this commit could not be turned back into the hand edit it was to replay it, so it is kept on HEAD: $1 $2" 6
     fi
-    LANES_INDEX_NUDGE=1
-    note "pushed (created origin/$LANES_BRANCH)"
+    note "push refused (attempt $CP_ATTEMPT of 6): origin/$LANES_BRANCH moved. Commit $1 is dropped and its change left in the working tree as the hand edit it was, and \`commit\` runs again to carry it onto origin's new tip (Amendment 23 S4)."
+  elif ! git -C "$LANES_REPO" reset -q --keep "refs/remotes/origin/$LANES_BRANCH" 2>"$cr_err"; then
+    note "git said: $(head -n 4 -- "$cr_err" 2>/dev/null | tr '\n' ' ')"
+    note "look at it: git -C $LANES_REPO show $1; the change git names is someone's, so commit it by pathspec as its own write, or restore it if it is nobody's — never stash or reset over it."
+    die "the push was refused because origin/$LANES_BRANCH moved, and this write's commit could not be dropped to replay it (\`git reset --keep\` refused over an uncommitted change), so it is kept on HEAD: $1 $2" 6
+  else
+    note "push refused (attempt $CP_ATTEMPT of 6): origin/$LANES_BRANCH moved. Commit $1 is dropped, and this write runs again on origin's new tip (Amendment 23 S4)."
+  fi
+  sleep 3
+  cleanup_for_exec
+  LANES__REPLAY_PID="$$"; LANES__ATTEMPT=$((CP_ATTEMPT + 1))
+  export LANES__REPLAY_PID LANES__ATTEMPT
+  [ "${#CP_REPLAY_ENV[@]}" -eq 0 ] || export "${CP_REPLAY_ENV[@]}"
+  exec "${BASH:-bash}" "$RESOLVED" ${ORIG_ARGV[@]+"${ORIG_ARGV[@]}"}
+  die "could not run $RESOLVED again to replay this write. Its commit was dropped, so nothing of it is on origin or here; run it again." 1
+}
+
+# THE PUBLISH ACT (Amendment 23 S4; #194's remedy 1, in #214's form): `commit`
+# with nothing staged publishes commits already made and writes nothing new.
+# S3 ran with every row but the unpushed one, and no fast-forward. The queue is
+# LISTED BY CONTENT before anything is pushed. Only a FAST-FORWARD push is made
+# (Open question 2): where origin has moved past the stack, a push would be
+# refused and a rebase of a stack is the stale-base hazard #198 measured, so it
+# refuses, naming S6.3's archive. #214's fence still vouches for what the queue
+# holds, and the push sends the commit the fence read. Then the read-back, and
+# no replay: there is no edit to repeat.
+cp_publish_act() {
+  cpa_trk="refs/remotes/origin/$LANES_BRANCH"; cpa_br="refs/heads/$LANES_BRANCH"
+  cpa_rc=0
+  cpa_list="$(git --no-replace-objects -C "$LANES_REPO" --no-pager cherry -v "$cpa_trk" "$cpa_br" 2>/dev/null)" || cpa_rc=$?
+  [ "$cpa_rc" = 0 ] || die "git could not compare $cpa_br with $cpa_trk, so what this publish would send is unknown; nothing was pushed (#194)" 2
+  cpa_plus="$(printf '%s\n' "$cpa_list" | grep '^+' || :)"
+  if [ -z "$cpa_plus" ]; then
+    note "nothing staged for ${CP_PATHS[*]} — no commit made, and origin/$LANES_BRANCH lacks nothing of this checkout's"
     return 0
   fi
-  attempt=1
-  while [ "$attempt" -le 6 ]; do
-    # A peer may have written LANES.md between our commit and this pull.
-    if ! git -C "$LANES_REPO" -c "$CP_EXACT" diff --quiet -- "${CP_PATHS[@]}"; then
-      cap="$(git -C "$LANES_REPO" -c "$CP_EXACT" --no-pager diff --numstat -- "${CP_PATHS[@]}" | cut -f1,2 | tr '\t' '/')"
-      git -C "$LANES_REPO" -c "$CP_EXACT" commit -q -m "LANES(concurrent@$WS): capture an uncommitted registry edit ($cap lines +/-) made by whoever else is writing right now — its author should follow up with a commit that says what it was" -- "${CP_PATHS[@]}" || :
-      note "captured a concurrent uncommitted edit ($cap lines +/-) as its own commit"
-    fi
-    others="$(dirty_elsewhere)"
-    if [ -n "$others" ]; then
-      # Someone else's uncommitted file in this shared checkout. Pulling is
-      # impossible until they commit it, and it is NOT ours to commit — a
-      # handoff mid-write is exactly the content Amendment 4(d) says its own
-      # author commits. So skip the pull and try the push: it succeeds unless
-      # the remote moved, and the register edit is already a local commit
-      # either way.
-      note "WARNING: this checkout has uncommitted changes to files OTHER than the register — not this invocation's:"
-      printf '  %s\n' $others >&2
-      note "skipping 'pull --rebase' (it refuses on any unstaged tracked change) and pushing straight out"
-      if git_net -C "$LANES_REPO" push -q origin "${CP_PUSH_SPEC:-$LANES_BRANCH}"; then
-        LANES_INDEX_NUDGE=1
-        note "pushed origin/$LANES_BRANCH (attempt $attempt, no pull — see the warning above)"
-        return 0
-      fi
-      [ "$GIT_TIMED_OUT" = 1 ] && git_timeout_die "git push origin $LANES_BRANCH"
-      note "push rejected and the pull is blocked by the files above (attempt $attempt)"
-      if [ "$attempt" -ge 6 ]; then
-        note "RECOVERY: their author commits those files (a handoff: handoff(<lane>@<workstation>): <what>),"
-        note "  then re-run: LANES_LANE=<lane> lanes-edit.sh commit \"<what you wrote>\"  — your edit is already"
-        note "  a local commit here. If $LANES_PATH is clean, that re-run makes no commit of its own and"
-        note "  pushes the local commits this lists (#194), refusing (2) and pushing nothing unless every one"
-        note "  is a register or handoff write: git -C $LANES_REPO log --oneline origin/$LANES_BRANCH..HEAD"
-        die "could not push origin/$LANES_BRANCH: behind the remote, and a peer's uncommitted file blocks the rebase. Nothing was lost — your commit is local." 3
-      fi
-    elif git_net -C "$LANES_REPO" pull --rebase -q origin "$LANES_BRANCH"; then
-      # The rebase has just put this invocation's commit on top of whatever
-      # landed first. `claim` hooks in HERE, because that is the moment the
-      # race is decided: if a peer's claim is on this history, theirs landed.
-      if [ -n "${CP_AFTER_REBASE:-}" ]; then
-        "$CP_AFTER_REBASE" || return $?
-      fi
-      if git_net -C "$LANES_REPO" push -q origin "${CP_PUSH_SPEC:-$LANES_BRANCH}"; then
-        LANES_INDEX_NUDGE=1
-        note "pushed origin/$LANES_BRANCH (attempt $attempt)"
-        return 0
-      fi
-      [ "$GIT_TIMED_OUT" = 1 ] && git_timeout_die "git push origin $LANES_BRANCH"
-      note "push raced (attempt $attempt) — retrying"
-    else
-      # A TIMED-OUT PULL IS NOT A CONFLICT. Read as one it would send the writer
-      # to a recovery that does not apply, and `rebase --abort` would be the
-      # only true line in it.
-      [ "$GIT_TIMED_OUT" = 1 ] && git_timeout_die "git pull --rebase origin $LANES_BRANCH"
-      note "REBASE CONFLICT on origin/$LANES_BRANCH — conflicting lines follow:"
-      for cp in "${CP_PATHS[@]}"; do
-        grep -n -e '^<<<<<<<' -e '^=======' -e '^>>>>>>>' -- "$LANES_REPO/$cp" 2>/dev/null | head -n 40 >&2 || :
-        grep -n -A2 -e '^<<<<<<<' -- "$LANES_REPO/$cp" 2>/dev/null | head -n 40 >&2 || :
-      done
-      git -C "$LANES_REPO" rebase --abort 2>/dev/null || :
-      cp_sha="$(git -C "$LANES_REPO" rev-parse HEAD 2>/dev/null)"
-      note "rebase ABORTED — the worktree is clean and NOT mid-rebase. Your edit is safe in these local commits:"
-      git -C "$LANES_REPO" --no-pager log --oneline "origin/$LANES_BRANCH..HEAD" 2>/dev/null | head -n 10 >&2 || :
-      # #32 — AN ABORTED PULL IS NOT PROOF THIS COMMIT NEVER REACHED ORIGIN
-      # (the same rule RV-B3 took for the handoff stamp's own push, in
-      # lane-start). This checkout is shared with every lane on the
-      # workstation, so the very next write out of it pulls this dangling
-      # commit onto its own and pushes both together — three of the four
-      # "rebase conflict … nothing was pushed" lines seen on Eagle in one
-      # hour named a commit that was ALREADY on origin by the time anyone
-      # read them. LOOK before you reset or redo anything — by ANCESTRY
-      # (Copilot round 2 on #50, 5203033893): a log capped at a few entries
-      # can bury this commit below the window while it stays an ancestor, the
-      # moment four or more later writes land ahead of it.
-      # ROUND 3 (Copilot 5203261904): `fetch && merge-base ... && echo A ||
-      # echo B` is left-associative — a FAILED fetch also falls to the `||`
-      # and prints the SAME "not-there" a genuine non-ancestor does, so a
-      # stale or unreachable origin would silently wave the reset/redo path
-      # through. Fetch is now its own line, checked before anything else.
-      # ROUND 4 (Copilot 5203455553): SHA ancestry is the wrong test — the
-      # very write this whole recovery exists to catch (a peer's own
-      # `commit_push` pulling THIS dangling commit and rebasing it onto a
-      # newer base, per the very next branch above) gives it a NEW sha, so
-      # `merge-base --is-ancestor $cp_sha …` answers "not-there" even once
-      # the CONTENT is published. `git cherry` compares by PATCH, not by
-      # sha, so a rebase that only replays the same change (no real
-      # conflict) is still found. Measured against a real bare repo: a
-      # commit rebased by a peer this way answers `not-there` under
-      # `merge-base --is-ancestor` and `-` (found, equivalent) under
-      # `git cherry` — verified for the genuinely-absent case too (`+`) and
-      # the plain same-sha case (no output at all, which the `-c '^+'`
-      # count below also reads as zero, i.e. already there).
-      note "RECOVERY (in that order):"
-      note "  git -C $LANES_REPO fetch origin $LANES_BRANCH || echo FETCH-FAILED   # if that printed FETCH-FAILED, STOP and retry — a stale or unreachable origin proves nothing either way"
-      note "  git -C $LANES_REPO cherry origin/$LANES_BRANCH $cp_sha | grep -c '^+'   # BY CONTENT, not by sha: a peer's rebase changes the hash but git cherry still finds the same patch"
-      note "  if that printed 0, STOP — reset or redo now would write it a second time."
-      note "  git -C $LANES_REPO rev-parse HEAD   # if this is not $cp_sha, STOP: the checkout moved after this abort, and the lines below no longer describe it"
-      note "  git -C $LANES_REPO cherry -v origin/$LANES_BRANCH HEAD   # WHOSE: one '+' line per local commit origin lacks, which is what the reset below drops"
-      note "  if any '+' line is not your own write, STOP and take it to the lane its subject names; a LANES(concurrent@…) or"
-      note "  LANES(pre-existing@…) capture names no lane, so it is NOT yours. Never reset, stash or overwrite a peer's work:"
-      note "  the reset below drops EVERY '+' commit in this checkout, theirs with yours, and origin holds no copy of any of them (#194)."
-      note "  git -C $LANES_REPO diff origin/$LANES_BRANCH..HEAD -- ${CP_PATHS[*]}   # only if it is not there: read back exactly what you wrote"
-      note "  git -C $LANES_REPO reset --hard origin/$LANES_BRANCH                # only if every '+' line is yours: drop the local commits (NOTE: also drops any"
-      note "                                                          # uncommitted peer edit in this checkout)"
-      note "  then re-read LANES.md and redo the edit with lanes-edit.sh, on top of the peer's version."
-      die "rebase conflict on origin/$LANES_BRANCH — not pushed by this attempt; a later write from this checkout may already carry it, so look before you retry." 3
-    fi
-    attempt=$((attempt + 1))
-    sleep 3
-  done
-  die "could not push origin/$LANES_BRANCH after 6 attempts; your commit is local — retry later" 6
+  cpa_n="$(printf '%s\n' "$cpa_plus" | awk 'END { print NR }')"
+  note "the publish act (Amendment 23 S4, #194): the $cpa_n commit(s) origin/$LANES_BRANCH lacks by content, listed before anything is pushed:"
+  printf '%s\n' "$cpa_plus" | head -n 10 | sed 's/^/  /' >&2 || :
+  [ "$cpa_n" -le 10 ] || note "  … and $((cpa_n - 10)) more"
+  if ! git -C "$LANES_REPO" merge-base --is-ancestor "$cpa_trk" "$cpa_br" 2>/dev/null; then
+    cp_publish_moved
+  fi
+  cp_publish_fence
+  note "pushing the $cpa_n local commit(s) origin/$LANES_BRANCH does not have, up to ${CP_FENCE_TIP:0:12}"
+  cpa_prc=0
+  git_net -C "$LANES_REPO" push -q origin "$CP_FENCE_TIP:refs/heads/$LANES_BRANCH" || cpa_prc=$?
+  cpa_pto="$GIT_TIMED_OUT"
+  cpa_crc=0; cp_confirm "$CP_FENCE_TIP" || cpa_crc=$?
+  if [ "$cpa_crc" = 0 ]; then cp_pushed "$CP_FENCE_TIP"; return 0; fi
+  if [ "$cpa_prc" = 0 ] || [ "$cpa_pto" = 1 ] || [ "$cpa_crc" = 2 ]; then
+    cp_not_confirmed "$CP_FENCE_TIP" "the publish of $cpa_n commit(s)" "$( [ "$cpa_prc" != 0 ] && [ "$cpa_pto" != 1 ] && printf 'the push was refused, and ')$(cp_why_unconfirmed "$cpa_crc")"
+  fi
+  if ! git -C "$LANES_REPO" merge-base --is-ancestor "$cpa_trk" "$CP_FENCE_TIP" 2>/dev/null; then
+    cp_publish_moved
+  fi
+  die "the push of the $cpa_n commit(s) up to ${CP_FENCE_TIP:0:12} failed with origin/$LANES_BRANCH unmoved; they are kept on HEAD, and nothing of them reached origin by this push. Look: git -C $LANES_REPO cherry -v origin/$LANES_BRANCH HEAD" 6
+}
+# OPEN QUESTION 2: A STACK ORIGIN HAS MOVED PAST IS NEVER REBASED. The commits
+# stay where they are, and the lane archives them and redoes what is still
+# wanted on the new tip, by hand (S6.3).
+cp_publish_moved() {
+  note "origin/$LANES_BRANCH has moved past this stack, so a push would be refused, and a rebase of a stack is the stale-base hazard (#198 §3.1). They stay on HEAD."
+  note "RECOVERY (S6.3), in this order:"
+  note "  git -C $LANES_REPO push origin HEAD:refs/heads/archive/<lane>-stranded-$(date -u +%Y%m%dT%H%MZ)   # the archive, on origin"
+  note "  git -C $LANES_REPO reset --keep origin/$LANES_BRANCH                       # then drop them here"
+  note "  then make again, with lanes-edit.sh, each edit that is still wanted on the register as it now is."
+  die "refusing to publish: origin/$LANES_BRANCH has moved past the local commits, and the publish act makes only a fast-forward push (Amendment 23 S4, Open question 2). Nothing was pushed." 2
 }
 
 # ====================================================== AMENDMENT 14 =======
@@ -2931,7 +2987,7 @@ EOF
 # THIS FILE TOUCHES IT IN EXACTLY TWO PLACES, AND NEITHER IS ON AN ACT'S PATH.
 #
 #   THE NUDGE (clause (d)). After a push has LANDED and the mutex is released —
-#   `cleanup`, on the way out, once `commit_push` has recorded a push that went
+#   `cleanup`, on the way out, once `commit_publish` has recorded a push that went
 #   through — ONE DETACHED `lanes-index sync`: stdin closed, stdout and stderr
 #   on /dev/null, descriptors 3 to 9 closed, started from a subshell that
 #   exits at once so this process never has a child to wait for, and its
@@ -3451,7 +3507,7 @@ ensure_log() {
   # `log_files_named_ci` reads the WORKING TREE, while every state reader here
   # deliberately answers out of `origin/<branch>` (R19): on a checkout that is
   # behind, a published `lanes/log/repocase-1.md` is invisible to the scan
-  # above, this write would create `repoCase-1.md`, and `commit_push`-s own
+  # above, this write would create `repoCase-1.md`, and `commit_publish`'s own
   # rebase would then land BOTH. The refusal below is fail-closed and its cure
   # is one command, where the cure for two published files is 15(d)-s hand
   # merge (Copilot round 1 on openRepoTools#41).
@@ -3485,7 +3541,7 @@ ensure_log() {
     # renaming; two `mv`s do the same job on both kinds of filesystem, and
     # neither is `git mv`, whose own case-only rename is the thing that differs
     # between platforms. The caller puts the old path in this write's pathspecs
-    # and `commit_push` drops its INDEX entry by that exact path before staging
+    # and `commit_publish` drops its INDEX entry by that exact path before staging
     # the new one, then commits the index rather than the pathspecs — the one
     # sequence that records the rename on a case-insensitive filesystem as well
     # as on this one, argued in full above `CP_EXACT`.
@@ -3968,7 +4024,7 @@ lane_log_exists() {
 #
 # IT IS SAFE BECAUSE NOTHING INSIDE ONE INVOCATION MOVES IT. `origin/<branch>`
 # is advanced by `log_sync`, which every subcommand runs BEFORE it reads, and by
-# `commit_push`, which runs AFTER the last read of a write path — so the ref a
+# `commit_publish`, which runs AFTER the last read of a write path — so the ref a
 # process reads is fixed for as long as that process reads it. The one act that
 # would break that assumption is a second `log_sync` mid-read, and there is
 # none; `log_sync` clears this cache anyway, so a caller that adds one gets the
@@ -4125,30 +4181,6 @@ retired_identity_hits() { # <lane>; stdout: matching retired spellings
       t = substr(r, 1, p2 - 1)
       if (tolower(t) == tolower(want) || (wk != "" && key(t) == wk)) print t
     }' | LC_ALL=C sort -u
-}
-
-add_row_retirement_rescan() {
-  ar_rebased_hits="$(retired_identity_hits "$ADD_ROW_LANE")" || {
-    note "the archive could not be read after rebase; refusing to push add-row for $ADD_ROW_LANE"
-    return 1
-  }
-  if [ -n "$ar_rebased_hits" ]; then
-    # The rejected add-row is already a local commit on top of the peer's
-    # archive. Leaving it at HEAD would let the next unrelated registry write
-    # push it. Remove ONLY this invocation's exact appended line and commit
-    # that compensation locally; any swept pre-existing edit stays intact.
-    ar_lines="$(command grep -nFx -- "$ADD_ROW_TEXT" "$LANES_FILE" 2>/dev/null)" || {
-      note "the rejected row could not be found exactly in $LANES_FILE; the local add-row commit must be repaired before any later push"
-      return 1
-    }
-    case "$ar_lines" in *$'\n'*) note "more than one exact copy of the rejected row exists; refusing automatic compensation"; return 1 ;; esac
-    ar_line="${ar_lines%%:*}"
-    delete_lines "$ar_line"
-    git -C "$LANES_REPO" -c "$CP_EXACT" add -- "$LANES_PATH" || return 1
-    git -C "$LANES_REPO" -c "$CP_EXACT" commit -q -m "LANES($ADD_ROW_LANE@$WS): cancel add-row rejected by peer retirement" -- "$LANES_PATH" || return 1
-    note "lane $ADD_ROW_LANE was retired by a peer before this add-row could push (archive: $(printf '%s' "$ar_rebased_hits" | tr '\n' ' ')); the rejected row was removed in a compensating LOCAL commit. Neither commit was pushed."
-    return 2
-  fi
 }
 
 # Each lane's LAST line on <object>, as
@@ -6370,7 +6402,7 @@ write_event() {
     note "Rule 6 line also appended to $LANES_FILE (one commit, ${#we_paths[@]} pathspecs)"
   fi
   we_msg="LOG($we_lane@$WS): $we_verb $we_obj"
-  commit_push "$we_msg" "${we_paths[@]}"
+  commit_publish "$we_msg" "${we_paths[@]}"
   we_rc=$?
   state_events_flush
   release_lock
@@ -11656,7 +11688,7 @@ gh_comment() {
   printf '%s\n' "$gc_url"
 }
 
-# The hook `commit_push` calls after every `pull --rebase`, before it pushes.
+# The check a `claim` replay runs first (Amendment 23 S4), on origin's new tip.
 # If another lane's CLAIMED or TAKEOVER on this object is on the rebased
 # history, THEIRS LANDED FIRST and this claim has lost. Git's push
 # serialization is the arbiter across workstations; the local `mkdir` mutex
@@ -11696,9 +11728,10 @@ EOF
 
 claim_rescan_hook() {
   CLAIM_WINNER=""
-  # The pull has just moved `origin/<branch>`, and OUR commit is not on it —
-  # so everything this read can see landed before ours, which is the whole
-  # test. Flush the cache first: the ref moved a moment ago.
+  # AMENDMENT 23 S4: THE REPLAY'S FIRST CHECK. This claim's push was refused,
+  # its commit dropped, and origin's new tip fetched — so OUR line is not on
+  # `origin/<branch>`, and everything this read can see landed before ours,
+  # which is the whole test. Flush the cache first: the ref moved a moment ago.
   state_events_flush
   # ISSUE #30's OWN RACE (Copilot round 12, PR #61): the dead-lane verdict was
   # read ONCE, before this claim's first pull, and nothing about $CLAIM_OBJ has
@@ -11777,6 +11810,39 @@ $(printf '%s\n' "$crh" | rows_named "$CLAIM_WINNER" | head -n1)
 EOF
   note "another lane's claim landed on main before this one: @$CLAIM_WINNER ($crh_verb, $crh_utc)"
   return 7
+}
+
+# Lost: Rule 1 says the lane STOPS AND REPORTS. The claim is abandoned, never
+# queued — Rule 7's queueing is for substrates, which this amendment does not
+# touch. TWO CAUSES, TWO EXIT CODES (Copilot's own "closer look" on 21b8e82, PR
+# #61): 7 is the documented, pre-existing CLAIM-LOST — a rival's claim landed
+# on main first; 9 is issue #30's own dead-lane verdict failing to reconfirm
+# before this takeover's push landed. Both write the same CLAIM-LOST event
+# (this attempt did not succeed, in either cause), but automation reading the
+# PROCESS exit must be able to tell them apart, so the exit is never coerced to
+# 7 for the second. Since Amendment 23 S4 this is reached from a replay, after
+# `claim_rescan_hook`, and the CLAIM-LOST line is the only one of this claim's
+# that reaches origin: the CLAIMED or TAKEOVER commit was dropped.
+claim_lost_write() {   # <7|9> <lane> <object> <uuid>
+  clw_rc="$1"; clw_lane="$2"; clw_obj="$3"; clw_uuid="$4"
+  # "ALIVE AGAIN" ONLY WHERE IT WAS SEEN (Copilot on 05d7889, PR #61):
+  # `claim_rescan_hook` sets `CLAIM_ABANDON_REVIVED` for a confirmed revival — a
+  # live session now backs the lane, or its log moved past the terminal line —
+  # and leaves it empty where the verdict simply could not be reconfirmed (an
+  # unreadable log, or an unreadable records tree). The exit is 9 either way;
+  # only the words differ.
+  if [ "$clw_rc" = 9 ] && [ -n "$CLAIM_ABANDON_REVIVED" ]; then
+    note "TAKEOVER ABANDONED — lane $CLAIM_WINNER is alive again. Rule 1: stop and report; do not author a successor."
+    write_event "$clw_lane" CLAIM-LOST "$clw_obj" "→" "lane:$CLAIM_WINNER" "abandoned: $CLAIM_WINNER is no longer dead, takeover withdrawn before landing" "$(utc_now)" "$clw_uuid"
+  elif [ "$clw_rc" = 9 ]; then
+    note "TAKEOVER ABANDONED — lane $CLAIM_WINNER's dead-lane verdict could not be reconfirmed before this push landed (above). Rule 1: stop and report; do not author a successor."
+    write_event "$clw_lane" CLAIM-LOST "$clw_obj" "→" "lane:$CLAIM_WINNER" "abandoned: the dead verdict on $CLAIM_WINNER could not be reconfirmed; takeover withdrawn before landing" "$(utc_now)" "$clw_uuid"
+  else
+    note "CLAIM LOST — lane $CLAIM_WINNER's claim on $clw_obj landed on main first. Rule 1: stop and report; do not author a successor."
+    write_event "$clw_lane" CLAIM-LOST "$clw_obj" "→" "lane:$CLAIM_WINNER" "abandoned: $CLAIM_WINNER landed its claim first" "$(utc_now)" "$clw_uuid"
+  fi
+  who_object "$clw_obj" || :
+  exit "$clw_rc"
 }
 
 # The URL of the stale claim a TAKEOVER supersedes — Rule 1's takeover comment
@@ -12032,8 +12098,8 @@ migrate_state_cells() {   # <1 = the act, 0 = the dry run>
   # THE FETCH FIRST (R30), AND A CHECKOUT THAT IS BEHIND IS REFUSED. This one
   # act rewrites every row of the register and appends to every lane's log in a
   # single commit; made against a register that is not the published one, each
-  # of those rewrites is a conflict for `commit_push`'s rebase to resolve, and
-  # the one it cannot resolve costs the whole migration its atomicity.
+  # of those rewrites is made on a base origin has moved past, and S4 replays
+  # the whole act or keeps it on HEAD — never a rebase of several rows.
   log_sync
   if [ "$NO_GIT" != 1 ] && have_remote_ref; then
     msc_behind="$(git -C "$LANES_REPO" rev-list --count "HEAD..origin/$LANES_BRANCH" 2>/dev/null || printf '')"
@@ -12321,7 +12387,7 @@ EOF
   #
   # EVERYTHING BELOW IS ONE COMMIT OR NONE. The archive, the appended logs and
   # the rewritten rows are made on disk first and published by the single
-  # `commit_push` at the end, so a refusal in the middle of them — a log whose
+  # `commit_publish` at the end, so a refusal in the middle of them — a log whose
   # append could not be proved, a row whose rewrite moved more than one line —
   # leaves this checkout DIRTY and the register unpublished, which is what
   # `git status` then shows and `git checkout -- lanes` undoes whole. Nothing is
@@ -12359,7 +12425,7 @@ $(cat -- "$msc_tmp/cells")
 EOF
 
   msc_msg="LANES(migrate@$WS): Amendment 13(e) — $msc_ok state cells become one phrase; $msc_lines lines ($msc_noted NOTED, $msc_ruled RULED) into the lanes' own logs; pre-migration register archived"
-  commit_push "$msc_msg" "${msc_paths[@]}"
+  commit_publish "$msc_msg" "${msc_paths[@]}"
   msc_rc=$?
   release_lock
   # THE STAGING GOES ON THE WAY OUT, on both paths: this directory holds a block
@@ -12811,7 +12877,7 @@ retire_rows() {   # <lane>… [--reason "<why>"] [--writer <lane>]
   # R30 — THE FETCH FIRST, AND A CHECKOUT THAT IS BEHIND IS REFUSED, for the
   # reason the migration gives: this act rewrites several rows and appends to
   # several logs in ONE commit, and made against a register that is not the
-  # published one each of those is a conflict for `commit_push`'s rebase.
+  # published one each of those is made on a stale base (Amendment 23 S3).
   log_sync
   if [ "$NO_GIT" != 1 ] && [ "$LOG_SYNC_FETCH" != yes ]; then
     die "retire-rows requires a successful fresh fetch before rewriting several rows; $LOG_SYNC_FETCH. The local origin/$LANES_BRANCH ref may be stale. Nothing was written." 1
@@ -13070,7 +13136,7 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
   # --------------------------------------------------------------- the write
   #
   # THE LOGS FIRST AND THE ROWS SECOND, and all of it published by the single
-  # `commit_push` at the end: a refusal in the middle leaves this checkout dirty
+  # `commit_publish` at the end: a refusal in the middle leaves this checkout dirty
   # and the register unpublished, which `git status` shows and
   # `git checkout -- lanes` undoes whole. Nothing is half-published, because the
   # commit is the only thing that publishes. A peer's register edit is
@@ -13100,7 +13166,7 @@ EOF
   rm -rf -- "$rr_tmp"
 
   rr_msg="LANES(retire-dormant@$WS): Amendment 19(c) — $rr_n dormant row(s) RETIRED by lane $rr_writer;$rr_names; reason $rr_reason"
-  commit_push "$rr_msg" "${rr_paths[@]}"
+  commit_publish "$rr_msg" "${rr_paths[@]}"
   rr_crc=$?
   release_lock
   # AND EACH SWEPT LANE'S SNAPSHOT FOLLOWS ITS LINE, after the lock, for the
@@ -13308,7 +13374,7 @@ EOF
 
   ar_msg="LANES(archive@$WS): Amendment 19(d) — $ar_n RETIRED row(s) of $ar_repo moved to $LANES_ARCH_PATH: $(tr '\n' ' ' < "$ar_tmp/names")"
   rm -rf -- "$ar_tmp"
-  commit_push "$ar_msg" "$LANES_PATH" "$LANES_ARCH_PATH"
+  commit_publish "$ar_msg" "$LANES_PATH" "$LANES_ARCH_PATH"
   ar_crc=$?
   release_lock
   return "$ar_crc"
@@ -15926,7 +15992,7 @@ Nothing was written." 2
     # there: the line is capped at 240 characters by the act above, and a
     # subject cut at 72 loses exactly the tail that says what happened.
     msg="LANES($lane@$WS): state · $ROW_STATE · $ROW_STATE_LINE"
-    commit_push "$msg"
+    commit_publish "$msg"
     ;;
 
   replace-in-row)
@@ -15959,7 +16025,7 @@ Nothing was written." 2
     ri_pre="${row%%"$old"*}"; ri_post="${row#*"$old"}"
     replace_line "$n" "$ri_pre$new$ri_post"
     msg="LANES($lane@$WS): ${why:-replace-in-row}"
-    commit_push "$msg"
+    commit_publish "$msg"
     ;;
 
   # AMENDMENT 8, R-A8-4 — THE UUID APPEND IS CELL-SCOPED.
@@ -16014,7 +16080,7 @@ Nothing was written." 2
     fi
     replace_line "$n" "$RSC_HEAD$(rstrip_spaces "$RSC_CELL") $add $RSC_TAIL"
     msg="LANES($lane@$WS): ${why:-append-session-id}"
-    commit_push "$msg"
+    commit_publish "$msg"
     ;;
 
   append-line)
@@ -16075,7 +16141,7 @@ Nothing was written." 2
     acquire_lock; checkout_sync append-line "$lane_tag" write "$LANES_PATH"   # Amendment 23 S3
     append_text_line "$text"
     msg="LANES(${lane_tag:-unknown}@$WS): append line — ${text:0:72}"
-    commit_push "$msg"
+    commit_publish "$msg"
     ;;
 
   add-row)
@@ -16105,7 +16171,7 @@ Nothing was written." 2
     # (Copilot round 4 on openRepoTools#41). The scan was of `$LANES_FILE` alone,
     # which a fetch does not move: on a checkout that is behind, a row `origin`
     # already carries as `repoCase-1` is invisible here, this appends
-    # `repocase-1`, and `commit_push`'s own rebase then publishes the pair — the
+    # `repocase-1`, and the push that follows publishes the pair — the
     # exact duplicate 15(a) makes this command refuse, arrived at through the one
     # file the check never read. BOTH sets are asked and either is the refusal:
     # the local scan stays because a row added here and not yet pushed is on no
@@ -16162,13 +16228,13 @@ Nothing was written." 2
     acquire_lock; checkout_sync add-row "$lane_new" write "$LANES_PATH"   # Amendment 23 S3
     append_text_line "$row"
     msg="LANES(${lane_new:-${LANES_LANE:-unknown}}@$WS): add row"
-    ADD_ROW_LANE="$lane_new"
-    ADD_ROW_TEXT="$row"
-    CP_AFTER_REBASE=add_row_retirement_rescan
-    commit_push "$msg"
-    ar_push_rc=$?
-    CP_AFTER_REBASE=""
-    exit "$ar_push_rc"
+    # A PEER'S RETIREMENT OR ROW LANDING FIRST IS MET ON THE REPLAY (Amendment
+    # 23 S4). A refused push drops this add-row's commit and runs the verb again
+    # from the top on origin's new tip, so the retirement and duplicate checks
+    # above refuse it with nothing written — where the old rescan after a
+    # `pull --rebase` left the add-row and its cancelling commit both local.
+    commit_publish "$msg"
+    exit $?
     ;;
 
   commit)
@@ -16184,9 +16250,10 @@ Nothing was written." 2
     # edit applied again) and every row applies, unpushed commits included.
     # A clean register is THE PUBLISH ACT (#194's remedy 1): it writes nothing
     # new, so S3 runs with every row but the unpushed one and no fast-forward,
-    # and `commit_push` publishes the queue (S4, "the publish act").
+    # and `commit_publish` publishes the queue (S4, "the publish act").
     if [ "$NO_GIT" != 1 ] && [ -n "$(cs_pending_of "$LANES_PATH")" ]; then
       checkout_sync commit "${LANES_LANE:-}" carry "$LANES_PATH"
+      CP_REPLAY_KEEPS_EDIT=1
     else
       checkout_sync commit "${LANES_LANE:-}" publish
     fi
@@ -16210,9 +16277,9 @@ Nothing was written." 2
       fi
     fi
     # #194 — the one write that, with nothing to stage, publishes the local
-    # commits ahead of origin: it is the RECOVERY's re-run. See commit_push.
+    # commits ahead of origin: it is the RECOVERY's re-run. See cp_publish_act.
     CP_PUBLISH_AHEAD=1
-    commit_push "LANES(${LANES_LANE:-unknown}@$WS): $msg"
+    commit_publish "LANES(${LANES_LANE:-unknown}@$WS): $msg"
     ;;
 
   # AMENDMENT 19(c) — THE SWEEP'S WRITE. `lane-end --retire-dormant <repo>` is
@@ -16266,7 +16333,7 @@ Nothing was written." 2
   #
   # AND THE `git mv` OF CLAUSES (c) AND (d) IS A PLAIN `mv` PLUS A PATHSPEC.
   # `git mv` is one command and it also STAGES, which is the one thing this file
-  # never does: `commit_push` commits from its PATHSPECS precisely so that a
+  # never does: `commit_publish` commits from its PATHSPECS precisely so that a
   # peer's uncommitted work in this shared checkout can never be swept into a
   # lane's commit (Amendment 5(d), and the sweep that made `--no-sweep` the
   # default). Both paths go in as pathspecs of the one commit and git records
@@ -16354,9 +16421,10 @@ Nothing was written." 2
     # releases it on every path out, the two signals included.
     #
     # ACROSS WORKSTATIONS the arbiter is the same one Rule 1's claim has:
-    # whichever commit lands on `main` first. `commit_push`'s rebase brings the
-    # other's row and log in, and the loser's next attempt meets its own
-    # refusals — a row under `<new>`, a published log — with nothing written.
+    # whichever commit lands on `main` first. The loser's push is refused, S4
+    # drops its commit and runs it again on origin's new tip, and there it meets
+    # its own refusals — a row under `<new>`, a published log — with nothing
+    # written.
     acquire_lock
 
     # Refuse a spelling-only rename before probing both roots: on a
@@ -16776,7 +16844,7 @@ EOF
     # in the index and `git add` stages its deletion; an UNTRACKED one — the log
     # an earlier write created and never committed — matches nothing once it is
     # gone, and `git add` FAILS on a pathspec that matches nothing at all,
-    # which would end this write inside `commit_push` with all four moves on
+    # which would end this write inside `commit_publish` with all four moves on
     # disk. Nothing in the index refers to it, so there is nothing to stage.
     if [ -n "$rl_log_old_rel" ] && [ "$rl_log_old_rel" != "$rl_log_new_rel" ] \
        && { [ "$NO_GIT" = 1 ] || git -C "$LANES_REPO" ls-files --error-unmatch -- "$rl_log_old_rel" >/dev/null 2>&1; }; then
@@ -16824,7 +16892,7 @@ EOF
     # AND THE REGISTER IS IN THE SNAPSHOT TOO (Copilot round 4 on
     # openRepoTools#81). `replace_line` cannot half-write it — it proves the new
     # file before it writes a byte — but the row IS written before
-    # `commit_push`, and `commit_push` can die before it commits anything. The
+    # `commit_publish`, and `commit_publish` can die before it commits anything. The
     # undo then put the other three back and left the row renamed: a split
     # rename, which is the state this whole mechanism exists to prevent.
     RL_REG="$LANES_FILE"
@@ -16950,7 +17018,7 @@ EOF
 
     # EVERY ONE OF THE FOUR IS ON DISK — AND THE UNDO STAYS ARMED THROUGH THE
     # COMMIT (Copilot round 3 on openRepoTools#81). It was cleared here, and
-    # `commit_push` can die on `update-index`, `git add` or `git commit` BEFORE
+    # `commit_publish` can die on `update-index`, `git add` or `git commit` BEFORE
     # any commit exists: the four files would then be left moved and modified
     # with nothing to show for them, which is the half-renamed state this whole
     # mechanism exists to prevent.
@@ -16958,15 +17026,15 @@ EOF
     # WHAT DECIDES IS WHETHER A COMMIT WAS MADE, not where the failure happened.
     # `rename_undo` compares HEAD against the sha taken here: unchanged means no
     # commit carries this work and the four are restored; moved means the commit
-    # exists, the work is IN it, and `commit_push` owns the recovery from there
+    # exists, the work is IN it, and `commit_publish` owns the recovery from there
     # — its exit 3 says so in its own words, and undoing a committed rename
     # behind its back would be a second, inverse change nobody asked for.
     RL_HEAD_BEFORE="$(git -C "$LANES_REPO" rev-parse HEAD 2>/dev/null || printf '')"
     rl_msg="LANES($rl_new@$WS): RENAMED lane $rl_old → $rl_new (Amendment 16) — the row, $rl_log_new_rel, the handoff and $LANES_ALIASES_PATH in one commit"
     [ -n "$PRE_DIRTY_LANES" ] && rl_msg="$rl_msg + sweeps uncommitted edit to row $PRE_DIRTY_LANES"
-    commit_push "$rl_msg" "${rl_paths[@]}"
+    commit_publish "$rl_msg" "${rl_paths[@]}"
     rl_rc=$?
-    # `commit_push` RETURNED, so either it committed or it had nothing staged;
+    # `commit_publish` RETURNED, so either it committed or it had nothing staged;
     # every other outcome exits from inside it and is the trap's business.
     RL_ACTIVE=0
     state_events_flush
@@ -17086,8 +17154,8 @@ EOF
     esac
     # R30 — THE FETCH COMES FIRST. `log` had no `log_sync` of its own at all:
     # it read the STARTED line that REFUSES `--home` out of an `origin/<branch>`
-    # nothing here had moved, and the pull inside `commit_push` comes far too
-    # late to be that read.
+    # nothing here had moved, and S3's fetch under the lock comes far too late
+    # to be that read.
     log_sync
     # AMENDMENT 15 — AFTER THE FETCH AND BEFORE EVERY READ AND WRITE BELOW IT.
     # The resolver reads the PUBLISHED register (R19), so it is asked once
@@ -17184,19 +17252,11 @@ EOF
     done
     [ -n "$obj_raw" ] || die "usage: claim <object> [--force] [--no-github] [--home owner/repo]" 2
 
-    # THE RACE IS DECIDED BY WHICH CLAIM LANDS ON main FIRST, and a rebase is
-    # what makes that decidable. Amendment 5(d) SKIPS the rebase when a peer
-    # has left uncommitted changes to other files in this shared checkout — a
-    # sensible default for a row edit, and unacceptable for a claim, which
-    # would then race unprotected. Refuse, and name the files — BEFORE the
-    # reads and before anything is written, and against exactly the pathspec
-    # this claim will write (the lane's log; a CLAIMED is not a LANDING).
-    # The register is exempt HERE and only here: write_event captures a peer's
-    # uncommitted `lanes/LANES.md` as its own commit and re-tests the checkout
-    # afterwards (R11), so a claim is not refused for the one file this
-    # checkout is dirty in most of the day.
-    # AND THE EXEMPTION IS A PATH, SO ITS AMBIGUITY IS THIS CLAIM'S (Copilot
-    # round 4): two logs differing only by case are a refusal, not a pathspec.
+    # THE RACE IS DECIDED BY WHICH CLAIM LANDS ON main FIRST, and Amendment 23
+    # S4 is what makes that decidable: a claim whose push is refused runs again
+    # on origin's new tip, where the rescan below finds the claim that landed
+    # first. TWO LOGS DIFFERING ONLY BY CASE are still refused before anything
+    # is read (Copilot round 4): which one this claim writes would be a guess.
     claim_log="$(log_path_ci "$lane")" || exit 2
     # AMENDMENT 23 S3 NARROWS THE GUARD THAT WAS HERE (ratified choice 8):
     # an unstaged change to another tracked file refused every claim, because
@@ -17215,6 +17275,20 @@ EOF
     home="$(resolve_home "$lane" "$home_override")" || exit $?
     obj="$(canon_object "$obj_raw" "$home")" || exit 2
     ! is_lane_object "$obj" || die "a lane is not a claimable object" 2
+    # AMENDMENT 23 S4 — ON A REPLAY, AMENDMENT 7(f)'s RESCAN COMES FIRST. This
+    # claim's push was refused because origin moved, its commit was dropped, and
+    # the verb runs again from the top on origin's new tip. A rival's CLAIMED or
+    # TAKEOVER now on main landed first, so this one is CLAIM-LOST (7) — or the
+    # lane a takeover was granted over is alive again (9) — and the CLAIM-LOST
+    # line is the only line of this claim's that origin ever gets. The takeover
+    # attempt 1 decided on crossed the `exec` with it.
+    if [ "$CP_REPLAYING" = 1 ]; then
+      CLAIM_OBJ="$obj"; CLAIM_LANE="$lane"; CLAIM_SKIP="$CP_CLAIM_FROM"; CLAIM_SKIP_DEAD="$CP_CLAIM_DEAD"
+      CLAIM_ABANDON_REVIVED=""
+      CP_REPLAY_ENV=("LANES__CLAIM_FROM=$CP_CLAIM_FROM" "LANES__CLAIM_DEAD=$CP_CLAIM_DEAD")
+      crh_rc=0; claim_rescan_hook || crh_rc=$?
+      case "$crh_rc" in 7|9) claim_lost_write "$crh_rc" "$lane" "$obj" "$(session_for "$lane")" ;; esac
+    fi
     takeover_payload=""; takeover_note=""; takeover_from=""; takeover_reason_phrase=""; takeover_dead=""
     # CASE-INSENSITIVE, FOR THE SAME REASON THE KEY ABOVE IS LOWER-CASED
     # (Amendment 15). This is the lane REMOVING ITSELF from the holders of the
@@ -17340,14 +17414,14 @@ EOF
     # 3. decision 2 — a crossing warns and proceeds.
     cross_repo_warn "$(object_repo "$obj")" "$home" "$lane"
 
-    # 4. append, commit, push. CP_AFTER_REBASE runs on every rebase inside the
-    #    push loop: if another lane's claim is on the rebased history, theirs
-    #    landed first and this one has lost.
+    # 4. append, commit, push. A refused push replays this whole verb on
+    #    origin's new tip (Amendment 23 S4), where the rescan above decides
+    #    the race: if another lane's claim landed first, this one has lost.
     uuid="$(session_for "$lane")"
     utc="$(utc_now)"
     CLAIM_OBJ="$obj"; CLAIM_LANE="$lane"; CLAIM_SKIP="$takeover_from"; CLAIM_SKIP_DEAD="$takeover_dead"
     CLAIM_ABANDON_REVIVED=""
-    CP_AFTER_REBASE=claim_rescan_hook
+    CP_REPLAY_ENV=("LANES__CLAIM_FROM=$takeover_from" "LANES__CLAIM_DEAD=$takeover_dead")
     # A line written with --no-github is NOT a Rule 1 claim until its GitHub
     # comment exists, and it says so on its face rather than in a habit.
     ng=""; [ "$NO_GITHUB" = 1 ] && ng="no-github"
@@ -17357,39 +17431,8 @@ EOF
       write_event "$lane" CLAIMED "$obj" "" "" "$ng" "$utc" "$uuid"
     fi
     wrc=$?
-    CP_AFTER_REBASE=""
+    CP_REPLAY_ENV=()
     CLAIM_SKIP_DEAD=""
-
-    # 5. lost: Rule 1 says the lane STOPS AND REPORTS. The claim is abandoned,
-    #    never queued — Rule 7's queueing is for substrates, which this
-    #    amendment does not touch. TWO CAUSES, TWO EXIT CODES (Copilot's own
-    #    "closer look" on 21b8e82, PR #61): 7 is the documented, pre-existing
-    #    CLAIM-LOST — a rival's claim landed on main first; 9 is issue #30's
-    #    own dead-lane verdict failing to reconfirm before this takeover's
-    #    push landed. Both write the same CLAIM-LOST event (this attempt did
-    #    not succeed, in either cause), but automation reading the PROCESS
-    #    exit must be able to tell them apart, so the exit is never coerced
-    #    to 7 for the second.
-    if [ "$wrc" = 7 ] || [ "$wrc" = 9 ]; then
-      # "ALIVE AGAIN" ONLY WHERE IT WAS SEEN (Copilot on 05d7889, PR #61):
-      # `claim_rescan_hook` sets `CLAIM_ABANDON_REVIVED` for a confirmed
-      # revival — a live session now backs the lane, or its log moved past
-      # the terminal line — and leaves it empty where the verdict simply
-      # could not be reconfirmed (an unreadable log, or an unreadable
-      # records tree). The exit is 9 either way; only the words differ.
-      if [ "$wrc" = 9 ] && [ -n "$CLAIM_ABANDON_REVIVED" ]; then
-        note "TAKEOVER ABANDONED — lane $CLAIM_WINNER is alive again. Rule 1: stop and report; do not author a successor."
-        write_event "$lane" CLAIM-LOST "$obj" "→" "lane:$CLAIM_WINNER" "abandoned: $CLAIM_WINNER is no longer dead, takeover withdrawn before landing" "$(utc_now)" "$uuid"
-      elif [ "$wrc" = 9 ]; then
-        note "TAKEOVER ABANDONED — lane $CLAIM_WINNER's dead-lane verdict could not be reconfirmed before this push landed (above). Rule 1: stop and report; do not author a successor."
-        write_event "$lane" CLAIM-LOST "$obj" "→" "lane:$CLAIM_WINNER" "abandoned: the dead verdict on $CLAIM_WINNER could not be reconfirmed; takeover withdrawn before landing" "$(utc_now)" "$uuid"
-      else
-        note "CLAIM LOST — lane $CLAIM_WINNER's claim on $obj landed on main first. Rule 1: stop and report; do not author a successor."
-        write_event "$lane" CLAIM-LOST "$obj" "→" "lane:$CLAIM_WINNER" "abandoned: $CLAIM_WINNER landed its claim first" "$(utc_now)" "$uuid"
-      fi
-      who_object "$obj" || :
-      exit "$wrc"
-    fi
     [ "$wrc" = 0 ] || exit "$wrc"
 
     # 6. the comment, AFTER the push, citing the commit that carries the line.
@@ -19650,7 +19693,7 @@ EOF
     ;;
 
   # opensoft/openRepoTools#162 — WHAT A HAND COMMIT OF A HANDOFF'S ATTACHMENTS
-  # WOULD STAGE THAT IS BYTECODE, asked BEFORE the commit. `commit_push`
+  # WOULD STAGE THAT IS BYTECODE, asked BEFORE the commit. `commit_publish`
   # refuses such a pathspec for every write this file makes; attachments are
   # committed by hand, so this is the same question for a person to ask first.
   #   0  nothing in those paths would stage bytecode, a cache or an environment
