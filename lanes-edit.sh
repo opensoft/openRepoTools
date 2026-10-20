@@ -15500,24 +15500,56 @@ ws_pending_refuse() {   # <canonical lane> <its checkout>
 # four routed `row_line` callers; `rename-lane` goes through its OLD name,
 # whose row it needs), a lane with no row in the published register refuses
 # first, and nothing is cloned.
-#   * NOT THE OTHER WRITES: `log`, `claim`, `release`, `commit`, `append-line`,
-#     `request-handoff` and the sweeps take a lane with no row — an archived
-#     lane keeps its log (Amendment 16(e)) — and `add-row` makes the row.
+#   * AND THE WRITES THAT NAME A LANE WITH NO ROW (lane openRepoTools-3's
+#     re-check of #282, R4-1, for slice 1b): `log`, `commit`, `request-handoff`
+#     and `append-line` take a lane with no row — an archived lane keeps its
+#     log (Amendment 16(e)) — so for them a row OR the lane's object log on
+#     origin passes it, and a lane with neither is a typo: `log NOTED
+#     lane:repoX-99 …` for repoX-9 cloned a checkout for a lane that does not
+#     exist and left it. `claim`, `release` and the sweeps are not gated, and
+#     `add-row`, a new lane's first act, makes the row.
 #   * A MISS IS ASKED AGAIN after one fetch of W (`log_sync`: W is still
-#     `LANES_REPO` here), so a row, or a rename's new name, that another
+#     `LANES_REPO` here), so a row, a log, or a rename's new name that another
 #     checkout published and W has not fetched yet is never refused.
-#   * A READ THAT COULD NOT BE MADE, OR A FETCH THAT DID NOT RUN (failed,
-#     `LANES_NO_FETCH=1`, `LANES_NO_GIT=1`), IS NO ANSWER (R22): the write goes
-#     on, and its arm decides, as it always has.
+#   * A READ THAT COULD NOT BE MADE, OR A FETCH THAT FAILED OR DID NOT RUN
+#     (`LANES_NO_GIT=1`), IS NO ANSWER (R22): the write goes on, and its arm
+#     decides, as it always has. `LANES_NO_GIT=1` then meets
+#     `lane_checkout_ensure`'s own refusal to clone.
+#   * EXCEPT `LANES_NO_FETCH=1` (slice 1b, R4-1): every gated verb is a writer,
+#     and for a writer a fetch that did not run is a fetch that failed, so S3
+#     step 1 refuses it in the lane's checkout (ratified choice 2). Failing
+#     open there only cloned a checkout the write could never use, so on a
+#     miss the gate gives S3 step 1's refusal itself, and clones nothing.
+# `lane_log_exists` is 0 for a log, 2 for two logs whose names differ only by
+# case (no answer: the arm refuses that itself), and otherwise whatever its
+# test gave — `cat-file -e` of a path origin's tree lacks is 128, not 1.
+lrg_known() {   # <canonical lane> <1 = its published log answers too> — 0 known · 1 not · 2 no answer
+  lrgk_rows="$(rows_named_ci "$1" 2>/dev/null)" || return 2
+  [ -z "$lrgk_rows" ] || return 0
+  [ "$2" = 1 ] || return 1
+  lrgk_rc=0; lane_log_exists "$1" >/dev/null 2>&1 || lrgk_rc=$?
+  case "$lrgk_rc" in 0) return 0 ;; 2) return 2 ;; *) return 1 ;; esac
+}
 lane_row_gate() {   # <canonical lane> <its checkout>
-  case "$cmd" in set-row-state|replace-in-row|append-session-id|rename-lane) : ;; *) return 0 ;; esac
+  case "$cmd" in
+    set-row-state|replace-in-row|append-session-id|rename-lane) lrg_log=0 ;;
+    log|commit|request-handoff|append-line) lrg_log=1 ;;
+    *) return 0 ;;
+  esac
   [ ! -e "$2/.git" ] || return 0
-  lrg_rows="$(rows_named_ci "$1" 2>/dev/null)" || return 0
-  [ -z "$lrg_rows" ] || return 0
+  lrg_rc=0; lrg_known "$1" "$lrg_log" || lrg_rc=$?
+  [ "$lrg_rc" = 1 ] || return 0
   log_sync
-  [ "$LOG_SYNC_FETCH" = yes ] || return 0
-  lrg_rows="$(rows_named_ci "$1" 2>/dev/null)" || return 0
-  [ -z "$lrg_rows" ] || return 0
+  if [ "$LOG_SYNC_FETCH" != yes ]; then
+    [ "${LANES_NO_FETCH:-0}" = 1 ] && [ "$NO_GIT" != 1 ] || return 0
+    lrg_what="no row"; [ "$lrg_log" = 0 ] || lrg_what="no row and no object log"
+    die "lane $1 is not in W's origin/$LANES_BRANCH as it stands ($lrg_what there), and LANES_NO_FETCH=1 is set, so W was not fetched to make sure. For a writer a fetch that did not run is a fetch that failed (Amendment 23 S3 step 1, ratified choice 2), and \`$cmd\` would refuse in the lane's checkout for it, so that checkout, $2/, was not cloned. Nothing was written. Run this write without LANES_NO_FETCH (reads may keep it)." 2
+  fi
+  lrg_rc=0; lrg_known "$1" "$lrg_log" || lrg_rc=$?
+  [ "$lrg_rc" = 1 ] || return 0
+  if [ "$lrg_log" = 1 ]; then
+    die "lane $1 has no row and no object log on origin/$LANES_BRANCH (fetched just now into W), so no lane of that name was ever started or archived, and \`$cmd\` would write for it: its checkout $2/ was not cloned (Amendment 23 S1, S2). Nothing was written. Check the name — \`$SELF lanes\` lists every lane, and \`$SELF lanes --closed\` the closed ones — or start the lane first (lane-start; its \`add-row\` makes the row)." 2
+  fi
   die "lane $1 has no row in the register on origin/$LANES_BRANCH (fetched just now into W), and \`$cmd\` edits that lane's row: there is nothing for it to edit, so its checkout $2/ was not cloned (Amendment 23 S1, S2). Nothing was written. Check the name — \`$SELF lanes\` lists every lane — or add the row first (\`add-row\`)." 2
 }
 

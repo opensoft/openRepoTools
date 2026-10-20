@@ -520,12 +520,12 @@ def test_a_write_that_needs_a_row_clones_nothing_for_a_lane_with_none(box: Box):
 def test_a_row_W_has_not_fetched_is_no_reason_to_refuse(box: Box, no_fetch: bool):
     """N5's gate asks W's `origin/main` again after fetching it, so a row
     another checkout published, which W has not fetched yet, is never refused.
-    Where that fetch does not run (`LANES_NO_FETCH=1`), a miss is no answer:
-    the gate refuses nothing and the write goes on. Since slice 1b the write
-    then refuses (2) in its own checkout at Amendment 23 S3 step 1 — for a
-    writer, a fetch that did not run is a fetch that failed (ratified choice
-    2) — so that refusal, and never the gate's, is what it meets, and nothing
-    is published."""
+    Where that fetch does not run (`LANES_NO_FETCH=1`), a miss is no answer
+    about the ROW. But since slice 1b a writer whose fetch did not run refuses
+    (2) at Amendment 23 S3 step 1 — a fetch that did not run is a fetch that
+    failed (ratified choice 2) — so the gate says that refusal itself, before
+    the clone the write could never use (R4-1): never "has no row", nothing
+    cloned, nothing published."""
     lane = "repoA23-7"
     head, sep, rest = box.origin_file(REGISTER).partition("|---|---|---|---|---|---|---|\n")
     box.peer_pushes(REGISTER, head + sep + _row(lane) + "\n" + rest)
@@ -537,7 +537,54 @@ def test_a_row_W_has_not_fetched_is_no_reason_to_refuse(box: Box, no_fetch: bool
         assert result.returncode == 2, (result.stdout, result.stderr)
         assert "LANES_NO_FETCH=1 is set" in result.stderr and "ratified choice 2" in result.stderr, result.stderr
         assert " · a row W had not fetched |" not in box.origin_register()
+        assert not box.lanes_root.exists(), "a write that must refuse at S3 step 1 clones nothing first"
         return
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert (box.checkout(lane) / ".git").is_dir()
     assert " · a row W had not fetched |" in box.origin_register()
+
+
+# --------------------------------------------- slice 1b: R4-1 (#282's re-check)
+
+TYPO = "repoA23-99"     # a typo for repoA23-9: no row, no log, anywhere
+ARCHIVED = "repoA23-8"  # an archived lane: its log on origin, and no row (Amendment 16(e))
+
+NAMED_WRITES = {
+    "log": (("log", "NOTED", f"lane:{TYPO}", "a note for a lane nobody started",
+             "--home", "opensoft/repoA23"), {"LANES_LANE": TYPO, "LANES_SESSION": UUID}),
+    "commit": (("commit", "a publish for a lane nobody started"), {"LANES_LANE": TYPO}),
+    "request-handoff": (("request-handoff", TYPO, "--no-wait"), {"LANES_SESSION": ASKER_UUID}),
+    "append-line": (("append-line", "LANDING — a line for a lane nobody started"), {"LANES_LANE": TYPO}),
+}
+
+
+@pytest.mark.parametrize("verb", sorted(NAMED_WRITES))
+def test_a_write_for_a_lane_with_no_row_and_no_log_clones_nothing(box: Box, verb: str):
+    """R4-1: under the opt-in, `log NOTED lane:repoX-99 …` — a typo for
+    repoX-9 — cloned `<W>-lanes/repoX-99/` (0.35-0.5 GB of working tree on
+    Eagle) for a lane that does not exist, and left it. So did `commit`,
+    `request-handoff` and `append-line`. Each takes a lane with no row, so
+    the gate asks for a row OR a published log; with neither, after one fetch
+    of W, it refuses (2) and clones nothing."""
+    args, env = NAMED_WRITES[verb]
+    head, w_before = box.origin_head(), box.w_state()
+    result = box.helper(*args, **env)
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert f"lane {TYPO} has no row and no object log on origin/main" in result.stderr, result.stderr
+    assert not box.lanes_root.exists(), "nothing was cloned for a lane that does not exist"
+    assert_nothing_written(box, head, w_before)
+
+
+def test_a_lane_with_a_published_log_and_no_row_is_no_reason_to_refuse(box: Box):
+    """R4-1's other half: an archived lane has no row and keeps its log, and
+    `log`, `commit`, `request-handoff` and `append-line` take it. The gate
+    passes it by its log on origin — here one W has not fetched yet, so the
+    gate's second read is the one that finds it — and the note lands."""
+    box.peer_pushes(f"lanes/log/{ARCHIVED}.md",
+                    f"# lane {ARCHIVED} — object log (lane-collision-protocol Amendment 7)\n")
+    result = box.helper("log", "NOTED", f"lane:{ARCHIVED}", "a note for an archived lane",
+                        "--home", "opensoft/repoA23", LANES_LANE=ARCHIVED, LANES_SESSION=UUID)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "has no row and no object log" not in result.stderr, result.stderr
+    assert (box.checkout(ARCHIVED) / ".git").is_dir(), "it went through that lane's own checkout"
+    assert "a note for an archived lane" in box.origin_file(f"lanes/log/{ARCHIVED}.md")
