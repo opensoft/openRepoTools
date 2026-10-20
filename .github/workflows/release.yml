@@ -22,6 +22,10 @@ name: release
 #     `/bin/bash` 3.2, and compiling the payload's two Python commands on
 #     3.9;
 #   - no step reads the release notes (WHAT THIS WORKFLOW NEVER READS).
+# It also holds more than the model where FR-029 and contracts/workflows.md
+# ask for it: the gate names `tests.yml`'s four jobs, the build checks out
+# full history with the submodule, and the ref step fetches the tag again
+# without `--depth`.
 #
 # FOUR JOBS, EACH GATED ON THE ONE BEFORE IT:
 #   build     the version and the repository guard; the tag, the branch, the
@@ -289,7 +293,8 @@ jobs:
         with:
           python-version: '3.12'
 
-      # STEP 1, BEFORE ANYTHING ASKS THE FORGE: THE VERSION, AND THE
+      # STEP 1, THE JOB'S FIRST SCRIPT, AFTER THE CHECKOUT AND THE PYTHON
+      # SETUP AND BEFORE ANY SCRIPT ASKS THE FORGE: THE VERSION, AND THE
       # REPOSITORY GUARD (FR-048). The model has no guard; this one puts
       # Brett Heap's answers on where releases come from into code.
       #
@@ -306,7 +311,7 @@ jobs:
       #   opensoft/openRepoTools       a tag     X.Y.ZrcN  TestPyPI alone
       #   opensoft/openRepoTools       a tag     X.Y.Z     refused
       #   any other repository         a tag     any       refused
-      #   any repository               a branch  any       neither: the rehearsal
+      #   any repository               a branch  any       nothing: the rehearsal
       # The two names are compared exactly, as GitHub spells them in
       # `$GITHUB_REPOSITORY`, so any other spelling is "any other" and fails
       # closed. A ref that is neither a tag nor a branch is refused here too,
