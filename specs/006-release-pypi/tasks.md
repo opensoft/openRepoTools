@@ -329,13 +329,13 @@ index does not serve.
 
 **Independent Test**: the three verify commands below.
 
-- [ ] T022 [P] [US6] [S] Create `docs/release-notes/v1.0.0.md` as exactly the output of `gh release view v1.0.0 --repo opensoft/openRepoTools --json body --jq .body` (research R15) — files: `docs/release-notes/v1.0.0.md` — verify: `gh release view v1.0.0 --repo opensoft/openRepoTools --json body --jq .body | cmp - docs/release-notes/v1.0.0.md`
-- [ ] T023 [P] [US6] [S] Draft `docs/release-notes/v1.1.0.md`, as detailed below — files: `docs/release-notes/v1.1.0.md` — verify: `tail -n 1 docs/release-notes/v1.1.0.md | command grep -q 'openRepoTools-spec.*docs/release-notes/v1.1.0.md' && command grep -q '^## Before the tag' docs/release-notes/v1.1.0.md && command grep -q 'pipx install --force openrepotools' docs/release-notes/v1.1.0.md`
+- [X] T022 [P] [US6] [S] Create `docs/release-notes/v1.0.0.md` as exactly the output of `gh release view v1.0.0 --repo opensoft/openRepoTools --json body --jq .body` (research R15) — files: `docs/release-notes/v1.0.0.md` — verify: `gh release view v1.0.0 --repo opensoft/openRepoTools --json body --jq .body | cmp - docs/release-notes/v1.0.0.md`
+- [X] T023 [P] [US6] [S] Draft `docs/release-notes/v1.1.0.md`, as detailed below — files: `docs/release-notes/v1.1.0.md` — verify: `tail -n 1 docs/release-notes/v1.1.0.md | command grep -q 'openRepoTools-spec.*docs/release-notes/v1.1.0.md' && command grep -q '^## Before the tag' docs/release-notes/v1.1.0.md && command grep -q 'pipx install --force openrepotools' docs/release-notes/v1.1.0.md`
   - what v1.1.0 brings: the `openrepotools` package on PyPI; `pipx install` and the offline `--install` that leaves `openRepoTools` to pipx; `--version` naming the release; and the `package` job and the release workflow;
   - the move from the one-line install (FR-024): `pipx install --force openrepotools`, then `openRepoTools --install`, and why `--force` is needed;
   - each value not yet known as a named `<placeholder>`, every one listed in a closing `## Before the tag` checklist;
   - a last line naming the file's own path in the spec leg, `opensoft/openRepoTools-spec`'s `docs/release-notes/v1.1.0.md`.
-- [ ] T024 [P] [US6] [S] Correct `README.md`, as detailed below — files: `README.md`, `tests/test_repo_hygiene.py` — verify: `! command grep -qE 'pipx install( --force)? openrepotools' README.md && bash tests/run.sh -k 'repo_hygiene or readme'`
+- [X] T024 [P] [US6] [S] Correct `README.md`, as detailed below — files: `README.md`, `tests/test_repo_hygiene.py`, `tests/test_test_roots.py` — verify: `! command grep -qE 'pipx install( --force)? openrepotools' README.md && bash tests/run.sh -k 'repo_hygiene or readme'`
   - rewrite the paragraph that says "There is no version number here". It now says that releases are annotated tags, that the version comes only from the tag, and what `--version` prints, stamped and unstamped, quoting contracts/cli-output.md's first lines;
   - correct three passages for a workstation with pipx's link: the SEVENTEEN-files count (sixteen placed and one left to pipx), the symlink paragraph (pipx's `openRepoTools` is the one link skipped), and the artifact-count invariant, "Twenty-nine artifacts always, plus the two hook entries once the path they call answers `guard`" since #237 (twenty-eight placed always, one left to pipx and 28 receipt rows, with the hook pair still on top once that path answers, so that nothing contradicts README's #237 text);
   - add no pipx install route;
@@ -348,7 +348,7 @@ index does not serve.
 
 ## Phase 9: Polish & cross-cutting concerns
 
-- [ ] T025 [O] Run quickstart.md's steps 1 to 8 on a workstation, as detailed below — files: `specs/006-release-pypi/quickstart.md` — verify: `bash tests/run.sh`
+- [X] T025 [O] Run quickstart.md's steps 1 to 8 on a workstation, as detailed below — files: `specs/006-release-pypi/quickstart.md`, `specs/006-release-pypi/plan.md`, `specs/006-release-pypi/contracts/cli-output.md` (the last two added by the lead's ruling, #228 comment 6255121743) — verify: `bash tests/run.sh`
   - the wheel built twice and compared;
   - the built-wheel tests, with no skip;
   - the pipx install into a temporary home;
