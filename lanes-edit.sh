@@ -1776,6 +1776,15 @@ delete_lines() {   # <line numbers, one per line, any order>
   dl_unchanged="${DL_SAYS_UNCHANGED:-no row was removed, the rows are in $LANES_ARCH_PATH, and the register is whole}"
   dl_after_write="${DL_SAYS_AFTER_WRITE:-The archive may have been appended locally, but $(reg_committed); resolve that partial move before retrying.}"
   register_copy "$dl_pre" "$dl_unchanged"
+  # AND EVERY LATER REFUSAL HERE SAYS IT AS WELL (delta review 4 of #263, N1
+  # and S4's N2). The pass, the line count and `numstat` below refused with no
+  # word of what the act had committed: add-row's take-back, which HAS committed
+  # its row, died saying only "the removal added or rewrote lines" or "that row
+  # is still in it and in that commit", with no row and no commit named, and the
+  # next write published the row. Each now ends as `register_copy`'s refusal
+  # does: the register as it was, what this act has committed, the caller's
+  # sentence, and what the act has already written in this checkout.
+  dl_as_was="The register is as it was and $(reg_committed): $dl_unchanged.$(reg_written_here)"
   dl_before="$(wc -l < "$dl_pre" | tr -d ' ')"
   # `awk -v` CARRIES ONE LINE, AND THIS LIST IS MANY — the finding `who_landing`
   # took in round 5 of A9 Addendum 4 (R-A9-11), re-made here and answered by
@@ -1801,14 +1810,22 @@ delete_lines() {   # <line numbers, one per line, any order>
     BEGIN { k = split(ENVIRON["LANES_DROP_LINES"], a, "\n")
             for (i = 1; i <= k; i++) if (a[i] != "") drop[a[i] + 0] = 1 }
     !(NR in drop)' "$dl_pre" > "$dl_out"; then
-    die "the pass that removes $dl_n row(s) from $LANES_FILE failed, so what the register would become is not known — and that is not an empty register (Amendment 7(d)). The register is as it was: $dl_unchanged." 5
+    die "the pass that removes $dl_n row(s) from $LANES_FILE failed, so what the register would become is not known — and that is not an empty register (Amendment 7(d)). $dl_as_was" 5
   fi
   dl_after="$(wc -l < "$dl_out" | tr -d ' ')"
   [ "$dl_after" -eq "$((dl_before - dl_n))" ] ||
-    die "removing $dl_n row(s) changed the line count by $((dl_before - dl_after)); refusing" 5
-  dl_stat="$(git --no-pager diff --no-index --numstat -- "$dl_pre" "$dl_out" 2>/dev/null | head -n1 | cut -f1,2)"
+    die "removing $dl_n row(s) changed the line count by $((dl_before - dl_after)); refusing. $dl_as_was" 5
+  # AND IT COUNTS LINES WHATEVER THE REGISTER'S SIZE (delta review 4 of #263,
+  # S4). Under a `core.bigFileThreshold` below the register's size git classes
+  # both copies as binary, and `numstat` prints a `-` for each count, which
+  # `--text` does not change: add-row's take-back refused there, and its row
+  # stayed committed for the next write to publish. A `-c` on the command line
+  # outranks every config file and `GIT_CONFIG_*` in the environment (measured
+  # on git 2.43). An attribute or a NUL byte that classes the copies as binary
+  # still makes this proof refuse, in the words above.
+  dl_stat="$(git --no-pager -c core.bigFileThreshold=2g diff --no-index --numstat -- "$dl_pre" "$dl_out" 2>/dev/null | head -n1 | cut -f1,2)"
   [ "$dl_stat" = "$(printf '0\t%s' "$dl_n")" ] ||
-    die "the removal added or rewrote lines (numstat: ${dl_stat:-none}); refusing" 5
+    die "the removal added or rewrote lines (numstat: ${dl_stat:-none}); refusing. $dl_as_was" 5
   # The redirection follows the register symlink, but its status is still a
   # write fence. An unwritable target must not let archive-rows commit the
   # appended archive while the source rows remain in the register. And its
@@ -3802,7 +3819,17 @@ add_row_retirement_rescan() {
   # one (`-`) or git's "\ No newline" note, so whatever context still arrives
   # is counted where it stands. The `unset` is inside the command
   # substitution's own subshell, and so touches nothing after it.
-  ar_diff="$(unset GIT_DIFF_OPTS; git --no-replace-objects --no-pager -C "$LANES_REPO" -c "$CP_EXACT" -c diff.interHunkContext=0 diff --no-color --no-ext-diff --no-textconv -U0 "refs/remotes/origin/$LANES_BRANCH" -- "$LANES_PATH" 2>/dev/null)" || {
+  #
+  # AND IT IS READ AS TEXT (delta review 4 of #263, S4). Where git classes the
+  # register as binary, the diff is one line, "Binary files … differ", with no
+  # hunk to read: a `binary` or `-diff` attribute, published or local, a diff
+  # driver with `binary=true`, `core.attributesFile`, `GIT_ATTR_SOURCE`,
+  # `attr.tree`, a NUL byte in its first 8000 bytes, or a `core.bigFileThreshold`
+  # below its size (the live register is over 2 MB). add-row then said this
+  # checkout added no copy of the row, kept its commit, and the next write
+  # published the row (measured with each). `--text` gives the hunks whatever
+  # classes the register.
+  ar_diff="$(unset GIT_DIFF_OPTS; git --no-replace-objects --no-pager -C "$LANES_REPO" -c "$CP_EXACT" -c diff.interHunkContext=0 diff --no-color --no-ext-diff --no-textconv --text -U0 "refs/remotes/origin/$LANES_BRANCH" -- "$LANES_PATH" 2>/dev/null)" || {
     note "$ar_why; and this checkout's register could not be compared with origin/$LANES_BRANCH's, so whether a copy of the rejected row here is this add-row's or a peer's is not known. Nothing was taken back: read \`git -C $LANES_REPO log -p origin/$LANES_BRANCH..HEAD -- $LANES_PATH\` and remove this add-row's row before any later push"
     return 1
   }
@@ -3842,8 +3869,20 @@ add_row_retirement_rescan() {
   DL_SAYS_AFTER_WRITE="Its row for lane $ADD_ROW_LANE was not taken back, and this act HAS committed it, locally and unpushed: with the register whole, remove that row from $LANES_PATH and commit that before any other write in $LANES_REPO, because the next one would publish it."
   delete_lines "$ar_line"
   REG_COMMITTED_HERE=""; DL_SAYS_UNCHANGED=""; DL_SAYS_AFTER_WRITE=""
-  git -C "$LANES_REPO" -c "$CP_EXACT" add -- "$LANES_PATH" || return 1
-  git -C "$LANES_REPO" -c "$CP_EXACT" commit -q -m "LANES($ADD_ROW_LANE@$WS): $ar_subject" -- "$LANES_PATH" || return 1
+  # A REMOVAL THAT CANNOT BE COMMITTED SAYS SO (delta review 4 of #263, N3).
+  # These returned in silence: the removal was left written or staged under
+  # add-row's commit, and the next write's own commit carried it, under its
+  # own caption, with no one told.
+  ar_msg="LANES($ADD_ROW_LANE@$WS): $ar_subject"
+  ar_fix="add-row's commit still holds the row. Commit the removal before any other write in $LANES_REPO, so that write does not carry it under its own caption: \`git -C $LANES_REPO commit -m '$ar_msg' -- $LANES_PATH\`"
+  git -C "$LANES_REPO" -c "$CP_EXACT" add -- "$LANES_PATH" || {
+    note "$ar_why; the rejected row was removed from $LANES_FILE, but staging that removal failed, so it is only in the working tree, and $ar_fix"
+    return 1
+  }
+  git -C "$LANES_REPO" -c "$CP_EXACT" commit -q -m "$ar_msg" -- "$LANES_PATH" || {
+    note "$ar_why; the rejected row was removed from $LANES_FILE and that removal is staged, but its compensating commit failed, so $ar_fix"
+    return 1
+  }
   note "$ar_why; the rejected row was removed in a compensating LOCAL commit, so no later write publishes it. Neither commit was pushed."
   return "$ar_back"
 }

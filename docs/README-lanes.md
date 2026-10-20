@@ -3281,10 +3281,17 @@ published the same row first, the rebase drops add-row's commit, and the copy
 left is the peer's, so nothing is taken back. It finds that copy's line in a
 diff it asks for with no context: `GIT_DIFF_OPTS` unset and
 `diff.interHunkContext=0`, either of which would otherwise add context to
-`-U0`. Any context that still arrives is counted where it stands. Where the
-take-back itself cannot rewrite the register, the refusal says that add-row has
-committed its row, locally and unpushed, and that it must be removed before any
-other write in that checkout publishes it.
+`-U0`. Any context that still arrives is counted where it stands. It reads
+that diff as text (`--text`), so an attribute, a NUL byte or a
+`core.bigFileThreshold` that classes the register as binary cannot hide the
+row, and its proof that one line was removed counts lines whatever
+`core.bigFileThreshold` says. Where the take-back itself cannot remove the row
+— a copy or a write cut short, or a proof that refuses — the refusal says that
+add-row has committed its row, locally and unpushed, and that it must be removed
+before any other write in that checkout publishes it. Where the row is removed
+but the removal cannot be committed, a note says whether the removal is staged,
+that add-row's commit still holds the row, and the command that commits the
+removal.
 
 **One such line refuses every lane, not only its own.** `lanes-edit.sh
 retired-identity <lane>`, the check `lane-start` makes before it launches,
