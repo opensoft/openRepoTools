@@ -4208,9 +4208,19 @@ one passed `lane-end`.
 
 * reads every leg, and every dependency nested in one (an initialized submodule of
   the leg's own, as `code/upstream/openRepoShape` will be), as a **`leg` row** —
-  `clean`, `dirty`, `unpushed`, `dirty+unpushed`, `absent` (not checked out here)
-  or `unreadable`. A leg is the assembly's, shared by every lane the assembly
-  homes, as the assembly's own checkout is: **no `--yes` acts on a leg
+  `clean`, `dirty`, `unpushed`, `dirty+unpushed`, `absent` (not checked out here,
+  or not there at all) or `unreadable` (a `.git` of its own that git cannot read,
+  or a leg directory this account cannot search, #255). A dependency nested in a
+  leg that git lists as not initialized has no row where its directory is missing,
+  or empty and searchable: it was never initialized. But git lists a dependency it
+  cannot search as not initialized too, so where its directory, or one above it,
+  cannot be searched (or it holds a `.git` that git cannot read), it is an
+  `unreadable` row, counted: a read that failed is never a clean dependency (#255).
+  One whose directory holds a checkout that git can read (a clone made by hand,
+  which git does not count as initialized) is read like an initialized one: it
+  holds the lane's work all the same.
+  A leg is the assembly's, shared by every lane the assembly homes, as the
+  assembly's own checkout is: **no `--yes` acts on a leg
   checkout** (its branches are another matter: see `--branches` below). It is
   COUNTED (exit 3, and `lane-end`'s gate) only where its HEAD's own `Lane:` trailer
   is this lane's and it holds edits or commits origin lacks — the rule the sweep
@@ -4278,8 +4288,9 @@ leg's repository (a paired tree, or one `lane-worktrees add --checkout
 checkout of the tree's own repository keeps it: a dependency nested in a leg
 (`--checkout <assembly>/code/upstream/<dep>`) is no declared leg. Any other tree keeps
 the lane's `dir`, as before. A leg that is not checked out here (never initialized, or
-deinitialized) names no tree. A leg with a `.git` of its own that git cannot read is
-`unreadable`, the sweep's word: one `- UNREADABLE LEG: …` line in WRITERS and a note on
+deinitialized) names no tree. A leg with a `.git` of its own that git cannot read, or
+a leg directory this account cannot search (#255), is `unreadable`, the sweep's word:
+one `- UNREADABLE LEG: …` line in WRITERS and a note on
 stderr, and counted on stderr's `legs: N of the assembly's legs under <dir> unreadable`
 line, never in WRITERS' `(N found)`. The lane is not held `SWAPPING` for the leg
 itself. A polled tree that could then be of that leg's repository is one it cannot
@@ -4301,8 +4312,9 @@ as a writer, just as the checkout's own registrations elsewhere are not;
 beside what the checkout holds. Every worktree git registers in a checked-out leg that
 no sidecar names is a `TREE` row: `unmanaged`, or `stale-registration` where its
 directory is gone, naming the leg. A checkout in the paired root that nothing else named
-is `unmanaged`. A leg with a `.git` of its own that git cannot read is a `TREE` row
-`unreadable` that requires recovery: the sweep's rule and word for its `leg` row, which
+is `unmanaged`. A leg with a `.git` of its own that git cannot read, or a leg directory
+this account cannot search, is a `TREE` row `unreadable` that requires recovery:
+the sweep's rule and word for its `leg` row, which
 it counts. The verdict is not `indeterminate` for it, so the sweep still lists and
 counts that leg. Nothing is adopted, deleted or overwritten.
 
@@ -4318,6 +4330,12 @@ cannot be listed, or a leg's directory under a feature cannot be searched. For t
 same directories, and where the lane's inventory cannot be read (which paired trees it
 names would then be unknown), `lane-handoff` gives the same three signs: a
 `- NOT POLLED: …` line in WRITERS, a note on stderr, and the lane left `SWAPPING`.
+So does an inventory that holds a record that is not a whole schema-1 one (#255):
+`lane-trees` gives such a record its id, its schema (`<unreadable>`, `<none>`, an
+unknown one, or #252's `<malformed>`) and any path it keeps, and the note names each
+one by those three. It is never read as a record, as the sweep never reads one, so a
+paired tree that only it names is not taken as this lane's writer, and the handoff
+files no record over it.
 **A checkout with no `project.yaml` is asked nothing**, and one whose
 `project.yaml` names no leg but itself is asked only `project-legs`, which answers 8.
 The handoff's output, top block and inventory, and the reconciliation, are byte for

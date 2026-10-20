@@ -14530,12 +14530,24 @@ EOF
   # TREE row `unreadable`, which requires recovery, as the sweep's `leg` row is
   # `unreadable` and counted. It is NO `indeterminate`: the sweep counts that
   # leg and goes on (exit 3), and a verdict it refuses on would hide the count.
+  # SO IS A LEG DIRECTORY THIS ACCOUNT CANNOT SEARCH (#255, openRepoShape-2's
+  # SHOULD on #246): whether a `.git` stands in it cannot be tested, and the
+  # `.git` test fails there exactly as for a leg that is not checked out, so it
+  # was passed over in silence. It is the same `unreadable` row, in the words
+  # of the sweep's `probe_leg` and `lane-handoff`; a leg directory that is not
+  # there at all is still passed over (`-d`).
   if [ "$lrc_lgrc" = 0 ]; then
     while IFS="$lrc_tab" read -r lrc_lrepo lrc_ldecl lrc_labs; do
       [ -n "$lrc_labs" ] && [ -d "$lrc_labs" ] || continue
       lrc_ltop="$(git -C "$lrc_labs" rev-parse --show-toplevel 2>/dev/null </dev/null || :)"
       if [ -z "$lrc_ltop" ] || [ "$(lane_real_path "$lrc_ltop")" != "$(lane_real_path "$lrc_labs")" ]; then
-        { [ -e "$lrc_labs/.git" ] || [ -L "$lrc_labs/.git" ]; } || continue
+        if [ -e "$lrc_labs/.git" ] || [ -L "$lrc_labs/.git" ]; then
+          lrc_lwhat="it has a .git of its own and git could not read it"
+        elif [ ! -x "$lrc_labs" ]; then
+          lrc_lwhat="its directory cannot be searched, so whether it has a .git of its own could not be tested, and git could not read it"
+        else
+          continue
+        fi
         lrc_lr="$(lane_real_path "$lrc_labs")"
         case "$lrc_seen" in *" $lrc_labs "*|*" $lrc_lr "*) continue ;; esac
         if [ -n "$lrc_ltop" ]; then
@@ -14545,9 +14557,9 @@ EOF
             | awk 'NF { sub(/^[ \t]+/, ""); sub(/[ \t]+$/, ""); print; exit }' | tr -d '\037')"
           lrc_lerr="${lrc_lerr:-no answer}"
         fi
-        printf 'TREE%s%s%sunreadable%s%s%sthe %s leg of %s/project.yaml%s: git could not be read through it (it has a .git of its own and git could not read it: %s), so NOTHING is assumed about it — not its own state, nor the worktrees it registers, which were not listed; a read that failed is never a clean leg (Amendment 7(d)) — read it by hand (git -C %s status) before relaunching a writer onto a tree of its repository\n' \
+        printf 'TREE%s%s%sunreadable%s%s%sthe %s leg of %s/project.yaml%s: git could not be read through it (%s: %s), so NOTHING is assumed about it — not its own state, nor the worktrees it registers, which were not listed; a read that failed is never a clean leg (Amendment 7(d)) — read it by hand (git -C %s status) before relaunching a writer onto a tree of its repository\n' \
           "$US" "$(tree_id_for "$lrc_labs")" "$US" "$US" "$lrc_labs" "$US" "$lrc_ldecl" "$lrc_dir" \
-          "${lrc_lrepo:+ ($lrc_lrepo)}" "$lrc_lerr" "$lrc_labs"
+          "${lrc_lrepo:+ ($lrc_lrepo)}" "$lrc_lwhat" "$lrc_lerr" "$lrc_labs"
         lrc_seen="$lrc_seen $lrc_labs $lrc_lr "
         lrc_recover=$((lrc_recover + 1))
         continue

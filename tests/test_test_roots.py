@@ -360,11 +360,15 @@ def test_the_pin_rules_are_read_with_the_assemblys_code_prefix(tmp_path, prefixe
 
 
 def test_the_length_caps_are_the_assembly_roots_where_one_is_named(tmp_path):
-    """At an assembly root the two caps are 347 and 510 — this repository's 323
-    and 486 plus the twenty-four lines each that T006's root guidance adds
-    there — and they are asked of the ASSEMBLY's files: one line over FAILS,
-    the cap itself passes. Red at `origin/main`, which counted this checkout's
-    own README and AGENTS.md whatever was named."""
+    """At an assembly root the two caps are 347 and 510. The dated entries in
+    `tests/test_repo_hygiene.py` made them from this repository's then caps,
+    323 and 486, and the twenty-four lines each that T006's root guidance adds
+    there, and they stand there while this repository's own are 330 and 505 at
+    this head: `assembly-0001` no longer applies to today's AGENTS.md or
+    README, so the re-cut that makes the assembly's files again sets them. And
+    they are asked of the ASSEMBLY's files: one line over FAILS, the cap itself
+    passes. Red at `origin/main`, which counted this checkout's own README and
+    AGENTS.md whatever was named."""
     def lines(n: int) -> str:
         return "".join(f"line {i}\n" for i in range(n))
     at_cap = assembly(tmp_path / "at", readme=lines(510))

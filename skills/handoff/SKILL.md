@@ -117,6 +117,27 @@ sread() {                      # sread <var> "<what the failure is NOT>" <verb> 
 }
 ```
 
+**THE WHY IS ONE LINE, AND IT IS REFUSED BEFORE STEP 1** (`opensoft/openRepoTools#85`; `lane-handoff` took
+the same refusal in #218). `$why` below is the operator's words, verbatim: the `[why]` of `/handoff [why]`.
+It reaches step 2's top block, where a line break writes a malformed prompt (a `---` line is where
+`lane-start` ends the prompt it hands the next session), and step 4's object-log `PAUSED` line and register
+line, two files nothing rewrites. Both of those writers refuse a newline or a carriage return before they
+write, but step 4 runs after step 2 has refreshed and committed the handoff, so a refusal there would end the
+act with a top block and no record behind it. So the test is made here, before step 1 renames anything and
+before anything is written. It is the test `lane-handoff` makes right after reading its arguments, because
+the skill and `lane-handoff` are one act (Amendment 17(a)) and refuse the same why. Step 4 still spells a
+break `; `, as `lane-handoff`'s `sanitize` does, and that is the second line of defence, not this one. A
+why the operator did not give is no why at all: it passes, and step 4 writes `handoff`. That holds in a shell
+running under `set -u` too, which is why the check reads `${why-}`.
+
+```sh
+case "${why-}" in
+  *$'\n'*|*$'\r'*)
+    printf '%s\n' "REFUSED: the why is ONE line: it is written into the handoff's top block, the object log's PAUSED line and the register's file-level line, and a newline or carriage return in it would split each of them — the last two in files nothing rewrites. Nothing was renamed or written. Put it on one line, with '; ' where the break was, and run /handoff again." >&2
+    exit 2 ;;
+esac
+```
+
 ## 1. Usage, then the identity triple — derived, not asked
 
 ```bash
@@ -468,9 +489,14 @@ a question. Never move on to step 4 with an unanswered writer unless the operato
 
 ## 4. Write the swap record
 
-First sanitize the operator's words **once**: replace every ` — ` with `; `. Amendment 7(b)/R26 refuses any
-payload or free text containing ` — ` (exit 2), because that separator is what divides a line's fields from
-its free text.
+First sanitize the operator's words **once**, as `lane-handoff`'s `sanitize` does: replace every ` — ` with
+`; `, and spell every line break `; ` as well, whether it is a CRLF, a lone CR or a lone LF, one `; ` each
+(#85). Amendment 7(b)/R26 refuses any payload or free text containing ` — ` (exit 2), because that separator
+is what divides a line's fields from its free text, and both one-line writers below refuse a line break before
+they write. The check before step 1 has already refused a why that carries a break, so spelling it here is
+the second line of defence: where one arrives anyway, the record is still written, on one line. An empty why
+is written `handoff`, as `lane-handoff` writes it. Both record writes then carry that text, `$why_text`
+below, and never a template placeholder (#80 item 7).
 
 ```sh
 # AMENDMENT 11 CLAUSE (c) — THE RECORD'S TWO NEW SUB-FIELDS, AND ITS SECOND REF.
@@ -659,8 +685,22 @@ payload="$payload; agent $agent_name; transcript $transcript_id"
 # TEXT after the why — `clear in-process`, `clear respawn`, `kind unknown`.
 kind="${kind:-unknown}"       # in-process | respawn | unknown
 payload="$payload; kind $kind"
-why_text="$why"
-if [[ "$kind" == unknown ]]; then why_text="$why kind unknown"; else why_text="$why $kind"; fi
+# THE OPERATOR'S WORDS, SANITIZED ONCE, AS `lane-handoff`'s `sanitize` DOES
+# (#85): every line break is one `; `, CRLF first so that it is one and not
+# two, and so is every ` — `. A why left empty is `handoff`, `lane-handoff`'s
+# own word for it. The kind's word follows, as the free text carries it.
+why_text="${why:-handoff}"
+why_text="${why_text//$'\r\n'/; }"
+why_text="${why_text//$'\r'/; }"
+why_text="${why_text//$'\n'/; }"
+why_text="${why_text// — /; }"
+if [[ "$kind" == unknown ]]; then why_text="$why_text kind unknown"; else why_text="$why_text $kind"; fi
+# BOTH RECORD WRITES BELOW CARRY THIS TEXT (#80 item 7). They used to carry the
+# template's angle-bracket placeholders instead, for the operator's words and
+# for what is open, so a block run as printed wrote the placeholders into two
+# files nothing rewrites. `lane-handoff` hands both writes its computed text,
+# and (b) is its line word for word. What is open is for the handoff's state
+# line to say, as it is in `lane-handoff`'s record.
 
 # (a) the Amendment 7 object-log PAUSED line — the record `swapped` reads.
 # AMENDMENT 11 CLAUSE (e) — THE SKILL SUPPLIES THE UUID, AND `LANES_SESSION` IS
@@ -694,13 +734,13 @@ if [[ -z "$ws_missing" ]]; then
 if [[ -z "$uuid_missing" ]]; then
 LANES_LANE="$lane" LANES_SESSION="$uuid" "$L" log PAUSED "lane:$lane" \
   → "$payload" \
-  "on <operator>'s word: <sanitized verbatim>"
+  "$why_text"
 # (b) the LANES.md file-level line, the shape every prior PAUSED/RESUMED used.
 # IT IS WRITTEN WHETHER OR NOT (a) COULD BE (A8(a) step 4, `R-A11-11`): a swap
 # is never left unwritten, so a lane whose object line was refused still gets
 # this line and the row's state cell, with the gap named in the handoff — EXCEPT
 # where there is no uuid to name, which is the `$uuid_missing` that skips both.
-"$L" append-line "PAUSED — lane $lane, session $uuid@$ws, $(date -u +%Y-%m-%dT%H:%M:%SZ), on <operator>'s word \"<sanitized verbatim>\"; <what's open, or NOTHING CLAIMED>; handoff refreshed"
+"$L" append-line "PAUSED — lane $lane, session $uuid@$ws, $(date -u +%Y-%m-%dT%H:%M:%SZ), $why_text; handoff refreshed"
 fi
 fi
 # (c) the row: ONE WRITE, which sets the whole state cell (Amendment 13(a)).
