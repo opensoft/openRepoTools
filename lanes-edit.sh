@@ -143,7 +143,9 @@
 #   of the control root) nudges exactly as a landed push nudges the register's.
 #   No act reads it: `lane-reconcile`, `lane-start` and `lane-end` read the
 #   sidecars and the disk. With `--index` the stderr line is `read: index
-#   (<store>) at inventory:<ws> synced <UTC>`.
+#   (<store>) at inventory:<ws> synced <UTC>`, followed by `(its last sync
+#   failed: <UTC> <why>)` while this workstation's last sync of that source
+#   wrote nothing.
 #
 # AMENDMENT 7 — the per-lane object log (`lanes/log/<lane>.md`)
 #   lanes-edit.sh log     <VERB> <object> [→|← <payload>] ["<text>"] [--text "<t>"]
@@ -18534,8 +18536,10 @@ EOF
   # every `inventory:<Workstation>` source the store holds — this
   # workstation's and any other that syncs into the same Postgres, which is the
   # point of the table — and stderr says which was read: `read: index (<store>)
-  # at inventory:<ws> synced <UTC>`, or `read: sources (index <why>)` and the
-  # sidecars answer, exactly as without the flag. NO ACT READS THIS: not
+  # at inventory:<ws> synced <UTC>` (and `(its last sync failed: <UTC> <why>)`
+  # after a source this workstation's last sync of which wrote nothing), or
+  # `read: sources (index <why>)` and the sidecars answer, exactly as without
+  # the flag. NO ACT READS THIS: not
   # `lane-reconcile`, not `lane-start`, not `lane-end`, not a sweep — each of
   # them reads the sidecars and the disk, and this is a listing.
   #
