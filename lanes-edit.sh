@@ -12671,6 +12671,81 @@ lane_restart_put() {   # <root> <lane> <state> <gen> <op> <mode> <agent> <profil
   } | lane_restart_sidecar_put "$lrw_root/restart-intent.yaml" "$lrw_lane"
 }
 
+# ------------- AMENDMENT 23, SLICE 2A: A HANDOFF PUBLISHED, IN ONE PLACE ------
+#
+# `handoff_publish_atomic <lane> <target> <prepared file> <prior digest>
+#                         [<operation> <generation> <attempt> <state> <transcript>]`
+#
+# `publish-handoff`'s act, FACTORED OUT WHOLE, so the two acts that replace a
+# lane's handoff — `publish-handoff`, which commits nothing, and
+# `write-handoff`, which publishes under S3 and S4 — fence it and write its
+# bytes with one implementation. In order, and every refusal is a `die` that
+# says nothing was published:
+#   1. the target's links are followed to the physical file (40 at most), its
+#      directory resolved with `cd -P`, and the file must be readable (1);
+#   2. the lane's restart intent is read (1 where it cannot be, 2 where it is
+#      malformed). With an operation, the five fences must be the intent's own
+#      — operation, generation, attempt, state, transcript — or this writer
+#      lost ownership (7), and the intent's bound handoff must be this file
+#      (2). With none, an active restart owns the file (7);
+#   3. the file's digest must still be the prior digest its caller read (7);
+#   4. the bytes. THEY GO #212's WAY, which is this act's own (`rename-lane`'s
+#      stamp says it copied it from here): an exclusive temporary BESIDE the
+#      target, in its physical directory, so the one `mv -f` is a rename and
+#      never a copy across a mount; `cp -p` first, so the handoff keeps its
+#      mode; then the bytes; then the rename. A reader sees the handoff whole
+#      before or whole after, a full disk leaves it as it was, and a crash
+#      leaves `<handoff>.resume.XXXXXX`, which no reader of `*.md` takes for a
+#      handoff. `pbh_tmp` is the name `cleanup` removes on every handled exit,
+#      and, #212's one refinement, it is CLEARED once the rename has landed:
+#      the name is no longer this process's to remove.
+#
+# RUN UNDER A LOCK THE CALLER HOLDS — the workstation's sidecar lock, or the
+# checkout's where the opt-in is off (`sidecar_lock_dir`) — which the exit trap
+# releases on every refusal. It sets HPA_TARGET, the file it published.
+HPA_TARGET=""
+handoff_publish_atomic() {   # <lane> <target> <prepared> <prior digest> [<op> <gen> <attempt> <state> <transcript>]
+  hpa_lane="$1"; hpa_target="$2"; hpa_source="$3"; hpa_digest="$4"
+  hpa_op="${5-}"; hpa_gen="${6-}"; hpa_attempt="${7-}"; hpa_state="${8-}"; hpa_sid="${9-}"
+  HPA_TARGET=""
+  hpa_links=0
+  while [ -L "$hpa_target" ]; do
+    hpa_links=$((hpa_links+1)); [ "$hpa_links" -lt 40 ] || die "the handoff link chain cannot be resolved" 2
+    hpa_link="$(readlink "$hpa_target")" || die "the handoff link could not be read" 1
+    case "$hpa_link" in /*) hpa_target="$hpa_link" ;; *) hpa_target="$(dirname -- "$hpa_target")/$hpa_link" ;; esac
+  done
+  hpa_parent="$( CDPATH=''; cd -P -- "$(dirname -- "$hpa_target")" && pwd -P )" || die "the handoff parent is missing" 1
+  hpa_target="$hpa_parent/$(basename -- "$hpa_target")"
+  [ -f "$hpa_target" ] && [ -r "$hpa_target" ] || die "the handoff target is unreadable" 1
+  hpa_irc=0; hpa_intent="$(lane_restart_read "$hpa_lane")" || hpa_irc=$?
+  case "$hpa_irc" in 0|8) : ;; *) die "restart ownership could not be read; no handoff was published" 1 ;; esac
+  hpa_current="$(printf '%s\n' "$hpa_intent" | awk -F'\t' '$1=="state" {print $2; exit}')"
+  case "$hpa_current" in UNKNOWN-*|INCOMPLETE) die "restart ownership is malformed; no handoff was published" 2 ;; esac
+  if [ -n "$hpa_op" ]; then
+    [ -n "$hpa_gen" ] && [ -n "$hpa_attempt" ] && [ -n "$hpa_state" ] && [ -n "$hpa_sid" ] ||
+      die "operation publication needs generation, attempt, state and transcript fences" 64
+    hpa_actual="$(printf '%s\n' "$hpa_intent" | awk -F'\t' '
+      $1=="operation" {o=$2} $1=="generation" {g=$2} $1=="attempt" {a=$2} $1=="state" {s=$2} $1=="new_transcript" {t=$2}
+      END {printf "%s|%s|%s|%s|%s",o,g,a,s,t}')"
+    [ "$hpa_actual" = "$hpa_op|$hpa_gen|$hpa_attempt|$hpa_state|$hpa_sid" ] ||
+      die "this handoff publisher lost restart ownership; nothing was published" 7
+    hpa_bound="$(printf '%s\n' "$hpa_intent" | awk -F'\t' '$1=="handoff" {print $2; exit}')"
+    [ -n "$hpa_bound" ] && [ "$hpa_bound" != none ] && [ "$hpa_bound" -ef "$hpa_target" ] ||
+      die "the publication target is not the operation-bound handoff; nothing was published" 2
+  else
+    case "$hpa_current" in preparing|pending|starting) die "an active restart owns this handoff; nothing was published" 7 ;; esac
+  fi
+  [ "$(lane_handoff_digest "$hpa_target")" = "$hpa_digest" ] || die "the handoff changed before publication; nothing was published" 7
+  pbh_tmp="$(mktemp "$hpa_target.resume.XXXXXX")" || { pbh_tmp=""; die "the publication temporary file could not be made" 1; }
+  if ! cp -p -- "$hpa_target" "$pbh_tmp" || ! cat -- "$hpa_source" > "$pbh_tmp" || ! mv -f -- "$pbh_tmp" "$hpa_target"; then
+    rm -f -- "$pbh_tmp"; pbh_tmp=""
+    die "the handoff could not be published atomically" 1
+  fi
+  pbh_tmp=""
+  HPA_TARGET="$hpa_target"
+  return 0
+}
+
 # ------------------- AMENDMENT 19(c): THE SWEEP, ONE COMMIT OR NONE ---------
 #
 # `lane-end --retire-dormant <repo>` is the word a person types, the dry run
@@ -18720,38 +18795,14 @@ EOF
     [ -f "$pbh_source" ] && [ -r "$pbh_source" ] && [ -s "$pbh_source" ] || die "the prepared handoff is unreadable or empty" 1
     sidecar_lock_use; acquire_lock   # the workstation's sidecar lock, and no other (Amendment 23 S2)
     managed_seam_refuse "$lane" "publish-handoff"
-    pbh_links=0
-    while [ -L "$pbh_target" ]; do
-      pbh_links=$((pbh_links+1)); [ "$pbh_links" -lt 40 ] || die "the handoff link chain cannot be resolved" 2
-      pbh_link="$(readlink "$pbh_target")" || die "the handoff link could not be read" 1
-      case "$pbh_link" in /*) pbh_target="$pbh_link" ;; *) pbh_target="$(dirname -- "$pbh_target")/$pbh_link" ;; esac
-    done
-    pbh_parent="$( CDPATH=''; cd -P -- "$(dirname -- "$pbh_target")" && pwd -P )" || die "the handoff parent is missing" 1
-    pbh_target="$pbh_parent/$(basename -- "$pbh_target")"
-    [ -f "$pbh_target" ] && [ -r "$pbh_target" ] || die "the handoff target is unreadable" 1
-    pbh_irc=0; pbh_intent="$(lane_restart_read "$lane")" || pbh_irc=$?
-    case "$pbh_irc" in 0|8) : ;; *) release_lock; die "restart ownership could not be read; no handoff was published" 1 ;; esac
-    pbh_current="$(printf '%s\n' "$pbh_intent" | awk -F'\t' '$1=="state" {print $2; exit}')"
-    case "$pbh_current" in UNKNOWN-*|INCOMPLETE) release_lock; die "restart ownership is malformed; no handoff was published" 2 ;; esac
-    if [ -n "$pbh_op" ]; then
-      [ -n "$pbh_gen" ] && [ -n "$pbh_attempt" ] && [ -n "$pbh_state" ] && [ -n "$pbh_sid" ] || { release_lock; die "operation publication needs generation, attempt, state and transcript fences" 64; }
-      pbh_actual="$(printf '%s\n' "$pbh_intent" | awk -F'\t' '
-        $1=="operation" {o=$2} $1=="generation" {g=$2} $1=="attempt" {a=$2} $1=="state" {s=$2} $1=="new_transcript" {t=$2}
-        END {printf "%s|%s|%s|%s|%s",o,g,a,s,t}')"
-      [ "$pbh_actual" = "$pbh_op|$pbh_gen|$pbh_attempt|$pbh_state|$pbh_sid" ] || { release_lock; die "this handoff publisher lost restart ownership; nothing was published" 7; }
-      pbh_bound="$(printf '%s\n' "$pbh_intent" | awk -F'\t' '$1=="handoff" {print $2; exit}')"
-      [ -n "$pbh_bound" ] && [ "$pbh_bound" != none ] && [ "$pbh_bound" -ef "$pbh_target" ] ||
-        { release_lock; die "the publication target is not the operation-bound handoff; nothing was published" 2; }
-    else
-      case "$pbh_current" in preparing|pending|starting) release_lock; die "an active restart owns this handoff; nothing was published" 7 ;; esac
-    fi
-    [ "$(lane_handoff_digest "$pbh_target")" = "$pbh_digest" ] || { release_lock; die "the handoff changed before publication; nothing was published" 7; }
-    pbh_tmp="$(mktemp "$pbh_target.resume.XXXXXX")" || { release_lock; die "the publication temporary file could not be made" 1; }
-    if ! cp -p -- "$pbh_target" "$pbh_tmp" || ! cat -- "$pbh_source" > "$pbh_tmp" || ! mv -f -- "$pbh_tmp" "$pbh_target"; then
-      rm -f -- "$pbh_tmp"; release_lock; die "the handoff could not be published atomically" 1
-    fi
+    # THE ACT ITSELF IS `handoff_publish_atomic`'s (Amendment 23 slice 2a), which
+    # `write-handoff` shares: the same fences, the same words and codes, the same
+    # bytes. Its contract here is the one every old caller has: the physical
+    # file on stdout, nothing committed, and the bound path compared as it is.
+    handoff_publish_atomic "$lane" "$pbh_target" "$pbh_source" "$pbh_digest" \
+      "$pbh_op" "$pbh_gen" "$pbh_attempt" "$pbh_state" "$pbh_sid"
     release_lock
-    printf '%s\n' "$pbh_target"
+    printf '%s\n' "$HPA_TARGET"
     ;;
 
   legacy-restart-check)
