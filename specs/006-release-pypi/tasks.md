@@ -231,8 +231,8 @@ pushed commit's `package` job is green.
 
 ### Tests for User Story 4 (write first; they MUST fail before T016)
 
-- [ ] T014 [P] [US4] [O] Create `.github/release-build-requirements.txt` and `.github/release-pipx-requirements.txt` from openRepoShape v1.1.0's two files (research R11). Every line below each header stays byte for byte. Each header is rewritten for this repository and #228, with the same uv 0.12.18 command and date — files: `.github/release-build-requirements.txt`, `.github/release-pipx-requirements.txt` — verify: `bash -c 'for f in release-build-requirements.txt release-pipx-requirements.txt; do diff <(sed -n "/^[a-z]/,\$p" ".github/$f") <(gh api -H "Accept: application/vnd.github.raw" "repos/opensoft/openRepoShape/contents/.github/$f?ref=v1.1.0" | sed -n "/^[a-z]/,\$p") || exit 1; done'`
-- [ ] T015 [P] [US4] [O] Write `tests/test_tests_workflow.py`. Its `test_tests_yml_*` tests load `.github/workflows/tests.yml` with the pinned `repo_shape.load_yaml`, skipping without the submodule as the command tests do. Inside this task, research R9's text fallback applies if a construct is refused. The tests hold contracts/workflows.md's `tests.yml` list, as detailed below — files: `tests/test_tests_workflow.py` — verify: `bash tests/run.sh --collect-only -q -k test_tests_yml_`
+- [X] T014 [P] [US4] [O] Create `.github/release-build-requirements.txt` and `.github/release-pipx-requirements.txt` from openRepoShape v1.1.0's two files (research R11). Every line below each header stays byte for byte. Each header is rewritten for this repository and #228, with the same uv 0.12.18 command and date — files: `.github/release-build-requirements.txt`, `.github/release-pipx-requirements.txt` — verify: `bash -c 'for f in release-build-requirements.txt release-pipx-requirements.txt; do diff <(sed -n "/^[a-z]/,\$p" ".github/$f") <(gh api -H "Accept: application/vnd.github.raw" "repos/opensoft/openRepoShape/contents/.github/$f?ref=v1.1.0" | sed -n "/^[a-z]/,\$p") || exit 1; done'`
+- [X] T015 [P] [US4] [O] Write `tests/test_tests_workflow.py`. Its `test_tests_yml_*` tests load `.github/workflows/tests.yml` with the pinned `repo_shape.load_yaml`, skipping without the submodule as the command tests do. Inside this task, research R9's text fallback applies if a construct is refused. The tests hold contracts/workflows.md's `tests.yml` list, as detailed below — files: `tests/test_tests_workflow.py` — verify: `bash tests/run.sh --collect-only -q -k test_tests_yml_`
   - the triggers;
   - the four job ids;
   - the three existing jobs' `runs-on`, checkout options, Python version and `run:` commands;
@@ -243,12 +243,12 @@ pushed commit's `package` job is green.
 
 ### Implementation for User Story 4
 
-- [ ] T016 [US4] [O] Change `.github/workflows/tests.yml`, as detailed below — files: `.github/workflows/tests.yml` — verify: `actionlint .github/workflows/tests.yml && bash tests/run.sh -k 'test_tests_yml_ or repo_hygiene'`
+- [X] T016 [US4] [O] Change `.github/workflows/tests.yml`, as detailed below — files: `.github/workflows/tests.yml` — verify: `actionlint .github/workflows/tests.yml && bash tests/run.sh -k 'test_tests_yml_ or repo_hygiene'`
   - push on `[main, 'release/v*']`;
   - rewrite the header comment of lines 29 to 36 for two push branches and four jobs;
   - add the `package` job, with exactly contracts/workflows.md's steps 1 to 11. Those are two `pip wheel` builds at `SOURCE_DATE_EPOCH` compared with `cmp`; the inline wheel check, with the stamp equal to the committed file; pipx 1.11.1 from the lock; the unstamped `--version`; the offline `--install` beside pipx's link, with exact lines and 28 receipt rows; and the three package test modules, with `OPENREPOTOOLS_TEST_WHEEL` and a JUnit count that fails on any skip;
   - leave the three existing jobs unchanged.
-- [ ] T017 [US4] [S] Rewrite AGENTS.md's CI paragraph (point 1 of "Testing your changes to this repository") to match FR-025 and FR-026, as detailed below — files: `AGENTS.md`, `tests/test_repo_hygiene.py` — verify: `bash tests/run.sh -k repo_hygiene`
+- [X] T017 [US4] [S] Rewrite AGENTS.md's CI paragraph (point 1 of "Testing your changes to this repository") to match FR-025 and FR-026, as detailed below — files: `AGENTS.md`, `tests/test_repo_hygiene.py` — verify: `bash tests/run.sh -k repo_hygiene`
   - `tests.yml` runs `guard-launch-mode`, `tests`, `tests-no-submodule` and `package`, all on ubuntu;
   - it runs on `pull_request`, push to `main` and `release/v*`, nightly, and `workflow_dispatch`;
   - the release workflow's macOS install leg, which runs on dispatch only, is the one place the payload runs under bash 3.2.
