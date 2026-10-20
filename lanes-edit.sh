@@ -143,9 +143,10 @@
 #   of the control root) nudges exactly as a landed push nudges the register's.
 #   No act reads it: `lane-reconcile`, `lane-start` and `lane-end` read the
 #   sidecars and the disk. With `--index` the stderr line is `read: index
-#   (<store>) at inventory:<ws> synced <UTC>`, followed by `(its last sync
-#   failed: <UTC> <why>)` while this workstation's last sync of that source
-#   wrote nothing.
+#   (<store>) at inventory:<ws> synced <UTC>`, followed by `(last error: <UTC>
+#   <why>)`, the last error `status` shows for that source: one a sync or a
+#   reconcile on this workstation refused or failed with, a `--dry-run`
+#   included, until a sync or a reconcile that is not a dry run succeeds.
 #
 # AMENDMENT 7 — the per-lane object log (`lanes/log/<lane>.md`)
 #   lanes-edit.sh log     <VERB> <object> [→|← <payload>] ["<text>"] [--text "<t>"]
@@ -2500,11 +2501,13 @@ index_open() {   # [worktrees]
   fi
   io_store="$(sed -n -e 's/^store=//p' "$io_dir/meta" | head -n 1)"
   if [ "$io_kind" = worktrees ]; then
-    # A FIFTH FIELD IS THE LAST SYNC'S ERROR, where this workstation's own
-    # record of it has one (N2 of the review of #289): a sync that refused a
-    # listing that was not whole left the table as it was, and `synced` alone
-    # did not say that a later sync had failed, or why.
-    io_at="$(awk -F'\t' '$1 == "inventory" { printf "%s%s synced %s%s", (n++ ? "; " : ""), $2, $3, ($5 != "" ? " (its last sync failed: " $5 ")" : "") }' "$io_dir/meta")"
+    # A FIFTH FIELD IS THE LAST ERROR this workstation's own record of the
+    # source carries (N2 of the review of #289): a sync that refused a listing
+    # that was not whole left the table as it was, and `synced` alone did not
+    # say that a later sync had failed, or why. It is named as `status` names
+    # it, because a refused `reconcile`, a `--dry-run` included, records one
+    # too (review r2 of #289, NIT-1).
+    io_at="$(awk -F'\t' '$1 == "inventory" { printf "%s%s synced %s%s", (n++ ? "; " : ""), $2, $3, ($5 != "" ? " (last error: " $5 ")" : "") }' "$io_dir/meta")"
     LANES_WT_IDX_DIR="$io_dir"
     printf 'read: index (%s) at %s\n' "${io_store:-unknown}" "${io_at:-no inventory source}" >&2
     return 0
@@ -13360,9 +13363,14 @@ lane_op_id() {
 # `[ -L ]` BESIDE `[ -e ]`, because a DANGLING SYMLINK is `-e` false: the name
 # is there and the bytes are not, which is exactly *present and unreadable* and
 # would otherwise fall through to the 8.
-lane_state_read() {   # <lane>
+#
+# THE PAYLOAD IS `lane_control_root`'s, AND OPTIONAL: a caller that already
+# holds the lane's `dir` hands it here, and the lane's log is not read again
+# to find it (review r2 of #289, SHOULD-A). A caller that names the lane
+# alone finds the root exactly as before.
+lane_state_read() {   # <lane> [<a payload that may carry `dir`>]
   lsr_lane="${1-}"; lsr_root=""; lsr_rc=0
-  lsr_root="$(lane_control_root "$lsr_lane")" || lsr_rc=$?
+  lsr_root="$(lane_control_root "$lsr_lane" "${2-}")" || lsr_rc=$?
   [ "$lsr_rc" = 0 ] || return 1
   lsr_f="$lsr_root/lane-state.yaml"
   if [ ! -r "$lsr_f" ]; then
@@ -13671,9 +13679,12 @@ lane_tree_put() {   # <root> <lane> <path> <checkout> <branch> <head> <upstream>
 # recomputing against. A record of THIS schema that is not a whole one is the
 # same row with the schema `<malformed>` (#115), and `lane_reconcile` reports
 # it as `malformed-sidecar`.
-lane_trees_list() {   # <lane>
+#
+# An optional payload carrying the lane's `dir` is `lane_control_root`'s, as
+# `lane_state_read` takes it (review r2 of #289, SHOULD-A).
+lane_trees_list() {   # <lane> [<a payload that may carry `dir`>]
   ltl_root=""; ltl_rc=0; ltl_n=0
-  ltl_root="$(lane_control_root "${1-}")" || ltl_rc=$?
+  ltl_root="$(lane_control_root "${1-}" "${2-}")" || ltl_rc=$?
   [ "$ltl_rc" = 0 ] || return 1
   [ -d "$ltl_root/trees" ] || return 8
   [ -r "$ltl_root/trees" ] && [ -x "$ltl_root/trees" ] || return 10
@@ -14500,12 +14511,14 @@ LRC_PAIRED
 # as whole (the review of #289, SHOULD-1). The logs themselves are asked AFTER
 # it, out of the warnings the events' own read of them left (`state_events`,
 # built once per process): a log it could not read, and a list of the logs it
-# could not make, which is the read every lane's `dir` comes from; where those
-# warnings could not be kept, whether a log failed is not known, which is said
-# the same way. With no `origin`, the log directory is asked as the trees' is
-# below, and its files are still read twice: docs/README-lanes.md says what
-# that leaves. An empty listing over a failed read is that line alone, and
-# never 8.
+# could not make, which is the read every lane's `dir` comes from - and the
+# lane's root, its trees and its snapshot are all found under that one `dir`,
+# not under a second read of its log (review r2 of #289, SHOULD-A); where
+# those warnings could not be kept, whether a log failed is not known, which
+# is said the same way. With no `origin`, the log directory is asked as the
+# trees' is below, and its files are still read twice: docs/README-lanes.md
+# says what that leaves. An empty listing over a failed read is that line
+# alone, and never 8.
 #
 # The rows are sorted bytewise, which is the order the index's copy is written
 # in too: the two reads of one inventory are the same bytes.
@@ -14596,8 +14609,16 @@ worktree_rows() {   # [<canonical lane>]
     # 61 lanes: 7.9 s for the whole read with the second reading, 2.7 s
     # without it). `none` is not absolute, so it falls to the same third rung
     # an absent `dir` does.
+    # AND THE SAME PAYLOAD TO THE TWO READS BELOW (review r2 of #289,
+    # SHOULD-A). `lane_trees_list` and `lane_state_read` worked the root out
+    # again with no `dir`, reading the lane's log a second and a third time,
+    # and a `git show` that failed there was thrown away: the root fell to the
+    # third rung, where no `trees` is, and a lane whose trees this loop had
+    # just found read as a lane with none. The listing's `dir` is now the root
+    # of all three, so the read that could fail is not made.
+    wr_pay="dir ${wr_dir:-none}"
     wr_root=""; wr_rrc=0
-    wr_root="$(lane_control_root "$wr_l" "dir ${wr_dir:-none}" 2>/dev/null)" || wr_rrc=$?
+    wr_root="$(lane_control_root "$wr_l" "$wr_pay" 2>/dev/null)" || wr_rrc=$?
     [ "$wr_rrc" = 0 ] || continue
     [ -d "$wr_root/trees" ] || continue
     # A DIRECTORY THAT IS THERE AND CANNOT BE LISTED IS NOT AN EMPTY ONE, and
@@ -14608,7 +14629,7 @@ worktree_rows() {   # [<canonical lane>]
       continue
     fi
     wr_trees=""; wr_trc=0
-    wr_trees="$(lane_trees_list "$wr_l" 2>/dev/null)" || wr_trc=$?
+    wr_trees="$(lane_trees_list "$wr_l" "$wr_pay" 2>/dev/null)" || wr_trc=$?
     # 8 IS A `trees` DIRECTORY WITH NO RECORD IN IT; ANYTHING ELSE, with the
     # directory already found above, is a read that did not happen - and its
     # rows are not rows this lane no longer has (Copilot round 2 on #171).
@@ -14642,7 +14663,7 @@ worktree_rows() {   # [<canonical lane>]
     esac
     wr_life=INDETERMINATE; wr_gen=""; wr_op=""
     wr_snap=""; wr_src=0
-    wr_snap="$(lane_state_read "$wr_l" 2>/dev/null)" || wr_src=$?
+    wr_snap="$(lane_state_read "$wr_l" "$wr_pay" 2>/dev/null)" || wr_src=$?
     if [ "$wr_src" = 0 ]; then
       wr_s="$(printf '%s\n' "$wr_snap" | awk -F'\t' '$1 == "state" { print $2; exit }')"
       if [ "$wr_s" != UNKNOWN-SCHEMA ]; then
@@ -18536,8 +18557,8 @@ EOF
   # every `inventory:<Workstation>` source the store holds — this
   # workstation's and any other that syncs into the same Postgres, which is the
   # point of the table — and stderr says which was read: `read: index (<store>)
-  # at inventory:<ws> synced <UTC>` (and `(its last sync failed: <UTC> <why>)`
-  # after a source this workstation's last sync of which wrote nothing), or
+  # at inventory:<ws> synced <UTC>` (and `(last error: <UTC> <why>)` after a
+  # source this workstation recorded one for, as `status` shows it), or
   # `read: sources (index <why>)` and the sidecars answer, exactly as without
   # the flag. NO ACT READS THIS: not
   # `lane-reconcile`, not `lane-start`, not `lane-end`, not a sweep — each of

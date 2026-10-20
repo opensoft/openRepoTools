@@ -3845,14 +3845,21 @@ knew of it. An indexer from before #173's item c1 refuses the line too, as one
 it does not read. A read of one NAMED lane goes by that name, which no listing
 gives, and never prints `PARTIAL`.
 
-Each of those reads is made ONCE for the listing (the review of #289). The
-register, the archive and the list of the logs are asked before the listing is
-made, and where one succeeds the listing reads that very text — the register
-out of its cache, the other two pinned for that listing alone — so a read that
-fails only after the check cannot thin a listing taken as whole. The events are
-read once per process, and their own list of the logs, out of which every lane's
-`dir` comes, says so where it could not be made: that is `PARTIAL` too. What is
-still read twice: with no `origin` (`LANES_NO_GIT=1`, or a checkout with no
+Where those reads succeed, the listing makes each of them once, except the list
+of the logs, which it makes twice (the review of #289). The register, the
+archive and the list of the logs are asked before the listing is made, and
+where one succeeds the listing reads that very text — the register out of its
+cache, the other two pinned for that listing alone — so a read of them that
+fails after the check cannot thin a listing taken as whole; where one fails,
+the read is `PARTIAL` whatever the listing's own reads of it then give. The
+second list of the logs is the events', which read every log once per process,
+and where it could not be made the events say so: that is `PARTIAL` too,
+because every lane's `dir` comes out of their read. A lane's `dir` is not read
+again: its control root, the list of its trees and its lifecycle snapshot all
+take the listing's own. A second read of the lane's log that failed used to
+send the root to `$PROJECTS_ROOT/.lane-state`, and a lane with trees read as
+one with none (review r2 of #289). What is still read twice, besides the list
+of the logs: with no `origin` (`LANES_NO_GIT=1`, or a checkout with no
 `origin/<branch>`), the log directory is asked — there and not a directory this
 account can list and search is `PARTIAL` — and is then listed again for the
 names and again for the events, and a log file in it that will not open leaves
@@ -3872,10 +3879,12 @@ every source a mark names before it lets go.
 `--index` it reads the table — every `inventory:*` source the store holds, so
 Raven sees Eagle's leftovers — and stderr says `read: index (<store>) at
 inventory:<ws> synced <UTC>`, or `read: sources (index <why>)` and the sidecars
-answer. Where this workstation's last sync of a source wrote nothing — a lane
-listing that was not whole, a store it could not reach — that source's
-`synced <UTC>` is followed by `(its last sync failed: <UTC> <why>)`, the error
-`status` shows; another workstation's is in its own record, not this one's.
+answer. Where this workstation recorded an error for a source — a `sync` or a
+`reconcile` of it that refused or failed, a `--dry-run` included: a lane listing
+that was not whole, a store it could not reach — that source's `synced <UTC>` is
+followed by `(last error: <UTC> <why>)`, the last error `status` shows, until a
+`sync` or a `reconcile` that is not a dry run succeeds; another workstation's is
+in its own record, not this one's.
 Where the table is current, this workstation's rows are the same bytes
 either way — and a store only this workstation syncs into (SQLite, or a
 Postgres nobody else writes) prints exactly the source read, while a shared one
