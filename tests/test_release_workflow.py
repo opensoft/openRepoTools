@@ -13,17 +13,18 @@ answer as the forge, the index, `curl`, the build and pipx do:
 - in the build job, the version check and the repository guard, the ref,
   branch, clean-checkout, environments, gate and digest steps, the stamp
   writer, the build step's byte-for-byte compare, and the wheel check;
-- in each upload job, the guard again, the approval and tag re-checks, and
-  both index checks;
+- in each upload job, the guard again, the dist step, the approval and tag
+  re-checks, and both index checks;
 - in the install check, the fetch from TestPyPI, the digest step, pipx's
   install and its one link, `--version`, and the 3.9 leg's compile.
 
-SEVEN ARE STILL READ ONLY AS TEXT, by their commands: the build's tool
-install from its hash lock, its two `git archive` extractions and its record
-of the wheel; each upload job's dist step; and the install check's install
-of pipx from its hash lock, its offline `--install`, and the macOS rerun,
-which is held to the offline `--install` line for line but for the lines it
-names.
+SIX ARE STILL READ ONLY AS TEXT. Five are held by their commands: the
+build's tool install from its hash lock and its two `git archive`
+extractions, and the install check's install of pipx from its hash lock,
+its offline `--install`, and the macOS rerun, which is held to the offline
+`--install` line for line but for the lines it names. The sixth, the
+build's record of the wheel, is held by its place and by its id, which the
+build job's outputs read.
 Every job's whole step list is pinned in order (`STEP_ORDER`).
 
 contracts/workflows.md's `release.yml` list is the specification, one prefix
@@ -51,8 +52,9 @@ per part of it (plan.md, "The test layout"):
   and each upload job's own first step;
 - `test_release_upload_*`: the four jobs' permissions and step lists, the
   two environments, the two conditions, and each upload job's checks around
-  the pinned action, the approval and tag re-checks run under a forge and
-  the index checks under a fake index;
+  the pinned action, the dist step run over the files a case puts in
+  `dist/`, the approval and tag re-checks run under a forge and the index
+  checks under a fake index;
 - `test_release_install_check_*`: the three legs and what each runs, its
   fetch, digest, pipx, `--version` and 3.9 steps run;
 - `test_release_reads_*`: no step reads what the code leg will not hold;
@@ -76,6 +78,12 @@ workflow (T019 to T021 write the other half):
   repository guard again, on its own");
 - the install legs' own steps are found by their `if:`.
 
+`STEP_ORDER`, which pins every job's whole step list in order, follows these
+rules, and finds every other step by a prefix of its label: an action by the
+action it uses, and this workflow's own steps, the install check's
+`--version` among them, by their own names. So a step found by its role can
+be renamed and still hold its place.
+
 HOW A STEP IS RUN, as GitHub runs a `shell: bash` step: its `run:` text in a
 file, `bash --noprofile --norc -eo pipefail <file>`, with the workflow's, the
 job's and the step's literal `env:` values (one that holds an expression is
@@ -88,8 +96,9 @@ own ahead of them. A heredoc is cut out as the model's `heredoc()` cuts one,
 and run with this Python under `-I`: the stamp writer with the two copies as
 its arguments, and the wheel check with the wheel as its one argument. Both
 read the release's values from `VERSION`, `TAG`, `COMMIT`, `DIGEST` and
-`REPOSITORY` (contracts/stamp.md) and, as the model's do, from `GITHUB_SHA`
-and `GITHUB_REPOSITORY`, which carry the same values.
+`REPOSITORY` (contracts/stamp.md), and the wheel check reads the run's own
+commit and repository from `GITHUB_SHA` and `GITHUB_REPOSITORY` as well,
+which carry the same values (the model's reads `GITHUB_SHA`).
 
 WITHOUT THE SUBMODULE every test that reads YAML or the standard SKIPS, as the
 command tests do (`NEEDS_UPSTREAM`), and a composed run fails instead. Nothing
@@ -2031,9 +2040,9 @@ def a_line_more_in_the_stamp(members: dict, info: str) -> None:
 #: THE SYNTHETIC WHEELS THAT ARE NOT THE COMMIT'S: contracts/workflows.md's
 #: four, then one for each other check the step makes (contracts/wheel.md's
 #: checks 2 to 5, the metadata, the entry points, and the run's values).
-#: Each is `(what its refusal must name, the change to the wheel as built,
-#: the mode HEAD gives the file changed, the run's values where they are not
-#: the release's)`.
+#: Each is `(what its refusal's ::error:: line must name, the change to the
+#: wheel as built, the mode HEAD gives the file changed, the run's values
+#: where they are not the release's)`.
 NOT_THE_COMMITS = {
     "no-licenses-LICENSE": ("licenses/LICENSE, so the commit's LICENSE is not in it",
                             no_license, None, None),
@@ -2115,7 +2124,9 @@ def test_release_build_the_wheel_check_refuses_a_wheel_that_is_not_the_commit_s(
     wheel as built checked in a run of another repository, metadata that
     names a dependency, a second console script, and a sixth `.dist-info/`
     file. Each fails, and among the lines it prints beyond the wheel as
-    built's is one naming what is wrong."""
+    built's is an `::error::` line naming what is wrong. Only that line is
+    the refusal: the step's own `print`s show some of the same values (the
+    metadata, for one) whether or not it refuses them."""
     names, change, head_mode, run = NOT_THE_COMMITS[which]
     if head_mode is not None:
         assert head()[1][names][0] == head_mode, (
@@ -2136,8 +2147,8 @@ def test_release_build_the_wheel_check_refuses_a_wheel_that_is_not_the_commit_s(
 
     known = set(lines(good, "a"))
     new = [line for line in lines(bad, "b") if line not in known]
-    assert [line for line in new if names in line], (
-        f"no line of the refusal names {names}:\n{transcript(bad)}")
+    assert [line for line in new if line.startswith("::error::") and names in line], (
+        f"no ::error:: line of the refusal names {names}:\n{transcript(bad)}")
 
 
 # --- the stamp writer --------------------------------------------------------------
@@ -3936,40 +3947,67 @@ def test_release_install_check_the_3_9_step_refuses_a_payload_command_that_does_
 
 # --- every job's steps, in order -----------------------------------------------------
 
-#: EACH JOB'S WHOLE STEP LIST, IN ORDER, each step by a prefix of its label
-#: (its name, or the action it uses): so a step inserted anywhere, named or
-#: not, fails here, as does one moved or dropped. An inserted step could undo
-#: a check before it (a step after the stamp writer that rewrote the stamp,
-#: say) while every check still passes on its own.
+#: THE STEPS `STEP_ORDER` FINDS BY THEIR ROLE, as HOW A STEP IS FOUND (the
+#: header) has them found, never by their names: the build's guard by the
+#: outputs it records (`guard_step`), each upload job's guard as its first
+#: step, and the macOS and 3.9 legs' own steps by their `if:`
+#: (`condition_kind`). Each is written as the failure message prints it.
+BUILD_GUARD = "<the repository guard: the step whose outputs the build job records>"
+UPLOAD_GUARD = "<the repository guard again: the job's first step>"
+MACOS_LEG = "<the macOS leg's own step: its if: is the macOS condition>"
+PYTHON_3_9_LEG = "<the Python 3.9 leg's own step: its if: is the 3.9 condition>"
+
+#: EACH JOB'S WHOLE STEP LIST, IN ORDER, each step by its role where the list
+#: names one, and every other step by a prefix of its label (its name, or the
+#: action it uses): so a step inserted anywhere, named or not, fails here, as
+#: does one moved or dropped, and a step found by its role can be renamed. An
+#: inserted step could undo a check before it (a step after the stamp writer
+#: that rewrote the stamp, say) while every check still passes on its own.
 STEP_ORDER = {
-    "build": ["actions/checkout", "actions/setup-python",
-              "the version is X.Y.Z or X.Y.ZrcN", *BUILD_STEPS,
+    "build": ["actions/checkout", "actions/setup-python", BUILD_GUARD, *BUILD_STEPS,
               "actions/upload-artifact"],
-    "testpypi": ["the repository guard (FR-048) again", "actions/download-artifact",
+    "testpypi": [UPLOAD_GUARD, "actions/download-artifact",
                  DIST_STEP, APPROVAL_STEP, TAG_AGAIN_STEP, EMPTY_INDEX_STEP,
                  "pypa/gh-action-pypi-publish", SERVED_STEP],
     "install": ["actions/checkout", "actions/setup-python", FETCH_STEP,
                 "take the build's own wheel", WHEEL_DIGEST_STEP,
                 "pipx from its hash lock", PIPX_STEP, VERSION_STEP,
-                "an offline --install beside pipx's link",
-                "on macOS, the offline --install again",
-                "on Python 3.9, the installed payload's own"],
-    "pypi": ["the repository guard (FR-048) again", "actions/download-artifact",
+                "an offline --install beside pipx's link", MACOS_LEG,
+                PYTHON_3_9_LEG],
+    "pypi": [UPLOAD_GUARD, "actions/download-artifact",
              DIST_STEP, APPROVAL_STEP, TAG_AGAIN_STEP, EMPTY_INDEX_STEP,
              "pypa/gh-action-pypi-publish", SERVED_STEP],
 }
+
+
+def in_its_place(workflow: dict, at: int, step: dict, wanted: str) -> bool:
+    """Whether `step`, at index `at` of its job, is the one `STEP_ORDER`
+    puts there: the step of the role `wanted` names, or one whose label
+    begins with `wanted`."""
+    if wanted == BUILD_GUARD:
+        return step is guard_step(workflow)
+    if wanted == UPLOAD_GUARD:
+        return at == 0
+    if wanted == MACOS_LEG:
+        return condition_kind(step.get("if")) == "macos"
+    if wanted == PYTHON_3_9_LEG:
+        return condition_kind(step.get("if")) == "python-3.9"
+    return label(step).startswith(wanted)
 
 
 @NEEDS_UPSTREAM
 @pytest.mark.parametrize("name", JOBS)
 def test_release_upload_each_job_runs_exactly_its_steps_in_order(name):
     """EVERY STEP OF EVERY JOB, IN ORDER, AND NO OTHER (contracts/workflows.md):
-    the job's steps are `STEP_ORDER`'s, one for one."""
-    labels = [label(step) for step in steps_of(release(), name)]
+    the job's steps are `STEP_ORDER`'s, one for one, each found as the rest
+    of this file finds it."""
+    workflow = release()
+    steps = steps_of(workflow, name)
     wanted = STEP_ORDER[name]
-    assert len(labels) == len(wanted) and all(
-        found.startswith(prefix) for found, prefix in zip(labels, wanted)), (
-        f"the {name} job's steps are:\n  " + "\n  ".join(labels)
+    assert len(steps) == len(wanted) and all(
+        in_its_place(workflow, at, step, entry)
+        for at, (step, entry) in enumerate(zip(steps, wanted))), (
+        f"the {name} job's steps are:\n  " + "\n  ".join(label(s) for s in steps)
         + "\nand `STEP_ORDER` holds:\n  " + "\n  ".join(wanted))
 
 
