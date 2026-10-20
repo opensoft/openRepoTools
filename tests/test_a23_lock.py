@@ -229,7 +229,7 @@ def test_holder_refreshes_its_lock_before_every_network_call(box: Box):
     shim = box.fakebin / "heartbeat-git"
     shim.write_text(f"""#!/usr/bin/env bash
 case " $* " in
-  *" pull "*) python3 -c 'import os,sys,time; t=time.time()-3600; os.utime(sys.argv[1], (t, t))' '{lock}' ;;
+  *" fetch "*) python3 -c 'import os,sys,time; t=time.time()-3600; os.utime(sys.argv[1], (t, t))' '{lock}' 2>/dev/null ;;
   *" push "*) python3 -c 'import os,sys,time; print(int(time.time()-os.stat(sys.argv[1]).st_mtime))' '{lock}' >> '{out}' ;;
 esac
 exec git "$@"
@@ -454,13 +454,15 @@ def test_a_lock_that_vanished_under_its_holder_is_not_made_again(box: Box):
     box.write(peer, "handoffs/peer.md", "from a peer\n")
     box.commit(peer, "a peer writes", "handoffs/peer.md")
     box.git("-C", str(peer), "push", "-q", "origin", "main")
-    # The lane's checkout is now behind, so its write pulls and then pushes:
-    # two network calls under the lock, and the lock is taken away between.
+    # The lane's checkout is now behind, so its write fetches (S3), pushes and
+    # reads back (S4): three network calls under the lock, and the lock is
+    # taken away at the push, before the read-back's heartbeat (#198 1b: no
+    # writer pulls any more).
     real = shutil.which("git")
     wrapper = box.root / "takes-the-lock"
     mark = box.root / "taken"
     wrapper.write_text(f"""#!/usr/bin/env bash
-case " $* " in *" pull "*)
+case " $* " in *" push "*)
   if [ ! -e '{mark}' ]; then : > '{mark}'; rm -f '{lock}/pid'; rmdir '{lock}'; fi ;;
 esac
 exec '{real}' "$@"

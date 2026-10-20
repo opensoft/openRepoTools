@@ -87,29 +87,35 @@ cross-references. Nothing here is ever released, pinned, swept or bumped.
 
 **The register no longer owns its whole checkout.** The workspace checkout
 also holds `handoffs/` and `workspaces/`, which other lanes write. That is why
-the writer now (a) uses a pathspec on every `git add` and `git commit`, so a
-peer's half-written handoff can never ride along in a register commit, and (b)
-SKIPS `pull --rebase` when the checkout has unstaged changes to other tracked
-files — `pull --rebase` refuses outright on any unstaged tracked change — and
-pushes straight out instead, warning and naming the files. If the push is also
-rejected (the remote moved), it stops with exit 3, leaves your edit as a local
-commit, and prints the recovery: the owner of that file commits it, then you
-re-run `lanes-edit.sh commit`. If `lanes/LANES.md` is clean, that re-run makes
-no commit of its own and pushes the local commits origin does not have yet,
-through the same loop, guard and retries (#194). It reads that queue on
-`refs/heads/main`, the branch the push sends, with HEAD required to be on it,
-and pushes exactly the commit it read. It refuses with 2 and pushes nothing
-unless every queued commit is a non-merge commit whose every change is an added
-or modified regular file under `lanes/` or `handoffs/`, and never bytecode, a
-cache or an environment. That refuses a merge, a deletion (a lane rename's
-included), a type change, a symlink, a gitlink and any other path. It is a
-path filter, not an ownership check: another lane's register write passes it,
-so read `git cherry -v origin/main HEAD` before you publish a shared queue.
-Only `commit` publishes that queue: any other write with nothing to stage
-leaves it local, and with nothing ahead `commit` is the no-op it always was.
-When `pull --rebase` finds every queued commit on origin already, by content
-under other shas, it drops them all. The publish then says so and exits 0
-without a push.
+the writer uses a pathspec on every `git add` and `git commit`, so a peer's
+half-written handoff can never ride along in a register commit. Since
+Amendment 23 S3–S4 (#198) no writer pulls. Every write first fetches, under its
+checkout's lock, and refuses (2, nothing written) a checkout it cannot bring to
+origin's tip: a fetch that failed, an operation in progress, HEAD off `main`,
+staged entries that are not its own, a commit origin lacks by content, a
+diverged branch, a pending change to a path it commits (a hand edit of the
+register refuses every writer but `commit`), or a fast-forward git refuses.
+Otherwise it fast-forwards, makes its edit on origin's tip, commits it by
+pathspec, pushes and reads origin back. A peer's unstaged change to another
+file does not refuse it, unless the fast-forward would overwrite that file.
+
+A local commit origin lacks — one kept on HEAD after six lost push races (exit
+6), or one a hand made — is published by **the publish act**: `lanes-edit.sh
+commit` with nothing staged and `lanes/LANES.md` clean. It writes nothing new,
+lists the commits origin lacks (`git cherry -v origin/main HEAD`) before it
+pushes, and pushes them only as a fast-forward of origin. Where origin has
+moved past them it refuses (2), naming the recovery: archive them on origin,
+then `git -C <the checkout> reset --keep origin/main`, then make again each edit
+still wanted. It reads that queue on `refs/heads/main`, the branch the push
+sends, with HEAD required to be on it, and pushes exactly the commit it read.
+It refuses with 2 and pushes nothing unless every queued commit is a non-merge
+commit whose every change is an added or modified regular file under `lanes/`
+or `handoffs/`, and never bytecode, a cache or an environment. That refuses a
+merge, a deletion (a lane rename's included), a type change, a symlink, a
+gitlink and any other path. It is a path filter, not an ownership check:
+another lane's register write passes it, so read the listing before you
+publish a shared queue. Only `commit` publishes that queue: every other write
+refuses over it, and with nothing ahead `commit` is the no-op it always was.
 
 ## THE ONE HAZARD — `sed -i` DESTROYS THE SYMLINK
 
@@ -183,57 +189,41 @@ anything, so a name typed in another case edits the row that is there instead of
 creating a second one; two rows differing only by case are a refusal naming both
 (Amendment 15). Then it does the same five things:
 
-1. takes a `mkdir` lock in `.lanes/` (so two helper runs never interleave);
-2. checks whether LANES.md is already dirty before making its own edit. If it
-   is, that content is someone else's — never this invocation's — so it
-   **warns** (`git diff --stat` plus the first 200 chars of every changed
-   line, and the affected lane(s) identified by the first backtick token on
-   each changed line, or `append` for a line with no row of its own) and, by
-   **default (`--no-sweep`)**, commits that pre-existing content FIRST, as its
-   own `LANES(pre-existing@<workstation>): capture an uncommitted registry
-   edit (row <lane>)` commit, so a peer's in-flight edit is never combined
-   with yours. Pass `--sweep` to fall back to the old combined-commit
-   behaviour instead — never silently: it appends " + sweeps uncommitted
-   edit to row \<lane\>" to the commit subject it is about to create. Either
-   way the write still goes through — this never fails the call;
+1. takes a `mkdir` lock in its checkout's `lanes/` (so two helper runs never
+   interleave);
+2. **S3, before the edit:** fetches `origin main` and brings the checkout to
+   origin's tip, or refuses with 2 and nothing written, naming the checkout and
+   the recovery (the Layout note above lists the rows). `LANES_NO_FETCH=1` is a
+   fetch that failed, for a writer. A pending hand edit of `lanes/LANES.md`
+   refuses every writer but `commit`, which carries it across the
+   fast-forward and commits it as its own act. A row edit carries even where
+   origin changed the row beside it, and anything that no longer applies is
+   kept in a file under the checkout's `.git/lanes-edit/` and named. The old
+   `LANES(pre-existing@…)` capture and `--sweep` are withdrawn (2);
 3. re-reads the file, edits **exactly one line** in place, and refuses if
    `git diff --numstat` says more than one line moved;
 4. commits as `LANES(<lane>@<workstation>): <what>` — workstation from
-   `hostname -s`;
-5. `git pull --rebase origin main` then `git push`, retrying a lost push race
-   up to six times — or, if a peer has uncommitted changes to other files in
-   this checkout, a warning naming them and a straight push (see the Layout
-   note above).
+   `hostname -s` — by pathspec;
+5. **S4, after the edit:** pushes `main` with no pull and reads origin back.
+   Confirmed is 0 and `pushed`. A push that went, or timed out, and cannot be
+   confirmed is **3, `pushed, not confirmed: <sha>`**, never success: the commit
+   stays on HEAD, and the next write's S3 finds it by content (published,
+   nothing to do; not, every write refuses until the publish act sends it). A
+   push refused because origin moved drops this write's commit
+   (`reset --keep`) and runs the same write again on origin's new tip, so its
+   own checks re-run on the new content — `claim`'s rescan included, which
+   ends a lost race as `CLAIM-LOST` (7). After six attempts, or a refusal with
+   origin unmoved, the commit is kept on HEAD and named (6).
 
-**On a rebase conflict it aborts**, leaves the worktree clean and not
-mid-rebase, prints the conflicting lines and prints the recovery commands. Your
-edit survives as a local commit — but an aborted pull is not proof it never
-reached origin: this checkout is shared with every lane on the workstation, so
-the very next write out of it can pull this dangling commit onto its own and
-push both together (#32). LOOK first: `git -C <the workspace checkout> fetch
-origin main` — if THAT fails, STOP and retry it; a stale or unreachable origin
-proves nothing either way, and is not permission to reset and redo. Only once
-the fetch succeeds do you check by CONTENT whether your own commit is already
-there, never by sha: the very peer write this recovery exists for carries a
-dangling commit by rebasing it onto a newer base, which changes its hash, so
-`merge-base --is-ancestor` alone can still say "not there" once the change is
-actually published. `git -C <the workspace checkout> cherry origin/main <your
-commit> | grep -c '^+'` compares by patch instead and still finds it; 0 means
-it is already there, in which case STOP. Only once fetch succeeded AND this
-prints something other than 0 do you check that `git -C <the workspace
-checkout> rev-parse HEAD` is still the commit the recovery named; if the checkout
-has moved since the abort, STOP. Then list WHOSE the commits are, with
-`git -C <the workspace checkout> cherry -v origin/main HEAD`: one `+` line per
-local commit origin lacks, which is exactly what a reset drops, and in a shared
-checkout not every one is yours. If any `+` line is not your own write, STOP and
-take it to the lane its subject names. A `LANES(concurrent@…)` or
-`LANES(pre-existing@…)` capture names no lane, so it is not yours either. Never
-reset, stash or overwrite a peer's work: `reset --hard` drops EVERY `+` commit
-in the checkout, theirs with yours, and origin holds no copy of any of them
-(#194). Only when every `+` line is yours do you read your edit back with
-`git -C <the workspace checkout> diff origin/main..HEAD -- lanes/LANES.md`,
-then `git -C <the workspace checkout> reset --hard origin/main` and redo it on
-top of the peer's version.
+**No write rebases, and no recovery resets with `--hard`.** If a write refuses
+over commits origin lacks, list them first — `git -C <the checkout> cherry -v
+origin/main HEAD` — because in a shared checkout not every one is yours. If any
+`+` line is not your own write, STOP and take it to the lane its subject names.
+Never reset, stash or overwrite a peer's work. Publish your own with the
+publish act; where origin has moved past them, archive them
+(`git -C <the checkout> push origin HEAD:refs/heads/archive/<lane>-stranded-<UTC>`),
+then `git -C <the checkout> reset --keep origin/main`, which keeps every
+uncommitted change, and make each edit again on the register as it now is.
 
 The script spells no path of its own: it finds the checkout root with `git
 rev-parse --show-toplevel` from its own directory and derives the pathspec
@@ -886,40 +876,24 @@ workstation. So:
 2. If another lane holds it, print `who` and **exit 2**: Rule 1 says the lane
    stops and reports, it does not author a successor. Nothing is written.
 3. Run Rule 1's three reads and print them; warn if this is a crossing.
-4. Append the `CLAIMED` line, commit, push. Inside that push, after every
-   `pull --rebase`, rescan: if another lane's `CLAIMED` or `TAKEOVER` is
-   already on this history, **theirs landed first** — append
-   `CLAIM-LOST → lane:<winner>`, push both lines, and **exit 7**. The claim is
-   *abandoned*, not queued; Rule 7's queueing is for substrates, which this
-   amendment does not touch.
+4. Append the `CLAIMED` line, commit, push (Amendment 23 S3–S4: fetched and
+   fast-forwarded first, no pull). A push refused because origin moved drops
+   the `CLAIMED` commit and runs the claim again on origin's new tip, and the
+   re-run rescans first: if another lane's `CLAIMED` or `TAKEOVER` is there,
+   **theirs landed first** — it appends `CLAIM-LOST → lane:<winner>`, pushes
+   that line alone, and **exits 7**. The claim is *abandoned*, not queued;
+   Rule 7's queueing is for substrates, which this amendment does not touch.
 5. Post the GitHub `CLAIMED —` comment **after** the push, citing the commit
    that carries the line. The line is never rewritten to cite the comment.
 
-A claim needs a checkout it can rebase. Amendment 5(d) *skips* `pull --rebase`
-when a peer has left uncommitted changes to other files in this shared
-checkout — the right default for a row edit, and unacceptable for a race — so
-`claim` **refuses (exit 2) and names the files** instead of racing unprotected.
-
-The guard is computed over the **whole checkout** — every tracked file that
-differs from `HEAD`, staged or not — minus exactly the pathspecs this write
-will commit, and `log` and `release` are guarded the same way. Scoped to
-anything narrower it was a hole: measured against (the lane's log + `LANES.md`)
-while a `CLAIMED` writes the log alone, a dirty `lanes/LANES.md` — the one file
-this checkout routinely has dirty — passed the guard, took the skip-the-pull
-branch, and raced with the rescan disabled, leaving two lanes holding one
-object. The exception is plural on purpose: a `LANDING` or `LANDED` writes two
-files, so a dirty register is *its* business and is captured as its own
-attributed commit, exactly as before.
-
-`claim`, `release` and `log` first take that same pre-existing capture for the
-register — a peer's uncommitted `lanes/LANES.md` lands as its own attributed
-`LANES(pre-existing@<workstation>): …` commit, with the warning every register
-write already prints — and only then re-test the checkout, because this clone
-carries a half-written register line most of the day and refusing every claim
-on it would push lanes to stop using the tool. Any **other** modified tracked
-file outside the write's own pathspecs is still a refusal (exit 2), and it is
-taken before the lock and before the capture, so a write that refuses never
-leaves a commit of somebody else's line behind.
+A claim used to need a checkout it could rebase, and refused one with any
+other tracked file dirty. Amendment 23 S3 narrows that (ratified choice 8): no
+writer pulls, so a peer's unstaged change elsewhere refuses a `claim`, `log` or
+`release` only where the fast-forward would overwrite it. A change to a path
+the write commits, or a pending hand edit of `lanes/LANES.md`, still refuses
+(2), with nothing written: the `LANES(pre-existing@<workstation>)` capture
+these three took for the register is withdrawn (ratified choice 9), and
+`commit` is the one act that commits such an edit.
 
 **Reads 2 and 3 name the object, not its digits** (Amendment 8). They searched
 for the bare slug as a *substring*, and a number is a substring of almost
