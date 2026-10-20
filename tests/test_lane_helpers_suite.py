@@ -15,7 +15,10 @@ would mean parsing that output into parametrized ids, which is a second
 implementation of the suite's own reporting and a second thing to keep right.
 What pytest needs to know is one bit: did every assertion pass? So this runs
 the file, and on failure prints the WHOLE transcript into the assertion
-message, which is what a person reading a red CI job actually needs.
+message, which is what a person reading a red CI job actually needs. A PASS
+prints only the suite's own account of where its time went (`show_timings`,
+opensoft/openRepoTools#77), because a green job is where nobody reads the
+transcript and where that one account is wanted.
 
 IT TOUCHES NOTHING REAL. The suite redirects `$HOME`, `$TMPDIR`,
 `$AGENT_PROTOCOL_ROOT` and `$OPENREPOTOOLS_BIN_DIR` into a `mktemp -d` sandbox
@@ -33,6 +36,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -282,6 +286,119 @@ def run_in_own_group(argv, *, timeout, **popen_kwargs):
             os.kill(os.getpid(), pending[0])
 
 
+#: WHAT THE SUITE SAYS ABOUT ITS OWN CLOCK (opensoft/openRepoTools#77, step 1a
+#: put it in the suite; step 1b is this file carrying it out). The two strings
+#: are the ones `tests/test_lane_helpers.sh` prints, and
+#: `test_the_wrapper_looks_for_what_the_suite_prints` reads that file to hold
+#: them to it: the table's first line on STDOUT, whose rows follow it up to the
+#: rule that precedes the footer, and the teardown line on STDERR, said by the
+#: exit trap after the footer by nature.
+TIMING_HEADER = "wall time per section, longest first"
+TEARDOWN_PREFIX = "teardown: rm -rf of the sandbox"
+
+#: A row of that table: `%6s s  %3s%%  <heading>`. The seconds may be NEGATIVE:
+#: they are differences of bash's `SECONDS`, which a clock step can send
+#: backwards, and a row the pattern did not know would end the table there and
+#: lose every row after it, the whole-run row among them.
+_TIMING_ROW = re.compile(r"^\s*-?\d+ s\s")
+
+
+def suite_timings(stdout: str, stderr: str) -> tuple[list[str], list[str]]:
+    """The suite's timing table and its teardown line, each as lines, or as an
+    empty list where the suite printed none. Reads text only and cannot fail:
+    what to do about a missing one is `show_timings`' to say."""
+    table: list[str] = []
+    lines = stdout.splitlines()
+    for at, line in enumerate(lines):
+        if line.startswith(TIMING_HEADER):
+            table = [line]
+            for row in lines[at + 1:]:
+                if not _TIMING_ROW.match(row):
+                    break
+                table.append(row)
+            break
+    teardown = [ln for ln in stderr.splitlines() if ln.startswith(TEARDOWN_PREFIX)]
+    return table, teardown
+
+
+#: HOW `show_timings` SPEAKS PAST PYTEST'S CAPTURE: a context manager that
+#: suspends it. It is `capsys.disabled` while one of THIS module's tests runs,
+#: put there by the fixture below, and a no-op anywhere else.
+_past_capture = contextlib.nullcontext
+
+
+@pytest.fixture(autouse=True)
+def _speak_past_capture(request, monkeypatch):
+    """Give `show_timings` the one fixture it needs WITHOUT A PARAMETER ON THE
+    TEST. `tests/test_lane_helpers_suite_timeout.py` calls
+    `test_the_lane_helper_suite_passes()` itself, with no arguments, at six call
+    sites, so that the call site and not a copy of it is what it proves; a
+    `capsys` parameter would make every one a TypeError. Called from there the
+    fixture is not in play (it is this module's, and autouse only reaches this
+    module's tests), `_past_capture` stays a no-op, and the block goes into the
+    capture a passing test discards: nothing there reads it.
+
+    `capsys` IS ASKED FOR, NOT REQUIRED. Under `-p no:capture` the fixture does
+    not exist, and a parameter named `capsys` on an AUTOUSE fixture would make
+    every test in this file, the liveness test among them, an ERROR for it.
+    Nothing captures there, so nothing needs suspending, and the no-op serves.
+    Only pytest's own `FixtureLookupError` is let go: a wider clause would read
+    a fault of some other kind as "no capture plugin" and hide it."""
+    try:
+        capsys = request.getfixturevalue("capsys")
+    except pytest.FixtureLookupError:   # the capture plugin is off
+        return
+    monkeypatch.setitem(globals(), "_past_capture", capsys.disabled)
+
+
+def show_timings(proc) -> None:
+    """Print a PASSING suite's timings to pytest's real output.
+
+    WHY THIS EXISTS (opensoft/openRepoTools#77). A passing run's stdout and
+    stderr were both captured here and dropped, so the numbers step 1a added
+    reached no log `gh run view --log` returns, and a step summary only a
+    person signed in to the web UI can open.
+
+    `capsys.disabled()` AND NOT A PRINT: pytest captures at the file
+    descriptor, so `print` and even `sys.__stdout__` land in the capture
+    buffer, which a passing test throws away. The fixture is the supported way
+    to speak past it, and it keeps the data inside this file. A
+    `pytest_terminal_summary` hook in `conftest.py` (there is one, for the test
+    roots) would print at the foot of the log instead, but it needs this test to
+    leave the numbers somewhere for the hook to find, in a file every other
+    test shares. What the fixture costs is the block's place: it lands in
+    `-q`'s row of dots, at the moment the test passes, so it opens and closes
+    with a newline.
+
+    A MISSING TABLE OR TEARDOWN LINE IS SAID, AND NEVER FAILS THE RUN: a suite
+    that stopped printing its clock is a regression `gh run view` would
+    otherwise hide for ever, and a timing table is not a reason to turn a green
+    run red. THE CALLER PRINTS ONLY AFTER ITS ASSERTIONS HAVE PASSED, so a
+    failing run says its transcript once, in the assertion message, and not
+    again here.
+
+    THE SAME RULE MAKES THE WRITE ITSELF SAFE. The suite's headings carry em
+    dashes, and a stdout that cannot spell one (`PYTHONIOENCODING=ascii`, a
+    stray `LANG`) would raise `UnicodeEncodeError` from a plain `print`, in a
+    test that had already passed. So the block is cut down to what the stream's
+    own encoding can say, with `\\uXXXX` for the rest, and a stream that cannot
+    be written to at all (an `OSError`) is let go: the numbers are lost and the
+    run is not."""
+    table, teardown = suite_timings(proc.stdout, proc.stderr)
+    block = [f"{SUITE.name} passed; its own clock, which a pass would otherwise "
+             "discard (opensoft/openRepoTools#77):"]
+    block += table or [f"(no timing table: no line of its stdout starts "
+                       f"{TIMING_HEADER!r})"]
+    block += teardown or [f"(no teardown line: no line of its stderr starts "
+                          f"{TEARDOWN_PREFIX!r})"]
+    text = "\n" + "\n".join(block) + "\n"
+    with _past_capture():
+        encoding = getattr(sys.stdout, "encoding", None) or "ascii"
+        text = text.encode(encoding, "backslashreplace").decode(encoding)
+        with contextlib.suppress(OSError):
+            print(text, flush=True)
+
+
 @WINDOWS_SKIP
 @pytest.mark.skipif(shutil.which("bash") is None,
                     reason="the lane helpers and their suite are bash")
@@ -321,3 +438,283 @@ def test_the_lane_helper_suite_passes():
     # The footer, read rather than assumed: a suite that exited 0 having run
     # nothing at all would otherwise pass this.
     assert " passed, 0 failed" in proc.stdout, proc.stdout[-2000:]
+    show_timings(proc)
+
+
+# --- the timings a pass prints (opensoft/openRepoTools#77, step 1b) ---------
+
+#: A STAND-IN FOR THE SUITE, in the shape step 1a gave its output: a heading,
+#: a case, the table of its sections with its rule, the footer, and the
+#: teardown line on stderr after it. `table=False` is a suite that prints no
+#: clock; `failing` is one whose footer counts a failure and which exits 1.
+_STAND_IN = """#!/usr/bin/env bash
+echo "== a heading =="
+echo "ok   a case"
+{table}echo "----"
+echo "{footer}"
+echo "teardown: rm -rf of the sandbox took 3 s" >&2
+exit {status}
+"""
+#: The third row carries an em dash, as the real suite's headings do.
+_STAND_IN_TABLE = """echo 'wall time per section, longest first (whole seconds; opensoft/openRepoTools#77):'
+echo '    12 s   60%  the slow section'
+echo '     8 s   40%  the quick section'
+echo '     0 s    0%  a row with a dash \u2014 in it'
+echo '    20 s  100%  the whole run, from the top of this file to this table'
+"""
+
+#: THE REAL TEST, RUN BY A CHILD PYTEST over this very file, with its own
+#: fixtures and signature, and with the suite it runs swapped for a stand-in by
+#: this plugin. A copy of its body here would prove the copy; and a child and
+#: not this process, because what is under test is what pytest's REAL output
+#: holds, which `capsys` and `capfd` in a test that is itself captured cannot
+#: say.
+_CHILD_PLUGIN = """\
+import os
+from pathlib import Path
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def stand_in_suite(monkeypatch):
+    import test_lane_helpers_suite as wrapper
+    monkeypatch.setattr(wrapper, "SUITE", Path(os.environ["STAND_IN_SUITE"]))
+"""
+
+#: WHAT THE CHILD IS NOT TO INHERIT. Each of these changes how pytest WRITES,
+#: not what it says, and a test that reads its output line by line must not
+#: depend on which of them the runner set. `CI` and `BUILD_NUMBER` make pytest
+#: print a whole failure message in its short summary where it prints the first
+#: line elsewhere; `NO_COLOR` and `FORCE_COLOR` are two of the four things that
+#: decide whether it colours. The fourth is the terminal, which a pipe is not,
+#: and the first, `PY_COLORS`, is read before the rest, so it is SET to "0"
+#: below rather than only removed: a runner that exports `FORCE_COLOR=1` and a
+#: `PY_COLORS=1` ends every `E` line in an escape sequence, and `lines_ending`
+#: then counts nothing.
+_CHILD_NOT_INHERITED = ("PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_CURRENT_TEST",
+                        "CI", "BUILD_NUMBER", "NO_COLOR", "FORCE_COLOR")
+
+_REAL_TEST = "test_the_lane_helper_suite_passes"
+
+
+def run_wrapper_over(tmp_path, *, table=True, failing=False, inherited=None,
+                     env_extra=None, args=(), tests=(_REAL_TEST,)):
+    """Run the wrapper's own test, as `pytest tests -q` runs it, over a
+    stand-in suite. Returns the child's process and its output as lines.
+
+    `inherited` is what the CHILD'S PARENT is imagined to have set, which the
+    child must not see; `env_extra` is what it IS to see; `args` are more
+    pytest options and `tests` the names, in this file, it is to run."""
+    stand_in = tmp_path / "stand-in-suite.sh"
+    stand_in.write_text(_STAND_IN.format(
+        table=_STAND_IN_TABLE if table else "",
+        footer="1 passed, 1 failed, 0 skipped, 0 pending" if failing
+        else "2 passed, 0 failed, 0 skipped, 0 pending",
+        status=1 if failing else 0), encoding="utf-8")
+    (tmp_path / "stand_in_plugin.py").write_text(_CHILD_PLUGIN, encoding="utf-8")
+    env = dict(os.environ, **(inherited or {}))
+    # THE COLOUR TESTS PIN `PY_COLORS="0"`, set below, and the escape-sequence
+    # assertion; these pops only keep a runner's own settings out of the child.
+    for name in _CHILD_NOT_INHERITED:
+        env.pop(name, None)
+    env.update(
+        STAND_IN_SUITE=str(stand_in), PY_COLORS="0", PYTHONDONTWRITEBYTECODE="1",
+        PYTHONPATH=os.pathsep.join(
+            [str(tmp_path), *filter(None, [os.environ.get("PYTHONPATH")])]),
+        **(env_extra or {}))
+    proc = run_in_own_group(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+         "-p", "stand_in_plugin", *args,
+         *(f"{Path(__file__).resolve()}::{name}" for name in tests)],
+        timeout=600, cwd=str(tmp_path), env=env)
+    return proc, (proc.stdout + proc.stderr).splitlines()
+
+
+def lines_ending(lines, text):
+    """How many lines of the output end in `text`: a row of the stand-in's
+    table, whether bare (a pass) or after pytest's `E   ` (a failure's message).
+    A failure's assertion explanation holds the whole `CompletedProcess` as one
+    escaped line, which ends in something else and so is not counted."""
+    return sum(1 for ln in lines if ln.rstrip().endswith(text))
+
+
+@WINDOWS_SKIP
+@pytest.mark.skipif(shutil.which("bash") is None,
+                    reason="the lane helpers and their suite are bash")
+def test_a_passing_suite_shows_its_timings_in_pytests_own_output(tmp_path):
+    proc, lines = run_wrapper_over(tmp_path)
+    assert proc.returncode == 0, "\n".join(lines)
+    assert lines_ending(lines, "the slow section") == 1, "\n".join(lines)
+    assert lines_ending(lines, "the quick section") == 1, "\n".join(lines)
+    assert lines_ending(lines, "to this table") == 1, "\n".join(lines)
+    assert lines_ending(lines, "teardown: rm -rf of the sandbox took 3 s") == 1, (
+        "\n".join(lines))
+    assert lines_ending(lines, "opensoft/openRepoTools#77):") == 2, (
+        "the table's own header and the lead line over it, once each:\n"
+        + "\n".join(lines))
+    # What the suite printed that is NOT its clock stays out of a green log.
+    assert lines_ending(lines, "ok   a case") == 0, "\n".join(lines)
+
+
+#: What a runner may have set that the child is not to see: the colour
+#: variables and `CI`, alone and together.
+_RUNNER_SETS = [
+    pytest.param({"FORCE_COLOR": "1"}, id="FORCE_COLOR=1"),
+    pytest.param({"PY_COLORS": "1"}, id="PY_COLORS=1"),
+    pytest.param({"CI": "true"}, id="CI=true"),
+    pytest.param({"CI": "true", "FORCE_COLOR": "1"}, id="CI=true+FORCE_COLOR=1"),
+    pytest.param({"BUILD_NUMBER": "7"}, id="BUILD_NUMBER=7"),
+    pytest.param({}, id="nothing"),
+]
+
+
+@WINDOWS_SKIP
+@pytest.mark.skipif(shutil.which("bash") is None,
+                    reason="the lane helpers and their suite are bash")
+@pytest.mark.parametrize("inherited", _RUNNER_SETS)
+def test_a_failing_suite_prints_no_timings_block_beside_its_transcript(
+        tmp_path, inherited):
+    proc, lines = run_wrapper_over(tmp_path, failing=True, inherited=inherited)
+    assert proc.returncode != 0, "\n".join(lines)
+    # The child's output is the same whatever the runner set: no escape
+    # sequence ends a row (the lines below are counted by how they END), and
+    # the same message is printed the same number of times.
+    assert not any("\x1b[" in ln for ln in lines), (
+        "the child coloured its output:\n" + "\n".join(lines))
+    # The transcript is in the assertion message, and that it is THERE is all
+    # that is counted: how many times pytest repeats the message is not this
+    # file's to pin.
+    assert lines_ending(lines, "the slow section") >= 1, "\n".join(lines)
+    assert lines_ending(lines, "teardown: rm -rf of the sandbox took 3 s") >= 1, (
+        "\n".join(lines))
+    # What is pinned is that the wrapper said nothing of its own: every block
+    # `show_timings` prints opens with its lead line, which names the run a
+    # PASS.
+    assert not any("its own clock" in ln for ln in lines), (
+        "a failing run printed the passing run's lead line:\n" + "\n".join(lines))
+
+
+@WINDOWS_SKIP
+@pytest.mark.skipif(shutil.which("bash") is None,
+                    reason="the lane helpers and their suite are bash")
+def test_a_passing_suite_that_printed_no_clock_is_said_to_have_none(tmp_path):
+    proc, lines = run_wrapper_over(tmp_path, table=False)
+    assert proc.returncode == 0, "\n".join(lines)
+    assert any(ln.startswith("(no timing table: ") for ln in lines), "\n".join(lines)
+
+
+@WINDOWS_SKIP
+@pytest.mark.skipif(shutil.which("bash") is None,
+                    reason="the lane helpers and their suite are bash")
+def test_a_stdout_that_cannot_spell_the_table_does_not_fail_a_pass(tmp_path):
+    """The real suite's headings carry em dashes. On an ASCII stdout the block
+    is written with `\\uXXXX` in their place, and the run stays green."""
+    proc, lines = run_wrapper_over(tmp_path, env_extra={"PYTHONIOENCODING": "ascii"})
+    assert proc.returncode == 0, "\n".join(lines)
+    assert any(ln.endswith("a row with a dash \\u2014 in it") for ln in lines), (
+        "\n".join(lines))
+    assert not any("UnicodeEncodeError" in ln for ln in lines), "\n".join(lines)
+
+
+def test_a_stream_that_cannot_be_written_to_does_not_fail_a_pass(monkeypatch):
+    """`show_timings` lets an `OSError` from its write go (a full disk, a pipe
+    nobody reads): the numbers are lost and the run is not. NOTHING ELSE IN THIS
+    FILE REACHES THAT `suppress`, and with it removed every other test here
+    still passes, so this one writes into a stream that raises ENOSPC and asks
+    that the write was ATTEMPTED and that the call RETURNED.
+
+    The stream is put where `sys.stdout` is by a stand-in for `capsys.disabled()`
+    (the autouse fixture's own would hand the real stdout back), and only for the
+    write, so nothing is left behind for the fixtures that tear down after this
+    test."""
+    class Unwritable:
+        encoding = "utf-8"
+        attempts = 0
+
+        def write(self, text):
+            Unwritable.attempts += 1
+            raise OSError(28, "No space left on device")
+
+        def flush(self):
+            raise OSError(28, "No space left on device")
+
+    @contextlib.contextmanager
+    def unwritable_stdout():
+        with contextlib.redirect_stdout(Unwritable()):
+            yield
+
+    monkeypatch.setitem(globals(), "_past_capture", unwritable_stdout)
+    show_timings(subprocess.CompletedProcess(
+        ["bash", "suite.sh"], 0,
+        stdout=f"{TIMING_HEADER} (whole seconds):\n     3 s  100%  the whole run\n",
+        stderr="teardown: rm -rf of the sandbox took 0 s\n"))
+    assert Unwritable.attempts >= 1, (
+        "the block was never written to the stream, so nothing was tested")
+
+
+@WINDOWS_SKIP
+@pytest.mark.skipif(shutil.which("bash") is None,
+                    reason="the lane helpers and their suite are bash")
+def test_a_run_without_pytests_capture_plugin_still_runs_and_shows_the_block(tmp_path):
+    """`-p no:capture` removes the `capsys` fixture. The fixture that asks for
+    it must not turn every test in this file into an ERROR (here the real test
+    and a pure one, both of them this file's), and with nothing capturing, the
+    block is on the output as it is."""
+    proc, lines = run_wrapper_over(
+        tmp_path, args=("-p", "no:capture"),
+        tests=(_REAL_TEST,
+               "test_the_timings_are_the_table_and_the_teardown_line_and_nothing_else"))
+    assert proc.returncode == 0, "\n".join(lines)
+    assert not any("capsys" in ln for ln in lines), "\n".join(lines)
+    assert any("2 passed" in ln for ln in lines), "\n".join(lines)
+    assert lines_ending(lines, "the slow section") == 1, "\n".join(lines)
+
+
+def test_the_timings_are_the_table_and_the_teardown_line_and_nothing_else():
+    stdout = ("== a heading ==\nok   a case\n"
+              "wall time per section, longest first (whole seconds; x):\n"
+              "    12 s   60%  the slow section\n"
+              "    20 s  100%  the whole run\n"
+              "----\n"
+              "2 passed, 0 failed, 0 skipped, 0 pending\n")
+    stderr = ("a note\nteardown: rm -rf of the sandbox took 3 s\n"
+              "teardown: rm -rf of the sandbox FAILED after 4 s, so part of it is left\n")
+    table, teardown = suite_timings(stdout, stderr)
+    assert table == [
+        "wall time per section, longest first (whole seconds; x):",
+        "    12 s   60%  the slow section",
+        "    20 s  100%  the whole run"]
+    assert teardown == [
+        "teardown: rm -rf of the sandbox took 3 s",
+        "teardown: rm -rf of the sandbox FAILED after 4 s, so part of it is left"]
+    assert suite_timings("no table here\n", "") == ([], [])
+
+
+def test_a_row_of_negative_seconds_does_not_end_the_table():
+    """bash's `SECONDS` can step backwards, and the suite prints the difference
+    as it is: `    -9 s  -300%  <heading>`."""
+    stdout = ("wall time per section, longest first (whole seconds; x):\n"
+              "    12 s  400%  the slow section\n"
+              "    -9 s -300%  a section the clock stepped back over\n"
+              "     0 s    0%  (preamble, before the first heading)\n"
+              "     3 s  100%  the whole run, from the top of this file to this table\n"
+              "----\n"
+              "2 passed, 0 failed, 0 skipped, 0 pending\n")
+    table, _ = suite_timings(stdout, "")
+    assert len(table) == 5, table
+    assert table[-1].endswith("to this table"), table
+
+
+def test_the_wrapper_looks_for_what_the_suite_prints():
+    """The strings above are copies, and a copy nobody holds to its original
+    reads as a pass that silently prints nothing. Hold them to the suite's
+    own `printf`s: BOTH teardown wordings, because the wrapper takes either by
+    its prefix and rewording only one of them would otherwise go unseen."""
+    text = SUITE.read_text(encoding="utf-8")
+    assert f"printf '{TIMING_HEADER}" in text, "the table's header moved"
+    assert f"printf '{TEARDOWN_PREFIX} took " in text, (
+        "the teardown line's `took` wording moved")
+    assert f"printf '{TEARDOWN_PREFIX} FAILED after " in text, (
+        "the teardown line's `FAILED after` wording moved")
+    assert "'%6s s  %3s%%  %s'" in text, "a row of the table changed shape"

@@ -2036,24 +2036,85 @@ def probe_leg(leg: Leg) -> None:
     """Is a checkout of its own there? An uninitialized leg is an empty
     directory of the assembly's, and git answers the ASSEMBLY there - which is
     no checkout of the leg's. A `.git` of its own that git cannot read is a
-    read that failed, never an absent leg."""
+    read that failed, never an absent leg.
+
+    SO IS A LEG DIRECTORY THIS ACCOUNT CANNOT SEARCH (#255, openRepoShape-2's
+    SHOULD on #246): whether a `.git` stands in it cannot be tested, and
+    `os.path.lexists` answers False for a path it cannot reach exactly as for
+    one that is not there - so the leg read `absent`, counted for nobody, and
+    `lane-end` could end a lane over an unpushed commit in it. The `.git` is
+    asked of `lstat` itself: only "no such file" (or "not a directory") is a
+    leg with no `.git`; any other failure is a read that failed, the same
+    `read_error` - `unreadable`, counted - in the words `lane-handoff` and
+    `lane-reconcile` use for it. A leg directory that is not there at all is
+    still `absent` (`leg.exists`)."""
     if not leg.exists:
         return
     proc = git(leg.path, "rev-parse", "--show-toplevel")
     if proc.returncode == 0 and real(proc.stdout.strip()) == leg.real:
         leg.checkout = True
-    elif os.path.lexists(os.path.join(leg.path, ".git")):
-        leg.read_error = ("it has a .git of its own and git could not read it: "
-                          + (_first_line(proc.stderr) if proc.returncode != 0 else
-                             f"git answers {proc.stdout.strip()} there"))
+        return
+    said = (_first_line(proc.stderr) if proc.returncode != 0 else
+            f"git answers {proc.stdout.strip()} there")
+    try:
+        os.lstat(os.path.join(leg.path, ".git"))
+    except (FileNotFoundError, NotADirectoryError):
+        return
+    except OSError:
+        leg.read_error = ("its directory cannot be searched, so whether it has a .git of its "
+                          "own could not be tested, and git could not read it: " + said)
+        return
+    leg.read_error = "it has a .git of its own and git could not read it: " + said
+
+
+def probe_uninitialized(leg: Leg) -> None:
+    """A dependency `git submodule status` lists as `-`: `read_error` is set
+    where its directory, or one above it, cannot be searched, and `checkout`
+    where it holds a checkout of its own that git can read (#255).
+    `probe_leg` alone cannot see a dependency beneath a directory this
+    account cannot search: `Leg.exists` is `os.path.isdir`, which answers
+    False for a path it cannot reach exactly as for one that is not there, so
+    it would read `absent`. The path is asked of `stat` itself: only "no such
+    file" (or "not a directory") is a dependency that is not there, which sets
+    nothing; any other failure is a read that failed. A directory that is
+    there is `probe_leg`'s: with no search it is unreadable through its
+    `lstat` of the `.git`; holding a checkout git can read - a clone made by
+    hand, which git does not count as initialized - it is a checkout; empty
+    and searchable, it is a dependency never initialized and sets nothing."""
+    try:
+        os.stat(leg.path)
+    except (FileNotFoundError, NotADirectoryError):
+        return
+    except OSError as err:
+        leg.read_error = ("a directory above it cannot be searched, so whether it is there "
+                          f"could not be tested: {err.strerror or err}")
+        return
+    probe_leg(leg)
 
 
 def assembly_checkouts(helper, assembly: str) -> tuple:
     """([Leg], declared, why-not) - every leg `<assembly>/project.yaml`
-    declares, and every dependency nested in one (the initialized submodules
-    `git submodule status --recursive` names in each leg), in that order;
-    `declared` is whether the manifest declares any leg at all, which is what
-    makes `<assembly>/worktrees` the paired root."""
+    declares, and every dependency nested in one (the submodules
+    `git submodule status --recursive` names in each leg: the initialized
+    ones, and a `-` line only as below), in that order; `declared` is whether
+    the manifest declares any leg at all, which is what makes
+    `<assembly>/worktrees` the paired root.
+
+    A DEPENDENCY GIT LISTS AS NOT INITIALIZED (A `-` LINE) IS NOT ALWAYS
+    NOTHING TO READ (#255, lane 3's review). Git lists a dependency whose
+    directory it cannot search - mode 000, or read and no search, or one
+    beneath a directory it cannot search - as `-` too, and exits 0, exactly as
+    for one never initialized. Skipped unread, it got no row, the sweep
+    exited 0, and `lane-end` ended the lane over that dependency's unpushed
+    commit. So a `-` line is probed (`probe_uninitialized`) and gets a row
+    where the probe is a read that failed, or where its directory holds a
+    checkout git can read - a clone made by hand, which git does not count as
+    initialized, and which holds the lane's work all the same: it is read like
+    an initialized one. A directory that is not there, or an empty one that
+    can be searched, is a dependency never initialized and still adds none.
+    The path on a `-` line is the whole of the rest of the line: git prints a
+    describe suffix only on a ` ` or `+` line (`print_status` in
+    builtin/submodule--helper.c), so none is trimmed from it."""
     rows, why = project_legs(helper, assembly)
     if why:
         return [], False, why
@@ -2069,17 +2130,25 @@ def assembly_checkouts(helper, assembly: str) -> tuple:
             return out, True, (f"the dependencies nested in the {decl} leg ({path}) could not be "
                                "listed (git submodule status failed): " + _first_line(sub.stderr))
         for line in sub.stdout.splitlines():
-            if not line.strip() or line.startswith("-"):
-                continue           # declared and not initialized: nothing to read
+            if not line.strip():
+                continue
             parts = line[1:].split(" ", 1)
             if len(parts) < 2:
                 continue
             rel = parts[1]
-            if rel.endswith(")") and " (" in rel:
+            if not line.startswith("-") and rel.endswith(")") and " (" in rel:
                 rel = rel[:rel.rindex(" (")]
             nested = Leg(os.path.normpath(os.path.join(path, rel)), f"{decl}/{rel}", "",
                          assembly, nested_in=decl)
-            probe_leg(nested)
+            if line.startswith("-"):
+                # Declared and not initialized: nothing to read - unless git
+                # could not search its directory, which it lists the same way,
+                # or a checkout of its own stands there (a hand clone).
+                probe_uninitialized(nested)
+                if not (nested.read_error or nested.checkout):
+                    continue
+            else:
+                probe_leg(nested)
             out.append(nested)
     return out, bool(rows), ""
 

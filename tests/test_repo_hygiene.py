@@ -18,10 +18,12 @@ the root it needs, and in the composed run it fails rather than skip.
 
 from __future__ import annotations
 
+import ast
 import os
 import re
 import shutil
 import subprocess
+import sys
 from collections import namedtuple
 from pathlib import Path
 
@@ -2480,10 +2482,88 @@ def test_readme_is_short_enough_to_be_read():
     lockstep-invariant section the leg pins' `resync_runbook:` names
     (`README.md#the-lockstep-invariant`) and the three-repository front door.
     Today's single repository keeps 486.
+
+    486 -> 505 HERE, on 2026-10-18
+    (opensoft/openRepoTools #228, feature 006, T024), for what a workstation
+    with pipx's link reads. Twenty lines, each one a thing a person MEETS: the
+    version paragraph, 3 -> 7 (FR-043), which said "no version number" and
+    now says that a release is an annotated tag, that the version comes only
+    from the tag, and what `--version` prints stamped, unstamped and from a
+    checkout; the one sentence that a workstation uses one install route or
+    the other until workBenches#165 lets its `setup-estate-commands.sh`
+    accept pipx's link, with its blank (FR-047, Brett Heap's decision of this
+    day), 4; the paragraph that says what `--install` does beside that link,
+    with its blank, 7; the sixteen-of-seventeen pointer on the file count and
+    the one-link-skipped sentence in the symlink passage, 1 and 1; and the
+    count invariant's twenty-eight placed, one left to pipx and 28 receipt
+    rows, 3 (FR-044). No pipx install route is added (FR-045). Every dated
+    entry above stays.
+    THE ASSEMBLY'S 510 DOES NOT MOVE HERE, although the 2026-10-08 entry makes
+    it this count plus T006's twenty-four, which would be 529. Its file does
+    not exist yet, and the README part of `assembly-0001` no longer applies to
+    today's README, at three hunks: the one at `README.md:237`, which adds the
+    assembly's install sentence, fails against this entry's own rewrite of the
+    file-count sentence; the one at `README.md:260`, which moves `tests/run.sh`
+    under `code/`, fails against this entry's one-link-skipped sentence in the
+    symlink passage; and the one at `README.md:300`, which does the same for
+    `commands/swap.md`, fails against #237's (#247's) rewrite of the count
+    paragraph. None of the three can be counted at this head, so
+    529 would be arithmetic over a patch that does not apply. The re-cut that
+    makes the assembly's file again sets its cap, as the 2026-10-18 AGENTS.md
+    entry above says for its 347, and `tests/test_test_roots.py` holds 510
+    until then.
     """
     lines = doc("README.md").read_text().splitlines()
-    cap = 486 if ROOTS.assembly is None else 510
+    cap = 505 if ROOTS.assembly is None else 510
     assert len(lines) <= cap, f"README.md is {len(lines)} lines; the cap is {cap}"
+
+
+def test_readme_says_what_a_release_is_and_offers_no_package_route():
+    """What T024 put in README is held here, because the line cap is the only
+    thing that bites otherwise (the review of PR 4 of #228, S2: a README
+    that offered the pipx route, dropped the one-route sentence, took back
+    "no version number" or counted 17 of 17 beside pipx's link, each stayed
+    green).
+
+    SC-009 and FR-045: README names no package route. No line holds `pipx
+    install` or `pip install` before `openrepotools` in any spelling of the
+    name, which is the check T024's own verify makes once, and makes only for
+    the lower-case `pipx install openrepotools`. FR-047: the install section
+    cites opensoft/workBenches#165. FR-043: the version paragraph holds the
+    three first lines `--version` prints, stamped, unstamped and from a
+    checkout, spelled as `contracts/cli-output.md` gives them. FR-044: the
+    count line beside pipx's link and the count invariant's receipt rows.
+
+    FR-045's later PR (the change's tasks.md 6.4) rewrites this test: it adds
+    the pipx route, so the first assertion goes with it, and the other three
+    follow the text it moves."""
+    text = doc("README.md").read_text(encoding="utf-8")
+
+    route = re.compile(r"(?i)\bpipx?\s+install\b.*\bopenrepotools\b")
+    offered = [line for line in text.splitlines() if route.search(line)]
+    assert not offered, (
+        "README.md offers a package route, which FR-045 and SC-009 forbid "
+        f"until the workBenches condition holds: {offered}")
+
+    install = re.search(r"(?ms)^## Install\n(.*?)(?=^## )", text)
+    assert install, "README.md has no `## Install` section"
+    assert "opensoft/workBenches#165" in install.group(1), (
+        "README.md's install section does not cite opensoft/workBenches#165, "
+        "which FR-047 requires beside the one-route sentence")
+
+    stamped = "openRepoTools <version> (<repository> @ <commit>)"
+    paragraphs = [" ".join(p.split()) for p in re.split(r"\n\s*\n", text)]
+    version = [p for p in paragraphs if stamped in p]
+    assert version, f"README.md has no paragraph holding `{stamped}`"
+    for first_line in (stamped, "openRepoTools 0.0.0 (an unstamped package)",
+                       "openRepoTools (<repo> @ <ref>)"):
+        assert first_line in version[0], (
+            f"README.md's version paragraph does not hold `{first_line}`")
+
+    for count in ("16 of 17 placed in <dir>, and 1 left to pipx",
+                  "28 receipt rows"):
+        assert count in text, (
+            f"README.md does not say `{count}` beside pipx's link (FR-044)")
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
@@ -3693,11 +3773,105 @@ def test_every_shipped_bash_file_is_tracked_with_lf():
         assert "i/lf" in row, f"not LF in the index:\n    {row}"
 
 
+def package_modules() -> list:
+    """Every `.py` file under `src/openrepotools/`, the code root's own: the
+    modules the `openrepotools` wheel ships (opensoft/openRepoTools#228). A
+    subdirectory is searched too, so a module cannot hide one level down, and
+    an empty answer is a failure rather than a pass with nothing read."""
+    modules = sorted((REPO / "src" / "openrepotools").rglob("*.py"))
+    assert modules, "no module under src/openrepotools/: package missing"
+    return modules
+
+
+#: THE MODULES THE PACKAGE MAY IMPORT, AND WHY (FR-005, opensoft/openRepoTools
+#: #228), by top-level name. This is the allowlist, and it is explicit rather
+#: than "whatever `sys.stdlib_module_names` holds": it admits exactly what the
+#: entry module needs, which design.md Decision 3 spells out — `cli.main()` is
+#: `os.execvp("bash", ["bash", <payload>/openRepoTools, *sys.argv[1:]])`, with
+#: SIGPIPE and SIGXFSZ set back to `SIG_DFL` first (the lead's amendment of
+#: 2026-10-18), and, on `FileNotFoundError` or `NotADirectoryError`, a refusal
+#: on stderr and exit 2. `__init__.py` holds a docstring and `_release.py` the
+#: five stamp lines, so neither imports anything. Nothing else is here on
+#: purpose: `pathlib`, `subprocess`, `importlib` and the package's own name
+#: are all absent, because the entry module reads no stamp, runs no child and
+#: passes bash nothing but the person's arguments; `__future__` is absent
+#: because nothing in Decision 3's module needs an annotation postponed on
+#: Python 3.9. A module that needs another name takes an edit here, with its
+#: reason beside it.
+PACKAGE_IMPORT_ALLOWLIST = {
+    "os": ("os.execvp replaces the process with the first bash on PATH, so "
+           "signals, the EXIT trap and the exit status pass through; the "
+           "payload directory beside the module's own file is found from "
+           "its __file__ with os.path"),
+    "signal": ("Python starts with SIGPIPE and SIGXFSZ ignored, an exec keeps "
+               "an ignored disposition, and a non-interactive bash cannot "
+               "reset one ignored on entry, so signal.signal sets both back "
+               "to SIG_DFL just before the exec, as subprocess's "
+               "restore_signals does (design.md Decision 3, amended "
+               "2026-10-18; FR-003)"),
+    "sys": ("sys.argv[1:] is the person's arguments, passed on unchanged; "
+            "sys.stderr carries the no-bash refusal that precedes its "
+            "exit 2"),
+}
+
+
+def test_the_package_imports_only_the_standard_library():
+    """FR-005: the `openrepotools` wheel declares `dependencies = []`, so a
+    module under `src/openrepotools/` that imports a third-party name is a
+    console script that dies with `ModuleNotFoundError` on a clean pipx
+    install, before anything of ours can say why.
+
+    The rule is the allowlist above, held to the syntax tree: every `import`
+    and `from … import` at ANY depth of every module (`ast.walk`, so one inside
+    a function or a `try` counts), by the top-level name, with a relative
+    import refused as a name of its own. `__import__()` is refused too, since
+    it names a module the tree walk would never see. Where this Python has
+    `sys.stdlib_module_names` (3.10 and up), the allowlist itself must be
+    standard-library names, so nobody makes the rule pass by adding `yaml` to
+    it. On 3.9, which the package supports and has no such set, that one check
+    is not made and NOTHING SKIPS: the explicit allowlist alone decides.
+    """
+    stdlib = getattr(sys, "stdlib_module_names", None)
+    if stdlib is not None:
+        outside = sorted(set(PACKAGE_IMPORT_ALLOWLIST) - set(stdlib))
+        assert not outside, (
+            "PACKAGE_IMPORT_ALLOWLIST holds names that are not in the "
+            "standard library of this Python (sys.stdlib_module_names): "
+            + ", ".join(outside))
+    problems = []
+    for path in package_modules():
+        label = path.relative_to(REPO).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=label)
+        for node in ast.walk(tree):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = ["." * node.level + (node.module or "")]
+            elif (isinstance(node, ast.Call)
+                  and isinstance(node.func, ast.Name)
+                  and node.func.id == "__import__"):
+                problems.append(
+                    f"{label}:{node.lineno}: __import__() loads a module by "
+                    "a name this rule cannot read; write an import")
+            for name in names:
+                top = name.split(".")[0]
+                if top not in PACKAGE_IMPORT_ALLOWLIST:
+                    note = " (a relative import)" if top == "" else ""
+                    problems.append(
+                        f"{label}:{node.lineno}: imports {name!r}{note}, "
+                        "which is not on PACKAGE_IMPORT_ALLOWLIST (allowed: "
+                        + ", ".join(sorted(PACKAGE_IMPORT_ALLOWLIST)) + ")")
+    assert not problems, (
+        "the package's modules may import only the standard library "
+        "(FR-005, dependencies = []):\n    " + "\n    ".join(problems))
+
+
 def test_the_python_files_compile():
-    """The suite is the Python here, bar two shipped commands named below, and a
-    file that does not parse is a file that fails as a collection ERROR rather
-    than as a test — which reads as the suite being broken instead of as one
-    file being wrong.
+    """The suite is the Python here, bar two shipped commands and the package's
+    modules named below, and a file that does not parse is a file that fails as
+    a collection ERROR rather than as a test — which reads as the suite being
+    broken instead of as one file being wrong.
 
     `compile()` rather than `py_compile`: nothing is written anywhere, so this
     runs in a read-only checkout and leaves no `__pycache__` behind.
@@ -3707,8 +3881,16 @@ def test_the_python_files_compile():
     text is compiled the same way — a syntax error there is a command that
     fails on every workstation's first sync. opensoft/openRepoTools#162 put
     `lane-worktrees` beside it, for the same reason.
+
+    opensoft/openRepoTools#228: `src/openrepotools/*.py` is the `openrepotools`
+    package, which the wheel ships and whose console script runs on every
+    pipx install, so a syntax error in one of its modules is a command that
+    fails on every workstation the release reaches. `package_modules()` is the
+    set the standard-library rule above reads, so the two cover the same files.
     """
     for path in sorted((REPO / "tests").glob("*.py")):
+        compile(path.read_text(encoding="utf-8"), str(path), "exec")
+    for path in package_modules():
         compile(path.read_text(encoding="utf-8"), str(path), "exec")
     for name in ("lanes-index", "lane-worktrees"):
         command = REPO / name

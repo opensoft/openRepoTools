@@ -321,9 +321,10 @@ def test_no_argument_at_all_prints_the_usage_and_exits_zero():
 
 
 def test_version_names_the_repository_and_the_ref():
-    """There is no version number here, for openRepoShape's reason: the
-    identity is a commit. So the honest answer to `--version` is WHICH BYTES it
-    will fetch — repo and ref."""
+    """A checkout and the one-line install name the repository and the ref
+    they fetch from: the honest answer to `--version` there is WHICH BYTES it
+    will fetch. A package names its release instead, from its own stamp, and
+    no `OPENREPOTOOLS_PACKAGE_*` variable changes what a checkout prints."""
     result = run_cmd("--version")
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "openRepoTools (opensoft/openRepoTools @ main)"

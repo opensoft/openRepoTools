@@ -544,6 +544,221 @@ pin_parse() {   # <file> — the PIN_* fields and 0, or PIN_WHY and 1
 	return 0
 }
 
+# --- the release stamp's fixed grammar ----------------------------------------
+#
+# `openrepotools/_release.py`, beside a package's payload (opensoft/openRepoTools
+# #228; `specs/006-release-pypi/contracts/stamp.md` is the grammar and the
+# refusal table, design.md Decision 5 the reason). BASH IS ITS ONE READER AT RUN
+# TIME: the entry module reads nothing, so Python and bash can never disagree
+# about a stamp. It is read by the rules below and NEVER SOURCED, IMPORTED OR
+# RUN, because its docstring is free text and a `$(…)` in it is only text.
+#
+# EACH REASON IS ONE LINE THAT BEGINS WITH ITS CAUSE, `cannot be read (…)`,
+# `is partial: …` or `is malformed: …`, so that `package_init`'s refusal reads
+# as a sentence around it. Nothing here prints, on either stream: that refusal
+# is the one line a broken stamp gets. And a refused stamp sets none of the
+# five values, because a stamp is all or nothing (FR-010) and is never read as
+# the part it holds. The five, the state and the reason are set here, so that
+# nothing in the environment can set them.
+
+STAMP_STATE=""   # unstamped | stamped, once `stamp_read` has accepted a stamp
+STAMP_VERSION="" STAMP_TAG="" STAMP_COMMIT="" STAMP_DIGEST="" STAMP_REPOSITORY=""
+STAMP_WHY=""     # why `stamp_read` refused, one line
+#: THE THREE LETTERS HATCH'S `(?i)` FOLDS ONTO ONE OF `version`'s, beyond ASCII's
+#: own capitals: U+017F onto `s`, and U+0130 and U+0131 onto `i`. They are every
+#: such letter, counted with Python's `re` over the whole of Unicode. Written as
+#: their UTF-8 bytes, so the guard folds them in any locale.
+STAMP_FOLD_S="$(printf '\305\277')"
+STAMP_FOLD_I_DOT="$(printf '\304\260')"
+STAMP_FOLD_I_DOTLESS="$(printf '\304\261')"
+
+stamp_number() {   # <text> — 0 for a decimal number with no leading zero
+	case "$1" in '' | *[!0123456789]* | 0?*) return 1 ;; esac
+	return 0
+}
+
+#: `X.Y.Z` or `X.Y.ZrcN`, each number with no leading zero: contracts/stamp.md's
+#: pattern, by `case` and parameter expansion. Not `=~`, whose quoting bash 3.2
+#: reads differently from bash 4, and whose `[0-9]` is a range.
+stamp_version_ok() {   # <version>
+	local v="$1" rest="" z=""
+	case "$v" in
+	*rc*)
+		stamp_number "${v##*rc}" || return 1
+		v="${v%rc*}"
+		;;
+	esac
+	rest="${v#*.}"
+	[ "$rest" != "$v" ] && stamp_number "${v%%.*}" || return 1
+	z="${rest#*.}"
+	[ "$z" != "$rest" ] && stamp_number "${rest%%.*}" && stamp_number "$z"
+}
+
+#: THE DOCSTRING GUARD (rule 3): a line that begins, in any case, with `version`
+#: or `__version__`, then optional spaces and `=`. Hatch's version source takes
+#: the first line ANYWHERE in the file that its pattern matches, docstring or
+#: not, so such a line would give the wheel one version and `--version`
+#: another. "Any case" is hatch's own, so the three letters it folds are folded
+#: here first; the guard is wider than hatch's pattern, which also wants a quote.
+stamp_hatch_reads() {   # <docstring line> — 0 when hatch could read it as the version
+	local s="$1"
+	s=${s//$STAMP_FOLD_S/s}
+	s=${s//$STAMP_FOLD_I_DOT/i}
+	s=${s//$STAMP_FOLD_I_DOTLESS/i}
+	case "$s" in
+	[Vv][Ee][Rr][Ss][Ii][Oo][Nn]*) s="${s#???????}" ;;
+	__[Vv][Ee][Rr][Ss][Ii][Oo][Nn]__*) s="${s#???????????}" ;;
+	*) return 1 ;;
+	esac
+	while :; do case "$s" in ' '*) s="${s#?}" ;; *) break ;; esac; done
+	case "$s" in '='*) return 0 ;; esac
+	return 1
+}
+
+stamp_names() {   # <name>… — them in prose with their verb: `A is`, `A and B are`, `A, B and C are`
+	local out="${1-}" verb=is
+	shift || :
+	while [ $# -gt 0 ]; do
+		verb=are
+		if [ $# -eq 1 ]; then out="$out and $1"; else out="$out, $1"; fi
+		shift
+	done
+	printf '%s %s\n' "$out" "$verb"
+}
+
+#: contracts/stamp.md's rules 1 to 5, line by line, then the checks after the
+#: read. `pin_parse`'s shape: each refusal returns at once with its reason, and
+#: the five values are copied out only once the whole file has passed.
+stamp_read() {   # <file> — STAMP_STATE, the five STAMP_* values and 0, or STAMP_WHY and 1
+	local line="" rest="" name="" value="" n=0 doc=none doc_line=0 guarded=0
+	local seen=" " field="" ref="" missing="" set_names="" partial=""
+	local f_VERSION="" f_TAG="" f_COMMIT="" f_DIGEST="" f_REPOSITORY=""
+	local tq='"""' sep=' = "' dq='"'
+	local shape='is not NAME = "VALUE" in column 0, with one space either side of ='
+	STAMP_STATE="" STAMP_VERSION="" STAMP_TAG="" STAMP_COMMIT="" STAMP_DIGEST=""
+	STAMP_REPOSITORY="" STAMP_WHY=""
+	# A FILE THAT CANNOT BE READ is said before any read is tried. A directory
+	# opens on Linux and fails at its first `read`, with bash's own line on
+	# stderr; a FIFO would wait for ever.
+	if [ -d "$1" ]; then
+		STAMP_WHY="cannot be read (it is a directory)"; return 1
+	elif [ ! -e "$1" ]; then
+		STAMP_WHY="cannot be read (there is no such file)"; return 1
+	elif [ ! -f "$1" ]; then
+		STAMP_WHY="cannot be read (it is not a regular file)"; return 1
+	elif [ ! -r "$1" ]; then
+		STAMP_WHY="cannot be read (it is not readable by this user)"; return 1
+	fi
+	while IFS= read -r line || [ -n "$line" ]; do
+		n=$((n + 1))
+		# RULE 1, BEFORE EVERY OTHER: on a `#` line and in the docstring too.
+		case "$line" in *"$ORT_CR"*) STAMP_WHY="is malformed: line $n has a carriage return"; return 1 ;; esac
+		# RULE 3, INSIDE THE DOCSTRING: every line is skipped. The first that
+		# hatch could read as the version is held until the docstring closes,
+		# so that one which never closes is refused as that, and not as one of
+		# the assignments it swallowed.
+		if [ "$doc" = open ]; then
+			if [ "$guarded" -eq 0 ] && stamp_hatch_reads "$line"; then guarded=$n; fi
+			case "$line" in *"$tq"*) doc=closed ;; esac
+			if [ "$doc" = closed ] && [ "$guarded" -ne 0 ]; then
+				STAMP_WHY="is malformed: line $guarded, in the docstring, would be read by hatch as the version"
+				return 1
+			fi
+			continue
+		fi
+		# RULE 2: a blank line, or a `#` in column 0, before the docstring as
+		# well as after it.
+		case "$line" in '#'*) continue ;; esac
+		rest="$line"
+		while :; do case "$rest" in ' '* | "$ORT_TAB"*) rest="${rest#?}" ;; *) break ;; esac; done
+		[ -n "$rest" ] || continue
+		# RULE 3, ITS OPENING: the one line beginning `"""` before any
+		# assignment. It closes on that line when a second `"""` follows.
+		case "$line" in
+		"$tq"*)
+			if [ "$doc" = none ] && [ "$seen" = " " ]; then
+				doc=open doc_line=$n
+				case "${line#"$tq"}" in *"$tq"*) doc=closed ;; esac
+				continue
+			fi
+			;;
+		esac
+		# RULE 4: `NAME = "VALUE"` and nothing else, NAME one of the five and
+		# VALUE free of `"`, `\` and `$`.
+		case "$line" in
+		*"$sep"*"$dq") ;;
+		*) STAMP_WHY="is malformed: line $n $shape"; return 1 ;;
+		esac
+		name="${line%%"$sep"*}"
+		value="${line#*"$sep"}"
+		value="${value%"$dq"}"
+		case "$name" in
+		VERSION | TAG | COMMIT | DIGEST | REPOSITORY) ;;
+		'' | [0123456789]* | *[!${ORT_ALNUM}_]*) STAMP_WHY="is malformed: line $n $shape"; return 1 ;;
+		*) STAMP_WHY="is malformed: line $n assigns $name, which is not one of the stamp's five names"; return 1 ;;
+		esac
+		case "$value" in
+		*"$dq"* | *\\* | *'$'*)
+			STAMP_WHY="is malformed: line $n has a quote, a backslash or a dollar sign in its value"; return 1 ;;
+		esac
+		# RULE 5: each of the five exactly once.
+		case "$seen" in *" $name "*) STAMP_WHY="is malformed: $name is assigned twice, the second time on line $n"; return 1 ;; esac
+		seen="$seen$name "
+		case "$name" in
+		VERSION) f_VERSION="$value" ;;
+		TAG) f_TAG="$value" ;;
+		COMMIT) f_COMMIT="$value" ;;
+		DIGEST) f_DIGEST="$value" ;;
+		REPOSITORY) f_REPOSITORY="$value" ;;
+		esac
+	done 2>/dev/null <"$1" || { STAMP_WHY="cannot be read (it could not be opened)"; return 1; }
+	if [ "$doc" = open ]; then
+		STAMP_WHY="is malformed: the docstring opened on line $doc_line never closes"; return 1
+	fi
+	for field in VERSION TAG COMMIT DIGEST REPOSITORY; do
+		case "$seen" in *" $field "*) ;; *) missing="$missing $field" ;; esac
+	done
+	if [ -n "$missing" ]; then
+		STAMP_WHY="is malformed: $(stamp_names $missing) missing"; return 1
+	fi
+	# UNSTAMPED is TAG, COMMIT and DIGEST all empty, and then VERSION is 0.0.0
+	# and REPOSITORY is empty: a REPOSITORY with no commit names nothing.
+	if [ -z "$f_TAG$f_COMMIT$f_DIGEST" ]; then
+		[ "$f_VERSION" = 0.0.0 ] || partial="VERSION is ${f_VERSION:-empty} rather than 0.0.0"
+		[ -z "$f_REPOSITORY" ] || partial="${partial:+$partial and }REPOSITORY is $f_REPOSITORY"
+		if [ -n "$partial" ]; then
+			STAMP_WHY="is partial: $partial, but TAG, COMMIT and DIGEST are empty"; return 1
+		fi
+		STAMP_STATE=unstamped
+	else
+		# STAMPED is everything else, and then every field is set and has the
+		# one shape its rule gives it.
+		for field in VERSION TAG COMMIT DIGEST REPOSITORY; do
+			ref="f_$field"
+			if [ -n "${!ref}" ]; then set_names="$set_names $field"; else missing="$missing $field"; fi
+		done
+		if [ -n "$missing" ]; then
+			STAMP_WHY="is partial: $(stamp_names $set_names) set, but $(stamp_names $missing) empty"; return 1
+		fi
+		if [ "$f_VERSION" = 0.0.0 ]; then
+			STAMP_WHY="is malformed: VERSION is 0.0.0, the unstamped version, and TAG, COMMIT and DIGEST are set"; return 1
+		fi
+		stamp_version_ok "$f_VERSION" ||
+			{ STAMP_WHY="is malformed: VERSION is $f_VERSION, not X.Y.Z or X.Y.ZrcN with no leading zeros"; return 1; }
+		[ "$f_TAG" = "v$f_VERSION" ] || { STAMP_WHY="is malformed: TAG is $f_TAG, not v$f_VERSION"; return 1; }
+		is_lower_hex 40 "$f_COMMIT" ||
+			{ STAMP_WHY="is malformed: COMMIT is $f_COMMIT, not 40 lowercase hex digits"; return 1; }
+		is_lower_hex 64 "$f_DIGEST" ||
+			{ STAMP_WHY="is malformed: DIGEST is $f_DIGEST, not 64 lowercase hex digits"; return 1; }
+		is_slug "$f_REPOSITORY" ||
+			{ STAMP_WHY="is malformed: REPOSITORY is $f_REPOSITORY, not an owner/name repository"; return 1; }
+		STAMP_STATE=stamped
+	fi
+	STAMP_VERSION="$f_VERSION" STAMP_TAG="$f_TAG" STAMP_COMMIT="$f_COMMIT"
+	STAMP_DIGEST="$f_DIGEST" STAMP_REPOSITORY="$f_REPOSITORY"
+	return 0
+}
+
 # --- one round trip, `gh` first and the API by `curl` second ------------------
 #
 # The same order as `fetch_from_repo`, for the same reason, and for the same
@@ -1885,6 +2100,13 @@ install_commands() {
 	for name in "${INSTALLABLES[@]}"; do
 		source="$STAGED/$name"
 		target="$dir/$name"
+		# PIPX'S LINK IS LEFT TO PIPX (#228, FR-016), as `plan_install_targets`
+		# decided: nothing is placed over it or through it, it is not counted,
+		# and its line says what updates it.
+		if [ -n "$PIPX_LINK" ] && [ "$target" = "$PIPX_LINK" ]; then
+			say "openRepoTools: left to pipx at $PIPX_LINK (a link into pipx's openrepotools environment); update it with \`pipx upgrade openrepotools\`, then run \`openRepoTools --install\` again"
+			continue
+		fi
 		if [ -e "$target" ] && cmp -s "$source" "$target"; then
 			# THE BYTES WERE RIGHT, WHICH IS NOT THE SAME AS NOTHING TO DO
 			# (#40, finding 2). The `chmod` below has always run on this arm
@@ -1932,7 +2154,20 @@ install_commands() {
 	done
 	# THE COUNT, out loud: a person reading eight lines cannot tell whether a
 	# ninth was meant to be there.
-	say "openRepoTools: $placed of ${#INSTALLABLES[@]} placed in $dir"
+	if [ -z "$PIPX_LINK" ]; then
+		say "openRepoTools: $placed of ${#INSTALLABLES[@]} placed in $dir"
+	elif pipx_own_run; then
+		# BESIDE PIPX'S LINK the count says where the missing one is
+		# (contracts/cli-output.md), and from pipx's own environment that is
+		# all it says.
+		say "openRepoTools: $placed of ${#INSTALLABLES[@]} placed in $dir, and 1 left to pipx"
+	else
+		# ANY OTHER RUN BESIDE IT — a checkout's, the one-line install's, a
+		# package outside pipx's venv — also says where the other sixteen now
+		# come from and which release is beside the link (research R5,
+		# FR-019): `install_source` and `pipx_release` say why each is spelt so.
+		say "openRepoTools: $placed of ${#INSTALLABLES[@]} placed in $dir, and 1 left to pipx; the other $placed now come from $(install_source), not from $(pipx_release)"
+	fi
 	# THE RETIREMENT IS THE LAST ACT OF THE INSTALL, AFTER EVERY PLACEMENT
 	# (Copilot round 7 on #45, `openRepoTools:369`). It is the one DESTRUCTIVE
 	# step here, and it ran before `place_skill_and_hook` — so a skill directory
@@ -1959,6 +2194,9 @@ install_commands() {
 		;;
 	esac
 	venv_note
+	# AND LAST, IN A PACKAGE: whether the `openRepoTools` a shell will run is
+	# this package's (FR-021). It changes nothing and leaves the exit status.
+	path_report
 }
 
 # ONE VIRTUAL ENVIRONMENT PER REPOSITORY, OUTSIDE THE ESTATE
@@ -2529,9 +2767,291 @@ unusable_dir_kind() {   # <directory>
 	return 1
 }
 
+# ------------------------------------------------------------- PIPX'S LINK
+#
+# opensoft/openRepoTools#228, User Story 1: `specs/006-release-pypi/contracts/
+# pipx-link.md` is the rule and `contracts/cli-output.md` the exact lines (the
+# change's design.md Decision 6). `pipx install openrepotools` places ONE
+# command, `<dir>/openRepoTools`, as a symbolic link into its own venv, and that
+# link may be the only `openRepoTools` on the workstation that can run
+# `--install` at all. So it is the one link `--install` LEAVES WHERE IT IS: it
+# is skipped, said out loud, counted as left to pipx, and given no receipt row
+# (`receipt_add` writes none for a link); no refusal lists it and no line ever
+# advises its `rm`. `retire_commands` never meets it, because `RETIRED` does not
+# hold `openRepoTools`.
+#
+# IT IS DECIDED FROM PATHS AND THE EXISTENCE OF FILES, AND FROM NOTHING ELSE. No
+# JSON is parsed, so it needs no `jq` and is decided before the `jq` check,
+# which stays where it is (FR-018); `PIPX_HOME` is never read, so it holds under
+# every home pipx uses — `$PIPX_HOME`, `~/.local/pipx`, `~/.local/share/pipx`
+# and macOS's `~/Library/Application Support/pipx`, whose SPACE is why every
+# expansion here is quoted. And it holds in every mode: the package's own
+# `--install`, a checkout's and the one-line install's.
+#
+# A LINK THAT LOOKS LIKE A VENV AND FAILS THE RULE — a later pipx layout, or a
+# `pip install` into a plain venv — is still refused, because it is not provably
+# pipx's. It is named for what it is, and NO `rm` IS PRINTED FOR IT: removing it
+# may remove the only command that can run `--install` (ADV3, SC-006).
+
+PIPX_LINK=""      # <dir>/openRepoTools, once it is known to be pipx's link
+PIPX_VENV=""      # the canonical venv that link resolves into
+PIPX_PAYLOAD=""   # that venv's canonical lib/python*/site-packages/openrepotools/payload
+
+#: EVERY LINK FOLLOWED, BY PLAIN `readlink`, which prints a link's own value on
+#: Linux, macOS and BSD alike: `readlink -f` is not in a stock macOS userland and
+#: neither is `realpath`. A relative value is joined to the LINK'S OWN directory,
+#: as the kernel reads it. Past 40 hops — a longer chain, or a cycle — it fails,
+#: and such a path is not pipx's link, whatever it ends at. Then the last path's
+#: DIRECTORY is canonicalised with `cd -P` and `pwd -P`, its own name kept, so
+#: the answer is one spelling of one file. `CDPATH` is emptied, because a `cd`
+#: through one prints where it went. Nothing outside it is read, because the PATH
+#: report reuses it and the suite cuts it out to run alone (`installer_function`).
+link_resolve() {   # <path> — its canonical path with every link followed; 1 past 40 hops
+	local p="$1" v="" dir="" hops=0
+	while [ -L "$p" ]; do
+		hops=$((hops + 1))
+		[ "$hops" -le 40 ] || return 1
+		v="$(readlink -- "$p")" || return 1
+		case "$v" in
+		/*) ;;
+		*) v="$(dirname -- "$p")/$v" ;;
+		esac
+		p="$v"
+	done
+	dir="$(CDPATH= cd -P -- "$(dirname -- "$p")" 2>/dev/null && pwd -P)" || return 1
+	printf '%s/%s\n' "${dir%/}" "${p##*/}"
+}
+
+#: PACKAGE MODE, FROM PATHS (design.md Decision 4): this file's directory,
+#: resolved with `cd -P` and `pwd -P`, is named `payload`, its parent is named
+#: `openrepotools`, and that parent holds a regular `_release.py` — the layout an
+#: installed wheel of this package has, and no other. A checkout's directory is
+#: its root, and the one-line install runs from a pipe or from a placed file in
+#: `<dir>`, so neither ever matches. Prints that directory, or returns 1.
+#:
+#: `package_init` asks it once, before the arguments are read, and keeps the
+#: answer in PACKAGE_DIR: the payload directory, canonical, in package mode, and
+#: empty in a checkout or the one-line install. It is set here, so that nothing
+#: in the environment can set it.
+PACKAGE_DIR=""
+package_payload_dir() {
+	local here="" parent=""
+	[ -f "$SELF" ] || return 1
+	here="$(CDPATH= cd -P -- "$(dirname -- "$SELF")" 2>/dev/null && pwd -P)" || return 1
+	[ "${here##*/}" = payload ] || return 1
+	parent="${here%/*}"
+	[ "${parent##*/}" = openrepotools ] && [ -f "$parent/_release.py" ] || return 1
+	printf '%s\n' "$here"
+}
+
+#: STEPS 1 TO 3 OF THE RULE, which the match and the venv-shaped refusal share:
+#: <target> is a symbolic link, it resolves, and what it resolves to is a regular
+#: file named `openRepoTools` in a directory named `bin`. Prints that `bin`'s
+#: parent — the venv, as far as a path can say — which is canonical because the
+#: resolution is.
+link_venv() {   # <target> — the venv it links into, or 1
+	local resolved="" bin="" venv=""
+	[ -L "$1" ] || return 1
+	resolved="$(link_resolve "$1")" || return 1
+	[ -f "$resolved" ] && [ "${resolved##*/}" = openRepoTools ] || return 1
+	bin="${resolved%/*}"
+	[ "${bin##*/}" = bin ] || return 1
+	venv="${bin%/*}"
+	printf '%s\n' "${venv:-/}"
+}
+
+#: PIPX'S LINK (FR-015): steps 1 to 3, then the two things only pipx's venv of
+#: this package holds — a regular `pipx_metadata.json` beside its `bin/`, of
+#: which nothing but its EXISTENCE is read, and a regular `openRepoTools` in some
+#: `lib/python*/site-packages/openrepotools/payload` under it. The glob is looped
+#: over with a `-f` test, because bash leaves a glob that matches nothing as its
+#: own text. A match records the three values the run reads, and nothing else.
+pipx_link_match() {   # <dir>/openRepoTools — 0 with PIPX_LINK, PIPX_VENV and PIPX_PAYLOAD set, else 1
+	local venv="" payload="" canonical=""
+	venv="$(link_venv "$1")" || return 1
+	[ -f "${venv%/}/pipx_metadata.json" ] || return 1
+	for payload in "${venv%/}"/lib/python*/site-packages/openrepotools/payload; do
+		[ -f "$payload/openRepoTools" ] || continue
+		canonical="$(CDPATH= cd -P -- "$payload" 2>/dev/null && pwd -P)" || continue
+		PIPX_LINK="$1" PIPX_VENV="$venv" PIPX_PAYLOAD="$canonical"
+		return 0
+	done
+	return 1
+}
+
+#: A LINK INTO A PYTHON ENVIRONMENT THAT FAILS THE RULE: steps 1 to 3 hold, the
+#: venv holds a regular `pyvenv.cfg`, as every venv does, and the whole match
+#: does not hold. Prints the venv, for the refusal to name. The match is asked in
+#: a subshell, so that asking it here records nothing.
+venv_shaped_link() {   # <dir>/openRepoTools — the venv, or 1
+	local venv=""
+	venv="$(link_venv "$1")" || return 1
+	[ -f "${venv%/}/pyvenv.cfg" ] || return 1
+	if (pipx_link_match "$1"); then return 1; fi
+	printf '%s\n' "$venv"
+}
+
+#: PIPX'S OWN ENVIRONMENT (research R5): a package-mode run whose payload,
+#: PACKAGE_DIR, is under the venv pipx's link resolves into. Both paths are
+#: canonical, so this compares one spelling of each.
+pipx_own_run() {
+	[ -n "$PIPX_VENV" ] && [ -n "$PACKAGE_DIR" ] || return 1
+	case "$PACKAGE_DIR/" in
+	"${PIPX_VENV%/}"/lib/*) return 0 ;;
+	esac
+	return 1
+}
+
+#: WHERE THE OTHER SIXTEEN NOW COME FROM, for the count line of every run beside
+#: pipx's link but pipx's own (research R5). A PACKAGE names its own release,
+#: from the stamp `package_init` read, in a pipx venv or not: it placed its own
+#: payload and fetched from nothing, so `$REPO @ $REF` would name a source it
+#: never used. A checkout and the one-line install name the source they
+#: collected from, `payload_where`'s pair with `@` in place of `at`. An adopted
+#: source mounted in a local assembly fetches nothing and so sets no
+#: PAYLOAD_REPO or PAYLOAD_REV: the pin its payload was checked against names
+#: that same pair there.
+install_source() {
+	if [ -n "$PACKAGE_DIR" ]; then
+		printf 'openrepotools %s\n' "$STAMP_VERSION"
+	elif [ "$SOURCE_LAYOUT" = adopted ]; then
+		printf '%s @ %s\n' "${PAYLOAD_REPO:-${PIN_SOURCE_REPOSITORY-}}" "${PAYLOAD_REV:-${PIN_COMMIT-}}"
+	else
+		printf '%s @ %s\n' "$REPO" "$REF"
+	fi
+}
+
+#: WHAT IS BESIDE PIPX'S LINK, for the same line: `openrepotools <VERSION>` of
+#: the stamp beside pipx's payload, `0.0.0` where it is unstamped. It is read in
+#: a SUBSHELL, because `stamp_read` sets the STAMP_* values and this run's own
+#: are the ones `install_source` names. A stamp there that fails the reader is
+#: another install's, not this one's, so it refuses nothing: the clause says it
+#: cannot be read, and the install goes on.
+pipx_release() {
+	local version=""
+	if version="$(stamp_read "${PIPX_PAYLOAD%/*}/_release.py" && printf '%s' "$STAMP_VERSION")"; then
+		printf 'openrepotools %s\n' "$version"
+	else
+		printf '%s\n' "the openrepotools beside pipx's link, whose stamp cannot be read"
+	fi
+}
+
+#: `^from openrepotools(\.[A-Za-z_][A-Za-z0-9_]*)* import ` by `case`, the
+#: import pip's console-script template writes for the entry point at column 0.
+#: The name characters are written out, for the reason ORT_ALNUM gives.
+pip_imports_entry() {   # <line>
+	local rest="" name=""
+	case "$1" in "from openrepotools"*) ;; *) return 1 ;; esac
+	rest="${1#from openrepotools}"
+	while :; do
+		case "$rest" in
+		' import '*) return 0 ;;
+		.*) rest="${rest#.}" ;;
+		*) return 1 ;;
+		esac
+		name="${rest%%[!${ORT_ALNUM}_]*}"
+		case "$name" in '' | [0123456789]*) return 1 ;; esac
+		rest="${rest#"$name"}"
+	done
+}
+
+#: PIP'S CONSOLE SCRIPT FOR THIS PACKAGE (FR-020, contracts/pipx-link.md), at a
+#: target that is a regular file and not a link: what `pip install --user
+#: openrepotools` leaves at `~/.local/bin/openRepoTools`. It is another
+#: installer's command, and `--install` refuses to replace it in every mode, its
+#: own run included. Both halves of pip's template must hold:
+#:
+#:   * A PYTHON INTERPRETER, in either form pip writes: a `#!` line whose first
+#:     word's last `/` segment begins with `python`, or the three-line `/bin/sh`
+#:     trampoline pip writes when that path holds a space or is too long for a
+#:     shebang — `#!/bin/sh`, then `'''exec' <python> … "$0" "$@"` with the
+#:     interpreter quoted up to the next `"` or unquoted up to the first space,
+#:     then `' '''`;
+#:   * THE ENTRY POINT'S IMPORT at column 0 in one of the first 20 lines
+#:     (`pip_imports_entry`).
+#:
+#: Read by `IFS= read -r`, `case` and parameter expansion: bash 3.2's.
+pip_script_is() {   # <dir>/openRepoTools — 0 when it is pip's console script for openrepotools
+	local line="" n=0 first="" second="" third="" imports=1 word="" rest=""
+	local exec_word="'''exec' " tail=' "$0" "$@"' close="' '''" dq='"'
+	[ -f "$1" ] && [ ! -L "$1" ] && [ -r "$1" ] || return 1
+	while [ "$n" -lt 20 ] && { IFS= read -r line || [ -n "$line" ]; }; do
+		n=$((n + 1))
+		case "$n" in
+		1) first="$line" ;;
+		2) second="$line" ;;
+		3) third="$line" ;;
+		esac
+		if [ "$imports" -ne 0 ] && pip_imports_entry "$line"; then imports=0; fi
+	done 2>/dev/null <"$1" || return 1
+	[ "$imports" -eq 0 ] || return 1
+	# THE SHEBANG FORM: the first word after `#!` names a Python.
+	case "$first" in '#!'*) ;; *) return 1 ;; esac
+	word="${first#??}"
+	while :; do case "$word" in ' '* | "$ORT_TAB"*) word="${word#?}" ;; *) break ;; esac; done
+	word="${word%%[ $ORT_TAB]*}"
+	case "${word##*/}" in python*) return 0 ;; esac
+	# THE TRAMPOLINE FORM, its three lines exactly as pip writes them.
+	[ "$first" = '#!/bin/sh' ] && [ "$third" = "$close" ] || return 1
+	case "$second" in "$exec_word"*) ;; *) return 1 ;; esac
+	rest="${second#"$exec_word"}"
+	case "$rest" in
+	"$dq"*)
+		rest="${rest#?}"
+		case "$rest" in *"$dq"*) ;; *) return 1 ;; esac
+		word="${rest%%"$dq"*}"
+		rest="${rest#*"$dq"}"
+		;;
+	*)
+		word="${rest%% *}"
+		rest="${rest#"$word"}"
+		;;
+	esac
+	case "$rest" in *"$tail") ;; *) return 1 ;; esac
+	case "${word##*/}" in python*) return 0 ;; esac
+	return 1
+}
+
+#: THE `openRepoTools` A SHELL WILL RUN, asked last in a package-mode
+#: `--install` (FR-021, research R7). `<prefix>` is five levels above the
+#: payload, the parent of its `lib/`, and is named only where the four
+#: directories between are an installed wheel's — `openrepotools`,
+#: `site-packages`, `python*` and `lib` — so a layout that names no prefix gets
+#: no note. The first `openRepoTools` on PATH, as `type -P` finds it, and this
+#: package's console script, `<prefix>/bin/openRepoTools`, are each followed
+#: through `link_resolve`, so pipx's link and the script it points at are one
+#: file. A mismatch, or no `openRepoTools` on PATH at all, is the one note. It
+#: changes nothing, and never fails: the exit status stays the install's.
+path_report() {
+	local up="$PACKAGE_DIR" prefix="" want="" first="" got="" expected=""
+	[ -n "$up" ] || return 0
+	up="${up%/*}"
+	[ "${up##*/}" = openrepotools ] || return 0
+	up="${up%/*}"
+	[ "${up##*/}" = site-packages ] || return 0
+	up="${up%/*}"
+	case "${up##*/}" in python*) ;; *) return 0 ;; esac
+	up="${up%/*}"
+	[ "${up##*/}" = lib ] || return 0
+	prefix="${up%/*}"
+	want="$prefix/bin/openRepoTools"
+	first="$(type -P openRepoTools 2>/dev/null)" || first=""
+	if [ -z "$first" ]; then
+		say "openRepoTools: note: the first openRepoTools on your PATH is none, not this package's $want, so the release you just installed is not the one that runs; put the directory that holds pipx's link to it on PATH"
+		return 0
+	fi
+	got="$(link_resolve "$first")" || got=""
+	expected="$(link_resolve "$want")" || expected=""
+	if [ -n "$got" ] && [ "$got" = "$expected" ]; then
+		return 0
+	fi
+	say "openRepoTools: note: the first openRepoTools on your PATH is $first, not this package's $want, so the release you just installed is not the one that runs; put the directory that holds pipx's link to it ahead of $(dirname -- "$first") on PATH"
+}
+
 plan_install_targets() {
 	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
-	local name target kind bad="" paths=""
+	local name target kind bad="" paths="" venv="" leave="" clear=""
+	PIPX_LINK="" PIPX_VENV="" PIPX_PAYLOAD=""
 	# THE DIRECTORY FIRST, which is the `-w` question for every target that is
 	# not there yet: an absent file is placeable exactly where the directory it
 	# would be created in takes a write. `plan_skill_targets` asks this of the
@@ -2548,19 +3068,44 @@ plan_install_targets() {
 	fi
 	for name in "${INSTALLABLES[@]}"; do
 		target="$dir/$name"
+		# PIPX'S LINK IS ASKED ABOUT BEFORE ANY LINK IS REFUSED (FR-015), at the
+		# one command pipx places. It is no bad target: the placement loop skips
+		# it. A venv-shaped link IS one, listed for what it is, with the
+		# paragraph that says to leave it, and kept out of the `rm -f` line.
+		if [ "$name" = openRepoTools ]; then
+			if pipx_link_match "$target"; then
+				continue
+			fi
+			if venv="$(venv_shaped_link "$target")"; then
+				bad="${bad:+$bad
+}    $target — a link into a Python environment, perhaps pipx's ($venv), in a layout this installer does not recognise"
+				leave="
+    Leave $target where it is: it may be the only openRepoTools that can
+    run \`--install\`. Run \`pipx reinstall openrepotools\`, then \`openRepoTools --install\`
+    again, and if this refusal stays, open an issue on opensoft/openRepoTools naming
+    the layout under $venv."
+				continue
+			fi
+			# PIP'S CONSOLE SCRIPT IS NOT THIS INSTALLER'S TO REPLACE (FR-020),
+			# in any mode: refused here, before anything is fetched or placed.
+			if pip_script_is "$target"; then
+				die "\`--install\` will not replace $target: it is pip's console script for openrepotools (\`pip install --user openrepotools\` leaves it there), and another installer's command is not this installer's to overwrite.
+    NOTHING was installed and nothing already installed was replaced.
+    pipx is the one package route. To move to it:
+        pip uninstall openrepotools
+        pipx install openrepotools
+        openRepoTools --install"
+			fi
+		fi
 		kind="$(unplaceable_kind "$target")" || continue
 		bad="${bad:+$bad
 }    $target — $kind"
 		paths="${paths:+$paths }\"$target\""
 	done
-	[ -z "$bad" ] || die "\`--install\` places a REGULAR FILE IT CAN WRITE at each of these, and these are
-    not that:
-$bad
-    Each command is placed by renaming a new copy over its path, so installing
-    over a symlink would replace somebody's link with a regular file, over a
-    directory would put the file inside it, and over a file this user cannot
-    write would replace a file somebody made read-only — none of it asked for.
-    NOTHING was installed and nothing already installed was replaced.
+	[ -n "$bad" ] || return 0
+	# THE `rm -f` LINE NAMES ONLY WHAT IT IS SAFE TO REMOVE, so with a
+	# venv-shaped link the only bad target there is no "Clear them" at all.
+	[ -z "$paths" ] || clear="
     Clear them, then re-run — \`rm -f\` takes a read-only file, because what a
     removal needs is the DIRECTORY's write bit and not the file's:
         rm -f -- $paths
@@ -2569,6 +3114,14 @@ $bad
     lane writes. Amendment 9's adoption act 6 removes them per host before the
     first \`--install\` that carries this, and act 5 strips that repository to
     data.)"
+	die "\`--install\` places a REGULAR FILE IT CAN WRITE at each of these, and these are
+    not that:
+$bad$leave
+    Each command is placed by renaming a new copy over its path, so installing
+    over a symlink would replace somebody's link with a regular file, over a
+    directory would put the file inside it, and over a file this user cannot
+    write would replace a file somebody made read-only — none of it asked for.
+    NOTHING was installed and nothing already installed was replaced.$clear"
 }
 
 # THE RIVALS THEMSELVES, FOR A REFUSAL TO NAME (#59). It is the conflict half of
@@ -4611,6 +5164,46 @@ wip_dispatch() {
 	wip_init
 }
 
+# --- package mode -----------------------------------------------------------
+#
+# A PACKAGE READS ITS OWN STAMP BEFORE IT ACTS ON ANY ARGUMENT (#228, FR-012,
+# design.md Decision 4). So a broken one refuses every invocation, `--help`,
+# `--version`, `--install`, `wip` and none at all alike, and a build that
+# cannot name its release places nothing. Package mode is decided from this
+# file's own path (`package_payload_dir`), and the stamp is the file beside its
+# payload and nothing else: no environment variable names it, mends it or
+# stands in for it (FR-011, research R4). In a checkout or the one-line install
+# this sets nothing and reads nothing.
+package_init() {
+	local here=""
+	here="$(package_payload_dir)" || return 0
+	PACKAGE_DIR="$here"
+	stamp_read "${here%/*}/_release.py" ||
+		die "this package's stamp (openrepotools/_release.py) $STAMP_WHY, so this build is broken and nothing ran. A package's stamp is a release's whole stamp or the unstamped one. Reinstall it: pipx reinstall openrepotools"
+}
+
+# `--version` IN PACKAGE MODE names the release this command IS, from the stamp
+# `package_init` read: never the release of the files `--install` placed, and
+# never the source a fetch would read (contracts/cli-output.md, FR-014).
+package_version() {
+	if [ "$STAMP_STATE" = stamped ]; then
+		say "openRepoTools $STAMP_VERSION ($STAMP_REPOSITORY @ $STAMP_COMMIT)"
+		say "  version   $STAMP_VERSION"
+		say "  tag       $STAMP_TAG"
+		say "  commit    $STAMP_COMMIT"
+		say "  digest    $STAMP_DIGEST (sorted-ls-tree-r-v1)"
+	else
+		say "openRepoTools 0.0.0 (an unstamped package)"
+		say "  version   0.0.0, unstamped: a package built from a checkout, not a release"
+		say "  tag       none"
+		say "  commit    none"
+		say "  digest    none"
+	fi
+}
+
+# ONCE, AFTER EVERY FUNCTION IS DEFINED AND BEFORE THE FIRST ARGUMENT IS READ.
+package_init
+
 # --- arguments ------------------------------------------------------------
 #
 # THREE FLAGS AND ONE VERB PAIR, and no others. The refusal names the commands
@@ -4622,7 +5215,11 @@ wip_dispatch() {
 while [ $# -gt 0 ]; do
 	case "$1" in
 	-h | --help) usage; exit 0 ;;
-	--version) say "openRepoTools ($REPO @ $REF)"; exit 0 ;;
+	--version)
+		# A PACKAGE NAMES ITS RELEASE. A checkout and the one-line install name
+		# the repository and the ref they fetch from, as they always have.
+		if [ -n "$PACKAGE_DIR" ]; then package_version; else say "openRepoTools ($REPO @ $REF)"; fi
+		exit 0 ;;
 	--install) MODE="install"; shift ;;
 	wip) shift; wip_dispatch "$@"; exit $? ;;
 	*)

@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import difflib
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -96,9 +97,9 @@ def field(out: str, key: str) -> list:
 
 
 def handoff(b: Bench, lane: str, cwd: Path, why: str = "t018 handoff",
-            *flags: str) -> subprocess.CompletedProcess:
+            *flags: str, env: dict | None = None) -> subprocess.CompletedProcess:
     return b.tool("lane-handoff", "--lane", lane, "--transcript", "none", "--agent", "claude",
-                  *flags, why, cwd=cwd)
+                  *flags, why, cwd=cwd, env=env)
 
 
 def writers_file(b: Bench, lane: str, rows: dict) -> Path:
@@ -787,6 +788,406 @@ def test_t018_a_leg_tree_add_made_is_withheld_where_the_legs_git_is_an_empty_dir
     assert "(NOT recorded)" not in top_block(b, "triad-1")
     assert "lifecycle: SWAPPED" in proc.stdout, proc.stdout
     assert inventory(b, "triad-1") == want
+
+
+# ====================================================================== #255
+
+@NEEDS_UPSTREAM
+def test_255_a_leg_directory_that_cannot_be_searched_is_unreadable_in_the_handoff_and_reconcile(triad):
+    """#255, OPENREPOSHAPE-2'S SHOULD ON #246: A LEG DIRECTORY THIS ACCOUNT
+    CANNOT SEARCH failed the handoff's and the reconciliation's `.git` test
+    as a leg that is not checked out does, so both passed over it IN SILENCE:
+    no UNREADABLE LEG line, no TREE row, and the tree `add --checkout spec`
+    made was re-recorded under the ASSEMBLY, over the leg `add` had recorded.
+    Now it takes the path of a leg git cannot read, in the sweep's words, with
+    no permission at all and with read but no search: named and counted, its
+    tree withheld `(NOT recorded)` and its record kept, the lane SWAPPING, and
+    one `unreadable` TREE row that requires recovery. Searchable again, it
+    names nothing and its tree is recorded under it."""
+    b, t = triad
+    if os.geteuid() == 0:
+        pytest.skip("root searches a directory whatever its mode")
+    a, spec = t["assembly"], t["spec"]
+    made = b.tool("lane-worktrees", "add", "triad-1", "s1", "--checkout", spec)
+    assert made.returncode == 0, made.stderr
+    lane_spec = Path(made.stdout.strip())
+    made = b.tool("lane-worktrees", "add", "triad-1", "root")
+    assert made.returncode == 0, made.stderr
+    lane_root = Path(made.stdout.strip())
+    want = {str(lane_spec): str(spec), str(lane_root): str(a)}
+    assert inventory(b, "triad-1") == want
+    words = (f"the spec leg of {a}/project.yaml (opensoft/triad-spec): git could not be read "
+             "through it (its directory cannot be searched, so whether it has a .git of its own "
+             "could not be tested, and git could not read it: ")
+    for mode in (0, 0o600):
+        os.chmod(spec, mode)
+        try:
+            proc = handoff(b, "triad-1", a, "a leg directory that cannot be searched")
+            rec = b.tool("lanes-edit.sh", "lane-reconcile", "triad-1")
+        finally:
+            os.chmod(spec, 0o755)
+        assert proc.returncode == 0, (oct(mode), proc.stdout + proc.stderr)
+        assert f"the leg {spec} is unreadable: {words}" in proc.stderr, (oct(mode), proc.stderr)
+        assert f"legs: 1 of the assembly's legs under {a} unreadable" in proc.stderr, proc.stderr
+        assert f"writers polled: 2 under {a}" in proc.stderr, proc.stderr
+        assert f"WRITER {lane_spec} — branch s1" in proc.stdout, proc.stdout
+        assert (f"the worktree inventory entry for {lane_spec} was NOT written: the assembly has "
+                "1 unreadable leg(s)") in proc.stderr, proc.stderr
+        assert f"the worktree inventory entry for {lane_root} was NOT written" not in proc.stderr
+        assert "lifecycle: SWAPPING" in proc.stdout, (oct(mode), proc.stdout)
+        writers = top_block(b, "triad-1").split("**WRITERS at ", 1)[1]
+        assert f"- UNREADABLE LEG: `{spec}` is unreadable, {words}" in writers, (oct(mode), writers)
+        assert writers.count("- UNREADABLE LEG: ") == 1, writers
+        assert f"- `{lane_spec}` (NOT recorded) — branch `s1`" in writers, writers
+        assert f"- `{lane_root}` — branch `root`" in writers, writers
+        assert inventory(b, "triad-1") == want
+        assert rec.returncode == 0, rec.stderr
+        rows = reconcile_rows(rec.stdout)
+        assert rows[real(spec)][0] == "unreadable", (oct(mode), rows)
+        assert rows[real(spec)][1].startswith(words), (oct(mode), rows[real(spec)])
+        assert field(rec.stdout, "TREES")[2] == "1 require recovery", (oct(mode), rec.stdout)
+        assert field(rec.stdout, "VERDICT")[0] != "indeterminate", rec.stdout
+
+    proc = handoff(b, "triad-1", a, "searchable again")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"the leg {spec} is unreadable" not in proc.stderr, proc.stderr
+    assert "UNREADABLE LEG" not in top_block(b, "triad-1")
+    assert "lifecycle: SWAPPED" in proc.stdout, proc.stdout
+    assert inventory(b, "triad-1") == want
+    rec = b.tool("lanes-edit.sh", "lane-reconcile", "triad-1")
+    assert real(spec) not in reconcile_rows(rec.stdout), rec.stdout
+    assert field(rec.stdout, "TREES")[2] == "0 require recovery", rec.stdout
+
+
+def lone_sidecar(b: Bench, lane: str) -> Path:
+    """The lane's one inventory record, as `set-lane-tree` filed it."""
+    files = sorted((b.projects / ".lane-state" / lane / "trees").glob("*.yaml"))
+    assert len(files) == 1, files
+    return files[0]
+
+
+def trees_row(b: Bench, lane: str, path: Path, env: dict | None = None) -> list:
+    """The `lane-trees` row whose path is `path`, as the handoff's `LANES_EDIT` gives it."""
+    helper = (env or {}).get("LANES_EDIT", str(b.bin / "lanes-edit.sh"))
+    proc = b.run(helper, "lane-trees", lane, env=env)
+    assert proc.returncode == 0, proc.stderr
+    rows = [ln.split(US) for ln in proc.stdout.splitlines() if ln.split(US)[1:2] == [str(path)]]
+    assert len(rows) == 1, proc.stdout
+    return rows[0]
+
+
+def a_paired_tree_a_broken_record_names(b: Bench, t: dict) -> tuple:
+    """A paired spec tree with a writer's first edit and nothing committed - so
+    no trailer finds it - recorded in triad-1's inventory with its leg as its
+    checkout: (the tree, its record, the record's bytes)."""
+    a, spec = t["assembly"], t["spec"]
+    fresh = leg_tree(b, spec, a / "worktrees" / "050-r" / "spec", "050-r")
+    (fresh / "draft.md").write_text("a writer's first edit\n")
+    rec = b.tool("lanes-edit.sh", "set-lane-tree", "triad-1", fresh, "--checkout", spec)
+    assert rec.returncode == 0, rec.stderr
+    sidecar = lone_sidecar(b, "triad-1")
+    text = sidecar.read_text()
+    assert text.startswith("schema: 1\n") and f"\npath: {fresh}\n" in text, text
+    return fresh, sidecar, text
+
+
+def assert_the_record_is_named_and_not_polled(b: Bench, t: dict, proc, fresh: Path,
+                                              sidecar: Path, before: bytes, schema: str,
+                                              path: str | None = None) -> None:
+    """THE HANDOFF NAMES A RECORD IT COULD NOT READ (#255): its id, schema and
+    path in the NOT POLLED note, on stderr and in the top block; the tree that
+    record names is not taken as this lane's writer; nothing is filed over the
+    record; and the lane stays SWAPPING. `path` is the path the record keeps
+    (the tree, unless told otherwise); `""` is a record that keeps none, which
+    the note then names by its id and schema alone."""
+    a = t["assembly"]
+    kept = str(fresh) if path is None else path
+    note = (f"this lane's worktree inventory holds record(s) that could not be read "
+            f"({sidecar.stem} (schema {schema}{', path ' + kept if kept else ''})), so a paired "
+            "tree only they name could not be told from another lane's")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert note in proc.stderr, proc.stderr
+    assert f"- NOT POLLED: {note}" in top_block(b, "triad-1"), top_block(b, "triad-1")
+    assert "lifecycle: SWAPPING" in proc.stdout, proc.stdout
+    assert f"WRITER {fresh} —" not in proc.stdout, proc.stdout
+    assert f"PAIRED ROOT, not this lane's: {fresh} — branch 050-r" in proc.stdout, proc.stdout
+    assert f"writers polled: 0 under {a}" in proc.stderr, proc.stderr
+    assert sidecar.read_bytes() == before, sidecar.read_text()
+
+
+@NEEDS_UPSTREAM
+@pytest.mark.parametrize("schema", ["2", "10"])
+def test_255_an_unknown_schema_record_is_named_in_the_handoffs_not_polled_note(triad, schema):
+    """#255: THE INVENTORY'S UNREADABLE RECORDS WERE ONLY THE ONES WITH NO
+    PATH. A record of another schema keeps its path and nothing else
+    (`lane-trees`' `${ltl_s:-<none>}` row), so the handoff read it as a record
+    with an empty checkout: its paired tree became this lane's writer, and the
+    poll's record for it was refused by `set-lane-tree`, which writes over no
+    record of another schema - reported as a refused write, with nothing said
+    of the record. Now a row whose schema - the thirteenth field - is not `1`
+    is named in the NOT POLLED note and never read as a record, as the sweep
+    reads it (`_discover`). Whole again, the record makes the tree this
+    lane's writer, and the lane is SWAPPED. THE SCHEMA IS MATCHED WHOLE: `10`
+    begins with a `1` but is not schema 1, so a rule that matched the schema by
+    its first character would read this record as a whole schema-1 one."""
+    b, t = triad
+    a, spec = t["assembly"], t["spec"]
+    fresh, sidecar, text = a_paired_tree_a_broken_record_names(b, t)
+    sidecar.write_text(f"schema: {schema}\n" + text[len("schema: 1\n"):])
+    before = sidecar.read_bytes()
+    row = trees_row(b, "triad-1", fresh)
+    assert row[0] == sidecar.stem and row[12] == schema and row[9] == "", row
+    proc = handoff(b, "triad-1", a, "a record of another schema")
+    assert_the_record_is_named_and_not_polled(b, t, proc, fresh, sidecar, before, schema)
+
+    sidecar.write_text(text)
+    proc = handoff(b, "triad-1", a, "a whole record again")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"WRITER {fresh} — branch 050-r" in proc.stdout, proc.stdout
+    assert "NOT POLLED" not in proc.stdout + proc.stderr
+    assert "lifecycle: SWAPPED" in proc.stdout, proc.stdout
+    assert inventory(b, "triad-1") == {str(fresh): str(spec)}
+
+
+@NEEDS_UPSTREAM
+def test_255_a_malformed_record_is_named_in_the_handoffs_not_polled_note(triad):
+    """#255, AND #252'S `<malformed>` ROW: a schema-1 record that is not a
+    whole one keeps its id, its path and the schema `<malformed>`
+    (`lanes-edit.sh` at 36520b9, `lane_trees_list`). Here the record is cut to
+    its first four lines, and `LANES_EDIT` is a `lanes-edit.sh` that passes
+    every call through but answers `lane-trees` with #252's row for it, so
+    this holds before #252 lands and after. The handoff names it in the NOT
+    POLLED note, takes its tree for no writer of this lane's, files nothing
+    over it, and leaves the lane SWAPPING."""
+    b, t = triad
+    a, spec = t["assembly"], t["spec"]
+    fresh, sidecar, text = a_paired_tree_a_broken_record_names(b, t)
+    sidecar.write_text("".join(text.splitlines(keepends=True)[:4]))
+    before = sidecar.read_bytes()
+    fake = b.root / "fake-lanes-edit.sh"
+    fake.write_text(
+        "#!/bin/sh\n"
+        f"real={shlex.quote(str(b.bin / 'lanes-edit.sh'))}\n"
+        "if [ \"${1-}\" = lane-trees ]; then\n"
+        "  out=\"$(\"$real\" \"$@\")\"; rc=$?\n"
+        "  [ \"$rc\" = 0 ] || { [ -z \"$out\" ] || printf '%s\\n' \"$out\"; exit \"$rc\"; }\n"
+        f"  printf '%s\\n' \"$out\" | P={shlex.quote(str(fresh))} awk -F'\\037' '$2 != ENVIRON[\"P\"]'\n"
+        f"  printf '%s\\037%s\\037\\037\\037\\037\\037\\037\\037\\037\\037\\037\\037<malformed>\\n' "
+        f"{shlex.quote(sidecar.stem)} {shlex.quote(str(fresh))}\n"
+        "  exit 0\n"
+        "fi\n"
+        "exec \"$real\" \"$@\"\n")
+    fake.chmod(0o755)
+    env = {"LANES_EDIT": str(fake)}
+    row = trees_row(b, "triad-1", fresh, env)
+    assert row[0] == sidecar.stem and len(row) == 13 and row[12] == "<malformed>", row
+    assert not any(row[2:12]), row
+    proc = b.tool("lane-handoff", "--lane", "triad-1", "--transcript", "none", "--agent", "claude",
+                  "a malformed record", cwd=a, env=env)
+    assert_the_record_is_named_and_not_polled(b, t, proc, fresh, sidecar, before, "<malformed>")
+
+    sidecar.write_text(text)
+    proc = handoff(b, "triad-1", a, "a whole record again")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"WRITER {fresh} — branch 050-r" in proc.stdout, proc.stdout
+    assert "NOT POLLED" not in proc.stdout + proc.stderr
+    assert "lifecycle: SWAPPED" in proc.stdout, proc.stdout
+    assert inventory(b, "triad-1") == {str(fresh): str(spec)}
+
+
+@NEEDS_UPSTREAM
+def test_255_a_record_with_a_tree_id_and_no_path_is_named_in_the_handoffs_not_polled_note(triad):
+    """#255, `pi_bad`'S EMPTY-PATH ARM: a record that files a tree id and no
+    path - #219's path-less tree - is a row with an empty path. A row with no
+    path names no tree, so it is no record of whose a tree is, whatever its
+    schema: before #252 the real `lanes-edit.sh` prints it as a WHOLE schema-1
+    row (every field but the path), which only the empty-path rule names; with
+    #252 it is `<malformed>`, which the schema rule names as well. Either way
+    the handoff names it by its id and its schema - there is no path to name -
+    takes the tree beside it for no writer of this lane's, files nothing over
+    the record, and leaves the lane SWAPPING. Whole again, the record makes the
+    tree this lane's writer."""
+    b, t = triad
+    a, spec = t["assembly"], t["spec"]
+    fresh, sidecar, text = a_paired_tree_a_broken_record_names(b, t)
+    no_path = "".join(ln for ln in text.splitlines(keepends=True) if not ln.startswith("path: "))
+    assert no_path != text and "\npath:" not in no_path, no_path
+    sidecar.write_text(no_path)
+    before = sidecar.read_bytes()
+    lt = b.tool("lanes-edit.sh", "lane-trees", "triad-1")
+    assert lt.returncode == 0, lt.stderr
+    rows = [ln.split(US) for ln in lt.stdout.splitlines() if ln.split(US)[0] == sidecar.stem]
+    assert len(rows) == 1, lt.stdout
+    row = rows[0]
+    assert row[1] == "" and row[12] in ("1", "<malformed>"), row
+    proc = handoff(b, "triad-1", a, "a record with no path")
+    assert_the_record_is_named_and_not_polled(b, t, proc, fresh, sidecar, before, row[12], path="")
+
+    sidecar.write_text(text)
+    proc = handoff(b, "triad-1", a, "a whole record again")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"WRITER {fresh} — branch 050-r" in proc.stdout, proc.stdout
+    assert "NOT POLLED" not in proc.stdout + proc.stderr
+    assert "lifecycle: SWAPPED" in proc.stdout, proc.stdout
+    assert inventory(b, "triad-1") == {str(fresh): str(spec)}
+
+
+@NEEDS_UPSTREAM
+def test_255_an_unreadable_record_is_named_in_the_handoffs_not_polled_note(triad):
+    """#255: a record file this account cannot read is a row of its own, named
+    by its file (`lane-trees`' `<unreadable>`, and no path). The handoff names
+    it in the NOT POLLED note - by its id and its schema, there being no path -
+    takes the tree beside it for no writer of this lane's, files nothing over
+    it and leaves the lane SWAPPING."""
+    b, t = triad
+    if os.geteuid() == 0:
+        pytest.skip("root reads a mode-000 file")
+    a = t["assembly"]
+    fresh, sidecar, text = a_paired_tree_a_broken_record_names(b, t)
+    before = sidecar.read_bytes()
+    sidecar.chmod(0)
+    try:
+        lt = b.tool("lanes-edit.sh", "lane-trees", "triad-1")
+        proc = handoff(b, "triad-1", a, "an unreadable record")
+    finally:
+        sidecar.chmod(0o644)
+    assert lt.returncode == 0, lt.stderr
+    rows = [ln.split(US) for ln in lt.stdout.splitlines() if ln.split(US)[0] == sidecar.stem]
+    assert len(rows) == 1 and rows[0][1] == "" and rows[0][12] == "<unreadable>", lt.stdout
+    assert_the_record_is_named_and_not_polled(b, t, proc, fresh, sidecar, before, "<unreadable>",
+                                              path="")
+
+
+# ===================================================================== #280
+
+#: A `lanes-edit.sh` that is the bench's own for every verb but `lane-state`, and
+#: answers that one in PIECES - the `state` line, 1.5 MiB of padding, then the
+#: rest of the snapshot - so that its reader has gone before it has finished,
+#: WHATEVER THE TIMING AND WHATEVER THE AWK. A pipe holds 64 KiB, so a producer
+#: with 1.5 MiB to write is still writing when a reader that stops at the first
+#: line closes; its next write gets SIGPIPE and the wrapper dies of it, as the
+#: real one can when a reader is quick enough to leave between its writes (its
+#: builtin `printf` writes a multi-line snapshot a line at a time). A pause
+#: instead of the padding was a race of its own: an awk that stalled for longer
+#: than the pause read it all. mawk reads ahead until its buffer is full - the
+#: review of fc061fe measured the end of input at 255 KiB or less and an early
+#: stop at 320 KiB or more - so the padding stays far above that. Its key, `pad`,
+#: is no field `lane-state` prints, so nothing in `lane-handoff` takes it for
+#: one. `real` is the bench's copy, `calls` the file each `lane-state` call is
+#: logged to, `pad` one padding line (a real TAB) and `pad_lines` how many.
+SLOW_LANE_STATE = """#!/bin/sh
+real='{real}'
+if [ "$1" = lane-state ]; then
+    printf '%s\\n' "$*" >> '{calls}'
+    out="$("$real" "$@")"
+    rc=$?
+    if [ "$rc" != 0 ]; then
+        [ -z "$out" ] || printf '%s\\n' "$out"
+        exit "$rc"
+    fi
+    first="$(printf '%s\\n' "$out" | sed -n 1p)"
+    rest="$(printf '%s\\n' "$out" | sed 1d)"
+    printf '%s\\n' "$first"
+    yes '{pad}' | head -n {pad_lines}
+    printf '%s\\n' "$rest"
+    exit 0
+fi
+exec "$real" "$@"
+"""
+#: One line of padding, and how many: 32768 lines of 48 bytes are 1.5 MiB.
+PAD_LINE = "pad\tno lifecycle field is spelled like this one"
+PAD_LINES = 32768
+
+#: `lane-handoff`'s lifecycle read as it was written before #280: the producer
+#: piped into an `awk` that exits at its first match, under `pipefail`.
+OLD_LIFECYCLE_READ = r'''set -uo pipefail
+rc=0
+now="$(LANES_NO_FETCH=1 "$1" lane-state "$2" 2>/dev/null | awk -F"\t" '$1 == "state" { print $2; exit }')" || rc=$?
+printf '%s %s\n' "$now" "$rc"
+'''
+
+
+def slow_lane_state(b: Bench) -> tuple:
+    """THE PRODUCER THAT OUTLIVES ITS READER: the wrapper (a `$LANES_EDIT`), and
+    the file it logs each `lane-state` call to."""
+    wrapper = b.root / "slow-lane-state" / "lanes-edit.sh"
+    wrapper.parent.mkdir()
+    calls = wrapper.parent / "calls"
+    wrapper.write_text(SLOW_LANE_STATE.format(real=b.bin / "lanes-edit.sh", calls=calls,
+                                              pad=PAD_LINE, pad_lines=PAD_LINES))
+    wrapper.chmod(0o755)
+    return wrapper, calls
+
+
+def lane_state(b: Bench, lane: str) -> dict:
+    proc = b.tool("lanes-edit.sh", "lane-state", lane)
+    assert proc.returncode == 0, proc.stderr
+    return dict(ln.split("\t", 1) for ln in proc.stdout.splitlines() if "\t" in ln)
+
+
+@NEEDS_UPSTREAM
+def test_280_a_lifecycle_read_whose_producer_writes_after_the_filter_exits_is_still_a_read(triad):
+    """#280: `lane-handoff` read the lane's lifecycle as `lane-state | awk '$1 ==
+    "state" { print $2; exit }'` under `set -o pipefail`, and that `awk` exits at
+    the first line. A producer that writes once more after that dies of SIGPIPE -
+    the real one's builtin `printf` hands a multi-line snapshot to the pipe in
+    pieces, and a reader quick enough sees the first before the last is written -
+    so the substitution's status was 141, the handoff said "the lane lifecycle
+    could not be read" and recorded no RUNNING -> SWAPPING -> SWAPPED transition
+    (CI run 39322387035, which passed one prefix down and in every run before
+    it). The race is held here EVERY time, by a `lane-state` that prints its
+    `state` line, 1.5 MiB of padding and then the rest: a pipe holds 64 KiB, so
+    that producer is still writing when a reader that stops at the first line
+    has closed, whatever the timing and whatever the awk. THE PREMISE FIRST: the
+    old shape of the read, run on that producer, gives `RUNNING 141`. Then the
+    handoff reads the snapshot whole and takes the status from `lane-state`
+    alone, so it records the transition as it does when the producer is quick."""
+    b, t = triad
+    a = t["assembly"]
+    wrapper, calls = slow_lane_state(b)
+    old = b.run("bash", "-c", OLD_LIFECYCLE_READ, "_", wrapper, "triad-1")
+    assert (old.returncode, old.stdout) == (0, "RUNNING 141\n"), (old.stdout, old.stderr)
+    calls.write_text("")        # the premise logged a call of its own
+
+    proc = handoff(b, "triad-1", a, "t280 handoff", env={"LANES_EDIT": str(wrapper)})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "lane-state triad-1" in calls.read_text().splitlines(), \
+        "the handoff never read the lifecycle through the wrapper"
+    assert "the lane lifecycle could not be read" not in proc.stderr, proc.stderr
+    assert "exited 141" not in proc.stderr, proc.stderr
+    assert "lifecycle: RUNNING -> SWAPPING (generation " in proc.stderr, proc.stderr
+    assert "lifecycle: SWAPPING -> SWAPPED (generation " in proc.stderr, proc.stderr
+    assert "lifecycle: SWAPPED" in proc.stdout, proc.stdout
+    assert lane_state(b, "triad-1")["state"] == "SWAPPED"
+
+
+@NEEDS_UPSTREAM
+def test_280_a_swapping_lane_read_the_same_way_still_names_the_operation_it_supersedes(triad):
+    """#280, a lane left SWAPPING: the FIRST read - the state - goes through the
+    same producer and must still see SWAPPING, so the handoff takes the lane
+    over, and its note names the operation that never finished. THAT IS WHAT
+    THIS PINS: the note's content, and the first read on a SWAPPING lane. It
+    cannot pin the SECOND read's own fix, the operation read once more for that
+    note: its status was never read, so reverting that site alone still passes."""
+    b, t = triad
+    a = t["assembly"]
+    wrapper, calls = slow_lane_state(b)
+    took = b.tool("lanes-edit.sh", "set-lane-state", "triad-1", "SWAPPING", "--expect", "RUNNING",
+                  "--operation", "op-stuck-280")
+    assert took.returncode == 0, took.stderr
+    assert lane_state(b, "triad-1")["operation"] == "op-stuck-280"
+
+    proc = handoff(b, "triad-1", a, "t280 handoff", env={"LANES_EDIT": str(wrapper)})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "lane-state triad-1" in calls.read_text().splitlines(), \
+        "the handoff never read the lifecycle through the wrapper"
+    assert "the lane lifecycle could not be read" not in proc.stderr, proc.stderr
+    assert ("lane triad-1 is still recorded SWAPPING from operation op-stuck-280, which never "
+            "finished") in proc.stderr, proc.stderr
+    assert "lifecycle: SWAPPING -> SWAPPING (generation " in proc.stderr, proc.stderr
+    assert "lifecycle: SWAPPING -> SWAPPED (generation " in proc.stderr, proc.stderr
+    after = lane_state(b, "triad-1")
+    assert after["state"] == "SWAPPED" and after["operation"] != "op-stuck-280", after
 
 
 # ===================================================== the single repository
