@@ -1229,9 +1229,9 @@ else.
 | 6 | `git add` / `commit` / `push` failed |
 | 7 | another act got there first and this one wrote nothing: `claim`'s `CLAIM-LOST` (another lane's claim landed first), and `set-lane-state` / `set-lane-tree`'s lifecycle fence (openRepoTools#91, below) |
 | 9 | `CLAIM-LOST` — issue #30's own dead-lane verdict could not be reconfirmed before a `--force` takeover's push landed: the source lane resumed, a live session now backs it up, or that could not be read at all (`claim` only). Never 7 — that code is a RIVAL's claim, and this is the same lane the takeover was granted over |
-| 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read (openRepoTools#91, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim`. `lane-trees`: the lane's `trees` directory is there and could not be listed (#157 item 4e) — never the 8 that means it recorded no tree |
+| 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read, or is of this schema and not a whole record, so nothing can be read out of it as a snapshot (openRepoTools#91 and #115, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim`. `lane-trees`: the lane's `trees` directory is there and could not be listed (#157 item 4e) — never the 8 that means it recorded no tree |
 | 8 | no record — and no other meaning |
-| 64 | `swapped`'s own usage error — never the dispatcher's 2 |
+| 64 | `swapped`'s own usage error — never the dispatcher's 2 — and the lifecycle arms' own: `set-lane-tree`'s partial observation, a count that is not one, or a field that is only blanks (below) |
 
 3 to 6 are the codes this helper already used; 7 and 8 were free.
 
@@ -3280,8 +3280,10 @@ RUNNING --/handoff begins--> SWAPPING --record + row + handoff all landed--> SWA
 | `SWAPPED` | no | the swap completed; the lane is resumable once its trees are read |
 | `SWAPPED` | yes | inconsistent — a swapped lane has no holder, and neither side is overwritten |
 | `CLOSED` | — | the lane is finished; a dirty or unpushed tree under it is a closure inconsistency and no cleanup is made |
-| any | **unreadable** | `indeterminate`. A holder that could not be established is NOT "no holder" (`R22`, Amendment 7(d)), and no crash is pronounced on a read nobody got. |
+| any | **unreadable** | `indeterminate`. A holder that could not be established is NOT "no holder" (`R22`, Amendment 7(d)), and no crash is pronounced on a read nobody got. That includes the ids the holder is looked up by: a register row that could not be read — the published one, or this checkout's copy — is never a row naming no session (opensoft/openRepoTools#113). |
 | **unreadable** | — | `indeterminate` again, and for the same rule read one file earlier: a snapshot that IS THERE and cannot be opened is not a lane that has none. `lane-state` exits **10** for it, never the **8** that means *this lane has no snapshot, go on*. |
+| **`MALFORMED`** | — | `indeterminate`: a snapshot of this schema that is not a WHOLE record — cut short, or edited by hand (opensoft/openRepoTools#115). `lane-state` exits **10** for it too, and every writer refuses to replace it. |
+| any | — and a worktree read **failed** | `indeterminate`, whatever the snapshot and the holder say: an inventory directory, the checkout's registrations or a lane root that could not be listed hides trees the report never saw (opensoft/openRepoTools#113). |
 | any | — and the lane is **bound elsewhere** | `indeterminate`. Amendment 18(b): liveness is pronounced only from inside the binding's own host and container, and from anywhere else a binding is UNKNOWN, never dead — and this workstation's snapshot is this workstation's alone. The one exception is clause (b)'s own: a binding whose window is gone from this host's tmux is dead, and the local read decides. |
 | — | — and the lane is **managed-owned** | `managed-owned`, and nothing else is read or pronounced: see *Managed-owned lanes* below. |
 
@@ -3304,6 +3306,16 @@ CLAIM-LOST, and one meaning on it: *you lost the race*. That is what stops a
 has recovered and resumed it. A handoff that finds the lane still `SWAPPING`
 **takes it over** with a new generation and names the operation that never
 finished; nothing of that operation is undone.
+
+`SWAPPED` keeps the generation and the operation — it is the same operation
+reaching its commit point — so for an inventory write the pair alone cannot
+tell a poll in flight from one delayed past its own finalizer. A
+`set-lane-tree … --generation/--operation` is therefore also refused with **7**
+where the lane reads `SWAPPED`: the operation it names is finished and its
+inventory is closed (opensoft/openRepoTools#114). Every other transition moves
+the generation, so this is the one state in which a matching pair names a
+finished operation. An observation filed under no transition is a
+`set-lane-tree` with neither flag.
 
 `RUNNING` is written by the act that CONFIRMS the binding and never by the
 SessionStart hook: `session-start` never writes, never touches the network and
@@ -3370,7 +3382,10 @@ answers rather than failures and are spelled as such — a branch with no commit
 yet has `unborn` for its head, and a branch whose upstream is configured but
 whose remote-tracking ref is not in this checkout (the ordinary state after a
 merged branch is deleted) records that configured upstream with `unknown`
-unpushed, never the `0` that reads as *everything here is published*.
+unpushed, never the `0` that reads as *everything here is published*. Both
+halves of that configuration are reads with a status: a `branch.<b>.merge` or
+`branch.<b>.remote` that git could not read is a **1**, never an empty remote
+spelled as the local upstream `./<merge>` (opensoft/openRepoTools#113).
 
 **A sidecar this helper cannot read is one it will not replace.** A snapshot or
 a tree record carrying a schema this version does not write is reported as
@@ -3378,8 +3393,30 @@ a tree record carrying a schema this version does not write is reported as
 than overwritten by a record an older helper can understand — the one act no
 later reader can undo. And `set-lane-tree --generation/--operation` is COMPARED
 with the lane's own snapshot under the mutex before the record is filed, so a
-poll taken under an operation a recovery has since superseded is refused with
-**7** instead of being filed over the current inventory.
+poll taken under an operation a recovery has since superseded — or one the
+lane has already finalized — is refused with **7** instead of being filed over
+the current inventory.
+
+**And a record of THIS schema is read only when it is whole**
+(opensoft/openRepoTools#115). The `schema:` line alone used to pass, so a file
+cut short after it was read as empty fields and replaced by every writer. Now
+every key its writer writes must be there and not empty — `lane`, `state`,
+`generation`, `operation`, `owner`, `agent`, `profile`, `workstation`, `kind`
+and `updated` for a snapshot; `lane`, `tree`, `path`, `checkout`, `branch`,
+`head`, `upstream`, `dirty`, `unpushed`, `writer`, `generation`, `operation` and
+`observed` for a tree — with a snapshot's `state` one of the four words, every
+`generation` a number, a tree's `dirty` a number and its `unpushed` a number or
+`unknown`, its `path` absolute, and its `tree` the id its file is named for.
+Both writers have written exactly these keys since #97 landed. A record that
+fails is taken the way an unknown schema is: every writer refuses it (exit
+**1**, nothing written), `lane-state` answers **10** and `lane-reconcile` reads
+the snapshot as `MALFORMED`, and `lane-trees` carries a tree record as a row of
+its own named by its file under the schema `<malformed>`, keeping the path the
+record names — so the tree is still named once, though that path is the record's
+own word and may be relative — and every other field empty.
+The writers ask the same question of their own temporary file before the
+rename, so a record cut short as it was written is removed rather than renamed
+over a whole one.
 
 **One path, one record.** A tree's record is named from its path and from
 nothing else: `c<cksum>-<folded path>`, a `cksum` of the WHOLE absolute path
@@ -3389,7 +3426,11 @@ and then the path with every character outside the file-name alphabet folded to
 other. And `set-lane-tree` takes a caller's observation **whole** — `--branch`,
 `--head`, `--upstream`, `--dirty` and `--unpushed` together — or reads the tree
 itself; a partial one is refused with **64** and nothing is written, because the
-fields it lacks would be filed as a `dirty 0, unpushed 0` nobody observed.
+fields it lacks would be filed as a `dirty 0, unpushed 0` nobody observed. So is
+a `--dirty` that is not a count, an `--unpushed` that is neither a count nor
+`unknown`, or a `--branch`, `--head`, `--upstream`, `--checkout` or `--writer`
+that is only blanks (a reader trims a value, so that field would be empty): a
+record carrying one could be neither read nor replaced.
 
 ### The reconciliation, which resets nothing
 
@@ -3402,8 +3443,15 @@ tree, reads `git worktree list --porcelain` in the lane's checkout and the
 directories under both lane roots, and prints one `TREE` line per tree with a
 classification: `ok`, `dirty`, `unpushed`, `unpushed-unknown`,
 `dirty+unpushed`, `dirty+unpushed-unknown`, `missing`, `possible-loss`,
-`not-a-checkout`, `unreadable`, `unreadable-sidecar`, `unknown-schema`,
-`unmanaged`, `stale-registration`. A `BINDING` line says where the lane is bound — `here`,
+`not-a-checkout`, `unreadable`, `unreadable-sidecar`, `malformed-sidecar`,
+`unknown-schema`, `unmanaged`, `stale-registration`. Every one of those reads has
+a status, and a read that FAILED is never an empty answer (opensoft/openRepoTools
+#113): an inventory directory that cannot be listed (`lane-trees`' **10**), a
+`git worktree list --porcelain` that fails in a checkout with a `.git` of its
+own, and a lane root that cannot be listed or searched each make the verdict
+`indeterminate` and are named in it — a recorded directory that is no
+repository at all registers nothing, and that alone is an absence, as
+`lane-worktrees` reads it. A `BINDING` line says where the lane is bound — `here`,
 `free`, `gone` (bound on this host's tmux and its window is gone), `elsewhere`
 (and where), or `unknown` (its log could not be read) — and `elsewhere` or
 `unknown` turns every verdict into `indeterminate` (Amendment 18(b)). The last
@@ -3461,6 +3509,13 @@ NOTHING (`AGENTS.md` rule 1), so this read runs `git status`, `git log @{u}..`,
   person reads by hand, and it is never skipped as though the lane owned one
   tree fewer (`lane-trees` carries it as a row of its own whose schema is
   `<unreadable>`);
+* a **malformed-sidecar** is a tree record of this schema that is not whole —
+  cut short, a key missing or out of shape, or an id that is not its file's
+  (opensoft/openRepoTools#115). It is reported as the unreadable one is: no
+  field of it is read, it counts toward recovery, the line says what is wrong
+  with it and names the file, and no writer replaces it. Before this, a record
+  cut after its `path:` came out with an empty dirty and unpushed, and a vanished
+  tree that held work read `missing`, clean and published;
 * an **unknown-schema** tree is a sidecar written by a newer tooling: it is
   named, and not one field of it is read, because a value taken out of a record
   whose shape this reader is guessing at is worse than no value.
@@ -4092,9 +4147,19 @@ one passed `lane-end`.
 
 * reads every leg, and every dependency nested in one (an initialized submodule of
   the leg's own, as `code/upstream/openRepoShape` will be), as a **`leg` row** —
-  `clean`, `dirty`, `unpushed`, `dirty+unpushed`, `absent` (not checked out here)
-  or `unreadable`. A leg is the assembly's, shared by every lane the assembly
-  homes, as the assembly's own checkout is: **no `--yes` acts on a leg
+  `clean`, `dirty`, `unpushed`, `dirty+unpushed`, `absent` (not checked out here,
+  or not there at all) or `unreadable` (a `.git` of its own that git cannot read,
+  or a leg directory this account cannot search, #255). A dependency nested in a
+  leg that git lists as not initialized has no row where its directory is missing,
+  or empty and searchable: it was never initialized. But git lists a dependency it
+  cannot search as not initialized too, so where its directory, or one above it,
+  cannot be searched (or it holds a `.git` that git cannot read), it is an
+  `unreadable` row, counted: a read that failed is never a clean dependency (#255).
+  One whose directory holds a checkout that git can read (a clone made by hand,
+  which git does not count as initialized) is read like an initialized one: it
+  holds the lane's work all the same.
+  A leg is the assembly's, shared by every lane the assembly homes, as the
+  assembly's own checkout is: **no `--yes` acts on a leg
   checkout** (its branches are another matter: see `--branches` below). It is
   COUNTED (exit 3, and `lane-end`'s gate) only where its HEAD's own `Lane:` trailer
   is this lane's and it holds edits or commits origin lacks — the rule the sweep
@@ -4162,8 +4227,9 @@ leg's repository (a paired tree, or one `lane-worktrees add --checkout
 checkout of the tree's own repository keeps it: a dependency nested in a leg
 (`--checkout <assembly>/code/upstream/<dep>`) is no declared leg. Any other tree keeps
 the lane's `dir`, as before. A leg that is not checked out here (never initialized, or
-deinitialized) names no tree. A leg with a `.git` of its own that git cannot read is
-`unreadable`, the sweep's word: one `- UNREADABLE LEG: …` line in WRITERS and a note on
+deinitialized) names no tree. A leg with a `.git` of its own that git cannot read, or
+a leg directory this account cannot search (#255), is `unreadable`, the sweep's word:
+one `- UNREADABLE LEG: …` line in WRITERS and a note on
 stderr, and counted on stderr's `legs: N of the assembly's legs under <dir> unreadable`
 line, never in WRITERS' `(N found)`. The lane is not held `SWAPPING` for the leg
 itself. A polled tree that could then be of that leg's repository is one it cannot
@@ -4185,8 +4251,9 @@ as a writer, just as the checkout's own registrations elsewhere are not;
 beside what the checkout holds. Every worktree git registers in a checked-out leg that
 no sidecar names is a `TREE` row: `unmanaged`, or `stale-registration` where its
 directory is gone, naming the leg. A checkout in the paired root that nothing else named
-is `unmanaged`. A leg with a `.git` of its own that git cannot read is a `TREE` row
-`unreadable` that requires recovery: the sweep's rule and word for its `leg` row, which
+is `unmanaged`. A leg with a `.git` of its own that git cannot read, or a leg directory
+this account cannot search, is a `TREE` row `unreadable` that requires recovery:
+the sweep's rule and word for its `leg` row, which
 it counts. The verdict is not `indeterminate` for it, so the sweep still lists and
 counts that leg. Nothing is adopted, deleted or overwritten.
 
@@ -4202,6 +4269,12 @@ cannot be listed, or a leg's directory under a feature cannot be searched. For t
 same directories, and where the lane's inventory cannot be read (which paired trees it
 names would then be unknown), `lane-handoff` gives the same three signs: a
 `- NOT POLLED: …` line in WRITERS, a note on stderr, and the lane left `SWAPPING`.
+So does an inventory that holds a record that is not a whole schema-1 one (#255):
+`lane-trees` gives such a record its id, its schema (`<unreadable>`, `<none>`, an
+unknown one, or #252's `<malformed>`) and any path it keeps, and the note names each
+one by those three. It is never read as a record, as the sweep never reads one, so a
+paired tree that only it names is not taken as this lane's writer, and the handoff
+files no record over it.
 **A checkout with no `project.yaml` is asked nothing**, and one whose
 `project.yaml` names no leg but itself is asked only `project-legs`, which answers 8.
 The handoff's output, top block and inventory, and the reconciliation, are byte for

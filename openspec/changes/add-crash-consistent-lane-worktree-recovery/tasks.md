@@ -115,7 +115,9 @@ Nothing is left as a comment thread and nothing is left unnamed.
   every one of these reads, as it already is at the holder's — a decision for
   the round that also settles how `lane-trees` carries a row it could not read.
   *The unreadable sidecar is taken in 8.12* — a row of its own, and the
-  `unreadable-sidecar` class; the other three reads remain.
+  `unreadable-sidecar` class; the other three reads remain. *They are taken in
+  decision 26*, with `lane-trees`' 10 for an inventory directory that cannot be
+  listed, which the reconciliation also swallowed.
 - **`opensoft/openRepoTools#114` — the inventory fence, and the partial
   observation.** `SWAPPING -> SWAPPED` keeps the generation AND the operation by
   design (decision 13), so `set-lane-tree --generation G --operation O` still
@@ -128,7 +130,8 @@ Nothing is left as a comment thread and nothing is left unnamed.
   compare-and-swap (at minimum `SWAPPING`) or the operation id is invalidated at
   finalization, and the second is whether a partial observation is a usage
   refusal or is completed from one `lane_tree_now`. *The second is taken in
-  8.12*, as a usage refusal (64); the fence remains.
+  8.12*, as a usage refusal (64); the fence remains. *The fence is taken in
+  decision 27*: a fenced write is refused (7) where the lane reads `SWAPPED`.
 - **`opensoft/openRepoTools#115` — validation beyond the `schema:` line.**
   `lane_sidecar_schema_ok` asks one question, so a truncated `schema: 1` file
   with no state and no generation passes it: readers emit empty fields and
@@ -136,7 +139,9 @@ Nothing is left as a comment thread and nothing is left unnamed.
   performed against a known one whose content is not valid. The cost is the one
   loss no later reader can undo; what decides it is which keys, types and
   identity each kind of sidecar requires, and whether a malformed record of a
-  known schema takes the same refusal path an unknown schema takes.
+  known schema takes the same refusal path an unknown schema takes. *Taken in
+  decision 28*: every key its writer writes, their shapes and a tree's id, and
+  the unknown schema's refusal path on both sides.
 - **`opensoft/openRepoTools#116` — the tree's identity.** `tree_id_for` folds
   every character outside the manifest-key set to `-` and squeezes repeats, so
   `/tmp/a/b` and `/tmp/a-b` share one sidecar and a lane with two valid trees
