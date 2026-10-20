@@ -165,3 +165,22 @@ def test_W_reflog_shows_only_fetch_and_ff(box: Box):
     assert len(new_remote) == len(remote_log) + 1 and new_remote[0].startswith("fetch"), new_remote
     assert box.wgit("for-each-ref", "--format=%(refname)").split() == refs, "no ref made or deleted"
     assert box.wgit("stash", "list") == ""
+
+
+@pytest.mark.parametrize("how", ["both", "root-only"])
+def test_refresh_refuses_a_W_that_is_a_lane_checkout(box: Box, how: str):
+    """MUST 3: in a lane window whose `LANES_WORKSPACE_ROOT` names the lane's
+    own checkout, `refresh-workspace` refuses (2), naming that variable, and
+    leaves that checkout where it was: it is not W, and W alone is refreshed."""
+    box.lanes_root.mkdir(parents=True)
+    c = box.clone(box.checkout("repoFF-1"))
+    box.peer_pushes()
+    before = box.git("-C", str(c), "rev-parse", "HEAD").strip()
+    extra = {"LANES_WORKSPACE_ROOT": str(c)}
+    if how == "both":
+        extra["LANES_REPO"] = str(c)
+    result = box.refresh(**extra)
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "Unset LANES_WORKSPACE_ROOT" in result.stderr, result.stderr
+    assert box.git("-C", str(c), "rev-parse", "HEAD").strip() == before, "not fast-forwarded"
+    assert not Path(f"{c}-lanes").exists()
