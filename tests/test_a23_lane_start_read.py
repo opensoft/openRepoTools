@@ -11,9 +11,11 @@ none "in this checkout", and refused to add a duplicate (`lane-start:1591`). A
 `lane-end` read the same W and found no row to end.
 
 Each case drives the real commands with no `LANES_REPO` and no `LANES_FILE`, so
-the helper routes every write and the commands resolve W from `workspace.yaml`
-as a lane window does. The sandbox is `test_lane_start_row_stamp`'s, with its
-explicit seam taken back out.
+the commands resolve W from `workspace.yaml` as a lane window does, and with
+`LANES_ROUTE_WRITES=1`, the opt-in the routing stays behind until slice 1b (the
+review of opensoft/openRepoTools#282, MUST 2); one case leaves it out. The
+sandbox is `test_lane_start_row_stamp`'s, with its explicit seam taken back
+out.
 """
 
 from __future__ import annotations
@@ -27,10 +29,13 @@ from conftest import REPO
 from test_lane_start_row_stamp import LANE, Sandbox, _checkout_of_length, pytestmark, short_root  # noqa: F401
 
 
-def default_resolution(box: Sandbox) -> Path:
-    """No seam: workspace.yaml names `box.wip` as W again. Returns the lane's checkout."""
+def default_resolution(box: Sandbox, *, route: bool = True) -> Path:
+    """No seam: workspace.yaml names `box.wip` as W again, and the routing is
+    opted into unless `route` is False. Returns the lane's checkout."""
     for key in ("LANES_REPO", "LANES_FILE"):
         box.env.pop(key, None)
+    if route:
+        box.env["LANES_ROUTE_WRITES"] = "1"
     (box.home / ".agents" / "workspace.yaml").write_text(
         f"repository: {box.root / 'origin.git'}\npath: {box.wip}\n", encoding="utf-8")
     return Path(os.path.realpath(box.wip) + "-lanes") / LANE
@@ -105,3 +110,46 @@ def test_a_LANES_REPO_alone_is_the_register_read(tmp_path, short_root):
     assert second.returncode == 0, second.stderr
     assert "ALREADY has a row" not in second.stderr, second.stderr
     assert len(rows(box.wip / "lanes" / "LANES.md")) == 1
+
+
+# ------------------------------------------------------- fix round 1 (#282's review)
+
+def test_without_the_opt_in_a_new_lane_starts_through_W(tmp_path, short_root):
+    """MUST 2: with no `LANES_ROUTE_WRITES` a start reads and writes W, as on
+    main: no lane checkout is made, and a second start finds its row in W."""
+    box = Sandbox(tmp_path)
+    checkout = default_resolution(box, route=False)
+    lane_dir = _checkout_of_length(short_root, None)
+    box.checkout(lane_dir)
+    first = box.start("--dir", str(lane_dir), window_name="claude")
+    assert first.returncode == 0, first.stderr
+    assert not checkout.parent.exists(), "no lane checkout, and no <W>-lanes/"
+    assert len(rows(box.wip / "lanes" / "LANES.md")) == 1, "the row is W's"
+    second = box.start(window_name=LANE)
+    assert second.returncode == 0, second.stderr
+    assert not checkout.parent.exists()
+
+
+def test_a_checkout_that_cannot_be_made_is_said_and_the_start_goes_on(tmp_path, short_root):
+    """SHOULD 2: where the lane's checkout cannot be cloned, the start says so
+    and reads W, as it does for a dry run with none: a register act it can do
+    without never refuses a launch (Amendment 8(d))."""
+    box = Sandbox(tmp_path)
+    checkout = default_resolution(box, route=False)
+    lane_dir = _checkout_of_length(short_root, None)
+    box.checkout(lane_dir)
+    first = box.start("--dir", str(lane_dir), window_name="claude")
+    assert first.returncode == 0, first.stderr
+    real = shutil.which("git")
+    wrapper = box.root / "no-clone-git"
+    wrapper.write_text(f"""#!/usr/bin/env bash
+case " $* " in *" clone "*) echo "test: no clone today" >&2; exit 1 ;; esac
+exec '{real}' "$@"
+""", encoding="utf-8")
+    wrapper.chmod(0o755)
+    box.env.update(LANES_ROUTE_WRITES="1", LANES_GIT=str(wrapper))
+    second = box.start(window_name=LANE)
+    assert "own register checkout could not be made" in second.stderr, second.stderr
+    assert "so this command reads W's register" in second.stderr
+    assert not checkout.exists()
+    assert second.returncode == 0, second.stderr

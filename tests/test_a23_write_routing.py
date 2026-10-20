@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from a23_box import REGISTER, RegisterBox, register_text
 from conftest import REPO, WINDOWS_SKIP
 
 pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
@@ -32,20 +33,9 @@ pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
 LANE = "repoA23-1"
 DORMANT = "repoA23-9"
 TARGET = "repoA23-4"
-REGISTER = "lanes/LANES.md"
 UUID = "a23a0001-a2a2-4000-8000-a23a0001a2a2"
 TARGET_UUID = "a23a0004-a2a2-4000-8000-a23a0004a2a2"
 ASKER_UUID = "a23a0005-a2a2-4000-8000-a23a0005a2a2"
-
-SCRUBBED_PREFIXES = ("LANES_", "LANE_START_", "CLAUDE_", "OPENREPOTOOLS_",
-                     "FAKE_", "GIT_", "TMUX")
-SCRUBBED = {"AGENT_PROTOCOL_ROOT", "PROJECTS_ROOT", "XDG_CONFIG_HOME",
-            "XDG_CACHE_HOME"}
-
-REFUSE = """#!/usr/bin/env bash
-printf 'FAKE %s REFUSED: %s -- this suite reaches no real surface\\n' "${0##*/}" "$*" >&2
-exit 90
-"""
 
 
 def _row(lane: str, uuid: str = UUID, state: str = "LIVE · seeded") -> str:
@@ -53,112 +43,28 @@ def _row(lane: str, uuid: str = UUID, state: str = "LIVE · seeded") -> str:
             f"| — | handoffs/repoA23/{lane}.md | {state} |")
 
 
-class Box:
-    """A bare origin, W cloned from it, and the workspace.yaml naming W."""
+class Box(RegisterBox):
+    """Four rows; the TARGET of a request bound in another container."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, **kw) -> None:
         root = Path(os.path.realpath(root))
-        root.mkdir(parents=True, exist_ok=True)
-        self.root = root
-        self.home = root / "home"
-        self.origin = root / "origin.git"
-        self.w = self.home / "projects" / "brett-wip"
-        self.lanes_root = self.home / "projects" / "brett-wip-lanes"
-        self.fakebin = root / "fakebin"
-        for d in (self.home / ".agents", self.home / "projects", root / "tmp", self.fakebin):
-            d.mkdir(parents=True, exist_ok=True)
-        for name in ("gh", "tmux"):
-            (self.fakebin / name).write_text(REFUSE, encoding="utf-8")
-            (self.fakebin / name).chmod(0o755)
-        env = {k: v for k, v in os.environ.items()
-               if k not in SCRUBBED and not k.startswith(SCRUBBED_PREFIXES)}
-        env.update({
-            "HOME": str(self.home),
-            "TMPDIR": str(root / "tmp"),
-            "XDG_CONFIG_HOME": str(self.home / ".config"),
-            "XDG_CACHE_HOME": str(self.home / ".cache"),
-            "PATH": f"{self.fakebin}{os.pathsep}{env.get('PATH', '')}",
-            "AGENT_PROTOCOL_ROOT": str(self.home / ".agents"),
-            "LANES_WORKSTATION": "Eagle",
-            "LANES_HOST": "hosta",
-            "LANES_CONTAINER": "bench-a",
-            "LANES_NO_GITHUB": "1",
-            "LANES_INDEX": "off",
-            "LANE_WORKTREES_REPORT": "off",
-            "GIT_AUTHOR_NAME": "a23 tests",
-            "GIT_AUTHOR_EMAIL": "test@example.invalid",
-            "GIT_COMMITTER_NAME": "a23 tests",
-            "GIT_COMMITTER_EMAIL": "test@example.invalid",
-        })
-        self.env = env
-        self.git("init", "-q", "--bare", "-b", "main", str(self.origin))
-        self.quiet(self.origin, bare=True)
-        seed = root / "seed"
-        self.git("clone", "-q", str(self.origin), str(seed))
-        self.quiet(seed)
-        rows = [_row(LANE), _row("repoA23-2"), _row(DORMANT, uuid="a23a0009-a2a2-4000-8000-a23a0009a2a2"),
+        rows = [_row(LANE), _row("repoA23-2"),
+                _row(DORMANT, uuid="a23a0009-a2a2-4000-8000-a23a0009a2a2"),
                 _row(TARGET, uuid=TARGET_UUID)]
-        self.write(seed, REGISTER,
-                   "# LANES.md -- the sandbox register\n\n"
-                   "| lane | session id | workstation / env / user | started (UTC) "
-                   "| objects owned | handoff path | state |\n"
-                   "|---|---|---|---|---|---|---|\n" + "".join(f"{r}\n" for r in rows))
-        # THE TARGET OF A REQUEST IS BOUND ELSEWHERE: its last lane-kind line is
-        # a STARTED from another container on this host (Amendment 18).
-        self.write(seed, f"lanes/log/{TARGET}.md",
-                   f"# lane {TARGET} — object log (lane-collision-protocol Amendment 7)\n"
-                   f"STARTED — lane {TARGET}, session {TARGET_UUID}@Eagle, 2026-10-17T09:00:00Z, "
-                   f"lane:{TARGET} → home opensoft/repoA23; estate repoA23; dir {root}/lanedir; "
-                   f"profile team-05a; window othersess:4 @62; host hosta; os linux; container bench-b\n")
-        self.write(seed, f"lanes/log/{LANE}.md",
-                   f"# lane {LANE} — object log (lane-collision-protocol Amendment 7)\n")
-        self.write(seed, "handoffs/README.md", "# handoffs\n")
-        self.git("-C", str(seed), "add", "--", REGISTER, "handoffs/README.md", "lanes/log")
-        self.git("-C", str(seed), "commit", "-q", "-m", "seed")
-        self.git("-C", str(seed), "push", "-q", "origin", "main")
-        self.seed = seed
-        self.git("clone", "-q", str(self.origin), str(self.w))
-        self.quiet(self.w)
-        (self.home / ".agents" / "workspace.yaml").write_text(
-            f"repository: {self.origin}\npath: {self.w}\n", encoding="utf-8")
-
-    def quiet(self, repo: Path, *, bare: bool = False) -> None:
-        where = ["--git-dir", str(repo)] if bare else ["-C", str(repo)]
-        self.git(*where, "config", "gc.auto", "0")
-        self.git(*where, "config", "maintenance.auto", "false")
-
-    def git(self, *args: str) -> str:
-        return subprocess.run(["git", *args], env=self.env, check=True,
-                              capture_output=True, text=True).stdout
-
-    @staticmethod
-    def write(checkout: Path, rel: str, text: str) -> None:
-        path = checkout / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
-
-    def helper(self, *args: str, **extra: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["bash", str(REPO / "lanes-edit.sh"), *args],
-                              env=dict(self.env, **extra), cwd=str(self.root),
-                              capture_output=True, text=True, timeout=180, check=False)
-
-    def checkout(self, lane: str) -> Path:
-        return self.lanes_root / lane
-
-    def clone(self, dest: Path) -> Path:
-        self.git("clone", "-q", str(self.origin), str(dest))
-        self.quiet(dest)
-        return dest
-
-    def origin_head(self) -> str:
-        return self.git("--git-dir", str(self.origin), "rev-parse", "main").strip()
-
-    def origin_file(self, rel: str) -> str:
-        return self.git("--git-dir", str(self.origin), "show", f"main:{rel}")
-
-    def w_state(self) -> tuple[str, str]:
-        return (self.git("-C", str(self.w), "rev-parse", "HEAD").strip(),
-                self.git("-C", str(self.w), "status", "--porcelain", "--untracked-files=all"))
+        files = {
+            REGISTER: register_text(rows),
+            # THE TARGET OF A REQUEST IS BOUND ELSEWHERE: its last lane-kind line
+            # is a STARTED from another container on this host (Amendment 18).
+            f"lanes/log/{TARGET}.md":
+                f"# lane {TARGET} — object log (lane-collision-protocol Amendment 7)\n"
+                f"STARTED — lane {TARGET}, session {TARGET_UUID}@Eagle, 2026-10-17T09:00:00Z, "
+                f"lane:{TARGET} → home opensoft/repoA23; estate repoA23; dir {root}/lanedir; "
+                f"profile team-05a; window othersess:4 @62; host hosta; os linux; container bench-b\n",
+            f"lanes/log/{LANE}.md":
+                f"# lane {LANE} — object log (lane-collision-protocol Amendment 7)\n",
+            "handoffs/README.md": "# handoffs\n",
+        }
+        super().__init__(root, files, **kw)
 
 
 @pytest.fixture
@@ -356,3 +262,165 @@ def test_guard_no_lane_exemption_still_first(box: Box):
         assert result.returncode == 0, (extra, result.stdout, result.stderr)
         assert result.stdout == "" and result.stderr == ""
     assert not box.lanes_root.exists()
+
+
+# ------------------------------------------------------- fix round 1 (#282's review)
+
+def _git_wrapper(box: Box, name: str, body: str) -> Path:
+    """A `LANES_GIT` — the binary the helper's NETWORK calls use, and only
+    those — that runs `body` first and then the real git."""
+    real = shutil.which("git")
+    path = box.root / name
+    path.write_text(f"#!/usr/bin/env bash\n{body}\nexec '{real}' \"$@\"\n", encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def test_without_the_opt_in_a_write_goes_through_W_as_before(box: Box):
+    """MUST 2: routing is opt-in until slice 1b. With no `LANES_ROUTE_WRITES`,
+    the default resolution writes, commits and pushes in W, and no lane
+    checkout or workstation lock is made — main's behaviour, byte for byte."""
+    head = box.w_state()[0]
+    result = box.helper("set-row-state", LANE, "LIVE · written in W", LANES_ROUTE_WRITES="")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert not box.lanes_root.exists(), "no lane checkout, no <W>-lanes/ at all"
+    assert box.w_state()[0] != head, "the commit is W's"
+    assert box.w_state()[1] == ""
+    assert " · written in W |" in box.origin_file(REGISTER)
+    assert box.git("-C", str(box.w), "rev-parse", "HEAD").strip() == box.origin_head()
+
+
+def test_a_routed_write_brings_W_origin_main_along(box: Box):
+    """MUST 1: a routed write pushes from the lane's checkout, and the prompt
+    guard reads W's `origin/main` OFFLINE. So W is fetched once the push has
+    landed — W's ref, and an unfetched read of W, see the write — and W's
+    branch and working tree stay as they were (S5: a fetch, nothing else)."""
+    w_before = box.w_state()
+    result = box.helper("set-row-state", LANE, "LIVE · what the guard reads")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert box.w_origin_main() == box.origin_head(), "W's origin/main followed the push"
+    read = box.helper("register-row", LANE, LANES_NO_FETCH="1")
+    assert read.returncode == 0, (read.stdout, read.stderr)
+    assert " · what the guard reads |" in read.stdout, "an offline read of W sees the write"
+    assert box.w_state() == w_before, "W itself was only fetched"
+
+
+def test_a_follow_fetch_that_fails_is_said_and_fails_nothing(box: Box):
+    """The write has landed by then: a W that cannot be fetched is a note."""
+    assert box.helper("set-row-state", LANE, "LIVE · made the checkout").returncode == 0
+    wrapper = _git_wrapper(box, "w-fetch-fails",
+                           f'case " $* " in *" {box.w} fetch "*) exit 1 ;; esac')
+    result = box.helper("set-row-state", LANE, "LIVE · W could not follow", LANES_GIT=str(wrapper))
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "did not learn it" in result.stderr and "refresh-workspace" in result.stderr
+    assert " · W could not follow |" in box.origin_file(REGISTER)
+    assert box.w_origin_main() != box.origin_head()
+
+
+@pytest.mark.parametrize("how", ["both", "root-only", "same-checkout"])
+def test_a_W_that_is_a_lane_checkout_refuses_naming_LANES_WORKSPACE_ROOT(box: Box, how: str):
+    """MUST 3: Eagle's lane windows export `LANES_REPO` and
+    `LANES_WORKSPACE_ROOT` at the lane's own checkout. That is not W: every
+    write refuses, naming the variable to unset, and nothing is cloned inside
+    it (`<lane>-lanes/<lane>`) and no lock is made beside it."""
+    if how == "same-checkout":
+        c = box.clone(box.root / "elsewhere" / "openRepoTools-3")
+    else:
+        box.lanes_root.mkdir(parents=True)
+        c = box.clone(box.checkout(LANE))
+    extra = {"LANES_WORKSPACE_ROOT": str(c)}
+    if how != "root-only":
+        extra["LANES_REPO"] = str(c)
+    head = box.origin_head()
+    result = box.helper("set-row-state", LANE, "LIVE · never written", **extra)
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "Unset LANES_WORKSPACE_ROOT" in result.stderr, result.stderr
+    assert "readers' copy" in result.stderr
+    assert not Path(f"{c}-lanes").exists(), "nothing cloned or locked beside the lane checkout"
+    assert box.origin_head() == head
+    checkout = box.helper("lane-checkout", LANE, "--create", LANES_ROUTE_WRITES="", **extra)
+    assert checkout.returncode == 2, (checkout.stdout, checkout.stderr)
+    assert not Path(f"{c}-lanes").exists(), "lane-checkout refuses with or without the opt-in"
+
+
+def test_S5_compares_the_repository_not_the_spelling(box: Box):
+    """SHOULD 3: `LANES_REPO` at W's own `lanes/` directory is W — its edit
+    would land in W's tree — so S5 refuses it before anything is written."""
+    head, w_before = box.origin_head(), box.w_state()
+    result = box.helper("set-row-state", LANE, "LIVE · never written",
+                        LANES_REPO=str(box.w / "lanes"), LANES_FILE=str(box.w / REGISTER))
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "readers' copy" in result.stderr and "Amendment 23 S5" in result.stderr, result.stderr
+    assert_nothing_written(box, head, w_before)
+
+
+def test_a_hand_edit_in_W_refuses_a_routed_write(box: Box):
+    """SHOULD 4: W's register carries a hand edit. A routed write — `commit`
+    among them — refuses, naming the edit and the lane's checkout, where
+    before it said "nothing staged" with exit 0 and left the edit in W."""
+    register = box.w / REGISTER
+    edited = register.read_text(encoding="utf-8").replace("LIVE · seeded |", "LIVE · by hand |", 1)
+    register.write_text(edited, encoding="utf-8")
+    head = box.origin_head()
+    result = box.helper("commit", "a hand edit", LANES_LANE=LANE)
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "uncommitted edit to its register" in result.stderr, result.stderr
+    assert f"{box.checkout(LANE)}/lanes/LANES.md" in result.stderr, "it names where the edit belongs"
+    assert register.read_text(encoding="utf-8") == edited, "the edit is still in W, untouched"
+    assert box.origin_head() == head
+    assert not box.checkout(LANE).exists()
+
+
+def _row_published_not_in_W(box: Box, lane: str) -> None:
+    """A row a peer published, which W has fetched and not fast-forwarded. It
+    goes at the TOP of the table, clear of the line an append adds at the
+    foot, so a checkout that predates it rebases over it cleanly."""
+    head, sep, rest = box.origin_file(REGISTER).partition("|---|---|---|---|---|---|---|\n")
+    box.peer_pushes(REGISTER, head + sep + _row(lane) + "\n" + rest)
+    box.git("-C", str(box.w), "fetch", "-q", "origin", "main")
+    assert f"`{lane}`" not in (box.w / REGISTER).read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("checkout_first", [False, True], ids=["fresh", "stale-checkout"])
+def test_append_line_attribution_reads_the_published_register(box: Box, checkout_first: bool):
+    """SHOULD 1: a LANDING line with no `LANES_LANE` is attributed from the
+    published register, not W's working tree, and its commit carries that
+    lane even where the lane's own checkout predates the row."""
+    lane = "repoA23-7"
+    if checkout_first:
+        made = box.helper("lane-checkout", lane, "--create")
+        assert made.returncode == 0, (made.stdout, made.stderr)
+    _row_published_not_in_W(box, lane)
+    result = box.helper("append-line", f"LANDING — lane {lane}, the published row decides")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert (box.checkout(lane) / ".git").is_dir(), "it went through that lane's checkout"
+    subject = box.git("--git-dir", str(box.origin), "log", "-1", "--format=%s", "main")
+    assert subject.startswith(f"LANES({lane}@Eagle): append line"), subject
+
+
+def test_request_handoff_why_after_the_separator_is_no_dry_run(box: Box):
+    """NIT 1: after `--` every word is the `--force` why, so `--dry-run` there
+    is text, the arm writes, and the write goes through the target's checkout."""
+    result = box.helper("request-handoff", TARGET, "--force", "--no-wait", "--", "--dry-run",
+                        LANES_SESSION=ASKER_UUID)
+    assert (box.checkout(TARGET) / ".git").is_dir(), (result.stdout, result.stderr)
+    assert not (box.w / "lanes" / ".lanes-edit.lock").exists()
+    assert box.w_state()[1] == "", "nothing was written in W"
+
+
+def test_no_git_makes_no_clone(box: Box):
+    """NIT 8: `LANES_NO_GIT=1` is no commit and no push, so it is no clone."""
+    result = box.helper("set-row-state", LANE, "LIVE · no git", LANES_NO_GIT="1")
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "LANES_NO_GIT=1" in result.stderr and "lane-checkout" in result.stderr
+    assert not box.checkout(LANE).exists()
+
+
+def test_an_explicit_LANES_REPO_still_needs_a_lane(box: Box):
+    """NIT 9: `LANES_REPO` chooses a checkout, never the lane a commit is for."""
+    other = box.clone(box.root / "elsewhere" / "register")
+    head = box.origin_head()
+    result = box.helper("commit", "a hand edit", LANES_REPO=str(other))
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "no lane, no write" in result.stderr and "LANES_LANE=<lane>" in result.stderr
+    assert box.origin_head() == head

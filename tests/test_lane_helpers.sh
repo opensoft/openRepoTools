@@ -15415,20 +15415,16 @@ is    "…and its verdict is the cutover one" \
 # the fixture the last case of this file asserts is still running — so it cannot
 # be stolen as a dead holder's, and `timeout`'s own 124 is the proof the writer
 # was still WAITING for it rather than exiting early on something else.
-# THE LOCK IS THE WORKSTATION'S SIDECAR LOCK since Amendment 23 S2 (ort186 Q3):
-# the inventory, the lifecycle snapshot and the restart intent share it, beside
-# W's lane checkouts, and W's own mutex no longer serialises them.
-H_SIDECAR="$(cd -P -- "$WIP_RO" && pwd -P)-lanes/.lane-state.lock"
 if [ "$HAVE_TIMEOUT" = 1 ]; then
-  mkdir -p "$H_SIDECAR"; printf '%s\n' "$LIVE_PID" > "$H_SIDECAR/pid"
+  mkdir -p "$H_LOCK"; printf '%s\n' "$LIVE_PID" > "$H_LOCK/pid"
   LANES_NO_FETCH=1 timeout 3 "$E" set-lane-tree repoRC-9 "$RC_DIR/.claude/worktrees/w1" \
     --checkout "$RC_DIR" --branch feat/rc1 --head "$rc5_w1head" --upstream none \
     --dirty 1 --unpushed 0 >/dev/null 2>&1
   rc9_lk=$?
-  is    "an UNFENCED inventory write WAITS on the sidecar lock another run holds" "$rc9_lk" 124
+  is    "an UNFENCED inventory write WAITS on the lane mutex another run holds" "$rc9_lk" 124
   run "$E" lane-trees repoRC-9
   is    "…so nothing of it was written while that run held the lock" "$rc" 8
-  rm -rf "$H_SIDECAR"
+  rm -rf "$H_LOCK"
   run env LANES_NO_FETCH=1 "$E" set-lane-tree repoRC-9 "$RC_DIR/.claude/worktrees/w1" \
     --checkout "$RC_DIR" --branch feat/rc1 --head "$rc5_w1head" --upstream none \
     --dirty 1 --unpushed 0
@@ -15437,7 +15433,7 @@ if [ "$HAVE_TIMEOUT" = 1 ]; then
   is    "…which is the inventory this lane then holds" \
         "$(printf '%s\n' "$out" | awk -F'\037' '{print $2}' | head -n 1)" "$RC_DIR/.claude/worktrees/w1"
 else
-  skip  "an UNFENCED inventory write WAITS on the sidecar lock another run holds" "$NO_TIMEOUT_WHY"
+  skip  "an UNFENCED inventory write WAITS on the lane mutex another run holds" "$NO_TIMEOUT_WHY"
   skip  "…so nothing of it was written while that run held the lock" "$NO_TIMEOUT_WHY"
   skip  "…and the same write lands the moment the mutex is free" "$NO_TIMEOUT_WHY"
   skip  "…which is the inventory this lane then holds" "$NO_TIMEOUT_WHY"

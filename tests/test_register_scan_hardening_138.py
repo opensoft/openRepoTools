@@ -49,7 +49,14 @@ def lane_line(verb: str, lane: str, sid: str, utc: str) -> str:
 
 
 class Register:
-    """One workspace repository: `origin` bare, `wip` its clone."""
+    """One workspace repository: `origin` bare, `wip` its clone, and W.
+
+    THE EXPLICIT SEAM (Amendment 23; the review of opensoft/openRepoTools#282,
+    MUST 5): every case writes through `wip`, named by `LANES_REPO`, which is
+    where it puts its faults; W, the readers' copy `LANES_WORKSPACE_ROOT` names,
+    is a clone of its own beside it. With `LANES_WORKSPACE_ROOT` at `wip` and
+    no `LANES_REPO`, Amendment 23's routing would send every write to
+    `<wip>-lanes/<lane>/`, away from the faults."""
 
     def __init__(self, tmp: Path):
         self.tmp = tmp
@@ -65,7 +72,7 @@ class Register:
         env.update(HOME=str(self.home), TMPDIR=str(tmp / "tmp"),
                    AGENT_PROTOCOL_ROOT=str(self.home / ".agents"),
                    PROJECTS_ROOT=str(self.home / "projects"),
-                   LANES_WORKSPACE_ROOT=str(self.wip), LANES_WORKSTATION="Eagle",
+                   LANES_WORKSTATION="Eagle",
                    LANES_HOST="Eagle", LANES_CONTAINER="none", LANES_IN_CONTAINER="0",
                    LANES_OS="linux", LANES_NO_GITHUB="1", LANES_INDEX="off",
                    GIT_AUTHOR_NAME="register tests", GIT_AUTHOR_EMAIL="t@example.invalid",
@@ -83,6 +90,9 @@ class Register:
             "repoX-1", lane_line("STARTED", "repoX-1", WRITER_ID, "2026-09-11T00:00:00Z"),
             lane_line("PAUSED", "repoX-1", WRITER_ID, "2026-09-11T01:00:00Z")))
         self.publish("seed the register")
+        self.ws = tmp / "ro" / "wip"
+        self.raw_git("clone", "-q", str(self.origin), str(self.ws))
+        self.env.update(LANES_WORKSPACE_ROOT=str(self.ws), LANES_REPO=str(self.wip))
 
     def raw_git(self, *args: str) -> str:
         return subprocess.run(["git", *args], capture_output=True, text=True,
@@ -603,3 +613,24 @@ def test_item_1_an_unreadable_published_register_refuses_the_sweep(reg):
     assert "is UNKNOWN" in result.stderr
     assert reg.head() == before
     assert not (reg.wip / "lanes/log/repoX-2.md").exists()
+
+
+# ------------------------------------- Amendment 23's routing, by default resolution
+
+def test_a_routed_sweep_refuses_over_a_peer_edit_in_W_and_captures_nothing(reg):
+    """SHOULD 4, the default-resolution case of the capture above. Under
+    `LANES_ROUTE_WRITES=1` with W resolved from its root and no `LANES_REPO`,
+    the sweep goes through the sweeping lane's own checkout, so nothing would
+    ever capture the peer's edit in W. It refuses, names the edit and that
+    checkout, and leaves W, origin and the edit as they were."""
+    edited = peer_edit(reg)
+    before = reg.head()
+    published = reg.raw_git("--git-dir", str(reg.origin), "rev-parse", "main").strip()
+    result = reg.sweep("repoX-2", LANES_ROUTE_WRITES="1", LANES_REPO="",
+                       LANES_WORKSPACE_ROOT=str(reg.wip))
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "uncommitted edit to its register" in result.stderr, result.stderr
+    assert f"{os.path.realpath(reg.wip)}-lanes/repoX-1/lanes/LANES.md" in result.stderr
+    assert reg.head() == before and reg.read("lanes/LANES.md") == edited
+    assert reg.raw_git("--git-dir", str(reg.origin), "rev-parse", "main").strip() == published
+    assert not (reg.tmp / "wip-lanes").exists()

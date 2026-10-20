@@ -22,7 +22,8 @@ from pathlib import Path
 
 import pytest
 
-from conftest import REPO, WINDOWS_SKIP
+from a23_box import REGISTER, RegisterBox, register_text
+from conftest import WINDOWS_SKIP
 
 pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
                                  reason="lanes-edit.sh is a bash script"),
@@ -31,18 +32,7 @@ pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
               WINDOWS_SKIP]
 
 LANE = "repoCK-1"
-REGISTER = "lanes/LANES.md"
 UUID = "a23c0001-0c0c-4000-8000-a23c00010c0c"
-
-SCRUBBED_PREFIXES = ("LANES_", "LANE_START_", "CLAUDE_", "OPENREPOTOOLS_",
-                     "FAKE_", "GIT_", "TMUX")
-SCRUBBED = {"AGENT_PROTOCOL_ROOT", "PROJECTS_ROOT", "XDG_CONFIG_HOME",
-            "XDG_CACHE_HOME"}
-
-REFUSE = """#!/usr/bin/env bash
-printf 'FAKE %s REFUSED: %s -- this suite reaches no real surface\\n' "${0##*/}" "$*" >&2
-exit 90
-"""
 
 
 def _row(lane: str, state: str = "LIVE · seeded") -> str:
@@ -50,127 +40,25 @@ def _row(lane: str, state: str = "LIVE · seeded") -> str:
             f"| — | handoffs/repoCK/{lane}.md | {state} |")
 
 
-class Box:
-    """A bare origin, W cloned from it, and the workspace.yaml naming W."""
+class Box(RegisterBox):
+    """The rows named, an alias table where one is given, and a second branch
+    on origin."""
 
     def __init__(self, root: Path, *, rows=("repoCK-1", "repoCK-2", "repoCK-3", "repoCK-5"),
                  aliases: str = "", w_reference: Path | None = None) -> None:
-        # REAL PATHS, because the helper prints W and its lane checkouts as
-        # `pwd -P` spells them (a temp root under a symlink would not match).
-        root = Path(os.path.realpath(root))
-        root.mkdir(parents=True, exist_ok=True)
-        self.root = root
-        self.home = root / "home"
-        self.origin = root / "origin.git"
-        self.w = self.home / "projects" / "brett-wip"
-        self.lanes_root = self.home / "projects" / "brett-wip-lanes"
-        self.fakebin = root / "fakebin"
-        for d in (self.home / ".agents", self.home / "projects", root / "tmp", self.fakebin):
-            d.mkdir(parents=True, exist_ok=True)
-        for name in ("gh", "tmux"):
-            (self.fakebin / name).write_text(REFUSE, encoding="utf-8")
-            (self.fakebin / name).chmod(0o755)
-        env = {k: v for k, v in os.environ.items()
-               if k not in SCRUBBED and not k.startswith(SCRUBBED_PREFIXES)}
-        env.update({
-            "HOME": str(self.home),
-            "TMPDIR": str(root / "tmp"),
-            "XDG_CONFIG_HOME": str(self.home / ".config"),
-            "XDG_CACHE_HOME": str(self.home / ".cache"),
-            "PATH": f"{self.fakebin}{os.pathsep}{env.get('PATH', '')}",
-            "AGENT_PROTOCOL_ROOT": str(self.home / ".agents"),
-            "LANES_WORKSTATION": "Eagle",
-            "LANES_HOST": "hosta",
-            "LANES_CONTAINER": "bench-a",
-            "LANES_NO_GITHUB": "1",
-            "LANES_INDEX": "off",
-            "LANE_WORKTREES_REPORT": "off",
-            "GIT_AUTHOR_NAME": "a23 tests",
-            "GIT_AUTHOR_EMAIL": "test@example.invalid",
-            "GIT_COMMITTER_NAME": "a23 tests",
-            "GIT_COMMITTER_EMAIL": "test@example.invalid",
-        })
-        self.env = env
-        self.git("init", "-q", "--bare", "-b", "main", str(self.origin))
-        self.quiet(self.origin, bare=True)
-        seed = root / "seed"
-        self.git("clone", "-q", str(self.origin), str(seed))
-        self.quiet(seed)
-        register = ("# LANES.md -- the sandbox register\n\n"
-                    "| lane | session id | workstation / env / user | started (UTC) "
-                    "| objects owned | handoff path | state |\n"
-                    "|---|---|---|---|---|---|---|\n"
-                    + "".join(f"{_row(lane)}\n" for lane in rows))
-        self.write(seed, REGISTER, register)
-        self.write(seed, "handoffs/README.md", "# handoffs\n")
-        paths = [REGISTER, "handoffs/README.md"]
+        files = {REGISTER: register_text(_row(lane) for lane in rows),
+                 "handoffs/README.md": "# handoffs\n"}
         if aliases:
-            self.write(seed, "lanes/aliases.tsv", aliases)
-            paths.append("lanes/aliases.tsv")
-        self.git("-C", str(seed), "add", "--", *paths)
-        self.git("-C", str(seed), "commit", "-q", "-m", "seed")
-        self.git("-C", str(seed), "push", "-q", "origin", "main")
-        # A SECOND BRANCH ON ORIGIN, so a clone that took every branch shows.
-        self.git("-C", str(seed), "push", "-q", "origin", "main:refs/heads/side")
-        self.seed = seed
-        clone = ["clone", "-q"]
-        if w_reference is not None:
-            clone += ["--reference", str(w_reference)]
-        self.git(*clone, str(self.origin), str(self.w))
-        self.quiet(self.w)
-        (self.home / ".agents" / "workspace.yaml").write_text(
-            f"repository: {self.origin}\npath: {self.w}\n", encoding="utf-8")
-
-    def quiet(self, repo: Path, *, bare: bool = False) -> None:
-        """gc.auto=0 and maintenance.auto=false: W is what lane checkouts borrow."""
-        where = ["--git-dir", str(repo)] if bare else ["-C", str(repo)]
-        self.git(*where, "config", "gc.auto", "0")
-        self.git(*where, "config", "maintenance.auto", "false")
-
-    def git(self, *args: str, check: bool = True) -> str:
-        return subprocess.run(["git", *args], env=self.env, check=check,
-                              capture_output=True, text=True).stdout
-
-    @staticmethod
-    def write(checkout: Path, rel: str, text: str) -> None:
-        path = checkout / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
-
-    def helper(self, *args: str, **extra: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["bash", str(REPO / "lanes-edit.sh"), *args],
-                              env=dict(self.env, **extra), cwd=str(self.root),
-                              capture_output=True, text=True, timeout=180, check=False)
-
-    def popen(self, *args: str, **extra: str) -> subprocess.Popen:
-        return subprocess.Popen(["bash", str(REPO / "lanes-edit.sh"), *args],
-                                env=dict(self.env, **extra), cwd=str(self.root),
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            files["lanes/aliases.tsv"] = aliases
+        super().__init__(root, files, second_branch=True, w_reference=w_reference)
 
     def stamp(self, lane: str, words: str, **extra: str) -> subprocess.CompletedProcess:
         return self.helper("set-row-state", lane, f"LIVE · {words}", **extra)
 
-    def checkout(self, lane: str) -> Path:
-        return self.lanes_root / lane
-
-    def origin_register(self) -> str:
-        return self.git("--git-dir", str(self.origin), "show", f"main:{REGISTER}")
-
-    def origin_head(self) -> str:
-        return self.git("--git-dir", str(self.origin), "rev-parse", "main").strip()
-
-    def w_state(self) -> tuple[str, str, str]:
+    def w_state(self) -> tuple:
         return (self.git("-C", str(self.w), "rev-parse", "HEAD").strip(),
                 self.git("-C", str(self.w), "rev-parse", "HEAD^{tree}").strip(),
                 self.git("-C", str(self.w), "status", "--porcelain"))
-
-    def clone_by_hand(self, dest: Path, *, origin: Path | None = None,
-                      reference: Path | None = None) -> None:
-        args = ["clone", "-q"]
-        if reference is not None:
-            args += ["--reference", str(reference)]
-        self.git(*args, str(origin or self.origin), str(dest))
-        self.quiet(dest)
 
 
 @pytest.fixture
@@ -335,9 +223,9 @@ def test_empty_directory_counts_as_absent(box: Box):
 
 def test_alternates_not_naming_W_is_refused(box: Box):
     other = box.root / "other-store"
-    box.clone_by_hand(other)
+    box.clone(other)
     c = box.checkout(LANE)
-    box.clone_by_hand(c, reference=other)
+    box.clone(c, reference=other)
     head = box.origin_head()
     result = box.stamp(LANE, "never written")
     assert_refused_exit_1(box, result, c)
@@ -348,7 +236,7 @@ def test_alternates_not_naming_W_is_refused(box: Box):
 
 def test_alternates_naming_a_missing_store_is_refused(box: Box):
     c = box.checkout(LANE)
-    box.clone_by_hand(c, reference=box.w)
+    box.clone(c, reference=box.w)
     gone = box.root / "gone" / "objects"
     (c / ".git" / "objects" / "info" / "alternates").write_text(f"{gone}\n", encoding="utf-8")
     head = box.origin_head()
@@ -396,7 +284,7 @@ ALIAS = "repoCK-7\trepoCK-8\t2026-10-17T00:00:00Z\n"
 def test_renamed_lane_directory_is_moved_once(tmp_path: Path):
     box = Box(tmp_path, rows=("repoCK-8",), aliases=ALIAS)
     old = box.checkout("repoCK-7")
-    box.clone_by_hand(old, reference=box.w)
+    box.clone(old, reference=box.w)
     (old / ".git" / "made-under-the-old-name").write_text("x\n", encoding="utf-8")
     first = box.stamp("repoCK-8", "after the rename")
     assert first.returncode == 0, (first.stdout, first.stderr)
@@ -414,7 +302,7 @@ def test_both_names_present_writes_new_reports_old(tmp_path: Path):
     box = Box(tmp_path, rows=("repoCK-8",), aliases=ALIAS)
     assert box.stamp("repoCK-8", "made the new one").returncode == 0
     old = box.checkout("repoCK-7")
-    box.clone_by_hand(old, reference=box.w)
+    box.clone(old, reference=box.w)
     old_head = box.git("-C", str(old), "rev-parse", "HEAD").strip()
     result = box.stamp("repoCK-8", "through the new one")
     assert result.returncode == 0, (result.stdout, result.stderr)
