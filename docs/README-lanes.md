@@ -1225,7 +1225,7 @@ else.
 | 2 | refusal — bad arguments, the object is held, an unknown alias, a checkout that cannot be rebased, or `commit` refusing to publish local commits that are not register or handoff writes, from a checkout whose HEAD is off the branch, or that it cannot read (#194; it pushes none of them) |
 | 3 | the edit is never a permanent loss, but this attempt cannot confirm whether it also reached origin — a rebase conflict (not pushed by this attempt; a later write from this checkout may already carry it to origin, so look by content before you retry), a network timeout on a push or a pull (a hung one often already landed), or six attempts exhausted because a peer's uncommitted file blocks every rebase |
 | 4 | the mutex could not be taken within 60s |
-| 5 | an edit moved more than one line and was refused |
+| 5 | an edit moved more than one line and was refused — or a register rewrite whose copy, write or result could not be proved (#120 item 1). The copy every proof is made against is compared with the register, and what lands with what was built; where a write cut the register short, its earlier bytes are put back and proved first, and the refusal says which of the two the register holds — never "unchanged" about a register the write truncated |
 | 6 | `git add` / `commit` / `push` failed |
 | 7 | another act got there first and this one wrote nothing: `claim`'s `CLAIM-LOST` (another lane's claim landed first), and `set-lane-state` / `set-lane-tree`'s lifecycle fence (openRepoTools#91, below) |
 | 9 | `CLAIM-LOST` — issue #30's own dead-lane verdict could not be reconfirmed before a `--force` takeover's push landed: the source lane resumed, a live session now backs it up, or that could not be read at all (`claim` only). Never 7 — that code is a RIVAL's claim, and this is the same lane the takeover was granted over |
@@ -3158,12 +3158,28 @@ had nowhere to keep its warnings about published logs it could not read, and it
 says so. Counting zero there would be "nothing to do" about rows nobody could
 class.
 
+A log whose **last** lane-kind line is `ENDED` or `RETIRED` is refused too,
+since a `RETIRED` after it would be one more line in an append-only log. The
+refusal says the lane is **already CLOSED** and already hidden (19(b)). For
+`RETIRED` it names `lanes-edit.sh archive-rows <repo>` as the act that takes the
+row out of the register. For `ENDED` it says nothing more is owed: the row stays
+as the record, because `archive-rows` moves only rows whose cell says `RETIRED`.
+A log whose last lane-kind line is `STARTED`, `PAUSED` or `RESUMED` is sent to
+`lane-end <lane>` instead (#120 item 3). The lane is called CLOSED only when
+origin's copy of its log ends on that line. A closing line only this checkout's
+log carries, left by an earlier act that stopped part-way or never pushed, is
+refused as exactly that.
+
 It refuses six more things for the reason every writer here refuses them — a
 half-written act is worse than no act: a checkout **behind** `origin` or dirty
 in anything but the register; a row whose ` | ` count makes **which text is the
 state cell** unknowable; a lane whose object log would need Amendment 15's
 **case-only rename**, which is a write of its own and not one this commit
-smuggles; an object log that exists here and is **NOT TRACKED**, which is
+smuggles — or whose log `origin` still publishes under another case while this
+checkout already has the row's spelling, **a case-only rename whose commit
+never landed**, which the scan refuses in `ensure_log`'s own words rather than
+leaving it to `ensure_log` half-way through the write (#120 item 2); an object
+log that exists here and is **NOT TRACKED**, which is
 somebody's uncommitted work and would land inside this commit under this act's
 message; a lane **named twice**, whose log would take the same line twice in a
 file nothing can correct; and a `--reason` carrying a `|`, a second ` · ` or a
@@ -3188,11 +3204,17 @@ publishes.** Every refusal above is made in the scan, before a byte is written.
 That includes the commit of a peer's uncommitted register edit, which the act
 makes as its own `LANES(pre-existing@…)` commit: it is made only after the
 scan, so a refusal leaves HEAD where it was. A failure in the writes themselves — a log whose append could not be proved, a
-row whose rewrite touched more than one line — leaves this checkout DIRTY and
+row whose rewrite touched more than one line or could not be proved (the
+register is put back where the write cut it short, #120 item 1) — leaves this checkout DIRTY and
 the register unpublished: that is what `git status` then shows, `git checkout --
 lanes` undoes it whole, and the next run is REFUSED by the dirty-checkout guard
 rather than made twice. `migrate-state-cells` has the same shape for the same
-reason.
+reason. Such a refusal says this act has committed nothing (a peer's edit it
+found and captured first is a commit of its own), and lists what the act had
+already written in this checkout. Where the register may be truncated, it also
+names where the exact copy of the register from before the edit is kept: in the
+checkout's own git directory, as `lanes-edit-register-before-edit.<UTC>.<pid>`
+with mode 0600, where a restart that empties the temporary directory leaves it.
 
 ### The archive — a second act on a second word
 
@@ -3240,7 +3262,46 @@ fail closed rather than answer, and for the same reason. The first three refuse
 `add-row` refuses a lane name the archive holds, so `lane-start <repo> <n>`
 cannot reissue one by hand either. It also refuses (exit **1**) where the
 published register cannot be read, rather than read that as "no such row":
-otherwise a row this checkout has not pulled would be added a second time. **Rule 9 holds either way** — a row is
+otherwise a row this checkout has not pulled would be added a second time.
+And it refuses (exit **1**) an archive that carries a `|` line it cannot take
+apart, naming each such line by its number and the copy it is in, published
+or this checkout's (#122). A line counts only if it is
+the table's header (its first cell is `lane`), its `|---|` rule, or a row whose
+first cell holds its lane in backticks; any other line may be the very lane
+being added. The header is found by that first cell, because a ` | ` count
+cannot tell it from a row (both carry six), and a hand edit can part it from its
+rule. An archive scan that **failed** is a refusal too, never "no match". So is
+an archive with CRLF line endings, or a table written without the spaces around
+its `|`: `archive-rows` writes neither, and nothing in this tool reads CRLF.
+Where add-row has already committed its row when a peer's archive arrives in its
+`pull --rebase`, any of these refusals removes the row again in a compensating
+local commit, as a peer's retirement does, so no later write publishes it. It
+removes only the copy this checkout's register adds over origin's: where a peer
+published the same row first, the rebase drops add-row's commit, and the copy
+left is the peer's, so nothing is taken back. It finds that copy's line in a
+diff it asks for with no context: `GIT_DIFF_OPTS` unset and
+`diff.interHunkContext=0`, either of which would otherwise add context to
+`-U0`. Any context that still arrives is counted where it stands. It reads
+that diff as text (`--text`), so an attribute, a NUL byte or a
+`core.bigFileThreshold` that classes the register as binary cannot hide the
+row, and its proof that one line was removed counts lines whatever
+`core.bigFileThreshold` says. Where the take-back itself cannot remove the row
+— a copy or a write cut short, or a proof that refuses — the refusal says that
+add-row has committed its row, locally and unpushed, and that it must be removed
+before any other write in that checkout publishes it. Where the row is removed
+but the removal cannot be committed, a note says whether the removal is staged,
+that add-row's commit still holds the row, and the command that commits the
+removal.
+
+**One such line refuses every lane, not only its own.** `lanes-edit.sh
+retired-identity <lane>`, the check `lane-start` makes before it launches,
+exits 1 on it as well, so every `lane-start` refuses while the line is there.
+`lane-start` hides the reason: it reads that check with its stderr discarded and
+says only that the archive could not be checked for the lane. Run
+`lanes-edit.sh retired-identity <lane>` to see the line, its number and its
+copy.
+
+**Rule 9 holds either way** — a row is
 one `git show` away — so the archive is for a register a person wants shorter,
 and never a requirement.
 
