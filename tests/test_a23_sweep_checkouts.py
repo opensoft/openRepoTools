@@ -578,6 +578,76 @@ def test_a_fetch_that_fails_holds(sweep):
     assert c.is_dir() and not (c / "lanes" / ".lanes-edit.lock").exists()
 
 
+def test_a_W_fetch_that_fails_at_the_listing_refuses_yes(sweep):
+    """`--yes` decides on a register fetched just now (D14). W's fetch FAILS
+    here while `ls-remote` succeeds, which `log_sync` says as `fell-back`: it
+    reads the stale ref and exits 0, and the listing's own note is the phrase
+    "reading the logs as they stand locally" without "NO FETCH WAS MADE" (rv4's
+    MUST 1, P5). Refused before the first removal, with nothing written."""
+    box = sweep.box
+    before, head = box.everything(), box.origin_head()
+    box.use_net(hook=f'case " $* " in *" -C {box.w} fetch "*) exit 1 ;; esac\nexit 0\n')
+    result, _ = sweep("--yes", LANES_LANE=RUNNER)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert "reading the logs as they stand locally" in result.stderr, result.stderr
+    assert "W's fetch did not complete" in result.stderr, result.stderr
+    assert "Nothing was removed" in result.stderr, result.stderr
+    assert box.everything() == before
+    assert box.origin_head() == head
+    assert "push" not in box.net_ops()
+
+
+def test_a_lane_resumed_while_W_cannot_fetch_is_kept(sweep):
+    """THE RE-CHECK UNDER THE LOCK IS A FRESH READ OR NONE (rv4's MUST 1, P1).
+    W fetches at the listing; the CLOSED lane then RESUMES on origin at its
+    own checkout's fetch, and W's fetch fails from then on, so the re-ask in
+    `sc_still` reads the stale ref, in which the lane is still CLOSED. That is
+    not a decision made after a fetch: the checkout is kept, and the reason
+    says why."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    marker = box.root / "resumed.marker"
+    resumed = (f"RESUMED — lane {CLOSED}, session {UUID[CLOSED]}@Eagle, "
+               f"2026-10-21T09:00:00Z, lane:{CLOSED}\n")
+    peer = box.seed
+    box.use_net(hook=(
+        f'case " $* " in\n'
+        f'  *" -C {c} fetch "*) git -C {peer} pull -q --ff-only origin main && '
+        f"printf '%s' '{resumed}' >> {peer}/lanes/log/{CLOSED}.md && "
+        f"git -C {peer} commit -q -am resumed && git -C {peer} push -q origin main && "
+        f'touch {marker} ;;\n'
+        f'  *" -C {box.w} fetch "*) if [ -e {marker} ]; then exit 1; fi ;;\n'
+        f'esac\nexit 0\n'))
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert marker.exists(), box.net_log.read_text(encoding="utf-8")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+    assert "was not read fresh" in rows[str(c)][1], rows[str(c)]
+    assert c.is_dir()
+
+
+@pytest.mark.skipif(getattr(os, "geteuid", lambda: 1)() == 0,
+                    reason="root reads a directory whose mode is 000")
+def test_session_records_unreadable_at_the_recheck_keep_the_checkout(sweep):
+    """The re-ask under the lock says "session records could not be read" on
+    stderr and exits 0, as the listing does; the listing's refusal is exit 1.
+    Here the records are readable at the listing and are not at the re-check,
+    so which lanes are LIVE is no longer established, and a LIVE lane's
+    checkout is never swept: the CLOSED lane's checkout is kept."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    sessions = box.home / ".claude" / "sessions"
+    _hook_on_fetch_of(box, c, f"chmod 000 {sessions}")
+    try:
+        result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    finally:
+        sessions.chmod(0o700)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+    assert "was not read fresh" in rows[str(c)][1], rows[str(c)]
+    assert c.is_dir()
+
+
 def test_nothing_outside_W_lanes_is_removed(sweep):
     """The clones beside W are listed with what holds them, and `--yes` removes
     none of them: nothing outside `<W>-lanes/` is ever removed."""
