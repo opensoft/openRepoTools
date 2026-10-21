@@ -313,8 +313,12 @@ if [ "$wt_mode" = 1 ]; then
 		out="$("$LANES_EDIT" worktrees ${idx_args[@]+"${idx_args[@]}"} "${wt_args[@]}" 2>"$wt_err_file")" || rc=$?
 		wt_err="$(cat -- "$wt_err_file" 2>/dev/null || printf '')"
 		# `-e` AND NO `--` AFTER THE PATTERN: BSD's `grep` stops at its first
-		# operand, so a `--` there is a FILE it cannot open on macOS.
-		command grep -v -e 'not fetching; reading origin/' "$wt_err_file" >&2 || :
+		# operand, so a `--` there is a FILE it cannot open on macOS. A BARE
+		# `grep`, NOT `command grep` (opensoft/openRepoTools#292): this one exits
+		# 1 whenever the helper said nothing else, and macOS's bash 3.2 ends a
+		# `set -e` script where a utility run through `command` fails, `|| :`
+		# or not, which left `lanes --worktrees` at exit 1 with no output.
+		grep -v -e 'not fetching; reading origin/' "$wt_err_file" >&2 || :
 		rm -f -- "$wt_err_file"
 	else
 		out="$("$LANES_EDIT" worktrees ${idx_args[@]+"${idx_args[@]}"} "${wt_args[@]}")" || rc=$?
