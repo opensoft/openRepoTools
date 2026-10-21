@@ -25,8 +25,11 @@ sandbox is the real `lanes-edit.sh`; nothing reaches a real remote.
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
+import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -744,4 +747,172 @@ def test_a_commit_made_on_top_before_the_replay_is_kept_exit_6(box: Box):
     assert box.subject(c, "HEAD~1").startswith(f"LANES({LANE}@"), "this write's commit is under it"
     assert (c / "handoffs" / "stamp.md").is_file(), "the other writer's file is still there"
     assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the publish act"
+    _settled(box, c)
+
+
+# ------------------------ one checkout, several writers (rv1b-c's re-check)
+
+def _spawn(box: Box, name: str, *args: str, **extra: str) -> subprocess.Popen:
+    """The helper in the background, its output in `<name>.out` and
+    `<name>.err` under the box (files, so no pipe can fill and stall it)."""
+    out = (box.root / f"{name}.out").open("w", encoding="utf-8")
+    err = (box.root / f"{name}.err").open("w", encoding="utf-8")
+    try:
+        return subprocess.Popen(box.cmd(*args), env=dict(box.env, **extra), cwd=str(box.root),
+                                stdout=out, stderr=err, text=True)
+    finally:
+        out.close()
+        err.close()
+
+
+def _err(box: Box, name: str) -> str:
+    return (box.root / f"{name}.err").read_text(encoding="utf-8")
+
+
+def _wait_for(pred, what: str, secs: float = 60.0) -> None:
+    end = time.monotonic() + secs
+    while time.monotonic() < end:
+        if pred():
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
+def _waits_on_the_lock(pid: int) -> bool:
+    """True while process `pid` is in `mutex_try`'s wait for the checkout's
+    lock: a `sleep` it started is running. Nothing a write does before the
+    lock starts one, so its own checks have all run."""
+    for stat in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            text = stat.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        comm = text[text.find("(") + 1:text.rfind(")")]
+        fields = text[text.rfind(")") + 2:].split()
+        if comm == "sleep" and len(fields) > 1 and fields[1] == str(pid):
+            return True
+    return False
+
+
+def _another_write_holds_the_lock(box: Box, c: Path, gate: Path) -> subprocess.Popen:
+    """P3, any other write through the same checkout: it takes the lock and
+    holds it at its push until the case writes `gate`."""
+    hook = box.fakebin / "hold-at-push"
+    hook.write_text(
+        "#!/usr/bin/env bash" + "\n" +
+        '[ "$1" = push ] || exit 0' + "\n" +
+        f"i=0; while [ ! -e {shlex.quote(str(gate))} ] && [ $i -lt 500 ]; do sleep 0.1; i=$((i + 1)); done" + "\n" +
+        "exit 0" + "\n", encoding="utf-8")
+    hook.chmod(0o755)
+    p3 = _spawn(box, "p3", "set-row-state", LANE, "LIVE · another write in this checkout",
+                FAKE_NET_HOOK=str(hook))
+    _wait_for(lambda: box.lock_of(c).exists(), "P3 to take the checkout's lock")
+    return p3
+
+
+def _a_reader_fetches_in(box: Box, c: Path) -> None:
+    """Any reader's `log_sync` in the shared checkout (a peer's push or its
+    read-back does the same): it moves the checkout's own
+    `refs/remotes/origin/main` to origin's tip, takes no lock, and writes
+    nothing."""
+    read = box.helper("who", OBJ, *HOME_FLAG)
+    assert read.returncode in (0, 8), read.stderr
+    assert box.git("-C", str(c), "rev-parse", "refs/remotes/origin/main").strip() == box.origin_head(), \
+        "the reader moved the shared checkout's origin/main"
+
+
+def test_a_rival_claim_a_reader_fetched_into_the_shared_checkout_loses_exit_7(box: Box):
+    """MUST-N of rv1b-c's re-check: B35 asked only whether S3's OWN fetch
+    moved origin/main. In a checkout several writers share — W, every lane's
+    while routing is off — another process moves that same ref while this
+    claim waits on the lock after its checks: a reader's `log_sync`, a peer's
+    push, its read-back. S3's fetch then found nothing new, this claim was
+    pushed on top of the rival's, and two lanes held the object. Now S3
+    compares with the tip the checks read, so the claim runs again from the
+    top on the new tip, and the replay's rescan finds the rival: CLAIM-LOST
+    (7), one holder."""
+    c = box.seam()
+    box.use_net()
+    gate = box.root / "go"
+    p3 = _another_write_holds_the_lock(box, c, gate)
+    a = _spawn(box, "a", "claim", OBJ, "--no-github", *HOME_FLAG, LANES_LANE=LANE, LANES_SESSION=UUID)
+    _wait_for(lambda: _waits_on_the_lock(a.pid), "the claim to finish its checks and wait on the lock")
+    c2 = box.clone(box.root / "c2")
+    rival = box.helper("claim", OBJ, "--no-github", *HOME_FLAG,
+                       LANES_REPO=str(c2), LANES_LANE=NEIGHBOUR, LANES_SESSION=UUID2)
+    assert rival.returncode == 0, rival.stderr
+    _a_reader_fetches_in(box, c)
+    gate.write_text("go" + "\n", encoding="utf-8")
+    assert p3.wait(timeout=180) == 0, _err(box, "p3")
+    rc = a.wait(timeout=180)
+    stderr = _err(box, "a")
+    assert rc == 7, stderr
+    assert "moved while this write's checks ran" in stderr
+    assert f"another lane's claim landed on main before this one: @{NEIGHBOUR}" in stderr
+    mine = box.origin_file(f"lanes/log/{LANE}.md")
+    assert f"CLAIMED — lane {LANE}" not in mine, "this lane never holds it"
+    assert f"CLAIM-LOST — lane {LANE}" in mine
+    assert f"CLAIMED — lane {NEIGHBOUR}" in box.origin_file(f"lanes/log/{NEIGHBOUR}.md")
+    assert _set("LIVE · another write in this checkout") in box.origin_register(), "P3's write landed"
+    assert box.unpublished(c) == []
+    _settled(box, c)
+
+
+def test_an_add_row_whose_name_a_reader_fetched_into_the_shared_checkout_refuses(box: Box):
+    """MUST-N of rv1b-c's re-check, for `add-row`: a peer's retirement of the
+    name lands while the add-row waits on the shared checkout's lock after its
+    checks, and a reader there fetches it. S3's fetch found nothing new, and
+    the retired name was issued again at attempt 1. Now the re-run on the new
+    tip refuses (2), and nothing is written."""
+    c = box.seam()
+    box.use_net()
+    gate = box.root / "go"
+    row = _row(NEW_LANE, uuid=UUID3)
+    box.peer_prepares(ARCHIVE, None,
+                      "# retired rows" + "\n" + "\n" + "| lane | session id |" + "\n" + "|---|---|" + "\n" +
+                      f"| `{NEW_LANE}` | harness `{UUID3}` |" + "\n", "a peer retires the name")
+    p3 = _another_write_holds_the_lock(box, c, gate)
+    a = _spawn(box, "a", "add-row", row)
+    _wait_for(lambda: _waits_on_the_lock(a.pid), "the add-row to finish its checks and wait on the lock")
+    box.git("-C", str(box.peer), "push", "-q", "origin", "main")
+    _a_reader_fetches_in(box, c)
+    gate.write_text("go" + "\n", encoding="utf-8")
+    assert p3.wait(timeout=180) == 0, _err(box, "p3")
+    rc = a.wait(timeout=180)
+    stderr = _err(box, "a")
+    assert rc == 2, stderr
+    assert "moved while this write's checks ran" in stderr
+    assert f"lane '{NEW_LANE}' is RETIRED" in stderr
+    assert box.origin_register().count(f"`{NEW_LANE}`") == 0, "the retired name is not issued again"
+    assert not [s for s in box.subjects() if s.endswith("add row")], "no add-row commit reached origin"
+    assert box.unpublished(c) == []
+    _settled(box, c)
+
+
+def test_a_claim_that_meets_a_move_at_every_S3_fetch_stops_at_six_exit_2(box: Box):
+    """SHOULD B of rv1b-c's re-check: `cs_recheck`'s six-attempt bound. A
+    peer moves origin at every one of S3's fetches, so every attempt finds
+    the tip moved under its checks. The sixth refuses (2) with nothing
+    written, rather than re-running for as long as origin is busy."""
+    c = box.seam()
+    peer = shlex.quote(str(box.peer))
+    count = shlex.quote(str(box.root / "moves"))
+    box.use_net(
+        '[ "$1" = fetch ] || exit 0' + "\n" +
+        f'case "$*" in *"{S3_REFSPEC}"*) : ;; *) exit 0 ;; esac' + "\n" +
+        f'n=$(cat {count} 2>/dev/null || echo 0); [ "$n" -lt 8 ] || exit 0; echo $((n + 1)) > {count}' + "\n" +
+        f"git -C {peer} fetch -q origin && git -C {peer} merge -q --ff-only refs/remotes/origin/main" + "\n" +
+        f'git -C {peer} commit -q --allow-empty -m "a peer moves origin ($((n + 1)))"' + "\n" +
+        f"git -C {peer} push -q origin main" + "\n" +
+        "exit 0" + "\n")
+    result = box.helper("claim", OBJ, "--no-github", *HOME_FLAG, LANES_LANE=LANE, LANES_SESSION=UUID)
+    assert result.returncode == 2, result.stderr
+    assert "on each of six attempts" in result.stderr
+    assert (box.root / "moves").read_text(encoding="utf-8").strip() == "6", "one move per attempt, six in all"
+    assert re.findall(r"checks ran \([^)]*\): nothing is written yet.*?attempt (\d) of 6", result.stderr) == \
+        ["1", "2", "3", "4", "5"]
+    assert f"lane {LANE}" not in box.origin_file(f"lanes/log/{LANE}.md").split("\n", 1)[1], \
+        "nothing of this claim's reached origin"
+    assert "push" not in box.net_ops(), "refused before any push"
+    assert box.unpublished(c) == []
     _settled(box, c)

@@ -1266,6 +1266,11 @@ CP_REPLAY_KEEPS_EDIT=0
 # verb runs again from the top on the new tip before anything is written
 # (`cs_recheck`). Never from the environment.
 CS_RECHECK=0
+# The tip of `refs/remotes/origin/<branch>` this process's FIRST `log_sync`
+# left, which is the tip every check after it read (`cs_seen_mark`); S3
+# compares origin's tip with it. Set once per process, and never from the
+# environment: a replay's `exec` starts it again.
+CS_SEEN=""; CS_SEEN_SET=0
 
 # die "<message>" [<exit code>] — the MESSAGE is $1 alone. It used to be "$*",
 # which joined the exit code on to the end of every refusal that passed one:
@@ -2241,15 +2246,16 @@ cs_flush() {
 # landing between that read and S3's fetch, was fast-forwarded in and written
 # over: two lanes holding one object, a retired name reissued, a second row.
 # S4's replay never ran, because the push was not refused — and the base's
-# rescan after every `pull --rebase` went with the pull. So where S3's fetch
-# moved origin's tip, nothing is written yet, and the verb runs again from the
+# rescan after every `pull --rebase` went with the pull. So where origin's tip
+# after S3's fetch is not the tip the checks read (`CS_SEEN`, whoever moved
+# the ref in between), nothing is written yet, and the verb runs again from the
 # top on the new tip with the lock held: the replay's own `exec`, so `claim`'s
 # rescan comes first (CLAIM-LOST 7, or 9) and `add-row`'s checks refuse (2),
 # inside S4's six attempts. At the sixth it refuses (2), nothing written. Only
 # those two opt in: the row verbs, `rename-lane` and the sweeps read what they
 # check after S3, and an opt-in for every verb would add a fetch and an `exec`
 # to every write made from a checkout behind origin.
-cs_recheck() {   # <what> <origin's tip before S3's fetch> <after it>
+cs_recheck() {   # <what> <the tip the checks read> <origin's tip after S3's fetch>
   if [ "$CP_ATTEMPT" -ge 6 ]; then
     cs_refuse "$1" "origin/$LANES_BRANCH moved while this write's own checks ran, on each of six attempts (Amendment 23 S4, ratified choice 4)" \
       "re-run this write when origin is quieter"
@@ -2299,8 +2305,14 @@ checkout_sync() {   # <what> <lane> <write|carry|publish> [<pathspec it commits>
     fi
   fi
   if [ "$CS_RECHECK" = 1 ] && [ "$CS_NO_ORIGIN_BRANCH" != 1 ]; then
+    # AGAINST THE TIP THE CHECKS READ (`CS_SEEN`), and against the one just
+    # before this fetch: in a shared checkout another process may have moved
+    # the ref while this write waited on the lock (`cs_seen_mark`).
     cs_now="$(git -C "$cs_c" rev-parse -q --verify "$cs_trk" 2>/dev/null || :)"
-    [ "$cs_now" = "$cs_was" ] || cs_recheck "$cs_what" "$cs_was" "$cs_now"
+    cs_base="$cs_was"; [ "$CS_SEEN_SET" = 1 ] && cs_base="$CS_SEEN"
+    if [ "$cs_now" != "$cs_base" ] || [ "$cs_now" != "$cs_was" ]; then
+      cs_recheck "$cs_what" "$cs_base" "$cs_now"
+    fi
   fi
 
   # ---- 2. an operation in progress, or unmerged entries
@@ -6422,6 +6434,22 @@ write_event() {
 # a paragraph in front of every launch on the workstation to fix a sentence that
 # is printed in one place.
 LOG_SYNC_FETCH=""      # yes · fell-back · else WHY this run did not fetch
+# THE TIP THE CHECKS READ IS THE ONE THE FIRST `log_sync` LEFT (rv1b-c's
+# MUST-N on slice 1b). `claim` and `add-row` check what this fetch brought
+# and then wait on the lock, and S3 asks whether origin moved under those
+# checks. Asking only whether S3's OWN fetch moved the ref missed every move
+# another process made to the same ref in between: in a checkout several
+# writers share (W, every lane's while routing is off), a peer's push, its
+# read-back or any reader's `log_sync` moves `refs/remotes/origin/<branch>`
+# while this write waits, S3's fetch then finds nothing new, and two lanes
+# held one object. The FIRST tip is kept, not the latest: a later `log_sync`
+# in the same process can only make the comparison see a move twice, never
+# miss one.
+cs_seen_mark() {
+  [ "$CS_SEEN_SET" = 1 ] && return 0
+  CS_SEEN="$(git -C "$LANES_REPO" rev-parse -q --verify "refs/remotes/origin/$LANES_BRANCH" 2>/dev/null || :)"
+  CS_SEEN_SET=1
+}
 log_sync() {
   # THE CACHE ABOVE IS THE REF AS IT STOOD; a fetch moves the ref, so it is
   # dropped here rather than read past. Both copies of it: the variable this
@@ -6435,11 +6463,12 @@ log_sync() {
   lane_alias_flush
   LOG_SYNC_FETCH=""
   [ "$NO_GIT" = 1 ] && { LOG_SYNC_FETCH="LANES_NO_GIT=1 is set, so nothing in this run touches git"; return 0; }
-  [ "${LANES_NO_FETCH:-0}" = 1 ] && { LOG_SYNC_FETCH="LANES_NO_FETCH=1 is set in this environment"; note "LANES_NO_FETCH=1 — not fetching; reading origin/$LANES_BRANCH as the ref already stands here"; return 0; }
+  [ "${LANES_NO_FETCH:-0}" = 1 ] && { LOG_SYNC_FETCH="LANES_NO_FETCH=1 is set in this environment"; note "LANES_NO_FETCH=1 — not fetching; reading origin/$LANES_BRANCH as the ref already stands here"; cs_seen_mark; return 0; }
   git -C "$LANES_REPO" rev-parse --git-dir >/dev/null 2>&1 || { LOG_SYNC_FETCH="$LANES_REPO is not a git checkout"; return 0; }
   if ! remote_has_branch; then
     LOG_SYNC_FETCH="origin/$LANES_BRANCH could not be reached"
     [ "$GIT_TIMED_OUT" = 1 ] && LOG_SYNC_FETCH="$LOG_SYNC_FETCH — ls-remote timed out after ${GIT_TIMEOUT}s"
+    cs_seen_mark
     return 0
   fi
   if git_net -C "$LANES_REPO" fetch -q origin "$LANES_BRANCH" 2>/dev/null; then
@@ -6448,6 +6477,7 @@ log_sync() {
     LOG_SYNC_FETCH=fell-back
     note "fetch $([ "$GIT_TIMED_OUT" = 1 ] && printf 'timed out after %ss' "$GIT_TIMEOUT" || printf 'failed') — reading the logs as they stand locally"
   fi
+  cs_seen_mark
   return 0
 }
 
