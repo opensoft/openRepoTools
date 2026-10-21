@@ -14977,6 +14977,79 @@ is    "…but the lane stays SWAPPING, because one of the three mandatory writes
 run "$E" lane-reconcile repoRC-6
 is    "…which a later session reads as an interrupted swap and not as a clean handoff" "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "interrupted-swap"
 
+# AND THE SAME HANDOFF EVERY TIME, HOWEVER EARLY ITS LIFECYCLE READ IS LEFT
+# (opensoft/openRepoTools#253). The last two lines above went red now and then
+# on CI with the two before them green — `expected [SWAPPING], got [RUNNING]`
+# and `expected [interrupted-swap], got [ungraceful-stop]`, in run
+# 39142719296's `tests-no-submodule` and run 39278403461's `tests`, both on
+# ubuntu-24.04, whose awk is gawk. That was #280's race, before #283:
+# `lifecycle_begin` read the lane as `lane-state | awk '$1 == "state" { print
+# $2; exit }'` under `pipefail`. gawk hands the `state` line over the moment it
+# arrives and leaves, while `lanes-edit.sh`'s builtin `printf` is still writing
+# the snapshot a line at a time, so its next write met a closed pipe, SIGPIPE
+# made the read's status 141, and the handoff took a reader that had stopped
+# listening for a lifecycle that could not be read: no RUNNING -> SWAPPING at
+# all, so the lane it handed off was still RUNNING, which with no live holder
+# reads back as an ungraceful stop. #283 reads the snapshot whole first, and
+# holds the race in `tests/test_triad_lane_tooling_handoff.py` — but only
+# where the openRepoShape submodule is checked out, which `tests-no-submodule`
+# never has, and only for a handoff whose three writes all land. This case
+# hands off with one missing, in both jobs, and it met the race by luck alone.
+# So here it is held every time: a `lanes-edit.sh` in front of the bench's own
+# answers `lane-state` with its `state` line, 1.5 MiB of padding and then the
+# rest. A pipe holds 64 KiB, and mawk, which reads ahead until its buffer is
+# full, read to the end of 256 KiB and left early from 280 KiB on when this
+# was written, so a reader that stops at the first line has always gone before
+# that producer is done, whatever the awk; and its LAST write is its own
+# builtin `printf`, which dies of the SIGPIPE as the real one does. THE PREMISE
+# FIRST: read the way the handoff read it before #283, that producer's status
+# is 141.
+cat > "$SANDBOX/rc253-slow-lane-state" <<'FAKE'
+#!/usr/bin/env bash
+if [ "${1-}" = lane-state ]; then
+  printf '%s\n' "$*" >> "${RC253_CALLS:?}"
+  out="$("${REAL_LANES_EDIT:?}" "$@")"; rc=$?
+  if [ "$rc" != 0 ]; then [ -z "$out" ] || printf '%s\n' "$out"; exit "$rc"; fi
+  first="$(printf '%s\n' "$out" | sed -n 1p)"
+  rest="$(printf '%s\n' "$out" | sed 1d)"
+  printf '%s\n' "$first"
+  yes 'pad no lifecycle field is spelled like this one' | head -n 32768
+  printf '%s\n' "$rest"
+  exit 0
+fi
+exec "${REAL_LANES_EDIT:?}" "$@"
+FAKE
+cat > "$SANDBOX/rc253-old-read" <<'OLD'
+#!/usr/bin/env bash
+# `lane-handoff`'s lifecycle read before #283 (`:1490-1491` at 21e0829).
+set -uo pipefail
+lcb_now=""; lcb_rc=0
+lcb_now="$(LANES_NO_FETCH=1 "$1" lane-state "$2" 2>/dev/null \
+	| awk -F"\t" '$1 == "state" { print $2; exit }')" || lcb_rc=$?
+printf '%s %s\n' "$lcb_now" "$lcb_rc"
+OLD
+chmod +x "$SANDBOX/rc253-slow-lane-state" "$SANDBOX/rc253-old-read"
+RC253_CALLS="$SANDBOX/rc253-lane-state-calls"
+: > "$RC253_CALLS"
+run "$E" set-lane-state repoRC-6 RUNNING --owner "$RC_ID" --agent claude --profile team-01a
+run env REAL_LANES_EDIT="$E" RC253_CALLS="$RC253_CALLS" \
+    "$SANDBOX/rc253-old-read" "$SANDBOX/rc253-slow-lane-state" repoRC-6
+is    "THE PREMISE (#253): read as the handoff read it before #283, a lane-state its reader leaves early exits 141, every time" "$out" "RUNNING 141"
+: > "$RC253_CALLS"
+run env LANE_HANDOFF_NO_TMUX=1 LANES_EDIT="$SANDBOX/rc253-slow-lane-state" REAL_LANES_EDIT="$E" \
+    RC253_CALLS="$RC253_CALLS" CLAUDE_CODE_SESSION_ID="$RC_ID" CLAUDE_PROFILE_NAME=team-01a \
+    "$HANDOFF_CMD" --lane repoRC-6 clear
+is    "a handoff whose lifecycle read is left early by its reader still completes" "$rc" 0
+has   "…and still reaches its restart line" "$out" "READY — restart with:"
+has   "…having read the lifecycle through that producer" "$(cat "$RC253_CALLS")" "lane-state repoRC-6"
+hasnt "…and never takes that read for one that failed" "$err" "the lane lifecycle could not be read"
+has   "…so it takes the lane RUNNING -> SWAPPING" "$err" "lifecycle: RUNNING -> SWAPPING"
+run "$E" lane-state repoRC-6
+is    "…and it STAYS SWAPPING for the write that did not land, every time and not now and then (#253)" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "state" { print $2 }')" SWAPPING
+run "$E" lane-reconcile repoRC-6
+is    "…which a later session reads as an interrupted swap, never an ungraceful stop" "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "interrupted-swap"
+
 # ------------------------------------ 7. what the reconciliation classifies
 
 # A tree that is GONE and was last seen holding work is POSSIBLE LOSS, and a
