@@ -284,7 +284,8 @@ workflow's stamp writer.
     only a link with the value of pipx's link, **Then** it prints a
     `BASH_VERSION` of 3.2, and the install succeeds with the same skip and
     count lines, naming that directory, and places each of the other sixteen
-    files there, none found already installed.
+    files there, none found already installed; and a second `--install` into
+    that directory finds each of the sixteen already installed and unchanged.
 
 ---
 
@@ -680,8 +681,11 @@ passages, and the absence of the pipx route.
   only a link with the value of pipx's link, and print its `BASH_VERSION`.
   It MUST require the exact skip and count lines for that directory and 16
   `installed at` lines there, because in the first run's directory every
-  file is already in place and none would be placed under 3.2. The Python 3.9
-  leg MUST compile the installed package's own `lanes-index` and
+  file is already in place and none would be placed under 3.2. It MUST then
+  run `--install` once more into that directory and require 16
+  `already installed at` lines there, each ending `(unchanged)`, so that the
+  installer's already-installed arm also runs under 3.2. The Python 3.9 leg
+  MUST compile the installed package's own `lanes-index` and
   `lane-worktrees`. There is no Windows leg.
 - **FR-033**: Rehearsals MUST never spend the real version.
   - A dispatch on a branch MUST run every build check and the install check
@@ -900,7 +904,9 @@ passages, and the absence of the pipx route.
   anything is placed.
 - **SC-008**: The macOS install-check leg completes the offline install
   under bash 3.2, in a bin directory of its own, with the same skip and
-  count lines, and places each of the sixteen files there.
+  count lines, and places each of the sixteen files there; a second install
+  into that directory finds each of the sixteen already installed and
+  unchanged.
 - **SC-009**: README never names an install route the index does not serve:
   it has no `pipx install openrepotools` line before PyPI serves 1.1.0.
 - **SC-010**: The v1.0.0 notes file matches the published Release body, byte

@@ -229,9 +229,10 @@ The steps are the model's, in its order. Each is a refusal on failure:
     This is a heredoc, which `tests/test_release_workflow.py` extracts and
     runs on synthetic wheels.
     - It reads every member first. Each one it cannot read, such as a bad
-      CRC, a broken deflate stream or a compression method `zipfile` does
-      not know, is named in an `::error::` line, and the step exits 1 there,
-      with no traceback and before checks 2 to 6 run (#278).
+      CRC, a broken deflate stream, a corrupt LZMA stream (`lzma.LZMAError`)
+      or a compression method `zipfile` does not know, is named in an
+      `::error::` line, and the step exits 1 there, with no traceback and
+      before checks 2 to 6 run (#278).
 14. Record these as job outputs: the wheel's name, its sha256, the digest,
     and step 1's `to-testpypi` and `to-pypi`. Keep the wheel as an
     artifact.
@@ -307,6 +308,12 @@ The steps:
      the output must hold 16 lines of the form
      `<file>: installed at <that directory>/<file>`, which are the sixteen
      files placed (#278).
+   - The rerun then runs `--install` once more into that directory, where
+     the sixteen files are now in place. The output of that second run must
+     hold 16 lines of the form
+     `<file>: already installed at <that directory>/<file> (unchanged)`, so
+     that the installer's already-installed arm, a file in place with its
+     bytes and its mode, also runs under bash 3.2 (#278).
 7. On 3.9 only, compile the installed package's own
    `payload/lanes-index` and `payload/lane-worktrees` with `python3 -c`
    `compile(...)`. The shipped bytes are what must compile on 3.9.
@@ -348,11 +355,12 @@ These are the model's grants (`release.yml:1133-1136` at v1.1.0).
   - one with no `licenses/LICENSE`, which fails, naming `LICENSE`;
   - one with a payload file's byte changed, which fails, naming that file;
   - one with a payload file's mode changed, which fails, naming that file.
-- Step 13's heredoc is also run on three wheels that each hold a member it
+- Step 13's heredoc is also run on four wheels that each hold a member it
   cannot read: a payload file with a bad CRC, a module with a broken deflate
-  stream and a `.dist-info` file in a compression method `zipfile` does not
-  know. Each fails, naming the member in an `::error::` line that says it
-  cannot be read, with no traceback.
+  stream, a `.dist-info` file in a compression method `zipfile` does not
+  know and a payload file stored as LZMA with corrupt data. Each fails,
+  naming the member in an `::error::` line that says it cannot be read, with
+  no traceback.
 - Step 13's heredoc and the `package` job's wheel check are each run on six
   wheels, each with one payload file at a mode that is not the commit's:
   typed as a symlink, typed as a directory, with no file type, setuid,
@@ -391,8 +399,11 @@ These are the model's grants (`release.yml:1133-1136` at v1.1.0).
   3.2. The first places the sixteen files in pipx's bin directory. The rerun
   places the same sixteen, each `installed at` and none `already installed`,
   in a bin directory of its own that its count line names, and leaves
-  pipx's bin directory as it was. What Apple's own bash makes of `--install`
-  is the macOS leg's to show.
+  pipx's bin directory as it was. Its second `--install`, into that
+  directory, finds the same sixteen each `already installed` and
+  `(unchanged)`; with one of them reported different, it updates that one,
+  counts 15, and the rerun exits 1 naming that count. What Apple's own bash
+  makes of `--install` is the macOS leg's to show.
 - No step reads `docs/`, `openspec/`, `specs/`, `README.md`, `AGENTS.md` or
   `CLAUDE.md`.
 - The header has the RELEASING sections above.
