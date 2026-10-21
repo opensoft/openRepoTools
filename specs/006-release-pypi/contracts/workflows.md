@@ -228,6 +228,10 @@ The steps are the model's, in its order. Each is a refusal on failure:
 13. [wheel.md](wheel.md)'s checks 2 to 6, with the stamp as the release's.
     This is a heredoc, which `tests/test_release_workflow.py` extracts and
     runs on synthetic wheels.
+    - It reads every member first. Each one it cannot read, such as a bad
+      CRC, a broken deflate stream or a compression method `zipfile` does
+      not know, is named in an `::error::` line, and the step exits 1 there,
+      with no traceback and before checks 2 to 6 run (#278).
 14. Record these as job outputs: the wheel's name, its sha256, the digest,
     and step 1's `to-testpypi` and `to-pypi`. Keep the wheel as an
     artifact.
@@ -254,11 +258,22 @@ this run's approvals, and `contents` for the tag, read again.
     the job after an upload that went through;
   - a file of any other name, or the wheel's name at another digest,
     refuses the job before the upload, and so does the verified wheel when
-    it is yanked.
+    it is yanked;
+  - a status other than 200 or 404, a read with no answer or one cut off,
+    and an answer that is not the index's JSON, such as a page or JSON with
+    no file list, refuse the job too, since what the index holds is then not
+    known.
+
+  This check reads the JSON once. Each of its refusals ends in an
+  `::error::` line that names its cause, and never in a traceback (#278).
 - Upload with `pypa/gh-action-pypi-publish@dc37677…` and
   `repository-url: https://test.pypi.org/legacy/`.
 - Then TestPyPI must serve exactly `{wheel: sha256}`. Read it up to 20
-  times, as the model does.
+  times, as the model does. A 404, a server error (5xx) and a read with no
+  answer, one that times out or whose connection breaks, even mid-answer,
+  are read again. A status other than 200, 404 and 5xx, and an answer that
+  is not the index's JSON, refuse the job at once, in an `::error::` line
+  that names it (#278).
 
 ### `install` (read only)
 
@@ -284,6 +299,14 @@ The steps:
    `package` job's step 10. The skip line and the count line must be exact.
 6. On macOS only, run step 5 again with `PATH="/bin:$PATH"`, and print
    `BASH_VERSION`, which must begin with `3.2`.
+   - The rerun has a fresh `HOME` and a bin directory of its own, which holds
+     one link, with pipx's link's value, and nothing else. Step 5's
+     directory, pipx's, already holds the sixteen files, so a rerun there
+     would find each of them already installed and place none under 3.2.
+   - The skip line and the count line must be exact for that directory, and
+     the output must hold 16 lines of the form
+     `<file>: installed at <that directory>/<file>`, which are the sixteen
+     files placed (#278).
 7. On 3.9 only, compile the installed package's own
    `payload/lanes-index` and `payload/lane-worktrees` with `python3 -c`
    `compile(...)`. The shipped bytes are what must compile on 3.9.
@@ -305,7 +328,8 @@ These are the model's grants (`release.yml:1133-1136` at v1.1.0).
 - Then come the same download, sha256 check, re-reads and empty-index check
   as `testpypi`, against PyPI.
 - The upload uses the same pinned action, with the default index.
-- Then PyPI must serve exactly `{wheel: sha256}`.
+- Then PyPI must serve exactly `{wheel: sha256}`, read up to 20 times with
+  `testpypi`'s retries and refusals.
 
 ### Held by `tests/test_release_workflow.py` (offline)
 
@@ -324,6 +348,16 @@ These are the model's grants (`release.yml:1133-1136` at v1.1.0).
   - one with no `licenses/LICENSE`, which fails, naming `LICENSE`;
   - one with a payload file's byte changed, which fails, naming that file;
   - one with a payload file's mode changed, which fails, naming that file.
+- Step 13's heredoc is also run on three wheels that each hold a member it
+  cannot read: a payload file with a bad CRC, a module with a broken deflate
+  stream and a `.dist-info` file in a compression method `zipfile` does not
+  know. Each fails, naming the member in an `::error::` line that says it
+  cannot be read, with no traceback.
+- Step 13's heredoc and the `package` job's wheel check are each run on six
+  wheels, each with one payload file at a mode that is not the commit's:
+  typed as a symlink, typed as a directory, with no file type, setuid,
+  setgid and sticky. Each check passes the wheel as built and refuses all
+  six, naming the file, with no traceback.
 - Every `uses:` is pinned by 40 hex digits, and the publish action is
   `dc37677…`.
 - Every `pip install` is from a hash lock, with `--require-hashes`.
@@ -344,8 +378,21 @@ These are the model's grants (`release.yml:1133-1136` at v1.1.0).
   `pypi` refuses everything but a final in `opensoft/openRepoTools-code`.
 - `testpypi`'s condition reads `to-testpypi`, and `pypi`'s reads `to-pypi`.
   So in an rc rehearsal `pypi` is skipped.
+- Each upload job's empty-index check and served check are run against a
+  fake index on 127.0.0.1. The empty-index check reads once. The served
+  check reads again after a 404, a server error, a read with no answer and
+  an answer cut off, up to 20 reads. Each refusal of either exits 1 with an
+  `::error::` line that names its cause, and prints no traceback.
 - The install matrix is exactly the three legs. The macOS leg reruns under
   `/bin/bash`, and the 3.9 leg compiles the two Python commands.
+- The offline `--install` and then the macOS rerun are run as one macOS leg,
+  over a real venv that holds the package, with pipx's link to it and a
+  stand-in `/bin` whose `bash` is the host's and answers `BASH_VERSION` as
+  3.2. The first places the sixteen files in pipx's bin directory. The rerun
+  places the same sixteen, each `installed at` and none `already installed`,
+  in a bin directory of its own that its count line names, and leaves
+  pipx's bin directory as it was. What Apple's own bash makes of `--install`
+  is the macOS leg's to show.
 - No step reads `docs/`, `openspec/`, `specs/`, `README.md`, `AGENTS.md` or
   `CLAUDE.md`.
 - The header has the RELEASING sections above.

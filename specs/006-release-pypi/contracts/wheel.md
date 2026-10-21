@@ -105,9 +105,16 @@ naming every problem.
 1. **One file.** The two builds are one file (`cmp`).
 2. **The payload.** Each `openrepotools/payload/<P>`:
    - is byte-identical to `git show <commit>:<P>`;
-   - has a mode whose owner-execute bit matches `git ls-tree <commit> -- <P>`
-     (`100755` to `0755`, `100644` to `0644`). Hatchling 1.27.0's
-     reproducible build normalises modes that way, per clarifications N4.
+   - has the commit's whole mode, as `git ls-tree <commit> -- <P>` records
+     it: `100755` is a regular file at `0755` and `100644` a regular file at
+     `0644`, with no other bit, so no other file type and no setuid, setgid
+     or sticky bit (#278). Hatchling 1.27.0's reproducible build normalises
+     the permission bits to `0755` or `0644` (clarifications N4) and leaves
+     the file type as the file has it, so a regular file keeps its type
+     (`hatchling/builders/utils.py:96-110`, `:122-127`). pip makes a member
+     executable only when it is typed a regular file
+     (`pip/_internal/utils/unpacking.py:111-115`, pip 26.2.1), so a `0755`
+     member with no file type is not the commit's mode either.
 3. **The modules.** Each `openrepotools/<name>.py` other than `_release.py`
    is byte-identical to `src/openrepotools/<name>.py` at the commit.
 4. **The stamp.**
@@ -124,7 +131,9 @@ naming every problem.
 
 **When `OPENREPOTOOLS_TEST_WHEEL` names a built wheel**, `tests/test_package.py`
 runs checks 2, 3, 5 and 6 against it, and compares its payload members with
-`payload_names` plus the pin in both directions.
+`payload_names` plus the pin in both directions. Its check 2 holds a member's
+permission bits, setuid, setgid and sticky included, to `0755` or `0644`, and
+reads no file type, so it refuses a subset of what the two workflows refuse.
 
 ## Modes at run time
 
