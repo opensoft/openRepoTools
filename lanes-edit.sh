@@ -479,7 +479,8 @@
 #      for every writer but `commit`), or a fast-forward git refused; the
 #      withdrawn `--sweep`; and the publish act over a stack origin has moved
 #      past (S4, Open question 2); and — slice 2a — `write-handoff`'s handoff
-#      that resolves into W through a link (S5), a restart's bound file or
+#      that resolves into W through a link (S5), a target in the checkout that
+#      is not a file under `handoffs/` (S2), a restart's bound file or
 #      pre-image that is not this one, or a splice that does not prove out,
 #      each with nothing written; while S3's refusal of a `--prepend` or a
 #      `--whole` has WRITTEN the handoff, uncommitted (R-A11-11), and printed
@@ -19174,8 +19175,10 @@ EOF
   #      after S3's fetch — or `--target`, the old callers' spelling — and
   #      TRANSLATED into the checkout this write goes through, never followed
   #      (`handoff_in_repo`, S2). One that still resolves into W, through a
-  #      link, refuses (S5, 2). One in ANOTHER REPOSITORY (Amendment 8(d)) is
-  #      written there and never committed.
+  #      link, refuses (S5, 2), and so does one in the checkout that is not a
+  #      file under `handoffs/` (S2: never the register or `lanes/`). One in
+  #      ANOTHER REPOSITORY (Amendment 8(d)) is written there and never
+  #      committed.
   #   3. S3 step 4 for the handoff's own path (`cs_own_pending`), and for a
   #      handoff git does not track yet, which a commit would add and a lost
   #      race's replay would drop.
@@ -19198,7 +19201,8 @@ EOF
   # STDOUT: `<file><TAB><sha256>` once the file is written (`HANDOFF_OUT`).
   #   0 pushed, or nothing to commit (another repository's file; LANES_NO_GIT)
   #   1 environment: a checkout that cannot be entered, an unreadable file
-  #   2 refused: S3 (step 6), S5, a restart's bound file or pre-image, a proof
+  #   2 refused: S3 (step 6), S5, a target that is not under handoffs/ (S2), a
+  #     restart's bound file or pre-image, a proof
   #   3 pushed, not confirmed · 4 a lock · 6 kept on HEAD, named
   #   7 a restart fence, or the handoff changed under the write
   #   8 no handoff to write: the row names none, or its file is not there
@@ -19293,6 +19297,24 @@ EOF
     fi
     [ "$whf_other" = 1 ] || path_under "$whf_phys" "$whf_c" || whf_other=1
     whf_rel=""; [ "$whf_other" = 1 ] || whf_rel="${whf_phys#"$whf_c"/}"
+    # ONLY A HANDOFF (rv2a's pre-review of slice 2a, SHOULD 1). This verb
+    # replaces a file whole and pushes it, so in this checkout it writes a file
+    # under `handoffs/` and nothing else: never the register, an object log or
+    # anything else under `lanes/`, which Rule 9's one-line guard and the logs'
+    # append-only rule (Amendment 7(b)) protect and this write would bypass
+    # (Amendment 23 S2 scopes it to `handoffs/<estate>/<file>`). `whf_rel` is
+    # the PHYSICAL path's, so a `--target`, a cell that climbs out through
+    # `..`, and a link out of `handoffs/` are all caught here, before a byte.
+    if [ "$whf_other" = 0 ]; then
+      whf_scope=1
+      case "$whf_rel" in handoffs/?*) whf_scope=0 ;; esac
+      case "$whf_rel" in "$LANES_PATH"|lanes/*|*/.|*/..) whf_scope=1 ;; esac
+      if [ -n "$LANES_PREFIX" ]; then case "$whf_rel" in "$LANES_PREFIX"*) whf_scope=1 ;; esac; fi
+      if [ "$whf_scope" = 1 ]; then
+        whf_stamp_said
+        die "lane $lane's handoff target $whf_path is $whf_rel in the checkout $whf_c, which is not a file under handoffs/: write-handoff writes a lane's handoff and nothing else, never the register ($LANES_PATH) or anything under lanes/ (Amendment 23 S2). Nothing was written." 2
+      fi
+    fi
     # ---- 3. S3 step 4 for the handoff itself: a change to it nobody committed,
     # and a handoff git does not track yet (rv2a's pre-review of slice 2a,
     # MUST 1). An untracked file — a new lane's first handoff, or a peer's —

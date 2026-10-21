@@ -948,3 +948,31 @@ def test_an_untracked_handoff_is_refused_and_never_dropped(box: Box, mode: str):
         assert result.stdout == _line(f)
         assert f"git -C {c} add -- {NEW_REL} && git -C {c} commit" in result.stderr
     _released(box, c)
+
+
+@pytest.mark.parametrize("how", ["target", "cell"])
+def test_a_target_outside_handoffs_is_refused_and_nothing_written(box: Box, how: str):
+    """SHOULD 1: this verb replaces a file and pushes it, so in the checkout
+    it writes a file under `handoffs/` and nothing else. A `--target` naming
+    the register, or a row cell that climbs out of `handoffs/` to the lane's
+    append-only object log, is refused (2) before a byte: the checkout's copy
+    and origin's are as they were, and nothing is printed on stdout."""
+    c = box.seam()
+    if how == "target":
+        rel = REGISTER
+        args = ("--whole", str(_prepared(box, "# not a register any more\n")),
+                "--expect-digest", sha(c / REGISTER), "--target", REGISTER)
+    else:
+        rel = f"lanes/log/{LANE}.md"
+        box.cell_is(f"handoffs/../{rel}")
+        args = ("--prepend", str(_block(box)))
+    before, published, tip = (c / rel).read_bytes(), box.origin_file(rel), box.origin_head()
+    result = box.write_handoff(*args, "--subject", "handoff: PAUSED")
+    assert result.returncode == 2, result.stderr
+    assert f"is {rel} in the checkout {c}, which is not a file under handoffs/" in result.stderr
+    assert "Nothing was written." in result.stderr
+    assert (c / rel).read_bytes() == before
+    assert box.origin_file(rel) == published
+    assert box.origin_head() == tip
+    assert result.stdout == ""
+    _released(box, c)
