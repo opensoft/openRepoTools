@@ -1204,3 +1204,39 @@ def test_handoff_path_over_an_unreadable_register_is_1_never_8(box: Box):
     assert result.returncode == 1, result.stderr
     assert "a read that failed is never 'no handoff' (R22)" in result.stderr
     assert result.stdout == ""
+
+
+def test_whole_refusal_names_HEAD_when_a_commit_landed_on_top(box: Box):
+    """S4.4's refusal where another writer's commit landed on top of this
+    write's while its push was in flight: HEAD is that commit, so the words
+    name it and say both are kept — never "kept on HEAD" for this write's.
+    Nothing is reset (6), and both commits wait for the publish act."""
+    c = box.seam()
+    f = c / HANDOFF_REL
+    box.peer_prepares(HANDOFF_REL, "Preserved task.\n", "Preserved task, and a peer's line.\n",
+                      "a peer edits the handoff")
+    peer = shlex.quote(str(box.peer))
+    cq = shlex.quote(str(c))
+    count = shlex.quote(str(box.count))
+    box.use_net('[ "$1" = push ] || exit 0\n'
+                f"[ -e {count} ] && exit 0\n"
+                f"echo 1 > {count}\n"
+                f"git -C {peer} push -q origin main\n"
+                f"printf 'stamp' > {cq}/handoffs/stamp.md\n"
+                f"git -C {cq} add -- handoffs/stamp.md\n"
+                f"git -C {cq} commit -q -m 'a stamp from an unlocked writer' -- handoffs/stamp.md\n"
+                "exit 0\n")
+    result = box.write_handoff("--whole", str(_prepared(box)), "--expect-digest", sha(f),
+                               "--subject", "handoff: PAUSED")
+    assert result.returncode == 6, result.stderr
+    top = box.head(c)
+    mine = box.git("-C", str(c), "rev-parse", "HEAD~1").strip()
+    assert box.subject(c) == "a stamp from an unlocked writer"
+    assert box.subject(c, "HEAD~1") == "handoff: PAUSED"
+    assert f"HEAD is {top}, not this write's commit {mine}" in result.stderr
+    assert f"kept, with HEAD at {top}: {mine} handoff: PAUSED" in result.stderr
+    assert f"kept on HEAD: {mine}" not in result.stderr
+    assert "push refused (attempt" not in result.stderr, "no reset, no replay"
+    assert len(box.unpublished(c)) == 2, "both kept, for the publish act"
+    assert result.stdout == _line(f)
+    _released(box, c)
