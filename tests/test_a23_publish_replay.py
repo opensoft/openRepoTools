@@ -916,3 +916,86 @@ def test_a_claim_that_meets_a_move_at_every_S3_fetch_stops_at_six_exit_2(box: Bo
     assert "push" not in box.net_ops(), "refused before any push"
     assert box.unpublished(c) == []
     _settled(box, c)
+
+
+def test_a_commit_another_writer_rewrote_is_named_as_rewritten_exit_6(box: Box):
+    """SHOULD A of rv1b-c's re-check: until slices 2b and 3, lane-start's
+    stamp and lane-handoff run `pull --rebase` and push in the same checkout
+    with no lock. One that runs while this write's push is in flight rebases
+    this write's commit, and here pushes its copy. Exit 6 said the commit and
+    the one on top of it were "kept on HEAD"; its sha is on no branch here,
+    and its change is on origin. Now the words say another writer rewrote it
+    and point to the read by content, and still nothing is replayed."""
+    c = box.seam()
+    peer = shlex.quote(str(box.peer))
+    cq = shlex.quote(str(c))
+    pushed = shlex.quote(str(box.root / "pushed"))
+    done = shlex.quote(str(box.root / "rebased"))
+    box.use_net(
+        f'if [ "$1" = push ] && [ ! -e {pushed} ]; then echo 1 > {pushed}' + "\n" +
+        f"  git -C {peer} commit -q --allow-empty -m 'a peer lands first'" + "\n" +
+        f"  git -C {peer} push -q origin main" + "\n" +
+        "  exit 0" + "\n" + "fi" + "\n" +
+        f'if [ "$1" = fetch ] && [ -e {pushed} ] && [ ! -e {done} ]; then echo 1 > {done}' + "\n" +
+        f"  printf 'stamp' > {cq}/handoffs/stamp.md" + "\n" +
+        f"  git -C {cq} add -- handoffs/stamp.md" + "\n" +
+        f"  git -C {cq} commit -q -m 'handoff(repoS4-2@Eagle): a stamp, rebased and pushed with no lock' -- handoffs/stamp.md" + "\n" +
+        f"  git -C {cq} pull --rebase -q origin main" + "\n" +
+        f"  git -C {cq} push -q origin main" + "\n" +
+        "fi" + "\n" + "exit 0" + "\n")
+    result = box.helper("set-row-state", LANE, "LIVE · rewritten under it")
+    assert result.returncode == 6, result.stderr
+    assert "rewrote this write's commit" in result.stderr
+    assert "kept on HEAD" not in result.stderr, "nothing of this write's is on HEAD under its own sha"
+    assert "cherry -v origin/main HEAD" in result.stderr
+    named = re.search(r"so it is not replayed: ([0-9a-f]{40}) ", result.stderr)
+    assert named, result.stderr
+    on_head = subprocess.run(["git", "-C", str(c), "merge-base", "--is-ancestor", named.group(1), "HEAD"],
+                             env=box.env, capture_output=True, check=False)
+    assert on_head.returncode == 1, "the named commit is not on HEAD"
+    assert _set("LIVE · rewritten under it") in box.origin_register(), "the rewritten copy reached origin"
+    assert "push refused (attempt 1 of 6)" not in result.stderr, "no reset was made"
+    assert box.unpublished(c) == []
+    _settled(box, c)
+
+
+def test_a_commit_landing_during_the_replays_reset_is_put_back_exit_6(box: Box):
+    """NIT 2 of rv1b-c's re-check: the replay's HEAD check and its reset are
+    two git calls, and an unlocked commit landing between them was dropped
+    with this write's commit, with exit 0. The window is milliseconds, so a
+    `git` first on PATH makes it exact: it commits on top in the checkout
+    just before the reset runs. Now the reset's ORIG_HEAD is asked: the reset
+    is undone, both commits are kept on HEAD and named (6), and nothing is
+    dropped."""
+    c = box.seam()
+    box.race()
+    real = shutil.which("git")
+    assert real, "git is on PATH"
+    shim = box.root / "gitshim"
+    shim.mkdir()
+    mark = shlex.quote(str(box.root / "landed"))
+    cq = shlex.quote(str(c))
+    rq = shlex.quote(real)
+    (shim / "git").write_text(
+        "#!/usr/bin/env bash" + "\n" +
+        'case " $* " in *" reset -q --keep "*)' + "\n" +
+        f"  if [ ! -e {mark} ]; then echo 1 > {mark}" + "\n" +
+        f"    printf 'stamp' > {cq}/handoffs/stamp.md" + "\n" +
+        f"    {rq} -C {cq} add -- handoffs/stamp.md" + "\n" +
+        f"    {rq} -C {cq} commit -q -m 'handoff(repoS4-2@Eagle): a stamp from an unlocked writer' -- handoffs/stamp.md" + "\n" +
+        "  fi ;;" + "\n" +
+        "esac" + "\n" +
+        f'exec {rq} "$@"' + "\n", encoding="utf-8")
+    (shim / "git").chmod(0o755)
+    result = box.helper("set-row-state", LANE, "LIVE · the write under it",
+                        PATH=f"{shim}{os.pathsep}{box.env['PATH']}")
+    assert (box.root / "landed").exists(), "the commit landed in the window"
+    assert result.returncode == 6, result.stderr
+    assert "between the replay's HEAD check and its reset" in result.stderr
+    assert "the reset is undone" in result.stderr
+    assert "push refused (attempt 1 of 6)" not in result.stderr, "nothing is replayed"
+    assert box.subject(c) == "handoff(repoS4-2@Eagle): a stamp from an unlocked writer"
+    assert box.subject(c, "HEAD~1").startswith(f"LANES({LANE}@"), "this write's commit is under it"
+    assert (c / "handoffs" / "stamp.md").is_file(), "the other writer's file is back"
+    assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the publish act"
+    _settled(box, c)
