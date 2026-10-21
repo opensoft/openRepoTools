@@ -535,7 +535,8 @@ def test_a_row_W_has_not_fetched_is_no_reason_to_refuse(box: Box, no_fetch: bool
     assert "has no row in the register" not in result.stderr, result.stderr
     if no_fetch:
         assert result.returncode == 2, (result.stdout, result.stderr)
-        assert "LANES_NO_FETCH=1 is set" in result.stderr and "ratified choice 2" in result.stderr, result.stderr
+        assert "LANES_NO_FETCH=1 is set" in result.stderr, result.stderr
+        assert "ratified choice 2" in result.stderr, result.stderr
         assert " · a row W had not fetched |" not in box.origin_register()
         assert not box.lanes_root.exists(), "a write that must refuse at S3 step 1 clones nothing first"
         return
