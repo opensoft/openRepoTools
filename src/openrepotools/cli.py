@@ -43,6 +43,20 @@ PATH whose last entry is a file is the same case: `execvp` then raises
 `NotADirectoryError` where it would raise `FileNotFoundError`, and the
 refusal is the same (FR-004).
 
+A `bash` THAT IS THERE AND CANNOT BE RUN IS REFUSED TOO (#256). `execvp` goes
+past an entry it cannot run to a later one it can, so this is the case where
+none can, and it then raises the FIRST error that was not "not found":
+`PermissionError` for a `bash` file with no execute bit, a directory on PATH
+that cannot be searched, or a directory named `bash`; a bare `OSError` for a
+file the kernel will not execute (`ENOEXEC`), a symlink loop (`ELOOP`) or an
+argument list that is too long (`E2BIG`). Each ended in a traceback and exit
+1. Now each is `UNRUNNABLE_BASH`, on stderr, with exit 2 and nothing run:
+`NO_BASH`'s form and last sentence, and the reason the system gave in place
+of "there is no bash on this PATH", which is not true where `ls` shows one.
+It is every `OSError` and not a list of them, because what the person needs
+does not depend on which errno it was. Only `FileNotFoundError` and
+`NotADirectoryError`, which `execvp` raises when there is none, keep `NO_BASH`.
+
 The standard library only, and of it only `os`, `signal` and `sys`: the
 package declares no dependencies, and `tests/test_repo_hygiene.py` holds
 every module's imports to that allowlist (FR-005).
@@ -57,6 +71,15 @@ import sys
 NO_BASH = ("REFUSED: openRepoTools needs bash, and there is no bash on this "
            "PATH. Nothing ran.")
 
+#: The refusal for a `bash` that is on PATH and cannot be run (#256): NO_BASH's
+#: one line to stderr, with no blank line before it and the same last
+#: sentence. `{why}` is the reason the system gave for the exec, as
+#: `OSError.strerror` words it: `Permission denied` for a file with no execute
+#: bit or a directory that cannot be searched, `Exec format error` for a file
+#: that is not a program.
+UNRUNNABLE_BASH = ("REFUSED: openRepoTools needs bash, and the bash on this "
+                   "PATH cannot be run ({why}). Nothing ran.")
+
 #: The signals Python's start-up sets to `SIG_IGN`, by name: each is set back
 #: to `SIG_DFL` before the exec, where this platform has it.
 IGNORED_BY_PYTHON = ("SIGPIPE", "SIGXFSZ")
@@ -65,8 +88,9 @@ IGNORED_BY_PYTHON = ("SIGPIPE", "SIGXFSZ")
 def main() -> int:
     """Become `bash <payload>/openRepoTools <arguments>`, or refuse with 2.
 
-    It returns only when there is no `bash` on PATH; otherwise the exec
-    replaces this process, and bash's exit status is the command's.
+    It returns only when the exec fails: there is no `bash` on PATH, or none
+    that can be run. Otherwise the exec replaces this process, and bash's exit
+    status is the command's.
     """
     payload = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            "payload")
@@ -79,9 +103,13 @@ def main() -> int:
     try:
         # S8705 is a false positive: argv is the caller's own command line (#228).
         os.execvp("bash", argv)  # NOSONAR
-    except (FileNotFoundError, NotADirectoryError):
+    except OSError as error:
         for number, before in found:
             if before is not None:
                 signal.signal(number, before)
-        print(NO_BASH, file=sys.stderr)
+        if isinstance(error, (FileNotFoundError, NotADirectoryError)):
+            print(NO_BASH, file=sys.stderr)
+        else:
+            why = error.strerror or type(error).__name__
+            print(UNRUNNABLE_BASH.format(why=why), file=sys.stderr)
         return 2
