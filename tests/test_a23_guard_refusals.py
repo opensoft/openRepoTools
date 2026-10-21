@@ -297,7 +297,13 @@ def test_the_1312Z_shape_is_pushed(box: Box):
     and 10 behind, whose adjacent row origin had changed, stranded all three
     of a launch's writes within 29 seconds. Fetched and fast-forwarded first,
     the row stamp and the log line are both pushed, and nothing is left
-    unpublished."""
+    unpublished.
+
+    The stamp must push on its FIRST attempt, and the two asserts on it say so
+    apart (rv1b's SHOULD 2): without S3's fast-forward the stamp edits the
+    stale tree, its push is refused, and the replay's `reset --keep` catches up
+    instead, so attempt 2 reaches the same end state and every other assert
+    here still holds (m1b's S10 survived that way)."""
     c = box.seam()
     for n in range(9):
         box.peer_pushes(f"handoffs/repoS3/peer-{n}.md", f"peer {n}\n")
@@ -308,6 +314,8 @@ def test_the_1312Z_shape_is_pushed(box: Box):
                    "HEAD...refs/remotes/origin/main").split() == ["0", "10"]
     stamp = run_verb(box, "set-row-state")
     assert stamp.returncode == 0, stamp.stderr
+    assert "pushed origin/main (attempt 1)" in stamp.stderr, stamp.stderr
+    assert "push refused" not in stamp.stderr, stamp.stderr
     note = run_verb(box, "log")
     assert note.returncode == 0, note.stderr
     register = box.origin_register()
@@ -316,6 +324,44 @@ def test_the_1312Z_shape_is_pushed(box: Box):
     assert "the guarded note" in box.origin_file(f"lanes/log/{LANE}.md")
     assert box.unpublished(c) == [], "no `+` under git cherry: nothing stranded"
     assert box.git("-C", str(c), "rev-parse", "HEAD") == box.origin_head() + "\n"
+
+
+def test_a_stray_copy_from_a_rename_that_never_landed_is_named_as_one(box: Box):
+    """rv1b's NIT 2: S3's fast-forward brings an old-cased PUBLISHED log into a
+    checkout that holds the canonical file untracked — what a case-only rename
+    whose commit never landed leaves. `ensure_log` then sees two files, and
+    15(d)'s hand merge is the wrong recovery for a stray copy: a commit of it
+    would publish a second file for one lane. The refusal names the tracked
+    log and the untracked copy, and the cure is to remove the copy and re-run,
+    after which the write renames the published log once, in its own commit."""
+    c = box.seam()
+    old_cased = f"lanes/log/{NEIGHBOUR.lower()}.md"
+    canonical = f"lanes/log/{NEIGHBOUR}.md"
+    header = f"# lane {NEIGHBOUR} — object log (lane-collision-protocol Amendment 7)\n"
+    box.peer_pushes(old_cased, header)
+    stray = box.write(c, canonical, header)
+    origin_before = box.origin_head()
+    note = ("log", "NOTED", f"lane:{NEIGHBOUR}", "the stray-copy note", *HOME_FLAG)
+    env = {"LANES_LANE": NEIGHBOUR, "LANES_SESSION": UUID2}
+    result = box.helper(*note, **env)
+    err = result.stderr
+    assert result.returncode == 2, (result.stdout, err)
+    assert f"{stray} is NOT TRACKED" in err, err
+    assert "a case-only rename whose commit never landed" in err, err
+    assert f'rm -- "{stray}"' in err, err
+    assert "renames the tracked log once, inside its own commit" in err, err
+    assert "Merge them by hand" not in err, "15(d)'s hand merge is not this state's recovery"
+    assert "Nothing was written." in err, err
+    assert box.origin_head() == origin_before, "nothing was published"
+    assert stray.read_text(encoding="utf-8") == header, "the copy is left as it was"
+    assert not box.lock_of(c).exists(), "the lock is released"
+    stray.unlink()
+    again = box.helper(*note, **env)
+    assert again.returncode == 0, again.stderr
+    assert "the stray-copy note" in box.origin_file(canonical)
+    logs = box.git("--git-dir", str(box.origin), "ls-tree", "--name-only", "main", "lanes/log/").split()
+    assert canonical in logs, logs
+    assert old_cased not in logs, "the rename landed in the write's own commit"
 
 
 # -------------------------------------------------------- every writer, routed or not
@@ -330,7 +376,8 @@ def test_S3_applies_through_a_routed_lane_checkout(box: Box):
     before = box.snapshot(lc)
     result = run_verb(box, "log")
     assert result.returncode == 2, result.stderr
-    assert f"in {lc}:" in result.stderr and "unpublished commit" in result.stderr
+    assert f"in {lc}:" in result.stderr
+    assert "unpublished commit" in result.stderr
     assert box.snapshot(lc) == before
     assert not box.lock_of(lc).exists()
 
@@ -343,7 +390,8 @@ def test_S3_applies_without_the_opt_in(tmp_path: Path):
     before = box.snapshot(box.w)
     result = run_verb(box, "set-row-state")
     assert result.returncode == 2, result.stderr
-    assert f"in {box.w}:" in result.stderr and "unpublished commit" in result.stderr
+    assert f"in {box.w}:" in result.stderr
+    assert "unpublished commit" in result.stderr
     assert box.snapshot(box.w) == before
     assert not box.lanes_root.exists(), "nothing was routed"
 

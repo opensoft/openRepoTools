@@ -25,8 +25,11 @@ sandbox is the real `lanes-edit.sh`; nothing reaches a real remote.
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
+import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -171,7 +174,8 @@ def test_refused_push_replays_on_a_fresh_fast_forward(box: Box):
     assert "LIVE · the neighbour moved first" in register, "the peer's row is kept"
     assert _set("LIVE · the replayed write") in register, "the write was made on the new tip"
     new = box.subjects()[: len(box.subjects()) - len(before)]
-    assert len(new) == 2 and new[1] == "a peer's row lands first", new
+    assert len(new) == 2, new
+    assert new[1] == "a peer's row lands first", new
     assert box.head(c) == box.origin_head(), "one commit of this write, and it is origin's tip"
     assert box.pushes() == 2
     assert box.unpublished(c) == []
@@ -249,7 +253,8 @@ def test_replay_reruns_the_one_match_guard(box: Box):
     assert "push refused (attempt 1 of 6)" in result.stderr
     assert "'seeded' occurs 0 times" in result.stderr, result.stderr
     register = box.origin_register()
-    assert "LIVE · rewritten by a peer" in register and "reseeded" not in register
+    assert "LIVE · rewritten by a peer" in register
+    assert "reseeded" not in register
     assert box.head(c) == box.origin_head(), "the dropped commit is gone and nothing is left ahead"
     assert box.unpublished(c) == []
     _settled(box, c)
@@ -309,7 +314,8 @@ def test_bound_keeps_the_commit_on_head_exit_6_and_next_write_refuses(box: Box):
     after = box.helper("log", "NOTED", f"lane:{LANE}", "a later write", *HOME_FLAG,
                        LANES_LANE=LANE, LANES_SESSION=UUID)
     assert after.returncode == 2, after.stderr
-    assert "1 unpublished commit(s)" in after.stderr and f"+ {sha}" in after.stderr
+    assert "1 unpublished commit(s)" in after.stderr
+    assert f"+ {sha}" in after.stderr
     assert box.head(c) == sha
 
 
@@ -420,11 +426,13 @@ def test_commit_carries_a_hand_edit_across_the_ff(box: Box):
     assert "carried the hand edit of lanes/LANES.md across the fast-forward" in result.stderr
     assert "anchored by those lines alone" in result.stderr, "the neighbour's row is the edit's context"
     register = box.origin_register()
-    assert "LIVE · moved on origin" in register and "LIVE · a hand edit" in register
+    assert "LIVE · moved on origin" in register
+    assert "LIVE · a hand edit" in register
     assert box.head(c) == box.origin_head()
     assert box.git("-C", str(c), "status", "--porcelain").strip() == ""
     saved = list((c / ".git" / "lanes-edit").glob("hand-edit-*.diff"))
-    assert len(saved) == 1 and "a hand edit" in saved[0].read_text(encoding="utf-8")
+    assert len(saved) == 1
+    assert "a hand edit" in saved[0].read_text(encoding="utf-8")
     _settled(box, c)
 
 
@@ -440,7 +448,8 @@ def test_commit_keeps_the_diff_when_it_no_longer_applies(box: Box):
     assert result.returncode == 2, result.stderr
     saved = list((c / ".git" / "lanes-edit").glob("hand-edit-*.diff"))
     assert len(saved) == 1
-    assert "no longer applies" in result.stderr and str(saved[0]) in result.stderr
+    assert "no longer applies" in result.stderr
+    assert str(saved[0]) in result.stderr
     assert "LIVE · a hand edit" in saved[0].read_text(encoding="utf-8")
     assert (c / REGISTER).read_text(encoding="utf-8") == box.origin_register()
     assert box.origin_head() == tip, "nothing was pushed"
@@ -481,7 +490,8 @@ def test_commit_replay_keeps_the_hand_edit(box: Box):
     assert result.returncode == 0, result.stderr
     assert "left in the working tree as the hand edit it was" in result.stderr
     register = box.origin_register()
-    assert "LIVE · landed mid-push" in register and "LIVE · a hand edit" in register
+    assert "LIVE · landed mid-push" in register
+    assert "LIVE · a hand edit" in register
     assert box.head(c) == box.origin_head()
     assert box.git("-C", str(c), "status", "--porcelain").strip() == ""
     _settled(box, c)
@@ -543,7 +553,8 @@ def test_publish_act_is_exempt_from_unpushed_only(box: Box, row):
         assert box.unpublished(c) == []
     else:
         assert result.returncode == 2, result.stderr
-        assert words in result.stderr and "Nothing was written." in result.stderr
+        assert words in result.stderr
+        assert "Nothing was written." in result.stderr
         assert box.origin_head() == tip
     _settled(box, c)
 
@@ -594,9 +605,11 @@ def test_publish_act_on_moved_origin_refuses(box: Box):
     err = result.stderr
     assert "origin/main has moved past the local commits" in err
     assert "only a fast-forward push" in err
-    assert "refs/heads/archive/" in err and f"git -C {c} reset --keep origin/main" in err
+    assert "refs/heads/archive/" in err
+    assert f"git -C {c} reset --keep origin/main" in err
     assert "push" not in box.net_ops()
-    assert box.origin_head() == tip and box.head(c) == shas[-1]
+    assert box.origin_head() == tip
+    assert box.head(c) == shas[-1]
     _settled(box, c)
 
 
@@ -629,4 +642,360 @@ def test_no_sweep_is_still_accepted(box: Box):
     result = box.helper("--no-sweep", "set-row-state", LANE, "LIVE · not swept")
     assert result.returncode == 0, result.stderr
     assert _set("LIVE · not swept") in box.origin_register()
+    _settled(box, c)
+
+
+# ------------------------------------- the window before S3 (rv1b's pre-review)
+
+S3_REFSPEC = "+refs/heads/main:refs/remotes/origin/main"
+
+
+def _at_s3_fetch(box: Box, body: str) -> None:
+    """Run `body` once, at the helper's first fetch with S3's own refspec:
+    after the verb's checks before the lock, and before S3's fetch under it."""
+    count = shlex.quote(str(box.root / "s3hook.count"))
+    box.use_net(
+        '[ "$1" = fetch ] || exit 0' + "\n" +
+        f'case "$*" in *"{S3_REFSPEC}"*) : ;; *) exit 0 ;; esac' + "\n" +
+        f"[ -e {count} ] && exit 0" + "\n" +
+        f"echo 1 > {count}" + "\n" + body + "\n" + "exit 0" + "\n")
+
+
+def test_a_rival_claim_landing_before_S3s_fetch_loses_exit_7(box: Box):
+    """MUST 1 of rv1b's pre-review: `claim`'s checks run before the lock on
+    what `log_sync` fetched, and a rival's CLAIMED can land between that
+    fetch and S3's. S3 then fast-forwarded onto it and this claim was pushed
+    on top, so both lanes held the object. Now a fast-forward that moved
+    origin's tip under this write's checks runs the verb again from the top
+    on the new tip, with the lock held, and the replay's rescan finds the
+    rival first: CLAIM-LOST (7), and one holder."""
+    box.seam()
+    c2 = box.clone(box.root / "c2")
+    env = {k: v for k, v in box.env.items() if k not in ("LANES_GIT", "FAKE_NET_LOG", "FAKE_NET_HOOK")}
+    env.update({"LANES_REPO": str(c2), "LANES_LANE": NEIGHBOUR, "LANES_SESSION": UUID2})
+    words = " ".join(shlex.quote(f"{k}={v}") for k, v in sorted(env.items()))
+    rival = " ".join(shlex.quote(a) for a in box.cmd("claim", OBJ, "--no-github", *HOME_FLAG))
+    out = shlex.quote(str(box.root / "rival.out"))
+    _at_s3_fetch(box, f"env -i {words} {rival} > {out} 2>&1; echo $? > {out}.rc")
+    result = box.helper("claim", OBJ, "--no-github", *HOME_FLAG, LANES_LANE=LANE, LANES_SESSION=UUID)
+    assert (box.root / "rival.out.rc").read_text(encoding="utf-8").strip() == "0", \
+        (box.root / "rival.out").read_text(encoding="utf-8")
+    assert result.returncode == 7, result.stderr
+    assert "moved while this write's checks ran" in result.stderr
+    assert f"another lane's claim landed on main before this one: @{NEIGHBOUR}" in result.stderr
+    mine = box.origin_file(f"lanes/log/{LANE}.md")
+    assert f"CLAIMED — lane {LANE}" not in mine, "this lane never holds it"
+    assert f"CLAIM-LOST — lane {LANE}" in mine
+    assert f"CLAIMED — lane {NEIGHBOUR}" in box.origin_file(f"lanes/log/{NEIGHBOUR}.md")
+
+
+@pytest.mark.parametrize("peer", ["retires-it", "adds-it"])
+def test_an_add_row_whose_name_lands_before_S3s_fetch_refuses(box: Box, peer: str):
+    """MUST 2 of rv1b's pre-review: `add-row`'s retirement and duplicate
+    checks run before the lock. A peer's retirement of the name, or its own
+    row for it, landing before S3's fetch was fast-forwarded in and the row
+    pushed on top, at attempt 1. The re-run on the new tip refuses (2), and
+    nothing is written."""
+    c = box.seam()
+    row = _row(NEW_LANE, uuid=UUID3)
+    if peer == "retires-it":
+        box.peer_prepares(ARCHIVE, None,
+                          "# retired rows" + "\n" + "\n" + "| lane | session id |" + "\n" + "|---|---|" + "\n" +
+                          f"| `{NEW_LANE}` | harness `{UUID3}` |" + "\n", "a peer retires the name")
+        words = f"lane '{NEW_LANE}' is RETIRED"
+    else:
+        box.peer_prepares(REGISTER, _row(NEIGHBOUR, uuid=UUID2),
+                          _row(NEIGHBOUR, uuid=UUID2) + "\n" + row, "a peer adds the row")
+        words = f"lane '{NEW_LANE}' already has a row"
+    _at_s3_fetch(box, f"git -C {shlex.quote(str(box.peer))} push -q origin main")
+    result = box.helper("add-row", row)
+    assert result.returncode == 2, result.stderr
+    assert "moved while this write's checks ran" in result.stderr
+    assert words in result.stderr, result.stderr
+    assert box.origin_register().count(f"`{NEW_LANE}`") == (1 if peer == "adds-it" else 0)
+    assert "push" not in box.net_ops(), "refused before any push"
+    assert box.unpublished(c) == []
+    _settled(box, c)
+
+
+def test_a_commit_made_on_top_before_the_replay_is_kept_exit_6(box: Box):
+    """MUST 4 of rv1b's pre-review: until slices 2b and 3, lane-start's
+    stamp, lane-handoff's commit and the skill's commit are made in the same
+    checkout with no lock. One landing on top of this write's commit while its
+    push is in flight was dropped by the replay's `reset --keep`, with exit 0
+    and nothing said. Now the replay asks HEAD first: both commits are kept
+    on HEAD and named (6), and nothing is dropped."""
+    c = box.seam()
+    peer = shlex.quote(str(box.peer))
+    cq = shlex.quote(str(c))
+    count = shlex.quote(str(box.root / "push.count"))
+    box.use_net(
+        '[ "$1" = push ] || exit 0' + "\n" +
+        f"[ -e {count} ] && exit 0" + "\n" +
+        f"echo 1 > {count}" + "\n" +
+        f"git -C {peer} commit -q --allow-empty -m 'a peer lands first'" + "\n" +
+        f"git -C {peer} push -q origin main" + "\n" +
+        f"printf 'stamp' > {cq}/handoffs/stamp.md" + "\n" +
+        f"git -C {cq} add -- handoffs/stamp.md" + "\n" +
+        f"git -C {cq} commit -q -m 'handoff(repoS4-2@Eagle): a stamp from an unlocked writer' -- handoffs/stamp.md" + "\n" +
+        "exit 0" + "\n")
+    result = box.helper("set-row-state", LANE, "LIVE · the write under it")
+    assert result.returncode == 6, result.stderr
+    assert "is no longer HEAD, so it is not replayed" in result.stderr
+    assert "push refused (attempt 1 of 6)" not in result.stderr, "no reset was made"
+    assert box.subject(c) == "handoff(repoS4-2@Eagle): a stamp from an unlocked writer"
+    assert box.subject(c, "HEAD~1").startswith(f"LANES({LANE}@"), "this write's commit is under it"
+    assert (c / "handoffs" / "stamp.md").is_file(), "the other writer's file is still there"
+    assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the publish act"
+    _settled(box, c)
+
+
+# ------------------------ one checkout, several writers (rv1b-c's re-check)
+
+def _spawn(box: Box, name: str, *args: str, **extra: str) -> subprocess.Popen:
+    """The helper in the background, its output in `<name>.out` and
+    `<name>.err` under the box (files, so no pipe can fill and stall it)."""
+    out = (box.root / f"{name}.out").open("w", encoding="utf-8")
+    err = (box.root / f"{name}.err").open("w", encoding="utf-8")
+    try:
+        return subprocess.Popen(box.cmd(*args), env=dict(box.env, **extra), cwd=str(box.root),
+                                stdout=out, stderr=err, text=True)
+    finally:
+        out.close()
+        err.close()
+
+
+def _err(box: Box, name: str) -> str:
+    return (box.root / f"{name}.err").read_text(encoding="utf-8")
+
+
+def _wait_for(pred, what: str, secs: float = 60.0) -> None:
+    end = time.monotonic() + secs
+    while time.monotonic() < end:
+        if pred():
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
+def _waits_on_the_lock(pid: int) -> bool:
+    """True while process `pid` is in `mutex_try`'s wait for the checkout's
+    lock: a `sleep` it started is running. Nothing a write does before the
+    lock starts one, so its own checks have all run."""
+    for stat in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            text = stat.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        comm = text[text.find("(") + 1:text.rfind(")")]
+        fields = text[text.rfind(")") + 2:].split()
+        if comm == "sleep" and len(fields) > 1 and fields[1] == str(pid):
+            return True
+    return False
+
+
+def _another_write_holds_the_lock(box: Box, c: Path, gate: Path) -> subprocess.Popen:
+    """P3, any other write through the same checkout: it takes the lock and
+    holds it at its push until the case writes `gate`."""
+    hook = box.fakebin / "hold-at-push"
+    hook.write_text(
+        "#!/usr/bin/env bash" + "\n" +
+        '[ "$1" = push ] || exit 0' + "\n" +
+        f"i=0; while [ ! -e {shlex.quote(str(gate))} ] && [ $i -lt 500 ]; do sleep 0.1; i=$((i + 1)); done" + "\n" +
+        "exit 0" + "\n", encoding="utf-8")
+    hook.chmod(0o755)
+    p3 = _spawn(box, "p3", "set-row-state", LANE, "LIVE · another write in this checkout",
+                FAKE_NET_HOOK=str(hook))
+    _wait_for(lambda: box.lock_of(c).exists(), "P3 to take the checkout's lock")
+    return p3
+
+
+def _a_reader_fetches_in(box: Box, c: Path) -> None:
+    """Any reader's `log_sync` in the shared checkout (a peer's push or its
+    read-back does the same): it moves the checkout's own
+    `refs/remotes/origin/main` to origin's tip, takes no lock, and writes
+    nothing."""
+    read = box.helper("who", OBJ, *HOME_FLAG)
+    assert read.returncode in (0, 8), read.stderr
+    assert box.git("-C", str(c), "rev-parse", "refs/remotes/origin/main").strip() == box.origin_head(), \
+        "the reader moved the shared checkout's origin/main"
+
+
+def test_a_rival_claim_a_reader_fetched_into_the_shared_checkout_loses_exit_7(box: Box):
+    """MUST-N of rv1b-c's re-check: B35 asked only whether S3's OWN fetch
+    moved origin/main. In a checkout several writers share — W, every lane's
+    while routing is off — another process moves that same ref while this
+    claim waits on the lock after its checks: a reader's `log_sync`, a peer's
+    push, its read-back. S3's fetch then found nothing new, this claim was
+    pushed on top of the rival's, and two lanes held the object. Now S3
+    compares with the tip the checks read, so the claim runs again from the
+    top on the new tip, and the replay's rescan finds the rival: CLAIM-LOST
+    (7), one holder."""
+    c = box.seam()
+    box.use_net()
+    gate = box.root / "go"
+    p3 = _another_write_holds_the_lock(box, c, gate)
+    a = _spawn(box, "a", "claim", OBJ, "--no-github", *HOME_FLAG, LANES_LANE=LANE, LANES_SESSION=UUID)
+    _wait_for(lambda: _waits_on_the_lock(a.pid), "the claim to finish its checks and wait on the lock")
+    c2 = box.clone(box.root / "c2")
+    rival = box.helper("claim", OBJ, "--no-github", *HOME_FLAG,
+                       LANES_REPO=str(c2), LANES_LANE=NEIGHBOUR, LANES_SESSION=UUID2)
+    assert rival.returncode == 0, rival.stderr
+    _a_reader_fetches_in(box, c)
+    gate.write_text("go" + "\n", encoding="utf-8")
+    assert p3.wait(timeout=180) == 0, _err(box, "p3")
+    rc = a.wait(timeout=180)
+    stderr = _err(box, "a")
+    assert rc == 7, stderr
+    assert "moved while this write's checks ran" in stderr
+    assert f"another lane's claim landed on main before this one: @{NEIGHBOUR}" in stderr
+    mine = box.origin_file(f"lanes/log/{LANE}.md")
+    assert f"CLAIMED — lane {LANE}" not in mine, "this lane never holds it"
+    assert f"CLAIM-LOST — lane {LANE}" in mine
+    assert f"CLAIMED — lane {NEIGHBOUR}" in box.origin_file(f"lanes/log/{NEIGHBOUR}.md")
+    assert _set("LIVE · another write in this checkout") in box.origin_register(), "P3's write landed"
+    assert box.unpublished(c) == []
+    _settled(box, c)
+
+
+def test_an_add_row_whose_name_a_reader_fetched_into_the_shared_checkout_refuses(box: Box):
+    """MUST-N of rv1b-c's re-check, for `add-row`: a peer's retirement of the
+    name lands while the add-row waits on the shared checkout's lock after its
+    checks, and a reader there fetches it. S3's fetch found nothing new, and
+    the retired name was issued again at attempt 1. Now the re-run on the new
+    tip refuses (2), and nothing is written."""
+    c = box.seam()
+    box.use_net()
+    gate = box.root / "go"
+    row = _row(NEW_LANE, uuid=UUID3)
+    box.peer_prepares(ARCHIVE, None,
+                      "# retired rows" + "\n" + "\n" + "| lane | session id |" + "\n" + "|---|---|" + "\n" +
+                      f"| `{NEW_LANE}` | harness `{UUID3}` |" + "\n", "a peer retires the name")
+    p3 = _another_write_holds_the_lock(box, c, gate)
+    a = _spawn(box, "a", "add-row", row)
+    _wait_for(lambda: _waits_on_the_lock(a.pid), "the add-row to finish its checks and wait on the lock")
+    box.git("-C", str(box.peer), "push", "-q", "origin", "main")
+    _a_reader_fetches_in(box, c)
+    gate.write_text("go" + "\n", encoding="utf-8")
+    assert p3.wait(timeout=180) == 0, _err(box, "p3")
+    rc = a.wait(timeout=180)
+    stderr = _err(box, "a")
+    assert rc == 2, stderr
+    assert "moved while this write's checks ran" in stderr
+    assert f"lane '{NEW_LANE}' is RETIRED" in stderr
+    assert box.origin_register().count(f"`{NEW_LANE}`") == 0, "the retired name is not issued again"
+    assert not [s for s in box.subjects() if s.endswith("add row")], "no add-row commit reached origin"
+    assert box.unpublished(c) == []
+    _settled(box, c)
+
+
+def test_a_claim_that_meets_a_move_at_every_S3_fetch_stops_at_six_exit_2(box: Box):
+    """SHOULD B of rv1b-c's re-check: `cs_recheck`'s six-attempt bound. A
+    peer moves origin at every one of S3's fetches, so every attempt finds
+    the tip moved under its checks. The sixth refuses (2) with nothing
+    written, rather than re-running for as long as origin is busy."""
+    c = box.seam()
+    peer = shlex.quote(str(box.peer))
+    count = shlex.quote(str(box.root / "moves"))
+    box.use_net(
+        '[ "$1" = fetch ] || exit 0' + "\n" +
+        f'case "$*" in *"{S3_REFSPEC}"*) : ;; *) exit 0 ;; esac' + "\n" +
+        f'n=$(cat {count} 2>/dev/null || echo 0); [ "$n" -lt 8 ] || exit 0; echo $((n + 1)) > {count}' + "\n" +
+        f"git -C {peer} fetch -q origin && git -C {peer} merge -q --ff-only refs/remotes/origin/main" + "\n" +
+        f'git -C {peer} commit -q --allow-empty -m "a peer moves origin ($((n + 1)))"' + "\n" +
+        f"git -C {peer} push -q origin main" + "\n" +
+        "exit 0" + "\n")
+    result = box.helper("claim", OBJ, "--no-github", *HOME_FLAG, LANES_LANE=LANE, LANES_SESSION=UUID)
+    assert result.returncode == 2, result.stderr
+    assert "on each of six attempts" in result.stderr
+    assert (box.root / "moves").read_text(encoding="utf-8").strip() == "6", "one move per attempt, six in all"
+    assert re.findall(r"checks ran \([^)]*\): nothing is written yet.*?attempt (\d) of 6", result.stderr) == \
+        ["1", "2", "3", "4", "5"]
+    assert f"lane {LANE}" not in box.origin_file(f"lanes/log/{LANE}.md").split("\n", 1)[1], \
+        "nothing of this claim's reached origin"
+    assert "push" not in box.net_ops(), "refused before any push"
+    assert box.unpublished(c) == []
+    _settled(box, c)
+
+
+def test_a_commit_another_writer_rewrote_is_named_as_rewritten_exit_6(box: Box):
+    """SHOULD A of rv1b-c's re-check: until slices 2b and 3, lane-start's
+    stamp and lane-handoff run `pull --rebase` and push in the same checkout
+    with no lock. One that runs while this write's push is in flight rebases
+    this write's commit, and here pushes its copy. Exit 6 said the commit and
+    the one on top of it were "kept on HEAD"; its sha is on no branch here,
+    and its change is on origin. Now the words say another writer rewrote it
+    and point to the read by content, and still nothing is replayed."""
+    c = box.seam()
+    peer = shlex.quote(str(box.peer))
+    cq = shlex.quote(str(c))
+    pushed = shlex.quote(str(box.root / "pushed"))
+    done = shlex.quote(str(box.root / "rebased"))
+    box.use_net(
+        f'if [ "$1" = push ] && [ ! -e {pushed} ]; then echo 1 > {pushed}' + "\n" +
+        f"  git -C {peer} commit -q --allow-empty -m 'a peer lands first'" + "\n" +
+        f"  git -C {peer} push -q origin main" + "\n" +
+        "  exit 0" + "\n" + "fi" + "\n" +
+        f'if [ "$1" = fetch ] && [ -e {pushed} ] && [ ! -e {done} ]; then echo 1 > {done}' + "\n" +
+        f"  printf 'stamp' > {cq}/handoffs/stamp.md" + "\n" +
+        f"  git -C {cq} add -- handoffs/stamp.md" + "\n" +
+        f"  git -C {cq} commit -q -m 'handoff(repoS4-2@Eagle): a stamp, rebased and pushed with no lock' -- handoffs/stamp.md" + "\n" +
+        f"  git -C {cq} pull --rebase -q origin main" + "\n" +
+        f"  git -C {cq} push -q origin main" + "\n" +
+        "fi" + "\n" + "exit 0" + "\n")
+    result = box.helper("set-row-state", LANE, "LIVE · rewritten under it")
+    assert result.returncode == 6, result.stderr
+    assert "rewrote this write's commit" in result.stderr
+    assert "kept on HEAD" not in result.stderr, "nothing of this write's is on HEAD under its own sha"
+    assert "cherry -v origin/main HEAD" in result.stderr
+    named = re.search(r"so it is not replayed: ([0-9a-f]{40}) ", result.stderr)
+    assert named, result.stderr
+    on_head = subprocess.run(["git", "-C", str(c), "merge-base", "--is-ancestor", named.group(1), "HEAD"],
+                             env=box.env, capture_output=True, check=False)
+    assert on_head.returncode == 1, "the named commit is not on HEAD"
+    assert _set("LIVE · rewritten under it") in box.origin_register(), "the rewritten copy reached origin"
+    assert "push refused (attempt 1 of 6)" not in result.stderr, "no reset was made"
+    assert box.unpublished(c) == []
+    _settled(box, c)
+
+
+def test_a_commit_landing_during_the_replays_reset_is_put_back_exit_6(box: Box):
+    """NIT 2 of rv1b-c's re-check: the replay's HEAD check and its reset are
+    two git calls, and an unlocked commit landing between them was dropped
+    with this write's commit, with exit 0. The window is milliseconds, so a
+    `git` first on PATH makes it exact: it commits on top in the checkout
+    just before the reset runs. Now the reset's ORIG_HEAD is asked: the reset
+    is undone, both commits are kept on HEAD and named (6), and nothing is
+    dropped."""
+    c = box.seam()
+    box.race()
+    real = shutil.which("git")
+    assert real, "git is on PATH"
+    shim = box.root / "gitshim"
+    shim.mkdir()
+    mark = shlex.quote(str(box.root / "landed"))
+    cq = shlex.quote(str(c))
+    rq = shlex.quote(real)
+    (shim / "git").write_text(
+        "#!/usr/bin/env bash" + "\n" +
+        'case " $* " in *" reset -q --keep "*)' + "\n" +
+        f"  if [ ! -e {mark} ]; then echo 1 > {mark}" + "\n" +
+        f"    printf 'stamp' > {cq}/handoffs/stamp.md" + "\n" +
+        f"    {rq} -C {cq} add -- handoffs/stamp.md" + "\n" +
+        f"    {rq} -C {cq} commit -q -m 'handoff(repoS4-2@Eagle): a stamp from an unlocked writer' -- handoffs/stamp.md" + "\n" +
+        "  fi ;;" + "\n" +
+        "esac" + "\n" +
+        f'exec {rq} "$@"' + "\n", encoding="utf-8")
+    (shim / "git").chmod(0o755)
+    result = box.helper("set-row-state", LANE, "LIVE · the write under it",
+                        PATH=f"{shim}{os.pathsep}{box.env['PATH']}")
+    assert (box.root / "landed").exists(), "the commit landed in the window"
+    assert result.returncode == 6, result.stderr
+    assert "between the replay's HEAD check and its reset" in result.stderr
+    assert "the reset is undone" in result.stderr
+    assert "push refused (attempt 1 of 6)" not in result.stderr, "nothing is replayed"
+    assert box.subject(c) == "handoff(repoS4-2@Eagle): a stamp from an unlocked writer"
+    assert box.subject(c, "HEAD~1").startswith(f"LANES({LANE}@"), "this write's commit is under it"
+    assert (c / "handoffs" / "stamp.md").is_file(), "the other writer's file is back"
+    assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the publish act"
     _settled(box, c)
