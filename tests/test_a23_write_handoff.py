@@ -1240,3 +1240,39 @@ def test_whole_refusal_names_HEAD_when_a_commit_landed_on_top(box: Box):
     assert len(box.unpublished(c)) == 2, "both kept, for the publish act"
     assert result.stdout == _line(f)
     _released(box, c)
+
+
+def test_whole_refusal_names_a_rewritten_commit_as_rewritten(box: Box):
+    """S4.4's refusal where another writer REWROTE this write's commit while
+    its push was in flight (slice 1b's SHOULD A case, which S4.4 meets before
+    `cp_replay` does): HEAD does not hold this write's sha at all, so nothing
+    is said to be kept, on HEAD or under it, and slice 1b's `cp_not_head`
+    names the rewrite. The rewrite here is an amend at the read-back fetch,
+    which cannot conflict with the peer's edit as a rebase over it would."""
+    c = box.seam()
+    f = c / HANDOFF_REL
+    box.peer_prepares(HANDOFF_REL, "Preserved task.\n", "Preserved task, and a peer's line.\n",
+                      "a peer edits the handoff")
+    peer = shlex.quote(str(box.peer))
+    cq = shlex.quote(str(c))
+    pushed = shlex.quote(str(box.root / "pushed"))
+    done = shlex.quote(str(box.root / "rewritten"))
+    box.use_net(f'if [ "$1" = push ] && [ ! -e {pushed} ]; then echo 1 > {pushed}\n'
+                f"  git -C {peer} push -q origin main\n"
+                "  exit 0\n"
+                "fi\n"
+                f'if [ "$1" = fetch ] && [ -e {pushed} ] && [ ! -e {done} ]; then echo 1 > {done}\n'
+                f"  git -C {cq} commit -q --amend -m 'handoff: PAUSED, reworded by an unlocked writer'\n"
+                "fi\n"
+                "exit 0\n")
+    result = box.write_handoff("--whole", str(_prepared(box)), "--expect-digest", sha(f),
+                               "--subject", "handoff: PAUSED")
+    assert result.returncode == 6, result.stderr
+    assert "rewrote this write's commit" in result.stderr
+    assert "kept on HEAD" not in result.stderr, "this write's sha is on no branch here"
+    assert "local and kept, with HEAD at" not in result.stderr, "no commit was made on top"
+    assert "push refused (attempt" not in result.stderr, "no reset, no replay"
+    assert box.subject(c) == "handoff: PAUSED, reworded by an unlocked writer"
+    assert len(box.unpublished(c)) == 1, "the rewritten copy waits for the publish act"
+    assert result.stdout == _line(f)
+    _released(box, c)

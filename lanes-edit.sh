@@ -2922,7 +2922,11 @@ EOF
   # this): until slices 2b and 3 another writer can commit on top of this one in
   # the same checkout while its push is in flight. Nothing is reset here either
   # way, so both are kept; the words then name HEAD, and say both are kept,
-  # never that this write's commit is HEAD.
+  # never that this write's commit is HEAD. A COMMIT ON TOP IS ONE CASE; A
+  # REWRITE IS ANOTHER (slice 1b's `cp_not_head`, rv1b-c's SHOULD A): where
+  # HEAD cannot be read, or no longer holds this write's commit at all (another
+  # writer rebased or amended it with no lock), nothing of it is kept here, and
+  # `cp_not_head` names that in 1b's words.
   if [ -n "$CP_WHOLE_REL" ]; then
     cpw_now="$(git -C "$LANES_REPO" rev-parse -q --verify "refs/remotes/origin/$LANES_BRANCH:$CP_WHOLE_REL" 2>/dev/null || :)"
     if [ "$cpw_now" != "$CP_WHOLE_BLOB" ]; then
@@ -2933,10 +2937,13 @@ EOF
         note "every later write from this checkout refuses (S3's unpushed row) until it is published — LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act — or archived (S6.3) and \`git -C $LANES_REPO reset --keep origin/$LANES_BRANCH\` run."
         die "the push was refused because origin/$LANES_BRANCH moved, and origin's copy of $CP_WHOLE_REL is no longer the one this whole-file write started from, so it does not replay over that change (Amendment 23 S4.4); the commit is local and kept on HEAD: $cp_sha $msg" 6
       fi
-      note "HEAD is ${cpw_head:-unreadable}, not this write's commit $cp_sha: another commit was made on top of it in this checkout while its push was in flight. Nothing is reset, so both are kept."
+      if [ -z "$cpw_head" ] || ! git -C "$LANES_REPO" merge-base --is-ancestor "$cp_sha" "$cpw_head" 2>/dev/null; then
+        cp_not_head "$cp_sha" "$msg" "while its push was in flight"
+      fi
+      note "HEAD is $cpw_head, not this write's commit $cp_sha: another commit was made on top of it in this checkout while its push was in flight. Nothing is reset, so both are kept."
       note "look at both: git -C $LANES_REPO log --oneline $cp_sha^..HEAD; and at origin's: git -C $LANES_REPO log -1 -p refs/remotes/origin/$LANES_BRANCH -- $CP_WHOLE_REL"
       note "every later write from this checkout refuses (S3's unpushed row) until they are published — LANES_LANE=<lane> $SELF commit \"<what they are>\", the publish act — or archived (S6.3)."
-      die "the push was refused because origin/$LANES_BRANCH moved, and origin's copy of $CP_WHOLE_REL is no longer the one this whole-file write started from, so it does not replay over that change (Amendment 23 S4.4); this write's commit and the one on top of it are local and kept, with HEAD at ${cpw_head:-unreadable}: $cp_sha $msg" 6
+      die "the push was refused because origin/$LANES_BRANCH moved, and origin's copy of $CP_WHOLE_REL is no longer the one this whole-file write started from, so it does not replay over that change (Amendment 23 S4.4); this write's commit and the one on top of it are local and kept, with HEAD at $cpw_head: $cp_sha $msg" 6
     fi
   fi
   # A REFUSAL WITH ORIGIN UNMOVED IS NOT A LOST RACE: the replay would send the
