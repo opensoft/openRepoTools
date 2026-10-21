@@ -21,7 +21,10 @@ from conftest import REPO
 def restart_box(tmp_path: Path) -> Sandbox:
     box = Sandbox(tmp_path)
     box.env["LANES_LANE_STATE_ROOT"] = str(tmp_path / "state")
-    box.env["LANES_NO_FETCH"] = "1"
+    # No `LANES_NO_FETCH=1` (Amendment 23 S3 step 1, ratified choice 2): for a
+    # writer a fetch that did not run is a fetch that failed, so every
+    # `add-row`, `log` and `claim` these cases make would refuse (2). The
+    # sandbox's origin is a local bare repository, so the fetch is offline.
     box.env["TMUX_PANE"] = "%1"
     tmux = box.fakebin / "tmux"
     tmux.write_text(tmux.read_text().replace("#!/usr/bin/env bash\n", '''#!/usr/bin/env bash
