@@ -593,8 +593,8 @@ dispatch until the two environments exist with their rules.
 - **Now, in `opensoft/openRepoTools`.** Create the environments `testpypi` and
   `pypi`. Each names brettheap as a required reviewer and has a deployment
   limit of exactly the tag pattern `v*`. (Today the repository has only the
-  environment `copilot`.) Recommended: a ruleset on the tags `v*` that lets
-  only him create, move or delete one.
+  environment `copilot`.) Recommended: a ruleset on the tags `v*` under which
+  only the admin role creates, moves or deletes one.
 - **Now, on test.pypi.org.** Create a pending trusted publisher with:
   - project `openrepotools`;
   - owner `opensoft`;
