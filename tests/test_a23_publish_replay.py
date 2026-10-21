@@ -35,7 +35,7 @@ from pathlib import Path
 import pytest
 
 from a23_box import REGISTER, RegisterBox, register_text
-from conftest import WINDOWS_SKIP
+from conftest import REPO, WINDOWS_SKIP
 
 pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
                                  reason="lanes-edit.sh is a bash script"),
@@ -1165,4 +1165,70 @@ def test_a_drop_whose_tree_step_and_put_back_are_both_refused_is_named_off_HEAD_
     assert box.subject(c) == STAMP_SUBJECT, "the other writer's commit is still HEAD"
     assert box.git("-C", str(c), "show", "HEAD:handoffs/stamp.md") == "stamp"
     assert _set(STATE) not in box.origin_register(), "nothing of this write's reached origin"
+    _settled(box, c)
+
+
+# ------------------------------- a file the write edits in place (slice 2a's A37)
+
+def _helper_naming(box: Box, rel: str) -> list:
+    """A copy of the helper whose one load-time line names `rel` as the file
+    this write edits in place, as slice 2a's `write-handoff` names its handoff
+    for `--stamp` and `--prepend`. No verb of slice 1b sets the global, so the
+    copy is how 1b tests its check: it differs from the helper in that one
+    line, and sits in a folder of its own with the shipped `repos.tsv` beside
+    it, as an install places it."""
+    src = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
+    line = 'CP_KEEP_IF_GONE=""\n'
+    assert src.count(line) == 1, "the global is set at load, once"
+    bindir = box.root / "bin-a37"
+    bindir.mkdir()
+    shutil.copy2(REPO / "repos.tsv", bindir / "repos.tsv")
+    copy = bindir / "lanes-edit.sh"
+    copy.write_text(src.replace(line, f"CP_KEEP_IF_GONE={shlex.quote(rel)}\n"), encoding="utf-8")
+    copy.chmod(0o755)
+    return ["bash", str(copy)]
+
+
+@pytest.mark.parametrize("peer", ["deletes-it", "keeps-it", "never-had-it"])
+def test_a_file_the_write_edits_in_place_deleted_on_origin_keeps_the_commit_exit_6(box: Box, peer: str):
+    """A37 of slice 2a, whose global is 1b's: a peer that deletes the file a
+    write edits in place, while that write's push is in flight, left the
+    replay nothing to write into, and the write only in the commit it
+    dropped. With `CP_KEEP_IF_GONE` naming the file, the commit is kept on
+    HEAD and named (6) before anything is dropped: the write is in this
+    checkout, origin has no such file, and one commit is unpublished. The
+    lane's own log stands in for the handoff here; the check is the same for
+    any path. A peer's commit that leaves the file where it was is an
+    ordinary lost race, replayed and landed (0), and so is a named file the
+    write's base never had: it is never "gone"."""
+    c = box.seam()
+    log = f"lanes/log/{LANE}.md"
+    rel = "handoffs/repoS4/never-had-it.md" if peer == "never-had-it" else log
+    if peer == "deletes-it":
+        box.git("-C", str(box.peer), "rm", "-q", "--", log)
+        box.git("-C", str(box.peer), "commit", "-q", "-m", f"a peer deletes {log}")
+        box.race(prepared=True)
+    else:
+        box.race()
+    cmd = _helper_naming(box, rel)
+    result = subprocess.run([*cmd, "log", "NOTED", f"lane:{LANE}", "the in-place write", *HOME_FLAG],
+                            env=dict(box.env, LANES_LANE=LANE, LANES_SESSION=UUID), cwd=str(box.root),
+                            capture_output=True, text=True, timeout=180, check=False)
+    err = result.stderr
+    if peer == "deletes-it":
+        assert result.returncode == 6, err
+        sha = box.head(c)
+        assert f"origin's copy of {log} was deleted while this write's push was in flight" in err, err
+        assert f"kept on HEAD: {sha}" in err
+        assert "push refused (attempt" not in err, "nothing is dropped or replayed"
+        assert "the in-place write" in (c / log).read_text(encoding="utf-8"), "the write is in this checkout"
+        assert log not in box.git("--git-dir", str(box.origin), "ls-tree", "-r", "--name-only", "main").split(), \
+            "origin has no such file"
+        assert [line.split()[1] for line in box.unpublished(c)] == [sha], "one commit unpublished, this write's"
+    else:
+        assert result.returncode == 0, err
+        assert "push refused (attempt 1 of 6)" in err
+        assert "pushed origin/main (attempt 2)" in err
+        assert "the in-place write" in box.origin_file(log)
+        assert box.unpublished(c) == []
     _settled(box, c)

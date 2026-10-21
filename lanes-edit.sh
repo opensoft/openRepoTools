@@ -1265,6 +1265,15 @@ CP_FENCE_AHEAD=0
 # `NAME=value` words a verb wants carried across its replay's `exec` (only
 # `claim` fills it: the takeover it decided on). Never from the environment.
 CP_REPLAY_ENV=()
+# The one file a write edits IN PLACE and does not create, where a refused
+# push must not replay over its absence: set by `write-handoff` alone (slice
+# 2a), for `--stamp` and `--prepend`, and never from the environment. A peer
+# that deletes that file while this write's push is in flight leaves the
+# replay nothing to write into, so its re-run says "Nothing was written" and
+# the write is only in the commit it dropped. Where origin no longer has the
+# file and this write's base did, the commit is kept on HEAD and named
+# instead (6), before anything is dropped (`cp_replay`).
+CP_KEEP_IF_GONE=""
 # Set by `commit`'s carry form alone: its edit is the hand edit in the working
 # tree, which no argv can make again, so a replay gives it back as the hand
 # edit it was instead of dropping it with the commit (`cp_replay`).
@@ -2962,6 +2971,21 @@ cp_replay() {   # <sha> <subject>
   # must still be this write's commit, or both are kept on HEAD and named.
   cr_head="$(git -C "$LANES_REPO" rev-parse -q --verify HEAD 2>/dev/null || :)"
   [ "$cr_head" = "$1" ] || cp_not_head "$1" "$2" "while its push was in flight"
+  # A FILE THIS WRITE EDITS IN PLACE IS GONE FROM ORIGIN (slice 2a's A37,
+  # `CP_KEEP_IF_GONE`): the re-run would find nothing to write into and drop
+  # the write with its commit. Asked of the base this write's commit was made
+  # on, so a file the write itself creates is never "gone"; and asked after
+  # the HEAD check, so "kept on HEAD" is said only of a commit HEAD is. Origin
+  # was just fetched (`cp_confirm`), and a file its base had and origin lacks
+  # means origin moved, so the origin-unmoved refusal can never be this one.
+  if [ -n "$CP_KEEP_IF_GONE" ] &&
+     git -C "$LANES_REPO" cat-file -e "$1^:$CP_KEEP_IF_GONE" 2>/dev/null &&
+     ! git -C "$LANES_REPO" cat-file -e "refs/remotes/origin/$LANES_BRANCH:$CP_KEEP_IF_GONE" 2>/dev/null; then
+    note "origin/$LANES_BRANCH no longer has $CP_KEEP_IF_GONE, which this write edits in place and its base had: another writer deleted or moved it while this write's push was in flight."
+    note "look at it: git -C $LANES_REPO show $1; and at origin's: git -C $LANES_REPO log -1 --stat refs/remotes/origin/$LANES_BRANCH -- $CP_KEEP_IF_GONE"
+    note "every later write from this checkout refuses (S3's unpushed row) until it is published — LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act — or archived (S6.3) and \`git -C $LANES_REPO reset --keep origin/$LANES_BRANCH\` run."
+    die "the push was refused because origin/$LANES_BRANCH moved, and origin's copy of $CP_KEEP_IF_GONE was deleted while this write's push was in flight, so a replay would find nothing to write into and drop this write; the commit is local and kept on HEAD: $1 $2" 6
+  fi
   if [ "$CP_ATTEMPT" -ge 6 ]; then
     note "origin/$LANES_BRANCH moved under this write six times (Amendment 23 S4, ratified choice 4)."
     note "look at it: git -C $LANES_REPO show $1"
