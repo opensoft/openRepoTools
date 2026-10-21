@@ -100,10 +100,25 @@ def test_a_named_read_of_a_lane_with_no_published_log_still_says_none(inv):
     """A LOG THAT IS NOT THERE IS NOT ONE THAT COULD NOT BE READ. repoC-1 has a
     row and no log: `git show` of its log fails because origin has no such
     path, and the tree says so - the read is the 8 it always was, and a lane
-    with a tree of its own lists it."""
-    res = inv.e.edit("worktrees", "repoC-1")
+    with a tree of its own lists it.
+
+    ASKED WITH NO OVERRIDE NAMING THE CONTROL ROOT, as a workstation asks it
+    (the review of #290, SHOULD-1(a)). The fixture's `LANES_LANE_STATE_ROOT`
+    places every lane's root without its log, so the named read never reaches
+    its `UNREAD` line and `lane-state` never reads the log: a read that took
+    "no such path" for "could not be read" passed under it. Without it the
+    named read is still 8 and empty, `lanes --lane` says nothing of a log that
+    could not be read, and `lane-state` is 8 - never the 10 of a log it could
+    not read, which `lanes-index` holds a lane for."""
+    no_root = {"LANES_LANE_STATE_ROOT": None}
+    res = inv.e.edit("worktrees", "repoC-1", env=no_root)
     assert res.returncode == 8, (res.returncode, res.stdout, res.stderr)
     assert res.stdout == "", res.stdout
+    row = inv.e.edit("lanes", "--lane", "repoC-1", env=no_root)
+    assert row.returncode == 0 and row.stdout.startswith("repoC-1\t"), (row.stdout, row.stderr)
+    assert "could not be read" not in row.stderr, row.stderr
+    state = inv.e.edit("lane-state", "repoC-1", env=no_root)
+    assert state.returncode == 8, (state.returncode, state.stdout, state.stderr)
     _sidecar(inv.lsr, "repoC-1", HEADS["repoC-1"])
     res = inv.e.edit("worktrees", "repoC-1")
     assert res.returncode == 0, res.stderr
