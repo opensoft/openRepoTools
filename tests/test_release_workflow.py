@@ -46,7 +46,8 @@ per part of it (plan.md, "The test layout"):
   step 13's wheel check run on synthetic wheels made from HEAD's blobs; and
   the digest label, one literal in the installer, the pin and the standard;
 - `test_release_stamp_writer_*`: the build's own stamp writer, run on a copy
-  of the committed stamp and read back by `--version` from a `package_tree`;
+  of the committed stamp and read back by `--version` from a `package_tree`,
+  and the steps from it on to the wheel check, run in order;
 - `test_release_guard_build_*` and `test_release_guard_upload_*` (FR-048):
   the repository guard, run under each row of contracts/workflows.md's table,
   and each upload job's own first step;
@@ -2458,6 +2459,165 @@ def test_release_stamp_writer_step_stamps_both_extractions_with_the_run_s_reposi
         "the stamp's REPOSITORY is not the run's GITHUB_REPOSITORY")
 
 
+#: THE STEPS AFTER THE STAMP WRITER, RUN. Each case above runs the stamp step
+#: alone, so a step inserted after it (the review's mutant N5: an unnamed step
+#: that rewrote both `TAG`s) was caught by `STEP_ORDER`'s count and by nothing
+#: that runs it. What stands between the stamp and a release is the build,
+#: which packages whatever its two extractions hold, and the wheel check, which
+#: refuses a stamp that is not the release's. So these cases run the steps from
+#: the stamp writer through the wheel check, as the workflow has them, in order.
+#:
+#: THE BUILD'S BACKEND, FAKED TO PACKAGE THE TREE IT RUNS IN: `$RUNNER_TEMP/
+#: tools/bin/python -m build ... --outdir <dir> .` writes into `<dir>` a copy of
+#: the wheel `CHAIN_TEMPLATE` names, with the tree's own `src/openrepotools/
+#: _release.py` for its stamp, so the stamp that any step has left in the tree
+#: is the one the wheel holds. Every other member, `RECORD` included (which the
+#: wheel check does not read), is the template's.
+CHAIN_BUILD = r'''
+import os, sys, zipfile
+out = sys.argv[sys.argv.index("--outdir") + 1]
+os.makedirs(out, exist_ok=True)
+with open(os.path.join("src", "openrepotools", "_release.py"), "rb") as handle:
+    stamp = handle.read()
+template = os.environ["CHAIN_TEMPLATE"]
+with zipfile.ZipFile(template) as source:
+    with zipfile.ZipFile(os.path.join(out, os.path.basename(template)), "w") as built:
+        for entry in source.infolist():
+            copy = zipfile.ZipInfo(entry.filename, entry.date_time)
+            copy.external_attr, copy.create_system = entry.external_attr, entry.create_system
+            copy.compress_type = zipfile.ZIP_DEFLATED
+            built.writestr(copy, stamp if entry.filename == "openrepotools/_release.py"
+                           else source.read(entry))
+'''
+
+#: A STEP INSERTED AFTER THE STAMP WRITER that rewrites one of the five values
+#: the writer wrote, in both extractions: the assignment line `STAMP_WAS`
+#: becomes `STAMP_NOW`. It refuses a stamp that does not hold that line, so a
+#: case cannot pass for want of a stamp to rewrite.
+REWRITES_THE_STAMP = '''python3 -I - "$TREE_A/src/openrepotools/_release.py" "$TREE_B/src/openrepotools/_release.py" <<'PY'
+import os, sys
+for path in sys.argv[1:]:
+    with open(path, encoding="utf-8", newline="") as handle:
+        text = handle.read()
+    assert os.environ["STAMP_WAS"] in text, path
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        handle.write(text.replace(os.environ["STAMP_WAS"], os.environ["STAMP_NOW"]))
+PY
+'''
+
+#: What that step rewrites each of the stamp's five values to: another value of
+#: the shape the writer accepts, so that only the wheel check can refuse it.
+REWRITTEN = {"VERSION": "9.9.9", "TAG": "v9.9.9", "COMMIT": "9" * 40,
+             "DIGEST": "9" * 64, "REPOSITORY": "someone/else"}
+
+NEEDS_GNU_BUILD_TOOLS = pytest.mark.skipif(
+    shutil.which("sha256sum") is None or shutil.which("cmp") is None,
+    reason="the build step runs GNU's sha256sum and cmp")
+
+
+def run_from_the_stamp_writer_to_the_wheel_check(
+        tmp_path: Path, rewrite: Optional[str] = None
+) -> List[Tuple[str, subprocess.CompletedProcess]]:
+    """THE BUILD'S STEPS FROM THE STAMP WRITER THROUGH THE WHEEL CHECK, as the
+    workflow has them and in its order, each run as GitHub runs it: over two
+    extractions that are copies of the committed stamp, `python3` this
+    interpreter, and the build's backend `CHAIN_BUILD`, with the wheel check
+    reading the wheel the build wrote. With `rewrite` naming one of the stamp's
+    five values, a step that rewrites it in both extractions is run right after
+    the writer. Stops at the first step that fails. Returns each step run, by
+    its label, and how it ended."""
+    workflow = release()
+    steps = steps_of(workflow, "build")
+    writer = where(workflow, "build", named(workflow, "build", STAMP_STEP))
+    check = where(workflow, "build", named(workflow, "build", WHEEL_CHECK_STEP))
+    assert writer < check, "the wheel check does not come after the stamp writer"
+    chain = steps[writer:check + 1]
+    for step in chain:
+        if not run_text(step):
+            pytest.fail(f"{label(step)!r} sits between the stamp writer and the "
+                        "wheel check, and is not a `run:` step: the suite cannot "
+                        "run it", pytrace=False)
+    if "tomllib" in heredoc(run_text(chain[-1])) and sys.version_info < (3, 11):
+        pytest.skip("the step's script reads TOML with tomllib, which is "
+                    "Python 3.11's and up, as the build job's Python is")
+    release_ = wheel_release("1.1.0")
+    trees = [tmp_path / "a" / "openRepoTools",
+             tmp_path / "b" / "elsewhere" / "v1.1.0-src"]
+    for tree in trees:
+        copy = tree / "src" / "openrepotools" / "_release.py"
+        copy.parent.mkdir(parents=True)
+        copy.write_bytes(STAMP.read_bytes())
+    members, info = wheel_members(release_)
+    template = write_wheel(tmp_path / "template" / "openrepotools-1.1.0-py3-none-any.whl",
+                           members, info)
+    values = {"VERSION": release_["VERSION"], "GITHUB_SHA": release_["COMMIT"],
+              "GITHUB_REPOSITORY": release_["REPOSITORY"],
+              "DIGEST": release_["DIGEST"], "TREE_A": str(trees[0]),
+              "TREE_B": str(trees[1]), "CHAIN_TEMPLATE": str(template)}
+    if rewrite is not None:
+        chain.insert(1, {"run": REWRITES_THE_STAMP})
+        values.update(STAMP_WAS=f'{rewrite} = "{release_[rewrite]}"',
+                      STAMP_NOW=f'{rewrite} = "{REWRITTEN[rewrite]}"')
+    fakes = python_tool(tmp_path / "fakes", "python3", AS_PYTHON)
+    runner = Runner(tmp_path / "work", workflow, "build", values, fakes)
+    python_tool(Path(runner.env["RUNNER_TEMP"]) / "tools" / "bin", "python", CHAIN_BUILD)
+    ran = []
+    for step in chain:
+        done = runner.run(step, cwd=REPO)
+        ran.append((label(step), done))
+        if done.returncode != 0:
+            break
+    return ran
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@NEEDS_GNU_BUILD_TOOLS
+def test_release_stamp_writer_the_steps_after_it_to_the_wheel_check_leave_the_stamp_as_written(
+        tmp_path):
+    """THE STAMP WRITER AND EVERY STEP AFTER IT UP TO THE WHEEL CHECK, RUN IN
+    ORDER (the review's mutant N5, which only `STEP_ORDER`'s count caught):
+    each exits 0, and the wheel check, which reads the stamp the build
+    packaged from the two extractions, passes it. So a step between the writer
+    and the check that changes the stamp the writer wrote is refused by the
+    wheel check here, as it is in production, and not only counted."""
+    ran = run_from_the_stamp_writer_to_the_wheel_check(tmp_path)
+    failed = [f"{name}:\n{transcript(done)}" for name, done in ran if done.returncode != 0]
+    assert not failed, "\n".join(failed)
+    check = named(release(), "build", WHEEL_CHECK_STEP)
+    assert ran[-1][0] == label(check), [name for name, _ in ran]
+    lines = ran[-1][1].stdout.splitlines()
+    assert (f"openrepotools/_release.py: the committed file, with "
+            f"{list(layout.STAMP_FIELDS)} written") in lines, transcript(ran[-1][1])
+    assert lines[-1] == "commands: ['openRepoTools']", (
+        f"the check did not run to its end:\n{transcript(ran[-1][1])}")
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+@NEEDS_GNU_BUILD_TOOLS
+@pytest.mark.parametrize("name", layout.STAMP_FIELDS)
+def test_release_stamp_writer_a_step_after_it_that_rewrites_the_stamp_is_refused_by_the_wheel_check(
+        tmp_path, name):
+    """WHAT THAT RUN CATCHES (the same steps, with one inserted right after the
+    writer that rewrites one of the stamp's five values in both extractions,
+    as N5 rewrote `TAG`): the build packages the same rewritten stamp from
+    both, so its `cmp` passes them, and the wheel check refuses the wheel,
+    with an `::error::` line naming the value, as it does in production."""
+    ran = run_from_the_stamp_writer_to_the_wheel_check(tmp_path, rewrite=name)
+    check = named(release(), "build", WHEEL_CHECK_STEP)
+    assert ran[-1][0] == label(check) and len(ran) > 3, (
+        "the steps before the wheel check did not all pass:\n"
+        + "\n".join(f"{step}:\n{transcript(done)}" for step, done in ran))
+    refused = ran[-1][1]
+    assert refused.returncode != 0, transcript(refused)
+    assert [line for line in refused.stdout.splitlines()
+            if line.startswith("::error::") and f'{name} = "{REWRITTEN[name]}"' in line], (
+        f"no ::error:: line names the rewritten {name}:\n{transcript(refused)}")
+
+
 # --- the repository guard (FR-048) --------------------------------------------------
 
 FINALS = ("1.1.0", "1.0.1", "2.10.30")
@@ -3962,7 +4122,9 @@ PYTHON_3_9_LEG = "<the Python 3.9 leg's own step: its if: is the 3.9 condition>"
 #: action it uses): so a step inserted anywhere, named or not, fails here, as
 #: does one moved or dropped, and a step found by its role can be renamed. An
 #: inserted step could undo a check before it (a step after the stamp writer
-#: that rewrote the stamp, say) while every check still passes on its own.
+#: that rewrote the stamp, say) while every check still passes on its own; the
+#: steps from the stamp writer through the wheel check are also run in order,
+#: and the wheel check refuses that stamp (`test_release_stamp_writer_*_after_it_*`).
 STEP_ORDER = {
     "build": ["actions/checkout", "actions/setup-python", BUILD_GUARD, *BUILD_STEPS,
               "actions/upload-artifact"],
