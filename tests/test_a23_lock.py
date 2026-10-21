@@ -476,3 +476,66 @@ exec '{real}' "$@"
     second = box.stamp("the next write", timeout=45)
     assert second.returncode == 0, (second.stdout, second.stderr)
     assert time.monotonic() - started < 30, "it did not wait on a leftover"
+
+
+def test_without_the_opt_in_a_lane_windows_sidecar_act_works_as_on_main(box: Box):
+    """MUST 2 with MUST 3: Eagle's lane windows name their own lane checkout
+    by `LANES_REPO` and `LANES_WORKSPACE_ROOT`. Without the opt-in that is
+    main's behaviour, so a sidecar act there takes that checkout's own lock
+    and is never refused as "a W that is a lane checkout"."""
+    box.lanes_root.mkdir(parents=True)
+    c = box.clone(box.checkout(LANE))
+    result = box.helper("set-lane-state", LANE, "RUNNING", "--expect", "none", "--owner", UUID,
+                        LANES_ROUTE_WRITES="", LANES_REPO=str(c), LANES_WORKSPACE_ROOT=str(c))
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert (box.state / LANE / "lane-state.yaml").is_file()
+    assert not Path(f"{c}-lanes").exists(), "no lock beside the lane checkout"
+    assert not (c / "lanes" / ".lanes-edit.lock").exists(), "its own lock, released"
+
+
+@pytest.mark.parametrize("how", ["both", "root-only"])
+def test_a_sidecar_act_in_a_W_that_is_a_lane_checkout_refuses(box: Box, how: str):
+    """MUST 3: under the opt-in a sidecar act takes the workstation's lock
+    beside W, so where W is a lane checkout it refuses (2), naming
+    `LANES_WORKSPACE_ROOT`, and makes no `<lane checkout>-lanes/` lock."""
+    box.lanes_root.mkdir(parents=True)
+    c = box.clone(box.checkout(LANE))
+    extra = {"LANES_WORKSPACE_ROOT": str(c)}
+    if how == "both":
+        extra["LANES_REPO"] = str(c)
+    result = box.helper("set-lane-state", LANE, "RUNNING", "--expect", "none", "--owner", UUID,
+                        **extra)
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "Unset LANES_WORKSPACE_ROOT" in result.stderr, result.stderr
+    assert not Path(f"{c}-lanes").exists(), "nothing locked beside the lane checkout"
+    assert not (box.state / LANE / "lane-state.yaml").exists(), "nothing written"
+
+
+# ----------------------------------------------------- fix round 2 (#282's re-review)
+
+@pytest.mark.parametrize("line", ["{pid} " + ME, "{pid}"], ids=["pid-container-host", "pid-only"])
+def test_without_the_opt_in_a_live_holder_is_aged_out_at_ten_minutes(box: Box, line: str):
+    """N1: without `LANES_ROUTE_WRITES` the lock is W's, which every lane
+    shares, and main ages out any lock over ten minutes old, whoever holds it:
+    a holder stopped by Ctrl-Z, or stuck in a D-state git, blocks every lane
+    for ten minutes and no longer. The write takes it over at once and lands,
+    and the holder itself is left running. (Under the opt-in a live holder is
+    never aged out: `test_live_holder_is_not_aged_out`.)"""
+    w_lock = box.w / "lanes" / ".lanes-edit.lock"
+    holder = subprocess.Popen(["sleep", "300"])
+    try:
+        hold(w_lock, line.format(pid=holder.pid), age_minutes=11)
+        started = time.monotonic()
+        result = box.stamp("past a quiet holder", LANES_ROUTE_WRITES="", timeout=120)
+        took = time.monotonic() - started
+        assert holder.poll() is None, "the holder itself is left running"
+    finally:
+        holder.kill()
+        holder.wait()
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert took < 30, f"it took the lock over at once, not after its minute's wait: {took:.0f}s"
+    assert f"taking over {w_lock}" in result.stderr, result.stderr
+    assert f"(pid {holder.pid}) is alive but has not refreshed it for over ten minutes" in result.stderr
+    assert " · past a quiet holder |" in box.origin_register()
+    assert not w_lock.exists(), "the writer released the lock it took over"
+    assert not box.lanes_root.exists(), "and no lane checkout or <W>-lanes/ was made"

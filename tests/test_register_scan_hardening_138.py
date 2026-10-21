@@ -622,20 +622,42 @@ def test_item_1_an_unreadable_published_register_refuses_the_sweep(reg):
 
 # ------------------------------------- Amendment 23's routing, by default resolution
 
-def test_a_routed_sweep_refuses_over_a_peer_edit_in_W_and_captures_nothing(reg):
-    """SHOULD 4, the default-resolution case of the capture above. Under
+def test_a_routed_sweep_over_a_peer_edit_in_W_warns_and_captures_nothing(reg):
+    """SHOULD 4, the default-resolution case of the refusal above (which was
+    the capture until slice 1b). Under
     `LANES_ROUTE_WRITES=1` with W resolved from its root and no `LANES_REPO`,
-    the sweep goes through the sweeping lane's own checkout, so nothing would
-    ever capture the peer's edit in W. It refuses, names the edit and that
-    checkout, and leaves W, origin and the edit as they were."""
+    the sweep goes through the sweeping lane's own checkout, so nothing
+    captures the peer's edit in W. Since the re-review's N2 only `commit`
+    refuses over it: the sweep WARNS, naming the edit and that checkout,
+    retires the row there, and leaves W's HEAD and the edit as they were."""
     edited = peer_edit(reg)
     before = reg.head()
-    published = reg.raw_git("--git-dir", str(reg.origin), "rev-parse", "main").strip()
     result = reg.sweep("repoX-2", LANES_ROUTE_WRITES="1", LANES_REPO="",
                        LANES_WORKSPACE_ROOT=str(reg.wip))
-    assert result.returncode == 2, (result.stdout, result.stderr)
-    assert "uncommitted edit to its register" in result.stderr, result.stderr
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "WARNING" in result.stderr and "uncommitted edit to its register" in result.stderr, result.stderr
     assert f"{os.path.realpath(reg.wip)}-lanes/repoX-1/lanes/LANES.md" in result.stderr
     assert reg.head() == before and reg.read("lanes/LANES.md") == edited
-    assert reg.raw_git("--git-dir", str(reg.origin), "rev-parse", "main").strip() == published
-    assert not (reg.tmp / "wip-lanes").exists()
+    published = reg.raw_git("--git-dir", str(reg.origin), "show", "main:lanes/LANES.md")
+    assert any(line.startswith("| `repoX-2` |") and "RETIRED" in line for line in published.splitlines()), published
+    assert "a peer's half-written cell" not in published, "the sweep captured nothing"
+    assert (reg.tmp / "wip-lanes" / "repoX-1" / ".git").is_dir(), "it went through the sweeper's checkout"
+
+
+def test_item_9_refuses_in_the_scan_under_the_opt_in_too(reg):
+    """MUST 5's seam, under the routing: with `LANES_ROUTE_WRITES=1` the
+    sweep still writes through `wip`, where the case puts its fault, and so
+    still refuses in the scan. Had the fixture left W at `wip`, the sweep
+    would go through `<wip>-lanes/repoX-1/`, never see the fault, and push."""
+    logs = reg.wip / "lanes" / "log"
+    before = reg.head()
+    logs.chmod(0)
+    try:
+        result = reg.sweep("repoX-2", LANES_ROUTE_WRITES="1")
+    finally:
+        logs.chmod(0o755)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert "exists and could not be listed" in result.stderr
+    assert reg.head() == before
+    assert reg.dirty() == ""
+    assert not (reg.tmp / "wip-lanes").exists(), "no lane checkout was made beside wip"

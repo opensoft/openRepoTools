@@ -490,13 +490,18 @@ class Helper:
         self._fetched = False
 
     def call(self, *args: str, env_extra: dict | None = None, fetch: bool = False,
-             timeout: int = 300):
+             write: bool = False, timeout: int = 300):
+        """`fetch` asks for one fetch per session; every later read is made
+        with `LANES_NO_FETCH=1`. A `write` is never given it: for a writer, a
+        fetch that did not run is a fetch that failed, and lanes-edit.sh's
+        Amendment 23 S3 refuses it (2, ratified choice 2), so the sweep's
+        NOTED line was refused after its first removal (#198, slice 1b)."""
         if not self.path:
             return subprocess.CompletedProcess(args, 127, "", "no lanes-edit.sh beside this "
                                                "command or on PATH")
         env = dict(os.environ)
         env["LANES_INDEX"] = "off"
-        if not fetch or self._fetched:
+        if not write and (not fetch or self._fetched):
             env["LANES_NO_FETCH"] = "1"
         if env_extra:
             env.update(env_extra)
@@ -669,7 +674,7 @@ class Helper:
         if session:
             extra["LANES_SESSION"] = session
         return self.call("log", "NOTED", f"lane:{lane}", register_text(text),
-                         env_extra=extra, fetch=False)
+                         env_extra=extra, write=True)
 
 
 LANE_LINE_RE = re.compile(r"^(?:STARTED|PAUSED|RESUMED|ENDED|RETIRED) — lane [^,]+, "
@@ -5525,6 +5530,13 @@ class Report:
         # that lane's writes; listing it here told a person to dispose of it.
         wroot = self.helper.workspace_root() if self.helper.path else ""
         lanes_home = real(wroot) + "-lanes" if wroot else ""
+        # AND A W THAT IS ITSELF A LANE CHECKOUT (the re-review of #282, SHOULD
+        # 5): Eagle's lane windows resolve W to their own `<X>-lanes/<lane>/`,
+        # and lane-start runs this report from there. Its lanes home is then its
+        # parent, as lanes-edit.sh's `lanes_home_check` reads a `*-lanes` one.
+        home = os.path.dirname(real(wroot)) if wroot else ""
+        if len(os.path.basename(home)) > len("-lanes") and home.endswith("-lanes"):
+            lanes_home = home
         registers = []
         for c in clones:
             if lanes_home and os.path.dirname(real(c)) == lanes_home:

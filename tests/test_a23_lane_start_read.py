@@ -153,3 +153,130 @@ exec '{real}' "$@"
     assert "so this command reads W's register" in second.stderr
     assert not checkout.exists()
     assert second.returncode == 0, second.stderr
+
+
+#: lane-end prints this line, its in-flight read of the lane's log, only after
+#: the register follow-up, so a case whose end must go on past the follow-up's
+#: note asserts it (the re-check of #282's cases, R3-1). The end's exit is its
+#: own later write's, so it cannot simply be asserted 0.
+GOES_ON = "in-flight read from lanes/log/"
+#: The re-check's R3-2: the slowest new cases run inside 300 s, not 120 or 180.
+SLOW = 300
+
+
+def _end(box: Sandbox, *args: str, timeout: int = 180) -> subprocess.CompletedProcess:
+    for name in ("lane-end", "lane-worktrees"):
+        shutil.copy2(REPO / name, box.bin / name)
+        (box.bin / name).chmod(0o755)
+    return subprocess.run([str(box.bin / "lane-end"), LANE, *args], env=box.env,
+                          capture_output=True, text=True, timeout=timeout, check=False)
+
+
+def _started_in_W(tmp_path: Path, short_root: Path, *, checkout_first: bool = False):
+    """A new lane started with no opt-in: its row is W's. With
+    `checkout_first`, the lane's own checkout is made BEFORE the row, so only
+    W shows it."""
+    box = Sandbox(tmp_path)
+    checkout = default_resolution(box, route=False)
+    if checkout_first:
+        made = subprocess.run([str(box.bin / "lanes-edit.sh"), "lane-checkout", LANE, "--create"],
+                              env=box.env, capture_output=True, text=True, timeout=180, check=False)
+        assert made.returncode == 0, made.stderr
+    lane_dir = _checkout_of_length(short_root, None)
+    box.checkout(lane_dir)
+    first = box.start("--dir", str(lane_dir), window_name="claude")
+    assert first.returncode == 0, first.stderr
+    assert len(rows(box.wip / "lanes" / "LANES.md")) == 1, "the row is W's"
+    return box, checkout
+
+
+def test_without_the_opt_in_lane_end_reads_W(tmp_path, short_root):
+    """MUST 2, for lane-end: with no `LANES_ROUTE_WRITES` it reads W's
+    register, as on main, even where the lane has a checkout of its own —
+    here one made before the lane's row, so only W shows the row."""
+    box, checkout = _started_in_W(tmp_path, short_root, checkout_first=True)
+    assert rows(checkout / "lanes" / "LANES.md") == [], "the lane's checkout predates its row"
+    end = _end(box, "--dry-run")
+    assert "has no row for lane" not in end.stderr, end.stderr
+    assert end.returncode == 0, (end.stdout, end.stderr)
+
+
+def _no_clone_git(box: Sandbox) -> Path:
+    real = shutil.which("git")
+    wrapper = box.root / "no-clone-git"
+    wrapper.write_text(f"""#!/usr/bin/env bash
+case " $* " in *" clone "*) echo "test: no clone today" >&2; exit 1 ;; esac
+exec '{real}' "$@"
+""", encoding="utf-8")
+    wrapper.chmod(0o755)
+    return wrapper
+
+
+def test_a_checkout_that_cannot_be_made_is_said_and_the_end_goes_on(tmp_path, short_root):
+    """SHOULD 2, for lane-end: where the lane's checkout cannot be cloned, the
+    end says so and reads W's register — it finds the lane's row there — and
+    is not refused for a register act it can do without (Amendment 8(d))."""
+    box, checkout = _started_in_W(tmp_path, short_root)
+    box.env.update(LANES_ROUTE_WRITES="1", LANES_GIT=str(_no_clone_git(box)))
+    end = _end(box)
+    assert "own register checkout could not be made" in end.stderr, end.stderr
+    assert "so this command reads W's register" in end.stderr, end.stderr
+    assert "has no row for lane" not in end.stderr, end.stderr
+    assert GOES_ON in end.stderr, end.stderr
+    assert not checkout.exists()
+
+
+class _CreationLockHeld:
+    """The lane's creation lock, `<W>-lanes/.<lane>.lock`, held by a live
+    process in this container, and every `sleep 1` an instant — so the
+    helper's wait for that lock, ten minutes and a minute of one-second
+    polls, ends in seconds with its 4."""
+
+    def __init__(self, box: Sandbox, checkout: Path) -> None:
+        self.lock = checkout.parent / f".{LANE}.lock"
+        real_sleep = shutil.which("sleep")
+        fake = box.root / "fakebin" / "sleep"
+        fake.write_text(f"""#!/usr/bin/env bash
+if [ "$*" = 1 ]; then exit 0; fi
+exec '{real_sleep}' "$@"
+""", encoding="utf-8")
+        fake.chmod(0o755)
+
+    def __enter__(self):
+        self.holder = subprocess.Popen(["sleep", "300"])
+        self.lock.mkdir(parents=True)
+        (self.lock / "pid").write_text(f"{self.holder.pid}\n", encoding="utf-8")
+        return self
+
+    def __exit__(self, *exc):
+        self.holder.kill()
+        self.holder.wait()
+        return False
+
+
+def test_a_held_creation_lock_is_said_and_the_start_goes_on(tmp_path, short_root):
+    """SHOULD 2, its 4: where another creator holds the lane's creation lock
+    past the wait, the start says so and reads W, as for a clone that failed."""
+    box, checkout = _started_in_W(tmp_path, short_root)
+    box.env["LANES_ROUTE_WRITES"] = "1"
+    with _CreationLockHeld(box, checkout):
+        second = box.start(window_name=LANE, timeout=SLOW)
+    assert "own register checkout could not be made" in second.stderr, second.stderr
+    assert "exited 4" in second.stderr, second.stderr
+    assert "so this command reads W's register" in second.stderr
+    assert not checkout.exists()
+    assert second.returncode == 0, second.stderr
+
+
+def test_a_held_creation_lock_is_said_and_the_end_goes_on(tmp_path, short_root):
+    """SHOULD 2, its 4, for lane-end."""
+    box, checkout = _started_in_W(tmp_path, short_root)
+    box.env["LANES_ROUTE_WRITES"] = "1"
+    with _CreationLockHeld(box, checkout):
+        end = _end(box, timeout=SLOW)
+    assert "own register checkout could not be made" in end.stderr, end.stderr
+    assert "exited 4" in end.stderr, end.stderr
+    assert "so this command reads W's register" in end.stderr
+    assert "has no row for lane" not in end.stderr, end.stderr
+    assert GOES_ON in end.stderr, end.stderr
+    assert not checkout.exists()
