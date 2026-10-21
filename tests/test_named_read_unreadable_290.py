@@ -20,6 +20,13 @@ beside it that still answered a failed read as an answer:
   * `lanes-index` read a failed read of a lane's log in `lane-state` as
     generation 0, and held the lane for that (review r3's NIT-A).
 
+And the guards the fixes for those need: a named read reads its lane's log
+ONCE, and finds the trees by that read; a tree whose lane's log - its binding
+- was not read has no writer pronounced, named or in the whole listing, and
+none has where the events' own list of the logs failed; a row whose log could
+not be listed is never classed DORMANT; and `lane-state`'s 10 for a snapshot it
+could not read names the file its one read of the log placed.
+
 Every case runs on `test_lanes_index`'s own estate and its helpers.
 """
 
@@ -30,7 +37,7 @@ import os
 import pytest
 
 from test_lanes_index import (HEADS, LANES, SHOW_LOG_B1, US, _a_lane_found_through_its_log,
-                              _git_shim, _shim_calls, _sidecar, _unreadable, _wt, inv)
+                              _git_shim, _row, _shim_calls, _sidecar, _unreadable, _wt, inv)
 
 __all__ = ["inv"]  # the fixture, imported so that pytest finds it here
 
@@ -320,3 +327,132 @@ def test_a_generation_read_whose_log_failed_says_so_and_holds(inv):
     assert healed.returncode == 0, healed.stderr
     assert "0 upserted, 1 removed" in healed.stdout, healed.stdout
     assert key not in inv.rows(), healed.stdout
+
+
+# --------------------------------------- the named read reads its log once
+
+
+def test_a_named_read_reads_its_lanes_log_once_and_finds_its_trees_by_it(inv):
+    """ONE READ OF THE LANE'S LOG, AND IT IS THE ONE ITS TREES ARE FOUND BY
+    (#290). The named read reads the log with its status, and the listing it
+    asks for the lane's row takes that read from it (`PIN_LANE_LOG`) instead of
+    making a second one: a second read that failed where the first had not gave
+    the row no `dir`, the root fell to the third rung, and the read said "none"
+    over the trees the first read had placed."""
+    by_dir, key = _a_lane_found_through_its_log(inv)
+    shim, log = _git_shim(inv, SHOW_LOG_B1, first=2)
+    res = inv.e.edit("worktrees", "repoB-1", env={**by_dir, **shim})
+    calls = _shim_calls(log)
+    assert len(calls) == 1, calls  # read once, and so never by the read that fails
+    assert res.returncode == 0, (res.returncode, res.stdout, res.stderr, calls)
+    assert [f[:3] for f in _lines(res.stdout)] == [["TREE", "Eagle", "repoB-1"]], res.stdout
+
+
+# ------------------------------------------------ a binding nobody read
+
+
+@pytest.mark.parametrize("named", [True, False], ids=["named", "whole"])
+def test_a_tree_whose_lanes_log_was_not_read_has_no_writer_pronounced(inv, named):
+    """THE LANE'S LOG IS ITS BINDING, AND A BINDING NOBODY READ IS NOT ONE THAT
+    IS HERE (#290, Amendment 18(b)). A writer of `0` says that no live record
+    here names one of the lane's ids AND that its binding is here or nowhere;
+    with the lane's log unread the second half was never read - the lane may be
+    bound on another host - so the writer is unknown, as it is for a lane
+    bound elsewhere. An override naming the control root still finds the
+    trees, so they are listed. A lane whose log was read keeps its own answer
+    beside it: repoA-2 is still LIVE."""
+    with _unreadable(inv.e, "origin/main:lanes/log/repoA-1.md"):
+        res = inv.e.edit("worktrees", *(["repoA-1"] if named else ["--all"]))
+        assert res.returncode == 0, (res.returncode, res.stdout, res.stderr)
+        lines = _lines(res.stdout)
+        a1 = {f[4]: f[10] for f in lines if f[0] == "TREE" and f[2] == "repoA-1"}
+        assert a1 == {str(inv.run_tree): "", str(inv.dirty_tree): ""}, lines
+        if not named:
+            assert any(f[0] == "PARTIAL" for f in lines), lines  # and the listing is not whole
+            a2 = {f[4]: f[10] for f in lines if f[0] == "TREE" and f[2] == "repoA-2"}
+            assert a2 == {str(inv.a2_tree): "1"}, lines
+
+
+def test_a_listing_whose_logs_could_not_be_listed_pronounces_no_writer(inv):
+    """AND WHERE THE EVENTS' OWN LIST OF THE LOGS COULD NOT BE MADE, NO LANE'S
+    BINDING WAS READ (#290). The listing's first list of the logs is pinned and
+    names the lanes; the events list them again for their lines, and where that
+    list failed the read is `PARTIAL` - and no tree in it has a writer
+    pronounced, LIVE included, because a lane bound on another host is
+    unknown from here whatever a local record says (Amendment 18(b))."""
+    shim, log = _git_shim(inv, LIST_LOGS, first=2)
+    res = inv.e.edit("worktrees", "--all", env=shim)
+    assert len(_shim_calls(log)) == 2, _shim_calls(log)  # the check's list, then the events'
+    assert res.returncode == 0, (res.returncode, res.stdout, res.stderr)
+    lines = _lines(res.stdout)
+    assert any(f[0] == "PARTIAL" and "could not be listed" in f[2] for f in lines), lines
+    writers = {f[4]: f[10] for f in lines if f[0] == "TREE"}
+    assert str(inv.a2_tree) in writers and len(writers) >= 3, lines  # not vacuous
+    assert set(writers.values()) == {""}, writers
+
+
+# ---------------------------------- the DORMANT class over a failed log list
+
+UUID_D1 = "dddddddd-0002-4000-8000-00000000d002"
+
+
+def test_a_row_whose_log_could_not_be_listed_is_not_classed_dormant(inv):
+    """A ROW WITH A PUBLISHED LOG IS NOT A ROW WITH NO LOG BECAUSE THE LIST OF
+    THE LOGS FAILED (#290). DORMANT is a row with no object log, asked of the
+    events, and where their own list of the logs could not be made no lane has
+    a line in them: a row whose log is on `origin` and not yet in this
+    checkout, with an `ENDED` cell, was classed DORMANT - left out of the
+    listing and offered to `lane-end --retire-dormant`. It is listed now, as
+    the listing's note says, and its class is withheld."""
+    lanes = inv.e.wip / "lanes"
+    reg = lanes / "LANES.md"
+    rows = reg.read_text(encoding="utf-8").split("\n")
+    at = next(i for i, line in enumerate(rows) if line.startswith("| `repoC-1`"))
+    rows.insert(at + 1, _row("repoD-1", f"`{UUID_D1}`", "ENDED · 2026-09-03T00:00:00Z · done",
+                             started="2026-09-03"))
+    reg.write_text("\n".join(rows), encoding="utf-8")
+    dlog = lanes / "log" / "repoD-1.md"
+    dlog.write_text(f"STARTED — lane repoD-1, session {UUID_D1}@Eagle, 2026-09-03T00:00:00Z, "
+                    f"lane:repoD-1 → home opensoft/repoD; dir /work/repoD\n", encoding="utf-8")
+    inv.e._git("add", "-A")
+    inv.e._git("commit", "-q", "-m", "repoD-1: a row and a log")
+    inv.e._git("push", "-q", "origin", "main")
+    dlog.unlink()  # published, and not in this checkout
+    whole = inv.e.edit("lanes", "--all")
+    assert whole.returncode == 0, whole.stderr
+    d1 = [row.split("\t") for row in whole.stdout.splitlines() if row.startswith("repoD-1\t")]
+    assert len(d1) == 1 and d1[0][1] == "IDLE" and d1[0][13] == "none", whole.stdout  # not vacuous
+    env, log = _git_shim(inv, LIST_LOGS, first=1)
+    res = inv.e.edit("lanes", "--all", env=env)
+    assert len(_shim_calls(log)) >= 2, _shim_calls(log)
+    assert res.returncode == 0, (res.stdout, res.stderr)
+    d1 = [row.split("\t") for row in res.stdout.splitlines() if row.startswith("repoD-1\t")]
+    assert len(d1) == 1 and d1[0][13] == "none", (res.stdout, res.stderr)
+
+
+# -------------------------- `lane-state`'s own 10 names the file it found
+
+
+def test_an_unreadable_snapshot_is_named_where_the_lanes_one_read_placed_it(inv):
+    """THE 10 OF A SNAPSHOT THAT COULD NOT BE READ NAMES THAT SNAPSHOT (#290).
+    `lane-state` reads the lane's `dir` once and finds the snapshot by it; the
+    message for a snapshot it could not read worked the root out again,
+    reading the log a second time, and where that read failed it named a file
+    the third rung places - not the one that could not be read."""
+    by_dir, key = _a_lane_found_through_its_log(inv)
+    put = inv.e.edit("set-lane-state", "repoB-1", "RUNNING", "--operation", "op-test-b1",
+                     env=by_dir)
+    assert put.returncode == 0, put.stderr
+    snap = inv.root / "elsewhere" / ".lane-state" / "repoB-1" / "lane-state.yaml"
+    assert snap.is_file(), snap  # where the log's `dir` places it: not vacuous
+    snap.chmod(0)
+    try:
+        if os.access(snap, os.R_OK):
+            pytest.skip("this account reads a mode-000 file (root): nothing to prove here")
+        shim, log = _git_shim(inv, SHOW_LOG_B1, first=2)
+        res = inv.e.edit("lane-state", "repoB-1", env={**by_dir, **shim})
+        assert len(_shim_calls(log)) == 1, _shim_calls(log)
+        assert res.returncode == 10, (res.returncode, res.stdout, res.stderr)
+        assert f"Read it by hand: {snap}" in res.stderr, res.stderr
+    finally:
+        snap.chmod(0o644)
