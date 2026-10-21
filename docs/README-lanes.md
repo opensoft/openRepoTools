@@ -3405,8 +3405,10 @@ Nothing is backfilled (Amendment 7(i)).
 
 A rung is passed over only where its directory is established absent. Where it
 could not be looked for (#291) — a directory on the way cannot be searched, or a
-link on the way cannot be followed — its root is the answer: every read under it
-is **10**, and every write there fails rather than filing under the next rung.
+link on the way cannot be followed — its root is the answer: `lane-state` and
+`lane-trees` exit **10** there, never the **8** that means *none*; the listing
+names the lane `UNREAD`; `lane-reconcile` pronounces `indeterminate`; and every
+write there fails rather than filing under the next rung.
 
 Because the snapshot is filed under NOTHING — never committed, never leaving the
 machine that wrote it — `R-A11-14` does not reach it: a container with no
