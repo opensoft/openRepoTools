@@ -251,7 +251,7 @@ drifted prints `updated at`, and one whose bytes were right and whose MODE was n
 prints `(mode restored to 755)`: the mode is stamped on every artifact on every
 run, whether or not the bytes moved. ALL SEVENTEEN ARE IN HAND BEFORE ANY IS
 PLACED, so a fetch that failed replaces nothing and names the file it could not
-get. A mode stamp that FAILS is a refusal naming the file it could not mode
+get. A `$OPENREPOTOOLS_BIN_DIR` holding a `:`, a control character or a character a terminal draws as another is refused first, before anything is fetched or named: exit 2, naming the kind and never the directory (#241, the table below). A mode stamp that FAILS is a refusal naming the file it could not mode
 (exit 2), never the shell's own 1: every `chmod` this command performs goes
 through the same door every other refusal here does. A target that is **not a
 regular file, or not one this user can write** — a
@@ -349,9 +349,9 @@ where `raw.githubusercontent.com` is blocked.
 
 | Variable | Default | What it is |
 |---|---|---|
-| `$OPENREPOTOOLS_REPO` | `opensoft/openRepoTools` | the `owner/name` to fetch from — a fork or a mirror, named once |
-| `$OPENREPOTOOLS_REF` | `main` | the ref to fetch it at |
-| `$OPENREPOTOOLS_BIN_DIR` | `~/.local/bin` | where `--install` puts the seventeen, and where `lane-start` looks for `claude-current` |
+| `$OPENREPOTOOLS_REPO` | `opensoft/openRepoTools` | the `owner/name` to fetch from — a fork or a mirror, named once. A value holding a control character or a character a terminal draws as another (a bidirectional override, U+200B, U+2028 or U+FEFF) is refused before `--version` prints it or `--install` names or sends it, naming the kind and never the value (#241); a package's `--version` prints neither this nor the ref |
+| `$OPENREPOTOOLS_REF` | `main` | the ref to fetch it at; refused on the same two grounds (#241) |
+| `$OPENREPOTOOLS_BIN_DIR` | `~/.local/bin` | where `--install` puts the seventeen, and where `lane-start` looks for `claude-current`. Refused before anything is placed, fetched or named, naming the kind of character and never the directory, where it holds a `:` (which splits a `PATH` whatever the quoting), a control character (U+0000 to U+001F, DEL or U+0080 to U+009F) or a character a terminal draws as another (#241). Two limits are known and held in a test, as in openRepoShape's `--install` (its #858): a name a multibyte locale such as GB18030 reads as text is placed, and so is a lone `0x9B` byte |
 | `$OPENREPOTOOLS_DATA_DIR` | `${XDG_DATA_HOME:-~/.local/share}/openRepoTools` | where `--install` writes the receipt of what it placed |
 | `$AGENT_PROTOCOL_ROOT` | `~/.agents` | where `workspace.yaml` lives — the one pointer to your data |
 | `$CLAUDE_PROFILES_HOME` | `~/.claude-profiles` | the profiles root `--install` places the shared skills under |

@@ -1817,7 +1817,7 @@ def test_a_digest_it_cannot_take_is_a_note_too(tmp_path):
 
 @pytest.mark.parametrize("character", ["\t", "\n"], ids=["tab", "newline"])
 @NEEDS_JQ
-def test_a_bin_dir_with_a_tab_or_newline_gets_no_receipt_and_a_whole_install(tmp_path, character):
+def test_a_bin_dir_that_resolves_to_a_tab_or_newline_gets_no_receipt_and_a_whole_install(tmp_path, character):
     """THE FAIL-CLOSED HALF OF THE TSV GUARD (Copilot on #103,
     `openRepoTools:425`, which asked for the test this is).
 
@@ -1830,14 +1830,25 @@ def test_a_bin_dir_with_a_tab_or_newline_gets_no_receipt_and_a_whole_install(tmp
     receipt that cannot be written is a note and never a refusal (#57), the
     install itself is complete.
 
-    Both characters are accepted by the planner (nothing before the receipt
-    refuses a directory over what is in its name), so both are driven here.
+    SINCE #241 THE DIRECTORY AS SUPPLIED CAN NO LONGER BE THE ONE THAT HOLDS
+    THE CHARACTER: `--install` refuses a `$OPENREPOTOOLS_BIN_DIR` with a tab or
+    a newline in it before it places anything
+    (`tests/test_install_unprintable_values_241.py`). What this guard still
+    answers is the CANONICAL spelling, which `receipt_add` asks about as well
+    and which a symlink in the directory can make carry a character the
+    supplied one never had, so that is what is driven here: a clean `bin` that
+    is a link to a directory with a tab or a newline in its name. Both
+    characters are accepted by the planner there (nothing before the receipt
+    looks past the supplied spelling), so both are driven.
     The receipt that is already there is seeded with a row for a file that
     does not exist, which any rewrite would DROP — so byte-for-byte equality
     afterwards is the proof it was not replaced — and nothing but it may be
     in the data directory, so no temporary was left behind either.
     """
-    bin_dir = tmp_path / f"bin{character}dir"
+    real = tmp_path / f"real{character}dir"
+    real.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.symlink_to(real)
     receipt = receipt_path(tmp_path)
     receipt.parent.mkdir(parents=True)
     seeded = ("# a receipt that somebody else's run wrote\n"
@@ -1851,7 +1862,7 @@ def test_a_bin_dir_with_a_tab_or_newline_gets_no_receipt_and_a_whole_install(tmp
     assert result.returncode == 0, result.stdout + result.stderr
     assert "REFUSED" not in result.stderr
     for name in INSTALLED:
-        assert (bin_dir / name).is_file(), f"{name} was not placed"
+        assert (real / name).is_file(), f"{name} was not placed"
     assert f"openRepoTools: {len(INSTALLED)} of {len(INSTALLED)} placed" \
         in result.stdout
     assert receipt.read_text(encoding="utf-8") == seeded, (
