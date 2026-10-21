@@ -157,7 +157,18 @@ jobs: {build, testpypi, install, pypi}
      `opensoft/openRepoTools` has no pypi.org publisher, which is the
      second line of defence.
    - The `testpypi` and `pypi` environments, the `v*` tag ruleset and the
-     trusted publishers are Brett Heap's to create.
+     trusted publishers are Brett Heap's to create. The header says what the
+     environments and the ruleset must be:
+     - each environment has brettheap as the required reviewer, self-review
+       allowed, administrators not bypassing, and a deployment limit of
+       exactly one rule, of type tag, `v*`;
+     - the ruleset is on the tags `v*`, and only the admin role creates,
+       moves or deletes one.
+
+     The workflow reads the reviewer and the deployment limit, in the build's
+     step 5 and again in each upload job, and nothing else of these.
+     Self-review, administrator bypass and the ruleset are not checked, and
+     the header says so.
 6. **What the workflow never reads**: the release notes, and anything
    outside the code leg (FR-046).
 

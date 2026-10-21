@@ -908,15 +908,24 @@ passages, and the absence of the pipx route.
   On Brett Heap's word it is also rehearsed as `1.1.0rc1` on TestPyPI from
   `opensoft/openRepoTools`.
 - **Brett Heap makes the acts outside the repository.** That means:
-  - the `testpypi` and `pypi` environments, each with brettheap as required
-    reviewer and the deployment limit `v*`, in both repositories in turn;
-  - the `v*` tag rulesets;
+  - the `testpypi` and `pypi` environments, in both repositories in turn,
+    each with:
+    - brettheap as the required reviewer;
+    - self-review allowed, because lane sessions act as brettheap, the one
+      reviewer;
+    - administrators not bypassing, so that no account, an administrator's
+      included, skips the approval;
+    - the deployment limit `v*`: exactly one rule, of type tag;
+  - the `v*` tag rulesets: a ruleset on the tags `v*`, named "Release tags
+    v*" in `opensoft/openRepoTools`, under which only the admin role creates,
+    moves or deletes one;
   - the test.pypi.org publisher, for this repository and then for the code
     leg;
   - the one pypi.org pending publisher, for `openRepoTools-code` only.
 
-  `release.yml` refuses every dispatch until the environments exist with
-  their rules.
+  `release.yml` refuses every dispatch until the environments exist with a
+  required reviewer and the deployment limit `v*`. That is all it reads of
+  these acts: it checks neither the other settings nor the ruleset.
 - **The `release/*` ruleset is Brett Heap's choice,** which #850 leaves to
   him: no force-push and no deletion, or a rule that requires a pull
   request. Both back-port forms are specified, so his choice changes only
