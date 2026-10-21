@@ -3883,6 +3883,51 @@ whole table as its compare-and-swap token and a sync count that only goes up. A
 container with no `LANES_WORKSTATION` syncs nothing (exit 2): a source named for
 a container's own id is one no restart finds again.
 
+**A lane listing that is not whole writes nothing** (opensoft/openRepoTools#173
+item c1). The inventory is read through the lane listing, whose lanes are the
+names three reads give — the register's rows, the archive's and the object
+logs' — and each lane's trees are under the control root its log's `dir`
+places. Where the register, the archive, the list of the logs or any one
+published log could not be read — or whether one could not is NOT KNOWN,
+because no temporary file could keep the warnings of their read —
+`lanes-edit.sh worktrees --all` prints the rows it did reach and one line more,
+`PARTIAL <workstation> <why>`; over a listing those reads left empty it is that
+line alone, never the **8** of "none". A lane such a read could not name is not
+a lane with no worktrees, and which lanes those are is exactly what it does not
+know, so `sync` and `reconcile --source inventory` write NOTHING over it — not
+the lanes it did list either — and exit **1**, `unread: the lane listing …
+was not whole - <why> - …`, which `status` shows as the last error and the
+`--index` read beside the source's `synced <UTC>` (below). The table
+stays the last whole read, dated by its `synced <UTC>`, and the first sync over
+a whole listing writes what moved meanwhile. Holding only the lanes the read
+could not name would have needed a marker for each of them, one for the listing
+itself — a first sync has no rows to hold — and a one-lane `--index` read that
+knew of it. An indexer from before #173's item c1 refuses the line too, as one
+it does not read. A read of one NAMED lane goes by that name, which no listing
+gives, and never prints `PARTIAL`.
+
+Where those reads succeed, the listing makes each of them once, except the list
+of the logs, which it makes twice (the review of #289). The register, the
+archive and the list of the logs are asked before the listing is made, and
+where one succeeds the listing reads that very text — the register out of its
+cache, the other two pinned for that listing alone — so a read of them that
+fails after the check cannot thin a listing taken as whole; where one fails,
+the read is `PARTIAL` whatever the listing's own reads of it then give. The
+second list of the logs is the events', which read every log once per process,
+and where it could not be made the events say so: that is `PARTIAL` too,
+because every lane's `dir` comes out of their read. A lane's `dir` is not read
+again: its control root, the list of its trees and its lifecycle snapshot all
+take the listing's own. A second read of the lane's log that failed used to
+send the root to `$PROJECTS_ROOT/.lane-state`, and a lane with trees read as
+one with none (review r2 of #289). What is still read twice, besides the list
+of the logs: with no `origin` (`LANES_NO_GIT=1`, or a checkout with no
+`origin/<branch>`), the log directory is asked — there and not a directory this
+account can list and search is `PARTIAL` — and is then listed again for the
+names and again for the events, and a log file in it that will not open leaves
+no warning naming it; and the events ask for themselves whether
+`origin/<branch>` is there, so a `rev-parse` that failed in that one read alone
+reads this checkout's logs in place of origin's.
+
 **The nudge.** Every inventory write — `set-lane-state`, `set-lane-tree`, the
 lifecycle follow after a `STARTED`, `RESUMED`, `ENDED` or `RETIRED`, and a
 rename's move of the control root — starts the same detached `lanes-index sync`
@@ -3895,13 +3940,23 @@ every source a mark names before it lets go.
 `--index` it reads the table — every `inventory:*` source the store holds, so
 Raven sees Eagle's leftovers — and stderr says `read: index (<store>) at
 inventory:<ws> synced <UTC>`, or `read: sources (index <why>)` and the sidecars
-answer. Where the table is current, this workstation's rows are the same bytes
+answer. Where this workstation recorded an error for a source — a `sync` or a
+`reconcile` of it that refused or failed, a `--dry-run` included: a lane listing
+that was not whole, a store it could not reach — that source's `synced <UTC>` is
+followed by `(last error: <UTC> <why>)`, the last error `status` shows, until a
+`sync` or a `reconcile` that is not a dry run succeeds; another workstation's is
+in its own record, not this one's.
+Where the table is current, this workstation's rows are the same bytes
 either way — and a store only this workstation syncs into (SQLite, or a
 Postgres nobody else writes) prints exactly the source read, while a shared one
 adds the other workstations' rows among them. Every row is a last observation: the current truth of a lane is `lanes-edit.sh lane-reconcile
 <lane>`, which reads the disk — and the sidecars — of the workstation it runs
 on and of no other, so the footer says to run it ON THE WORKSTATION the lane's
-rows name (#173): Raven's listing of Eagle's rows is answered on Eagle.
+rows name (#173): Raven's listing of Eagle's rows is answered on Eagle. A
+`PARTIAL` line prints as `(every lane)` and `lane listing NOT WHOLE: <why>`,
+and the footer says that a lane missing from such a listing is NOT a lane with
+no worktrees — the listing's own form of an `UNREAD` lane's `inventory NOT
+READ` line.
 
 **What never reads it.** No act: not `lane-reconcile` — there is no
 `lane-reconcile --index`, by Amendment 14(b) — not `lane-start`, `lane-end`,
