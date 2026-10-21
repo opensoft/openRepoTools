@@ -57,8 +57,10 @@ generation of a lane whose rows would all leave, and rows written at
 generation 1 that now read 0 are held, for the wrong reason, while `reconcile`
 removes them.
 
-Every mode set here is restored before the case ends, and root - which
-searches and reads a mode-000 directory - proves nothing here and skips.
+Every mode set here is restored before the case ends. Root searches and reads
+a mode-000 directory, so a case that sets a mode proves nothing as root and
+skips there; the two links that cannot be followed set none, and run as root
+too.
 """
 
 from __future__ import annotations
@@ -78,9 +80,15 @@ pytestmark = [
     WINDOWS_SKIP,
     pytest.mark.skipif(shutil.which("bash") is None or shutil.which("git") is None,
                        reason="the lane tooling is bash over git"),
-    pytest.mark.skipif(getattr(os, "geteuid", lambda: -1)() == 0,
-                       reason="root searches and reads a mode-000 directory: nothing to prove here"),
 ]
+
+#: ONLY A CASE THAT SETS A MODE SKIPS AS ROOT (the review of 124b509, NIT-3).
+#: Root searches and reads a mode-000 directory, so a lookup a mode blocks is
+#: not blocked there and the case proves nothing. A link that cannot be
+#: followed sets no mode, and its cases prove the same thing as root.
+NOT_AS_ROOT = pytest.mark.skipif(
+    getattr(os, "geteuid", lambda: -1)() == 0,
+    reason="root searches and reads a mode-000 directory: nothing to prove here")
 
 LANE = "repoB-1"
 SIDECAR_ID = f"c0-{LANE}"
@@ -197,6 +205,7 @@ BLOCKED = ["lane-state-dir", "control-root", "above-the-dirs-parent", "above-pro
            "link-into-a-locked-dir"]
 
 
+@NOT_AS_ROOT
 @pytest.mark.parametrize("case", BLOCKED, ids=BLOCKED)
 def test_a_control_root_nobody_could_search_is_not_a_lane_with_no_trees(inv, case):
     """THE LOOKUP THAT SAYS A ROOT IS NOT THERE HAS TO HAVE BEEN MADE (#291).
@@ -259,6 +268,7 @@ def test_a_control_root_nobody_could_search_is_not_a_lane_with_no_trees(inv, cas
     assert inv.e.edit("lane-state", LANE, env=env).returncode == 8  # none, and looked for
 
 
+@NOT_AS_ROOT
 def test_a_write_under_a_root_nobody_could_look_for_fails_and_lands_nowhere_else(inv):
     """A WRITE GOES WHERE THE READS GO, OR NOWHERE (#291). The parent of the
     recorded `dir` could not be looked for, so the lane keeps its own control
@@ -363,6 +373,7 @@ def test_a_trees_link_that_cannot_be_followed_is_never_said_to_be_there(inv):
     assert facts.get("VERDICT", [""])[0] == "resumable", out
 
 
+@NOT_AS_ROOT
 def test_a_trees_directory_that_cannot_be_searched_is_still_unread(inv):
     """ONE LEVEL DOWN, AS IT WAS (#157 item 4e, Copilot round 2 on #171): a
     `trees` directory that is there and readable and cannot be searched is a
@@ -392,6 +403,7 @@ def test_a_trees_directory_that_cannot_be_searched_is_still_unread(inv):
     assert healed.returncode == 0 and "0 upserted, 1 removed" in healed.stdout, healed.stdout
 
 
+@NOT_AS_ROOT
 def test_a_tree_record_that_cannot_be_read_holds_its_lanes_rows(inv):
     """A RECORD THAT COULD NOT BE READ IS NOT A TREE WITH NO PATH. The listing
     names it as it did - a row of its own, `unreadable sidecar`, its file's
