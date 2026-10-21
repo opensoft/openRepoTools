@@ -12313,7 +12313,18 @@ EOF
         elif [ "$msc_ln" = 1 ]; then
           msc_lf="$msc_loc"; msc_rel="${LANES_LOG_PREFIX}${msc_loc##*/}"
           if [ "${msc_rel##*/}" != "${msc_pub##*/}" ]; then
-            msc_why="its object log is published as $msc_pub while this checkout has ${msc_rel##*/} — a case-only rename whose commit never landed. Pull first, or merge them (15(d))"
+            # NOT A PULL, AND NOT 15(d)'s HAND MERGE (rv1b-c2's NIT 4 on slice
+            # 1b; `ensure_log`'s stray-copy refusal names the same state). The
+            # behind test above refuses a dry run first, so this checkout is at
+            # origin's tip and the other name is its own: a rename it committed
+            # and never published, or the copy a rename's two `mv`s left when
+            # its commit was never made. A commit of both would publish a second
+            # file for one lane, and no writer pulls.
+            if [ "$NO_GIT" != 1 ] && git -C "$LANES_REPO" -c "$CP_EXACT" ls-files --error-unmatch -- "$msc_rel" >/dev/null 2>&1; then
+              msc_why="its object log is published as $msc_pub while this checkout has ${msc_rel##*/}, committed here and not on origin: a case-only rename whose commit never landed. The publish act refuses it (#194: a rename deletes and re-adds the log) and no later write carries it (S3 refuses every write over it), so archive it (S6.3): git -C $LANES_REPO push origin HEAD:refs/heads/archive/${msc_lane}-stranded-$(date -u +%Y%m%dT%H%MZ), then git -C $LANES_REPO reset --keep origin/$LANES_BRANCH, and re-run; the lane's next write renames the log once, inside its own commit"
+            else
+              msc_why="its object log is published as $msc_pub while this checkout has ${msc_rel##*/} NOT TRACKED: the copy left by a case-only rename whose commit never landed, which is not merged by hand, since a commit of it would publish a second file for one lane (Amendment 15). Compare them (git -C $LANES_REPO show refs/remotes/origin/$LANES_BRANCH:$msc_pub | diff - \"$msc_lf\"): a line only the copy holds belongs to a write that never landed, and is re-run as that write. Then remove the copy (rm -- \"$msc_lf\"), put the published log back (git -C $LANES_REPO checkout HEAD -- $msc_pub) and re-run; the lane's next write renames it once, inside its own commit"
+            fi
           elif [ "$NO_GIT" != 1 ] && ! git -C "$LANES_REPO" ls-files --error-unmatch -- "$msc_rel" >/dev/null 2>&1; then
             # AN UNTRACKED LOG IS SOMEBODY'S UNCOMMITTED WORK, AND THIS ACT WOULD
             # COMMIT IT (Copilot round 2 on openRepoTools#82). A log that is
