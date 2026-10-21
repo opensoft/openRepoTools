@@ -270,11 +270,14 @@ this run's approvals, and `contents` for the tag, read again.
 - Upload with `pypa/gh-action-pypi-publish@dc37677…` and
   `repository-url: https://test.pypi.org/legacy/`.
 - Then TestPyPI must serve exactly `{wheel: sha256}`. Read it up to 20
-  times, as the model does. A 404, a server error (5xx) and a read with no
-  answer, one that times out or whose connection breaks, even mid-answer,
-  are read again. A status other than 200, 404 and 5xx, and an answer that
-  is not the index's JSON, refuse the job at once, in an `::error::` line
-  that names it (#278).
+  times, as the model does. A 404, a server error (5xx) and every failure
+  that carries no HTTP status, whatever its cause, are read again: any
+  `OSError` (a name that does not resolve, a connection refused, reset or
+  broken, a timeout, a TLS error) and any `http.client.HTTPException` (a
+  status line that is not HTTP, too many headers, a body cut short). A
+  status other than 200, 404 and 5xx, and an answer that is not the
+  index's JSON, refuse the job at once, in an `::error::` line that names
+  it (#278).
 
 ### `install` (read only)
 
