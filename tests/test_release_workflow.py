@@ -196,8 +196,11 @@ INSTALL_IF = ("${{ !cancelled() && needs.build.result == 'success' && "
               "(needs.testpypi.result == 'success' || "
               "(needs.testpypi.result == 'skipped' && "
               "!startsWith(github.ref, 'refs/tags/'))) }}")
-INSTALL_LEGS = [("ubuntu-latest", "3.x"), ("macos-latest", "3.x"),
-                ("ubuntu-latest", "3.9")]
+
+#: The two ubuntu legs are pinned to 24.04, and macOS is not: `ubuntu-latest`
+#: became Ubuntu 26.04 on 2026-10-21, where setup-python has no Python 3.9.
+INSTALL_LEGS = [("ubuntu-24.04", "3.x"), ("macos-latest", "3.x"),
+                ("ubuntu-24.04", "3.9")]
 
 #: THE BUILD'S STEPS ADAPTED FROM THE MODEL, BY THE MODEL'S OWN NAMES, each
 #: a prefix the step's `name:` begins with (contracts/workflows.md's build
