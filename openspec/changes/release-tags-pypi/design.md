@@ -139,6 +139,31 @@ The console script's function does one thing. It calls
     and a `PATH` whose last entry is a file, `execvp` raises
     `NotADirectoryError`. The function refuses for it too, with the same
     message and exit 2 (FR-004).
+  - **Amended again 2026-10-21, for #256: every other `OSError` is a refusal
+    too.** `execvp` goes past an entry it cannot run to a later one it can,
+    and where none can it raises the first error that was not "not found". The
+    function now catches every `OSError`. The two not-found errors keep the
+    no-bash line. Every other one prints `REFUSED: openRepoTools needs bash,
+    and no bash on this PATH can be run (<why>). Nothing ran.` to stderr, with
+    `<why>` the error's `strerror`, and exits 2, after the signals are put
+    back (`contracts/cli-output.md`). A runnable `bash` later on `PATH` still
+    runs, because `execvp` goes on to it.
+    - The errors that reach it are `PermissionError`, for a `bash` with no
+      execute bit, a `PATH` directory that cannot be searched or a directory
+      named `bash`, and a bare `OSError` for `ENOEXEC` (a file that is not a
+      program), `ELOOP` (a link that loops) or `E2BIG` (an argument list that
+      is too long).
+    - The line says no `bash` can be run, and not that one is there: a `PATH`
+      directory that cannot be searched may hide every `bash`, and with
+      `E2BIG` the `bash` is fine. It is not the no-bash line, because "there
+      is no bash on this PATH" is untrue where one is there. It names no file,
+      because `execvp`'s error carries none.
+    - **A named limit: a `bash` that is there and cannot be started.** A
+      `bash` whose `#!` interpreter or ELF loader is missing, and a dangling
+      link named `bash`, raise `FileNotFoundError` (`ENOENT`, as for no
+      `bash`), so they still get the no-bash line. Telling them apart takes a
+      check of `PATH` that the function does not make. A separate refusal for
+      them is a follow-up.
   - **A named limit: the C locale.** Under a C or POSIX locale, Python's
     locale coercion (PEP 538) sets `LC_CTYPE=C.UTF-8` before the function
     runs, so bash sees it. The function does not undo it, because it cannot
