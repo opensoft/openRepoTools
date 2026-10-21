@@ -15131,9 +15131,13 @@ lanes_home_check() {
     [ "$lhc_r" != "$LANES_WS_REAL" ] || lhc_why="LANES_REPO names that same checkout, which makes it the checkout this window writes through"
     # UNLESS IT IS W ITSELF (the re-review of #282, N4): both variables naming
     # the `path:` workspace.yaml names is no lane checkout. It is still a
-    # refusal, S5's — no write goes through W — and it says that instead.
+    # refusal, S5's — no write goes through W — and it says that instead. ONLY
+    # UNDER THE OPT-IN (the re-check of #282, R4-2): without it nothing is routed,
+    # a write goes through W as on main, and `lane-checkout` and
+    # `refresh-workspace`, which call this unconditionally, write no register.
     if [ -n "$lhc_why" ] &&
        [ "$(LANES_WORKSPACE_ROOT='' lanes_workspace_root 2>/dev/null || :)" = "$LANES_WS_REAL" ]; then
+      [ "$LANES_ROUTE_ON" = 1 ] || return 0
       die "LANES_WORKSPACE_ROOT and LANES_REPO both name $LANES_WS_REAL, which is W itself — the \`path:\` in $(lanes_ws_yaml) — and W is the readers' copy: under LANES_ROUTE_WRITES=1 nothing is written through it (Amendment 23 S5). Nothing was written, and nothing was cloned or locked. Unset LANES_REPO, and LANES_WORKSPACE_ROOT with it (it only repeats that \`path:\`): each write then goes through its lane's own checkout, $LANES_WS_REAL-lanes/<lane>/." 2
     fi
   fi

@@ -184,3 +184,22 @@ def test_refresh_refuses_a_W_that_is_a_lane_checkout(box: Box, how: str):
     assert "Unset LANES_WORKSPACE_ROOT" in result.stderr, result.stderr
     assert box.git("-C", str(c), "rev-parse", "HEAD").strip() == before, "not fast-forwarded"
     assert not Path(f"{c}-lanes").exists()
+
+
+def test_without_the_opt_in_both_variables_naming_W_still_refresh_it(box: Box):
+    """R4-2: `LANES_WORKSPACE_ROOT` and `LANES_REPO` both at the `path:`
+    workspace.yaml names is W itself. Under the opt-in that is S5's refusal
+    (the N4 case in test_a23_write_routing.py), but without it no write goes
+    anywhere else than W, as on main, and `refresh-workspace` writes no
+    register: it refused (2) all the same, naming an opt-in that is off, and
+    exit 2 is this verb's "skipped, nothing changed", so a caller went on with
+    a stale W. It fast-forwards W as it does where `LANES_REPO` is unset."""
+    box.peer_pushes()
+    assert box.head() != box.origin_main()
+    result = box.refresh(LANES_ROUTE_WRITES="", LANES_WORKSPACE_ROOT=str(box.w),
+                         LANES_REPO=str(box.w))
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "W itself" not in result.stderr and "Amendment 23 S5" not in result.stderr, result.stderr
+    assert "fast-forwarded W" in result.stderr, result.stderr
+    assert box.head() == box.origin_main(), "W was refreshed"
+    assert not box.lanes_root.exists(), "a read-side act makes no lane checkout"
