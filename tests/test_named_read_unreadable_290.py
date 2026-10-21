@@ -73,7 +73,8 @@ def test_a_named_read_whose_log_could_not_be_read_says_so_and_not_none(inv):
     read said "none": exit 8, and `lanes --worktrees` said "no worktree is
     inventoried". It is now ONE `UNREAD` line naming the log, exit 0, which
     `lanes --worktrees` prints as NOT READ. The `lanes --lane` read of the same
-    lane - the one `lane <name>` makes - still answers, and says it."""
+    lane - the one `lane <name>` makes - still answers, and says it. A log
+    tree that could not be listed is the same `UNREAD` line."""
     by_dir, key = _a_lane_found_through_its_log(inv)
     whole = inv.e.edit("worktrees", "repoB-1", env=by_dir)
     assert whole.returncode == 0, whole.stderr
@@ -94,6 +95,16 @@ def test_a_named_read_whose_log_could_not_be_read_says_so_and_not_none(inv):
         assert row.stdout.startswith("repoB-1\t"), row.stdout
         assert "these published logs could not be read, so no lane of theirs is classed " \
             "DORMANT: lanes/log/repoB-1.md" in row.stderr, row.stderr
+    # AND A LOG TREE THAT COULD NOT BE LISTED (the review of #290, SHOULD-1(b)).
+    # `git show` fails there as it does for a path the tree does not name, and
+    # the `ls-tree` of the log's path that tells the two apart fails as well:
+    # that is a read that did not happen, never a lane with no log.
+    with _unreadable(inv.e, LOG_TREE):
+        res = inv.e.edit("worktrees", "repoB-1", env=by_dir)
+        assert res.returncode == 0, (res.returncode, res.stdout, res.stderr)
+        lines = _lines(res.stdout)
+        assert len(lines) == 1 and lines[0][:3] == ["UNREAD", "Eagle", "repoB-1"], res.stdout
+        assert "its object log lanes/log/repoB-1.md could not be read" in lines[0][3], lines[0]
 
 
 def test_a_named_read_of_a_lane_with_no_published_log_still_says_none(inv):
