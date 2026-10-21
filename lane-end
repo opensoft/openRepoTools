@@ -1371,10 +1371,16 @@ DUPES
     # `dh_settle_gone` polls up to two seconds (twenty tries, 0.1s apart) and
     # returns the instant both checks agree the pid is gone, so the common,
     # unloaded case still resolves in one pass.
+    #
+    # `ps` IN A SUBSHELL OF ITS OWN (opensoft/openRepoTools#292): macOS's bash
+    # 3.2 ends a `set -e` script where a utility run through `command` fails,
+    # even after `!` in an `if`, and `ps -p` fails exactly when the pid is
+    # gone, so this act ended at the moment it had its answer. The subshell's
+    # status is ps's either way, and `command -p` keeps its bypass.
     dh_settle_gone() {   # <pid> — 0 once confirmed gone, 1 if still found
       dsg_tries=0
       while [ "$dsg_tries" -lt 20 ]; do
-        if ! kill -0 "$1" 2>/dev/null && ! command -p ps -p "$1" >/dev/null 2>&1; then
+        if ! kill -0 "$1" 2>/dev/null && ! (command -p ps -p "$1" >/dev/null 2>&1); then
           return 0
         fi
         dsg_tries=$((dsg_tries + 1))
