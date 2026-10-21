@@ -1467,9 +1467,9 @@ def test_release_build_the_ref_step_fetches_the_tag_again_without_cutting_the_ch
     checkout is not shallow afterwards: it still holds all four, where a depth
     would cut that history off at this commit. The step's one `git fetch`
     also names no option that limits history, which a depth beyond the four
-    commits would not show. A depth beyond the four commits that the line takes
-    from a variable would pass both checks; that is contrived, and no case
-    holds it."""
+    commits would not show. A depth that the fetch line takes from a variable,
+    and that is beyond the four commits, would pass both checks; that is
+    contrived, and no case holds it."""
     history = 4
     checkout, commit, objects = tagged_origin(tmp_path / "git", ("v1.1.0",), history)
     home = tmp_path / "git" / "home"
