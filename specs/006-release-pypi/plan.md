@@ -99,8 +99,9 @@ this plan.
 
 - **Runs on**: Linux and macOS, and WSL2 on Windows. Python 3.9 or later;
   bash 3.2 or later.
-- **CI**: `ubuntu-latest`. The release install check adds `macos-latest`,
-  run under `/bin/bash` 3.2.
+- **CI**: `ubuntu-24.04`, pinned because `ubuntu-latest` became Ubuntu 26.04
+  on 2026-10-21, where setup-python has no Python 3.9. The release install
+  check adds `macos-latest`, run under `/bin/bash` 3.2.
 
 **Project Type**: a command-line toolset, the bash installer and the
 commands it places, published as one Python wheel, with CI and release
