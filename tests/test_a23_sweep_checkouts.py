@@ -188,7 +188,7 @@ def test_dry_run_lists_and_removes_nothing(sweep):
     result, rows = sweep()
     assert result.returncode == 3, (result.stdout, result.stderr)
     assert "DRY RUN" in result.stdout, result.stdout
-    assert _tagged(rows, "candidate") == {str(box.checkout(CLOSED)), str(box.checkout(OLD))}, rows
+    assert _tagged(rows, "remove") == {str(box.checkout(CLOSED)), str(box.checkout(OLD))}, rows
     assert rows[str(box.checkout(OLD))][1].startswith(f"a former name of lane {NEW}"), rows
     assert box.everything() == before, "a dry run changes nothing under <W>-lanes/ or beside W"
     assert box.origin_head() == head, "nothing reached origin"
@@ -204,7 +204,7 @@ def test_dry_run_with_nothing_to_remove_exits_0(sweep):
         box.checkout(lane).rename(box.root / f"aside-{lane}")
     result, rows = sweep()
     assert result.returncode == 0, (result.stdout, result.stderr)
-    assert not _tagged(rows, "candidate"), rows
+    assert not _tagged(rows, "remove"), rows
     assert "there is nothing to remove" in result.stdout, result.stdout
 
 
@@ -268,7 +268,7 @@ def test_W_and_live_lane_never_candidates(sweep):
     assert f"lane {NEW} is IDLE" in keep[str(box.checkout(NEW))], keep
     assert not any(".lock" in path for path in rows), "hidden entries are never looked at"
     assert "1 hidden entr(ies)" in result.stdout, result.stdout
-    assert _tagged(rows, "candidate") == {str(box.checkout(CLOSED)), str(box.checkout(OLD))}
+    assert _tagged(rows, "remove") == {str(box.checkout(CLOSED)), str(box.checkout(OLD))}
 
 
 def test_a_paused_lane_is_kept_without_LANES_REPO(sweep):
@@ -297,5 +297,285 @@ def test_clones_beside_W_are_listed_and_never_candidates(sweep):
     result, rows = sweep()
     assert _tagged(rows, "beside") == {str(c) for c in box.profile_clones}, rows
     assert str(box.w.parent / "otherrepo") not in rows, rows
-    assert all(Path(p).parent == box.lanes_root for p in _tagged(rows, "candidate")), rows
+    judged = _tagged(rows, "remove") | _tagged(rows, "hold")
+    assert judged and all(Path(p).parent == box.lanes_root for p in judged), rows
     assert "listed and never removed by this build" in result.stdout
+
+
+# ------------------------------------------------------- the act, and holds
+
+def _assert_under(base: Path, paths) -> None:
+    """Every path the run removed is under the test's own basetemp."""
+    for path in paths:
+        assert Path(os.path.realpath(path)).is_relative_to(base), path
+
+
+def _no_aside(box: Sweep) -> None:
+    assert not list(box.lanes_root.glob(".*.removing-*")), "no half-removed aside is left"
+
+
+def test_closed_lane_checkout_removed_live_kept(sweep, tmp_path):
+    """`--yes`, run by a lane, removes the CLOSED lane's checkout and the former
+    name's beside its new one, and leaves every other entry — the LIVE lane's,
+    the PAUSED one's, its own, a non-clone, a link — and every clone beside W
+    exactly as they were."""
+    box = sweep.box
+    before = box.everything()
+    gone = {str(box.checkout(CLOSED)), str(box.checkout(OLD))}
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert _tagged(rows, "removed") == gone, rows
+    _assert_under(Path(os.path.realpath(tmp_path)), gone)
+    for path in gone:
+        assert not os.path.lexists(path), path
+    after = box.everything()
+    assert {k: v for k, v in before.items() if k not in gone} == after, \
+        "nothing but the two removed entries changed, under <W>-lanes/ or beside W"
+    assert _tagged(rows, "beside") == {str(c) for c in box.profile_clones}
+    _no_aside(box)
+    assert not list(box.lanes_root.glob("*/lanes/.lanes-edit.lock")), "every lock it took is released"
+
+
+def _commit_unpushed(box: Sweep, c: Path) -> None:
+    box.write(c, "lanes/extra.md", "a record never pushed\n")
+    box.commit(c, "an unpushed record", "lanes/extra.md")
+
+
+def _stash(box: Sweep, c: Path) -> None:
+    (c / "handoffs" / "README.md").write_text("# handoffs\nstashed\n", encoding="utf-8")
+    box.git("-C", str(c), "stash", "-q")
+
+
+def _staged(box: Sweep, c: Path) -> None:
+    box.write(c, "handoffs/staged.md", "staged, never committed\n")
+    box.git("-C", str(c), "add", "--", "handoffs/staged.md")
+
+
+def _modified(box: Sweep, c: Path) -> None:
+    (c / "handoffs" / "README.md").write_text("# handoffs\nedited by hand\n", encoding="utf-8")
+
+
+def _untracked_handoff(box: Sweep, c: Path) -> None:
+    box.write(c, "handoffs/repoS4/draft.md", "a handoff written, never committed\n")
+
+
+def _untracked_elsewhere(box: Sweep, c: Path) -> None:
+    box.write(c, "notes.txt", "a person's note in the root\n")
+
+
+def _side_branch(box: Sweep, c: Path) -> None:
+    box.git("-C", str(c), "switch", "-q", "-c", "side")
+    _commit_unpushed(box, c)
+    box.git("-C", str(c), "switch", "-q", "main")
+
+
+def _detached(box: Sweep, c: Path) -> None:
+    box.git("-C", str(c), "switch", "-q", "--detach")
+    _commit_unpushed(box, c)
+
+
+def _merge_only(box: Sweep, c: Path) -> None:
+    """A merge commit origin lacks, whose parents origin has both, carrying
+    content of its own. `git cherry` skips merges, so it lists no `+` line at
+    all here, and only the merge check can hold it: B, an empty commit, is
+    published to origin's main; main goes back to B's parent; and B is merged
+    in with `--no-ff` and a file only the merge carries."""
+    c_ = ["-C", str(c)]
+    box.git(*c_, "commit", "-q", "--allow-empty", "-m", "B, published")
+    box.git(*c_, "push", "-q", "origin", "main")
+    box.git(*c_, "reset", "-q", "--keep", "HEAD~1")
+    box.git(*c_, "merge", "-q", "--no-ff", "--no-commit", "refs/remotes/origin/main")
+    box.write(c, "lanes/evil.md", "content only the merge carries\n")
+    box.git(*c_, "add", "--", "lanes/evil.md")
+    box.git(*c_, "commit", "-q", "-m", "merge B, with content")
+    cherry = box.git(*c_, "cherry", "refs/remotes/origin/main", "refs/heads/main")
+    assert not [line for line in cherry.splitlines() if line.startswith("+")], cherry
+    assert box.git(*c_, "rev-list", "--merges", "refs/heads/main", "--not",
+                   "refs/remotes/origin/main").strip(), "the merge is the one commit origin lacks"
+
+
+def _tag(box: Sweep, c: Path) -> None:
+    box.git("-C", str(c), "commit", "-q", "--allow-empty", "-m", "tagged, never pushed")
+    box.git("-C", str(c), "tag", "kept")
+    box.git("-C", str(c), "reset", "-q", "--keep", "HEAD~1")
+
+
+def _lock(box: Sweep, c: Path) -> None:
+    (c / "lanes" / ".lanes-edit.lock").mkdir()
+    (c / "lanes" / ".lanes-edit.lock" / "pid").write_text("1 none unknown\n", encoding="utf-8")
+
+
+def _worktree(box: Sweep, c: Path) -> None:
+    """A linked worktree of the checkout, made by hand in the shape `git
+    worktree add` leaves (this suite runs no `git worktree add`): its admin
+    directory under `.git/worktrees/`, and the worktree's own `.git` file."""
+    linked = box.root / "wt-of-closed"
+    linked.mkdir()
+    admin = c / ".git" / "worktrees" / "wt-of-closed"
+    admin.mkdir(parents=True)
+    head = box.git("-C", str(c), "rev-parse", "HEAD").strip()
+    (admin / "HEAD").write_text(head + "\n", encoding="utf-8")
+    (admin / "commondir").write_text("../..\n", encoding="utf-8")
+    (admin / "gitdir").write_text(f"{linked / '.git'}\n", encoding="utf-8")
+    (linked / ".git").write_text(f"gitdir: {admin}\n", encoding="utf-8")
+    assert str(linked) in box.git("-C", str(c), "worktree", "list"), "git sees the linked worktree"
+
+
+def _assume_unchanged(box: Sweep, c: Path) -> None:
+    box.git("-C", str(c), "update-index", "--assume-unchanged", "handoffs/README.md")
+    (c / "handoffs" / "README.md").write_text("# handoffs\nhidden from status\n", encoding="utf-8")
+
+
+def _merging(box: Sweep, c: Path) -> None:
+    head = box.git("-C", str(c), "rev-parse", "HEAD").strip()
+    (c / ".git" / "MERGE_HEAD").write_text(head + "\n", encoding="utf-8")
+
+
+def _no_origin_main(box: Sweep, c: Path) -> None:
+    box.git("-C", str(c), "update-ref", "-d", "refs/remotes/origin/main")
+
+
+HOLDS = [
+    pytest.param(_commit_unpushed, "commit(s) origin lacks by content", id="a + on main"),
+    pytest.param(_side_branch, "branch side has 1 commit(s) origin lacks", id="a + on a branch"),
+    pytest.param(_detached, "its detached HEAD has 1 commit(s)", id="a + on a detached HEAD"),
+    pytest.param(_merge_only, "a merge commit origin lacks", id="a merge only"),
+    pytest.param(_tag, "refs/tags/kept reaches commits", id="a tag"),
+    pytest.param(_stash, "a stash of 1 entr(ies)", id="a stash"),
+    pytest.param(_staged, "staged or modified: 1 (handoffs/staged.md)", id="staged"),
+    pytest.param(_modified, "staged or modified: 1 (handoffs/README.md)", id="modified"),
+    pytest.param(_untracked_handoff, "untracked: 1 (handoffs/repoS4/draft.md)", id="untracked under handoffs"),
+    pytest.param(_untracked_elsewhere, "untracked: 1 (notes.txt)", id="untracked elsewhere"),
+    pytest.param(_assume_unchanged, "marked assume-unchanged or skip-worktree", id="assume-unchanged"),
+    pytest.param(_merging, "an operation in progress (MERGE_HEAD)", id="a merge in progress"),
+    pytest.param(_lock, "lanes/.lanes-edit.lock", id="its writers' lock"),
+    pytest.param(_worktree, "linked worktree(s) of it", id="a linked worktree"),
+]
+
+
+@pytest.mark.parametrize("make,said", HOLDS)
+def test_holds(sweep, make, said):
+    """S6.2 (a): each hold is reported with what it holds, and the checkout is
+    left — by the dry run, and by `--yes`, which decides under its lock after
+    a fetch and releases that lock as it leaves."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    make(box, c)
+    before = box.everything()[str(c)]
+    result, rows = sweep()
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+    assert said in rows[str(c)][1], rows[str(c)]
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+    assert said in rows[str(c)][1], rows[str(c)]
+    assert c.is_dir() and box.everything()[str(c)] == before, "the held checkout is as it was"
+    if make is not _lock:
+        assert not (c / "lanes" / ".lanes-edit.lock").exists(), "the sweep's own lock is released"
+    _no_aside(box)
+
+
+def test_no_origin_main_holds_the_dry_run(sweep):
+    """A checkout with no `refs/remotes/origin/main` has nothing its branches
+    can be compared with, so the dry run, which fetches nothing, holds it.
+    `--yes` fetches it first with an explicit refspec, which makes that ref
+    again, and decides on what the fetch brought: here nothing holds it."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    _no_origin_main(box, c)
+    _, rows = sweep()
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+    assert "it has no refs/remotes/origin/main" in rows[str(c)][1], rows[str(c)]
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert rows[str(c)][0] == "removed", rows[str(c)]
+    assert not os.path.lexists(c)
+    _no_aside(box)
+
+
+def test_a_live_cwd_holds(sweep):
+    """S6.2 (c): a live process working inside the checkout holds it. The
+    process is a `sleep` started there, killed by its PID afterwards."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    sleeper = subprocess.Popen(["sleep", "600"], cwd=str(c / "lanes"))
+    try:
+        result, rows = sweep("--yes", LANES_LANE=RUNNER)
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert rows[str(c)][0] == "hold", rows[str(c)]
+        assert f"a live process works in it (pid {sleeper.pid})" in rows[str(c)][1], rows[str(c)]
+        assert c.is_dir()
+    finally:
+        sleeper.kill()
+        sleeper.wait()
+
+
+def _hook_on_fetch_of(box: Sweep, target: Path, body: str) -> None:
+    """A `LANES_GIT` hook that runs `body` when the sweep fetches `target`."""
+    box.use_net(hook=(
+        f'case " $* " in *" -C {target} fetch "*) {body} ;; esac\n'
+        "exit 0\n"))
+
+
+def test_recheck_before_removal(sweep):
+    """THE HOLDS ARE READ AGAIN UNDER THE LOCK, AFTER THE FETCH: a handoff
+    written into the checkout after the listing and before its removal holds
+    it, whatever the listing said."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    _, rows = sweep()
+    assert rows[str(c)][0] == "remove", rows[str(c)]
+    _hook_on_fetch_of(box, c, f"printf late > {c}/handoffs/late.md")
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+    assert "untracked: 1 (handoffs/late.md)" in rows[str(c)][1], rows[str(c)]
+    assert (c / "handoffs" / "late.md").is_file()
+    assert "fetch" in box.net_ops(), "the candidate was fetched before it was decided"
+
+
+def test_a_lane_resumed_after_the_listing_is_kept(sweep):
+    """THE LANE'S STATE IS ASKED AGAIN UNDER THE LOCK, AFTER A FETCH (rv1b's
+    MUSTs 1-2): a CLOSED lane that RESUMED on origin after the listing read it
+    is kept."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    resumed = (f"RESUMED — lane {CLOSED}, session {UUID[CLOSED]}@Eagle, "
+               f"2026-10-21T09:00:00Z, lane:{CLOSED}\n")
+    peer = box.seed
+    _hook_on_fetch_of(box, c, (
+        f"git -C {peer} pull -q --ff-only origin main && "
+        f"printf '%s' '{resumed}' >> {peer}/lanes/log/{CLOSED}.md && "
+        f"git -C {peer} commit -q -am resumed && git -C {peer} push -q origin main"))
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+    assert f"lane {CLOSED} is IDLE now, not CLOSED" in rows[str(c)][1], rows[str(c)]
+    assert c.is_dir()
+
+
+def test_a_fetch_that_fails_holds(sweep):
+    """`--yes` decides on a fetched origin: a candidate whose fetch fails is
+    held, and its lock released."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    box.use_net(hook=f'case " $* " in *" -C {c} fetch "*) exit 1 ;; esac\nexit 0\n')
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+    assert "its fetch of origin main failed" in rows[str(c)][1], rows[str(c)]
+    assert c.is_dir() and not (c / "lanes" / ".lanes-edit.lock").exists()
+
+
+def test_nothing_outside_W_lanes_is_removed(sweep):
+    """The clones beside W are listed with what holds them, and `--yes` removes
+    none of them: nothing outside `<W>-lanes/` is ever removed."""
+    box = sweep.box
+    before = {str(c): box.everything()[str(c)] for c in box.profile_clones}
+    _, rows = sweep()
+    assert rows[str(box.profile_clones[0])] == ("beside", f"holds: leaned on by {box.profile_clones[1]} (its alternates file names this clone's objects)"), rows
+    assert rows[str(box.profile_clones[2])][1].startswith("nothing holds it"), rows
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert {str(c): box.everything()[str(c)] for c in box.profile_clones} == before
+    assert all(rows[str(c)] == ("beside", "left") for c in box.profile_clones), rows
