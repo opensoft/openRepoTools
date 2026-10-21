@@ -244,7 +244,8 @@ def test_the_printed_recovery_publishes_the_edit_it_stranded(box):
                           LANES_SESSION="0e3c9a52-6d1b-4b8e-9f3a-2a7c5d4e6f81")
     assert stranded.returncode == 2, stranded.stderr
     assert "1 unpublished commit(s)" in stranded.stderr
-    assert f'LANES_LANE={LANE} ' in stranded.stderr and ' commit "<what they are>"' in stranded.stderr
+    assert f'LANES_LANE={LANE} ' in stranded.stderr
+    assert ' commit "<what they are>"' in stranded.stderr
     assert "the publish act" in stranded.stderr, stranded.stderr
     assert len(box.unpublished()) == 1, "the edit is a local commit and only that"
 
@@ -272,7 +273,8 @@ def test_a_clean_checkout_with_nothing_ahead_is_still_a_no_op(box):
     assert f"nothing staged for {REGISTER} — no commit made" in result.stderr
     assert "pushed" not in result.stderr, result.stderr
     calls = box.net_calls()
-    assert len(calls) == 1 and " fetch " in f" {calls[0]} ", calls
+    assert len(calls) == 1, calls
+    assert " fetch " in f" {calls[0]} ", calls
     assert (box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")) == (head, origin)
 
 
@@ -373,7 +375,8 @@ def test_a_no_op_write_never_publishes_what_the_checkout_queued(box, exported):
     assert (box.wgit("rev-parse", "HEAD"), box.ogit("rev-parse", "main")) == (head, origin)
     assert box.origin_file(TOOL) == "#!/usr/bin/env bash\n"
     assert box.unpublished()[0].startswith(queued)
-    assert "1 unpublished commit(s)" in result.stderr and f"+ {queued}" in result.stderr
+    assert "1 unpublished commit(s)" in result.stderr
+    assert f"+ {queued}" in result.stderr
     assert "Nothing was written." in result.stderr
 
 

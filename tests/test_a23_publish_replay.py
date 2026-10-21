@@ -171,7 +171,8 @@ def test_refused_push_replays_on_a_fresh_fast_forward(box: Box):
     assert "LIVE · the neighbour moved first" in register, "the peer's row is kept"
     assert _set("LIVE · the replayed write") in register, "the write was made on the new tip"
     new = box.subjects()[: len(box.subjects()) - len(before)]
-    assert len(new) == 2 and new[1] == "a peer's row lands first", new
+    assert len(new) == 2, new
+    assert new[1] == "a peer's row lands first", new
     assert box.head(c) == box.origin_head(), "one commit of this write, and it is origin's tip"
     assert box.pushes() == 2
     assert box.unpublished(c) == []
@@ -249,7 +250,8 @@ def test_replay_reruns_the_one_match_guard(box: Box):
     assert "push refused (attempt 1 of 6)" in result.stderr
     assert "'seeded' occurs 0 times" in result.stderr, result.stderr
     register = box.origin_register()
-    assert "LIVE · rewritten by a peer" in register and "reseeded" not in register
+    assert "LIVE · rewritten by a peer" in register
+    assert "reseeded" not in register
     assert box.head(c) == box.origin_head(), "the dropped commit is gone and nothing is left ahead"
     assert box.unpublished(c) == []
     _settled(box, c)
@@ -309,7 +311,8 @@ def test_bound_keeps_the_commit_on_head_exit_6_and_next_write_refuses(box: Box):
     after = box.helper("log", "NOTED", f"lane:{LANE}", "a later write", *HOME_FLAG,
                        LANES_LANE=LANE, LANES_SESSION=UUID)
     assert after.returncode == 2, after.stderr
-    assert "1 unpublished commit(s)" in after.stderr and f"+ {sha}" in after.stderr
+    assert "1 unpublished commit(s)" in after.stderr
+    assert f"+ {sha}" in after.stderr
     assert box.head(c) == sha
 
 
@@ -420,11 +423,13 @@ def test_commit_carries_a_hand_edit_across_the_ff(box: Box):
     assert "carried the hand edit of lanes/LANES.md across the fast-forward" in result.stderr
     assert "anchored by those lines alone" in result.stderr, "the neighbour's row is the edit's context"
     register = box.origin_register()
-    assert "LIVE · moved on origin" in register and "LIVE · a hand edit" in register
+    assert "LIVE · moved on origin" in register
+    assert "LIVE · a hand edit" in register
     assert box.head(c) == box.origin_head()
     assert box.git("-C", str(c), "status", "--porcelain").strip() == ""
     saved = list((c / ".git" / "lanes-edit").glob("hand-edit-*.diff"))
-    assert len(saved) == 1 and "a hand edit" in saved[0].read_text(encoding="utf-8")
+    assert len(saved) == 1
+    assert "a hand edit" in saved[0].read_text(encoding="utf-8")
     _settled(box, c)
 
 
@@ -440,7 +445,8 @@ def test_commit_keeps_the_diff_when_it_no_longer_applies(box: Box):
     assert result.returncode == 2, result.stderr
     saved = list((c / ".git" / "lanes-edit").glob("hand-edit-*.diff"))
     assert len(saved) == 1
-    assert "no longer applies" in result.stderr and str(saved[0]) in result.stderr
+    assert "no longer applies" in result.stderr
+    assert str(saved[0]) in result.stderr
     assert "LIVE · a hand edit" in saved[0].read_text(encoding="utf-8")
     assert (c / REGISTER).read_text(encoding="utf-8") == box.origin_register()
     assert box.origin_head() == tip, "nothing was pushed"
@@ -481,7 +487,8 @@ def test_commit_replay_keeps_the_hand_edit(box: Box):
     assert result.returncode == 0, result.stderr
     assert "left in the working tree as the hand edit it was" in result.stderr
     register = box.origin_register()
-    assert "LIVE · landed mid-push" in register and "LIVE · a hand edit" in register
+    assert "LIVE · landed mid-push" in register
+    assert "LIVE · a hand edit" in register
     assert box.head(c) == box.origin_head()
     assert box.git("-C", str(c), "status", "--porcelain").strip() == ""
     _settled(box, c)
@@ -543,7 +550,8 @@ def test_publish_act_is_exempt_from_unpushed_only(box: Box, row):
         assert box.unpublished(c) == []
     else:
         assert result.returncode == 2, result.stderr
-        assert words in result.stderr and "Nothing was written." in result.stderr
+        assert words in result.stderr
+        assert "Nothing was written." in result.stderr
         assert box.origin_head() == tip
     _settled(box, c)
 
@@ -594,9 +602,11 @@ def test_publish_act_on_moved_origin_refuses(box: Box):
     err = result.stderr
     assert "origin/main has moved past the local commits" in err
     assert "only a fast-forward push" in err
-    assert "refs/heads/archive/" in err and f"git -C {c} reset --keep origin/main" in err
+    assert "refs/heads/archive/" in err
+    assert f"git -C {c} reset --keep origin/main" in err
     assert "push" not in box.net_ops()
-    assert box.origin_head() == tip and box.head(c) == shas[-1]
+    assert box.origin_head() == tip
+    assert box.head(c) == shas[-1]
     _settled(box, c)
 
 
