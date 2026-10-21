@@ -12,7 +12,7 @@ Two tests read the file as text instead, and need no submodule: the header
 comment, because a comment is not data, and the digest rule, because a
 digest is wrong wherever in the file it stands.
 
-THREE OF THE `package` JOB'S STEPS ARE RUN, NOT ONLY READ. Each runs under
+FOUR OF THE `package` JOB'S STEPS ARE RUN, NOT ONLY READ. Each runs under
 bash at the repository's root, as the runner runs it, with `$RUNNER_TEMP`,
 `$HOME` and every `$GITHUB_*` file under the test's own directory, and with
 pip pointed at no index, so nothing can be fetched:
@@ -20,10 +20,14 @@ pip pointed at no index, so nothing can be fetched:
 - step 4, under a fake `pip` that records each call and installs nothing:
   the file it installs `tomli` from, by hash, must be the build lock's whole
   `tomli` entry, every hash of it;
-- step 6, the wheel check, over four wheels made here with `zipfile` from
-  HEAD's own blobs and modes, laid out as hatchling 1.27.0 lays one out, and
-  put where step 5 leaves its two builds, `$RUNNER_TEMP/a/` and
-  `$RUNNER_TEMP/b/`;
+- step 6, the wheel check, over the wheels `WHEEL_CASES` names, made here
+  with `zipfile` from HEAD's own blobs and modes, laid out as hatchling
+  1.27.0 lays one out, and put where step 5 leaves its two builds,
+  `$RUNNER_TEMP/a/` and `$RUNNER_TEMP/b/`;
+- step 10, whole, with a stand-in for pipx's link that prints the lines and
+  writes the receipt a case gives it: the step must pass the skip line, the
+  count line and the 28 receipt rows, and refuse a run that lacks one of them
+  (#275);
 - step 11's report step, over JUnit reports written here.
 
 WHAT THESE TESTS NEED OF THE `package` JOB, beyond the contract's own
@@ -41,6 +45,10 @@ words, written down here so that the task adding the job (T016) knows:
 - step 6's YAML step holds that one heredoc, and its script, up to the
   heredoc's closing `PY`, checks the wheel in `$RUNNER_TEMP/a/` against
   `HEAD`, printing each problem, and exits 0 or 1;
+- step 10 runs `$PIPX_BIN_DIR/openRepoTools --install` with its `HOME` at
+  `$RUNNER_TEMP/install-home`, reads the receipt at
+  `.local/share/openRepoTools/installed.tsv` under it, and exits 0, or 1
+  after one `::error::` line;
 - a step that is run reads what an earlier step left only through
   `$GITHUB_ENV`, `$GITHUB_PATH`, `$RUNNER_TEMP` or the job's `env:`, and the
   only expressions it holds are `${{ runner.temp }}`,
@@ -60,6 +68,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import warnings
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -207,17 +216,31 @@ WRITTEN_MODE = 0o644
 WHEEL_FILE = (b"Wheel-Version: 1.0\nGenerator: hatchling 1.27.0\n"
               b"Root-Is-Purelib: true\nTag: py3-none-any\n")
 
-#: THE WHEEL CHECK'S FOUR WHEELS (contracts/workflows.md, step 6). Each case
-#: is the exit the check must give and the name its output must add to the
-#: output the wheel as built gives: the file that is wrong.
+#: THE WHEEL CHECK'S WHEELS (contracts/workflows.md, step 6): the contract's
+#: four, then one for each check they never reach (#275): a module, the
+#: stamp, "nothing else" and the check that no member is there twice. Each
+#: case is the exit the check must give and the name an `::error::` line of
+#: its output must add to the output the wheel as built gives: the file that
+#: is wrong.
 BYTE_TARGET = "skills/handoff/SKILL.md"
 MODE_TARGET = "lanes-index"
+MODULE_TARGET = PACKAGE + "cli.py"
+STAMP_TARGET = PACKAGE + "_release.py"
+EXTRA_TARGET = PACKAGE + "extra.py"
 WHEEL_CASES = {
     "as-built": (0, None),
     "no-license": (1, "LICENSE"),
     "payload-byte": (1, BYTE_TARGET),
     "payload-mode": (1, MODE_TARGET),
+    "module-byte": (1, MODULE_TARGET),
+    "stamp-line": (1, STAMP_TARGET),
+    "extra-member": (1, EXTRA_TARGET),
+    "member-twice": (1, MODULE_TARGET),
 }
+
+#: The members a case's wheel holds a second time, as a build that lists a
+#: file twice leaves it. A dict of members cannot say it, so `write_wheel` does.
+WHEEL_TWICE = {"member-twice": (MODULE_TARGET,)}
 
 #: Every expression a run step may hold, and what the runner gives it.
 EXPRESSION = re.compile(r"\$\{\{\s*([A-Za-z_][\w.-]*)\s*\}\}")
@@ -227,6 +250,20 @@ OFFLINE_INDEX = "https://offline.invalid/simple"
 
 NEEDS_BASH = pytest.mark.skipif(shutil.which("bash") is None,
                                 reason="the package job's steps are bash")
+
+
+def has_gnu_stat() -> bool:
+    """Step 10 reads its link with `stat -c %i` and `sha256sum`: GNU's, and
+    not what macOS's userland has under those names."""
+    if shutil.which("stat") is None or shutil.which("sha256sum") is None:
+        return False
+    return subprocess.run(["stat", "-c", "%i", os.curdir], capture_output=True,
+                          check=False).returncode == 0
+
+
+NEEDS_GNU_STAT = pytest.mark.skipif(
+    not has_gnu_stat(),
+    reason="step 10 reads its link with GNU's `stat -c` and `sha256sum`")
 
 
 # --- reading the workflow -----------------------------------------------------
@@ -731,8 +768,16 @@ def built_members(head: Head) -> dict:
     return members
 
 
+def one_byte_changed(data: bytes) -> bytes:
+    """`data` with one bit of its middle byte flipped."""
+    changed = bytearray(data)
+    changed[len(changed) // 2] ^= 0x01
+    return bytes(changed)
+
+
 def case_members(head: Head, case: str) -> dict:
-    """The wheel as built, with what `case` changes."""
+    """The wheel as built, with what `case` changes. `member-twice` changes
+    nothing here: `WHEEL_TWICE` names what `write_wheel` writes again."""
     members = built_members(head)
     info = head.dist_info
     if case == "no-license":
@@ -743,22 +788,38 @@ def case_members(head: Head, case: str) -> dict:
         assert PAYLOAD + BYTE_TARGET in members, (
             f"{BYTE_TARGET} is no longer a payload file: pick another")
         data, mode = members[PAYLOAD + BYTE_TARGET]
-        changed = bytearray(data)
-        changed[len(changed) // 2] ^= 0x01
-        members[PAYLOAD + BYTE_TARGET] = (bytes(changed), mode)
+        members[PAYLOAD + BYTE_TARGET] = (one_byte_changed(data), mode)
     elif case == "payload-mode":
         assert members.get(PAYLOAD + MODE_TARGET, (b"", 0))[1] == 0o100755, (
             f"{MODE_TARGET} is no longer an executable payload file: pick "
             "another")
         members[PAYLOAD + MODE_TARGET] = (members[PAYLOAD + MODE_TARGET][0],
                                           0o100644)
+    elif case == "module-byte":
+        assert MODULE_TARGET in members, (
+            f"{MODULE_TARGET} is no longer a module: pick another")
+        data, mode = members[MODULE_TARGET]
+        members[MODULE_TARGET] = (one_byte_changed(data), mode)
+    elif case == "stamp-line":
+        data, mode = members[STAMP_TARGET]
+        members[STAMP_TARGET] = (
+            data + b"# a line the committed stamp does not have\n", mode)
+    elif case == "extra-member":
+        assert EXTRA_TARGET not in members, (
+            f"{EXTRA_TARGET} is HEAD's now: pick another")
+        members[EXTRA_TARGET] = (b"import os\n", 0o100644)
+    elif case in WHEEL_TWICE:
+        assert all(name in members for name in WHEEL_TWICE[case]), (
+            f"{WHEEL_TWICE[case]} are no longer wheel members: pick another")
     else:
         assert case == "as-built", case
     return members
 
 
-def write_wheel(path: Path, head: Head, members: dict) -> None:
-    """`members`, and the RECORD of them, as one zip at the commit's time."""
+def write_wheel(path: Path, head: Head, members: dict,
+                again: tuple = ()) -> None:
+    """`members`, and the RECORD of them, as one zip at the commit's time,
+    and then each member `again` names a second time."""
     when = datetime.fromtimestamp(max(head.epoch, 315532800), timezone.utc)
     record = []
     for name, (data, _) in members.items():
@@ -769,12 +830,16 @@ def write_wheel(path: Path, head: Head, members: dict) -> None:
     entries = dict(members)
     entries[head.dist_info + "RECORD"] = (
         ("\n".join(record) + "\n").encode("utf-8"), WRITTEN_MODE)
-    with zipfile.ZipFile(path, "w") as wheel:
-        for name, (data, mode) in entries.items():
-            info = zipfile.ZipInfo(name, when.timetuple()[:6])
-            info.external_attr = mode << 16
-            info.compress_type = zipfile.ZIP_DEFLATED
-            wheel.writestr(info, data)
+    written = list(entries.items()) + [(name, entries[name]) for name in again]
+    with warnings.catch_warnings():
+        # `zipfile` warns of a name it writes twice, and writes it.
+        warnings.simplefilter("ignore", UserWarning)
+        with zipfile.ZipFile(path, "w") as wheel:
+            for name, (data, mode) in written:
+                info = zipfile.ZipInfo(name, when.timetuple()[:6])
+                info.external_attr = mode << 16
+                info.compress_type = zipfile.ZIP_DEFLATED
+                wheel.writestr(info, data)
 
 
 def wheel_check_script(step: dict) -> tuple:
@@ -793,16 +858,18 @@ def wheel_check_script(step: dict) -> tuple:
             "\n".join(lines[start + 1:end]) + "\n")
 
 
-def run_wheel_check(workflow: dict, head: Head, root: Path, members: dict):
-    """Step 6, over the wheel `members` make, placed where step 5 leaves its
-    two builds: the finished process and its runner."""
+def run_wheel_check(workflow: dict, head: Head, root: Path, members: dict,
+                    again: tuple = ()):
+    """Step 6, over the wheel `members` make, with each member `again` names
+    written twice, placed where step 5 leaves its two builds: the finished
+    process and its runner."""
     job = package_job(workflow)
     step = job["steps"][locate(job)[6]]
     script, _ = wheel_check_script(step)
     runner = Runner(workflow, job, root)
     first = runner.temp / "a" / head.wheel_name
     first.parent.mkdir()
-    write_wheel(first, head, members)
+    write_wheel(first, head, members, again)
     (runner.temp / "b").mkdir()
     shutil.copyfile(first, runner.temp / "b" / head.wheel_name)
     return runner.run(step, script=script), runner
@@ -1014,9 +1081,12 @@ STEP_CHECKS = {
         ("a PATH first holding a gh and a curl that exit 1", "step",
          lambda text: all(re.search(p, text) for p in (
              r"\bgh\b", r"\bcurl\b", r"exit 1(?![0-9])", r"\bPATH="))),
-        ("the skip line, exactly", "step", has_all(*SKIP_LINE_PARTS)),
-        ("the count line, exactly", "step", has_all(*COUNT_LINE_PARTS)),
-        ("28 receipt rows", "step", has(r"\b28\b")),
+        # THESE THREE READ THE STEP'S WORDS, NOT WHAT IT ASSERTS: an `echo`
+        # or a `count=` assignment holds them whether or not a command looks
+        # for the line or compares the rows (#275). The run below holds that.
+        ("the skip line's words", "step", has_all(*SKIP_LINE_PARTS)),
+        ("the count line's words", "step", has_all(*COUNT_LINE_PARTS)),
+        ("the number 28", "step", has(r"\b28\b")),
     ),
     11: (
         (f"runs `{PYTEST_COMMAND}`", "step", runs_the_pytest_command),
@@ -1031,7 +1101,8 @@ STEP_CHECKS = {
                          ids=[f"step-{n}" for n in sorted(STEP_CHECKS)])
 def test_tests_yml_package_step_says_what_the_contract_says(workflow, number):
     """What contracts/workflows.md writes for each of steps 4 to 11, read
-    from the step itself. Steps 4, 6 and 11's report are also run, below."""
+    from the step itself. Steps 4, 6, 10 and 11's report are also run,
+    below, and step 10's lines and rows are held by that run alone."""
     job = package_job(workflow)
     found = locate(job)
     missing = [what for what, scope, check in STEP_CHECKS[number]
@@ -1143,20 +1214,27 @@ def test_tests_yml_package_wheel_check_refuses_a_wheel_that_is_not_the_commits(
         workflow, head, tmp_path, case):
     """Step 6 over the wheel as built with one thing wrong: no
     `licenses/LICENSE`, a payload file with one byte changed, or a payload
-    file that lost its execute bit. It exits 1, and what it prints beyond
-    what the wheel as built gives names the file that is wrong."""
+    file that lost its execute bit; and then what those three never reach
+    (#275): a module with a byte changed, a line added to the stamp, a
+    member nothing lists, and a member twice. It exits 1, and an `::error::`
+    line among what it prints beyond what the wheel as built gives names the
+    file that is wrong. It does not crash: a traceback names a file too."""
     built, built_runner = run_wheel_check(workflow, head, tmp_path / "built",
                                           built_members(head))
     assert built.returncode == 0, ("the wheel as built does not pass, so "
                                    "this case proves nothing:\n" + shown(built))
     proc, runner = run_wheel_check(workflow, head, tmp_path / "case",
-                                   case_members(head, case))
+                                   case_members(head, case),
+                                   WHEEL_TWICE.get(case, ()))
     code, name = WHEEL_CASES[case]
     assert proc.returncode == code, shown(proc)
+    assert "Traceback (most recent call last)" not in proc.stdout + proc.stderr, (
+        "the check crashed rather than name the problem:\n" + shown(proc))
     before = set(built_runner.lines(built))
     new = [line for line in runner.lines(proc) if line not in before]
-    assert any(name in line for line in new), (
-        f"the check refused, and named no {name}:\n" + shown(proc))
+    assert any(line.startswith("::error::") and name in line for line in new), (
+        f"the check refused, and no `::error::` line names {name}:\n"
+        + shown(proc))
 
 
 def junit_report(tests: int, skipped: int = 0, failures: int = 0,
@@ -1205,10 +1283,117 @@ def test_tests_yml_package_report_step_fails_on_any_skip_or_none_run(
     assert (proc.returncode == 0) is passes, shown(proc)
 
 
-def test_tests_yml_synthetic_wheels_are_wheel_md_s_members(head):
+#: THE TWO LINES `--install` PRINTS BESIDE PIPX'S LINK, as
+#: contracts/cli-output.md spells them: `{link}` is pipx's link and `{dir}`
+#: the directory it is in. Written out whole here, and not from
+#: `SKIP_LINE_PARTS` and `COUNT_LINE_PARTS`, which are only what a script's
+#: text must carry.
+INSTALL_SKIP_LINE = ("openRepoTools: left to pipx at {link} (a link into "
+                     "pipx's openrepotools environment); update it with "
+                     "`pipx upgrade openrepotools`, then run "
+                     "`openRepoTools --install` again")
+INSTALL_COUNT_LINE = "openRepoTools: 16 of 17 placed in {dir}, and 1 left to pipx"
+
+#: STEP 10's CASES (#275): each is the number of skip lines the run prints,
+#: of count lines, the receipt's rows and the lines in it that are no row, and
+#: the `::error::` text the step must print, or None where it must pass. A
+#: full install's 29 rows less pipx's link are 28, and a row is `name`,
+#: `destination`, `sha256` and `utc`, four fields by tabs. `{skip}` and
+#: `{count}` stand for the two lines as this run prints them.
+INSTALL_CASES = {
+    "as-printed": (1, 1, 28, 0, None),
+    "no-skip-line": (0, 1, 28, 0,
+                     "--install printed this line 0 times, not once: {skip}"),
+    "no-count-line": (1, 0, 28, 0,
+                      "--install printed this line 0 times, not once: {count}"),
+    "count-line-twice": (1, 2, 28, 0,
+                         "--install printed this line 2 times, not once: "
+                         "{count}"),
+    "27-rows": (1, 1, 27, 0,
+                "the receipt has 27 lines and 27 rows, not 28"),
+    "29-rows": (1, 1, 29, 0,
+                "the receipt has 29 lines and 29 rows, not 28"),
+    "28-rows-and-a-line-that-is-no-row": (
+        1, 1, 28, 1, "the receipt has 29 lines and 28 rows, not 28"),
+    "27-rows-and-a-line-that-is-no-row": (
+        1, 1, 27, 1, "the receipt has 28 lines and 27 rows, not 28"),
+}
+
+
+def stand_in_for_pipx_link(directory: Path, output: str, receipt: str) -> Path:
+    """A `/bin/sh` script that does what `--install`, run through pipx's
+    link, did: it prints `output`, and writes `receipt` under the `HOME` it
+    runs with, where `--install` keeps its own. Step 10 reaches it through a
+    link, as it reaches pipx's."""
+    directory.mkdir(parents=True)
+    printed, rows = directory / "output.txt", directory / "receipt.tsv"
+    printed.write_text(output, encoding="utf-8")
+    rows.write_text(receipt, encoding="utf-8")
+    script = directory / "openrepotools-stand-in"
+    script.write_text(
+        "#!/bin/sh\n"
+        f"cat {shlex.quote(str(printed))}\n"
+        'mkdir -p "$HOME/.local/share/openRepoTools"\n'
+        f"cp {shlex.quote(str(rows))} "
+        '"$HOME/.local/share/openRepoTools/installed.tsv"\n',
+        encoding="utf-8")
+    script.chmod(0o755)
+    return script
+
+
+@NEEDS_UPSTREAM
+@WINDOWS_SKIP
+@NEEDS_BASH
+@NEEDS_GNU_STAT
+@pytest.mark.parametrize("case", list(INSTALL_CASES))
+def test_tests_yml_package_offline_install_step_holds_its_two_lines_and_28_rows(
+        workflow, tmp_path, case):
+    """Step 10 run whole, offline, with a stand-in for pipx's link that
+    prints the lines a case gives it and writes the receipt it gives it
+    (#275). The step passes the skip line and the count line once each with
+    28 receipt rows, and refuses a run with no skip line, with no count line
+    or with it twice, and with a receipt of 27 rows, of 29, or of 28 rows and
+    a line that is no row. A refusal is exit 1 and an `::error::` line that
+    names what is wrong."""
+    skips, counts, rows, strays, error = INSTALL_CASES[case]
+    job = package_job(workflow)
+    step = job["steps"][locate(job)[10]]
+    runner = Runner(workflow, job, tmp_path / "run")
+    bin_dir = runner.temp / "pipx" / "bin"
+    link = bin_dir / "openRepoTools"
+    skip = INSTALL_SKIP_LINE.format(link=link)
+    count = INSTALL_COUNT_LINE.format(dir=bin_dir)
+    printed = (["openRepoTools: the run's other output"] + [skip] * skips
+               + [count] * counts)
+    receipt = ["\t".join((f"file-{n}", f"{bin_dir}/file-{n}",
+                          hashlib.sha256(f"file-{n}".encode()).hexdigest(),
+                          "2026-10-21T00:00:00Z"))
+               for n in range(rows)]
+    receipt += [f"a line that is no row, number {n}" for n in range(strays)]
+    stand_in = stand_in_for_pipx_link(
+        tmp_path / "stand-in", "".join(f"{line}\n" for line in printed),
+        "".join(f"{line}\n" for line in receipt))
+    bin_dir.mkdir(parents=True)
+    link.symlink_to(stand_in)
+    runner.env["PIPX_BIN_DIR"] = str(bin_dir)
+    proc = runner.run(step)
+    errors = [line for line in proc.stdout.splitlines()
+              if line.startswith("::error::")]
+    if error is None:
+        assert proc.returncode == 0 and not errors, shown(proc)
+        return
+    want = "::error::" + error.format(skip=skip, count=count)
+    assert proc.returncode == 1, shown(proc)
+    assert any(line.startswith(want) for line in errors), (
+        f"no `::error::` line says {want!r}:\n" + shown(proc))
+
+
+def test_tests_yml_synthetic_wheels_are_wheel_md_s_members(head, tmp_path):
     """The wheels above are the one contracts/wheel.md lists: HEAD's
     modules, the 24 payload files and the five `.dist-info` names, each
-    case differing from the wheel as built in its one member alone."""
+    case differing from the wheel as built in its one member alone, and the
+    one that writes a member twice in nothing but that member's second
+    entry."""
     built = built_members(head)
     info = head.dist_info
     assert len(head.payload) == 24, head.payload
@@ -1218,9 +1403,21 @@ def test_tests_yml_synthetic_wheels_are_wheel_md_s_members(head):
                    "licenses/LICENSE"]), "RECORD is added when written"
     changed = {"no-license": {info + "licenses/LICENSE", info + "METADATA"},
                "payload-byte": {PAYLOAD + BYTE_TARGET},
-               "payload-mode": {PAYLOAD + MODE_TARGET}}
+               "payload-mode": {PAYLOAD + MODE_TARGET},
+               "module-byte": {MODULE_TARGET},
+               "stamp-line": {STAMP_TARGET},
+               "extra-member": {EXTRA_TARGET},
+               "member-twice": set()}
+    assert sorted(changed) == sorted(set(WHEEL_CASES) - {"as-built"}), (
+        "a case of WHEEL_CASES has no entry here, or this has one it lacks")
     for case, names in changed.items():
         members = case_members(head, case)
         differ = {name for name in set(built) | set(members)
                   if built.get(name) != members.get(name)}
         assert differ == names, (case, differ)
+    for case, again in WHEEL_TWICE.items():
+        path = tmp_path / f"{case}.whl"
+        write_wheel(path, head, case_members(head, case), again)
+        with zipfile.ZipFile(path) as wheel:
+            listed = wheel.namelist()
+        assert all(listed.count(name) == 2 for name in again), (case, listed)

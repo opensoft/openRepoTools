@@ -272,9 +272,9 @@ jobs:
       #
       # It names every problem, then fails if there was one. INLINE, as the
       # release build's own check is (research R13), and
-      # `tests/test_tests_workflow.py` runs this heredoc on four wheels it
-      # makes from HEAD's blobs: the wheel as built, and three with one thing
-      # wrong.
+      # `tests/test_tests_workflow.py` runs this heredoc on the wheels it makes
+      # from HEAD's blobs: the wheel as built, and one for each way the check
+      # refuses a wheel.
       - name: the wheel holds this commit's files, byte for byte and mode for mode
         run: |
           set -euo pipefail
