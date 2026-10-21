@@ -6,7 +6,7 @@ resolves it. Text in angle brackets is filled in at run time. Everything else
 is literal, and two spaces mean two spaces.
 
 `die` prints a blank line and then `REFUSED: <text>` to stderr, and exits 2
-(`openRepoTools:88`). Every refusal below goes through it, except the one
+(`openRepoTools:88`). Every refusal below goes through it, except the two
 from the entry module.
 
 ## `--version`
@@ -76,6 +76,29 @@ So the line reads correctly for each of them.
 ```text
 REFUSED: openRepoTools needs bash, and there is no bash on this PATH. Nothing ran.
 ```
+
+## A `bash` on PATH that cannot be run (the entry module; stderr, exit 2)
+
+```text
+REFUSED: openRepoTools needs bash, and no bash on this PATH can be run (<why>). Nothing ran.
+```
+
+`<why>` is the exec error's `strerror`. The usual two are:
+
+- `Permission denied`, for a `bash` file with no execute bit, a directory on
+  `PATH` that cannot be searched, or a directory named `bash`;
+- `Exec format error`, for an executable file that is not a program.
+
+Another exec error gives its own `strerror`, such as `Too many levels of
+symbolic links` for a link that loops, or `Argument list too long`.
+
+- It is printed for every `OSError` except `FileNotFoundError` and
+  `NotADirectoryError`, which keep the no-bash line above. They keep it for a
+  `bash` whose `#!` interpreter or ELF loader is missing, and for a dangling
+  link named `bash`, though a `bash` is there (design.md Decision 3's named
+  limit).
+- It is one line, with no blank line before it.
+- A runnable `bash` later on `PATH` runs instead, and nothing is refused.
 
 ## `--install` with pipx's link
 
