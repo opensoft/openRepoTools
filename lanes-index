@@ -1896,7 +1896,7 @@ def inventory_digest(record: dict) -> str:
 def lane_generation(lane: str) -> tuple:
     """`(generation, None)` of a lane's lifecycle snapshot, asked of `lanes-edit.sh
     lane-state` - 0 where the lane has no snapshot or no control root here - or
-    `(None, why)` where the snapshot is there and could not be read."""
+    `(None, why)` where the snapshot could not be read."""
     proc = _helper_run(["lane-state", lane], 120, f"lane {lane}'s lifecycle snapshot")
     if proc.returncode in (1, 8):
         return 0, None
