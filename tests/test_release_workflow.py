@@ -4097,7 +4097,21 @@ HEADER_CARRIES = (
     # the ref step's fetch needs the code leg public
     "opensoft/openRepoTools-code STAYS PUBLIC: the ref step fetches the tag "
     "from it with no credentials, as the model does, and the migration "
-    "creates it public.")
+    "creates it public.",
+    # Brett Heap's acts as the header words them: each environment's
+    # settings, how little of them the build reads, and what the ruleset on
+    # the tags `v*` allows. spec.md, contracts/workflows.md and the proposal
+    # state the same settings, so a header sentence that changes here is one
+    # that changes there
+    "The build refuses every dispatch until both environments exist with a "
+    "required reviewer and the deployment limit, and no job reads more of "
+    "these acts than that.",
+    "each with brettheap as the required reviewer, self-review allowed, "
+    "administrators not bypassing, and a deployment limit of exactly one tag "
+    "rule, `v*`.",
+    "Only that a required reviewer is named (any, not brettheap in "
+    "particular) and the limit are checked here (FR-029).",
+    "only the admin role creates, moves or deletes one")
 
 
 @NEEDS_UPSTREAM
@@ -4118,8 +4132,10 @@ def test_release_header_carries_the_six_releasing_sections_in_order():
 def test_release_header_says_what_releasing_needs(phrase):
     """The procedure's commands verbatim, its approval step, the branch and
     tag policy's terms, the rehearsal branch, both repositories and both
-    environments, and the missing pypi.org publisher, the second line of
-    defence."""
+    environments, the missing pypi.org publisher, the second line of
+    defence, and Brett Heap's acts as the header words them: each
+    environment's settings, how little of them the build reads, and what the
+    tag ruleset allows."""
     assert phrase in header(), f"the RELEASING header never says {phrase!r}"
 
 
