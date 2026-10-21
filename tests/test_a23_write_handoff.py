@@ -170,7 +170,8 @@ def test_publish_handoff_prints_the_physical_file_and_keeps_its_mode(box: Box):
     assert stat.S_IMODE(real.stat().st_mode) == 0o640
     assert link.is_symlink()
     _no_temporary_beside(real)
-    assert box.head(c) == head and box.origin_head() == tip, "publish-handoff commits nothing"
+    assert box.head(c) == head, "publish-handoff commits nothing"
+    assert box.origin_head() == tip, "publish-handoff pushes nothing"
 
 
 def test_publish_handoff_refuses_a_handoff_that_changed_exit_7(box: Box):
@@ -268,11 +269,13 @@ def test_stamp_spliced_committed_pushed_with_lane_trailer(box: Box):
     assert f.read_text(encoding="utf-8") == stamped(HANDOFF)
     assert box.origin_file(HANDOFF_REL) == stamped(HANDOFF)
     msg = box.last_message()
-    assert msg[0] == SUBJECT and f"Lane: {LANE}" in msg, msg
+    assert msg[0] == SUBJECT, msg
+    assert f"Lane: {LANE}" in msg, msg
     assert box.git("--git-dir", str(box.origin), "show", "--name-only", "--format=", "main").split() == [HANDOFF_REL]
     assert result.stdout == _line(f)
     assert "pushed origin/main" in result.stderr
-    assert box.head(c) == box.origin_head() and box.unpublished(c) == []
+    assert box.head(c) == box.origin_head()
+    assert box.unpublished(c) == []
     _released(box, c)
 
 
@@ -292,7 +295,8 @@ def test_stamp_refused_by_S3_writes_nothing_prints_line(box: Box, row: str):
     before = box.snapshot(c)
     result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT, **extra)
     assert result.returncode == 2, result.stderr
-    assert words in result.stderr and "Nothing was written." in result.stderr
+    assert words in result.stderr
+    assert "Nothing was written." in result.stderr
     assert f"the stamp line it would have written under the handoff's header block: {STAMP}" in result.stderr
     assert result.stdout == ""
     assert box.snapshot(c) == before
@@ -318,11 +322,13 @@ def test_stamp_replays_on_new_content(box: Box, peer: str):
     assert result.returncode == 0, result.stderr
     assert "push refused (attempt 1 of 6)" in result.stderr
     published = box.origin_file(HANDOFF_REL)
-    assert published == stamped(base) and published.count(STAMP) == 1
+    assert published == stamped(base)
+    assert published.count(STAMP) == 1
     f = c / HANDOFF_REL
     assert result.stdout == _line(f), "one line: the last attempt's"
     assert box.subjects()[0] == SUBJECT
-    assert box.head(c) == box.origin_head() and box.unpublished(c) == []
+    assert box.head(c) == box.origin_head()
+    assert box.unpublished(c) == []
     _released(box, c)
 
 
@@ -336,9 +342,11 @@ def test_stamp_that_does_not_prove_out_writes_nothing(box: Box):
     tip = box.origin_head()
     result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT)
     assert result.returncode == 2, result.stderr
-    assert "did not prove out" in result.stderr and STAMP in result.stderr
+    assert "did not prove out" in result.stderr
+    assert STAMP in result.stderr
     assert (c / HANDOFF_REL).read_text(encoding="utf-8") == "one line and no newline"
-    assert box.origin_head() == tip and result.stdout == ""
+    assert box.origin_head() == tip
+    assert result.stdout == ""
     _released(box, c)
 
 
@@ -355,7 +363,8 @@ def test_stamp_over_an_uncommitted_change_to_the_handoff_is_refused(box: Box):
     assert result.returncode == 2, result.stderr
     assert f"these paths this write commits hold an uncommitted change: {HANDOFF_REL}" in result.stderr
     assert f.read_text(encoding="utf-8") == edited
-    assert box.origin_head() == tip and result.stdout == ""
+    assert box.origin_head() == tip
+    assert result.stdout == ""
     _released(box, c)
 
 
@@ -378,29 +387,47 @@ def test_prepend_written_committed(box: Box):
     assert f.read_text(encoding="utf-8") == prepended(HANDOFF)
     assert box.origin_file(HANDOFF_REL) == prepended(HANDOFF)
     msg = box.last_message()
-    assert msg[0] == subject and f"Lane: {LANE}" in msg
+    assert msg[0] == subject
+    assert f"Lane: {LANE}" in msg
     assert result.stdout == _line(f)
     assert box.unpublished(c) == []
     _released(box, c)
 
 
-def test_prepend_refused_by_S3_still_writes_file_no_commit(box: Box):
-    """R-A11-11: a swap is never left unwritten. S3 refuses the commit (a
-    foreign staged entry), the handoff is written all the same, nothing is
-    committed or pushed, S3's words are printed, and so is the path (2)."""
+def _written_uncommitted_under_S3(box: Box, mode: str) -> None:
+    """S3 refuses the commit (a foreign staged entry); the handoff is written
+    all the same, nothing is committed or pushed, S3's words are printed, and
+    so is the path (2)."""
     c = box.seam()
     f = c / HANDOFF_REL
+    if mode == "prepend":
+        args, after = ("--prepend", str(_block(box))), prepended(HANDOFF)
+    else:
+        args, after = ("--whole", str(_prepared(box)), "--expect-digest", sha(f)), "# the handoff, written whole\n"
     _staged_foreign(box, c)
     head, tip = box.head(c), box.origin_head()
-    result = box.write_handoff("--prepend", str(_block(box)), "--subject", "handoff: PAUSED")
+    result = box.write_handoff(*args, "--subject", "handoff: PAUSED")
     assert result.returncode == 2, result.stderr
     assert "staged entries this write did not make: handoffs/README.md" in result.stderr
     assert "the handoff is WRITTEN and NOT committed" in result.stderr
-    assert f.read_text(encoding="utf-8") == prepended(HANDOFF)
+    assert f.read_text(encoding="utf-8") == after
     assert result.stdout == _line(f)
-    assert box.head(c) == head and box.origin_head() == tip
+    assert box.head(c) == head
+    assert box.origin_head() == tip
     assert box.git("-C", str(c), "diff", "--cached", "--name-only").split() == ["handoffs/README.md"]
     _released(box, c)
+
+
+def test_prepend_refused_by_S3_still_writes_file_no_commit(box: Box):
+    """R-A11-11: a swap is never left unwritten, so S3's refusal leaves the
+    new top block written and uncommitted."""
+    _written_uncommitted_under_S3(box, "prepend")
+
+
+def test_whole_refused_by_S3_still_writes_file_no_commit(box: Box):
+    """The same for the skill's whole-file write (R-A11-11's path): the
+    prepared handoff is written, uncommitted, with S3's words and the path."""
+    _written_uncommitted_under_S3(box, "whole")
 
 
 # ------------------------------------------------- --whole
@@ -419,7 +446,8 @@ def test_whole_expect_digest_mismatch_exit_7_nothing_published(box: Box):
     assert result.returncode == 7, result.stderr
     assert "the handoff changed before publication; nothing was published" in result.stderr
     assert (c / HANDOFF_REL).read_text(encoding="utf-8") == HANDOFF
-    assert result.stdout == "" and box.origin_head() == tip
+    assert result.stdout == ""
+    assert box.origin_head() == tip
     _released(box, c)
 
 
@@ -524,7 +552,8 @@ def test_cell_in_another_repository_is_published_not_committed(box: Box):
     assert (other / "handoff.md").read_text(encoding="utf-8") == stamped(HANDOFF)
     assert box.git("-C", str(other), "rev-parse", "HEAD").strip() == other_head
     assert box.git("-C", str(other), "status", "--porcelain").split() == ["M", "handoff.md"]
-    assert box.head(c) == head and box.origin_head() == tip
+    assert box.head(c) == head
+    assert box.origin_head() == tip
     assert result.stdout == _line(other / "handoff.md")
     _released(box, c)
 
@@ -594,7 +623,8 @@ def test_restart_fence_refusals_write_nothing(box: Box, case: str):
     assert result.returncode == code, result.stderr
     assert words in result.stderr
     assert f.read_text(encoding="utf-8") == HANDOFF
-    assert result.stdout == "" and box.origin_head() == tip
+    assert result.stdout == ""
+    assert box.origin_head() == tip
     assert box.intent_field("prepared_digest") == "none", "nothing was reserved"
     _released(box, c)
 
@@ -715,9 +745,11 @@ def test_W_untouched(box: Box):
     assert whole.returncode == 0, whole.stderr
     assert box.origin_file(HANDOFF_REL) == "# the handoff, written whole\n"
     assert box.subjects()[:3] == ["handoff: whole", "handoff: PAUSED", SUBJECT]
-    assert box.w_state() == w_before and box.w_reflog() == reflog
+    assert box.w_state() == w_before
+    assert box.w_reflog() == reflog
     assert (box.w / HANDOFF_REL).read_text(encoding="utf-8") == HANDOFF
-    assert box.head(c) == box.origin_head() and box.unpublished(c) == []
+    assert box.head(c) == box.origin_head()
+    assert box.unpublished(c) == []
     _released(box, c)
 
 
@@ -737,11 +769,13 @@ def test_handoff_path_names_where_write_handoff_writes(tmp_path: Path, how: str)
         assert not c.exists(), "a read makes no checkout"
         made = box.helper("handoff-path", LANE, "--create")
         assert made.returncode == 0, made.stderr
-        assert made.stdout == f"{c / HANDOFF_REL}\n" and (c / HANDOFF_REL).is_file()
+        assert made.stdout == f"{c / HANDOFF_REL}\n"
+        assert (c / HANDOFF_REL).is_file()
     for argv in (("repoS4-9",), ("repoS4-9", "--create")):
         none = box.helper("handoff-path", *argv)
         assert none.returncode == 8, none.stderr
-        assert "no row for it in the register" in none.stderr and none.stdout == ""
+        assert "no row for it in the register" in none.stderr
+        assert none.stdout == ""
     assert not box.checkout("repoS4-9").exists(), "a lane with no row gets no checkout"
 
 
@@ -763,7 +797,8 @@ def test_usage_is_64_and_writes_nothing(box: Box, argv):
     before = box.snapshot(c)
     result = box.write_handoff(*argv)
     assert result.returncode == 64, result.stderr
-    assert box.snapshot(c) == before and box.net_ops() == []
+    assert box.snapshot(c) == before
+    assert box.net_ops() == []
 
 
 def test_write_handoff_for_a_lane_with_no_row_is_8(box: Box):
@@ -775,7 +810,8 @@ def test_write_handoff_for_a_lane_with_no_row_is_8(box: Box):
     assert result.returncode == 8, result.stderr
     assert "row names no handoff, so there is none to write" in result.stderr
     assert f"the stamp line it would have written under the handoff's header block: {STAMP}" in result.stderr
-    assert result.stdout == "" and box.snapshot(c) == before
+    assert result.stdout == ""
+    assert box.snapshot(c) == before
     _released(box, c)
 
 
@@ -812,7 +848,8 @@ def test_a_managed_marker_landing_inside_the_s3_window_is_refused(box: Box):
     assert "managed ledger" in result.stderr
     assert f.read_text(encoding="utf-8") == HANDOFF, "nothing written"
     assert "managed-owner: daemon-a23" in box.origin_register(), "the peer's row landed"
-    assert box.origin_file(HANDOFF_REL) == HANDOFF and result.stdout == ""
+    assert box.origin_file(HANDOFF_REL) == HANDOFF
+    assert result.stdout == ""
     assert box.net_ops()[0] == "fetch", "the marker landed at S3's fetch, after the first ask"
     _released(box, c)
 
@@ -834,7 +871,9 @@ def test_routed_write_handoff_for_a_lane_with_no_row_clones_nothing(box: Box, fe
         assert "LANES_NO_FETCH=1 is set" in result.stderr
     assert "was not cloned" in result.stderr
     assert not box.checkout("repoS4-9").exists(), "nothing is cloned for a lane with no row"
-    assert box.w_state() == w_before and box.origin_head() == tip and result.stdout == ""
+    assert box.w_state() == w_before
+    assert box.origin_head() == tip
+    assert result.stdout == ""
 
 
 # ------------------------------------------------- set-restart-intent --handoff
@@ -1055,4 +1094,79 @@ def test_another_repositorys_handoff_is_written_when_S3_refuses_this_checkout(bo
     assert other.read_text(encoding="utf-8") == after
     assert result.stdout == _line(other)
     assert box.snapshot(c) == before
+    _released(box, c)
+
+
+def test_target_names_the_file_written(box: Box):
+    """`--target`, the old callers' spelling, is the file written: a tracked
+    handoff that is not the row's is stamped, committed and pushed, and the
+    row's own handoff is left as it was, in the checkout and on origin."""
+    rel = "handoffs/repoS4/old-callers.md"
+    box.peer_pushes(rel, HANDOFF)
+    c = box.seam()
+    f = c / rel
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT, "--target", str(f))
+    assert result.returncode == 0, result.stderr
+    assert f.read_text(encoding="utf-8") == stamped(HANDOFF)
+    assert box.origin_file(rel) == stamped(HANDOFF)
+    assert (c / HANDOFF_REL).read_text(encoding="utf-8") == HANDOFF
+    assert box.origin_file(HANDOFF_REL) == HANDOFF
+    assert result.stdout == _line(f)
+    _released(box, c)
+
+
+def test_with_no_workspace_resolved_an_absolute_target_is_the_checkouts_own(tmp_path: Path):
+    """A5's rule for an unresolved W: with no workspace checkout, an absolute
+    path is only ever the checkout's own or another repository's — an empty W
+    would read every absolute path as inside it and strip its leading `/`.
+    Through the seam, a `--target` spelled absolute is written there."""
+    box = Box(tmp_path, route=False)
+    (box.home / ".agents" / "workspace.yaml").write_text(
+        f"repository: {box.origin}\npath: {box.root / 'no-such-workspace'}\n", encoding="utf-8")
+    c = box.seam()
+    f = c / HANDOFF_REL
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT, "--target", str(f))
+    assert result.returncode == 0, result.stderr
+    assert f.read_text(encoding="utf-8") == stamped(HANDOFF)
+    assert box.origin_file(HANDOFF_REL) == stamped(HANDOFF)
+    assert result.stdout == _line(f)
+    _released(box, c)
+
+
+def test_a_push_that_cannot_be_confirmed_is_3_and_its_line_printed(box: Box):
+    """S4's read-back: the push lands and the fetch that would confirm it
+    fails. 3, `pushed, not confirmed: <sha>`, never the success line; the
+    handoff is written, its line printed (A13), and origin does hold it."""
+    c = box.seam()
+    f = c / HANDOFF_REL
+    mark = shlex.quote(str(box.root / "pushed"))
+    box.use_net(f'[ "$1" = push ] && {{ touch {mark}; exit 0; }}\n'
+                f'[ "$1" = fetch ] && [ -e {mark} ] && {{ echo "fatal: no read-back" >&2; exit 128; }}\n'
+                "exit 0\n")
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT)
+    assert result.returncode == 3, result.stderr
+    sent = box.head(c)
+    assert f"pushed, not confirmed: {sent}" in result.stderr
+    assert "pushed origin/main (attempt" not in result.stderr, "never the success line"
+    assert box.origin_head() == sent, "it did land: 3 never says it did not"
+    assert f.read_text(encoding="utf-8") == stamped(HANDOFF)
+    assert result.stdout == _line(f)
+    _released(box, c)
+
+
+def test_with_LANES_NO_GIT_the_handoff_is_written_and_nothing_committed(box: Box):
+    """`LANES_NO_GIT=1`: the handoff is written and proven as ever, and no git
+    act follows — no fetch, no commit, no push. 0, said, its line printed."""
+    c = box.seam()
+    f = c / HANDOFF_REL
+    box.use_net()
+    head, tip = box.head(c), box.origin_head()
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT, LANES_NO_GIT="1")
+    assert result.returncode == 0, result.stderr
+    assert "LANES_NO_GIT=1 — not committing" in result.stderr
+    assert f.read_text(encoding="utf-8") == stamped(HANDOFF)
+    assert result.stdout == _line(f)
+    assert box.head(c) == head
+    assert box.origin_head() == tip
+    assert box.net_ops() == []
     _released(box, c)
