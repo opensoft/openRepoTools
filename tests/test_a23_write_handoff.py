@@ -786,3 +786,32 @@ def test_a_block_with_no_last_newline_is_refused(box: Box):
     result = box.write_handoff("--prepend", str(block), "--subject", "handoff: PAUSED")
     assert result.returncode == 64, result.stderr
     assert (c / HANDOFF_REL).read_text(encoding="utf-8") == HANDOFF
+
+
+# ------------------------------------------------- the seam, asked on S3's tip (A28)
+
+def test_a_managed_marker_landing_inside_the_s3_window_is_refused(box: Box):
+    """The managed seam is asked before the lock on this checkout's
+    origin/main as it last stood, and AGAIN on what S3 fetched: a peer's row
+    carrying managed-owner vocabulary, landed at the moment of S3's fetch, is
+    read, and the stamp is refused with nothing written."""
+    c = box.seam()
+    f = c / HANDOFF_REL
+    box.peer_prepares(REGISTER, f"| handoffs/repoS4/{LANE}.md | LIVE · seeded |",
+                      f"| handoffs/repoS4/{LANE}.md | LIVE · managed-owner: daemon-a23 |",
+                      "a peer's row names a managed owner")
+    peer = shlex.quote(str(box.peer))
+    count = shlex.quote(str(box.count))
+    box.use_net('[ "$1" = fetch ] || exit 0\n'
+                f'[ -e {count} ] && exit 0\n'
+                f"echo 1 > {count}\n"
+                f"git -C {peer} push -q origin main\n"
+                "exit 0\n")
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT)
+    assert result.returncode in (1, 2), result.stderr
+    assert "managed ledger" in result.stderr
+    assert f.read_text(encoding="utf-8") == HANDOFF, "nothing written"
+    assert "managed-owner: daemon-a23" in box.origin_register(), "the peer's row landed"
+    assert box.origin_file(HANDOFF_REL) == HANDOFF and result.stdout == ""
+    assert box.net_ops()[0] == "fetch", "the marker landed at S3's fetch, after the first ask"
+    _released(box, c)

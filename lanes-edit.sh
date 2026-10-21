@@ -19096,6 +19096,11 @@ EOF
     whf_cs="$(checkout_sync write-handoff "$lane" write && printf 'ok%s' "$CS_NO_ORIGIN_BRANCH")" || whf_s3=$?
     if [ "$whf_s3" = 0 ]; then
       CS_NO_ORIGIN_BRANCH="${whf_cs##*ok}"; cs_flush; LOG_SYNC_FETCH=yes
+      # THE SEAM ASKED AGAIN, ON WHAT S3 JUST FETCHED (the pre-review of 1b,
+      # MUST 1's shape): the ask before the lock read this checkout's
+      # origin/$LANES_BRANCH as it last stood, and a managed-owner marker that
+      # landed since would otherwise go unread. A refusal here writes nothing.
+      managed_seam_refuse "$lane" "write-handoff"
     fi
     # ---- 2. the target, translated.
     if [ -n "$whf_target" ]; then whf_cell="$whf_target"; else whf_cell="$(handoff_of_lane "$lane" 2>/dev/null || :)"; fi
