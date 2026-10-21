@@ -2056,6 +2056,23 @@ place_by_rename() {   # <staged source> <target> <mode> <what a refusal adds>
 		die "$target is a directory, so nothing was placed there: \`mv\` would have put the file inside it.
     $rest"
 	fi
+	# A LINK AT THE TARGET IS REFUSED HERE TOO, AS THE LAST QUESTION BEFORE THE
+	# RENAME (#257). Every planner refuses a link at every target, so a link
+	# here appeared after planning — a `pipx install` that finished mid-run puts
+	# one at `<dir>/openRepoTools` — and `mv` would replace it with a regular
+	# file: pipx's command gone until the next `pipx install` or `pipx upgrade`.
+	# It is asked with a builtin, so nothing runs between this test and the
+	# rename but `mv` starting. A link made in that instant is still replaced:
+	# a rename takes whatever is at its destination, and no `mv` this file can
+	# count on refuses a link there. The refusal names the link and prints no
+	# `rm`, because it may be pipx's and the only `openRepoTools` that can run
+	# `--install` (ADV3); the run it asks for asks about it afresh.
+	if [ -L "$target" ]; then
+		rm -f -- "$tmp"
+		PLACING=""
+		die "$target is a symlink to $(readlink -- "$target" 2>/dev/null || printf '<unreadable>') now, and was not one when this run planned, so nothing was placed there and the link is left as it was: \`mv\` would have replaced it with a regular file. Run \`openRepoTools --install\` again, and it asks about $target afresh.
+    $rest"
+	fi
 	mv -f -- "$tmp" "$target" ||
 		{ rm -f -- "$tmp"; PLACING=""; die "could not move the new $target into place, so what was there is untouched.
     $rest"; }
@@ -2100,12 +2117,28 @@ install_commands() {
 	for name in "${INSTALLABLES[@]}"; do
 		source="$STAGED/$name"
 		target="$dir/$name"
-		# PIPX'S LINK IS LEFT TO PIPX (#228, FR-016), as `plan_install_targets`
-		# decided: nothing is placed over it or through it, it is not counted,
-		# and its line says what updates it.
-		if [ -n "$PIPX_LINK" ] && [ "$target" = "$PIPX_LINK" ]; then
-			say "openRepoTools: left to pipx at $PIPX_LINK (a link into pipx's openrepotools environment); update it with \`pipx upgrade openrepotools\`, then run \`openRepoTools --install\` again"
-			continue
+		# PIPX'S LINK IS LEFT TO PIPX (#228, FR-016): nothing is placed over it
+		# or through it, it is not counted, and its line says what updates it.
+		#
+		# IT IS ASKED AGAIN AT ITS OWN TURN (#257), not taken from what
+		# `plan_install_targets` found. A `pipx install` that finishes between
+		# the two puts its link at a target this run planned to place, and the
+		# rename would replace it with a regular file. So the target is left to
+		# pipx when it is pipx's link NOW, and the match sets what the count line
+		# reads; and a target planning left to pipx that is not pipx's link now
+		# has changed since planning, which refuses, touching nothing at it. Any
+		# other link is refused by `place_by_rename`, at the last instant before
+		# the rename that would replace it.
+		if [ "$name" = openRepoTools ]; then
+			if pipx_link_match "$target"; then
+				say "openRepoTools: left to pipx at $PIPX_LINK (a link into pipx's openrepotools environment); update it with \`pipx upgrade openrepotools\`, then run \`openRepoTools --install\` again"
+				continue
+			fi
+			if [ -n "$PIPX_LINK" ]; then
+				die "$target was pipx's link when this run planned, and is not now, so nothing was placed there and what is there now is left as it was. Run \`openRepoTools --install\` again, and it asks about $target afresh.
+    Whatever the lines above report is placed; the skills, the command files and the
+    hook entries are not placed at all."
+			fi
 		fi
 		if [ -e "$target" ] && cmp -s "$source" "$target"; then
 			# THE BYTES WERE RIGHT, WHICH IS NOT THE SAME AS NOTHING TO DO
