@@ -527,9 +527,11 @@
 #   6  git add or commit failed — or, AMENDMENT 23 S4, the commit is KEPT ON
 #      HEAD AND NAMED (sha, subject, `git show`): origin moved under six
 #      attempts (the bound, ratified choices 4 and 5), a replay's
-#      `reset --keep` refused over an uncommitted change, or a push (a
-#      write's, or the publish act's) refused with origin unmoved, which
-#      no replay can mend. Every later write from that
+#      `reset --keep` refused over an uncommitted change, a commit another
+#      writer made on top of this one in the checkout before the replay (the
+#      reset would drop it too), or a push (a write's, or the publish act's)
+#      refused with origin unmoved, which no replay can mend. Every later
+#      write from that
 #      checkout refuses under S3 until the lane publishes or archives it
 #   7  ANOTHER ACT GOT THERE FIRST, and this one wrote nothing. `claim`:
 #      CLAIM-LOST, another lane's claim landed on main first.
@@ -2852,6 +2854,19 @@ cp_not_confirmed() {   # <sha> <subject> <why>
 # and named, and every later write from this checkout refuses under S3 until
 # the lane publishes or archives it (ratified choices 4 and 5).
 cp_replay() {   # <sha> <subject>
+  # THE COMMIT DROPPED IS THIS WRITE'S AND NO OTHER (rv1b's pre-review of
+  # slice 1b, MUST 4). Until slices 2b and 3, lane-start's stamp, lane-handoff's
+  # commit and the skill's commit are made in the same checkout with no lock,
+  # so one can land on top of this write's commit while its push is in flight.
+  # Either reset below would then drop that commit too, and say nothing. So
+  # HEAD must still be this write's commit, or both are kept on HEAD and named.
+  cr_head="$(git -C "$LANES_REPO" rev-parse -q --verify HEAD 2>/dev/null || :)"
+  if [ "$cr_head" != "$1" ]; then
+    note "HEAD is ${cr_head:-unreadable}, not this write's commit $1: another commit was made on top of it in this checkout while its push was in flight, and dropping this write's commit to replay it would drop that one too."
+    note "look at both: git -C $LANES_REPO log --oneline $1^..HEAD"
+    note "every later write from this checkout refuses (S3's unpushed row) until they are published — LANES_LANE=<lane> $SELF commit \"<what they are>\", the publish act — or archived (S6.3)."
+    die "the push was refused because origin/$LANES_BRANCH moved, and this write's commit is no longer HEAD, so it is not replayed: it and the commit on top of it are kept on HEAD (Amendment 23 S4): $1 $2" 6
+  fi
   if [ "$CP_ATTEMPT" -ge 6 ]; then
     note "origin/$LANES_BRANCH moved under this write six times (Amendment 23 S4, ratified choice 4)."
     note "look at it: git -C $LANES_REPO show $1"

@@ -630,3 +630,36 @@ def test_no_sweep_is_still_accepted(box: Box):
     assert result.returncode == 0, result.stderr
     assert _set("LIVE · not swept") in box.origin_register()
     _settled(box, c)
+
+# ------------------------------------- the replay's reset (rv1b's pre-review)
+
+def test_a_commit_made_on_top_before_the_replay_is_kept_exit_6(box: Box):
+    """MUST 4 of rv1b's pre-review: until slices 2b and 3, lane-start's
+    stamp, lane-handoff's commit and the skill's commit are made in the same
+    checkout with no lock. One landing on top of this write's commit while its
+    push is in flight was dropped by the replay's `reset --keep`, with exit 0
+    and nothing said. Now the replay asks HEAD first: both commits are kept
+    on HEAD and named (6), and nothing is dropped."""
+    c = box.seam()
+    peer = shlex.quote(str(box.peer))
+    cq = shlex.quote(str(c))
+    count = shlex.quote(str(box.root / "push.count"))
+    box.use_net(
+        '[ "$1" = push ] || exit 0' + "\n" +
+        f"[ -e {count} ] && exit 0" + "\n" +
+        f"echo 1 > {count}" + "\n" +
+        f"git -C {peer} commit -q --allow-empty -m 'a peer lands first'" + "\n" +
+        f"git -C {peer} push -q origin main" + "\n" +
+        f"printf 'stamp' > {cq}/handoffs/stamp.md" + "\n" +
+        f"git -C {cq} add -- handoffs/stamp.md" + "\n" +
+        f"git -C {cq} commit -q -m 'handoff(repoS4-2@Eagle): a stamp from an unlocked writer' -- handoffs/stamp.md" + "\n" +
+        "exit 0" + "\n")
+    result = box.helper("set-row-state", LANE, "LIVE · the write under it")
+    assert result.returncode == 6, result.stderr
+    assert "is no longer HEAD, so it is not replayed" in result.stderr
+    assert "push refused (attempt 1 of 6)" not in result.stderr, "no reset was made"
+    assert box.subject(c) == "handoff(repoS4-2@Eagle): a stamp from an unlocked writer"
+    assert box.subject(c, "HEAD~1").startswith(f"LANES({LANE}@"), "this write's commit is under it"
+    assert (c / "handoffs" / "stamp.md").is_file(), "the other writer's file is still there"
+    assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the publish act"
+    _settled(box, c)
