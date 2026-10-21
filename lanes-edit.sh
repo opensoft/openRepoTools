@@ -13508,6 +13508,14 @@ lane_state_word_ok() {   # <word>
 # of the one ancestor a lookup stops at. Where the answer is 0,
 # `LOOKUP_BLOCKED_WHY` says where, in the words every reader below prints; call
 # this directly, never inside `$( )`, or that is lost.
+#
+# ITS LIMIT (#291's review, NIT-4): the rule reads MODE BITS. A denial they do
+# not show — macOS TCC's EPERM under a protected folder such as `~/Documents`,
+# a Linux security module, a FUSE mount without `allow_other` — leaves the
+# deepest name that is there looking searchable, so the name below it still
+# reads as absent (1): #291's failure by another route. Telling the two apart
+# needs the errno of the stat that failed, and none of the shell's tests
+# reports one.
 LOOKUP_BLOCKED_WHY=""
 lookup_blocked() {   # <a path the caller found not there>
   lkb_x="${1-}"; LOOKUP_BLOCKED_WHY=""
