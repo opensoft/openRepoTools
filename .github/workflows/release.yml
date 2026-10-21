@@ -271,7 +271,10 @@ env:
 jobs:
   build:
     name: build and verify
-    runs-on: ubuntu-latest
+    # EVERY UBUNTU RUNNER IS ON 24.04: `ubuntu-latest` became Ubuntu 26.04 on
+    # 2026-10-21. There setup-python has no Python 3.9 and the `[host]` case of
+    # the TERM-ignoring kill test fails. Pinned until 26.04 support is decided.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read  # the checkout and its submodule, the tag, and the forge's compare and tree listing
@@ -1037,7 +1040,7 @@ jobs:
     # (their deployment limit is the tags v*). With no status function in
     # it, `if:` also requires the build to have succeeded.
     if: startsWith(github.ref, 'refs/tags/v') && needs.build.outputs.to-testpypi == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment:
       name: testpypi
@@ -1259,11 +1262,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             python: '3.x'
           - os: macos-latest
             python: '3.x'
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             python: '3.9'
     env:
       WHEEL: ${{ needs.build.outputs.wheel }}
@@ -1562,7 +1565,7 @@ jobs:
     # opensoft/openRepoTools-code alone (FR-048), so in an rc rehearsal
     # this job is skipped and never asks for the `pypi` approval.
     if: startsWith(github.ref, 'refs/tags/v') && needs.build.outputs.to-pypi == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment:
       name: pypi

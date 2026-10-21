@@ -277,8 +277,10 @@ this run's approvals, and `contents` for the tag, read again.
 - It needs `build` and `testpypi`. It runs on a tag after `testpypi`
   succeeded, and on a branch when `testpypi` was skipped. This is the
   model's condition.
-- The matrix is `ubuntu-latest` on `3.x`, `macos-latest` on `3.x`, and
-  `ubuntu-latest` on `3.9`. There is no Windows leg.
+- The matrix is `ubuntu-24.04` on `3.x`, `macos-latest` on `3.x`, and
+  `ubuntu-24.04` on `3.9`. There is no Windows leg. The ubuntu legs are
+  pinned because `ubuntu-latest` became Ubuntu 26.04 on 2026-10-21, where
+  setup-python has no Python `3.9`.
 - `PIP_INDEX_URL` is PyPI's, as the model has it.
 
 The steps:
@@ -371,8 +373,10 @@ These are the model's grants (`release.yml:1133-1136` at v1.1.0).
   version and `run:` commands. These are asserted from the file's text, not
   from history, because CI checks out one commit at `fetch-depth: 1`. The
   pull request's diff review confirms the rest of "unchanged".
-- The `package` job runs on `ubuntu-latest` with Python `3.9` and
-  `submodules: true`, and carries steps 4 to 11 in order.
+- The `package` job runs on `ubuntu-24.04` with Python `3.9` and
+  `submodules: true`, and carries steps 4 to 11 in order. The runner is
+  pinned because `ubuntu-latest` became Ubuntu 26.04 on 2026-10-21, where
+  setup-python has no Python `3.9`.
 - Its `tomli` comes from the build lock's own entry, and the job holds no
   `--hash` of its own.
 - Its wheel-check heredoc (step 6) is run on the same four synthetic wheels
