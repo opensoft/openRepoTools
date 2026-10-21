@@ -815,3 +815,23 @@ def test_a_managed_marker_landing_inside_the_s3_window_is_refused(box: Box):
     assert box.origin_file(HANDOFF_REL) == HANDOFF and result.stdout == ""
     assert box.net_ops()[0] == "fetch", "the marker landed at S3's fetch, after the first ask"
     _released(box, c)
+
+
+# ------------------------------------------------- a lane with no row, routed (A23)
+
+@pytest.mark.parametrize("fetch", ["fetched", "no-fetch"])
+def test_routed_write_handoff_for_a_lane_with_no_row_clones_nothing(box: Box, fetch: str):
+    """R4-1's rule for this verb: routed, a lane with no row has no handoff,
+    and it is refused (2) before its checkout is cloned — after one fetch of
+    W, or at once under `LANES_NO_FETCH=1`, which a writer cannot run on."""
+    extra = {"LANES_NO_FETCH": "1"} if fetch == "no-fetch" else {}
+    w_before, tip = box.w_state(), box.origin_head()
+    result = box.helper("write-handoff", "repoS4-9", "--stamp", STAMP, "--subject", SUBJECT, **extra)
+    assert result.returncode == 2, result.stderr
+    if fetch == "fetched":
+        assert "writes the handoff that lane's row names: there is none to write" in result.stderr
+    else:
+        assert "LANES_NO_FETCH=1 is set" in result.stderr
+    assert "was not cloned" in result.stderr
+    assert not box.checkout("repoS4-9").exists(), "nothing is cloned for a lane with no row"
+    assert box.w_state() == w_before and box.origin_head() == tip and result.stdout == ""
