@@ -542,7 +542,11 @@
 #      item 4e). And `lane-state` spends it for a snapshot of this schema that
 #      opens and is not a WHOLE record — cut short, or a key missing or out of
 #      shape (#115): nothing can be read out of it as a snapshot, so it is
-#      the same answer, and the message says which of the two it is.
+#      the same answer, and the message says which of the two it is. Both
+#      spend it, too, where the record could not even be LOOKED FOR (#291): a
+#      control root, or a directory above it, that this process cannot search
+#      — or a link on the way it cannot follow — leaves stat as silent as a
+#      name that is gone, and the message says so rather than "is there".
 #
 # --no-sweep (DEFAULT, added 2026-09-09 after 0d84d34/a1f2438 swept another
 #   lane's uncommitted hand edit into an unrelated commit): every mutating
@@ -13482,8 +13486,58 @@ lane_state_word_ok() {   # <word>
   return 1
 }
 
+# A NAME THAT IS NOT THERE IS ABSENT ONLY WHERE THE LOOKUP THAT SAYS SO COULD
+# BE MADE (opensoft/openRepoTools#291, the review of #289's SHOULD-4). `[ -d ]`,
+# `[ -e ]`, `[ -r ]` and `[ -L ]` are all false for a path under a directory
+# this process may not SEARCH: stat fails there with EACCES exactly as it fails
+# with ENOENT for a name that is gone, and none of the shell's tests tells the
+# two apart. So a lane whose `.lane-state` was mode 000 read as a lane with no
+# trees and no snapshot — `lane-trees` and `lane-state` answered 8, the listing
+# left the lane out, and `lanes-index sync` removed its rows — and a recorded
+# `dir` whose parent could not be looked for fell to the next rung's root. The
+# read that failed was taken for the answer (R22, Amendment 7(d)).
+#
+# So the walk goes up from the path to the deepest name that IS there. A
+# directory this process can search has answered for the name below it, and a
+# name that is not a directory has no name below it: the absence is
+# established, 1. A directory that cannot be searched has not answered (0), and
+# nor has a link that cannot be followed (0): its target is gone or is under a
+# directory that cannot be searched, and stat cannot tell those two apart
+# either. `-x` and not `-r`, because a lookup needs search permission alone.
+# It is `lane_restart_root_ok`'s rule (unknown ancestry is never absent), asked
+# of the one ancestor a lookup stops at. Where the answer is 0,
+# `LOOKUP_BLOCKED_WHY` says where, in the words every reader below prints; call
+# this directly, never inside `$( )`, or that is lost.
+LOOKUP_BLOCKED_WHY=""
+lookup_blocked() {   # <a path the caller found not there>
+  lkb_x="${1-}"; LOOKUP_BLOCKED_WHY=""
+  [ -n "$lkb_x" ] || return 1
+  while :; do
+    if [ -e "$lkb_x" ]; then
+      if [ -d "$lkb_x" ] && [ ! -x "$lkb_x" ]; then
+        LOOKUP_BLOCKED_WHY="the directory $lkb_x cannot be searched"
+        return 0
+      fi
+      return 1
+    fi
+    if [ -L "$lkb_x" ]; then
+      LOOKUP_BLOCKED_WHY="$lkb_x is a symbolic link that cannot be followed"
+      return 0
+    fi
+    case "$lkb_x" in
+      /|.) return 1 ;;
+      */*) lkb_x="${lkb_x%/*}"; [ -n "$lkb_x" ] || lkb_x=/ ;;
+      *)   lkb_x=. ;;
+    esac
+  done
+}
+
 # THE CONTROL ROOT — the three rungs above, in order. 0 with the path (which
-# need not exist yet), 8 where no rung answers.
+# need not exist yet), 8 where no rung answers. A rung is passed over only where
+# its directory is established absent (#291): where whether it is there could
+# not be looked for, ITS root is the answer — every read under it then meets the
+# same directory nobody can search and says so, and every write fails there —
+# and never the next rung's, a different root where nothing of this lane's is.
 lane_control_root() {   # <lane> [<a payload that may carry `dir`>]
   lcr_lane="${1-}"; lcr_pay="${2-}"; lcr_dir=""; lcr_par=""
   [ -n "$lcr_lane" ] || return 8
@@ -13499,13 +13553,17 @@ lane_control_root() {   # <lane> [<a payload that may carry `dir`>]
     /*) lcr_par="${lcr_dir%/*}" ;;
     *)  lcr_par="" ;;
   esac
-  if [ -n "$lcr_par" ] && [ -d "$lcr_par" ]; then
-    printf '%s/.lane-state/%s\n' "$lcr_par" "$lcr_lane"
-    return 0
+  if [ -n "$lcr_par" ]; then
+    if [ -d "$lcr_par" ] || lookup_blocked "$lcr_par"; then
+      printf '%s/.lane-state/%s\n' "$lcr_par" "$lcr_lane"
+      return 0
+    fi
   fi
-  if [ -n "${PROJECTS_ROOT:-}" ] && [ -d "$PROJECTS_ROOT" ]; then
-    printf '%s/.lane-state/%s\n' "${PROJECTS_ROOT%/}" "$lcr_lane"
-    return 0
+  if [ -n "${PROJECTS_ROOT:-}" ]; then
+    if [ -d "$PROJECTS_ROOT" ] || lookup_blocked "$PROJECTS_ROOT"; then
+      printf '%s/.lane-state/%s\n' "${PROJECTS_ROOT%/}" "$lcr_lane"
+      return 0
+    fi
   fi
   return 8
 }
@@ -13683,7 +13741,8 @@ lane_op_id() {
 # here parses with one `awk`. 0 with the fields, 8 where the lane has no
 # snapshot at all (the pre-cutover lane, and not a failure), 10 where a snapshot
 # IS there and could not be read — or is of this schema and not a whole record
-# (#115) — 1 where the control root could not be derived.
+# (#115), or could not even be looked for (#291, `lookup_blocked`) — 1 where
+# the control root could not be derived.
 #
 # THE 10 IS THE POINT OF THIS ROUND (Copilot round 6 on openRepoTools#97, where
 # it was 9 — main's #61 has since spent 9 on `claim`, so this one moved). A bare
@@ -13711,6 +13770,9 @@ lane_state_read() {   # <lane> [<a payload that may carry `dir`>]
   lsr_f="$lsr_root/lane-state.yaml"
   if [ ! -r "$lsr_f" ]; then
     if [ -e "$lsr_f" ] || [ -L "$lsr_f" ]; then return 10; fi
+    # AND ONE NOBODY COULD LOOK FOR IS NOT AN ABSENT ONE (#291): its control
+    # root, or a directory above it, cannot be searched.
+    if lookup_blocked "$lsr_f"; then return 10; fi
     return 8
   fi
   # AN UNKNOWN SCHEMA FAILS CLOSED (design decision: "conservative fail-closed
@@ -13990,7 +14052,9 @@ lane_tree_put() {   # <root> <lane> <path> <checkout> <branch> <head> <upstream>
 # EVERY RECORDED TREE, ONE PER LINE, US-separated:
 #   <id><US><path><US><branch><US><head><US><upstream><US><dirty><US><unpushed><US><writer><US><observed><US><checkout><US><generation><US><operation><US><schema>
 # 0 with rows, 8 with none, 1 where no control root could be derived, 10 where
-# the `trees` directory is there and cannot be listed.
+# the `trees` directory is there and cannot be listed — or could not even be
+# looked for, its control root or a directory above it being one this process
+# cannot search (#291).
 #
 # THAT 10 IS NOT AN 8 (#157 item 4e). A directory this process may not read or
 # search yields an empty glob, which read as a lane that recorded no tree — the
@@ -14022,7 +14086,10 @@ lane_trees_list() {   # <lane> [<a payload that may carry `dir`>]
   ltl_root=""; ltl_rc=0; ltl_n=0
   ltl_root="$(lane_control_root "${1-}" "${2-}")" || ltl_rc=$?
   [ "$ltl_rc" = 0 ] || return 1
-  [ -d "$ltl_root/trees" ] || return 8
+  if [ ! -d "$ltl_root/trees" ]; then
+    if lookup_blocked "$ltl_root/trees"; then return 10; fi
+    return 8
+  fi
   [ -r "$ltl_root/trees" ] && [ -x "$ltl_root/trees" ] || return 10
   for ltl_f in "$ltl_root"/trees/*.yaml; do
     [ -e "$ltl_f" ] || [ -L "$ltl_f" ] || continue
@@ -14259,7 +14326,7 @@ lane_reconcile() {   # <lane>
   fi
 
   # 1. THE SNAPSHOT.
-  lrc_state=""; lrc_gen=""; lrc_op=""; lrc_owner=""; lrc_upd=""
+  lrc_state=""; lrc_gen=""; lrc_op=""; lrc_owner=""; lrc_upd=""; lrc_sblk=""
   lrc_snap=""; lrc_srrc=0
   lrc_snap="$(lane_state_read "$lrc_lane")" || lrc_srrc=$?
   if [ "$lrc_srrc" = 0 ]; then
@@ -14287,6 +14354,11 @@ lane_reconcile() {   # <lane>
     if [ "$lrc_srrc" = 10 ] && [ -r "$lrc_root/lane-state.yaml" ] \
        && ! lane_sidecar_schema_ok "$lrc_root/lane-state.yaml"; then
       lrc_state=MALFORMED; lrc_swhy="$LSS_WHY"
+    fi
+    # AND ONE NOBODY COULD LOOK FOR (#291) is never said to be there.
+    if [ "$lrc_srrc" = 10 ] && [ ! -e "$lrc_root/lane-state.yaml" ] \
+       && [ ! -L "$lrc_root/lane-state.yaml" ] && lookup_blocked "$lrc_root/lane-state.yaml"; then
+      lrc_sblk="$LOOKUP_BLOCKED_WHY"
     fi
   fi
   printf 'ROOT%s%s\n' "$US" "$lrc_root"
@@ -14723,7 +14795,8 @@ LRC_PAIRED
       SWAPPED0)   lrc_v=inconsistent;    lrc_why="the lane is recorded SWAPPED and a holder is LIVE: a swapped lane has no holder, so one of the two is wrong and neither is overwritten here" ;;
       CLOSED8)    lrc_v=closed;          lrc_why="the lane is closed" ;;
       CLOSED0)    lrc_v=inconsistent;    lrc_why="the lane is recorded CLOSED and a holder is LIVE" ;;
-      UNREADABLE*) lrc_v=indeterminate;  lrc_why="this lane's lifecycle snapshot at $lrc_root/lane-state.yaml IS THERE and could not be read, so where its session stopped is NOT established — which is not the same as a lane that has none, and is no clearance to relaunch anything (R22, Amendment 7(d): a read that failed is never an answer). Read that file by hand; if you know what wrote it, move it aside and this lane's next transition writes a fresh one" ;;
+      UNREADABLE*) lrc_v=indeterminate;  lrc_why="this lane's lifecycle snapshot at $lrc_root/lane-state.yaml IS THERE and could not be read, so where its session stopped is NOT established — which is not the same as a lane that has none, and is no clearance to relaunch anything (R22, Amendment 7(d): a read that failed is never an answer). Read that file by hand; if you know what wrote it, move it aside and this lane's next transition writes a fresh one"
+        [ -z "$lrc_sblk" ] || lrc_why="whether this lane has a lifecycle snapshot at $lrc_root/lane-state.yaml could not be read: $lrc_sblk, so where its session stopped is NOT established — which is not the same as a lane that has none, and is no clearance to relaunch anything (R22, Amendment 7(d): a read that failed is never an answer). Its worktree inventory is under the same control root and could not be read either (#291). Read it by hand" ;;
       MALFORMED*) lrc_v=indeterminate;   lrc_why="this lane's lifecycle snapshot at $lrc_root/lane-state.yaml is of this schema and ${lrc_swhy:-is not a whole record} — truncated, or edited by hand — so where its session stopped is NOT established, and no writer replaces it, exactly as none replaces a schema it does not write (#115). Read that file by hand; if you know what wrote it, move it aside and this lane's next transition writes a fresh one" ;;
       NONE*)      lrc_v=no-state;        lrc_why="this lane has no lifecycle snapshot: it has not started or handed off under this capability, so its crash kind cannot be told from its record (Amendment 7(i)'s cutover rule — nothing is backfilled)" ;;
       *)          lrc_v=unknown-state;   lrc_why="the snapshot holds the state word '$lrc_state', which this reader does not know; nothing is assumed about it" ;;
@@ -14824,6 +14897,12 @@ LRC_PAIRED
 # there. A kept path is the record's own word, so it may be relative or
 # not a tree at all; only a whole record's path is known absolute. A count that is
 # `unknown` is empty — an INTEGER column has no word for it.
+#
+# A LANE THE LISTING NAMED AND COULD NOT READ IS ITS OWN `UNREAD` LINE, whose
+# rows the indexer keeps: one whose `trees` directory is there and cannot be
+# listed, one whose `trees` could not even be looked for - its control root, or
+# a directory above it, cannot be searched - and one with a record that could
+# not be read, beside that record's own row (#291).
 #
 # AND THE LISTING ITSELF IS SAID TO BE WHOLE OR NOT (opensoft/openRepoTools#173
 # item c1, Copilot's fourth review of #171). Its lanes are the names three
@@ -14956,7 +15035,20 @@ worktree_rows() {   # [<canonical lane>]
     wr_root=""; wr_rrc=0
     wr_root="$(lane_control_root "$wr_l" "$wr_pay" 2>/dev/null)" || wr_rrc=$?
     [ "$wr_rrc" = 0 ] || continue
-    [ -d "$wr_root/trees" ] || continue
+    # AND ONE NOBODY COULD LOOK FOR IS NOT AN ABSENT ONE (#291, the review of
+    # #289's SHOULD-4). Where the control root, or a directory above it, cannot
+    # be searched, `-d` is false over trees that may well be there, and this
+    # `continue` made a lane with no trees of it: the sync removed its rows.
+    # The listing NAMED the lane, so it is the lane's own `UNREAD`, whose rows
+    # the indexer holds, and not the listing's `PARTIAL`, which is for a lane a
+    # read could not name.
+    if [ ! -d "$wr_root/trees" ]; then
+      if lookup_blocked "$wr_root/trees"; then
+        wr_out="${wr_out}UNREAD$US$WS$US$wr_l${US}whether its trees directory $wr_root/trees is there could not be read: $LOOKUP_BLOCKED_WHY
+"
+      fi
+      continue
+    fi
     # A DIRECTORY THAT IS THERE AND CANNOT BE LISTED IS NOT AN EMPTY ONE, and
     # the trees it holds are not trees this lane no longer has (R22).
     if [ ! -r "$wr_root/trees" ] || [ ! -x "$wr_root/trees" ]; then
@@ -15010,12 +15102,14 @@ worktree_rows() {   # [<canonical lane>]
       fi
     fi
     [ "$wr_owner" = legacy ] || wr_life=INDETERMINATE
+    wr_unrec=""
     while IFS="$US" read -r t_id t_p t_b t_h t_u t_d t_n t_w t_ob t_co t_g t_o t_s; do
       [ -n "${t_id:-}" ] || continue
       t_base=""; t_last=""
       if [ "${t_s:-}" = "<unreadable>" ]; then
         t_branch="unreadable sidecar"; [ -n "${t_p:-}" ] || t_p="$t_id"
         t_d=""; t_n=""; t_g=""; t_ob=""
+        wr_unrec="${wr_unrec:+$wr_unrec }$t_id"
       elif [ "${t_s:-}" = "<malformed>" ]; then
         t_branch="malformed sidecar"; [ -n "${t_p:-}" ] || t_p="$t_id"
         t_d=""; t_n=""; t_g=""; t_ob=""
@@ -15053,6 +15147,14 @@ worktree_rows() {   # [<canonical lane>]
     done <<WR_TREES
 $wr_trees
 WR_TREES
+    # A RECORD THAT COULD NOT BE READ IS A READ THAT DID NOT HAPPEN (#291), and
+    # not a tree with no path. Its row is keyed by its id where the path would
+    # be, so a sync took it for a new tree and REMOVED the row the record last
+    # gave - its path, branch and counts - as a tree the lane no longer had.
+    # The row stays, for a person to read, and the lane is `UNREAD` beside it:
+    # the indexer holds the lane's rows until the record can be read again.
+    [ -z "$wr_unrec" ] || wr_out="${wr_out}UNREAD$US$WS$US$wr_l${US}these records under $wr_root/trees could not be read: $wr_unrec
+"
   done <<WR_LANES
 $wr_lanes
 WR_LANES
@@ -18526,9 +18628,13 @@ EOF
       0) : ;;
       8) exit 8 ;;
       10)
-        # WHICH OF THE TWO 10s (#115): a record that opens and is not a whole
-        # one of this schema is said as that, for the person who reads it.
+        # WHICH OF THE 10s (#115): a record that opens and is not a whole
+        # one of this schema is said as that, for the person who reads it —
+        # and one nobody could look for (#291) is never said to be there.
         lst_f="$(lane_control_root "$lane" 2>/dev/null || printf '<no control root>')/lane-state.yaml"
+        if [ ! -e "$lst_f" ] && [ ! -L "$lst_f" ] && lookup_blocked "$lst_f"; then
+          die "whether lane $lane has a lifecycle snapshot could not be read: $lst_f could not be looked for, because $LOOKUP_BLOCKED_WHY. That is NOT 'this lane has no snapshot' — 8 says that, and a launcher answers an 8 by going on, which here would be a launch made in ignorance of a crash nobody could look at (R22, Amendment 7(d)). Read it by hand." 10
+        fi
         lst_what="it could not be read"
         if [ -r "$lst_f" ] && ! lane_sidecar_schema_ok "$lst_f"; then lst_what="it is of this schema and $LSS_WHY, so nothing can be read out of it as a snapshot"; fi
         die "lane $lane HAS a lifecycle snapshot at its control root and $lst_what. That is NOT 'this lane has no snapshot' — 8 says that, and a launcher answers an 8 by going on, which over an unreadable record would be a launch made in ignorance of a crash nobody could look at (R22, Amendment 7(d)). Read it by hand: $lst_f" 10 ;;
@@ -18652,7 +18758,14 @@ EOF
     case "$ltr_rc" in
       0) : ;;
       8) exit 8 ;;
-      10) die "lane $lane's worktree inventory directory $(lane_control_root "$lane" 2>/dev/null || printf '<no control root>')/trees is there and could not be listed. That is NOT 'this lane recorded no tree' — 8 says that, and a reader that goes on over it relaunches writers onto trees nobody looked at (R22, Amendment 7(d)). Read it by hand." 10 ;;
+      10)
+        # WHICH OF THE TWO 10s (#291): a `trees` directory nobody could look
+        # for is never said to be there.
+        ltr_root="$(lane_control_root "$lane" 2>/dev/null || printf '<no control root>')"
+        if [ ! -d "$ltr_root/trees" ] && lookup_blocked "$ltr_root/trees"; then
+          die "whether lane $lane has a worktree inventory could not be read: $ltr_root/trees could not be looked for, because $LOOKUP_BLOCKED_WHY. That is NOT 'this lane recorded no tree' — 8 says that, and a reader that goes on over it relaunches writers onto trees nobody looked at (R22, Amendment 7(d)). Read it by hand." 10
+        fi
+        die "lane $lane's worktree inventory directory $ltr_root/trees is there and could not be listed. That is NOT 'this lane recorded no tree' — 8 says that, and a reader that goes on over it relaunches writers onto trees nobody looked at (R22, Amendment 7(d)). Read it by hand." 10 ;;
       *) die "lane $lane has no lifecycle control root, so its worktree inventory could not be read. That is NOT 'this lane owns no worktree' (Amendment 7(d))." 1 ;;
     esac
     printf '%s\n' "$ltr_out"

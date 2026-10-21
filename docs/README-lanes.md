@@ -1229,7 +1229,7 @@ else.
 | 6 | `git add` / `commit` / `push` failed |
 | 7 | another act got there first and this one wrote nothing: `claim`'s `CLAIM-LOST` (another lane's claim landed first), and `set-lane-state` / `set-lane-tree`'s lifecycle fence (openRepoTools#91, below) |
 | 9 | `CLAIM-LOST` — issue #30's own dead-lane verdict could not be reconfirmed before a `--force` takeover's push landed: the source lane resumed, a live session now backs it up, or that could not be read at all (`claim` only). Never 7 — that code is a RIVAL's claim, and this is the same lane the takeover was granted over |
-| 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read, or is of this schema and not a whole record, so nothing can be read out of it as a snapshot (openRepoTools#91 and #115, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim`. `lane-trees`: the lane's `trees` directory is there and could not be listed (#157 item 4e) — never the 8 that means it recorded no tree |
+| 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read, or is of this schema and not a whole record, so nothing can be read out of it as a snapshot (openRepoTools#91 and #115, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim`. `lane-trees`: the lane's `trees` directory is there and could not be listed (#157 item 4e) — never the 8 that means it recorded no tree. Both spend it, too, where the record could not even be looked for: its control root, or a directory above it, cannot be searched, or a link on the way cannot be followed (#291) |
 | 8 | no record — and no other meaning |
 | 64 | `swapped`'s own usage error — never the dispatcher's 2 — and the lifecycle arms' own: `set-lane-tree`'s partial observation, a count that is not one, or a field that is only blanks (below) |
 
@@ -3424,9 +3424,15 @@ lanes-edit.sh lane-tree-now <worktree path>
 
 A `trees` directory that is there and cannot be listed is `lane-trees`' exit
 **10**, never the **8** of a lane that recorded no tree (opensoft/openRepoTools#157
-item 4e). Every lane's records on this workstation, one row per tree, are `lanes
---worktrees`; the derived index keeps them as its `worktrees` table, which no
-act reads (*The derived index*, below).
+item 4e). So is one that could not even be looked for (#291): under a directory
+this account cannot search, stat fails as it does for a name that is gone, so
+the read walks up to the deepest name that is there and answers **8** only where
+that name could answer for the one below it. `lane-state` answers for the
+snapshot the same way, and a recorded `dir` whose parent could not be looked for
+keeps its own control root rather than falling to `$PROJECTS_ROOT`'s. Every
+lane's records on this workstation, one row per tree, are `lanes --worktrees`;
+the derived index keeps them as its `worktrees` table, which no act reads (*The
+derived index*, below).
 
 The full `head` and the `upstream` are why this is not the prose section one
 more time: `%h` is an abbreviation that lengthens as a repository grows, and
@@ -3833,7 +3839,7 @@ lanes-index reconcile --source inventory [--dry-run]
 |---|---|
 | `workstation`, `lane` | the workstation's name (`lanes-edit.sh workstation`) and the lane's canonical one |
 | `owner` | `legacy`, `managed <owner>` or `unknown` — the read `managed-projection` makes, never a parser of the indexer's |
-| `path`, `branch`, `dirty_count`, `unpushed_count`, `last_seen_utc` | the tree's sidecar: the last observation, `detached <sha>` for a detached head, an `unknown` count as NULL. A sidecar that could not be read is `unreadable sidecar`, one of another schema `unknown schema <n>`, each with the record's id where its path would be |
+| `path`, `branch`, `dirty_count`, `unpushed_count`, `last_seen_utc` | the tree's sidecar: the last observation, `detached <sha>` for a detached head, an `unknown` count as NULL. A sidecar that could not be read is `unreadable sidecar`, one of another schema `unknown schema <n>`, each with the record's id where its path would be; the lane of a sidecar that could not be read is `UNREAD` beside it, so a sync keeps that lane's rows rather than replace the tree's row with one keyed by the record's id (#291) |
 | `base`, `last_commit` | two git reads of the RECORDED head, in the tree or, once it is gone, its recorded checkout: its merge-base with `origin/main` (else `main`, else `origin/HEAD`), and `<sha> <subject>` |
 | `lifecycle`, `generation`, `operation` | the lane's snapshot (`lane-state`): `RUNNING`, `SWAPPING`, `SWAPPED` or `CLOSED` for a **legacy** lane; `INDETERMINATE` for a managed or unknown one, whose lifecycle this tooling does not pronounce on, and for a snapshot that is missing, unreadable or of another schema |
 | `writer_live` | the listing's own LIVE — a session record on this workstation naming one of the row's ids — and NULL where those records could not be read or the lane is bound on another host, from where liveness is unknown and never dead (Amendment 18(b)) |
@@ -3858,7 +3864,8 @@ the inventory no longer names — removed at landing, or by a sweep's dispositio
 `sync` that reads a lane's lifecycle generation below the one its rows were
 written at (a snapshot moved aside and begun again) writes nothing for that lane
 and says so, and `reconcile --source inventory` is the act that takes the lane
-as it now stands. A lane whose `trees` directory is there and cannot be listed
+as it now stands. A lane whose `trees` directory is there and cannot be listed,
+could not even be looked for, or holds a record that could not be read (#291)
 keeps its rows — it is not a lane with no worktrees — and gets ONE MARKER ROW,
 keyed `<lane>:<US>unread`, with no `path` and the `branch` `unreadable inventory
 (<why>)` — the key is what makes it one, because a tree's path can be empty (a
@@ -3904,7 +3911,10 @@ could not name would have needed a marker for each of them, one for the listing
 itself — a first sync has no rows to hold — and a one-lane `--index` read that
 knew of it. An indexer from before #173's item c1 refuses the line too, as one
 it does not read. A read of one NAMED lane goes by that name, which no listing
-gives, and never prints `PARTIAL`.
+gives, and never prints `PARTIAL`. Nor does a lane the listing DID name and
+could not read — its `trees` directory, its control root or a directory above
+it cannot be listed or searched, or a record of its trees cannot be read: that
+is the lane's own `UNREAD` line, and only that lane's rows are held (#291).
 
 Where those reads succeed, the listing makes each of them once, except the list
 of the logs, which it makes twice (the review of #289). The register, the
