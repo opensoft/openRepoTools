@@ -539,10 +539,12 @@
 #   6  git add or commit failed — or, AMENDMENT 23 S4, the commit is KEPT ON
 #      HEAD AND NAMED (sha, subject, `git show`): origin moved under six
 #      attempts (the bound, ratified choices 4 and 5), a replay's
-#      `reset --keep` refused over an uncommitted change, a push (a
-#      write's, or the publish act's) refused with origin unmoved, which
-#      no replay can mend, or a whole-file `write-handoff` whose copy origin
-#      changed meanwhile, which no replay may overwrite (S4.4). Every later write from that
+#      `reset --keep` refused over an uncommitted change, a commit another
+#      writer made on top of this one in the checkout before the replay (the
+#      reset would drop it too), a push (a write's, or the publish act's)
+#      refused with origin unmoved, which no replay can mend, or a
+#      whole-file `write-handoff` whose copy origin changed meanwhile, which
+#      no replay may overwrite (S4.4). Every later write from that
 #      checkout refuses under S3 until the lane publishes or archives it
 #   7  ANOTHER ACT GOT THERE FIRST, and this one wrote nothing. `claim`:
 #      CLAIM-LOST, another lane's claim landed on main first.
@@ -1285,6 +1287,11 @@ CP_REPLAY_KEEPS_EDIT=0
 #                  push replays only where origin's copy is still that one
 #                  (Amendment 23 S4.4), checked before any reset.
 CP_TRAILER=""; CP_WHOLE_REL=""; CP_WHOLE_BLOB=""
+# Set by `claim` and `add-row` alone, whose own checks run BEFORE the lock on
+# what was last fetched: where S3's fetch then finds origin's tip moved, the
+# verb runs again from the top on the new tip before anything is written
+# (`cs_recheck`). Never from the environment.
+CS_RECHECK=0
 
 # die "<message>" [<exit code>] — the MESSAGE is $1 alone. It used to be "$*",
 # which joined the exit code on to the end of every refusal that passed one:
@@ -2263,6 +2270,35 @@ cs_flush() {
   lane_alias_flush
   state_events_flush
 }
+# MUSTs 1 AND 2 OF rv1b'S PRE-REVIEW OF SLICE 1b: A VERB WHOSE OWN CHECKS RAN
+# BEFORE THE LOCK RUNS AGAIN WHEN ORIGIN MOVED UNDER THEM. `claim` (the
+# holders, and Amendment 7(f)'s race) and `add-row` (a retired name, a row
+# already there) decide on what `log_sync`, or an earlier fetch, last saw. A
+# rival's CLAIMED, a peer's retirement of the name or a peer's own row for it,
+# landing between that read and S3's fetch, was fast-forwarded in and written
+# over: two lanes holding one object, a retired name reissued, a second row.
+# S4's replay never ran, because the push was not refused — and the base's
+# rescan after every `pull --rebase` went with the pull. So where S3's fetch
+# moved origin's tip, nothing is written yet, and the verb runs again from the
+# top on the new tip with the lock held: the replay's own `exec`, so `claim`'s
+# rescan comes first (CLAIM-LOST 7, or 9) and `add-row`'s checks refuse (2),
+# inside S4's six attempts. At the sixth it refuses (2), nothing written. Only
+# those two opt in: the row verbs, `rename-lane` and the sweeps read what they
+# check after S3, and an opt-in for every verb would add a fetch and an `exec`
+# to every write made from a checkout behind origin.
+cs_recheck() {   # <what> <origin's tip before S3's fetch> <after it>
+  if [ "$CP_ATTEMPT" -ge 6 ]; then
+    cs_refuse "$1" "origin/$LANES_BRANCH moved while this write's own checks ran, on each of six attempts (Amendment 23 S4, ratified choice 4)" \
+      "re-run this write when origin is quieter"
+  fi
+  note "origin/$LANES_BRANCH moved while this write's checks ran (${2:-no ref} → $3): nothing is written yet, and it runs again from the top on origin's new tip, with the lock held (attempt $CP_ATTEMPT of 6; Amendment 23 S3, S4)."
+  cleanup_for_exec
+  LANES__REPLAY_PID="$$"; LANES__ATTEMPT=$((CP_ATTEMPT + 1))
+  export LANES__REPLAY_PID LANES__ATTEMPT
+  [ "${#CP_REPLAY_ENV[@]}" -eq 0 ] || export "${CP_REPLAY_ENV[@]}"
+  exec "${BASH:-bash}" "$RESOLVED" ${ORIG_ARGV[@]+"${ORIG_ARGV[@]}"}
+  die "could not run $RESOLVED again on origin's new tip. Nothing was written; run this write again." 1
+}
 checkout_sync() {   # <what> <lane> <write|carry|publish> [<pathspec it commits>…]
   cs_what="$1"; cs_lane="${2:-}"; cs_mode="$3"; shift 3
   CS_NO_ORIGIN_BRANCH=0; CS_CARRY_DIFF=""
@@ -2280,6 +2316,7 @@ checkout_sync() {   # <what> <lane> <write|carry|publish> [<pathspec it commits>
     cs_refuse "$cs_what" "LANES_NO_FETCH=1 is set, and for a writer a fetch that did not run is a fetch that failed (Amendment 23 S3 step 1, ratified choice 2): without a current origin/$LANES_BRANCH this write knows neither its base nor whether it could confirm a push" \
       "run this write without LANES_NO_FETCH (reads may keep it)"
   fi
+  cs_was="$(git -C "$cs_c" rev-parse -q --verify "$cs_trk" 2>/dev/null || :)"
   if ! git_net -C "$cs_c" -c gc.auto=0 -c maintenance.auto=false fetch -q origin "+$cs_br:$cs_trk" 2>"$cs_tmp/fetch.err"; then
     if [ "$GIT_TIMED_OUT" = 1 ]; then
       cs_refuse "$cs_what" "the fetch of origin $LANES_BRANCH timed out after ${GIT_TIMEOUT}s, and a write that cannot see origin's tip does not edit (Amendment 23 S3 step 1)" \
@@ -2297,6 +2334,10 @@ checkout_sync() {   # <what> <lane> <write|carry|publish> [<pathspec it commits>
       cs_refuse "$cs_what" "the fetch of origin $LANES_BRANCH failed, and a write that cannot see origin's tip does not edit (Amendment 23 S3 step 1, ratified choice 2). git said: $(head -n 3 -- "$cs_tmp/fetch.err" 2>/dev/null | tr '\n' ' ')" \
         "re-run this write once origin answers: git -C $cs_c fetch origin $LANES_BRANCH"
     fi
+  fi
+  if [ "$CS_RECHECK" = 1 ] && [ "$CS_NO_ORIGIN_BRANCH" != 1 ]; then
+    cs_now="$(git -C "$cs_c" rev-parse -q --verify "$cs_trk" 2>/dev/null || :)"
+    [ "$cs_now" = "$cs_was" ] || cs_recheck "$cs_what" "$cs_was" "$cs_now"
   fi
 
   # ---- 2. an operation in progress, or unmerged entries
@@ -2918,6 +2959,19 @@ cp_not_confirmed() {   # <sha> <subject> <why>
 # and named, and every later write from this checkout refuses under S3 until
 # the lane publishes or archives it (ratified choices 4 and 5).
 cp_replay() {   # <sha> <subject>
+  # THE COMMIT DROPPED IS THIS WRITE'S AND NO OTHER (rv1b's pre-review of
+  # slice 1b, MUST 4). Until slices 2b and 3, lane-start's stamp, lane-handoff's
+  # commit and the skill's commit are made in the same checkout with no lock,
+  # so one can land on top of this write's commit while its push is in flight.
+  # Either reset below would then drop that commit too, and say nothing. So
+  # HEAD must still be this write's commit, or both are kept on HEAD and named.
+  cr_head="$(git -C "$LANES_REPO" rev-parse -q --verify HEAD 2>/dev/null || :)"
+  if [ "$cr_head" != "$1" ]; then
+    note "HEAD is ${cr_head:-unreadable}, not this write's commit $1: another commit was made on top of it in this checkout while its push was in flight, and dropping this write's commit to replay it would drop that one too."
+    note "look at both: git -C $LANES_REPO log --oneline $1^..HEAD"
+    note "every later write from this checkout refuses (S3's unpushed row) until they are published — LANES_LANE=<lane> $SELF commit \"<what they are>\", the publish act — or archived (S6.3)."
+    die "the push was refused because origin/$LANES_BRANCH moved, and this write's commit is no longer HEAD, so it is not replayed: it and the commit on top of it are kept on HEAD (Amendment 23 S4): $1 $2" 6
+  fi
   if [ "$CP_ATTEMPT" -ge 6 ]; then
     note "origin/$LANES_BRANCH moved under this write six times (Amendment 23 S4, ratified choice 4)."
     note "look at it: git -C $LANES_REPO show $1"
@@ -16474,14 +16528,16 @@ Nothing was written." 2
         die "lane '$lane_new' already has a row, spelled $(printf '%s\n' "$ar_all" | tr '\n' ' ')— a lane name is ONE name under any case (Amendment 15(a)), so a row under another case IS that lane's row and this would be a second one. $ar_where$ar_more" 2
       fi
     fi
+    # A PEER'S RETIREMENT OR ROW LANDING FIRST IS MET BY A RE-RUN ON ORIGIN'S
+    # NEW TIP, whichever side of S3's fetch it lands on: before it, S3 finds
+    # the tip moved and runs the verb again (`CS_RECHECK`); after it, the push
+    # is refused and S4 replays. Either way the retirement and duplicate checks
+    # above refuse it with nothing written — where the old rescan after a
+    # `pull --rebase` left the add-row and its cancelling commit both local.
+    CS_RECHECK=1
     acquire_lock; checkout_sync add-row "$lane_new" write "$LANES_PATH"   # Amendment 23 S3
     append_text_line "$row"
     msg="LANES(${lane_new:-${LANES_LANE:-unknown}}@$WS): add row"
-    # A PEER'S RETIREMENT OR ROW LANDING FIRST IS MET ON THE REPLAY (Amendment
-    # 23 S4). A refused push drops this add-row's commit and runs the verb again
-    # from the top on origin's new tip, so the retirement and duplicate checks
-    # above refuse it with nothing written — where the old rescan after a
-    # `pull --rebase` left the add-row and its cancelling commit both local.
     commit_publish "$msg"
     exit $?
     ;;
@@ -17655,6 +17711,10 @@ EOF
     CLAIM_OBJ="$obj"; CLAIM_LANE="$lane"; CLAIM_SKIP="$takeover_from"; CLAIM_SKIP_DEAD="$takeover_dead"
     CLAIM_ABANDON_REVIVED=""
     CP_REPLAY_ENV=("LANES__CLAIM_FROM=$takeover_from" "LANES__CLAIM_DEAD=$takeover_dead")
+    # A RIVAL THAT LANDS BEFORE S3's FETCH, not only one that lands before the
+    # push: the checks above read what `log_sync` fetched, so a tip that moved
+    # since runs this claim again from the top, rescan first (`cs_recheck`).
+    CS_RECHECK=1
     # A line written with --no-github is NOT a Rule 1 claim until its GitHub
     # comment exists, and it says so on its face rather than in a habit.
     ng=""; [ "$NO_GITHUB" = 1 ] && ng="no-github"
@@ -17665,6 +17725,7 @@ EOF
     fi
     wrc=$?
     CP_REPLAY_ENV=()
+    CS_RECHECK=0
     CLAIM_SKIP_DEAD=""
     [ "$wrc" = 0 ] || exit "$wrc"
 
