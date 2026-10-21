@@ -791,15 +791,23 @@ jobs:
       # COMMIT'S OWN, read from git (FR-006, FR-030): each module from
       # `src/openrepotools/`, byte for byte, and each payload file, at
       # `openrepotools/payload/<P>`, from `<P>` at the commit, byte for byte
-      # and with the commit's mode, `100755` as 0755 and `100644` as 0644,
-      # which is how hatchling 1.27.0's reproducible build writes them.
+      # and with the commit's mode WHOLE, `100755` or `100644`: a regular
+      # file at 0755 or 0644 and no other bit, so no other file type and no
+      # setuid, setgid or sticky bit. That is how hatchling 1.27.0's
+      # reproducible build writes them (TestPyPI's 1.1.0rc1 wheel has all
+      # 24 payload files so), and pip makes a member executable only when
+      # it is typed a regular file. `tests.yml`'s `package` job holds its
+      # wheel to the same rule (#278).
       # Every file git tracks under `src/openrepotools/` and every path
       # `pyproject.toml` force-includes is in it, and nothing else is. The
       # stamp is the committed one with exactly its five values written. The
       # metadata names this version, `pyproject.toml`'s dependencies and its
       # one command, and carries the commit's LICENSE (FR-002: hatchling
       # builds a wheel with no LICENSE and says nothing, so this check is
-      # what refuses one). A missing member is named, never a traceback.
+      # what refuses one). Every member is read before anything is
+      # compared, and a member that cannot be read, a bad CRC or a broken
+      # compressed stream, refuses there (#278). A missing member and an
+      # unreadable one are named, never a traceback.
       # `tests/test_release_workflow.py` runs this very script on synthetic
       # wheels made from the commit's blobs.
       - name: the wheel holds the commit's own files, byte for byte and mode for mode, and the stamp
@@ -808,7 +816,7 @@ jobs:
         run: |
           export TAG="v$VERSION" COMMIT="$GITHUB_SHA" REPOSITORY="$GITHUB_REPOSITORY"
           python3 -I - "$RUNNER_TEMP/dist-a/openrepotools-$VERSION-py3-none-any.whl" <<'PY'
-          import ast, configparser, email.parser, os, re, stat, subprocess, sys, tomllib, zipfile
+          import ast, configparser, email.parser, os, re, stat, subprocess, sys, tomllib, zipfile, zlib
 
           names = ("VERSION", "TAG", "COMMIT", "DIGEST", "REPOSITORY")
           release = {name: os.environ.get(name, "") for name in names}
@@ -822,7 +830,7 @@ jobs:
               sys.exit(f"::error::the check reads one wheel, and this run names {sys.argv[1:]}")
           info, stamp = f"openrepotools-{version}.dist-info/", "openrepotools/_release.py"
           payload, package = "openrepotools/payload/", "src/openrepotools/"
-          modes = {"100755": 0o755, "100644": 0o644}
+          modes = {"100755": stat.S_IFREG | 0o755, "100644": stat.S_IFREG | 0o644}
 
           listing = subprocess.run(["git", "ls-tree", "-r", "-z", "--full-tree", sha],
                                    capture_output=True)
@@ -885,10 +893,22 @@ jobs:
               if len(listed) != len(set(listed)):
                   problems.append("the wheel names one file twice")
               members = {e.filename: e for e in entries}
+              contents = {}
+              for name, entry in members.items():
+                  try:
+                      contents[name] = wheel.read(entry)
+                  except (zipfile.BadZipFile, zlib.error, EOFError, OSError, RuntimeError,
+                          ValueError) as error:
+                      problems.append(f"{name} in the wheel cannot be read "
+                                      f"({type(error).__name__}: {error})")
+              if len(contents) != len(members):
+                  for problem in problems:
+                      print(f"::error::{problem}")
+                  sys.exit(1)
 
 
               def read(name):
-                  return wheel.read(members[name]) if name in members else None
+                  return contents.get(name)
 
 
               for name in sorted(members):
@@ -898,7 +918,7 @@ jobs:
                       source = sources[name]
                       data, entry = committed(source), tree.get(source)
                       want = modes.get(entry[0]) if entry else None
-                      got = stat.S_IMODE(members[name].external_attr >> 16)
+                      got = members[name].external_attr >> 16
                       if data is None or want is None:
                           problems.append(f"{name} is in the wheel, and {source} is not a regular "
                                           f"file at {sha}")
@@ -908,11 +928,12 @@ jobs:
                           problems.append(f"{name} in the wheel is not {source} at {sha}, byte for byte")
                           fine = False
                       if got != want:
-                          problems.append(f"{name} has mode {got:04o} in the wheel, and {source} is "
-                                          f"{entry[0]} at {sha}, which is {want:04o}")
+                          problems.append(f"{name} has mode {got:06o} in the wheel, and {source} is "
+                                          f"{entry[0]} at {sha}, a regular file at "
+                                          f"{stat.S_IMODE(want):04o} and no other bit")
                           fine = False
                       if fine:
-                          print(f"{name} = {sha[:12]}:{source}, mode {got:04o}")
+                          print(f"{name} = {sha[:12]}:{source}, mode {got:06o}")
                   elif name in modules:
                       source = modules[name]
                       if read(name) != committed(source):
@@ -1163,29 +1184,42 @@ jobs:
       # this version but the verified wheel, at its verified digest: an
       # index never replaces a file. A 404 is a version with no file yet.
       # The verified wheel itself, already there, is a re-run of this job
-      # after its upload went through, and uploads nothing new.
+      # after its upload went through, and uploads nothing new. The index
+      # is read once: any other HTTP status, a read with no answer, and an
+      # answer that is not the index's JSON each refuse with an `::error::`
+      # line naming it, never a traceback (#278), and "Re-run failed jobs"
+      # reads it again.
       - name: the index holds no file of this version but the verified wheel
         run: |
           python3 - <<'PY'
-          import json, os, sys, urllib.error, urllib.request
+          import http.client, json, os, sys, urllib.error, urllib.request
 
           index, version = os.environ["INDEX"], os.environ["VERSION"]
           url = f"{os.environ['JSON_BASE']}{version}/json"
           wanted = {os.environ["WHEEL"]: os.environ["WHEEL_SHA256"]}
+          unknown = (f"so what {index} holds of openrepotools {version} is not known, and "
+                     "nothing is uploaded")
           try:
               with urllib.request.urlopen(url, timeout=30) as response:
-                  release = json.load(response)
+                  body = response.read()
           except urllib.error.HTTPError as error:
               if error.code != 404:
-                  raise
+                  sys.exit(f"::error::{index} answered {url} with HTTP {error.code}, {unknown}")
               print(f"{index} holds no file of openrepotools {version} yet")
               sys.exit(0)
-          held = {f["filename"]: f["digests"]["sha256"] for f in release["urls"]}
+          except (OSError, http.client.HTTPException) as error:
+              sys.exit(f"::error::{url} could not be read ({type(error).__name__}: {error}), {unknown}")
+          try:
+              release = json.loads(body)
+              held = {f["filename"]: f["digests"]["sha256"] for f in release["urls"]}
+              yanked = sorted(f["filename"] for f in release["urls"] if f.get("yanked"))
+          except (ValueError, KeyError, TypeError, AttributeError) as error:
+              sys.exit(f"::error::{index}'s answer for {url} is not its JSON API's "
+                       f"({type(error).__name__}: {error}), {unknown}")
           other = {name: digest for name, digest in held.items() if wanted.get(name) != digest}
           if other:
               sys.exit(f"::error::{index} already holds {other} for openrepotools {version}, "
                        "which the build job did not verify, so nothing is uploaded")
-          yanked = sorted(f["filename"] for f in release["urls"] if f.get("yanked"))
           if yanked:
               sys.exit(f"::error::{index} holds {yanked} at the verified digest, but yanked; "
                        "un-yank it on the index, or release a new version")
@@ -1200,31 +1234,44 @@ jobs:
 
       # AFTER THE UPLOAD, the index serves exactly the verified wheel, by
       # digest, not yanked. Its JSON can lag an upload, so it is read up to
-      # 20 times, 15 seconds apart.
+      # 20 times, 15 seconds apart. A 404, a server error (5xx) and a read
+      # with no answer, a timeout or a connection broken, are read again;
+      # any other HTTP status, and an answer that is not the index's JSON,
+      # refuse at once with an `::error::` line naming it, never a
+      # traceback (#278).
       - name: the index serves exactly the verified wheel
         run: |
           python3 - <<'PY'
-          import json, os, sys, time, urllib.error, urllib.request
+          import http.client, json, os, sys, time, urllib.error, urllib.request
 
           index, version = os.environ["INDEX"], os.environ["VERSION"]
           url = f"{os.environ['JSON_BASE']}{version}/json"
           wanted = {os.environ["WHEEL"]: os.environ["WHEEL_SHA256"]}
+          unknown = "so whether it serves the verified wheel is not known"
           served = None
           for attempt in range(1, 21):
               try:
                   with urllib.request.urlopen(url, timeout=30) as response:
-                      release = json.load(response)
-                  served = {f["filename"]: f["digests"]["sha256"] for f in release["urls"]}
+                      body = response.read()
+              except (OSError, http.client.HTTPException) as error:
+                  code = getattr(error, "code", None)
+                  if code is not None and code != 404 and code < 500:
+                      sys.exit(f"::error::read {attempt}: {index} answered {url} with HTTP {code}, "
+                               f"which no later read outlasts, {unknown}")
+                  print(f"read {attempt}: {url} did not answer yet ({error})")
+              else:
+                  try:
+                      release = json.loads(body)
+                      served = {f["filename"]: f["digests"]["sha256"] for f in release["urls"]}
+                      yanked = any(f.get("yanked") for f in release["urls"])
+                  except (ValueError, KeyError, TypeError, AttributeError) as error:
+                      sys.exit(f"::error::read {attempt}: {index}'s answer for {url} is not its JSON "
+                               f"API's ({type(error).__name__}: {error}), {unknown}")
                   if served == wanted:
-                      if any(f.get("yanked") for f in release["urls"]):
+                      if yanked:
                           sys.exit(f"::error::{index} serves the verified wheel, yanked")
                       break
                   print(f"read {attempt}: {index} serves {served} so far")
-              except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
-                  code = getattr(error, "code", None)
-                  if code is not None and code != 404 and code < 500:
-                      raise
-                  print(f"read {attempt}: {url} did not answer yet ({error})")
               time.sleep(15)
           else:
               sys.exit(f"::error::after 20 reads {index} serves {served}, and the build job "
@@ -1447,27 +1494,35 @@ jobs:
           fi
 
       # ON macOS, THE SAME OFFLINE --install AGAIN UNDER APPLE'S OWN
-      # `/bin/bash` 3.2 (FR-032), in a fresh home: `/bin` first on PATH, so
-      # the bash the package's entry point finds there is `/bin/bash`. The
-      # bash first on that same PATH prints its BASH_VERSION first, and it
-      # must be 3.2. The skip line, the count line, the 28 rows and the link
-      # must be as they were under the leg's own bash.
+      # `/bin/bash` 3.2 (FR-032), in a fresh home and A BIN DIRECTORY OF
+      # ITS OWN, which holds pipx's link, its value copied, and nothing
+      # else. In the bin directory of the step above, every command is
+      # already in place, so all sixteen would be "already installed" and
+      # none placed under 3.2 (#278); here each of the sixteen is placed,
+      # its line `<command>: installed at <that directory>/<command>`.
+      # `/bin` is first on PATH, so the bash the package's entry point
+      # finds there is `/bin/bash`. The bash first on that same PATH prints
+      # its BASH_VERSION first, and it must be 3.2. The skip line, the count
+      # line, the 28 rows and the link must be as they were under the leg's
+      # own bash, in this bin directory.
       - name: on macOS, the offline --install again under Apple's /bin/bash 3.2
         if: runner.os == 'macOS'
         run: |
           set -euo pipefail
           home="$RUNNER_TEMP/install-home-bin-bash"
           offline="$RUNNER_TEMP/offline-bin-bin-bash"
-          mkdir "$home" "$offline"
+          bin_dir="$RUNNER_TEMP/bin-bin-bash"
+          mkdir "$home" "$offline" "$bin_dir"
           for tool in gh curl; do
             printf '#!/bin/sh\necho "%s: this run is offline" >&2\nexit 1\n' "$tool" > "$offline/$tool"
             chmod 755 "$offline/$tool"
           done
-          link="$PIPX_BIN_DIR/openRepoTools"
+          ln -s "$(readlink "$PIPX_BIN_DIR/openRepoTools")" "$bin_dir/openRepoTools"
+          link="$bin_dir/openRepoTools"
           fingerprint='import hashlib, os, sys; p = sys.argv[1]; print(os.lstat(p).st_ino, os.readlink(p), hashlib.sha256(open(p, "rb").read()).hexdigest())'
           before="$(python3 -I -c "$fingerprint" "$link")"
           # shellcheck disable=SC2016
-          version="$(env -i PATH="/bin:$offline:$PIPX_BIN_DIR:$PATH" bash -c 'printf "%s\n" "$BASH_VERSION"')"
+          version="$(env -i PATH="/bin:$offline:$bin_dir:$PATH" bash -c 'printf "%s\n" "$BASH_VERSION"')"
           echo "BASH_VERSION $version, from the bash first on PATH=/bin:..."
           case "$version" in
             3.2.*) ;;
@@ -1477,9 +1532,9 @@ jobs:
               ;;
           esac
           status=0
-          env -i HOME="$home" PATH="/bin:$offline:$PIPX_BIN_DIR:$PATH" \
-              OPENREPOTOOLS_BIN_DIR="$PIPX_BIN_DIR" OPENREPOTOOLS_REPO=offline.invalid/sentinel \
-              "$PIPX_BIN_DIR/openRepoTools" --install > "$RUNNER_TEMP/install-bin-bash.out" \
+          env -i HOME="$home" PATH="/bin:$offline:$bin_dir:$PATH" \
+              OPENREPOTOOLS_BIN_DIR="$bin_dir" OPENREPOTOOLS_REPO=offline.invalid/sentinel \
+              "$bin_dir/openRepoTools" --install > "$RUNNER_TEMP/install-bin-bash.out" \
               2> "$RUNNER_TEMP/install-bin-bash.err" || status=$?
           cat "$RUNNER_TEMP/install-bin-bash.out"
           cat "$RUNNER_TEMP/install-bin-bash.err" >&2
@@ -1488,7 +1543,7 @@ jobs:
             exit 1
           fi
           skip="openRepoTools: left to pipx at $link (a link into pipx's openrepotools environment); update it with \`pipx upgrade openrepotools\`, then run \`openRepoTools --install\` again"
-          count="openRepoTools: 16 of 17 placed in $PIPX_BIN_DIR, and 1 left to pipx"
+          count="openRepoTools: 16 of 17 placed in $bin_dir, and 1 left to pipx"
           for line in "$skip" "$count"; do
             seen="$(grep -cFx -e "$line" "$RUNNER_TEMP/install-bin-bash.out" || true)"
             if [ "$seen" -ne 1 ]; then
@@ -1496,6 +1551,11 @@ jobs:
               exit 1
             fi
           done
+          placed="$(grep -cF -e ": installed at $bin_dir/" "$RUNNER_TEMP/install-bin-bash.out" || true)"
+          if [ "$placed" -ne 16 ]; then
+            echo "::error::--install under /bin/bash $version placed $placed commands in $bin_dir, not all 16"
+            exit 1
+          fi
           receipt="$home/.local/share/openRepoTools/installed.tsv"
           if [ ! -f "$receipt" ]; then
             echo "::error::--install under /bin/bash $version wrote no receipt at $receipt"
@@ -1669,25 +1729,34 @@ jobs:
       - name: the index holds no file of this version but the verified wheel
         run: |
           python3 - <<'PY'
-          import json, os, sys, urllib.error, urllib.request
+          import http.client, json, os, sys, urllib.error, urllib.request
 
           index, version = os.environ["INDEX"], os.environ["VERSION"]
           url = f"{os.environ['JSON_BASE']}{version}/json"
           wanted = {os.environ["WHEEL"]: os.environ["WHEEL_SHA256"]}
+          unknown = (f"so what {index} holds of openrepotools {version} is not known, and "
+                     "nothing is uploaded")
           try:
               with urllib.request.urlopen(url, timeout=30) as response:
-                  release = json.load(response)
+                  body = response.read()
           except urllib.error.HTTPError as error:
               if error.code != 404:
-                  raise
+                  sys.exit(f"::error::{index} answered {url} with HTTP {error.code}, {unknown}")
               print(f"{index} holds no file of openrepotools {version} yet")
               sys.exit(0)
-          held = {f["filename"]: f["digests"]["sha256"] for f in release["urls"]}
+          except (OSError, http.client.HTTPException) as error:
+              sys.exit(f"::error::{url} could not be read ({type(error).__name__}: {error}), {unknown}")
+          try:
+              release = json.loads(body)
+              held = {f["filename"]: f["digests"]["sha256"] for f in release["urls"]}
+              yanked = sorted(f["filename"] for f in release["urls"] if f.get("yanked"))
+          except (ValueError, KeyError, TypeError, AttributeError) as error:
+              sys.exit(f"::error::{index}'s answer for {url} is not its JSON API's "
+                       f"({type(error).__name__}: {error}), {unknown}")
           other = {name: digest for name, digest in held.items() if wanted.get(name) != digest}
           if other:
               sys.exit(f"::error::{index} already holds {other} for openrepotools {version}, "
                        "which the build job did not verify, so nothing is uploaded")
-          yanked = sorted(f["filename"] for f in release["urls"] if f.get("yanked"))
           if yanked:
               sys.exit(f"::error::{index} holds {yanked} at the verified digest, but yanked; "
                        "un-yank it on the index, or release a new version")
@@ -1704,27 +1773,36 @@ jobs:
       - name: the index serves exactly the verified wheel
         run: |
           python3 - <<'PY'
-          import json, os, sys, time, urllib.error, urllib.request
+          import http.client, json, os, sys, time, urllib.error, urllib.request
 
           index, version = os.environ["INDEX"], os.environ["VERSION"]
           url = f"{os.environ['JSON_BASE']}{version}/json"
           wanted = {os.environ["WHEEL"]: os.environ["WHEEL_SHA256"]}
+          unknown = "so whether it serves the verified wheel is not known"
           served = None
           for attempt in range(1, 21):
               try:
                   with urllib.request.urlopen(url, timeout=30) as response:
-                      release = json.load(response)
-                  served = {f["filename"]: f["digests"]["sha256"] for f in release["urls"]}
+                      body = response.read()
+              except (OSError, http.client.HTTPException) as error:
+                  code = getattr(error, "code", None)
+                  if code is not None and code != 404 and code < 500:
+                      sys.exit(f"::error::read {attempt}: {index} answered {url} with HTTP {code}, "
+                               f"which no later read outlasts, {unknown}")
+                  print(f"read {attempt}: {url} did not answer yet ({error})")
+              else:
+                  try:
+                      release = json.loads(body)
+                      served = {f["filename"]: f["digests"]["sha256"] for f in release["urls"]}
+                      yanked = any(f.get("yanked") for f in release["urls"])
+                  except (ValueError, KeyError, TypeError, AttributeError) as error:
+                      sys.exit(f"::error::read {attempt}: {index}'s answer for {url} is not its JSON "
+                               f"API's ({type(error).__name__}: {error}), {unknown}")
                   if served == wanted:
-                      if any(f.get("yanked") for f in release["urls"]):
+                      if yanked:
                           sys.exit(f"::error::{index} serves the verified wheel, yanked")
                       break
                   print(f"read {attempt}: {index} serves {served} so far")
-              except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
-                  code = getattr(error, "code", None)
-                  if code is not None and code != 404 and code < 500:
-                      raise
-                  print(f"read {attempt}: {url} did not answer yet ({error})")
               time.sleep(15)
           else:
               sys.exit(f"::error::after 20 reads {index} serves {served}, and the build job "

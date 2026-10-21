@@ -263,8 +263,10 @@ jobs:
       # 2 to 6), read from git at HEAD and never from the checkout:
       #
       #   * each payload file of `pyproject.toml`'s force-include table is its
-      #     blob, byte for byte, at mode 0755 where git records 100755 and 0644
-      #     where it records 100644, which is how hatchling 1.27.0 writes them;
+      #     blob, byte for byte, at git's own mode whole, a regular file at
+      #     0755 where git records 100755 and 0644 where it records 100644,
+      #     with no setuid, setgid or sticky bit, which is how hatchling
+      #     1.27.0 writes them and the rule the release build holds (#278);
       #   * each module is its file under `src/openrepotools/`;
       #   * the stamp is the committed file, unchanged: this build is unstamped;
       #   * the `.dist-info` holds exactly its five names, LICENSE the commit's;
@@ -367,7 +369,7 @@ jobs:
                       print(f"{name} = {COMMIT}:{source}")
                       continue
                   mode = member.external_attr >> 16
-                  if mode & 0o777 != perm or mode & 0o170000 not in (0, 0o100000):
+                  if mode != 0o100000 | perm:
                       problems.append(f"{name} has mode {mode:o} in the wheel, and "
                                       f"{source} is {modes[source]} at {COMMIT}, "
                                       f"which is mode {perm:04o}")
