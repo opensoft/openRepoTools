@@ -6,8 +6,8 @@ read back — and a refused push replays the one edit.
 pull, and fetches origin to confirm the commit is on it: confirmed is 0 and
 `pushed`; a push that went (or timed out) and could not be confirmed is 3,
 `pushed, not confirmed: <sha>`, never success. A push refused because origin
-moved drops this write's commit (`reset --keep`, the only unpublished commit
-S3 allows) and runs the verb again from the top on origin's new tip, so the
+moved drops this write's commit (only while the branch still holds it, the
+only unpublished commit S3 allows) and runs the verb again from the top on origin's new tip, so the
 verb's own checks re-run on the new content: `claim`'s rescan (CLAIM-LOST, 7),
 the one-match guard, `add-row`'s retirement and duplicate checks. Six attempts
 in all; at the bound the commit is kept on HEAD and named (6), and every later
@@ -337,7 +337,7 @@ def test_push_refused_with_origin_unmoved_is_kept_exit_6(box: Box):
 
 
 def test_replay_refused_by_a_change_in_the_way_keeps_the_commit_exit_6(box: Box):
-    """`reset --keep` never runs over an uncommitted change: a hand edit of
+    """The drop never moves the tree over an uncommitted change: a hand edit of
     the register made while the push was in flight stops the replay, and the
     commit is kept on HEAD and named (6), with the edit untouched."""
     c = box.seam()
@@ -959,43 +959,138 @@ def test_a_commit_another_writer_rewrote_is_named_as_rewritten_exit_6(box: Box):
     _settled(box, c)
 
 
-def test_a_commit_landing_during_the_replays_reset_is_put_back_exit_6(box: Box):
-    """NIT 2 of rv1b-c's re-check: the replay's HEAD check and its reset are
-    two git calls, and an unlocked commit landing between them was dropped
-    with this write's commit, with exit 0. The window is milliseconds, so a
-    `git` first on PATH makes it exact: it commits on top in the checkout
-    just before the reset runs. Now the reset's ORIG_HEAD is asked: the reset
-    is undone, both commits are kept on HEAD and named (6), and nothing is
-    dropped."""
-    c = box.seam()
-    box.race()
+# The drop's two moments, as `git` first on PATH sees them: the helper at
+# d9ff4e6 dropped with one `reset -q --keep`; since SHOULD C the branch moves
+# first (`update-ref`, a compare-and-swap) and the tree after it
+# (`read-tree -m -u`). Each pattern names both, so a case runs on either.
+DROP_STARTS = '*" reset -q --keep "*|*" update-ref -m lanes-edit: the replay drops "*'
+DROP_ENDS = '*" reset -q --keep "*|*" read-tree -m -u "*'
+STATE = "LIVE · the write under it"
+
+
+def _git_shim(box: Box, pattern: str, *, before: str = "", after: str = "") -> dict:
+    """A `git` first on PATH for the helper: the first call matching
+    `pattern` runs `before`, then the real command, then `after`, and keeps
+    the real command's status; every other call is the real git. `{git}` in
+    the snippets is the real git. Returns the env that puts it on PATH."""
     real = shutil.which("git")
     assert real, "git is on PATH"
     shim = box.root / "gitshim"
     shim.mkdir()
-    mark = shlex.quote(str(box.root / "landed"))
-    cq = shlex.quote(str(c))
     rq = shlex.quote(real)
+    mark = shlex.quote(str(box.root / "fired"))
     (shim / "git").write_text(
         "#!/usr/bin/env bash" + "\n" +
-        'case " $* " in *" reset -q --keep "*)' + "\n" +
+        f'case " $* " in {pattern})' + "\n" +
         f"  if [ ! -e {mark} ]; then echo 1 > {mark}" + "\n" +
-        f"    printf 'stamp' > {cq}/handoffs/stamp.md" + "\n" +
-        f"    {rq} -C {cq} add -- handoffs/stamp.md" + "\n" +
-        f"    {rq} -C {cq} commit -q -m 'handoff(repoS4-2@Eagle): a stamp from an unlocked writer' -- handoffs/stamp.md" + "\n" +
+        before.format(git=rq) +
+        f'    {rq} "$@"; rc=$?' + "\n" +
+        after.format(git=rq) +
+        "    exit $rc" + "\n" +
         "  fi ;;" + "\n" +
         "esac" + "\n" +
         f'exec {rq} "$@"' + "\n", encoding="utf-8")
     (shim / "git").chmod(0o755)
-    result = box.helper("set-row-state", LANE, "LIVE · the write under it",
-                        PATH=f"{shim}{os.pathsep}{box.env['PATH']}")
-    assert (box.root / "landed").exists(), "the commit landed in the window"
+    return {"PATH": f"{shim}{os.pathsep}{box.env['PATH']}"}
+
+
+def _stamp(c: Path) -> str:
+    """An unlocked writer's stamp, committed by pathspec as lane-start does."""
+    cq = shlex.quote(str(c))
+    return (f"    printf 'stamp' > {cq}/handoffs/stamp.md" + "\n" +
+            f"    {{git}} -C {cq} add -- handoffs/stamp.md" + "\n" +
+            f"    {{git}} -C {cq} commit -q -m 'handoff(repoS4-2@Eagle): a stamp from an unlocked writer' -- handoffs/stamp.md" + "\n")
+
+
+def _pull(c: Path) -> str:
+    """An unlocked writer's `pull --rebase` (lane-start's, lane-handoff's)."""
+    return f"    {{git}} -C {shlex.quote(str(c))} pull --rebase -q origin main >/dev/null 2>&1" + "\n"
+
+
+def _mine_named_on_head(box: Box, c: Path, stderr: str) -> list:
+    """Every sha the words name that is this write's commit, with whether
+    HEAD holds it."""
+    out = []
+    for sha in sorted(set(re.findall(r"\b[0-9a-f]{40}\b", stderr))):
+        subj = subprocess.run(["git", "-C", str(c), "log", "-1", "--format=%s", sha],
+                              env=box.env, capture_output=True, text=True, check=False).stdout.strip()
+        if subj.startswith(f"LANES({LANE}@"):
+            on = subprocess.run(["git", "-C", str(c), "merge-base", "--is-ancestor", sha, "HEAD"],
+                                env=box.env, capture_output=True, check=False).returncode == 0
+            out.append((sha, on))
+    return out
+
+
+def test_a_commit_landing_before_the_replays_drop_is_never_dropped_exit_6(box: Box):
+    """NIT 2 of rv1b-c's re-check, and SHOULD C of rv1b-c2's: the replay's
+    HEAD check and its drop are two git calls, and an unlocked commit landing
+    between them was dropped with this write's commit, with exit 0. The window
+    is milliseconds, so a `git` first on PATH makes it exact: it commits on
+    top just before the drop runs. The drop is a compare-and-swap of the
+    branch from this write's own commit, so git refuses it and nothing moves:
+    both commits are kept on HEAD and named (6), and nothing is dropped."""
+    c = box.seam()
+    box.race()
+    env = _git_shim(box, DROP_STARTS, before=_stamp(c))
+    result = box.helper("set-row-state", LANE, STATE, **env)
+    assert (box.root / "fired").exists(), "the commit landed in the window"
     assert result.returncode == 6, result.stderr
-    assert "between the replay's HEAD check and its reset" in result.stderr
-    assert "the reset is undone" in result.stderr
+    assert "between the replay's HEAD check and its drop" in result.stderr
+    assert "is no longer HEAD, so it is not replayed" in result.stderr
     assert "push refused (attempt 1 of 6)" not in result.stderr, "nothing is replayed"
     assert box.subject(c) == "handoff(repoS4-2@Eagle): a stamp from an unlocked writer"
     assert box.subject(c, "HEAD~1").startswith(f"LANES({LANE}@"), "this write's commit is under it"
-    assert (c / "handoffs" / "stamp.md").is_file(), "the other writer's file is back"
+    assert (c / "handoffs" / "stamp.md").is_file(), "the other writer's file is still there"
     assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the publish act"
+    assert "the replay drops" not in box.git("-C", str(c), "reflog", "refs/heads/main"), "the branch never moved"
+    _settled(box, c)
+
+
+def test_an_up_to_date_pull_after_the_replays_drop_is_no_commit_on_top(box: Box):
+    """SHOULD C of rv1b-c2's re-check, its case A: no commit lands anywhere,
+    and an unlocked `pull --rebase` that is up to date runs just after the
+    replay's drop. It rewrites ORIG_HEAD without moving HEAD, and the helper
+    at d9ff4e6 read that as a commit on top: its "undo" did nothing, it said
+    both commits were kept on HEAD, and the write was on neither HEAD nor
+    origin (6). Nothing is read from ORIG_HEAD now, so the replay goes on and
+    the write lands, as it did before the check (0)."""
+    c = box.seam()
+    box.race()
+    env = _git_shim(box, DROP_ENDS, after=_pull(c))
+    result = box.helper("set-row-state", LANE, STATE, **env)
+    assert (box.root / "fired").exists(), "the pull ran just after the drop"
+    assert result.returncode == 0, result.stderr
+    assert "push refused (attempt 1 of 6)" in result.stderr
+    assert "pushed origin/main (attempt 2)" in result.stderr
+    assert "kept on" not in result.stderr, "nothing is said to be kept"
+    assert box.origin_register().count(_set(STATE)) == 1, "the write landed once"
+    assert box.head(c) == box.origin_head()
+    assert box.unpublished(c) == []
+    _settled(box, c)
+
+
+def test_a_stamp_committed_and_pulled_around_the_replays_drop_is_never_lost(box: Box):
+    """SHOULD C's case B, lane-start's own order: its stamp is committed on
+    top of this write's commit just before the drop, and its `pull --rebase`
+    runs just after. At d9ff4e6 the reset took both commits, the pull rewrote
+    ORIG_HEAD, and the helper said both were kept on HEAD while neither was on
+    it, nor on origin. Now the drop is refused with nothing moved: the stamp
+    and this write's change stay on HEAD (here the pull rebases them, so the
+    words say rewritten), the replay is not run (6), and "kept" is said only
+    of a commit HEAD holds."""
+    c = box.seam()
+    box.race()
+    env = _git_shim(box, DROP_STARTS, before=_stamp(c), after=_pull(c))
+    result = box.helper("set-row-state", LANE, STATE, **env)
+    assert (box.root / "fired").exists(), "the stamp and the pull ran around the drop"
+    assert result.returncode == 6, result.stderr
+    assert "push refused (attempt 1 of 6)" not in result.stderr, "nothing is replayed"
+    head_register = box.git("-C", str(c), "show", f"HEAD:{REGISTER}")
+    assert _set(STATE) in head_register or _set(STATE) in box.origin_register(), \
+        "the write is on HEAD or on origin, never lost"
+    assert box.git("-C", str(c), "show", "HEAD:handoffs/stamp.md") == "stamp", "the stamp is on HEAD"
+    if "kept on" in result.stderr:
+        named = _mine_named_on_head(box, c, result.stderr)
+        assert named, result.stderr
+        assert all(on for _, on in named), f"called kept, and not on HEAD: {named}"
     _settled(box, c)
