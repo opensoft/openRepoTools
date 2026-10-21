@@ -43,9 +43,11 @@ CLOSED = "repoS4-2"     # ENDED: its checkout is the sweep's
 LIVE = "repoS4-3"       # a live session record here names it
 PAUSED = "repoS4-4"     # PAUSED: a lane somebody may pick up
 OLD, NEW = "repoS4-8", "repoS4-9"   # renamed: OLD is a former name of NEW
+CHAIN = ("repoS4-5", "repoS4-6", "repoS4-7")   # ENDED: checkouts made by `_chain`
 UTC = "2026-10-20T10:00:00Z"
 UUID = {lane: f"a23a{n}04d-5404-4000-8000-a23a{n}04d5404"
-        for n, lane in ((1, RUNNER), (2, CLOSED), (3, LIVE), (4, PAUSED), (9, NEW))}
+        for n, lane in ((1, RUNNER), (2, CLOSED), (3, LIVE), (4, PAUSED),
+                        (5, CHAIN[0]), (6, CHAIN[1]), (7, CHAIN[2]), (9, NEW))}
 PROFILE_CLONES = ("brett-wip-team01-laneA", "brett-wip-team02-laneA", "brett-wip-team03-laneA")
 
 
@@ -66,7 +68,9 @@ class Sweep(RegisterBox):
 
     `<W>-lanes/` holds: the runner's, the CLOSED lane's, the LIVE lane's and
     the PAUSED lane's checkouts; OLD's beside NEW's; a directory that is no
-    checkout, a symbolic link and a hidden creation lock. Beside W: three
+    checkout, a symbolic link and a hidden creation lock. The CHAIN lanes are
+    ENDED in the register and the logs, and have no checkout until `_chain`
+    makes them. Beside W: three
     per-profile clones, each borrowing from the one before it and the first
     from W (c3 → c2 → c1 → W), and a clone of another repository."""
 
@@ -77,12 +81,14 @@ class Sweep(RegisterBox):
                                      _row(CLOSED, "ENDED · closed"),
                                      _row(LIVE, "LIVE · working"),
                                      _row(PAUSED, "PAUSED · swapped"),
-                                     _row(NEW, "LIVE · renamed from repoS4-8")]),
+                                     _row(NEW, "LIVE · renamed from repoS4-8"),
+                                     *(_row(lane, "ENDED · closed") for lane in CHAIN)]),
             f"lanes/log/{RUNNER}.md": _log(RUNNER, "STARTED"),
             f"lanes/log/{CLOSED}.md": _log(CLOSED, "STARTED", "ENDED"),
             f"lanes/log/{LIVE}.md": _log(LIVE, "STARTED"),
             f"lanes/log/{PAUSED}.md": _log(PAUSED, "STARTED", "PAUSED"),
             f"lanes/log/{NEW}.md": _log(NEW, "STARTED"),
+            **{f"lanes/log/{lane}.md": _log(lane, "STARTED", "ENDED") for lane in CHAIN},
             "lanes/aliases.tsv": f"{OLD}\t{NEW}\t{UTC}\n",
             "handoffs/README.md": "# handoffs\n",
         }
@@ -193,7 +199,7 @@ def test_dry_run_lists_and_removes_nothing(sweep):
     assert box.everything() == before, "a dry run changes nothing under <W>-lanes/ or beside W"
     assert box.origin_head() == head, "nothing reached origin"
     assert not list(box.lanes_root.glob("*/lanes/.lanes-edit.lock")), "a dry run takes no lock"
-    assert f"LANES_LANE=<your lane> lane-end --sweep-checkouts --yes" in result.stdout
+    assert "LANES_LANE=<your lane> lane-end --sweep-checkouts --yes" in result.stdout
 
 
 def test_dry_run_with_nothing_to_remove_exits_0(sweep):
@@ -317,10 +323,11 @@ def _no_aside(box: Sweep) -> None:
 def test_closed_lane_checkout_removed_live_kept(sweep, tmp_path):
     """`--yes`, run by a lane, removes the CLOSED lane's checkout and the former
     name's beside its new one, and leaves every other entry — the LIVE lane's,
-    the PAUSED one's, its own, a non-clone, a link — and every clone beside W
-    exactly as they were."""
+    the PAUSED one's, a non-clone, a link — and every clone beside W exactly
+    as they were. Its own checkout moves only by the NOTED commit it pushed."""
     box = sweep.box
     before = box.everything()
+    runner = str(box.checkout(RUNNER))
     gone = {str(box.checkout(CLOSED)), str(box.checkout(OLD))}
     result, rows = sweep("--yes", LANES_LANE=RUNNER)
     assert result.returncode == 0, (result.stdout, result.stderr)
@@ -329,8 +336,12 @@ def test_closed_lane_checkout_removed_live_kept(sweep, tmp_path):
     for path in gone:
         assert not os.path.lexists(path), path
     after = box.everything()
-    assert {k: v for k, v in before.items() if k not in gone} == after, \
+    assert {k: v for k, v in before.items() if k not in gone and k != runner} == \
+        {k: v for k, v in after.items() if k != runner}, \
         "nothing but the two removed entries changed, under <W>-lanes/ or beside W"
+    assert box.git("-C", runner, "rev-parse", "HEAD").strip() == box.origin_head(), \
+        "the runner's checkout moved only to the NOTED commit it pushed"
+    assert after[runner][1:] == before[runner][1:], "and holds nothing new"
     assert _tagged(rows, "beside") == {str(c) for c in box.profile_clones}
     _no_aside(box)
     assert not list(box.lanes_root.glob("*/lanes/.lanes-edit.lock")), "every lock it took is released"
@@ -579,3 +590,225 @@ def test_nothing_outside_W_lanes_is_removed(sweep):
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert {str(c): box.everything()[str(c)] for c in box.profile_clones} == before
     assert all(rows[str(c)] == ("beside", "left") for c in box.profile_clones), rows
+
+
+# ------------------------------------------------- leaves first, and chains
+
+def _chain(box: Sweep) -> list:
+    """Three CLOSED lanes' checkouts under `<W>-lanes/`, each borrowing objects
+    from the one before it: 7 from 6, 6 from 5, and 5 from W."""
+    out, previous = [], box.w
+    for lane in CHAIN:
+        previous = box.clone(box.checkout(lane), reference=previous)
+        out.append(previous)
+    return out
+
+
+def _entries(text: str, paths) -> list:
+    """`(tag, path)` for each report line naming one of `paths`, in the order
+    the report gives them."""
+    want = {str(p) for p in paths}
+    out = []
+    for line in text.splitlines():
+        if not line.startswith("    ") or line.startswith("     "):
+            continue
+        tag, _, rest = line.strip().partition(" ")
+        path = rest.strip().partition("  ")[0]
+        if path in want:
+            out.append((tag, path))
+    return out
+
+
+def test_leaves_first_in_one_run(sweep, tmp_path):
+    """S6.2 (b): *"so leaves go first"*. A chain of CLOSED lanes' checkouts,
+    each borrowing objects from the one before it (7 → 6 → 5 → W), is all
+    removable in ONE run: the dry run lists 7, 6, 5 as removable in that
+    order, though the directory lists them 5, 6, 7, and `--yes` removes them
+    in that order. W, which 5 borrows from, is never a candidate."""
+    box = sweep.box
+    chain = _chain(box)
+    leaves_first = [str(c) for c in reversed(chain)]
+    result, _ = sweep()
+    assert result.returncode == 3, (result.stdout, result.stderr)
+    assert _entries(result.stdout, chain) == [("remove", p) for p in leaves_first], result.stdout
+    result, _ = sweep("--yes", LANES_LANE=RUNNER)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert _entries(result.stdout, chain) == [("removed", p) for p in leaves_first], result.stdout
+    _assert_under(Path(os.path.realpath(tmp_path)), chain)
+    for c in chain:
+        assert not os.path.lexists(c), c
+    box.git("-C", str(box.w), "fsck", "--connectivity-only")   # W, which 5 borrowed from, is whole
+    _no_aside(box)
+
+
+@pytest.mark.parametrize("held,expect", [
+    (2, {2: "commit(s) origin lacks", 1: "leaned on by {2}", 0: "leaned on by {1}"}),
+    (1, {2: "removed", 1: "commit(s) origin lacks", 0: "leaned on by {1}"}),
+    (0, {2: "removed", 1: "removed", 0: "commit(s) origin lacks"}),
+], ids=["the leaf held", "the middle held", "the root held"])
+def test_held_parent_keeps_its_dependents_chain(sweep, held, expect):
+    """S6.2 (b): *"A clone still depended on by a held clone stays."* One
+    link of the chain 7 → 6 → 5 holds an unpublished commit. Everything that
+    link borrows from, down to W, is held by it — in the dry run and under
+    `--yes`, which reads what leans on each candidate again just before its
+    removal — while every link that borrows from it, held by nothing, goes."""
+    box = sweep.box
+    chain = _chain(box)
+    _commit_unpushed(box, chain[held])
+    for args, env, gone in ((), {}, "remove"), (("--yes",), {"LANES_LANE": RUNNER}, "removed"):
+        result, rows = sweep(*args, **env)
+        assert result.returncode in (0, 3), (result.stdout, result.stderr)
+        for i, said in expect.items():
+            c = str(chain[i])
+            if said == "removed":
+                assert rows[c][0] == gone, (c, rows[c])
+            else:
+                assert rows[c][0] == "hold", (c, rows[c])
+                assert said.format(*chain) in rows[c][1], (c, rows[c])
+    for i, said in expect.items():
+        assert os.path.lexists(chain[i]) == (said != "removed"), chain[i]
+
+
+# ----------------------------------------------------------- the NOTED line
+
+def test_noted_line_written_through_runner_checkout(sweep):
+    """`--yes` ends with ONE NOTED line in the runner's own log, naming what it
+    removed, written as the runner's session through the RUNNER'S OWN
+    checkout (S2) under S3 and S4: the commit on origin is that checkout's
+    HEAD, W's own HEAD does not move, and that checkout fetched origin before
+    it pushed (no `LANES_NO_FETCH`; rv1b's MUST 3)."""
+    box = sweep.box
+    box.use_net()
+    runner = box.checkout(RUNNER)
+    w_head = box.git("-C", str(box.w), "rev-parse", "HEAD").strip()
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert _tagged(rows, "removed") == {str(box.checkout(CLOSED)), str(box.checkout(OLD))}, rows
+    noted = [line for line in box.origin_file(f"lanes/log/{RUNNER}.md").splitlines()
+             if line.startswith("NOTED")]
+    assert len(noted) == 1, noted
+    assert f"lane {RUNNER}, session {UUID[RUNNER]}@" in noted[0], noted
+    assert noted[0].endswith(
+        "sweep-checkouts (Amendment 23 S6.2): removed 2 register checkout(s) under "
+        f"brett-wip-lanes/ that held nothing unpublished: {CLOSED} {OLD}; "
+        "3 clone(s) beside W listed and left"), noted
+    assert str(box.root) not in noted[0], "no host path is written into the log"
+    assert box.git("-C", str(runner), "rev-parse", "HEAD").strip() == box.origin_head(), \
+        "the NOTED commit is the runner's checkout's own"
+    assert box.git("-C", str(box.w), "rev-parse", "HEAD").strip() == w_head, "W's HEAD did not move"
+    lines = box.net_log.read_text(encoding="utf-8").splitlines()
+    mine = [i for i, line in enumerate(lines) if f"-C {runner} " in line]
+    fetches = [i for i in mine if lines[i].startswith("fetch ")]
+    pushes = [i for i in mine if lines[i].startswith("push ")]
+    assert fetches and pushes and fetches[0] < pushes[0], lines
+    assert "NOTED in lane" in result.stdout, result.stdout
+
+
+def test_nothing_removed_writes_nothing(sweep):
+    """Nothing removed is nothing to record: with the CLOSED lane's checkout
+    held and the former name's gone, `--yes` removes nothing, writes no line
+    and makes no commit."""
+    box = sweep.box
+    box.checkout(OLD).rename(box.root / f"aside-{OLD}")
+    _commit_unpushed(box, box.checkout(CLOSED))
+    head = box.origin_head()
+    runner_head = box.git("-C", str(box.checkout(RUNNER)), "rev-parse", "HEAD").strip()
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert not _tagged(rows, "removed"), rows
+    assert box.origin_head() == head and "NOTED" not in box.origin_file(f"lanes/log/{RUNNER}.md")
+    assert box.git("-C", str(box.checkout(RUNNER)), "rev-parse", "HEAD").strip() == runner_head
+    assert "NOTED in lane" not in result.stdout
+
+
+REFUSING_LOG = """#!/usr/bin/env bash
+if [ "${1-}" = log ]; then
+  printf 'FAKE: the register refused this line\\n' >&2
+  exit 2
+fi
+exec bash %s "$@"
+"""
+
+
+def test_noted_line_not_written_exits_1_with_the_command(sweep):
+    """A NOTED line the writer refuses after the removals is not a quiet
+    success: exit 1, and the exact command that writes it by hand, which
+    then writes it."""
+    box = sweep.box
+    wrapper = box.fakebin / "lanes-edit-refusing-log"
+    wrapper.write_text(REFUSING_LOG % (REPO / "lanes-edit.sh"), encoding="utf-8")
+    wrapper.chmod(0o755)
+    result, rows = sweep("--yes", LANES_LANE=RUNNER, LANES_EDIT=str(wrapper))
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert _tagged(rows, "removed") == {str(box.checkout(CLOSED)), str(box.checkout(OLD))}, rows
+    assert "the NOTED line recording this sweep was NOT written" in result.stderr, result.stderr
+    assert "Nothing was lost" in result.stderr
+    by_hand = result.stderr.split("Write the line by hand: ", 1)[1].strip()
+    assert by_hand.startswith(f"LANES_LANE={RUNNER} LANES_SESSION={UUID[RUNNER]} lanes-edit.sh log NOTED "), by_hand
+    assert "NOTED" not in box.origin_file(f"lanes/log/{RUNNER}.md")
+    done = subprocess.run(["bash", "-c", by_hand], cwd=str(box.root), capture_output=True, text=True,
+                          env=dict(box.env, PATH=f"{REPO}{os.pathsep}{box.env['PATH']}"),
+                          timeout=180, check=False)
+    assert done.returncode == 0, (done.stdout, done.stderr)
+    assert "sweep-checkouts (Amendment 23 S6.2): removed 2" in box.origin_file(f"lanes/log/{RUNNER}.md")
+
+
+def test_yes_without_a_session_uuid_is_refused(sweep):
+    """The NOTED line's session field is a transcript uuid and only that
+    (Amendment 7(b)): a `LANES_SESSION` that is none is refused before
+    anything is removed, not met by the line after the removals."""
+    box = sweep.box
+    before, head = box.everything(), box.origin_head()
+    result, _ = sweep("--yes", LANES_LANE=RUNNER, LANES_SESSION="unknown")
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "has no transcript uuid for the session field" in result.stderr, result.stderr
+    assert "Nothing was removed" in result.stderr
+    assert box.everything() == before and box.origin_head() == head
+
+
+def test_a_store_kept_inside_a_clone_is_leaned_on(sweep):
+    """D18: a repository LEANS ON A CLONE when its alternates file names an
+    object directory anywhere AT OR UNDER that clone, not only the clone's own
+    `.git/objects`: removing the clone removes that store too. Here a store
+    kept inside the CLOSED lane's `.git` is borrowed by a repository beside W,
+    and the CLOSED lane's checkout is held by it, in the dry run and under
+    `--yes`, and that repository stays whole."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    store = c / ".git" / "kept-store"
+    box.git("init", "-q", "--bare", str(store))
+    borrower = box.w.parent / "borrower"
+    box.git("init", "-q", "-b", "main", str(borrower))
+    box.write(borrower, "f.txt", "kept\n")
+    box.commit(borrower, "a commit whose objects go to the store", "f.txt")
+    objects = borrower / ".git" / "objects"
+    for entry in objects.iterdir():
+        if entry.name not in ("info", "pack"):
+            shutil.copytree(entry, store / "objects" / entry.name, dirs_exist_ok=True)
+    (objects / "info" / "alternates").write_text(f"{store / 'objects'}\n", encoding="utf-8")
+    for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+        result, rows = sweep(*args, **env)
+        assert result.returncode in (0, 3), (result.stdout, result.stderr)
+        assert rows[str(c)][0] == "hold", rows[str(c)]
+        assert f"leaned on by {borrower} " in rows[str(c)][1], rows[str(c)]
+    assert c.is_dir() and store.is_dir()
+    box.git("-C", str(borrower), "fsck", "--connectivity-only")
+
+
+def test_a_directory_sharing_Ws_git_directory_is_kept_as_W(sweep):
+    """W IS NEVER A CANDIDATE, by its git directory as well as by its path: a
+    directory under `<W>-lanes/`, named for a CLOSED lane, whose own `.git`
+    names W's as its common directory (a linked worktree's admin files copied
+    by hand) IS W's repository, and is kept as W, by the dry run and `--yes`."""
+    box = sweep.box
+    d = box.checkout(CHAIN[0])
+    (d / ".git").mkdir(parents=True)
+    (d / ".git" / "commondir").write_text(f"{box.w / '.git'}\n", encoding="utf-8")
+    (d / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    assert box.git("-C", str(d), "rev-parse", "--git-common-dir").strip() == str(box.w / ".git")
+    w_before = box.w_state()
+    for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+        result, rows = sweep(*args, **env)
+        assert result.returncode in (0, 3), (result.stdout, result.stderr)
+        assert rows[str(d)] == ("keep", "W itself, the readers' copy"), rows[str(d)]
+    assert d.is_dir() and box.w_state() == w_before
