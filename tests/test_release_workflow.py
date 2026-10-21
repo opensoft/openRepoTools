@@ -712,17 +712,23 @@ def fixture_git(home: Path, cwd: Path, *args: str, data: Optional[str] = None) -
     return done.stdout.strip()
 
 
-def tagged_origin(where: Path, tags: Tuple[str, ...]) -> Tuple[Path, str, Dict[str, str]]:
-    """A bare repository on this filesystem holding one commit and an
-    annotated tag at it for each of `tags`, and an empty repository whose
-    `origin` is it, by a `file://` URL: what the ref step fetches from.
-    Returns that repository, the commit, and each tag's object."""
+def tagged_origin(where: Path, tags: Tuple[str, ...], history: int = 1
+                  ) -> Tuple[Path, str, Dict[str, str]]:
+    """A bare repository on this filesystem holding `history` commits (one
+    with no parent, unless a case asks for more, each the child of the one
+    before it) and an annotated tag at the last for each of `tags`, and an
+    empty repository whose `origin` is it, by a `file://` URL: what the ref
+    step fetches from. Returns that repository, the last commit, and each
+    tag's object."""
     home, origin, checkout = where / "home", where / "origin.git", where / "checkout"
     for directory in (origin, checkout):
         directory.mkdir(parents=True)
     fixture_git(home, origin, "init", "--quiet", "--bare")
     tree = fixture_git(home, origin, "mktree", data="")
     commit = fixture_git(home, origin, "commit-tree", tree, "-m", "the release commit")
+    for _ in range(history - 1):
+        commit = fixture_git(home, origin, "commit-tree", tree, "-p", commit,
+                             "-m", "the release commit")
     objects = {}
     for tag in tags:
         fixture_git(home, origin, "tag", "-a", tag, "-m", f"openRepoTools {tag}", commit)
@@ -1444,6 +1450,45 @@ def test_release_build_the_ref_step_holds_the_ref_the_forge_and_git_to_v_version
     if ref != f"refs/tags/v{version}":
         assert forge_asked(tmp_path) == [], (
             f"the step asked the forge about a ref it must refuse: {forge_asked(tmp_path)}")
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+def test_release_build_the_ref_step_fetches_the_tag_again_without_cutting_the_checkout_s_history(
+        tmp_path):
+    """STEP 2 ON A TAG KEEPS THE CHECKOUT'S FULL HISTORY (the step's own
+    comment, and the header's: it "fetches the tag again without `--depth`").
+    RUN on `refs/tags/v1.1.0` in a checkout that holds four commits and the
+    tag, as the build's `fetch-depth: 0` leaves it, the step passes and the
+    checkout is not shallow afterwards: it still holds all four, where a depth
+    would cut that history off at this commit. The step's one `git fetch`
+    also names no option that limits history, which a depth beyond the four
+    commits would not show."""
+    history = 4
+    checkout, commit, objects = tagged_origin(tmp_path / "git", ("v1.1.0",), history)
+    home = tmp_path / "git" / "home"
+    fixture_git(home, checkout, "fetch", "--quiet", "origin", "+refs/tags/*:refs/tags/*")
+    assert fixture_git(home, checkout, "rev-parse", "--is-shallow-repository") == "false"
+    assert fixture_git(home, checkout, "rev-list", "--count", commit) == str(history)
+    forge, values = api_forge(tmp_path, annotated_tag(CODE_LEG, "v1.1.0",
+                                                      objects["v1.1.0"], commit))
+    values.update(GITHUB_REF="refs/tags/v1.1.0", GITHUB_REF_NAME="v1.1.0",
+                  GITHUB_SHA=commit, GITHUB_REPOSITORY=CODE_LEG, VERSION="1.1.0")
+    workflow = release()
+    step = named(workflow, "build", REF_STEP)
+    runner = Runner(tmp_path / "work", workflow, "build", values, forge)
+    done = runner.run(step, cwd=checkout)
+    assert done.returncode == 0, transcript(done)
+    assert fixture_git(home, checkout, "rev-parse", "--is-shallow-repository") == "false", (
+        f"the step left the checkout shallow:\n{transcript(done)}")
+    assert fixture_git(home, checkout, "rev-list", "--count", commit) == str(history), (
+        f"the step cut the checkout's history off:\n{transcript(done)}")
+    fetches = [line for line in commands(run_text(step))
+               if re.search(r"\bgit\s+fetch\b", line)]
+    assert len(fetches) == 1, fetches
+    assert not re.search(r"--(?:depth|deepen|shallow-since|shallow-exclude)\b",
+                         fetches[0]), fetches[0]
 
 
 #: A `gh` that answers `compare` as the forge does (`FORGE_COMPARE`, a JSON map
