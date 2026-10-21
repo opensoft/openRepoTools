@@ -5164,6 +5164,264 @@ wip_dispatch() {
 	wip_init
 }
 
+# --- the values no line can print as they read (#241) -----------------------
+#
+# THREE VALUES REACH THIS COMMAND FROM THE ENVIRONMENT AND ARE NAMED IN ITS
+# LINES AS THEY WERE TYPED: the directory `--install` places into, which is in
+# the `$PATH` note, in every `installed at` line and in every refusal that
+# names a target; and `$OPENREPOTOOLS_REPO` and `$OPENREPOTOOLS_REF`, which
+# `--version` prints and every fetch and every refusal about the source sends
+# or names. What a person typed into one of them is not always what a line that
+# prints it shows:
+#
+#   * A `:` splits a `$PATH` whatever the quoting, so no `export PATH=` line can
+#     name a directory that holds one (the directory only; a repository or a
+#     ref is no `$PATH`).
+#   * A newline breaks the line it is printed in into two, so the second can
+#     be made to say anything; a carriage return rewrites the line on the
+#     terminal (`/tmp/x^MFORGED is not on $PATH`); an escape, and the C1
+#     control U+009B that is its one-character form, are the terminal's to act
+#     on. DEL and every other C0 control are refused with them: none belongs
+#     in a name that is printed.
+#   * A character a terminal draws as something other than itself shows one
+#     name as another's: U+202E reorders the rest of the line, U+200B draws as
+#     nothing, so `~/.local<U+200B>/bin` reads as `~/.local/bin`, and U+2028
+#     ends a line for any reader that keeps Unicode's line breaks.
+#
+# EACH IS ASKED ONCE, BEFORE ANYTHING IS PLACED, FETCHED OR NAMED, and a refusal
+# says which KIND of character it found and never repeats the value, so the
+# refusal cannot forge a line either. The directory is asked by
+# `refuse_bad_bin_dir`, straight before `install_commands`; the repository and
+# the ref by `refuse_bad_values`, before `--version` prints them (where it does
+# print them: a package's `--version` names its stamp and neither value) and
+# before `--install` names or fetches with them, in a package as in a checkout.
+# `wip init` neither prints nor sends any of the three, so it asks none of
+# them. `--help` and the bare usage name the variables and never their values,
+# so they answer past all three.
+#
+# THE RULE IS openRepoShape's, as its `install.sh` and `openRepoShape
+# --install` hold it, and it is read in bytes, under `LC_ALL=C` in a subshell,
+# so the answer is the same in every locale:
+#
+#   * a CONTROL CHARACTER is `[[:cntrl:]]` (U+0000 to U+001F and DEL) or a C1
+#     control (U+0080 to U+009F), which in UTF-8 is `0xC2` and a byte from
+#     `0x80` to `0x9F`. It is NOT `[![:print:]]`: under `C` that matches every
+#     byte past ASCII, so a directory called `café` was refused for a fault it
+#     has not got (openRepoShape #940);
+#   * a MISDRAWN CHARACTER is one of `MISDRAWN_CHARACTERS`, whose UTF-8 bytes
+#     `misdrawn_characters` looks for and names by code point, so the refusal
+#     can say which one nobody can see.
+#
+# THE TWO CASES openRepoShape #858 LEFT OPEN, DECIDED HERE:
+#
+#   * A NAME A MULTIBYTE LOCALE READS AS TEXT IS PLACED. GBK, GB18030 and CP936
+#     read `0xC2 0x80` to `0xC2 0x9F` as 32 hanzi, and Big5, EUC-JP and EUC-KR
+#     read U+00AD's two bytes as one letter, so the bytes alone refuse a name
+#     that holds no control character at all in the locale it was typed in.
+#     Where the bytes refuse a DIRECTORY, `locale_reading` asks the person's
+#     own locale how it reads them and the C1 and misdrawn checks are made on
+#     that reading. Only a directory is read this way: a repository and a ref
+#     are held to the bytes alone, because no repository or ref has a reason
+#     to be spelled in such a charset, and that is the stricter of the two.
+#   * A LONE `0x9B` BYTE IS PLACED, and so is every other byte that is not UTF-8
+#     (an overlong form of a control, a lone `0xE9`). A terminal that reads
+#     UTF-8 draws such a byte as a character it cannot read, and only one set
+#     to an 8-bit charset acts on it. This is the KNOWN LIMIT: it is the trade
+#     openRepoShape made (#867), and `tests/test_install_unprintable_values_241.py`
+#     holds it in a row of its own so that nobody changes it by accident. For
+#     the same reason a locale that reads those bytes as letters, left in a
+#     terminal that reads UTF-8, hands that terminal a C1 control it acts on.
+
+#: THE CHARACTERS A TERMINAL DRAWS AS SOMETHING OTHER THAN THEMSELVES, by code
+#: point, a range as its first and last (openRepoShape #837). Every entry is
+#: U+0080 or above, because `misdrawn_characters` builds the two-, three- and
+#: four-byte forms of UTF-8 and no other.
+#:   00AD        the soft hyphen, drawn as a hyphen in a terminal cell and as
+#:               nothing elsewhere, never as what it is;
+#:   061C, 200E-200F, 202A-202E, 2066-2069
+#:               the twelve bidirectional controls, which reorder the text
+#:               around them: a mark the characters beside it, an embedding,
+#:               override or isolate the rest of the line;
+#:   2028-2029   the line and paragraph separators, which end a line for any
+#:               reader that keeps Unicode's line breaks;
+#:   200B, 2060-206F, FEFF, FFF9-FFFB, 1D173-1D17A, E0001
+#:               the format characters of no width that nothing needs: the
+#:               zero-width space and no-break space, the word joiner, the
+#:               invisible operators, the deprecated format controls, the
+#:               interlinear annotation characters, the musical beam, tie,
+#:               slur and phrase controls, and the deprecated language tag.
+#: LEFT OUT, EACH FOR ITS REASON: U+200C and U+200D (a name in Persian, in an
+#: Indic script or with an emoji sequence holds them) and U+180E (Mongolian
+#: needs it as Persian needs U+200C); the tags, the variation selectors and
+#: U+034F, which are drawn as part of the character before them; the format
+#: characters a script builds its signs with; and every space and the blank
+#: Hangul fillers, each drawn as a blank cell, as a space is.
+MISDRAWN_CHARACTERS=(00AD 061C 200B 200E-200F 2028-202E 2060-206F FEFF FFF9-FFFB 1D173-1D17A E0001)
+
+#: WHICH OF THEM "$1" HOLDS, as `U+XXXX`, comma-separated, in that order, or
+#: nothing. Run under `LC_ALL=C`, in a subshell, so the match is byte by byte
+#: in every locale: each character's UTF-8 is built from its code point with
+#: printf's octal escapes (`%b` reads `\0NNN`, as POSIX defines it), in two
+#: bytes below U+0800, three below U+10000 and four above, and looked for in
+#: the value as bytes. No byte is read back as a number, so one list says both
+#: what is refused and what the refusal names.
+misdrawn_characters() {
+	local value="$1" entry code last bytes name found=""
+	for entry in "${MISDRAWN_CHARACTERS[@]}"; do
+		code=$((0x${entry%-*}))
+		last=$((0x${entry#*-}))
+		while [ "$code" -le "$last" ]; do
+			if [ "$code" -lt 2048 ]; then
+				printf -v bytes '\\0%o\\0%o' $((0xC0 | (code >> 6))) \
+					$((0x80 | (code & 63)))
+			elif [ "$code" -lt 65536 ]; then
+				printf -v bytes '\\0%o\\0%o\\0%o' $((0xE0 | (code >> 12))) \
+					$((0x80 | ((code >> 6) & 63))) $((0x80 | (code & 63)))
+			else
+				printf -v bytes '\\0%o\\0%o\\0%o\\0%o' \
+					$((0xF0 | (code >> 18))) $((0x80 | ((code >> 12) & 63))) \
+					$((0x80 | ((code >> 6) & 63))) $((0x80 | (code & 63)))
+			fi
+			printf -v bytes '%b' "$bytes"
+			case "$value" in
+			*"$bytes"*)
+				printf -v name 'U+%04X' "$code"
+				found="${found:+$found, }$name"
+				;;
+			*) ;;
+			esac
+			code=$((code + 1))
+		done
+	done
+	printf '%s' "$found"
+}
+
+#: A C1 CONTROL IN "$1": U+0080 to U+009F, which UTF-8 spells as `0xC2` and a
+#: byte from `0x80` to `0x9F`, looked for as those two bytes under `LC_ALL=C`
+#: in a subshell, so the locale changes nothing. Left to a UTF-8 locale,
+#: `[[:cntrl:]]` matches a C1 control only in a value that is valid UTF-8: one
+#: byte that is not (a lone `0xE9`) makes bash match byte by byte, and then
+#: U+009B's two bytes are no control.
+holds_c1_control() {   # <value>
+	(LC_ALL=C; case "$1" in *$'\302'[$'\200'-$'\237']*) exit 0 ;; *) exit 1 ;; esac)
+}
+
+#: THE VALUE AS THE PERSON'S LOCALE READS IT, IN UTF-8, WHERE THAT LOCALE READS
+#: TWO OR MORE OF ITS BYTES AS ONE CHARACTER (openRepoShape #858). The control
+#: check and `misdrawn_characters` look for UTF-8's bytes under `LC_ALL=C`, and
+#: a multibyte charset that is not UTF-8 reads some of those bytes as text: GBK,
+#: GB18030 and CP936 read `0xC2 0x80` to `0xC2 0x9F` as 32 hanzi; GBK, Big5,
+#: EUC-JP and EUC-KR read U+00AD's two bytes as a hanzi, a kanji or a Hangul
+#: syllable; and in Shift_JIS a kanji whose second byte is `0xC2`, before one
+#: of the common kanji, puts a C1 control's two bytes side by side. It prints
+#: the reading, and succeeds, only where:
+#:   * `locale charmap`, asked under the person's own `LC_ALL`, `LC_CTYPE` and
+#:     `LANG`, answers with a charset that is neither UTF-8, whose reading is
+#:     the bytes, nor ASCII, which reads no byte past 0x7F;
+#:   * `iconv` reads the whole value in that charset;
+#:   * the reading, written back into that charset by `iconv`, is the value
+#:     again, byte for byte, so an `iconv` that drops or changes a byte, or
+#:     prints nothing at all and exits 0, gives no reading; and
+#:   * the reading has fewer characters than the value has bytes, counted under
+#:     `LC_ALL=C` as the bytes of UTF-8 that start a character (0x80 to 0xBF
+#:     continue one). A single-byte charset reads each byte alone, and there
+#:     the bytes decide: under a Latin-1 `LANG` left in a terminal that reads
+#:     UTF-8, U+FEFF's three bytes would read as three letters.
+#: Otherwise it prints nothing and fails, and the bytes decide: no `locale` or
+#: no `iconv` (a minimal container), a charset either does not know, or a value
+#: the charset cannot read. The locale is taken at its word, and that is the
+#: trade (see above): a multibyte locale that is not UTF-8, left in a terminal
+#: that reads UTF-8, is handed the C1 bytes it reads as letters, and that
+#: terminal acts on them. This is openRepoShape's `locale_reading`, copied as it
+#: is, so that neither command places a directory the other refuses.
+locale_reading() {
+	local charmap reading
+	charmap="$(locale charmap 2>/dev/null)" || return 1
+	case "$charmap" in
+	"" | [Uu][Tt][Ff]-8 | [Uu][Tt][Ff]8 | ANSI_X3.4-1968 | *ASCII*) return 1 ;;
+	*) ;;
+	esac
+	reading="$(printf '%s' "$1" | iconv -f "$charmap" -t UTF-8 2>/dev/null)" ||
+		return 1
+	[ "$(printf '%s' "$reading" | iconv -f UTF-8 -t "$charmap" 2>/dev/null)" = "$1" ] ||
+		return 1
+	(
+		LC_ALL=C
+		letters=${reading//[$'\200'-$'\277']/}
+		[ "${#letters}" -lt "${#1}" ] || exit 1
+		printf '%s' "$reading"
+	)
+}
+
+#: WHAT "$1" HOLDS THAT NO LINE CAN PRINT AS IT READS, in words that never
+#: repeat it, and 0; or nothing and 1 where it holds none. A CONTROL CHARACTER
+#: comes first: `[[:cntrl:]]` is asked of the bytes as typed (those characters
+#: are ASCII's in every charset a locale reads), and the C1 controls and the
+#: misdrawn characters of the value as `locale_reading` reads it, when the
+#: caller says `locale` and the bytes refuse it, else of the bytes too.
+#: `$(...)` drops a newline at the end of a reading, which is why the typed
+#: bytes are asked for the first.
+value_fault() {   # <value> [locale]
+	local value="$1" seen="$1" misdrawn
+	if [ "${2-}" = locale ] &&
+		{ holds_c1_control "$value" || [ -n "$(LC_ALL=C; misdrawn_characters "$value")" ]; }; then
+		seen="$(locale_reading "$value")" || seen="$value"
+	fi
+	if (LC_ALL=C; case "$value" in *[[:cntrl:]]*) exit 0 ;; *) exit 1 ;; esac) ||
+		holds_c1_control "$seen"; then
+		printf '%s' 'a control character, such as a newline, a carriage return, a tab or an escape'
+		return 0
+	fi
+	misdrawn="$(LC_ALL=C; misdrawn_characters "$seen")"
+	if [ -n "$misdrawn" ]; then
+		printf 'a character a terminal draws as something other than itself (%s): one that is invisible, is drawn as another character, ends a line or reorders the text around it' "$misdrawn"
+		return 0
+	fi
+	return 1
+}
+
+#: THE DIRECTORY `--install` PLACES INTO, ASKED BEFORE ANYTHING IS PLACED,
+#: FETCHED OR NAMED: refused for a control character, a misdrawn character or a
+#: `:`, in that order, naming the kind and never the directory. It is the
+#: directory as `install_commands` computes it, so a `$HOME` holding one is
+#: refused when `$OPENREPOTOOLS_BIN_DIR` is unset. A WINDOWS SPELLING (`D:\tools`)
+#: holds a `:` and is refused with the rest: nothing here spells one the way
+#: bash does, and on Windows the way in is WSL2.
+refuse_bad_bin_dir() {
+	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}" fault
+	if fault="$(value_fault "$dir" locale)"; then
+		die "\`--install\` would place the ${#INSTALLABLES[@]} commands in a directory whose name holds $fault, so no line about \$PATH can print the name as it reads.
+    NOTHING was installed and nothing already installed was replaced. Set
+    \$OPENREPOTOOLS_BIN_DIR to a directory without one, then run this again."
+	fi
+	case "$dir" in
+	*:*)
+		die "\`--install\` would place the ${#INSTALLABLES[@]} commands in a directory whose name holds a ':', and a ':' is what splits a \$PATH into its directories, so no line about \$PATH can name it.
+    NOTHING was installed and nothing already installed was replaced. Set
+    \$OPENREPOTOOLS_BIN_DIR to a directory without one, then run this again."
+		;;
+	esac
+}
+
+#: THE REPOSITORY AND THE REF, CHECKED ONCE, BEFORE ANY LINE NAMES EITHER AND
+#: BEFORE ANY REQUEST CARRIES THEM (openRepoShape #866): the same rule, with a
+#: `:` allowed, because neither is a `$PATH`. The refusal never repeats the
+#: value, so the shape refusals after it (`is_slug`'s, a fetch's) are the only
+#: lines that print one, and by then it holds nothing a terminal acts on.
+refuse_bad_values() {
+	local fault
+	if fault="$(value_fault "$REPO")"; then
+		die "\$OPENREPOTOOLS_REPO holds $fault, so this command will not print it or send it in a request.
+    Nothing was fetched, installed or replaced. Set \$OPENREPOTOOLS_REPO to an
+    owner/name, such as opensoft/openRepoTools, then run this again."
+	fi
+	if fault="$(value_fault "$REF")"; then
+		die "\$OPENREPOTOOLS_REF holds $fault, so this command will not print it or send it in a request.
+    Nothing was fetched, installed or replaced. Set \$OPENREPOTOOLS_REF to a
+    branch, a tag or a commit, such as main, then run this again."
+	fi
+}
+
 # --- package mode -----------------------------------------------------------
 #
 # A PACKAGE READS ITS OWN STAMP BEFORE IT ACTS ON ANY ARGUMENT (#228, FR-012,
@@ -5217,8 +5475,15 @@ while [ $# -gt 0 ]; do
 	-h | --help) usage; exit 0 ;;
 	--version)
 		# A PACKAGE NAMES ITS RELEASE. A checkout and the one-line install name
-		# the repository and the ref they fetch from, as they always have.
-		if [ -n "$PACKAGE_DIR" ]; then package_version; else say "openRepoTools ($REPO @ $REF)"; fi
+		# the repository and the ref they fetch from, as they always have, and
+		# so they are checked first (#241): a package prints neither value, so
+		# it asks neither of them anything.
+		if [ -n "$PACKAGE_DIR" ]; then
+			package_version
+		else
+			refuse_bad_values
+			say "openRepoTools ($REPO @ $REF)"
+		fi
 		exit 0 ;;
 	--install) MODE="install"; shift ;;
 	wip) shift; wip_dispatch "$@"; exit $? ;;
@@ -5231,6 +5496,11 @@ while [ $# -gt 0 ]; do
 done
 
 if [ "$MODE" = "install" ]; then
+	# THE THREE VALUES NO LINE CAN PRINT AS THEY READ ARE REFUSED FIRST (#241):
+	# before a request carries the repository or the ref, before the directory
+	# is named by a line or a refusal, and before anything is placed.
+	refuse_bad_values
+	refuse_bad_bin_dir
 	install_commands
 	exit 0
 fi
