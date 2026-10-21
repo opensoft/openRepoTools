@@ -45,7 +45,7 @@ longer names leaves in the same sync. Its
 provenance moves only forward PER LANE: a sync that reads a lane's lifecycle
 generation below the one its rows were written at writes nothing for that lane
 (`reconcile` takes the lane as it now stands, and says so); a lane whose
-inventory is there and could not be read keeps its rows and gets one marker
+inventory could not be read keeps its rows and gets one marker
 row, with no path and a branch no git ref can be (#173), which `export
 --worktrees` writes back as the source's own `UNREAD` line; a read whose LANE
 LISTING was not whole - the helper's `PARTIAL` line: its register, its archive,
@@ -1912,7 +1912,7 @@ def lane_generation(lane: str) -> tuple:
 def collect_inventory() -> tuple[dict, dict]:
     """Every tree the inventory names, keyed `<lane>:<path>` (a second tree of
     one lane with the same path `<lane>:<path><US><n>`), and every lane whose
-    inventory is there and could not be read - whose rows are KEPT, never taken
+    inventory could not be read - whose rows are KEPT, never taken
     for a lane with no trees (Amendment 7(d)).
 
     A READ WHOSE LANE LISTING WAS NOT WHOLE IS NO ANSWER AT ALL
@@ -2064,7 +2064,7 @@ def run_inventory(mode: str, requested: str | None, dry_run: bool) -> int:
     # know - #173 item c1.)
     held: dict = {}
     for lane, why in unread.items():
-        held[lane] = f"its inventory is there and could not be read ({why})"
+        held[lane] = f"its inventory could not be read ({why})"
     read_gen: dict = {}
     for rec in trees.values():
         read_gen[rec["lane"]] = max(read_gen.get(rec["lane"], 0), rec["generation"] or 0)

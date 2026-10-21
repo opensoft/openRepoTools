@@ -377,7 +377,7 @@ EOF
 	say ""
 	say "$n worktree(s) in $nl lane(s) on $nw workstation(s), each as its lane's inventory last recorded it (LAST SEEN); nothing here is recomputed."
 	if [ "$wt_unread" != 0 ]; then
-		say "$wt_unread lane(s) above have an inventory that is there and could not be read: that is NOT a lane with no worktrees."
+		say "$wt_unread lane(s) above have an inventory that could not be read: that is NOT a lane with no worktrees."
 	fi
 	if [ "$wt_partial" != 0 ]; then
 		say "the lane listing above is NOT WHOLE: a lane it could not name is missing from it, and that is NOT a lane with no worktrees."
