@@ -2152,13 +2152,17 @@ def test_release_build_the_wheel_check_refuses_a_wheel_that_is_not_the_commit_s(
         f"no ::error:: line of the refusal names {names}:\n{transcript(bad)}")
 
 
-#: THE WHEEL CHECK'S WHOLE STEP, ON THE REFS A DISPATCH CAN BE ON: `(the
-#: dispatched ref, the version)`. A rehearsal is dispatched on a branch and
+#: THE WHEEL CHECK'S WHOLE STEP, ON THE RUNS A DISPATCH CAN BE: `(the
+#: dispatched ref, the version, the repository it runs in)`. A rehearsal is
+#: dispatched on a branch, in this repository, as rehearsals run today, and
 #: builds the version of the tag it rehearses, `1.1.0rc1` first; a release is
-#: dispatched on its own tag.
+#: dispatched on its own tag, in the code leg. Each wheel is stamped with the
+#: repository of its own run, so a `REPOSITORY` hard-coded to either name
+#: fails one of the two cases.
 WHEEL_CHECK_REFS = {
-    "a-rehearsal-branch": ("refs/heads/l3-rehearsal-v1.1.0", "1.1.0rc1"),
-    "the-version-s-tag": ("refs/tags/v1.1.0", "1.1.0"),
+    "a-rehearsal-branch": ("refs/heads/l3-rehearsal-v1.1.0", "1.1.0rc1",
+                           THIS_REPOSITORY),
+    "the-version-s-tag": ("refs/tags/v1.1.0", "1.1.0", CODE_LEG),
 }
 
 
@@ -2172,13 +2176,17 @@ def test_release_build_the_wheel_check_step_as_github_runs_it_holds_the_wheel_to
     `COMMIT` and `REPOSITORY` from `$VERSION`, `$GITHUB_SHA` and
     `$GITHUB_REPOSITORY`, and hands its heredoc the wheel at
     `$RUNNER_TEMP/dist-a/openrepotools-$VERSION-py3-none-any.whl`. With the
-    wheel as built for the release put there, it passes on a rehearsal's
-    branch and on the version's tag alike, so the `TAG` it holds the stamp to
+    wheel as built for the release put there, stamped with the repository of
+    the run, it passes on a rehearsal's branch in this repository and on the
+    version's tag in the code leg alike. So the `TAG` it holds the stamp to
     is `v$VERSION`, which comes from `$VERSION` and never from the ref's
     name: a branch's name is `l3-rehearsal-v1.1.0`, and the heredoc refuses
-    a `TAG` that is not `v$VERSION`."""
-    ref, version = WHEEL_CHECK_REFS[which]
-    release_ = wheel_release(version)
+    a `TAG` that is not `v$VERSION`. And the `REPOSITORY` it holds the stamp
+    to is `$GITHUB_REPOSITORY`, never the code leg's by name: a rehearsal
+    runs in this repository, where the heredoc refuses a `REPOSITORY` that is
+    not the run's."""
+    ref, version, repository = WHEEL_CHECK_REFS[which]
+    release_ = dict(wheel_release(version), REPOSITORY=repository)
     workflow = release()
     step = named(workflow, "build", WHEEL_CHECK_STEP)
     if "tomllib" in heredoc(run_text(step)) and sys.version_info < (3, 11):
