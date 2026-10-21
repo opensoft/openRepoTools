@@ -714,12 +714,12 @@ def fixture_git(home: Path, cwd: Path, *args: str, data: Optional[str] = None) -
 
 def tagged_origin(where: Path, tags: Tuple[str, ...], history: int = 1
                   ) -> Tuple[Path, str, Dict[str, str]]:
-    """A bare repository on this filesystem holding `history` commits (one
-    with no parent, unless a case asks for more, each the child of the one
-    before it) and an annotated tag at the last for each of `tags`, and an
-    empty repository whose `origin` is it, by a `file://` URL: what the ref
-    step fetches from. Returns that repository, the last commit, and each
-    tag's object."""
+    """A bare repository on this filesystem holding `history` commits and an
+    annotated tag at the last for each of `tags`, and an empty repository
+    whose `origin` is it, by a `file://` URL: what the ref step fetches from.
+    The commits are in a line, the first with no parent and each later one
+    the child of the one before it, and `history` is 1 unless a case asks for
+    more. Returns that repository, the last commit, and each tag's object."""
     home, origin, checkout = where / "home", where / "origin.git", where / "checkout"
     for directory in (origin, checkout):
         directory.mkdir(parents=True)
@@ -1464,7 +1464,9 @@ def test_release_build_the_ref_step_fetches_the_tag_again_without_cutting_the_ch
     checkout is not shallow afterwards: it still holds all four, where a depth
     would cut that history off at this commit. The step's one `git fetch`
     also names no option that limits history, which a depth beyond the four
-    commits would not show."""
+    commits would not show. A depth beyond the four commits that the line takes
+    from a variable would pass both checks; that is contrived, and no case
+    holds it."""
     history = 4
     checkout, commit, objects = tagged_origin(tmp_path / "git", ("v1.1.0",), history)
     home = tmp_path / "git" / "home"
