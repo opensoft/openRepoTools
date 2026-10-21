@@ -742,10 +742,44 @@ def test_a_commit_made_on_top_before_the_replay_is_kept_exit_6(box: Box):
     result = box.helper("set-row-state", LANE, "LIVE · the write under it")
     assert result.returncode == 6, result.stderr
     assert "is no longer HEAD, so it is not replayed" in result.stderr
+    assert "in this checkout while its push was in flight" in result.stderr, "the HEAD check fired, not the drop's"
     assert "push refused (attempt 1 of 6)" not in result.stderr, "no reset was made"
     assert box.subject(c) == "handoff(repoS4-2@Eagle): a stamp from an unlocked writer"
     assert box.subject(c, "HEAD~1").startswith(f"LANES({LANE}@"), "this write's commit is under it"
     assert (c / "handoffs" / "stamp.md").is_file(), "the other writer's file is still there"
+    assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the publish act"
+    _settled(box, c)
+
+
+def test_a_commit_made_on_top_at_the_sixth_push_is_named_before_the_bound_exit_6(box: Box):
+    """m1b-c2's mutant B04 (the replay's HEAD check removed) survived every
+    case, because the drop's compare-and-swap refuses a commit on top as
+    well, in other words. The HEAD check comes before the six-attempt bound,
+    so a commit that lands on top during the sixth push is named as not this
+    write's, and is never folded into the bound's "kept on HEAD"."""
+    c = box.seam()
+    peer = shlex.quote(str(box.peer))
+    cq = shlex.quote(str(c))
+    count = shlex.quote(str(box.root / "push.count"))
+    box.use_net(
+        '[ "$1" = push ] || exit 0' + "\n" +
+        f"n=$(cat {count} 2>/dev/null || echo 0)" + "\n" +
+        f"echo $((n + 1)) > {count}" + "\n" +
+        f"git -C {peer} fetch -q origin" + "\n" +
+        f"git -C {peer} merge -q --ff-only refs/remotes/origin/main" + "\n" +
+        f"git -C {peer} commit -q --allow-empty -m \"a peer's commit lands first ($((n + 1)))\"" + "\n" +
+        f"git -C {peer} push -q origin main" + "\n" +
+        '[ "$n" = 5 ] || exit 0' + "\n" +
+        f"printf 'stamp' > {cq}/handoffs/stamp.md" + "\n" +
+        f"git -C {cq} add -- handoffs/stamp.md" + "\n" +
+        f"git -C {cq} commit -q -m 'handoff(repoS4-2@Eagle): a stamp from an unlocked writer' -- handoffs/stamp.md" + "\n" +
+        "exit 0" + "\n")
+    result = box.helper("set-row-state", LANE, "LIVE · beaten five times, then a stamp on top")
+    assert result.returncode == 6, result.stderr
+    assert "push refused (attempt 5 of 6)" in result.stderr
+    assert "is no longer HEAD, so it is not replayed" in result.stderr
+    assert "after six attempts" not in result.stderr, "the HEAD check comes before the bound"
+    assert box.subject(c) == "handoff(repoS4-2@Eagle): a stamp from an unlocked writer"
     assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the publish act"
     _settled(box, c)
 
