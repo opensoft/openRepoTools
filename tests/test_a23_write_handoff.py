@@ -904,3 +904,47 @@ def test_set_restart_intent_refuses_any_other_relative_path(box: Box, cell: str)
     assert made.returncode == 64, made.stderr
     assert "--handoff" in made.stderr
     assert not (box.state / LANE / "restart-intent.yaml").exists()
+
+
+# ------------------------------------------------- rv2a's pre-review of slice 2a
+
+#: A handoff the checkout has and git has never tracked: a new lane's first, or
+#: a peer's.
+NEW_REL = "handoffs/repoS4/new-untracked.md"
+
+
+@pytest.mark.parametrize("mode", ["stamp", "prepend", "whole"])
+def test_an_untracked_handoff_is_refused_and_never_dropped(box: Box, mode: str):
+    """MUST 1: the row names a handoff the checkout has and git has never
+    tracked, and a peer's commit lands at the push. This write's commit would
+    add the file under its own subject, and the lost race's replay dropped that
+    commit and the file with it (8, "Nothing was written"). S3 step 4 counts it
+    as a pending change: refused (2) before any commit, `--stamp` writing
+    nothing and `--prepend`/`--whole` writing it, uncommitted (R-A11-11). The
+    file is still there in every mode, still untracked, and nothing is pushed."""
+    c = box.seam()
+    box.cell_is(NEW_REL)
+    f = c / NEW_REL
+    f.write_text(HANDOFF, encoding="utf-8")
+    box.race()
+    if mode == "stamp":
+        args, after = ("--stamp", STAMP), HANDOFF
+    elif mode == "prepend":
+        args, after = ("--prepend", str(_block(box))), prepended(HANDOFF)
+    else:
+        args, after = ("--whole", str(_prepared(box)), "--expect-digest", sha(f)), "# the handoff, written whole\n"
+    result = box.write_handoff(*args, "--subject", "handoff: PAUSED")
+    assert result.returncode == 2, result.stderr
+    assert f"{NEW_REL}, this write's handoff, is not tracked yet" in result.stderr
+    assert f.read_text(encoding="utf-8") == after
+    assert box.git("-C", str(c), "status", "--porcelain", "--", NEW_REL).split() == ["??", NEW_REL]
+    assert box.head(c) == box.origin_head(), "S3's fast-forward, and no commit of this write"
+    assert "push" not in box.net_ops()
+    assert NEW_REL not in box.git("--git-dir", str(box.origin), "ls-tree", "-r", "--name-only", "main").split()
+    if mode == "stamp":
+        assert result.stdout == ""
+        assert f"the stamp line it would have written under the handoff's header block: {STAMP}" in result.stderr
+    else:
+        assert result.stdout == _line(f)
+        assert f"git -C {c} add -- {NEW_REL} && git -C {c} commit" in result.stderr
+    _released(box, c)

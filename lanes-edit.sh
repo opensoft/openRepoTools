@@ -19176,7 +19176,9 @@ EOF
   #      (`handoff_in_repo`, S2). One that still resolves into W, through a
   #      link, refuses (S5, 2). One in ANOTHER REPOSITORY (Amendment 8(d)) is
   #      written there and never committed.
-  #   3. S3 step 4 for the handoff's own path (`cs_own_pending`).
+  #   3. S3 step 4 for the handoff's own path (`cs_own_pending`), and for a
+  #      handoff git does not track yet, which a commit would add and a lost
+  #      race's replay would drop.
   #   4. THE READ FOLLOWS THE WRITE: the file in that checkout, and `--stamp`'s
   #      splice (`lane-start`'s, unchanged: the line after the first blank line
   #      after line 1), `--prepend`'s (`lane-handoff`'s: the block, `---` and a
@@ -19291,9 +19293,25 @@ EOF
     fi
     [ "$whf_other" = 1 ] || path_under "$whf_phys" "$whf_c" || whf_other=1
     whf_rel=""; [ "$whf_other" = 1 ] || whf_rel="${whf_phys#"$whf_c"/}"
-    # ---- 3. S3 step 4 for the handoff itself.
+    # ---- 3. S3 step 4 for the handoff itself: a change to it nobody committed,
+    # and a handoff git does not track yet (rv2a's pre-review of slice 2a,
+    # MUST 1). An untracked file — a new lane's first handoff, or a peer's —
+    # would be ADDED by this write's commit, under its subject; and where the
+    # push then lost a race, the replay's `reset --keep` dropped that commit
+    # and the file with it, and the re-run found nothing to write into (8). So
+    # it is a pending change like any other, and whoever made it adds and
+    # commits it as its own write.
+    whf_untracked=0
     if [ "$whf_s3" = 0 ] && [ "$whf_other" = 0 ]; then
       ( cs_own_pending write-handoff "$lane" "$whf_rel" ) || whf_s3=$?
+      if [ "$whf_s3" = 0 ] && [ "$NO_GIT" != 1 ] && { [ -e "$whf_phys" ] || [ -L "$whf_phys" ]; } &&
+         ! git --literal-pathspecs -C "$whf_c" -c "$CP_EXACT" ls-files --error-unmatch -- "$whf_rel" >/dev/null 2>&1; then
+        whf_untracked=1
+        ( cs_refuse write-handoff "$whf_rel, this write's handoff, is not tracked yet: git has never had it (a new lane's first handoff, or a peer's), so this write's commit would add it under its own subject, and a replay after a lost race would drop that commit and the file with it (Amendment 23 S3 step 4)" \
+            "read it: git -C $LANES_REPO status --short -- $whf_rel" \
+            "whoever made it adds and commits it by pathspec, as its own write: git -C $LANES_REPO add -- $whf_rel && git -C $LANES_REPO commit -m \"<lane>(<what>)\" -- $whf_rel, then LANES_LANE=<lane> $SELF commit \"<what it is>\" (the publish act)" \
+            "never commit a file you did not make; then re-run this write" ) || whf_s3=$?
+      fi
     fi
     if [ "$whf_s3" != 0 ] && [ "$whf_mode" = stamp ]; then
       note "the stamp is NOT written: the checkout refused above (Amendment 23 S3), and a Rule 3 stamp the checkout cannot take is written by nobody, and never blocks a launch."
@@ -19367,7 +19385,8 @@ EOF
     if [ "$whf_s3" != 0 ]; then
       note "the handoff is WRITTEN and NOT committed: the checkout refused above (Amendment 23 S3; R-A11-11 — a swap is never left unwritten, so the handoff is written, no commit is made, and git's own words are above). It is $HPA_TARGET."
       if [ "$whf_other" = 0 ]; then
-        note "once the refusal is answered, commit it by pathspec and publish it: git -C $whf_c commit -m \"$whf_subject\" -m \"Lane: $lane\" -- $whf_rel, then LANES_LANE=$lane $SELF commit \"<what it is>\" (the publish act). Never write it again with --prepend: that puts a second block on top."
+        whf_add=""; [ "$whf_untracked" = 0 ] || whf_add="git -C $whf_c add -- $whf_rel && "
+        note "once the refusal is answered, commit it by pathspec and publish it: ${whf_add}git -C $whf_c commit -m \"$whf_subject\" -m \"Lane: $lane\" -- $whf_rel, then LANES_LANE=$lane $SELF commit \"<what it is>\" (the publish act). Never write it again with --prepend: that puts a second block on top."
       fi
       exit "$whf_s3"
     fi
