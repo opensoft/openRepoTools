@@ -1849,7 +1849,7 @@ def tree_line(row: dict, provenance) -> str:
 
 #: THE BRANCH OF A LANE'S UNREAD MARKER (opensoft/openRepoTools#173): a
 #: `worktrees` row with no path and a branch `unreadable inventory (<why>)`,
-#: saying the lane's inventory was there and could not be read at the last
+#: saying the lane's inventory could not be read at the last
 #: sync, and why. A MARKER IS ITS KEY, `unread_key(<lane>)` - `<lane>:` and a
 #: US - and nothing else decides it (the review of #219 and its delta check):
 #: no tree's key can carry a US after the colon but its own `<US><n>`, while a

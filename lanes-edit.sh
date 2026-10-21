@@ -18620,7 +18620,11 @@ EOF
   #       on*; 10 tells it *this lane may be mid-crash and nobody could look*.
   #       (It was 9 until main's #61 spent 9 on `claim`'s abandoned takeover.)
   #       A snapshot of this schema that is not a whole record is 10 as well
-  #       (#115): nothing can be read out of it as a snapshot.
+  #       (#115): nothing can be read out of it as a snapshot. And so is a
+  #       record that could not even be LOOKED FOR (#291): a control root, or a
+  #       directory above it, that this process cannot search — or a link on
+  #       the way it cannot follow — leaves stat as silent as a name that is
+  #       gone, and the message says so rather than "is there".
   #  64   a usage error of this subcommand's own — for `set-lane-tree`, a
   #       partial observation, a `--dirty`/`--unpushed` that is not a count
   #       (`unknown` is one for `--unpushed`), or a field that is only blanks
