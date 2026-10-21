@@ -422,13 +422,18 @@ def dist_info_dirs(archive: zipfile.ZipFile) -> list:
 
 def test_wheel_payload_is_the_commits_blobs_byte_for_byte_and_mode_for_mode(
         built_wheel, head_tree):
-    """contracts/wheel.md's CHECK 2 (FR-006).
+    """contracts/wheel.md's CHECK 2 (FR-006), read by permission bits.
 
     Each `openrepotools/payload/<P>` is `git show HEAD:<P>` byte for byte,
-    and its mode is the one hatchling 1.27.0's reproducible build gives the
-    commit's: 0755 for `100755` and 0644 for `100644` (clarifications N4). A
-    `.gitattributes` filter that changed a byte is caught here, before
-    anything ships.
+    and its permission bits, setuid, setgid and sticky included, are the
+    ones hatchling 1.27.0's reproducible build gives the commit's: 0755 for
+    `100755` and 0644 for `100644` (clarifications N4). A `.gitattributes`
+    filter that changed a byte is caught here, before anything ships.
+
+    The contract holds a member to the commit's whole mode (#278): a regular
+    file at that mode and no other bit. This test reads no file type, so it
+    refuses a subset of what that rule refuses, and release.yml's step 13
+    and tests.yml's `package` job hold the rest.
     """
     members = [info for info in built_wheel.infolist()
                if info.filename.startswith(PAYLOAD_PREFIX)

@@ -805,9 +805,11 @@ jobs:
       # one command, and carries the commit's LICENSE (FR-002: hatchling
       # builds a wheel with no LICENSE and says nothing, so this check is
       # what refuses one). Every member is read before anything is
-      # compared, and a member that cannot be read, a bad CRC or a broken
-      # compressed stream, refuses there (#278). A missing member and an
-      # unreadable one are named, never a traceback.
+      # compared, and a member that cannot be read, a bad CRC, a broken
+      # deflate stream or a corrupt LZMA one (`lzma.LZMAError`, which is
+      # neither an `OSError` nor a `ValueError`, so the read loop names it),
+      # refuses there (#278). A missing member and an unreadable one are
+      # named, never a traceback.
       # `tests/test_release_workflow.py` runs this very script on synthetic
       # wheels made from the commit's blobs.
       - name: the wheel holds the commit's own files, byte for byte and mode for mode, and the stamp
@@ -816,7 +818,7 @@ jobs:
         run: |
           export TAG="v$VERSION" COMMIT="$GITHUB_SHA" REPOSITORY="$GITHUB_REPOSITORY"
           python3 -I - "$RUNNER_TEMP/dist-a/openrepotools-$VERSION-py3-none-any.whl" <<'PY'
-          import ast, configparser, email.parser, os, re, stat, subprocess, sys, tomllib, zipfile, zlib
+          import ast, configparser, email.parser, lzma, os, re, stat, subprocess, sys, tomllib, zipfile, zlib
 
           names = ("VERSION", "TAG", "COMMIT", "DIGEST", "REPOSITORY")
           release = {name: os.environ.get(name, "") for name in names}
@@ -897,8 +899,8 @@ jobs:
               for name, entry in members.items():
                   try:
                       contents[name] = wheel.read(entry)
-                  except (zipfile.BadZipFile, zlib.error, EOFError, OSError, RuntimeError,
-                          ValueError) as error:
+                  except (zipfile.BadZipFile, zlib.error, lzma.LZMAError, EOFError, OSError,
+                          RuntimeError, ValueError) as error:
                       problems.append(f"{name} in the wheel cannot be read "
                                       f"({type(error).__name__}: {error})")
               if len(contents) != len(members):
@@ -1234,11 +1236,16 @@ jobs:
 
       # AFTER THE UPLOAD, the index serves exactly the verified wheel, by
       # digest, not yanked. Its JSON can lag an upload, so it is read up to
-      # 20 times, 15 seconds apart. A 404, a server error (5xx) and a read
-      # with no answer, a timeout or a connection broken, are read again;
-      # any other HTTP status, and an answer that is not the index's JSON,
-      # refuse at once with an `::error::` line naming it, never a
-      # traceback (#278).
+      # 20 times, 15 seconds apart. A read is made again after a 404, after
+      # a server error (5xx), and after EVERY failure that carries no HTTP
+      # status, whatever its cause: any `OSError` (a name that does not
+      # resolve, a connection refused, reset or broken, a timeout, a TLS
+      # error) and any `http.client.HTTPException` (a status line that is
+      # not HTTP, too many headers, a body cut short). Any other HTTP
+      # status, 408 and 429 among them, and an answer that is not the
+      # index's JSON, refuse at once with an `::error::` line naming it,
+      # never a traceback (#278). A failure that never clears ends in the
+      # `after 20 reads` refusal at the foot of the step.
       - name: the index serves exactly the verified wheel
         run: |
           python3 - <<'PY'
@@ -1257,7 +1264,7 @@ jobs:
                   code = getattr(error, "code", None)
                   if code is not None and code != 404 and code < 500:
                       sys.exit(f"::error::read {attempt}: {index} answered {url} with HTTP {code}, "
-                               f"which no later read outlasts, {unknown}")
+                               f"a status this check does not read again, {unknown}")
                   print(f"read {attempt}: {url} did not answer yet ({error})")
               else:
                   try:
@@ -1504,7 +1511,13 @@ jobs:
       # finds there is `/bin/bash`. The bash first on that same PATH prints
       # its BASH_VERSION first, and it must be 3.2. The skip line, the count
       # line, the 28 rows and the link must be as they were under the leg's
-      # own bash, in this bin directory.
+      # own bash, in this bin directory. Then the same --install once more
+      # into that bin directory (#278), for the placing loop's other arm:
+      # the sixteen are there now, with their bytes and their mode, and each
+      # must say `<command>: already installed at <that
+      # directory>/<command> (unchanged)`, sixteen such lines. Before this
+      # directory was the rerun's own, the rerun ran only that arm under 3.2;
+      # without this second run it would run only the placing one.
       - name: on macOS, the offline --install again under Apple's /bin/bash 3.2
         if: runner.os == 'macOS'
         run: |
@@ -1556,6 +1569,22 @@ jobs:
             echo "::error::--install under /bin/bash $version placed $placed commands in $bin_dir, not all 16"
             exit 1
           fi
+          status=0
+          env -i HOME="$home" PATH="/bin:$offline:$bin_dir:$PATH" \
+              OPENREPOTOOLS_BIN_DIR="$bin_dir" OPENREPOTOOLS_REPO=offline.invalid/sentinel \
+              "$bin_dir/openRepoTools" --install > "$RUNNER_TEMP/install-bin-bash-again.out" \
+              2> "$RUNNER_TEMP/install-bin-bash-again.err" || status=$?
+          cat "$RUNNER_TEMP/install-bin-bash-again.out"
+          cat "$RUNNER_TEMP/install-bin-bash-again.err" >&2
+          if [ "$status" -ne 0 ]; then
+            echo "::error::the second offline --install under /bin/bash $version exited $status"
+            exit 1
+          fi
+          unchanged="$(grep -F -e ": already installed at $bin_dir/" "$RUNNER_TEMP/install-bin-bash-again.out" | grep -cF ' (unchanged)' || true)"
+          if [ "$unchanged" -ne 16 ]; then
+            echo "::error::the second --install under /bin/bash $version found $unchanged commands already installed and unchanged in $bin_dir, not all 16"
+            exit 1
+          fi
           receipt="$home/.local/share/openRepoTools/installed.tsv"
           if [ ! -f "$receipt" ]; then
             echo "::error::--install under /bin/bash $version wrote no receipt at $receipt"
@@ -1568,7 +1597,7 @@ jobs:
             exit 1
           fi
           if [ ! -L "$link" ] || [ "$(python3 -I -c "$fingerprint" "$link")" != "$before" ]; then
-            echo "::error::--install under /bin/bash $version changed pipx's link at $link"
+            echo "::error::--install under /bin/bash $version changed the copy of pipx's link at $link"
             exit 1
           fi
 
@@ -1788,7 +1817,7 @@ jobs:
                   code = getattr(error, "code", None)
                   if code is not None and code != 404 and code < 500:
                       sys.exit(f"::error::read {attempt}: {index} answered {url} with HTTP {code}, "
-                               f"which no later read outlasts, {unknown}")
+                               f"a status this check does not read again, {unknown}")
                   print(f"read {attempt}: {url} did not answer yet ({error})")
               else:
                   try:

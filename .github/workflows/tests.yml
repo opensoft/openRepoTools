@@ -370,9 +370,9 @@ jobs:
                       continue
                   mode = member.external_attr >> 16
                   if mode != 0o100000 | perm:
-                      problems.append(f"{name} has mode {mode:o} in the wheel, and "
-                                      f"{source} is {modes[source]} at {COMMIT}, "
-                                      f"which is mode {perm:04o}")
+                      problems.append(f"{name} has mode {mode:06o} in the wheel, and "
+                                      f"{source} is {modes[source]} at {COMMIT}, a "
+                                      f"regular file at {perm:04o} and no other bit")
                       continue
                   print(f"{name} = {COMMIT}:{source}, mode {perm:04o}")
           for name in sorted(set(wanted) - set(names)):

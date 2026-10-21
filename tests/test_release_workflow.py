@@ -2094,8 +2094,18 @@ def damage(path: Path, member: str, how: str) -> None:
     damage it, its bytes and every other member left as they are: `crc`
     makes its CRC-32 in the central directory one bit off, `deflate` makes
     the first byte of its compressed bytes 0xFF, a block type deflate does
-    not have, and `method` makes its compression method in the central
-    directory 99, one `zipfile` cannot read."""
+    not have, `method` makes its compression method in the central
+    directory 99, one `zipfile` cannot read, and `lzma` first stores it as
+    LZMA, which `zipfile` writes and reads, then makes the first byte of its
+    LZMA stream 0xFF, where the range coder's first byte is always 0."""
+    if how == "lzma":
+        with zipfile.ZipFile(path) as wheel:
+            kept = [(entry, wheel.read(entry)) for entry in wheel.infolist()]
+        with zipfile.ZipFile(path, "w") as wheel:
+            for entry, body in kept:
+                if entry.filename == member:
+                    entry.compress_type = zipfile.ZIP_LZMA
+                wheel.writestr(entry, body)
     data = bytearray(path.read_bytes())
     (at,) = struct.unpack_from("<I", data, data.rindex(b"PK\x05\x06") + 16)
     while data[at:at + 4] == b"PK\x01\x02":
@@ -2110,10 +2120,12 @@ def damage(path: Path, member: str, how: str) -> None:
     elif how == "method":
         struct.pack_into("<H", data, at + 10, 99)
     else:
-        assert how == "deflate", how
+        assert how in ("deflate", "lzma"), how
         (local,) = struct.unpack_from("<I", data, at + 42)
         named, extra = struct.unpack_from("<HH", data, local + 26)
-        data[local + 30 + named + extra] = 0xFF
+        # `zipfile` writes LZMA behind a 9 byte header: the version, the
+        # properties' length and the five properties.
+        data[local + 30 + named + extra + (9 if how == "lzma" else 0)] = 0xFF
     path.write_bytes(bytes(data))
 
 
@@ -2196,13 +2208,17 @@ def test_release_build_the_wheel_check_refuses_a_wheel_that_is_not_the_commit_s(
 #: A MEMBER THE CHECK CANNOT READ (#278): the wheel as built, written, then
 #: damaged on disk (`damage`). Each is `(the member, where `{info}` is the
 #: `.dist-info/` prefix, how it is damaged)`. Reading it raises, in turn,
-#: `zipfile`'s `BadZipFile` ("Bad CRC-32"), `zlib.error` and
-#: `NotImplementedError`, and each must end in an `::error::` line naming the
-#: member, never in a traceback.
+#: `zipfile`'s `BadZipFile` ("Bad CRC-32"), `zlib.error`,
+#: `NotImplementedError` and `lzma.LZMAError`, and each must end in an
+#: `::error::` line naming the member, never in a traceback. The last is the
+#: one error here that is neither an `OSError` nor a `ValueError`: it derives
+#: from `Exception` alone, so the step's read loop has to name it (#278).
 UNREADABLE_MEMBERS = {
     "a-payload-file-with-a-bad-crc": (layout.PAYLOAD_PREFIX + "lanes-edit.sh", "crc"),
     "a-module-with-a-broken-deflate-stream": ("openrepotools/cli.py", "deflate"),
     "a-dist-info-file-zipfile-cannot-decompress": ("{info}METADATA", "method"),
+    "a-payload-file-stored-as-lzma-with-corrupt-data": (
+        layout.PAYLOAD_PREFIX + "lane", "lzma"),
 }
 
 
@@ -2210,10 +2226,11 @@ UNREADABLE_MEMBERS = {
 @pytest.mark.parametrize("which", UNREADABLE_MEMBERS)
 def test_release_build_the_wheel_check_names_a_member_it_cannot_read(tmp_path, which):
     """STEP 13 ON A WHEEL WITH A MEMBER IT CANNOT READ (#278): a payload file
-    with a bad CRC, a module whose deflate stream is broken, and a `.dist-info`
-    file in a compression method `zipfile` cannot read. Each exits 1, and
-    names the member in an `::error::` line that says it cannot be read, with
-    no traceback, as a member missing from the wheel is named."""
+    with a bad CRC, a module whose deflate stream is broken, a `.dist-info`
+    file in a compression method `zipfile` cannot read, and a payload file
+    stored as LZMA with corrupt data. Each exits 1, and names the member in
+    an `::error::` line that says it cannot be read, with no traceback, as a
+    member missing from the wheel is named."""
     member, how = UNREADABLE_MEMBERS[which]
     release_ = wheel_release("1.1.0")
     done = run_wheel_check(release(), tmp_path / "w", release_, None,
@@ -3855,9 +3872,11 @@ FINGERPRINT_LINES = (
 #: them already installed; the bash it runs under, which must print a
 #: `BASH_VERSION` of 3.2; `/bin` first on the `--install`'s PATH; its own
 #: output files; its count line naming its bin directory; the check that all
-#: sixteen were placed there; and refusals that name that bash. The skip
-#: line, the receipt's 28 rows and the link's fingerprint are the offline
-#: --install's own.
+#: sixteen were placed there; a second `--install` into that bin directory,
+#: with the check that it found all sixteen already installed and unchanged,
+#: so that the placing loop's other arm runs under 3.2 as well (#278); and
+#: refusals that name that bash. The skip line, the receipt's 28 rows and the
+#: link's fingerprint are the offline --install's own.
 MACOS_RERUN_LINES = (
     (['home="$RUNNER_TEMP/install-home"',
       'offline="$RUNNER_TEMP/offline-bin"',
@@ -3918,6 +3937,29 @@ MACOS_RERUN_LINES = (
       '  echo "::error::--install under /bin/bash $version placed $placed '
       'commands in $bin_dir, not all 16"',
       '  exit 1',
+      'fi',
+      'status=0',
+      'env -i HOME="$home" PATH="/bin:$offline:$bin_dir:$PATH" \\',
+      '    OPENREPOTOOLS_BIN_DIR="$bin_dir" '
+      'OPENREPOTOOLS_REPO=offline.invalid/sentinel \\',
+      '    "$bin_dir/openRepoTools" --install > '
+      '"$RUNNER_TEMP/install-bin-bash-again.out" \\',
+      '    2> "$RUNNER_TEMP/install-bin-bash-again.err" || status=$?',
+      'cat "$RUNNER_TEMP/install-bin-bash-again.out"',
+      'cat "$RUNNER_TEMP/install-bin-bash-again.err" >&2',
+      'if [ "$status" -ne 0 ]; then',
+      '  echo "::error::the second offline --install under /bin/bash $version '
+      'exited $status"',
+      '  exit 1',
+      'fi',
+      'unchanged="$(grep -F -e ": already installed at $bin_dir/" '
+      '"$RUNNER_TEMP/install-bin-bash-again.out" | grep -cF \' (unchanged)\' '
+      '|| true)"',
+      'if [ "$unchanged" -ne 16 ]; then',
+      '  echo "::error::the second --install under /bin/bash $version found '
+      '$unchanged commands already installed and unchanged in $bin_dir, not '
+      'all 16"',
+      '  exit 1',
       'fi']),
     (['  echo "::error::--install wrote no receipt at $receipt"'],
      ['  echo "::error::--install under /bin/bash $version wrote no receipt at '
@@ -3927,8 +3969,8 @@ MACOS_RERUN_LINES = (
      ['  echo "::error::under /bin/bash $version the receipt has $lines lines '
       'and $rows rows, not 28"']),
     (['  echo "::error::--install changed pipx\'s link at $link"'],
-     ['  echo "::error::--install under /bin/bash $version changed pipx\'s link '
-      'at $link"']),
+     ['  echo "::error::--install under /bin/bash $version changed the copy of '
+      'pipx\'s link at $link"']),
 )
 
 #: The offline `--install` step, in either file: the one step of its job, with
@@ -4064,22 +4106,48 @@ exec @BASH@ "$@"
 #: A command `--install` placed: `<command>: installed at <bin>/<command>`.
 PLACED = re.compile(r"^(\S+): installed at (.+)/\1$", re.M)
 
+#: A command `--install` found in place with its bytes and its mode, as the
+#: rerun's second run finds all sixteen: `<command>: already installed at
+#: <bin>/<command> (unchanged)`.
+UNCHANGED = re.compile(r"^(\S+): already installed at (.+)/\1 \(unchanged\)$", re.M)
+
+#: THE RERUN'S SECOND `--install`, into the bin directory the first one placed
+#: the sixteen commands in (#278): `(a command that a `cmp` ahead of the
+#: system's reports as different in that directory, or None; whether the step
+#: passes)`. The placing loop calls `cmp -s` on each command it finds in
+#: place, and says `already installed at ... (unchanged)` where the bytes are
+#: the same and the mode is 755. With the system's `cmp` the second run finds
+#: all sixteen so, and the step passes. With one command reported different
+#: the loop updates it instead, only 15 are unchanged, and the step must
+#: refuse, because its count requires 16.
+RERUN_SECOND_RUN = {
+    "all-sixteen-found-already-installed-and-unchanged": (None, True),
+    "one-command-the-second-run-would-update": ("lane", False),
+}
+
 
 @NEEDS_UPSTREAM
 @NEEDS_BASH
 @WINDOWS_SKIP
+@pytest.mark.parametrize("which", RERUN_SECOND_RUN)
 def test_release_install_check_the_macos_rerun_places_the_sixteen_commands_in_a_bin_directory_of_its_own(
-        tmp_path):
+        tmp_path, which):
     """THE OFFLINE `--install`, THEN THE macOS RERUN, RUN as the macOS leg
     runs them (#278): one `$RUNNER_TEMP` and one `$PIPX_BIN_DIR`, pipx's
     environment a real venv holding the package with pipx's link to it, and
     the rerun's `/bin` a directory whose `bash` reads as 3.2 (`APPLE_BIN_BASH`).
-    Both pass. The offline `--install` places the sixteen commands in pipx's
-    bin directory. The rerun places the same sixteen again, each `installed
-    at` and none `already installed`, in a bin directory of its own named by
-    its count line, and leaves pipx's bin directory as it was. In pipx's bin
+    The offline `--install` places the sixteen commands in pipx's bin
+    directory. The rerun places the same sixteen again, each `installed at`
+    and none `already installed`, in a bin directory of its own named by its
+    count line, and leaves pipx's bin directory as it was. In pipx's bin
     directory, as before #278, it would find all sixteen already installed
-    and place none under 3.2."""
+    and place none under 3.2. The rerun then runs `--install` a second time
+    into that bin directory, and the placing loop's other arm, under the same
+    bash, must find all sixteen `already installed at ... (unchanged)`: the
+    step passes. Where one command is reported different
+    (`RERUN_SECOND_RUN`) the second run updates it, 15 are unchanged, and the
+    step exits 1 naming that count."""
+    differs, passes = RERUN_SECOND_RUN[which]
     workflow = release()
     steps = install_steps(workflow)
     offline = offline_install_step(steps, "release.yml's install job")
@@ -4092,8 +4160,19 @@ def test_release_install_check_the_macos_rerun_places_the_sixteen_commands_in_a_
     (apple_bin / "bash").write_text(
         APPLE_BIN_BASH.replace("@BASH@", shlex.quote(host_bash)), encoding="utf-8")
     (apple_bin / "bash").chmod(0o755)
+    if differs is not None:
+        real_cmp = shutil.which("cmp")
+        assert real_cmp, "the case needs the system's cmp to hand every other file to"
+        (apple_bin / "cmp").write_text(
+            "#!/bin/sh\n"
+            'for last in "$@"; do :; done\n'
+            f'case "$last" in */bin-bin-bash/{differs}) exit 1 ;; esac\n'
+            f'exec {shlex.quote(real_cmp)} "$@"\n', encoding="utf-8")
+        (apple_bin / "cmp").chmod(0o755)
     text = run_text(reruns[0])
-    assert text.count('PATH="/bin:') == 2, "the rerun no longer puts /bin first twice"
+    assert text.count('PATH="/bin:') == 3, (
+        "the rerun no longer puts /bin first for its version probe and for each of "
+        "its two --install runs")
     rerun = dict(reruns[0], run=text.replace('PATH="/bin:', f'PATH="{apple_bin}:'))
     pipx_bin = tmp_path / "pipx" / "bin"
     pipx_bin.mkdir(parents=True)
@@ -4111,17 +4190,39 @@ def test_release_install_check_the_macos_rerun_places_the_sixteen_commands_in_a_
                      p.lstat().st_ctime_ns) for p in pipx_bin.iterdir())
 
     again = runner.run(rerun)
-    assert again.returncode == 0, transcript(again)
+    assert again.returncode == (0 if passes else 1), transcript(again)
+    temp = Path(runner.env["RUNNER_TEMP"])
+    first_run, second_run = (temp / "install-bin-bash.out",
+                             temp / "install-bin-bash-again.out")
+    assert first_run.is_file() and second_run.is_file(), (
+        f"the rerun did not run --install twice:\n{transcript(again)}")
+    placing, finding = (first_run.read_text(encoding="utf-8"),
+                        second_run.read_text(encoding="utf-8"))
     counts = re.findall(r"^openRepoTools: 16 of 17 placed in (.+), and 1 left to pipx$",
-                        again.stdout, re.M)
+                        placing, re.M)
     assert len(counts) == 1 and counts[0] != str(pipx_bin), (
         f"the rerun placed in pipx's own bin directory, or said nothing:\n"
         f"{transcript(again)}")
-    placed_again = PLACED.findall(again.stdout)
+    placed_again = PLACED.findall(placing)
     assert sorted(n for n, _ in placed_again) == sorted(n for n, _ in placed_first), (
         transcript(again))
     assert {d for _, d in placed_again} == {counts[0]}, transcript(again)
-    assert "already installed at" not in again.stdout, transcript(again)
+    assert "already installed at" not in placing, transcript(again)
+    unchanged = UNCHANGED.findall(finding)
+    assert {d for _, d in unchanged} == {counts[0]}, transcript(again)
+    assert not PLACED.findall(finding), (
+        f"the second run placed a command, and found it not there:\n{transcript(again)}")
+    if passes:
+        assert sorted(n for n, _ in unchanged) == sorted(n for n, _ in placed_first), (
+            transcript(again))
+    else:
+        assert sorted(n for n, _ in unchanged) == sorted(
+            n for n, _ in placed_first if n != differs), transcript(again)
+        assert f"{differs}: updated at {counts[0]}/{differs}" in finding, transcript(again)
+        assert [line for line in again.stdout.splitlines()
+                if line.startswith("::error::")
+                and "found 15 commands already installed and unchanged in "
+                f"{counts[0]}, not all 16" in line], transcript(again)
     assert sorted((p.name, p.lstat().st_ino, p.lstat().st_mtime_ns,
                    p.lstat().st_ctime_ns) for p in pipx_bin.iterdir()) == pipx_s, (
         "the rerun touched pipx's bin directory")
