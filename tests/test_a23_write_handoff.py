@@ -835,3 +835,72 @@ def test_routed_write_handoff_for_a_lane_with_no_row_clones_nothing(box: Box, fe
     assert "was not cloned" in result.stderr
     assert not box.checkout("repoS4-9").exists(), "nothing is cloned for a lane with no row"
     assert box.w_state() == w_before and box.origin_head() == tip and result.stdout == ""
+
+
+# ------------------------------------------------- set-restart-intent --handoff
+
+def _bound(box: Box, cell: str) -> subprocess.CompletedProcess:
+    """A `/ctx`'s `pending`, bound to `cell` as the caller spells it."""
+    return box.helper("set-restart-intent", LANE, "pending", "--expect", "none", "--operation", FENCE[0],
+                      "--generation", FENCE[1], "--handoff", cell)
+
+
+@pytest.mark.parametrize("how", ["seam", "routed", "default"])
+def test_set_restart_intent_binds_a_repository_relative_cell_in_the_checkout(tmp_path: Path, how: str):
+    """The row's repository-relative cell is translated into the checkout the
+    lane's writes go through and stored as that absolute path, with that
+    file's digest; the owned stamp then lands on it, fenced and reserved."""
+    box = Box(tmp_path, route=(how != "default"))
+    if how == "routed":
+        made = box.helper("handoff-path", LANE, "--create")
+        assert made.returncode == 0, made.stderr
+    c = {"seam": box.seam, "routed": lambda: box.checkout(LANE), "default": lambda: box.w}[how]()
+    f = c / HANDOFF_REL
+    made = _bound(box, HANDOFF_REL)
+    assert made.returncode == 0, made.stderr
+    assert f"--handoff {HANDOFF_REL} is bound as {f}" in made.stderr
+    assert box.intent_field("handoff") == str(f)
+    assert box.intent_field("digest") == sha(f)
+    box.intent("starting", "--expect", "pending", "--expect-operation", FENCE[0],
+               "--attempt", FENCE[2], "--new-transcript", FENCE[4])
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT, "--restart", *FENCE,
+                               "--expected-digest", box.intent_field("digest"))
+    assert result.returncode == 0, result.stderr
+    assert f.read_text(encoding="utf-8") == stamped(HANDOFF)
+    assert box.intent_field("prepared_digest") == sha(f)
+    if how != "default":
+        assert (box.w / HANDOFF_REL).read_text(encoding="utf-8") == HANDOFF
+
+
+def test_set_restart_intent_binds_the_estate_spelling_in_the_checkout(box: Box):
+    """`~/…` through the estate link is W's file, and is bound as the
+    checkout's copy of it, never followed into W."""
+    cell = _estate_link(box)
+    c = box.seam()
+    made = _bound(box, cell)
+    assert made.returncode == 0, made.stderr
+    assert box.intent_field("handoff") == str(c / HANDOFF_REL)
+    assert box.intent_field("digest") == sha(c / HANDOFF_REL)
+
+
+def test_set_restart_intent_keeps_an_absolute_path_as_given(box: Box):
+    """Every older caller's spelling: an absolute path is stored exactly as
+    given, W's included — `lane-start` compares it with the file it resolves
+    in W until slice 2b, and the older `lane-handoff` publishes that file."""
+    w_file = box.w / HANDOFF_REL
+    made = _bound(box, str(w_file))
+    assert made.returncode == 0, made.stderr
+    assert box.intent_field("handoff") == str(w_file)
+    assert box.intent_field("digest") == sha(w_file)
+    assert "is bound as" not in made.stderr
+
+
+@pytest.mark.parametrize("cell", ["notes/handoff.md", "handoffs/../lanes/LANES.md",
+                                  "handoffs/./repoS4/repoS4-1.md", "~user/handoff.md"])
+def test_set_restart_intent_refuses_any_other_relative_path(box: Box, cell: str):
+    """Only the row's own spellings are translated; any other relative path
+    is still refused (64) and nothing is written."""
+    made = _bound(box, cell)
+    assert made.returncode == 64, made.stderr
+    assert "--handoff" in made.stderr
+    assert not (box.state / LANE / "restart-intent.yaml").exists()
