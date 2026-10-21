@@ -923,7 +923,7 @@ def test_tests_yml_existing_job_keeps_todays_runner_checkout_python_and_runs(
     assert isinstance(job, dict), f"tests.yml has no `{job_id}` job"
     want = EXISTING_JOBS[job_id]
     steps = job.get("steps") or []
-    assert job.get("runs-on") == "ubuntu-latest", job.get("runs-on")
+    assert job.get("runs-on") == "ubuntu-24.04", job.get("runs-on")
     assert len(steps) >= 2, f"`{job_id}` has {len(steps)} steps"
     assert steps[0].get("uses") == CHECKOUT, steps[0]
     assert steps[0].get("with") == want["checkout"], steps[0].get("with")
@@ -998,7 +998,7 @@ def test_tests_yml_package_runs_on_ubuntu_python_3_9_with_the_submodule(
     Python the package supports, on ubuntu."""
     job = package_job(workflow)
     steps = job["steps"]
-    assert job.get("runs-on") == "ubuntu-latest", job.get("runs-on")
+    assert job.get("runs-on") == "ubuntu-24.04", job.get("runs-on")
     assert len(steps) >= 2, f"the package job has {len(steps)} steps"
     assert steps[0].get("uses") == CHECKOUT, steps[0]
     assert steps[0].get("with") == {"submodules": True, "fetch-depth": 1}, \

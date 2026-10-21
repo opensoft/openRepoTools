@@ -52,7 +52,10 @@ jobs:
   # lane-helper suite runs. Each GitHub job has its own workstation runner;
   # the canonical wrapper still serializes any pytest processes on that runner.
   guard-launch-mode:
-    runs-on: ubuntu-latest
+    # EVERY UBUNTU RUNNER IS ON 24.04: `ubuntu-latest` became Ubuntu 26.04 on
+    # 2026-10-21. There setup-python has no Python 3.9 and the `[host]` case of
+    # the TERM-ignoring kill test fails. Pinned until 26.04 support is decided.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
@@ -72,7 +75,7 @@ jobs:
         run: bash tests/run.sh -k 'guard_launch_mode or repo_hygiene'
 
   tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # PINNED BY COMMIT, not by tag — openRepoShape's own rule, and the same
       # two commits every job here pins. A tag can be moved and a commit
@@ -128,7 +131,7 @@ jobs:
   # the assertion; `-rs` prints the skip reasons, which is what a person
   # reading this job wants to see.
   tests-no-submodule:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
@@ -173,7 +176,7 @@ jobs:
   # hatchling and pipx reaches it for its shared pip; the `--install` run
   # reaches nothing.
   package:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # The same two commits the other jobs pin.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
