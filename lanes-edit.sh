@@ -19492,15 +19492,44 @@ EOF
     # the handoff: the reader of this file is a DIFFERENT PROCESS IN A
     # DIFFERENT DIRECTORY — the supervisor in a respawned pane — and a relative
     # path resolved against its cwd is a path to somewhere else. `~` is the
-    # writing shell's and is never expanded here.
+    # writing shell's and is never expanded in `--dir`.
+    #
+    # …EXCEPT THE ROW'S OWN SPELLINGS OF A HANDOFF (Amendment 23 S2, slice
+    # 2a): a repository-relative `handoffs/…` cell, and the estate's `~/…`,
+    # are TRANSLATED once the lane is known — into the checkout that lane's
+    # writes go through (`handoff_checkout_of`: its own under the opt-in, an
+    # explicit `LANES_REPO`, W with the opt-in off) — and stored as that
+    # absolute path, so the digest below is that file's and `write-handoff`
+    # fences on it directly. An ABSOLUTE path is kept exactly as given: it
+    # is every older caller's, and each binds the file it then publishes and
+    # compares — W's, until slice 2b moves `lane-start` and `lane-handoff`
+    # (`write-handoff` translates a W-bound path on its own side). Any other
+    # relative path, and a `.` or `..` component, is still refused.
     case "$sri_dir" in ''|/*) : ;; *) die "--dir takes an ABSOLUTE path: this record is read by the supervisor in a pane whose working directory is not this one, and a relative path there names a different place. Got '$sri_dir'." 64 ;; esac
-    case "$sri_hf" in ''|/*) : ;; *) die "--handoff takes an ABSOLUTE path, for the same reason --dir does: the launch that reads it back stands somewhere else. Got '$sri_hf'." 64 ;; esac
+    sri_hf_cell=""
+    case "$sri_hf" in
+      ''|/*) : ;;
+      handoffs/*|'~/'*)
+        case "/$sri_hf/" in
+          */../*|*/./*) die "--handoff's repository-relative cell is joined to a checkout, so it names no '.' or '..' component. Got '$sri_hf'." 64 ;;
+        esac
+        sri_hf_cell="$sri_hf" ;;
+      *) die "--handoff takes an ABSOLUTE path, for the same reason --dir does: the launch that reads it back stands somewhere else — or the row's own spelling, a repository-relative handoffs/… cell or ~/…, which is translated into the lane's checkout. Got '$sri_hf'." 64 ;;
+    esac
     for sri_exact in "$sri_dir" "$sri_pane" "$sri_win" "$sri_hf" "$sri_old" "$sri_new" "$sri_dig" "$sri_prepared"; do
       lane_restart_value_ok "$sri_exact" || die "restart launch facts cannot contain control characters. Nothing was written." 64
     done
     check_lane_name "$lane"
     log_sync
     lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
+    if [ -n "$sri_hf_cell" ]; then
+      handoff_checkout_of "$lane" 0
+      sri_hf="$(handoff_in_repo "$HCO_PATH" "$sri_hf_cell")" || :
+      case "$sri_hf" in
+        /*) note "--handoff $sri_hf_cell is bound as $sri_hf: the row's spelling, translated into the checkout lane $lane's writes go through, or another repository's file as it is (Amendment 23 S2)" ;;
+        *)  die "--handoff $sri_hf_cell could not be made an absolute path in the checkout lane $lane's writes go through (got '$sri_hf'). Nothing was written." 1 ;;
+      esac
+    fi
     # Select the physical intent under the CAS mutex: a waiting writer must
     # see a reservation another writer established before releasing the lock.
     sidecar_lock_use; acquire_lock   # the workstation's sidecar lock, and no other (Amendment 23 S2)
