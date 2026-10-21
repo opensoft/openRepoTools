@@ -1094,3 +1094,75 @@ def test_a_stamp_committed_and_pulled_around_the_replays_drop_is_never_lost(box:
         assert named, result.stderr
         assert all(on for _, on in named), f"called kept, and not on HEAD: {named}"
     _settled(box, c)
+
+
+# NIT 3 of rv1b-c2's re-check, re-aimed by SHOULD C: the drop's two refusals
+# that had no case. `commit`'s carry form dropped with `reset -q --mixed` at
+# d9ff4e6; since SHOULD C it takes the same compare-and-swap, then the index
+# alone (`read-tree -m -i`). The keep form's tree step (`read-tree -m -u`) is
+# SHOULD C's own, so d9ff4e6 has nothing for its pattern to match.
+CARRY_DROP_STARTS = '*" reset -q --mixed "*|*" update-ref -m lanes-edit: the replay drops "*'
+TREE_STEP = '*" read-tree -m -u "*'
+STAMP_SUBJECT = "handoff(repoS4-2@Eagle): a stamp from an unlocked writer"
+
+
+def test_a_commit_landing_before_the_carry_forms_drop_is_never_dropped_exit_6(box: Box):
+    """`commit`'s carry form gives its commit back as the hand edit it was,
+    and its drop is guarded as the keep form's is: an unlocked commit landing
+    on top just before it makes the compare-and-swap fail, and nothing moves.
+    The hand-edit commit and the one on top of it are kept on HEAD and named
+    (6), the working tree is clean, and nothing is replayed. A drop that took
+    the carry form's branch without the compare-and-swap would drop the
+    stamp with it."""
+    c = box.seam()
+    box.peer_prepares(REGISTER, _row(NEIGHBOUR, uuid=UUID2),
+                      _row(NEIGHBOUR, uuid=UUID2, state="LIVE · landed mid-push"),
+                      "a peer's row lands first")
+    box.race(prepared=True)
+    box.hand_edit(c)
+    env = _git_shim(box, CARRY_DROP_STARTS, before=_stamp(c))
+    result = box.helper("commit", "the hand edit", LANES_LANE=LANE, **env)
+    assert (box.root / "fired").exists(), "the commit landed in the window"
+    assert result.returncode == 6, result.stderr
+    err = result.stderr
+    assert "between the replay's HEAD check and its drop" in err, err
+    assert "is no longer HEAD, so it is not replayed" in err
+    assert "push refused (attempt 1 of 6)" not in err, "nothing is replayed"
+    assert box.subject(c) == STAMP_SUBJECT
+    assert box.subject(c, "HEAD~1") == f"LANES({LANE}@Eagle): the hand edit", "the hand-edit commit is under it"
+    assert "LIVE · a hand edit" in box.git("-C", str(c), "show", f"HEAD:{REGISTER}"), "the hand edit is on HEAD"
+    assert box.git("-C", str(c), "status", "--porcelain").strip() == "", "nothing was turned back into an edit"
+    assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the publish act"
+    assert "the replay drops" not in box.git("-C", str(c), "reflog", "refs/heads/main"), "the branch never moved"
+    _settled(box, c)
+
+
+def test_a_drop_whose_tree_step_and_put_back_are_both_refused_is_named_off_HEAD_exit_6(box: Box):
+    """The drop moved the branch, git refused the tree step after it, and an
+    unlocked writer committed on the branch in that moment, so the put-back's
+    compare-and-swap is refused too. Nothing more is moved: the other writer's
+    commit stays HEAD, and this write's commit is named as off HEAD with the
+    reflog that names it (6), never as kept. A `git` first on PATH makes the
+    moment exact: at the tree step it commits the stamp, then refuses."""
+    c = box.seam()
+    box.race()
+    refuse = "    echo 'error: the tree step is refused here (the test)' >&2; exit 1" + "\n"
+    env = _git_shim(box, TREE_STEP, before=_stamp(c) + refuse)
+    result = box.helper("set-row-state", LANE, STATE, **env)
+    assert (box.root / "fired").exists(), "the drop's tree step ran, with the stamp landing first"
+    assert result.returncode == 6, result.stderr
+    err = result.stderr
+    assert "could be neither dropped cleanly nor put back" in err, err
+    assert "is off HEAD" in err
+    assert f"git -C {c} reflog -5" in err
+    assert "kept on" not in err, "nothing of this write's is said to be kept"
+    assert "push refused (attempt 1 of 6)" not in err, "nothing is replayed"
+    named = _mine_named_on_head(box, c, err)
+    assert named, err
+    assert not any(on for _, on in named), f"named, and on HEAD: {named}"
+    reflog = box.git("-C", str(c), "reflog", "--format=%H", "refs/heads/main").split()
+    assert named[0][0] in reflog, "the reflog names this write's commit"
+    assert box.subject(c) == STAMP_SUBJECT, "the other writer's commit is still HEAD"
+    assert box.git("-C", str(c), "show", "HEAD:handoffs/stamp.md") == "stamp"
+    assert _set(STATE) not in box.origin_register(), "nothing of this write's reached origin"
+    _settled(box, c)
