@@ -1029,3 +1029,30 @@ def test_a_managed_marker_already_fetched_is_refused_before_the_lock(box: Box):
     assert f.read_text(encoding="utf-8") == HANDOFF
     assert result.stdout == ""
     _released(box, c)
+
+
+@pytest.mark.parametrize("mode", ["stamp", "prepend"])
+def test_another_repositorys_handoff_is_written_when_S3_refuses_this_checkout(box: Box, mode: str):
+    """SHOULD 2: a handoff in another repository is never committed
+    (Amendment 8(d)), so S3's refusal of the REGISTER checkout — here no
+    fetch can run, `LANES_NO_FETCH=1` — does not stop its write, as the old
+    `publish-handoff` never fetched for it. Written, said, its line printed,
+    exit 0; the register checkout and origin are as they were."""
+    c = box.seam()
+    other = box.root / "otherrepo" / "h.md"
+    other.parent.mkdir(parents=True)
+    other.write_text(HANDOFF, encoding="utf-8")
+    args, after = (("--stamp", STAMP), stamped(HANDOFF)) if mode == "stamp" else \
+        (("--prepend", str(_block(box))), prepended(HANDOFF))
+    before = box.snapshot(c)
+    result = box.write_handoff(*args, "--subject", SUBJECT, "--target", str(other), LANES_NO_FETCH="1")
+    assert result.returncode == 0, result.stderr
+    assert "LANES_NO_FETCH=1 is set" in result.stderr
+    assert f"does not stop this write: {other} is another repository's handoff (Amendment 8(d))" in result.stderr
+    assert "another repository's handoff (Amendment 8(d)): it is written there" in result.stderr
+    assert "the stamp is NOT written" not in result.stderr
+    assert "the handoff is WRITTEN and NOT committed" not in result.stderr
+    assert other.read_text(encoding="utf-8") == after
+    assert result.stdout == _line(other)
+    assert box.snapshot(c) == before
+    _released(box, c)

@@ -19179,7 +19179,7 @@ EOF
   #      link, refuses (S5, 2), and so does one in the checkout that is not a
   #      file under `handoffs/` (S2: never the register or `lanes/`). One in
   #      ANOTHER REPOSITORY (Amendment 8(d)) is written there and never
-  #      committed.
+  #      committed, and S3's refusal of this checkout does not stop it.
   #   3. S3 step 4 for the handoff's own path (`cs_own_pending`), and for a
   #      handoff git does not track yet, which a commit would add and a lost
   #      race's replay would drop.
@@ -19200,7 +19200,8 @@ EOF
   #      origin's new tip — a `--whole` only where origin's copy is still the
   #      one it read (S4.4).
   # STDOUT: `<file><TAB><sha256>` once the file is written (`HANDOFF_OUT`).
-  #   0 pushed, or nothing to commit (another repository's file; LANES_NO_GIT)
+  #   0 pushed, or nothing to commit (another repository's file, S3's refusal
+  #     of this checkout or not; LANES_NO_GIT)
   #   1 environment: a checkout that cannot be entered, an unreadable file
   #   2 refused: S3 (step 6), S5, a target that is not under handoffs/ (S2), a
   #     restart's bound file or pre-image, a proof
@@ -19319,6 +19320,16 @@ EOF
         whf_stamp_said
         die "lane $lane's handoff target $whf_path is $whf_rel in the checkout $whf_c, which is not a file under handoffs/: write-handoff writes a lane's handoff and nothing else, never the register ($LANES_PATH) or anything under lanes/ (Amendment 23 S2). Nothing was written." 2
       fi
+    fi
+    # ANOTHER REPOSITORY'S HANDOFF IS NOT THIS CHECKOUT'S WRITE (rv2a's
+    # pre-review of slice 2a, SHOULD 2). It is written there and committed
+    # nowhere (Amendment 8(d)), so S3's refusal of the register checkout — an
+    # offline lane's fetch, a staged entry — does not stop it, as the old
+    # `publish-handoff` never fetched for it. The managed seam (asked above),
+    # the restart fences and the digests still apply.
+    if [ "$whf_other" = 1 ] && [ "$whf_s3" != 0 ]; then
+      note "the refusal above is this checkout's (Amendment 23 S3) and does not stop this write: $whf_phys is another repository's handoff (Amendment 8(d)), which no tool here commits"
+      whf_s3=0
     fi
     # ---- 3. S3 step 4 for the handoff itself: a change to it nobody committed,
     # and a handoff git does not track yet (rv2a's pre-review of slice 2a,
