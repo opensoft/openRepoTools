@@ -34,6 +34,13 @@ directory above the recorded `dir`'s parent, one above `$PROJECTS_ROOT`, and a
   * a root, a `trees` or a snapshot that is simply not there is still the 8 of
     "none", and a lane with no trees still holds nothing in a sync.
 
+Two of #291's changes that none of those reads shows have cases of their own: a
+write under a root nobody could look for fails there and is filed nowhere else
+(it used to fall to `$PROJECTS_ROOT`'s root, where nothing of the lane's is and
+the record was stranded once the block lifted), and a `.lane-state` link whose
+target is gone is the same 10, since stat cannot tell it from a link into a
+directory that cannot be searched.
+
 Beside them: a `trees` directory that is there and cannot be searched (the
 read #157 item 4e already made `UNREAD`, kept as it is), and a tree record that
 cannot be read - `lane-trees` names it as its own `<unreadable>` row with exit
@@ -244,6 +251,61 @@ def test_a_control_root_nobody_could_search_is_not_a_lane_with_no_trees(inv, cas
     assert healed.returncode == 0 and "0 upserted" in healed.stdout, healed.stdout
     assert "kept as they are" not in healed.stdout, healed.stdout
     assert set(inv.rows()) == kept, (healed.stdout, sorted(inv.rows()))
+    assert inv.e.edit("lane-trees", LANE, env=env).returncode == 0
+    assert inv.e.edit("lane-state", LANE, env=env).returncode == 8  # none, and looked for
+
+
+def test_a_write_under_a_root_nobody_could_look_for_fails_and_lands_nowhere_else(inv):
+    """A WRITE GOES WHERE THE READS GO, OR NOWHERE (#291). The parent of the
+    recorded `dir` could not be looked for, so the lane keeps its own control
+    root and `set-lane-tree` meets the directory nobody can search there: it
+    exits nonzero and records nothing. It used to fall to the next rung and
+    file the tree under `$PROJECTS_ROOT/.lane-state`, where nothing of this
+    lane's is and where the record was stranded once the block lifted."""
+    env, root, modes, _ = _layout(inv, "above-the-dirs-parent")
+    elsewhere = Path(env["PROJECTS_ROOT"]) / ".lane-state"
+    assert not elsewhere.exists()  # nothing there yet: the write it must not make
+    with _modes(modes):
+        res = inv.e.edit("set-lane-tree", LANE, f"/nowhere/{LANE}/w2", "--branch", f"feat/{LANE}",
+                         "--head", HEADS[LANE], "--upstream", "none", "--dirty", "0",
+                         "--unpushed", "0", env=env)
+        assert res.returncode != 0, (res.returncode, res.stdout, res.stderr)
+        assert f"could not be written under {root}/trees" in res.stderr, res.stderr
+    assert not elsewhere.exists(), sorted(elsewhere.rglob("*"))
+    trees = inv.e.edit("lane-trees", LANE, env=env)
+    assert trees.returncode == 0, (trees.returncode, trees.stderr)
+    assert [line.split(US)[0] for line in trees.stdout.splitlines()] == [SIDECAR_ID], trees.stdout
+
+
+def test_a_lane_state_link_whose_target_is_gone_is_unread_not_none(inv):
+    """A LINK ON THE WAY THAT CANNOT BE FOLLOWED IS NOT A LANE WITH NO TREES
+    (#291). Its target is gone, and stat cannot tell that from a link into a
+    directory nobody can search, so it is the same 10: `lane-trees` and
+    `lane-state` say the lane's inventory and its snapshot could not be read,
+    never the 8 a launcher answers by going on. With the target put back, the
+    lane has its tree again and, looked for, no snapshot."""
+    env = {"LANES_LANE_STATE_ROOT": None}
+    away = inv.root / "elsewhere"
+    target, aside, link = away / "lane-state", away / "lane-state-aside", away / ".lane-state"
+    target.mkdir(parents=True)
+    link.symlink_to(target)
+    root = _a_lane_with_trees(inv, away, env)
+    why = f"{link} is a symbolic link that cannot be followed"
+    target.rename(aside)
+    try:
+        assert link.is_symlink() and not link.exists(), "the link does not dangle: nothing to prove"
+        trees = inv.e.edit("lane-trees", LANE, env=env)
+        assert trees.returncode == 10, (trees.returncode, trees.stdout, trees.stderr)
+        assert f"whether lane {LANE} has a worktree inventory could not be read: {root}/trees " \
+            f"could not be looked for, because {why}. That is NOT 'this lane recorded no " \
+            f"tree'" in trees.stderr, trees.stderr
+        state = inv.e.edit("lane-state", LANE, env=env)
+        assert state.returncode == 10, (state.returncode, state.stdout, state.stderr)
+        assert f"whether lane {LANE} has a lifecycle snapshot could not be read: " \
+            f"{root}/lane-state.yaml could not be looked for, because {why}. That is NOT " \
+            f"'this lane has no snapshot'" in state.stderr, state.stderr
+    finally:
+        aside.rename(target)
     assert inv.e.edit("lane-trees", LANE, env=env).returncode == 0
     assert inv.e.edit("lane-state", LANE, env=env).returncode == 8  # none, and looked for
 
