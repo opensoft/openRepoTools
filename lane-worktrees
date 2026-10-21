@@ -490,13 +490,18 @@ class Helper:
         self._fetched = False
 
     def call(self, *args: str, env_extra: dict | None = None, fetch: bool = False,
-             timeout: int = 300):
+             write: bool = False, timeout: int = 300):
+        """`fetch` asks for one fetch per session; every later read is made
+        with `LANES_NO_FETCH=1`. A `write` is never given it: for a writer, a
+        fetch that did not run is a fetch that failed, and lanes-edit.sh's
+        Amendment 23 S3 refuses it (2, ratified choice 2), so the sweep's
+        NOTED line was refused after its first removal (#198, slice 1b)."""
         if not self.path:
             return subprocess.CompletedProcess(args, 127, "", "no lanes-edit.sh beside this "
                                                "command or on PATH")
         env = dict(os.environ)
         env["LANES_INDEX"] = "off"
-        if not fetch or self._fetched:
+        if not write and (not fetch or self._fetched):
             env["LANES_NO_FETCH"] = "1"
         if env_extra:
             env.update(env_extra)
@@ -669,7 +674,7 @@ class Helper:
         if session:
             extra["LANES_SESSION"] = session
         return self.call("log", "NOTED", f"lane:{lane}", register_text(text),
-                         env_extra=extra, fetch=False)
+                         env_extra=extra, write=True)
 
 
 LANE_LINE_RE = re.compile(r"^(?:STARTED|PAUSED|RESUMED|ENDED|RETIRED) — lane [^,]+, "
