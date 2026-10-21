@@ -630,3 +630,108 @@ def test_no_sweep_is_still_accepted(box: Box):
     assert result.returncode == 0, result.stderr
     assert _set("LIVE · not swept") in box.origin_register()
     _settled(box, c)
+
+
+# ------------------------------------- the window before S3 (rv1b's pre-review)
+
+S3_REFSPEC = "+refs/heads/main:refs/remotes/origin/main"
+
+
+def _at_s3_fetch(box: Box, body: str) -> None:
+    """Run `body` once, at the helper's first fetch with S3's own refspec:
+    after the verb's checks before the lock, and before S3's fetch under it."""
+    count = shlex.quote(str(box.root / "s3hook.count"))
+    box.use_net(
+        '[ "$1" = fetch ] || exit 0' + "\n" +
+        f'case "$*" in *"{S3_REFSPEC}"*) : ;; *) exit 0 ;; esac' + "\n" +
+        f"[ -e {count} ] && exit 0" + "\n" +
+        f"echo 1 > {count}" + "\n" + body + "\n" + "exit 0" + "\n")
+
+
+def test_a_rival_claim_landing_before_S3s_fetch_loses_exit_7(box: Box):
+    """MUST 1 of rv1b's pre-review: `claim`'s checks run before the lock on
+    what `log_sync` fetched, and a rival's CLAIMED can land between that
+    fetch and S3's. S3 then fast-forwarded onto it and this claim was pushed
+    on top, so both lanes held the object. Now a fast-forward that moved
+    origin's tip under this write's checks runs the verb again from the top
+    on the new tip, with the lock held, and the replay's rescan finds the
+    rival first: CLAIM-LOST (7), and one holder."""
+    box.seam()
+    c2 = box.clone(box.root / "c2")
+    env = {k: v for k, v in box.env.items() if k not in ("LANES_GIT", "FAKE_NET_LOG", "FAKE_NET_HOOK")}
+    env.update({"LANES_REPO": str(c2), "LANES_LANE": NEIGHBOUR, "LANES_SESSION": UUID2})
+    words = " ".join(shlex.quote(f"{k}={v}") for k, v in sorted(env.items()))
+    rival = " ".join(shlex.quote(a) for a in box.cmd("claim", OBJ, "--no-github", *HOME_FLAG))
+    out = shlex.quote(str(box.root / "rival.out"))
+    _at_s3_fetch(box, f"env -i {words} {rival} > {out} 2>&1; echo $? > {out}.rc")
+    result = box.helper("claim", OBJ, "--no-github", *HOME_FLAG, LANES_LANE=LANE, LANES_SESSION=UUID)
+    assert (box.root / "rival.out.rc").read_text(encoding="utf-8").strip() == "0", \
+        (box.root / "rival.out").read_text(encoding="utf-8")
+    assert result.returncode == 7, result.stderr
+    assert "moved while this write's checks ran" in result.stderr
+    assert f"another lane's claim landed on main before this one: @{NEIGHBOUR}" in result.stderr
+    mine = box.origin_file(f"lanes/log/{LANE}.md")
+    assert f"CLAIMED — lane {LANE}" not in mine, "this lane never holds it"
+    assert f"CLAIM-LOST — lane {LANE}" in mine
+    assert f"CLAIMED — lane {NEIGHBOUR}" in box.origin_file(f"lanes/log/{NEIGHBOUR}.md")
+
+
+@pytest.mark.parametrize("peer", ["retires-it", "adds-it"])
+def test_an_add_row_whose_name_lands_before_S3s_fetch_refuses(box: Box, peer: str):
+    """MUST 2 of rv1b's pre-review: `add-row`'s retirement and duplicate
+    checks run before the lock. A peer's retirement of the name, or its own
+    row for it, landing before S3's fetch was fast-forwarded in and the row
+    pushed on top, at attempt 1. The re-run on the new tip refuses (2), and
+    nothing is written."""
+    c = box.seam()
+    row = _row(NEW_LANE, uuid=UUID3)
+    if peer == "retires-it":
+        box.peer_prepares(ARCHIVE, None,
+                          "# retired rows" + "\n" + "\n" + "| lane | session id |" + "\n" + "|---|---|" + "\n" +
+                          f"| `{NEW_LANE}` | harness `{UUID3}` |" + "\n", "a peer retires the name")
+        words = f"lane '{NEW_LANE}' is RETIRED"
+    else:
+        box.peer_prepares(REGISTER, _row(NEIGHBOUR, uuid=UUID2),
+                          _row(NEIGHBOUR, uuid=UUID2) + "\n" + row, "a peer adds the row")
+        words = f"lane '{NEW_LANE}' already has a row"
+    _at_s3_fetch(box, f"git -C {shlex.quote(str(box.peer))} push -q origin main")
+    result = box.helper("add-row", row)
+    assert result.returncode == 2, result.stderr
+    assert "moved while this write's checks ran" in result.stderr
+    assert words in result.stderr, result.stderr
+    assert box.origin_register().count(f"`{NEW_LANE}`") == (1 if peer == "adds-it" else 0)
+    assert "push" not in box.net_ops(), "refused before any push"
+    assert box.unpublished(c) == []
+    _settled(box, c)
+
+
+def test_a_commit_made_on_top_before_the_replay_is_kept_exit_6(box: Box):
+    """MUST 4 of rv1b's pre-review: until slices 2b and 3, lane-start's
+    stamp, lane-handoff's commit and the skill's commit are made in the same
+    checkout with no lock. One landing on top of this write's commit while its
+    push is in flight was dropped by the replay's `reset --keep`, with exit 0
+    and nothing said. Now the replay asks HEAD first: both commits are kept
+    on HEAD and named (6), and nothing is dropped."""
+    c = box.seam()
+    peer = shlex.quote(str(box.peer))
+    cq = shlex.quote(str(c))
+    count = shlex.quote(str(box.root / "push.count"))
+    box.use_net(
+        '[ "$1" = push ] || exit 0' + "\n" +
+        f"[ -e {count} ] && exit 0" + "\n" +
+        f"echo 1 > {count}" + "\n" +
+        f"git -C {peer} commit -q --allow-empty -m 'a peer lands first'" + "\n" +
+        f"git -C {peer} push -q origin main" + "\n" +
+        f"printf 'stamp' > {cq}/handoffs/stamp.md" + "\n" +
+        f"git -C {cq} add -- handoffs/stamp.md" + "\n" +
+        f"git -C {cq} commit -q -m 'handoff(repoS4-2@Eagle): a stamp from an unlocked writer' -- handoffs/stamp.md" + "\n" +
+        "exit 0" + "\n")
+    result = box.helper("set-row-state", LANE, "LIVE · the write under it")
+    assert result.returncode == 6, result.stderr
+    assert "is no longer HEAD, so it is not replayed" in result.stderr
+    assert "push refused (attempt 1 of 6)" not in result.stderr, "no reset was made"
+    assert box.subject(c) == "handoff(repoS4-2@Eagle): a stamp from an unlocked writer"
+    assert box.subject(c, "HEAD~1").startswith(f"LANES({LANE}@"), "this write's commit is under it"
+    assert (c / "handoffs" / "stamp.md").is_file(), "the other writer's file is still there"
+    assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the publish act"
+    _settled(box, c)
