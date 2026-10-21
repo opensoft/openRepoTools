@@ -199,8 +199,9 @@ name: release
 #     - In the repository that releases, the environments `testpypi` and
 #       `pypi`, each with brettheap as the required reviewer, self-review
 #       allowed, administrators not bypassing, and a deployment limit of
-#       exactly one tag rule, `v*`. Only the reviewer and the limit are
-#       checked here (FR-029).
+#       exactly one tag rule, `v*`. Only that a required reviewer is named
+#       (any, not brettheap in particular) and the limit are checked here
+#       (FR-029).
 #     - The ruleset on the tags `v*`, in the same repository, under which
 #       only the admin role creates, moves or deletes one (named "Release
 #       tags v*" in opensoft/openRepoTools). It is not checked here
