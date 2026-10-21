@@ -15010,8 +15010,11 @@ worktree_rows() {   # [<canonical lane> [register-unread]]
     else
       wr_partial="${wr_partial:+$wr_partial; }the archive $LANES_ARCH_PATH could not be read"
     fi
-    # `known_lanes`' OWN TWO READS, which print what they could and answer 0
-    # either way, because the listing unions them with the register. WITH NO
+    # `known_lanes`' OWN TWO READS, which print what they could, because the
+    # listing unions them with the register. The published list answers 1
+    # where it could not be made (#290) - the listing says so and lists the
+    # rest - and the directory's, with no `origin`, answers 0 either way: so
+    # whether each was made is asked here, for the `PARTIAL` line. WITH NO
     # `origin`, A DIRECTORY THAT IS THERE IS ASKED AS THE TREES' IS BELOW: `ls`
     # lists an `r--` one, whose files no glob can then open (N1 of the review).
     if have_remote_ref; then
