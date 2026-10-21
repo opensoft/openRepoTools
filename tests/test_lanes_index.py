@@ -2939,6 +2939,7 @@ def test_a_lanes_log_that_fails_after_the_listing_removes_no_row(inv):
     res = inv.sync(env={**by_dir, **shim})
     calls = _shim_calls(log)
     assert calls and calls[0].startswith("1 "), calls  # the listing's own read: not vacuous
+    assert len(calls) == 1, calls  # and the lane's `dir` is not read again (NIT-B, #290)
     assert key in inv.rows(), (res.stdout, res.stderr, calls)
     assert dump(inv.e.sqlite, with_utc=True) == before, (res.stdout, res.stderr, calls)
     assert "kept as they are" not in res.stdout, (res.stdout, calls)  # and no lane held over it
