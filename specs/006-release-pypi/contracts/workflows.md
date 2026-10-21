@@ -364,5 +364,18 @@ These are the model's grants (`release.yml:1133-1136` at v1.1.0).
 - Its `tomli` comes from the build lock's own entry, and the job holds no
   `--hash` of its own.
 - Its wheel-check heredoc (step 6) is run on the same four synthetic wheels
-  as the release build's, with the same four outcomes.
+  as the release build's, with the same four outcomes, and on four more, one
+  for each check those four never reach ([wheel.md](wheel.md)'s checks 3, 4
+  and 6, and the check that no member is there twice):
+  - one with a module's byte changed, which fails, naming that module;
+  - one with a line added to the stamp, which fails, naming `_release.py`;
+  - one with a member that no check lists, which fails, naming it;
+  - one with a member twice, which fails, naming it.
+
+  Each refusal is an `::error::` line, and never a traceback.
+- Its step 10 is run whole, offline, with a stand-in for pipx's link that
+  prints the lines and writes the receipt a case names. The step passes with
+  the skip line and the count line once each and 28 receipt rows. It fails,
+  with an `::error::` line, for a missing skip line, a missing or repeated
+  count line, and a receipt that is not 28 rows.
 - The header comment names both push branches and four jobs.
