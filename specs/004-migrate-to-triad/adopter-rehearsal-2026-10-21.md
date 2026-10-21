@@ -1,0 +1,879 @@
+# Gate C rehearsal, run D, at the frozen source — October 21, 2026
+
+**Task:** T003–T005's rehearsal evidence for Gate C, under
+[#186](https://github.com/opensoft/openRepoTools/issues/186).
+No task is checked complete by it.
+**Tool:** openRepoShape `190133d5e704e380c430f87ca9c4e31746de0012`, the commit
+its tag `v1.1.0` peels to (the clone's `HEAD`, `v1.1.0^{commit}` and the
+checkout agree at setup, and `190133d` is on its `main`), with
+`git-filter-repo` 2.47.0 (`git filter-repo --version` printed `a40bce548d2c`)
+(`runD/run-header.txt`, `logs/shape-clone.log`, `logs/setup-filter-repo.log`).
+**Source:** main `33ce26dffc5286e68f1d29ab5c6458edef0330c0`, the EXPECT, read
+with `git ls-remote` at 2026-10-21T16:22:30Z just before cloning. It is #299's
+squash of `076fa70` on `50d05d4`, lane 1's `composed.yml` runner pin, landed
+2026-10-21T14:08:04Z: the last landing before the freeze. The clone has 156
+commits and 200 files, and its `upstream/openRepoShape` gitlink and
+`contracts/openreposhape-pin.yaml` both name `190133d`
+(`logs/source-clone.log`, `<S>.observe/before-setup.txt`).
+**Authority:** Brett Heap's words, as lane 1's coordinator relayed them (`<P>/PLAN.md`
+10.4), each a single turn, timed by that turn in lane 1's session transcript:
+"yes to e2 and D7, names only" (2026-10-20T22:56:11Z); "yes to one rehearsal and
+e4; include P7, P8, P10" (2026-10-21T10:31:16Z); "yes to the link-only 70 fallback"
+(2026-10-21T13:43:26Z). The start, which lane 1's freeze notice quotes: "continue;
+start D when the freeze is ready" (2026-10-21T13:55:01Z).
+**Private receipt:** `rehearsal-d`, with its observation directory
+`rehearsal-d.observe`, under `work-20261021`.
+
+Below, `<S>` is the sandbox `rehearsal-d`, `<S>.observe` its observation
+directory, `<P>` the prep directory `rehearsal-prep` (`PLAN.md` and `scripts/`),
+`<W>` the work directory `work-20261021`, and `~` the lane's home. Each figure
+names its file relative to `<S>`, `<S>.observe` or `<P>`.
+
+**The freeze (e2).** Lane 1's notice, #186 comment 6320876769, was created
+2026-10-21T16:21:27Z, 33 seconds before the first observation. Its heading says
+"16:3xZ", which was lane 1's slip (the post was drafted before it went up): GitHub's
+time stands, and the comment is left unedited, because an edit re-fires other lanes'
+`since=` watchers. It says "Main stays at `33ce26d` until the cutover", and its
+rules hold until lane 1 posts D's end:
+
+- nothing lands on main, no `adopt/*` ref is pushed, no leg repository is created,
+  and no HOLD or LANDING line is written, because D's observations fail closed on
+  a new one;
+- on any bench, no `openRepoTools --install` or `--uninstall`, no workBenches
+  setup, and no edits to `~/.claude/skills`, `~/.claude/commands`,
+  `~/.claude-profiles/shared/` or `~/.claude/settings.json`;
+- on cloud-bench, relaunch only pinned (`CLAUDE_BIN` at the 2.1.306 executable,
+  `DISABLE_AUTOUPDATER=1`) and install nothing into `~/.local/bin`;
+- Brett's ruling: a P10 exit 70 whose difference is only the `claude` or `codex`
+  link row is recorded as attributed.
+
+The register's last HOLD, LANDING and LANDED lines before it are lane 3's for #299
+(14:05:43Z to 14:08:49Z, `<S>.observe/before-setup.txt`), and lane 1 asked every lane
+to land nothing more at 14:12Z (#186 6318207326).
+
+**Reviewed bytes.** `<P>/scripts/REVIEWED.sha256` (13 lines, sha256
+`fcfe0653d2f08d04e4a81252ca3c4e41dfccd57b92697d0bbbeec50b3929d9b4`) was written by
+lane 1 on 2026-10-21 at 16:20:45Z from the bytes the reviews name, and `setup_d.sh`
+refuses (65) any script not on record there. `<S>/logs/setup-scripts.log` checks
+each copy, `observe_d.sh` and setup's own bytes against it: 12 `reviewed` lines,
+setup's own line, no MISMATCH. These are the 13 rows (`<P>/scripts/REVIEWED.md`
+names each review):
+
+| File | sha256 | Review that covers these bytes |
+| --- | --- | --- |
+| `setup_d.sh` | `20d82fda…` | Lane 3, #186 6320744628 (round 5c, 2026-10-21T16:16Z): READY, no MUST, no SHOULD; earlier bytes 6315175076. Not copied: it checks its own bytes |
+| `env-d.sh` | `e5c12db0…` | Lane 3, 6315175076 (rounds 5, 5b) and 6320744628 (5c): read unchanged since round 4, READY |
+| `run_rehearsal_d.sh` | `4ec81498…` | Lane 3, 6320744628: READY, no MUST, no SHOULD (NITs 131–135 and 141–144 left for after D) |
+| `observe_d.sh` | `a157c257…` | Lane 3, 6315175076 and 6320744628: read unchanged since round 4, READY. Not copied: it runs from `<P>/scripts` |
+| `resolve_plan_d.py` | `89bb3490…` | Lane 2, #186 6289380127 and 6290828597: READY |
+| `publish_plan_d.py` | `2d40606f…` | The same |
+| `independent_accounting_d.py` | `e0160b89…` | The same |
+| `decisions-new-paths.json` | `5a5a50f1…` | The same (lane 1's D2 of 2026-10-20, amended at 11:1xZ) |
+| `suites_d.sh` | `c452ab6a…` | Lane 3, 6319760887 (post-run rounds 4b and 4c, 2026-10-21T15:29Z): READY, no MUST, no SHOULD (NITs 121–123 left for after D) |
+| `install_d.sh` | `7bf6781c…` | The same |
+| `wheel_d.sh` | `fe196121…` | The same |
+| `rollback_d.sh` | `bbb11d6f…` | The same |
+| `provenance_d.py` | `22b29dde…` | Lane 3, 6314817974 (round 4): READY, no MUST, no SHOULD, at these bytes; rounds 4b and 4c did not change it |
+
+Lane 1 ran D on round 5c's reviewed bytes, not on lane 3's suggested round 5d (#186
+6320876769). NIT 142 cannot fire in D: the real git configuration holds no URL with
+a query (`runD/realcfg-names.txt` has no `?`). NIT 141 needs a second stage
+invocation while `stage2` runs, and `runD/exits.txt` has one `stage2 begins` line.
+NITs 121–123, 131–135 and 141–144, with the tested fixes for 141 and 142, go into a
+round after D and before the cutover.
+
+**Run D supersedes nothing.** Runs A (`c4864ac`) and B (the repin candidate `e43b243`)
+stand as recorded in [adopter-rehearsal-2026-10-07.md](adopter-rehearsal-2026-10-07.md),
+and run C (`837928a`) in
+[adopter-rehearsal-2026-10-08.md](adopter-rehearsal-2026-10-08.md). Run D is the one
+rehearsal Brett approved for the cutover: one `execute`, in a fresh sandbox, with the
+tool at v1.1.0 and the source frozen at `33ce26d`. Every check on its outputs can be
+repeated; a second `execute`, in a new sandbox, happens only on Brett's word. Its
+plan, as published, stays with this record on an evidence branch until the root-split
+PR (e2), so the
+[mapping](../../openspec/changes/migrate-to-triad/adoption-plan.yaml) on main stays
+run C's plan. Like run C, it is kept host-local outside every repository. Clone
+paths, local remote URLs, exact command lines and complete logs stay in the private
+receipt.
+
+## Setup
+
+Lane 1's observation `before-setup` and `setup_d.sh` ran 2026-10-21T16:22:00Z to
+16:22:51Z and ended `setup ok`, exit 0 (`<W>/d-operator-log/act0-act1.log`).
+
+- **Scripts:** setup copied 11 files into `<S>/scripts`: the six recipe files,
+  decisions file included, and the five post-run scripts. None was absent. Each copy
+  has the sha256 the table above lists (`logs/setup-scripts.log`).
+- **filter-repo (e4):** `git-filter-repo` 2.47.0 in a private venv, `<S>/venv`. The
+  bench has no `ensurepip` (the first observation records `python3-venv` and
+  `python3.12-venv` as not installed, and `import ensurepip` exiting 1), so the venv
+  was made with `--without-pip`. The wheel is run C's, sha256
+  `2cd04929b9024e83e65db571cbe36aec65ead0cb5f9ec5abe42158654af5ad83`: `sha256sum -c`
+  OK, installed with `--no-index --no-deps`, EXIT 0 (`logs/setup-filter-repo.log`).
+- **Tool and source:** a fresh clone of openRepoShape detached at `190133d`, equal to
+  `v1.1.0^{commit}`, clean, and a bare mirror of it for the recursive clones
+  (`logs/shape-clone.log`). A fresh single-branch clone of main, one worktree, `HEAD`
+  equal to the EXPECT: MATCH, `origin` still the public GitHub URL
+  (`logs/source-clone.log`).
+- **Inputs:** seven patches pinned from `33ce26d` itself, no override,
+  `PIN_NOTE_ACK: none`, each at the digest the recipe expects: assembly-0001
+  `2ec48bbf…`, code-0001 `74b98ff9…`, spec-0001 `c11070f0…`, T007 `67d8e7ce…`, T009's
+  caps `2dd4aac2…`, T010's assembly job `60245cb9…` and T010's code-leg workflow
+  `1406ead3…`. `SHA256SUMS` (`37256f12…`) is anchored and the directory is read-only
+  (`logs/inputs-patches.log`).
+- **Transport:** of the stages, by the recipe only setup reaches the network (NET 1–4):
+  `git ls-remote` and the clones of the tool's tag and of the source, and
+  `pip download --require-hashes` of the two release locks, 7 wheels each, EXIT 0 twice
+  (`logs/wheels-net4.log`). The observations are separate: they read GitHub and the
+  register with `gh api` and `git ls-remote`. After setup, `scripts/env-d.sh` limits git
+  to local files (`GIT_ALLOW_PROTOCOL=file`), and `gh`, `curl` and `wget` are shims that
+  refuse and log; `logs/network-shim-calls.log` is empty (0 bytes) after stage 4. The
+  shims and that setting stop only `gh`, `curl`, `wget` and git's non-file transports:
+  Python, pip and raw sockets are not stopped, so none of this says that a run used no
+  network. The recursive clones reached code's nested openRepoShape through the local
+  mirror.
+- **Isolation:** `scripts/env-d.sh` points `GIT_CONFIG_GLOBAL` at `home/.gitconfig`, an
+  empty file (0 bytes), and sets `GIT_CONFIG_NOSYSTEM=1`. `logs/setup-env.log` records the
+  environment's names after it and the inherited names left over, which are only those
+  it sets itself. Its `git config --show-origin --list`, headed "isolated: expect
+  nothing", printed 160 rows, all `file:.git/config`. Acts 0 and 1 ran from lane 1's tool
+  shell, whose working directory is the shared openRepoTools checkout (PLAN 10.1 names
+  none), so the rows are that checkout's own local configuration, read only. No row came
+  from a global or system file, which is what the check is for. After D,
+  `git --no-optional-locks status --short` there prints 0 lines and no work-tree file is
+  newer than `<S>.observe/before-setup.txt` (16:22:12Z); this record's writer read both
+  again at 21:01Z. The post-run starts used `cd /tmp`: starting the stage acts from a
+  neutral directory too is a NIT for the post-D round.
+
+## Mapping (T003)
+
+Since run C's source the tree gained 80 files (120 to 200) and two top-level paths,
+`pyproject.toml` and `src/` (#228). The plan has 36 entries where run C's reference
+plan has 34.
+
+- **`plan`** (exit 0) read 200 files and 156 commits and left 18 questions.
+  **`resolve_plan_d.py`** (exit 0) checked the reference plan's sha256 first,
+  `5321b73626e7426b2985ba4e5aa804114919fd2f73540a5b8de0303b495e0084`, and applied 22
+  resolutions verbatim, all from the reference plan: 18 answer the tool's questions
+  (all to code), 3 move `commands/`, `contracts/` and `skills/` from spec to code,
+  and 1 confirms `ideation/` in spec; 21 code, 1 spec (`runD/resolve.log`,
+  `runD/resolve-report.json`). The decisions file's two entries, `pyproject.toml` and
+  `src/` to code, were kept (`runD/decisions-effective.log`: "kept ['pyproject.toml',
+  'src/']") and not needed: the tool puts both in code with no question (rules
+  `code-build-manifests` and `code-source-and-tests`, confidence high), so neither is
+  among the 18 `generated_questions` of `resolve-report.json`, and all 22 `applied`
+  entries are `from: reference`. The file's other parts did apply: its
+  `__extra_follow_ups__` entry is the extra follow-up, and its `__retire_hand_follow_ups__`
+  entry's text is absent from the plan.
+- **Follow-ups:** the tool's 32 over the resolved entries, 9 of the reference's 10
+  hand-written ones (item 6, "Regenerate this preliminary plan after planning lands
+  and baseline freeze; …", retired byte for byte; one count edited, "120-file" to
+  "200-file"), and the decisions file's one extra, on the wheel's `license-files` and
+  T006 code-0001: 42 in all. After resolution the plan assigns spec 108 files
+  (1,694,221 bytes), code 86 (7,604,620), root 6 (69,263), none unresolved.
+- **The diffs:** `runD/plan-vs-generated.diff` (26 hunks) is what resolve changed in
+  the tool's plan: 18 `leg: null` and 3 `leg: spec` lines become `leg: code`, 22
+  `resolution:` lines are added, the follow-ups are re-derived (55 become 42) and
+  the summary moves (spec 115 to 108 files, code 61 to 86, unresolved 18 to 0).
+  `runD/plan-vs-reference.diff` (29 hunks) holds the kinds of change PLAN section 4
+  lists: the header block, `generated_on`, `source:` (commit `33ce26df…`, 200 files,
+  9,368,104 bytes, 156 commits, `cloned: false`), the pins comment, `.github/` (4
+  files, rule `consensus`, medium), `.gitmodules` and `upstream/` (rule
+  `ambiguous-gitmodules`), the two new entries, new counts, `review_required: true`
+  where a question was asked, the follow-ups and the summary.
+- **`check`** of the executed plan, and **`check-published`** of the published copy:
+  each exit 0, `plan ok`, 0 FINDING lines and one NOTE (it did not ask whether the url
+  of `upstream/openRepoShape`, a network url, answers). The two logs are equal byte
+  for byte. The published copy differs from the executed plan only by its header,
+  `local_path: .`, and the closing `planning_status: rehearsal-input-not-cutover` and
+  `execution_authorized: false`; their sha256 are `84198e59…` and `45b0ec8d…`
+  (`runD/check.log`, `runD/check-published.log`, `runD/plans.sha256`). The published
+  plan's header says the new top-level paths were "answered as
+  scripts/decisions-new-paths.json of the private receipt records". That sentence is
+  the publish step's fixed text and overstates D's case: resolve applied none of the
+  file's path answers, though both say code, as the tool did. A NIT for the post-D
+  round.
+- **`check-realcfg`** (ledger I4, D7, names only), `check` of the published copy under
+  the real shell's git configuration, started with `D7_REALCFG=1`: exit 0, no FINDING
+  or REFUSED code kept (`runD/check-realcfg.log`). `runD/realcfg-names.txt` (12 lines,
+  726 bytes, sha256 `15d9494e…`) holds 12 name rows from one file, the global
+  configuration (7 `credential`, 2 `url`, 2 `user`, 1 `safe`; 10 distinct names), no
+  value and no redaction mark. The names stay out of this record. Lane 3 asked for two
+  counts, with no name printed (#186 6323118228): lines with a byte outside printable
+  ASCII and blanks, and url rows whose userinfo is not redacted. Lane 1 ran both at
+  18:11:29Z, before this record: **0 and 0**, with a planted control (a 0xff byte and a
+  url with userinfo) giving 1 and 1 (#186 6323149947). `XDG_CONFIG_HOME` was unset in
+  the real shell, so git read `~/.config` (`runD/run-header.txt`).
+- Stage 1 left the source clone's status and refs unchanged (`runD/source-status.diff`
+  and `runD/source-refs-stage1.diff` empty). `runD/exits.txt` has `plan`, `resolve`,
+  `check`, `publish`, `check-published` and `check-realcfg` at EXIT 0, 16:23:21Z to
+  16:23:26Z, and `STAGE1-PASSED` was written at 16:23:26Z.
+
+## The STOP gate
+
+The gate observation passed (16:24:57Z, `<S>.observe/gate.txt`): origin main `33ce26df…`
+FROZEN, both leg repositories absent on GitHub (HTTP 404), no `adopt/` ref on origin, no
+register line since the first observation, and the shared checkout's `HEAD`, status and
+refs as at the start. `STAGE1-REVIEWED` was made at 16:25:11Z, once it had passed and its
+last line was `verdict OK` (`<W>/d-operator-log/act3-gate.log`).
+
+**What lane 1 read before the mark** is in the extract of its session transcript,
+`<W>/d-operator-log/act9-transcript-extract-1619-1634.txt` (sha256 `309d978e…`, read
+only, written 17:16:22Z): every Bash call from 16:19:50Z to 16:34Z with its result. The
+gate reads are its calls `tvZ1mEmK` (16:23:38Z, stage 1's output), `M7cWkvuf` (16:23:51Z,
+the FINDING counts), `h5YC1X5L` (16:24:03Z, `check-realcfg` and the real-config names by
+count), and `zrRZP87o` (16:24:23Z) and `8HwsX145` (16:24:37Z), on the published plan;
+`eYWgV1do` (16:24:57Z) is the gate act itself. Lane 1 checked:
+
+- 22 resolutions; a header naming `33ce26d`, `190133d` and Run D; the `pyproject.toml`,
+  `src/` and `.github/` rows; `ambiguous-gitmodules` for `.gitmodules` and `upstream/`;
+- 19 answered rows and 1 submodule row; `review_required` on exactly the 18 question
+  entries; 42 follow-ups, the extra one last and the retired one absent; a summary root
+  of 6;
+- `check` and `check-published` at 0 FINDING, `check-realcfg` at exit 0, and
+  `realcfg-names.txt` by counts only.
+
+Checked as PLAN 10.1 says: `gate.txt` is a plain file, newer than `STAGE1-PASSED`;
+line 1 is `# 2026-10-21T16:24:57Z gate`; line 2 names `observe_d.sh` `a157c257…`, `<S>`
+and `33ce26df…`, where `a157c257…` is the `observe_d.sh reviewed` value of
+`logs/setup-scripts.log`; it has one `origin main` line, `-> FROZEN`, no FINDING, and
+one verdict line, `verdict OK`, last. `before-setup.txt` and `after-execute.txt` carry
+the same line 2.
+
+| Observation | Time | Register lines in its window | Verdict |
+| --- | --- | --- | --- |
+| `before-setup` | 16:22:00Z | 18 HOLD, LANDING, LANDED or WITHDRAWN lines in the 24 hours before (no earlier phase), 9 of them a HOLD or a LANDING, the last at 14:08:49Z | OK |
+| `gate` | 16:24:57Z | 0 since 16:22:00Z | OK |
+| `after-execute` | 16:25:51Z | 0 since 16:24:57Z | OK |
+| `end` | 20:40:44Z | 0 since 16:25:51Z | OK |
+
+## Run D — main `33ce26d`
+
+`stage2`, the one execute, began 16:25:23Z. `execute` with `--local-remote-dir`,
+`--work-dir` and `--yes` exited **0** at 16:25:30Z and printed
+`adoption verified: every source path is in exactly one place`
+(`runD/exits.txt`, `runD/execute.log`).
+
+| Source accounting (the standard's table) | Run D | Run C |
+| --- | ---: | ---: |
+| Spec | 108 | 65 |
+| Code | 86 | 49 |
+| Assembly root | 6 | 6 |
+| Dropped | 0 | 0 |
+| Total | 200 | 120 |
+
+The standard reported 18 new assembly paths (manifest, pins and shape files), five
+collisions written beside the originals under `shape/` (nothing overwritten), and, in
+the root `.gitattributes`, a `text eol=lf` line appended for each of 9 pinned copies
+(#471), none of its own lines changed.
+
+| Disposable repository | Commit | Kept commits |
+| --- | --- | ---: |
+| Spec | `de756faf8797ea4ee598bf2a9cee84f2b358fa67` | 69 |
+| Code | `d9e7d568011b339e8d4bb87f3f83f58ec653794a` | 145 |
+| Assembly split | `92e4e4172779a226a5e98efa6a3c671baa43ba79` | 157 on its branch |
+
+(`runD/results.txt`.) The split's only parent is `33ce26d`, so its branch holds the
+source's 156 commits and itself, as `refs/heads/adopt/three-repo-shape` in the source
+clone. Spec took 4 plan paths and code 26. Spec's tree digest is
+`29c982db162c36aa9fd15d4a5f6c880086559c01a25cc9b1dfa95b5531512421` and code's
+`68a05297b1e0dee588c5fa5b1456e465d26717ff5136a023e52bc4f351c55f9b` (the split's
+`contracts/*-pin.yaml`, read with `git show`).
+
+- **Commit maps:** filter-repo's two maps, kept under `runD/wd-execute`, are listed in
+  `runD/commit-maps.sha256` (code `6dc62d31…`, spec `9370ae10…`). That file's sha256,
+  `dec7000db3afd0530be22f82dd91d1262737d0f4cc97f8d5ce30d53d6110df50`, is the single
+  anchor line of `runD/exits.txt` (line 9), and `STAGE2A-PASSED` holds the same line.
+  The file and both maps are read-only. `v1`, `t006-1` and `cand-v0` each checked the
+  anchor first (`commit-maps-check.txt`: one anchor line, equal values, both maps OK).
+- **The source clone:** `git status --porcelain --ignored` listed nothing before or
+  after `execute` (`runD/source-status-before-execute.txt` and
+  `runD/source-status-execute.diff`, both empty), `main` stayed at `33ce26d`, and the
+  only change in its refs is the new split ref (the diff at the end of
+  `runD/results.txt`).
+- `STAGE2A-PASSED` was written at 16:25:31Z.
+
+## After execute
+
+**Observation.** `after-execute` (16:25:51Z) passed: origin main FROZEN at
+`33ce26df…`, still no leg repository and no `adopt/` ref on GitHub (`execute` made its
+legs only in the sandbox), no register line since the gate. The prerequisites block is
+identical in `before-setup`, `gate` and `after-execute`.
+
+**stage2v, attempt v1** (16:26:08Z to `STAGE2-PASSED` at 16:26:19Z, every command at
+EXIT 0 in `runD/exits.txt`):
+
+- **Accounting:** `independent_accounting_d.py` matched path, mode, object type and
+  object ID for all 200 entries of `ls-tree -r 33ce26d`: 108 spec, 86 code, 6 root;
+  zero missing, duplicate or misplaced owners, no plan-ambiguous entry, no leg extras
+  (spec tree 108 entries, code 86), no root shadow. The gitlink `upstream/openRepoShape`
+  at `190133d` has one owner, code. The root `.gitattributes` is the source blob
+  `3560973e9d45` plus the #471 block of 9 lines, `a9ac338e09f6`: MATCH. `RESULT PASS`
+  (`runD/v1/accounting.log`), which lists 22 assembly additions: the 18 new paths plus
+  `.gitattributes`, `.gitmodules` and the two leg mounts.
+- **Records:** the split's `project.yaml` holds the `submodules` block at 1 row and the
+  `answered_paths` block at 19, each MATCH against `resolve-report.json`'s preview
+  (`runD/v1/records.log`); the #471 line and the NEXT line are in `eol-line.txt` and
+  `next-line.txt`.
+- **Recursive clone** through the local mirror: spec `de756faf8797`, code `d9e7d568011b`,
+  code's nested openRepoShape at `190133d`, the contract's pin
+  (`runD/v1/verify-clone-heads.txt`). The pinned checkout's own `repo_shape.py`
+  recomputed the `sorted-ls-tree-r-v1` digest
+  `7a66972c7de193c050f77f97bffa13d8543c28d74f61ea210644e65aa3f37912`, equal to the
+  contract's (`runD/v1/pin-digest.log`).
+- **`scripts/bootstrap.py`** printed `bootstrap ok`; the naming, manifest and pins
+  validators (`manifest ok: openRepoTools (openrepotools), 3 legs`, `pins ok`, 11
+  copied shape files match their digests) and `make validate` exited 0. Every work
+  tree was clean afterwards, ignored files included (`runD/v1/status-after-validate.txt`).
+- **OpenSpec** (`runD/v1/openspec.log`): at the spec leg, 1.6.0 passes all 6 changes;
+  1.2.0, the `openspec` first on `PATH`, passes 3 and fails 3
+  (`interactive-lane-name-repair`, `migrate-to-triad`, `release-tags-pypi`; exit 1). At
+  the assembly root both say "No items found to validate." and exit 0.
+
+**stage3, the T006 trial** (`runD/t006-1`, 16:26:44Z to 16:26:45Z). Its inputs were
+checked against `SHA256SUMS` first (all seven OK). Five patches, in scratch clones of
+the legs and the split, each `git apply --check -v` then `git am --3way`, each at
+EXIT 0 (`summary.txt` and the `.check.log` and `.am.log` of each): `assembly-0001` and
+`t010-assembly-exact-pin-job` on the split (the second creates `composed.yml`),
+`code-0001` and `t010-code-leg-tests-workflow` on the code leg, `spec-0001` on the spec
+leg. No hunk was rejected; two applied at an offset: `spec-0001`'s hunk 1 of
+`docs/README-claude-current.md` (8 lines) and the code-leg workflow patch's hunk 3 of
+`tests.yml` (3 lines). `summary.txt` notes that this patch expects a `tests.yml`
+blob `2cfa173` and the code leg has `46feb68`. Not applied here: assembly-0002 and
+assembly-0003 (stage 4's `bump-leg.py` makes the bumps); not tried here: the T009 caps
+and T007 patches (stage 4 applies them).
+
+## The candidate (stage 4, v0)
+
+`runD/cand-v0`, 16:27:07Z to `STAGE4-PASSED` at 16:27:17Z. It copied D's two leg remotes
+into bare repositories of its own, fetched the split into a third, applied the patches
+in clones, and pushed only to those copies (`push -q`: the three `push-*.log` are
+empty). Every step exited 0 in `runD/exits.txt`, and `inputs.txt` records
+`assembly-0001.patch` and `t009-assembly-caps.patch` "applied, as setup pinned it".
+
+| Repository | Candidate | Past D's |
+| --- | --- | --- |
+| Spec leg | `f41ac906b8f707fd8969e307b658d79aa3827f83` | 1 commit, spec-0001 (70 in all) |
+| Code leg | `56142ed741f9cb1d66c62d5d19b3ebf9620a500d` | 3: code-0001, T010's workflow, the T009 caps (148 in all) |
+| Assembly, `candidate-v0` | `c67b0e6838c2c1ae25733df2c0b8316bb7e72452` | 5 past the split: assembly-0001, T010's exact-pin job, T007's front door, and two `bump-leg.py` bumps (spec to `f41ac906b8f7`, then code to `56142ed741f9`), each with the trailer `Rehearsal: D v0` |
+| Nested `upstream/openRepoShape` | `190133d5e704e380c430f87ca9c4e31746de0012` | none |
+
+The candidate's pins are spec tree `bc2d1813…`, code tree `45b3f125…` and the shape
+and code's openRepoShape pin `7a66972c…`; its `AGENTS.md` has 354 lines and `README.md`
+529, the caps T009 sets (`runD/cand-v0/identities.txt`). A fresh recursive clone of
+`candidate-v0` checked out all four, `scripts/bootstrap.py` printed `bootstrap ok` (both
+legs on `main`, tip equal to the pin), `make validate` exited 0, and `composed.yml`'s
+step "every context the composed run claims is here", run as written, exited 0. Every
+tree was clean (`status.txt`; `status-tracked.txt`, `diff-check-*.log` and
+`listing.diff` empty), D's own outputs and the source clone's refs were unchanged, and
+the shim log was empty. The assembly's remote in the candidate's copies holds `main` at
+the split `92e4e41…` and `candidate-v0`. D's remotes are read again at the end, below.
+
+## The post-run scripts
+
+Each was started detached from lane 1's shell, with the operator's redirect
+`runD/<script>-v0.out` that PLAN 10.2's start lines give. Each start is `cd /tmp &&` and
+then PLAN 10.2's line for the script, byte for byte (compared by program), headed
+`/usr/bin/setsid -f /usr/bin/env -i HOME="$HOME" PATH=/usr/bin:/bin LANG=C.UTF-8`; P10's
+adds ` --original-repo` and the shared checkout after `"$S"`, where its header places
+options. PLAN 10.2's grep for the five installer variables printed nothing (rc 1) at
+16:27:42Z, before the first start, and again before P10's start (calls `tMh5TFaE`,
+`hVfNmWJN`, `xmH4S3m1`, `oqqXFS3r`, `CDdSNjEi` and `ky2SHRDr` of lane 1's transcript
+extract, at 16:27:42Z, 16:27:47Z, 16:28:06Z, 16:28:16Z, 16:28:36Z and 16:32:56Z). A
+script's exit is the last `exit N` in its attempt's `pid.txt`; its receipt was verified in
+the attempt with `sha256sum -c --strict RECEIPT.sha256`. The window is `attempt.txt`'s
+`started` line to `pid.txt`'s `finished` line, all 2026-10-21Z. The arguments are each
+`attempt.txt`'s `argv`: P3 `v0 --state-root` a state root under the system temporary
+directory, `must`; P4, P5 and P7 `v0`; P10 `--original-repo` the shared checkout. Lane 1's
+milestone, #186 comment 6321243191 (2026-10-21T16:38:23Z), agrees with this record's stage
+times and with the PASS counts of P4, P7 and P10, and says the freeze still held.
+
+| Script | Attempt | Window | Exit | PASS / FAIL / NOTE | Receipt (`sha256sum -c --strict`) | Surfaces |
+| --- | --- | --- | --- | --- | --- | --- |
+| P4, `install_d.sh` | `install-v0/a1` | 16:28:17Z to 16:28:55Z | 0 | 36 / 0 / 0 | exit 0, 95 rows OK | unchanged |
+| P7, `rollback_d.sh` | `rollback-v0/a1` | 16:28:36Z to 16:29:05Z | 0 | 47 / 0 / 0 | exit 0, 96 rows OK | unchanged |
+| P10, `provenance_d.py` | `provenance/a1` | 16:32:56Z to 16:33:02Z | 0 | 22 / 0 / 2 | exit 0, 15 rows OK | unchanged |
+| P3, `suites_d.sh`, `must` | `suites-v0/a1` | 16:27:48Z to 19:57:58Z | **1** | jobs: 2 GREEN, 2 RED | exit 0, 32 rows OK | unchanged |
+| P5, `wheel_d.sh` | `wheel-v0/a1` | 16:28:08Z to 18:20:03Z | **2** | 10 / 0 / 1 SKIP | exit 0, 36 rows OK | unchanged |
+
+No script exited 70, 71 or 72: the exits are 0, 0, 0, 1 and 2. For each of the five
+attempts, and for the two SMOKE attempts under P3, the shim log is empty and
+`surfaces.diff` is empty, and `SUMMARY.txt` says "real surfaces: unchanged". P3's 1 is its
+two RED jobs; P5's 2, which its header defines as no FAIL but a step SKIPPED, is the
+skipped pipx step. Neither is the watch's 70.
+
+**P4, the install comparison** (`install-v0/a1`; seeds s1 and s2, the `p11` seed, a
+pre-#237 workstation, not selected). Each seed ran, in a disposable home inside the
+attempt, main's `./openRepoTools --install` (A), the candidate's (B), the candidate
+again (B2), the checkout absent (D) and main's again over B's home (C): 18 checks per
+seed, all PASS. Every install exited 0; the candidate's `--version` exited 0 and `nope`
+exited 2. The candidate's install equals main's (the whole home by path, type, mode and
+sha256, and the receipt's name, destination and sha256 columns, 29 rows; only its UTC
+column may differ); the candidate run again changes nothing and prints no `installed at`
+or `updated at` line; rollback by reinstall (C) restores main's install; A and B each
+say "17 of 17 placed". `settings.json` is byte-identical after A, B, B2 and C: with the gate open
+(s1) 2 of our hook entries are merged, with it closed (s2) none, the seeded guard entry
+being removed. With both trees moved away, the 17 installed commands give the same
+`--help` output (and `openRepoTools --version`) and exit status as with them present.
+B reports that the code is mounted at `openRepoTools-code` `56142ed741f9…`, every payload
+file checked against that commit and nothing fetched.
+
+**P7, the rollback drills** (`rollback-v0/a1`; drills a, b1 and b2; 47 PASS: 23, 14 and 9,
+and one check that `candidate-v0` descends from the source commit). The drills read D's
+repositories only, through bundles and clones. Every push goes to a throwaway bare
+repository the attempt made (`b1/<mode>/live.git`, `b2/live.git`), and each refused a
+force push that rewinds `main` and a delete of it (`b1-ff-deny.log`,
+`b1-squash-deny.log`, `b2-deny.log`).
+
+- **(a) Restore from preserved artifacts:** six bundles (the two execute remotes, the
+  three candidate remotes, the source clone), each verified and listed in
+  `bundles/SHA256SUMS`, each restored into a fresh bare repository whose `for-each-ref`
+  listing equals the original's, connectivity ok. `candidate-v0` and the split were
+  cloned recursively from the restored copies (a marker branch only they hold was
+  served, so the originals were not read); `bootstrap.py` and `make validate` exited 0
+  in both; the restored candidate's four identities equal stage 4's clone's line for
+  line (root `c67b0e6838c2`) and the restored split's three heads equal
+  `v1/verify-clone-heads.txt`.
+- **(b1) A post-merge revert, twice:** `main` at the source commit, then `candidate-v0`
+  merged by fast-forward (`main` 6 commits past the source) and reverted over the range
+  (6 commits, no conflict); and merged by squash, the repository's own policy
+  (1 commit, `783e959f6b6b`) and reverted. Each revert was pushed as a fast-forward,
+  `main^{tree}` is the source commit's tree, `15a58404a93b`, and the merged `main`
+  stays an ancestor: the revert was added, nothing was rewound.
+- **(b2) A pin-bump rollback:** `bump-leg.py` moved the code leg `56142ed741f9` to a new
+  leg commit `0e9cb613f658` in one commit and back in one, each a fast-forward; the tree
+  after the bump back is the tree before the bump forward (`7d86b1214742`), the gitlink
+  is `56142ed741f9` again, and `contracts/code-pin.yaml` is byte-identical. A second bump
+  forward was undone by `git revert`, with `main^{tree}` the tree before the first bump:
+  four pushes, none a rewrite.
+
+**P10, provenance** (`provenance/a1`; `--original-repo` pointed read-only at the shared
+checkout; no `--expect-spec`, because the anchors check `results.txt`'s counts; 22 PASS,
+2 NOTE; tables in `provenance.md`).
+
+- **Join:** the anchor in `exits.txt` and in `STAGE2A-PASSED` matches
+  `commit-maps.sha256` (`dec7000db3af…`) and each leg's head is the one the split pins
+  and `results.txt` records (spec 69 commits, code 145). Every spec-leg commit, 69 of
+  69, and every code-leg commit, 145 of 145, joins to an original through its commit
+  map, with each changed path's blob and mode equal to the original's (spec 200 paths
+  ok, code 611, 0 bad), every path assigned to its leg by the plan, each parent's
+  original an ancestor of the commit's original, the same author date, author and
+  subject on the original, and the map and that metadata naming the same original.
+- **Documents:** 91 files under `openspec/` and `specs/`, in 12 groups, each introduced
+  and last changed by a commit that has an original.
+- **Hash resolution (NOTE):** 648 distinct hex tokens in those documents (558 with a
+  letter a to f). By the file's stated rule, 400 are not an openRepoTools commit here, 17
+  are openRepoShape's, 143 resolve only in the original repository and 88 in the source's
+  main history; 46 resolve in the spec leg itself. The file says its classes follow its
+  own rule and are not comparable with the earlier record's figures.
+- **Recount (NOTE)** of cross-leg citations in feature 004's working files (40 files):
+  by directory entries only, 306 mentions by lines in 34 files (380 by occurrences);
+  with the distinctive file names, 435 in 35 (591); with every code-leg entry, the upper
+  bound, 1,063 in 37 (1,500). Of the 11 per-file counts the earlier record lists, 7 equal
+  the first rule's by lines (5 by occurrences), and 1 equals each of the other rules'.
+
+### P3, the suites (`suites-v0/a1`)
+
+Exit **1**, 16:27:48Z to 19:57:58Z. Its `pytest-version.txt` reads
+`pytest 7.4.4 (python3 = /usr/bin/python3)`. The state root was `rehearsal-d-state0`
+under the system temporary directory, which gives run.sh a TMPDIR of 70 characters.
+
+| Job | Verdict | Seconds | Result |
+| --- | --- | ---: | --- |
+| `upstream-pin` | GREEN | 20 | 15 tests, 0 failed, 0 skipped |
+| `composed` | **RED** | 6584 | 3009 tests: 4 failed, 6 skipped; started at a load average of 63.28 |
+| `refusals` | GREEN | 144 | 6 of 6 broken layouts refused as expected, each exit 4; cases 1 and 5 say "a named root is never replaced by a found one" (#193 item 15) |
+| `standalone` | **RED** | 5854 | 3009 tests: 1 failed, 33 skipped; started at a load of 3.89 |
+
+**The failures** (5 results, 4 tests; `composed.log`, `standalone.log` and the junit files):
+
+- **(a) `test_repo_hygiene::test_no_committed_file_names_a_host_absolute_path`, composed
+  only.** Its four offenders are the rehearsal's own local URLs: lines 3 and 6 of the
+  assembly root's `.gitmodules` (D's local leg remotes) and lines 15 and 33 of its
+  `shape/README.md` (a `git clone --recurse-submodules` of D's local source clone). At the
+  cutover they are GitHub's URLs, which the test does not name; D cannot show that.
+- **(b) `test_lane_helpers_suite::test_the_lane_helper_suite_passes`, in both jobs,** one
+  case each time, "…with clause (c)'s directory and window in the tail, for the person
+  reading the row" (composed 4890 passed, 1 failed; standalone 4872 passed, 1 failed, 3
+  skipped). The suite's text: "expected to contain [; dir …/projects/repoA; window ]", and
+  the row's cell it got ends `; dir …/projects/repoA; ...`, with no window. This is #180's
+  row-stamp length limit (the pre-review's S5): `lane-start` cuts the stamp line at 230
+  characters.
+  PLAN 10.2 and `suites_d.sh`'s header put the limit at "about 72" for run.sh's TMPDIR,
+  but the stamp through `; window ` was 231 characters at P3's 70. Lane 1's record writer ran
+  `lane-start`'s own cut on a line built from the logged text: the case passes at 69 and
+  fails at 70.
+- **(c) two `test_claude_current` cases, composed only:**
+  `test_a_native_another_launch_finished_while_this_one_waited_is_read_again` (it asserts
+  "updated by another launch" in stderr, which says only "updating the native install
+  toward 2.1.284 … updated") and
+  `test_a_copy_ahead_of_npm_that_appears_during_the_wait_is_ahead` (exit 1: "no runnable
+  Claude Code was found by absolute path … the update lock … was not free within 4s").
+  Both are lock-timing races with a lock holder of 2 s and 1.5 s, and both passed in
+  standalone.
+
+**The skips,** from `composed.xml` and `standalone.xml` (function names without their
+`test_`). The 6 of composed are also standalone's first 6: five `test_package` wheel
+tests, "OPENREPOTOOLS_TEST_WHEEL is unset"
+(`wheel_payload_is_the_commits_blobs_byte_for_byte_and_mode_for_mode`,
+`wheel_modules_are_the_commits_own`,
+`wheel_dist_info_is_the_five_names_with_the_commits_license`,
+`wheel_holds_its_member_list_and_nothing_else`,
+`wheel_payload_members_are_payload_names_and_the_pin_both_ways`; P5 runs them), and
+`test_precision_90a_96`'s `a_count_that_cannot_be_made_is_a_line_over_the_cap[UTF-8]`
+("only a byte count past 240 reaches the `wc` recount"). Standalone has no assembly or
+spec root and skips 27 more:
+
+- 9 `test_install_payload_source` composed-acceptance cases:
+  `r01_composed_the_documented_one_liners_resolve_through_the_root_entry_point`
+  (`[openRepoShape]`, `[gh]`), `r01_composed_the_root_entry_point_delegates_locally`,
+  `r01_composed_a_signal_reaches_the_implementation_and_its_temporaries_go`,
+  `r08_composed_the_root_entry_point_refuses_a_pin_its_gitlink_disagrees_with` (`[gh]`,
+  `[curl]`), `r14_composed_acceptance_requires_the_nested_dependency`,
+  `r15_composed_the_root_entry_points_pin_reader_is_the_implementations` and
+  `r15_composed_the_root_entry_point_parses_and_uses_nothing_bash_3_2_lacks`;
+- 11 that need the assembly root's `README.md`: `test_openrepotools_command`'s
+  `the_help_and_the_readme_say_the_mode_the_receipt_is_born_at`, and ten of
+  `test_repo_hygiene`'s: `the_readme_prints_the_install_line_the_pointer_prints`,
+  `the_readme_also_carries_the_gh_api_form`,
+  `the_readme_carries_the_two_line_onboarding_chain`,
+  `no_document_offers_a_windows_powershell_twin`,
+  `the_documents_say_what_bare_park_does_now`,
+  `the_documents_say_what_status_is_and_is_not`,
+  `the_documents_say_the_sweep_skips_a_root_without_the_overlay`,
+  `the_documents_say_what_a_bare_lanes_lists`, `readme_is_short_enough_to_be_read` and
+  `readme_says_what_a_release_is_and_offers_no_package_route`;
+- 7 more in `test_repo_hygiene`: 3 need its `AGENTS.md` (`agents_md_names_the_pin_rules`,
+  `agents_md_is_short_enough_to_be_read`,
+  `the_suite_wrapper_takes_one_lock_and_names_it_where_agents_read_it`), 1 its `CLAUDE.md`
+  (`claude_md_points_at_agents_md`), and 3 the spec root's `docs/README-lanes.md`
+  (`the_directory_precedence_states_every_rung_it_implements`,
+  `the_exit_3_documentation_agrees_with_the_die_message_it_describes`,
+  `the_manual_offers_the_fork_act_and_not_a_kill`).
+
+**Two SMOKE attempts diagnose the failures.** `suites_d.sh` marks each SUMMARY "SMOKE, NOT
+EVIDENCE", and they stand beside P3's results, never in place of them. Each receipt
+verifies (15 rows OK), `surfaces.diff` is empty, and each reads P3's pytest line.
+
+| Attempt | Selection (`composed`) | State root, TMPDIR | Window | Result |
+| --- | --- | --- | --- | --- |
+| `s1` | the lane-helper suite case | `rds2` (9 characters), about 56 | 20:00:06Z to 20:39:25Z | GREEN: 1 passed in 2357 s, exit 0 |
+| `s2` | the hygiene case and the two timing cases | `rehearsal-d-state1` (23, as P3's), 70 | 20:00:30Z to 20:39:47Z | RED: 2 passed, 1 failed in 12.81 s, exit 1 |
+
+`s1` passing says (b) is the length. In `s2` both timing cases pass, at a start load of
+3.70, which says (c) is load; the hygiene case fails with the same four offenders, which
+says (a) is deterministic, from the local URLs. `s2`'s pytest began at 20:39:34Z, after
+`s1` ended: it had waited for the pytest lock. A first start at P3's own state root was
+refused (`runD/suites-v0.out`), because that root was not empty: P3's tests had left
+`lanes-index.lock` and `lanes-index.status.json` in it (under the system temporary
+directory, not a real surface). P3 and `s1` left their roots, as their notes say; nothing
+was removed.
+
+What D shows: P3 is RED, on three conditions of the rehearsal (local URLs, a TMPDIR one
+character past this case's limit, a load of 63). None is shown to be a defect of the
+candidate, and none is shown to be absent at the cutover. D has no green `composed` run.
+
+### P5, the wheel (`wheel-v0/a1`)
+
+Exit **2**, 16:28:08Z to 18:20:03Z; its header defines 2 as "no FAIL but a step was
+SKIPPED". Ten steps PASS and one is SKIP (`steps.tsv`, `SUMMARY.txt`):
+
+- **clone** (the code leg at `56142ed741f9`, the assembly's pin) and **venv** (the build
+  lock by hash, `--no-index`); **build-a**, **build-b** and **one-file**: the package job's
+  two builds give one file, `openrepotools-0.0.0-py3-none-any.whl`, sha256 `b93503b1…`,
+  byte for byte; **content**, the package job's own check verbatim: 32 members against
+  `HEAD`, 0 problems; **release**: `python -m build --wheel --no-isolation` from a
+  `git archive` is build a, byte for byte;
+- **package-tests**: `test_package.py`, `test_package_stamp.py` and `test_install_pipx.py`
+  against the built wheel, through `tests/run.sh`: 285 passed (116.52 s of pytest, after a
+  wait for the pytest lock behind P3 from 16:31:03Z; the step ended 18:19:56Z);
+  **zero-skip**: 285 tests, 0 skipped, 0 failed, 0 in error; **control**: the raw leg
+  (`d9e7d56`, no LICENSE) is refused by the content check (rc 1), and the `-k dist_info`
+  test fails on it, as it must;
+- **pipx is SKIP**: "/usr/bin/python3 has no ensurepip, so pipx cannot create its shared
+  libraries (python3-venv is not installed); use --python with an interpreter that has
+  it". PLAN's P5 line passes no `--python`.
+
+**pipx rests on CI's `package` job, not on D.** Main's CI run at `33ce26d` (run
+39614104431, a push created 14:07:44Z) is `success`, and its `package` job's pipx steps (8
+to 11) are each `success`: "pipx from its hash lock", "install the wheel with pipx", "the
+unstamped --version, line for line" and the `--install` step beside pipx's link. That job
+runs Python 3.9 and pipx 1.11.1 from the lock, on the single repository's `tests.yml`
+(blob `46feb68`), not on D's candidate. The candidate code leg's `tests.yml` (blob
+`a24d126`) has the same four steps, which only the code leg's own CI can run.
+
+What D's record says of P3 and P5, whatever their results:
+
+- **Jobs:** P3's job word is `must`, jobs 1–4: `upstream-pin`, `composed`, `refusals`,
+  `standalone` (`attempt.txt`).
+- **pytest** is the system's, with no `--pytest-wheels` and no `--pytest-sha256sums`
+  (`attempt.txt` of both). P3's `pytest-version.txt` reads
+  `pytest 7.4.4 (python3 = /usr/bin/python3)` and P5's reads `pytest 7.4.4`, not the
+  8.3.4 CI pins: the isolated HOME hides the user-site pytest the real HOME has
+  (`suites-v0.out`, WARNING; `pytest-setup.log`). Any pytest hash the scripts record is
+  self-consistency only. P5 ran Python 3.12.3 with pip 24.0, where CI runs Python 3.9.
+- **The wheel build** is `--no-index`, but pip's isolated build installs the build's own
+  dependencies (hatchling and what it needs) from the find-links directory with no hash
+  check. Only the venv's install of the lock is hash-checked.
+- **No claim of a run without the network** is made for either: the shims and
+  `GIT_ALLOW_PROTOCOL=file` stop only `gh`, `curl`, `wget` and git's non-file
+  transports, and Python, pip and raw sockets are not stopped.
+
+**What did not run in D.** P3's job 5, no-submodule, runs only when it is named, and D did
+not name it; P9, lane 2's matrix rerun, does not run in D. Both follow Brett's "include
+P7, P8, P10". So Gate C's checklist row 31 rests on r2's 242-skip classification and
+main's CI, and row 27 on lane 2's 15/15 matrix (#186 6073209094, final at `13cc752`). This
+record does not say that D ran either. P7, P8 and P10 are the optional evidence that does
+run in D.
+
+### The surface watch
+
+Each script took a snapshot of the real install surfaces when it started and again when it
+ended, and exits 70 when the two differ.
+
+- **The watched places,** as every attempt's `surfaces-before.txt` names them: under `~`,
+  `installed.tsv` in `.local/state/openRepoTools/` (absent) and in
+  `.local/share/openRepoTools/` (sha256 `5d0ccba5…`, mtime 2026-10-08T20:52:08Z), and
+  `.claude/settings.json` (sha256 `d0dafd61…`, mtime 2026-10-15T18:56:28Z), each hashed;
+  and `.local/bin`, `.claude/skills`, `.claude/commands`, `.claude-profiles/shared/skills`
+  and `.claude-profiles/shared/commands`, each listed (207 lines).
+- **It compares listings, not contents.** A directory is listed by each entry's type,
+  mode, size, mtime, path and link target; a change that keeps all of those is not seen,
+  nor is a subtree the listing cannot read. A skills directory's `synced/` and `.trash/`,
+  which Claude Code's skill sync writes many times a day, are left out.
+- **Every lane and profile on the bench shares those places,** so a 70 would say that a
+  place changed during the run, not who changed it. This record does not claim that
+  nothing was written outside an attempt: the watch, like the command scan below, is a
+  reader's aid. P3 and `s1` left lane-index files under their state roots, and P8 saw
+  other actors' churn outside the watch.
+- **Windows** (`attempt.txt`'s `started` to `pid.txt`'s `finished`): P3 16:27:48Z to
+  19:57:58Z, P5 16:28:08Z to 18:20:03Z, P4 16:28:17Z to 16:28:55Z, P7 16:28:36Z to
+  16:29:05Z, P10 16:32:56Z to 16:33:02Z, `s1` 20:00:06Z to 20:39:25Z and `s2` 20:00:30Z to
+  20:39:47Z; exits 1, 2, 0, 0, 0, 0 and 1. None is 70.
+- **Installs and setups in the windows.** In all seven attempts `surfaces.diff` is empty
+  and the before- and after-snapshots hold the same 207 lines: those of P3, P4, P5, P7,
+  `s1` and `s2` are byte-identical (sha256 `b812e02a…`), and P10's, which
+  `provenance_d.py` writes with its mtimes in epoch seconds, is the same 207 lines once the
+  notation is read alike (lane 1's record writer's comparison). The real `installed.tsv`, which an
+  `openRepoTools --install` writes, has 29 rows, all stamped 2026-10-08T20:52:08Z (before
+  the freeze and every window), and its sha256 is `5d0ccba5…` in every snapshot and when
+  lane 1's record writer read it again at 21:01Z: no install wrote it in or after any window. The
+  freeze forbids an install and a workBenches setup, and the watch saw neither; it cannot
+  say that no lane tried one.
+- **The link-only fallback** ("yes to the link-only 70 fallback") covers P10's provenance
+  check only, for a 70 whose difference is only the `claude` or `codex` link row under
+  `~/.local/bin`. It was not used: no run exited 70, so there is no `surfaces.diff` line
+  to quote or attribute. The `claude` row stood at the 2.1.306 executable (mtime
+  2026-10-21T12:13:44Z) and the `codex` row at its standalone package
+  (2026-10-20T20:38:11Z) in every snapshot.
+
+## P8, T18's method on D's candidate
+
+By hand, on a copy of `runD/cand-v0/clone`, as `t018-disposable-2026-10-09.md` section 1
+gives it (Brett's "include P7, P8, P10"). A separate writer (Sonnet 5.5) ran it from
+16:38:27Z to 17:29Z in a run directory of its own, `p8-t018-d` under `<W>`. The harness
+refused its write of the report, so lane 1 saved its reply verbatim:
+`REPORT-p8-20261021T1729Z.md`, sha256 `dbc167be…`. Its `RECEIPT.sha256` (sha256
+`3e3e1b54…`; 177 files, the report not among them) verifies: `sha256sum -c --strict` exits
+0 with 177 OK, run again by this record's writer.
+
+**The sandbox** is T18's, with these differences:
+
+- three homes, every command under `env -i`, and a copy of the agent root (405 files) with
+  its own `workspace.yaml`, the real file unchanged. No lane variable or lane command was
+  used: `scripts/sbx.sh` refuses (99) a HOME or directory outside the run directory and an
+  extra variable naming HOME, PATH, XDG, `AGENT_PROTOCOL_ROOT`, `LANES_*` or `TMUX*`;
+- git moves only by `file`, through six `insteadOf` rules into the run directory's own bare
+  copies of D's three candidate remotes and the mirror (D's `.gitmodules` carries its own
+  prefix, where T18 rewrote run C's);
+- the network is cut by `unshare --net` and the `gh`, `curl` and `wget` shims: 6 calls
+  refused (2 probes, 4 `gh api` of `status --fetch`), where T18 logged 2;
+- **new, a read-only mount namespace:** inside every command the real home and the
+  bench's whole projects tree are read-only (D's sandbox and observation directory among
+  them), only the run directory is writable, and capabilities are dropped. T18 relied on
+  `HOME` alone;
+- the commands under test are installed by the candidate's own `./openRepoTools --install`
+  from a fresh recursive clone into each home (17 of 17 placed, 29 files recorded; `park`,
+  `resume`, `status` and `openRepoTools` byte-identical to the code leg's blobs at
+  `56142ed`), with the Speckit overlay of workBenches `ffd551601e49` (44 files); on all
+  three workstations the root, both legs and the nested dependency equal D's
+  `identities.txt`.
+
+**Results.** Every step of T18's logs 10 to 93 ran, and none blocked or hung. **55 of the
+57 exit statuses T18 logged are equal.** The two exceptions are log `00`, where the
+writer's probe ends on a different command, and log `14`, the as-copied root, which sits
+on `candidate-v0`, so `status` exits 1 with 2 findings (T18: 0). Every refusal text is
+T18's except the Makefile line numbers, one line later (`Makefile:56: park`; T18's `:55`),
+because D's split renders the root Makefile with openRepoShape v1.1.0's template. The
+other differences are explained: the four installed commands have new blobs (#236, #235,
+#242, #243, #191, #228 PR 1, #292); the feature numbers are 007 and 008, because D's spec
+leg already holds `006-release-pypi`; OpenSpec 1.2.0, first on the bench's PATH, fails 3
+of the spec leg's 6 changes (the new `release-tags-pypi` among them), as it does on the
+single-repository `33ce26d`, while 1.6.0 passes all 6; and the hooks and the fork check
+are the first and third of the three notes below (workstation 1, a local origin, logs one
+`gh api` call where T18 had two).
+
+**T18's eleven follow-ups (its section 5): none is fixed.** Each was checked with its log.
+The overlay scripts they belong to are byte-identical between workBenches `ffd5516` and
+its `origin/main` `d89869b`, and none of the 60 code-leg commits dated after 2026-10-09
+touches these behaviours. Follow-up 7 is one change worse (the third failing spec change).
+Not exercised: macOS, the `gh`-backed fork and shape-currency checks, and
+`setup-openspeckit` from workBenches `origin/main` (476 lines different).
+
+**Judgement calls:** (1) in P8's own copy of the root remote, `main` is fast-forwarded
+to the candidate `c67b0e6`: D's remote holds it as `candidate-v0`, with `main` at the
+unpatched split `92e4e41`, and a fresh clone, `resume` and `park` read `main`. D's `main`
+is kept there as `refs/d-orig/main`, and D's own remote is untouched. (2) Workstation 1's
+copy, a `cp -a` of `cand-v0/clone` on `candidate-v0`, was put on `main` (same commit) after
+its as-copied `status` was logged. (3) The wrapper added the read-only mount namespace.
+
+**New for the cutover runbook:** a fresh install writes no `~/.claude/settings.json`
+(T18's install created one): the SessionStart hook and the name guard are merged only
+once `~/projects/xFactory/lanes-edit.sh` answers `guard` (#237); `status` flags a stage-4
+clone left on `candidate-v0`; and `status --fetch`'s fork check runs only for a github.com
+origin.
+
+**The proofs** (P8's `state/sources-before.txt` at 16:55:45Z against `sources-after2.txt`
+at 17:27:56Z): **D's 12 ref digests are unchanged** (the three `cand-v0/remotes`, the two
+`runD/remotes`, the mirror, `source`, `shape`, the clone and its three module git
+directories), and so are the tree digests of 7 of the 8 directories read. The 8th, `<S>`
+itself, grew by 7 files, all under `runD/suites-v0/a1/`, which D's own P3 was writing.
+Lane 1's record writer recomputed the 12 ref digests at 20:49Z with P8's formula: all equal. **The
+real surfaces that P3 and P5 watch are unchanged** (listed and hashed at 16:51:38Z and
+17:27:56Z: `~/.local/bin`, the share-directory `installed.tsv`, `settings.json`, the
+skills and commands, `~/.agents`). **Other actors' churn, outside the watch:**
+`lanes-index.sqlite` and `lanes-index.status.json` (the live register index) and Claude
+Code's `skills/synced/` files of four sessions. P8 attributes them to others: every one of
+those paths was read-only inside its sandbox, and it ran no lane command.
+
+## The end of D
+
+`observed end` ran 20:40:44Z to 20:40:53Z, after every post-run script and both SMOKE
+attempts had ended (`<W>/d-operator-log/act10-end.log`; 0 STOP lines in exits.txt). Its
+verdict is **OK** (`<S>.observe/end.txt`):
+
+- origin main `33ce26df…` FROZEN; 0 `adopt/` refs; `openRepoTools-spec` and
+  `openRepoTools-code` absent (HTTP 404); the shared checkout as at the start (0 status
+  lines, 0 `adopt/` branches);
+- 0 HOLD, LANDING, LANDED or WITHDRAWN lines after 16:25:51Z; with the windows of the gate
+  and after-execute, none from 16:22:00Z to 20:40:44Z;
+- line 2 is `observe_d.sh sha256 a157c257…; S=<S>; expect 33ce26df…`, equal to the
+  `observe_d.sh reviewed` value of `logs/setup-scripts.log` and to the sha256 of
+  `<P>/scripts/observe_d.sh` (PLAN 10.1, F8); `before-setup`, `gate` and `after-execute`
+  carry the same line 2;
+- `prereq.diff` reads "bench and system installs unchanged" (e4): the prerequisites block
+  is the same in all four phase files.
+
+**The command scan** (`<S>.observe/command-scan.txt`) lists 38 lines of `<S>/scripts/*`, as
+PLAN 10.2's table expects: 37 in the post-run scripts and 1 in `run_rehearsal_d.sh`. Each
+is matched to a row of that table **by its text, not by its number** (lane 1's record writer's match,
+by program; the numbers also equal the table's, since D ran the bytes it was made for),
+and none is unmatched or matched twice:
+
+| Row | Kind and text | Lines | Where |
+| --- | --- | ---: | --- |
+| 1 | force-push: `push --force` of `main~1` over `main` in the drill's throwaway repository | 1 | `rollback_d.sh` |
+| 2 | push-delete: the delete of `main` there | 1 | `rollback_d.sh` |
+| 3 | ref-rewrite: `live_repo()`'s `symbolic-ref HEAD` and `update-ref refs/heads/main` | 2 | `rollback_d.sh` |
+| 4 | ref-rewrite: drill (a)'s restored copy, `symbolic-ref HEAD` and the marker branch | 2 | `rollback_d.sh` |
+| 5 | ref-rewrite: drill (b2)'s `switch -q -C bump-back` and `bump-again` | 2 | `rollback_d.sh` |
+| 6 | signal: `on_signal`'s `kill -TERM "$CHILD"` | 2 | `suites_d.sh`, `wheel_d.sh` |
+| 7 | signal: the same TERM after the `INTERRUPTED` check | 2 | `suites_d.sh`, `wheel_d.sh` |
+| 8 | signal: `kill -0 "$CHILD"` | 2 | `suites_d.sh`, `wheel_d.sh` |
+| 9 | prose naming `kill -TERM`, in comments and messages | 23 | `suites_d.sh` 6, `wheel_d.sh` 6, `install_d.sh` 4, `rollback_d.sh` 4, `provenance_d.py` 3 |
+| 10 | history-rewrite: `git filter-repo --version`, in the header stage 1 writes | 1 | `run_rehearsal_d.sh` |
+
+Lane 1's `n13-table.py --check` of PLAN.md, run at 20:42:39Z
+(`<W>/d-operator-log/act10c-n13-check.txt`), says OK: the table is its output byte for byte
+(10 rows), every listed line is in exactly one row, and D's 11 copied scripts are each
+byte-identical to the reviewed ones. The scan lists known forms only: a command written
+in a form none of its 38 patterns names is not listed, so it is a reader's aid and never a
+proof that nothing else is there.
+
+**D's remotes at the end.** Lane 1 read their refs at 20:40:54Z with `git for-each-ref`
+(`<W>/d-operator-log/act10b-remotes-at-end.txt`): D's execute remotes hold `main` at
+`de756faf8797` (spec) and `d9e7d568011b` (code), 1 ref each; the candidate's copies hold
+`f41ac906b8f7` (spec), `56142ed741f9` (code) and `92e4e4172779` (assembly, 2 refs: `main`
+and `candidate-v0`); the source clone is at `33ce26dffc52` (6 refs). They are the commits
+`results.txt` and stage 4 recorded.
+
+## Private log SHA256s
+
+Each digest was computed for this record from the file as it stands; the private receipt
+keeps the files. The act logs and the extract are under `<W>/d-operator-log/`, the
+observations under `<S>.observe/`, the rest under `<S>/runD/`.
+
+| File | sha256 |
+| --- | --- |
+| `act0-act1.log` | `584256836245ada6504f349aeac0d4f3afe5eeb9fd219899a9e2021e9b907f12` |
+| `act2-stage1.log` | `e821e1ce2f10fb5bb288208b8c4f1ea88c64d6bbb7ab6472acf432f0cf6637aa` |
+| `act3-gate.log` | `d976131484fef691ac7a7d846a50c5574e05956f7a69f04f9a6ae3686d97f9e6` |
+| `act4-stage2.log` | `b0b10396d636c375babdd738a3096bf58560cc253aa0da442f7a949049429ff7` |
+| `act5-after-execute.log` | `db58c0c17d3071af7ae5949da27eea6f0ec2001ad16b610aed4cba3b28b16885` |
+| `act6-stage2v.log` | `616e638eb096b08ea15dc4c791f77c0ebec1b90c450d27d7fb00a0325fb2dad9` |
+| `act7-stage3.log` | `030acc93fef0d5addc3467485ab3ade764db95d1c584ec10519e54bf7602ee23` |
+| `act8-stage4.log` | `d8fff21ade86a09272b3f9aa0dff891e7054c711af49dbc69128ddd23953b49a` |
+| `act9-transcript-extract-1619-1634.txt` | `309d978e07fdf12a4e7018a6f1ffb715d3259e371047f99a4c987c6b006802d9` |
+| `act10-end.log` | `0a40bacf588bbb95bbc17f9e262f90e241b7a89dacc0f97029840f0368abd801` |
+| `act10b-remotes-at-end.txt` | `952aeaa7eb3fbbc74555e25bf004755e723753ce5039d9e56893106230ebbc5c` |
+| `act10c-n13-check.txt` | `9941318ceca793c530a551c7fa17a144da35a5e85a53e3abe74faf16b11cb013` |
+| observation `before-setup.txt` | `0788125978b96bca25657832b405530908e89772ecfbda6144e9513198143cb4` |
+| observation `gate.txt` | `84254cf17f02c16e7d47ede6b3ceb77fbafbfd5f745b820b6210386f02967e16` |
+| observation `after-execute.txt` | `3705342ce67cfdc1686a21404efcfd0174b54d95ee847f34f85df58d20a36a42` |
+| observation `end.txt` | `6de121c6f1a6ecebbbca3fcb417b66e1f0beba44db3e0d4337e16d7e8884cf47` |
+| `command-scan.txt` | `35b1a9a4f3a725e5603fbf45bea1671b7dff3b675b4b3ba6cfa182b6bef59ed1` |
+| `prereq.diff` | `4f80027255652a053715960bfe15b0064bd71d39524d88de9c11e999c7d8f657` |
+| `exits.txt` | `c144eb92c18c85e522872b62922ace5769195fa4fc835be340af104c16baa6b2` |
+| `execute.log` | `0d50767d7834231f5777a4a7b2fbb7c4d9f6735e60ab3ed7f8c50cfc9e5850eb` |
+| `v1/bootstrap.log` | `459b34f31f9ce054d01997ce2c01de586371241478d8fb5a44ff4db06d03e6ea` |
+| `v1/accounting.log` | `136bc5dbd8b072febda672a5f3c757d63151c7baa512618cec4375f71b08927b` |
+| `cand-v0/bootstrap.log` | `aa0d9006b768d728815837d71a53fcc893454a71f04e83829d68626e9b409494` |
+| `RECEIPT.sha256` of P4 (`install-v0/a1`) | `8f66c7aa29b0d2df271e5cd678fd5157e47bb48792dea91b5ce8c76c842f6e50` |
+| `RECEIPT.sha256` of P7 (`rollback-v0/a1`) | `fbd1306795bc7d22e86f767a8d99c98f0c478edaff8e37e099ee902e7a37a8a9` |
+| `RECEIPT.sha256` of P10 (`provenance/a1`) | `4c5bbcc46f421a97ff0a2ee0d40dff37ad2fde8398194b935e767cf61c5150fe` |
+| `RECEIPT.sha256` of P3 (`suites-v0/a1`) | `cd5c9d12040f4daa93a00edd51f027b8b0ad1851d6983eb49f7bbc35334da606` |
+| `RECEIPT.sha256` of P5 (`wheel-v0/a1`) | `0cefffef9438d277ea315fd9a9d79737e0020000ca2fe5b14c92885e58cdb92d` |
+| `RECEIPT.sha256` of `s1` | `7b5e4cc8444a92d4a45bf9dc9a032acbd68cb6d0723ec10655010503d22b7644` |
+| `RECEIPT.sha256` of `s2` | `26906d3c3d9f9f5503b22e0b3e3725d7d8654b5be81839a7e4b89919997ad0f7` |
+| P8's `RECEIPT.sha256` | `3e3e1b5442b950d313727f81dfb2a35307457b07c408e6321a55d66c10036dfc` |
+| P8's `REPORT-p8-20261021T1729Z.md` | `dbc167be73589591175be0d33c18367dd2e5b2f02871408390d450802c0fbd44` |
+| `<P>/scripts/REVIEWED.sha256` | `fcfe0653d2f08d04e4a81252ca3c4e41dfccd57b92697d0bbbeec50b3929d9b4` |
+| the published plan, `published-plan.yaml` | `45b0ec8d7513a7f8dd58b3003c133c2ee155324929e145f44990404823b226ed` |
+
+The published plan is the file on the evidence branch under
+`openspec/changes/migrate-to-triad/adoption-plan.yaml`, byte for byte.
+
+## Remaining gates
+
+**Gate C is not given by this record.** It needs Brett Heap's explicit approval, which must
+name the revisions, the leg repositories, their visibility and the final plan. Still to
+come after this record:
+
+- the review of this record by lane 3 and lane 2 (lane 3 asked to review it with lane 2,
+  #186 6323118228);
+- P3's `composed` and `standalone` jobs stand RED in D, and the SMOKE attempts do not turn
+  them green: whether P3 runs again before Gate C, on a quiet bench, at a TMPDIR of at
+  most 69 characters and with GitHub's URLs in the candidate's `.gitmodules` and
+  `shape/README.md`, is lane 1's and Brett's call;
+- the plan, regenerated from the frozen source at the cutover: D's published plan is a
+  rehearsal input with `execution_authorized: false`, and stays on an evidence branch with
+  this record until the root-split PR (e2);
+- inside the cutover, right after `execute` and before the code leg's first package or
+  release run: T006 code-0001 in `openRepoTools-code`, and the owner's acts the plan's last
+  follow-up names (the testpypi and pypi environments and the tag ruleset in
+  `openRepoTools-code`, a test.pypi.org trusted publisher for it, and a pypi.org pending
+  publisher naming `openRepoTools-code`, `release.yml` and the pypi environment: #228);
+- a round after D and before the cutover: lane 3's NITs 121–123, 131–135 and 141–144, with
+  the tested fixes for 141 and 142 (#186 6320876769); the message text at
+  `setup_d.sh:237` (`pin_expect`);
+  #299's four NITs on the dated notes (lane 3's review of #299, comment 6317075196); the
+  published plan's header sentence, which overstates what the decisions file did
+  (Mapping); starting the stage acts from a neutral directory (Setup); and the "about
+  72" that PLAN 10.2 and `suites_d.sh`'s header give for run.sh's TMPDIR, which P3's 70
+  disproved for case (b);
+- T18's eleven follow-ups, all still present (the P8 section), for the cutover runbook;
+- the e2 freeze: main stays at `33ce26d` until the cutover, and a second `execute`, in a
+  new sandbox, happens only on Brett's word.
+
+This evidence authorizes no real conversion, repository creation, merge, default-branch
+move or lane rebinding.

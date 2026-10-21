@@ -1,9 +1,9 @@
-# Rehearsal input, NOT the cutover plan: regenerated 2026-10-08 from source 837928a1029ac53b050a9bdcbc0ef4055b10719b (main)
-# with openRepoShape adopt-project.py at 7f84ca42ca86a8902928345109d2bf6bad87bd91.
-# Run C: the run B plan's 22 resolutions (the October 4 mapping's 19, plus lane-worktrees and
-# lanes-index to code and ideation/ to spec) are reapplied verbatim; no new top-level path.
-# Disposable rehearsal evidence: ../../../specs/004-migrate-to-triad/adopter-rehearsal-2026-10-08.md.
-# Gate B remains open (T006-T011); execution needs a frozen baseline and explicit Gate C approval.
+# Rehearsal input, NOT the cutover plan: regenerated 2026-10-21 from source 33ce26dffc5286e68f1d29ab5c6458edef0330c0 (main)
+# with openRepoShape adopt-project.py at 190133d5e704e380c430f87ca9c4e31746de0012 (v1.1.0).
+# Run D: run C's 22 resolutions reapplied verbatim; new top-level paths answered as
+# scripts/decisions-new-paths.json of the private receipt records.
+# Disposable rehearsal evidence: ../../../specs/004-migrate-to-triad/adopter-rehearsal-2026-10-21.md.
+# Execution needs a frozen baseline, a regenerated plan and explicit Gate C approval.
 # Paths are relative to the source checkout (local_path published as "."); generated metadata
 # does not authorize repository creation.
 schema_version: 1
@@ -14,18 +14,24 @@ kind: adoption-plan
 # human or an AI answers it by setting `leg:` to spec, code, root or
 # drop and adding one line of `resolution:` beside it. `check` then
 # has to pass, and `execute` REFUSES while any leg is still null.
+# An entry whose rule names a default arrives with it as its `leg:`
+# and `execute` takes it as written: confirm it or change it.
 
-generated_on: 2026-10-08
+generated_on: 2026-10-21
 tool: opensoft/openRepoShape adopt-project.py
 
+# `cloned: true` says `plan` cloned `repository` into `local_path`, so
+# `check` and `execute` clone it again where that clone is gone or no
+# longer whole. A path given to `plan` is never cloned again.
 source:
   repository: opensoft/openRepoTools
   local_path: .
+  cloned: false
   default_branch: main
-  commit: "837928a1029ac53b050a9bdcbc0ef4055b10719b"
-  files: 120
-  bytes: 6292407
-  commits: 92
+  commit: "33ce26dffc5286e68f1d29ab5c6458edef0330c0"
+  files: 200
+  bytes: 9368104
+  commits: 156
 
 # The adopted repository KEEPS its name, its identity and
 # its history and becomes the assembly root. `new-root` — a new
@@ -52,7 +58,13 @@ legs:
 
 # Neutral products this project declares a pin on. A
 # `<Domainx><Product>` assembly root is a DESCENDANT only when
-# its `open<Product>` is listed here (2026-09-02).
+# its `open<Product>` is listed here (2026-09-02). Each pin was
+# read by `plan --pin <product>@<40 hex commit>`: the commit, and
+# the `sorted-ls-tree-r-v1` digest of the product's tree there.
+# `execute` writes `contracts/<product lowercased>-pin.yaml` from
+# them, as `scaffold-project.py --pin` does, and reads no network
+# for them. To change a pin, re-run `plan`: a commit or a digest
+# edited here is one nobody read (#273).
 pins: []
 
 # A leg that NO entry below assigns a path to is SEEDED from the
@@ -86,11 +98,11 @@ paths:
     review_required: false
   - path: .github/
     leg: code
-    confidence: high
-    rule: code-ci-workflows
-    reason: "CI runs the implementation's own gate — build, test, analysis. The assembly root gets its own `validate.yml` from the shape, so a workflow moved here is not a workflow lost."
-    files: 1
-    bytes: 18865
+    confidence: medium
+    rule: consensus
+    reason: "every file under this path classifies as code, by 2 different rules: code-ci-workflows, extension-majority"
+    files: 4
+    bytes: 139923
     review_required: false
   - path: .gitignore
     leg: root
@@ -103,12 +115,12 @@ paths:
   - path: .gitmodules
     leg: code
     confidence: review
-    rule: default
-    reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
+    rule: ambiguous-gitmodules
+    reason: "`.gitmodules` is where a repository registers its submodules. Each registration and the gitlink it names are one fact recorded in two places, and which leg those dependencies belong to is a fact about this repository."
     files: 1
     bytes: 121
-    review_required: false
-    question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
+    review_required: true
+    question: "When a repository is adopted, a source's own `.gitmodules` goes to the SAME leg as every submodule it registers; `execute` writes the assembly root a fresh one for its two mounts. Which leg owns the submodules, spec or code? Send `.gitmodules` there and every submodule path with it, or drop them all together. A submodule it does not register with a path and a url cannot be kept in a leg at all: drop it, or register it first. Any one submodule may also be dropped on its own; its registration stays behind in that leg, inert. `root` is not an answer for this file or for any submodule, and `adopt-project.py` refuses a plan that gives it, as it does a plan that splits them."
     resolution: "Keep existing nested dependency registration with its upstream gitlink in code; assembly spec/code registrations are generated separately."
   - path: AGENTS.md
     leg: root
@@ -116,7 +128,7 @@ paths:
     rule: root-assistant-instructions
     reason: "The AI-assistant instruction files and their one-file directories are the same document ten times over, and it addresses the whole project. An assistant that read it from inside the code leg would be told about specifications it cannot see. Root, ruled 2026-09-02."
     files: 1
-    bytes: 21092
+    bytes: 22361
     review_required: false
   - path: CLAUDE.md
     leg: root
@@ -140,7 +152,7 @@ paths:
     rule: root-front-door
     reason: "What a person or a forge reads BEFORE deciding which leg to open. The licence and the code of conduct govern all three repositories; the README is the front door of the thing an engineer clones."
     files: 1
-    bytes: 31198
+    bytes: 33634
     review_required: false
   - path: claude-current
     leg: code
@@ -148,8 +160,8 @@ paths:
     rule: default
     reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
     files: 1
-    bytes: 29335
-    review_required: false
+    bytes: 31059
+    review_required: true
     question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
     resolution: "Executable installer payload added by merged PR #134; keep resolver/checker with commands and their implementation tests in code."
   - path: claude-restart-check
@@ -158,8 +170,8 @@ paths:
     rule: default
     reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
     files: 1
-    bytes: 11880
-    review_required: false
+    bytes: 12933
+    review_required: true
     question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
     resolution: "Executable installer payload added by merged PR #134; keep resolver/checker with commands and their implementation tests in code."
   - path: commands/
@@ -175,7 +187,7 @@ paths:
     leg: code
     confidence: high
     rule: spec-governance
-    reason: "Requirements, decisions, contracts and governance prose — what the project has DECIDED, as opposed to what it currently runs. `contracts/` is here by the 2026-09-02 ruling even where the code reads it: the code reads across the assembly-root mount (`spec/contracts` from the root, `../spec/contracts` from `code/`), which is what the legs are mounted for."
+    reason: "Requirements, decisions, contracts and governance prose — what the project has DECIDED, as opposed to what it currently runs. `contracts/` is here by the 2026-09-02 ruling even where the code reads it: the code reads across the assembly-root mount, which is what the legs are mounted for."
     files: 1
     bytes: 3299
     review_required: false
@@ -184,9 +196,9 @@ paths:
     leg: spec
     confidence: high
     rule: spec-governance
-    reason: "Requirements, decisions, contracts and governance prose — what the project has DECIDED, as opposed to what it currently runs. `contracts/` is here by the 2026-09-02 ruling even where the code reads it: the code reads across the assembly-root mount (`spec/contracts` from the root, `../spec/contracts` from `code/`), which is what the legs are mounted for."
-    files: 2
-    bytes: 287738
+    reason: "Requirements, decisions, contracts and governance prose — what the project has DECIDED, as opposed to what it currently runs. `contracts/` is here by the 2026-09-02 ruling even where the code reads it: the code reads across the assembly-root mount, which is what the legs are mounted for."
+    files: 5
+    bytes: 422160
     review_required: false
   - path: ideation/
     leg: spec
@@ -194,7 +206,7 @@ paths:
     rule: extension-majority
     reason: "no rule names this path; the `.md` extension is classified as spec by the policy's extension table"
     files: 12
-    bytes: 49688
+    bytes: 49679
     review_required: false
     resolution: "Feature ideation and brainstorm packets are planning prose about what the project is deciding, not shipped payload; spec beside openspec/, specs/ and docs/, as the October 6 rehearsal assigned it."
   - path: lane
@@ -203,8 +215,8 @@ paths:
     rule: default
     reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
     files: 1
-    bytes: 83555
-    review_required: false
+    bytes: 87092
+    review_required: true
     question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
     resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
   - path: lane-end
@@ -213,8 +225,8 @@ paths:
     rule: default
     reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
     files: 1
-    bytes: 141860
-    review_required: false
+    bytes: 155090
+    review_required: true
     question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
     resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
   - path: lane-handoff
@@ -223,8 +235,8 @@ paths:
     rule: default
     reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
     files: 1
-    bytes: 153546
-    review_required: false
+    bytes: 190970
+    review_required: true
     question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
     resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
   - path: lane-rename
@@ -234,7 +246,7 @@ paths:
     reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
     files: 1
     bytes: 17116
-    review_required: false
+    review_required: true
     question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
     resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
   - path: lane-start
@@ -243,8 +255,8 @@ paths:
     rule: default
     reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
     files: 1
-    bytes: 270707
-    review_required: false
+    bytes: 289777
+    review_required: true
     question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
     resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
   - path: lane-worktrees
@@ -253,8 +265,8 @@ paths:
     rule: default
     reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
     files: 1
-    bytes: 277594
-    review_required: false
+    bytes: 309126
+    review_required: true
     question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
     resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
   - path: lanes
@@ -263,8 +275,8 @@ paths:
     rule: default
     reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
     files: 1
-    bytes: 45015
-    review_required: false
+    bytes: 47924
+    review_required: true
     question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
     resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
   - path: lanes-edit.sh
@@ -273,7 +285,7 @@ paths:
     rule: extension-majority
     reason: "no rule names this path; the `.sh` extension is classified as code by the policy's extension table"
     files: 1
-    bytes: 1007136
+    bytes: 1139720
     review_required: false
   - path: lanes-index
     leg: code
@@ -281,8 +293,8 @@ paths:
     rule: default
     reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
     files: 1
-    bytes: 114193
-    review_required: false
+    bytes: 126026
+    review_required: true
     question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
     resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
   - path: link-estates
@@ -292,7 +304,7 @@ paths:
     reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
     files: 1
     bytes: 21694
-    review_required: false
+    review_required: true
     question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
     resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
   - path: openRepoTools
@@ -301,17 +313,17 @@ paths:
     rule: default
     reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
     files: 1
-    bytes: 193656
-    review_required: false
+    bytes: 273347
+    review_required: true
     question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
     resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
   - path: openspec/
     leg: spec
     confidence: high
     rule: spec-governance
-    reason: "Requirements, decisions, contracts and governance prose — what the project has DECIDED, as opposed to what it currently runs. `contracts/` is here by the 2026-09-02 ruling even where the code reads it: the code reads across the assembly-root mount (`spec/contracts` from the root, `../spec/contracts` from `code/`), which is what the legs are mounted for."
-    files: 28
-    bytes: 185941
+    reason: "Requirements, decisions, contracts and governance prose — what the project has DECIDED, as opposed to what it currently runs. `contracts/` is here by the 2026-09-02 ruling even where the code reads it: the code reads across the assembly-root mount, which is what the legs are mounted for."
+    files: 35
+    bytes: 313926
     review_required: false
   - path: park
     leg: code
@@ -319,10 +331,18 @@ paths:
     rule: default
     reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
     files: 1
-    bytes: 50113
-    review_required: false
+    bytes: 60184
+    review_required: true
     question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
     resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
+  - path: pyproject.toml
+    leg: code
+    confidence: high
+    rule: code-build-manifests
+    reason: "A build, package, lint or analysis manifest describes how the implementation is built and measured. `sonar-project.properties` names source and coverage paths, so it follows the sources it names."
+    files: 1
+    bytes: 5230
+    review_required: false
   - path: repos.tsv
     leg: code
     confidence: review
@@ -330,7 +350,7 @@ paths:
     reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
     files: 1
     bytes: 2651
-    review_required: false
+    review_required: true
     question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
     resolution: "Runtime alias data installed beside the lane commands."
   - path: resume
@@ -339,8 +359,8 @@ paths:
     rule: default
     reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
     files: 1
-    bytes: 63671
-    review_required: false
+    bytes: 79282
+    review_required: true
     question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
     resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
   - path: skills/
@@ -349,16 +369,24 @@ paths:
     rule: extension-majority
     reason: "no rule names this path; the `.md` extension is classified as spec by the policy's extension table"
     files: 3
-    bytes: 80497
+    bytes: 95875
     review_required: false
     resolution: "These three skills are installed product payloads; project workflow skills remain local root bootstrap artifacts."
   - path: specs/
     leg: spec
     confidence: high
     rule: spec-governance
-    reason: "Requirements, decisions, contracts and governance prose — what the project has DECIDED, as opposed to what it currently runs. `contracts/` is here by the 2026-09-02 ruling even where the code reads it: the code reads across the assembly-root mount (`spec/contracts` from the root, `../spec/contracts` from `code/`), which is what the legs are mounted for."
-    files: 23
-    bytes: 123603
+    reason: "Requirements, decisions, contracts and governance prose — what the project has DECIDED, as opposed to what it currently runs. `contracts/` is here by the 2026-09-02 ruling even where the code reads it: the code reads across the assembly-root mount, which is what the legs are mounted for."
+    files: 56
+    bytes: 908456
+    review_required: false
+  - path: src/
+    leg: code
+    confidence: high
+    rule: code-source-and-tests
+    reason: "The implementation, the tests that hold it, and the scripts and images that build and run it. `scripts/` moves whole: a harness that reads `contracts/` from beside it reads them across the root mount afterwards, which is a code change the plan records as a follow-up rather than a reason to split the directory."
+    files: 3
+    bytes: 6343
     review_required: false
   - path: status
     leg: code
@@ -366,8 +394,8 @@ paths:
     rule: default
     reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
     files: 1
-    bytes: 347320
-    review_required: false
+    bytes: 359720
+    review_required: true
     question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
     resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
   - path: tests/
@@ -375,67 +403,80 @@ paths:
     confidence: high
     rule: code-source-and-tests
     reason: "The implementation, the tests that hold it, and the scripts and images that build and run it. `scripts/` moves whole: a harness that reads `contracts/` from beside it reads them across the root mount afterwards, which is a code change the plan records as a follow-up rather than a reason to split the directory."
-    files: 22
-    bytes: 2637149
+    files: 52
+    bytes: 4141212
     review_required: false
   - path: upstream/
     leg: code
     confidence: review
-    rule: default
-    reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
+    rule: ambiguous-gitmodules
+    reason: "`.gitmodules` is where a repository registers its submodules. Each registration and the gitlink it names are one fact recorded in two places, and which leg those dependencies belong to is a fact about this repository."
     files: 1
     bytes: 0
-    review_required: false
-    question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
+    review_required: true
+    question: "When a repository is adopted, a source's own `.gitmodules` goes to the SAME leg as every submodule it registers; `execute` writes the assembly root a fresh one for its two mounts. Which leg owns the submodules, spec or code? Send `.gitmodules` there and every submodule path with it, or drop them all together. A submodule it does not register with a path and a url cannot be kept in a leg at all: drop it, or register it first. Any one submodule may also be dropped on its own; its registration stays behind in that leg, inert. `root` is not an answer for this file or for any submodule, and `adopt-project.py` refuses a plan that gives it, as it does a plan that splits them. This entry holds the submodule(s) `upstream/openRepoShape`: it is asked this question, not classified by its rule `default`."
     resolution: "Mounted openRepoShape is the implementation/test dependency; preserve its exact gitlink with the original .gitmodules and dependency pin."
 
 follow_ups:
-  - "code/claude-current names `docs/`, which moves to the spec leg: it must read across the assembly root — `../spec/docs/` relative to `code/` — or take the path from the environment"
-  - "code/lane-start names `docs/`, which moves to the spec leg: it must read across the assembly root — `../spec/docs/` relative to `code/` — or take the path from the environment"
-  - "code/lanes-edit.sh names `docs/`, which moves to the spec leg: it must read across the assembly root — `../spec/docs/` relative to `code/` — or take the path from the environment"
-  - "code/openRepoTools names `docs/`, which moves to the spec leg: it must read across the assembly root — `../spec/docs/` relative to `code/` — or take the path from the environment"
-  - "code/tests/run.sh names `docs/`, which moves to the spec leg: it must read across the assembly root — `../spec/docs/` relative to `code/` — or take the path from the environment"
-  - "code/tests/test_install_skill_and_hook.py names `docs/`, which moves to the spec leg: it must read across the assembly root — `../spec/docs/` relative to `code/` — or take the path from the environment"
-  - "code/tests/test_lane_helpers.sh names `docs/`, which moves to the spec leg: it must read across the assembly root — `../spec/docs/` relative to `code/` — or take the path from the environment"
-  - "code/tests/test_lane_start_claude_current.py names `docs/`, which moves to the spec leg: it must read across the assembly root — `../spec/docs/` relative to `code/` — or take the path from the environment"
-  - "… and 1 more file(s) under the code leg naming `docs/`"
-  - "code/lane-handoff names `openspec/`, which moves to the spec leg: it must read across the assembly root — `../spec/openspec/` relative to `code/` — or take the path from the environment"
-  - "code/lanes-edit.sh names `openspec/`, which moves to the spec leg: it must read across the assembly root — `../spec/openspec/` relative to `code/` — or take the path from the environment"
-  - "code/tests/test_lane_helpers.sh names `openspec/`, which moves to the spec leg: it must read across the assembly root — `../spec/openspec/` relative to `code/` — or take the path from the environment"
-  - "code/tests/test_park_resume_commands.py names `specs/`, which moves to the spec leg: it must read across the assembly root — `../spec/specs/` relative to `code/` — or take the path from the environment"
-  - "merge shape/.gitattributes into .gitattributes: the source repository already has that name, so the shape's copy was written beside it and NOTHING was overwritten"
-  - "merge shape/.gitignore into .gitignore: the source repository already has that name, so the shape's copy was written beside it and NOTHING was overwritten"
+  - ".github/workflows/release.yml in the code leg names `docs/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `docs/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "claude-current in the code leg names `docs/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `docs/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "lane-start in the code leg names `docs/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `docs/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "lanes-edit.sh in the code leg names `docs/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `docs/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "openRepoTools in the code leg names `docs/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `docs/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "tests/conftest.py in the code leg names `docs/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `docs/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "tests/run.sh in the code leg names `docs/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `docs/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "tests/test_install_skill_and_hook.py in the code leg names `docs/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `docs/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "… and 9 more file(s) under the code leg naming `docs/`"
+  - "tests/test_release_workflow.py in the code leg names `ideation/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `ideation/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - ".github/workflows/release.yml in the code leg names `openspec/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `openspec/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "lane-handoff in the code leg names `openspec/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `openspec/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "lanes-edit.sh in the code leg names `openspec/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `openspec/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "tests/conftest.py in the code leg names `openspec/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `openspec/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "tests/test_lane_helpers.sh in the code leg names `openspec/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `openspec/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "tests/test_release_workflow.py in the code leg names `openspec/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `openspec/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "tests/test_test_roots.py in the code leg names `openspec/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `openspec/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - ".github/workflows/release.yml in the code leg names `specs/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `specs/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "openRepoTools in the code leg names `specs/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `specs/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "tests/conftest.py in the code leg names `specs/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `specs/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "tests/test_install_payload_source.py in the code leg names `specs/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `specs/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "tests/test_package_stamp.py in the code leg names `specs/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `specs/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "tests/test_park_resume_commands.py in the code leg names `specs/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `specs/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "tests/test_release_workflow.py in the code leg names `specs/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `specs/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "tests/test_repo_hygiene.py in the code leg names `specs/`, which moves to the spec leg: it must read across the assembly root — from the code leg, where the plan's `legs.code_path` mounts it, to `specs/` in the spec leg, where `legs.spec_path` mounts it — or take the path from the environment"
+  - "… and 1 more file(s) under the code leg naming `specs/`"
+  - "keep the block at the end of .gitattributes that opens with `# openRepoShape (#471): the pinned shape copies below check out with LF everywhere, as contracts/shape-pin.yaml records their bytes`: the source repository already has a .gitattributes, so the shape's copy was written beside it as shape/.gitattributes, which governs only its own directory, and the split appends one `text eol=lf` line to .gitattributes for each pinned copy outside it. That block is what makes every checkout, Windows included, write those copies with the bytes contracts/shape-pin.yaml records; without it a Windows clone reports shape-copy-drift on each one. None of the source's own lines is changed. Merge the rest of shape/.gitattributes into .gitattributes only if the whole project should check out with LF, and only then remove shape/.gitattributes: `update-shape.py check` reports its pin row `merged-away`, and `apply` drops the row"
+  - "merge shape/.gitignore into .gitignore: the source repository already has that name, so the shape's copy was written beside it and NOTHING was overwritten. Then remove shape/.gitignore: `update-shape.py check` reports its pin row `merged-away`, and `apply` drops the row"
   - "add the line `Read AGENTS-shape.md first — the rules of this repository's shape.` to the existing AGENTS.md rather than replacing it with shape/AGENTS.md: AGENTS.md is what this project's agents ALREADY read, and `contracts/path-classification.yaml` keeps it at the root (`root-assistant-instructions`) because it addresses the whole project. Then delete shape/AGENTS.md. Nothing was overwritten."
   - "add the line `Read AGENTS-shape.md first — the rules of this repository's shape.` to the existing CLAUDE.md rather than replacing it with shape/CLAUDE.md: CLAUDE.md is what this project's agents ALREADY read, and `contracts/path-classification.yaml` keeps it at the root (`root-assistant-instructions`) because it addresses the whole project. Then delete shape/CLAUDE.md. Nothing was overwritten."
   - "merge shape/README.md into README.md: the source repository already has that name, so the shape's copy was written beside it and NOTHING was overwritten"
-  - "open the split as a pull request against the source's default branch; the legs openRepoTools-spec and openRepoTools-code are seeded before it, so review the root's diff and the two new repositories together"
+  - "review the root's diff together with openRepoTools-spec and openRepoTools-code, the two new repositories `execute` creates and pushes before the split; against GitHub it opens the split's pull request itself, whose base is the plan's `tracking_branch`, the branch the assembly root and both legs track"
   - "Preserve original .gitmodules, upstream/openRepoShape gitlink and contracts/openreposhape-pin.yaml together in code; rehearse existing-submodule extraction/removal and recursive bootstrap before real execution. Never weaken blob verification or edit the standard in place."
   - "Add an assembly openRepoTools compatibility entry point after byte-preserving split verification; resolve one immutable code pin for all installer artifacts and preserve OPENREPOTOOLS_REPO/REF forks, raw/gh and offline checkout behavior."
   - "Separate code, assembly and spec roots in test fixtures and hygiene checks; code CI must supply the exact compatible spec/assembly context where a test reads product documentation."
-  - "Current .specify and agent links are ignored local bootstrap artifacts, not the 120-file source tree; capture local configuration and regenerate root workflow using setup-openspeckit after manifest/legs are present."
+  - "Current .specify and agent links are ignored local bootstrap artifacts, not the 200-file source tree; capture local configuration and regenerate root workflow using setup-openspeckit after manifest/legs are present."
   - "Preserve all branch/PR/worktree and dirty/untracked work; source main extraction does not transport unfinished feature branches. Migrate selected patches to paired feature branches with old-to-new receipts before rebinding lanes."
-  - "Regenerate this preliminary plan after planning lands and baseline freeze; require current coverage check, local bare-remote rehearsal, prerequisite availability and explicit approval before execute."
   - "Review genuine bounded features/<NNN-feature>/openspec/ amendment records explicitly as code; canonical/full proposals and archives remain spec even when created on a feature branch. No existing bounded amendment paths were observed; do not manufacture them for historical features."
   - "Preserve approved original repository/commit/path provenance and verify correspondence to extracted spec identities, repairing relative links, selected OpenSpec roots/stores and paired feature paths without guessing filtered commit hashes."
   - "Use the adopted manual amendment workflow with immediate working Speckit updates and one docs reconciliation issue at the first amendment. Schema, root routing, bootstrap distribution and upstream placement automation are pending in their owners; do not patch pinned shape copies or assume other workstations are updated."
   - "Reconcile the tested migration net effect and all amendment dispositions in one final docs batch before completed assembly advancement; prepare docs/code PRs together, link landed code/evidence, close reconciliation after docs landing, and archive only after implementation and assembly pins land."
+  - "The wheel declares license-files = [\"LICENSE\"] relative to pyproject.toml, which moves to the code leg while LICENSE stays in the root: apply T006 code-0001 (the code leg's byte-identical LICENSE, .gitattributes and front door) in openRepoTools-code inside the cutover, right after execute and before the code leg's first package or release run. At the cutover, as the owner's acts: create the testpypi and pypi environments and the tag ruleset in openRepoTools-code, add a test.pypi.org trusted publisher for openRepoTools-code, and add a pypi.org pending publisher naming openRepoTools-code, release.yml and the pypi environment (opensoft/openRepoTools#228)."
 
 summary:
   spec:
-    files: 65
-    bytes: 646970
-    file_share: 0.5417
-    byte_share: 0.1028
+    files: 108
+    bytes: 1694221
+    file_share: 0.5400
+    byte_share: 0.1808
   code:
-    files: 49
-    bytes: 5579879
-    file_share: 0.4083
-    byte_share: 0.8868
+    files: 86
+    bytes: 7604620
+    file_share: 0.4300
+    byte_share: 0.8118
   root:
     files: 6
-    bytes: 65558
-    file_share: 0.0500
-    byte_share: 0.0104
+    bytes: 69263
+    file_share: 0.0300
+    byte_share: 0.0074
   unresolved:
     files: 0
     bytes: 0
