@@ -3456,6 +3456,29 @@ ensure_log() {
   el_hits="$(log_files_named_ci "$lane")"
   el_n="$(printf '%s' "$el_hits" | grep -c . || :)"
   if [ "$el_n" -gt 1 ]; then
+    # ONE TRACKED AND ONE UNTRACKED IS A RENAME THAT NEVER LANDED, NOT TWO LOGS
+    # TO MERGE (rv1b's NIT 2 on slice 1b). S3 fast-forwards before this runs,
+    # so the state a failed case-only rename leaves — the canonical file here,
+    # untracked, and the old-cased one still published — now reaches this
+    # check with BOTH in the working tree, and 15(d)'s hand merge would commit
+    # the stray copy as a second published file. Its recovery is to remove the
+    # copy and re-run, and the rename then happens once, in its own commit.
+    if [ "$el_n" = 2 ] && [ "$NO_GIT" != 1 ]; then
+      el_t=""; el_u=""; el_tn=0
+      while IFS= read -r el_h; do
+        [ -n "$el_h" ] || continue
+        if git -C "$LANES_REPO" ls-files --error-unmatch -- "${LANES_LOG_PREFIX}${el_h##*/}" >/dev/null 2>&1; then
+          el_t="$el_h"; el_tn=$((el_tn + 1))
+        else
+          el_u="$el_h"
+        fi
+      done <<EOF
+$el_hits
+EOF
+      if [ "$el_tn" = 1 ] && [ -n "$el_u" ]; then
+        die "lane $lane has 2 object logs whose names differ only by case, and only one is tracked: $el_t is the log this checkout has from origin, and $el_u is NOT TRACKED — the copy left by a case-only rename whose commit never landed (Amendment 15). It is not merged by hand, since a commit of it would publish a second file for one lane. Compare them (diff -- \"$el_t\" \"$el_u\"): a line only the untracked copy holds belongs to a write that never landed, and is re-run as that write. Then remove the copy (rm -- \"$el_u\") and re-run: this write renames the tracked log once, inside its own commit. Nothing was written." 2
+      fi
+    fi
     die "lane $lane has $el_n object logs whose names differ only by case: $(printf '%s\n' "$el_hits" | tr '\n' ' ')— one lane is ONE lane under any case and its log is ONE file (Amendment 15). Merge them by hand into $lf, oldest lines first, remove the others in the same commit, and re-run. Nothing was written." 2
   fi
   # A LOG THIS CHECKOUT HAS NOT PULLED IS STILL THIS LANE-S LOG, AND CREATING
