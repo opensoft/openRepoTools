@@ -1909,7 +1909,13 @@ def lane_generation(lane: str) -> tuple:
     if proc.returncode in (1, 8):
         return 0, None
     if proc.returncode != 0:
-        said = (proc.stderr.strip().splitlines() or [""])[-1]
+        # `die`'S OWN `(exit <n>)` LINE IS NOT THE REASON (the review of #290,
+        # N3). The helper runs in this process's environment, and with
+        # `LANES_DEBUG` set `die` writes that line after the sentence, last.
+        lines = proc.stderr.strip().splitlines()
+        if lines and re.fullmatch(r"lanes-edit: \(exit [0-9]+\)", lines[-1].strip()):
+            lines.pop()
+        said = (lines or [""])[-1]
         if said.startswith("lanes-edit: "):
             said = said[len("lanes-edit: "):]
         said = said.split(". ", 1)[0].rstrip(".")

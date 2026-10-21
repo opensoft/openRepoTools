@@ -25,7 +25,9 @@ ONCE, and finds the trees by that read; a tree whose lane's log - its binding
 - was not read has no writer pronounced, named or in the whole listing, and
 none has where the events' own list of the logs failed; a row whose log could
 not be listed is never classed DORMANT; and `lane-state`'s 10 for a snapshot it
-could not read names the file its one read of the log placed.
+could not read names the file its one read of the log placed. The hold
+`lanes-index` makes over that 10 gives `lane-state`'s sentence with
+`LANES_DEBUG` set too, not the `(exit 10)` line `die` adds after it.
 
 Every case runs on `test_lanes_index`'s own estate and its helpers.
 """
@@ -353,6 +355,30 @@ def test_a_generation_read_whose_log_failed_says_so_and_holds(inv):
     assert healed.returncode == 0, healed.stderr
     assert "0 upserted, 1 removed" in healed.stdout, healed.stdout
     assert key not in inv.rows(), healed.stdout
+
+
+def test_a_generation_hold_gives_lane_states_sentence_with_lanes_debug_set(inv):
+    """THE HOLD'S REASON IS `lane-state`'S SENTENCE, NOT ITS CODE (the review of
+    #290, N3). The reason is the last line `lane-state` wrote to stderr, and
+    the indexer runs the helper in its own environment: with `LANES_DEBUG`
+    set, `die` writes `lanes-edit: (exit 10)` after the sentence, and the hold
+    read "could not be read - (exit 10)". That line is not the reason."""
+    by_dir, key = _a_lane_found_through_its_log(inv)
+    put = inv.e.edit("set-lane-state", "repoB-1", "RUNNING", "--operation", "op-test-b1",
+                     env=by_dir)
+    assert put.returncode == 0, put.stderr
+    assert inv.sync(env=by_dir).returncode == 0
+    assert inv.rows()[key]["generation"] == 1, inv.rows()[key]  # rows written at 1
+    for sidecar in (inv.root / "elsewhere" / ".lane-state" / "repoB-1" / "trees").iterdir():
+        sidecar.unlink()  # its rows would all leave: the sync asks for its generation
+    shim, log = _git_shim(inv, SHOW_LOG_B1, first=2, last=2)
+    res = inv.sync(env={**by_dir, **shim, "LANES_DEBUG": "1"})
+    assert len(_shim_calls(log)) == 2, _shim_calls(log)  # `lane-state`'s read failed
+    assert res.returncode == 0, (res.stdout, res.stderr)
+    assert key in inv.rows(), res.stdout
+    assert "lane repoB-1: its rows are kept as they are - its lifecycle generation could " \
+        "not be read - lane repoB-1's object log could not be read" in res.stdout, res.stdout
+    assert "(exit 10)" not in res.stdout, res.stdout
 
 
 # --------------------------------------- the named read reads its log once
