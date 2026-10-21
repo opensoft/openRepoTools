@@ -194,13 +194,17 @@ name: release
 #     from it with no credentials, as the model does, and the migration
 #     creates it public.
 #   - BRETT HEAP'S ACTS, NONE OF THEM A LANE'S. The build refuses every
-#     dispatch until both environments exist with their rules.
+#     dispatch until both environments exist with a required reviewer and
+#     the deployment limit, and no job reads more of these acts than that.
 #     - In the repository that releases, the environments `testpypi` and
 #       `pypi`, each with brettheap as the required reviewer, self-review
 #       allowed, administrators not bypassing, and a deployment limit of
-#       exactly one tag rule, `v*`.
-#     - The ruleset on the tags `v*`, "Release tags v*: only admins create,
-#       move or delete". It is not checked here (ACCEPTED LIMITS).
+#       exactly one tag rule, `v*`. Only the reviewer and the limit are
+#       checked here (FR-029).
+#     - The ruleset on the tags `v*`, in the same repository, under which
+#       only the admin role creates, moves or deletes one (named "Release
+#       tags v*" in opensoft/openRepoTools). It is not checked here
+#       (ACCEPTED LIMITS).
 #     - On test.pypi.org, the trusted publisher for opensoft/openRepoTools:
 #       project `openrepotools`, workflow `release.yml`, environment
 #       `testpypi`.
