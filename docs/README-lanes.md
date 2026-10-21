@@ -3403,6 +3403,11 @@ No rung answering is **8**, *this lane has no control root* — the ordinary
 answer for a lane that has not started under Amendment 11(c), and not a failure.
 Nothing is backfilled (Amendment 7(i)).
 
+A rung is passed over only where its directory is established absent. Where it
+could not be looked for (#291) — a directory on the way cannot be searched, or a
+link on the way cannot be followed — its root is the answer: every read under it
+is **10**, and every write there fails rather than filing under the next rung.
+
 Because the snapshot is filed under NOTHING — never committed, never leaving the
 machine that wrote it — `R-A11-14` does not reach it: a container with no
 `$LANES_WORKSTATION` still keeps a lifecycle it can recover itself from, while
