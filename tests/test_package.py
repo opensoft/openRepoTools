@@ -27,8 +27,8 @@ FOUR GROUPS, ONE PREFIX EACH (plan.md, "The test layout"), so that a task's
   `openRepoTools` with the person's arguments unchanged and with neither
   signal Python ignores at start-up still ignored, and must refuse, running
   nothing, where there is no `bash`, a `PATH` whose last entry is a file
-  included, and where the `bash` on PATH cannot be run (design.md Decision 3
-  as amended on 2026-10-18, FR-003, FR-004; #256).
+  included, and where no `bash` on PATH can be run (design.md Decision 3 as
+  amended on 2026-10-18, FR-003, FR-004; #256).
 
 THE HELPERS ARE THE SUITE'S OWN. `command_env`, `placement_temporaries`,
 `path_without`, `SLOW_TOOLS`, `NEEDS_JQ` and `NOT_ROOT` come from
@@ -107,12 +107,12 @@ WHEEL_VARIABLE = "OPENREPOTOOLS_TEST_WHEEL"
 NO_BASH = ("REFUSED: openRepoTools needs bash, and there is no bash on this "
            "PATH. Nothing ran.")
 
-#: The entry module's refusal for a `bash` that is on PATH and cannot be run
-#: (#256): NO_BASH's form, one line with no blank line before it, and the
-#: reason the system gave in the braces. A test fills it from `os.strerror`,
-#: so that it holds no platform's wording of an errno.
-UNRUNNABLE_BASH = ("REFUSED: openRepoTools needs bash, and the bash on this "
-                   "PATH cannot be run ({why}). Nothing ran.")
+#: The entry module's refusal for a PATH where no `bash` can be run (#256):
+#: NO_BASH's form, one line with no blank line before it, and the reason the
+#: system gave in the braces. A test fills it from `os.strerror`, so that it
+#: holds no platform's wording of an errno.
+UNRUNNABLE_BASH = ("REFUSED: openRepoTools needs bash, and no bash on this "
+                   "PATH can be run ({why}). Nothing ran.")
 
 NEEDS_BASH = pytest.mark.skipif(shutil.which("bash") is None,
                                 reason="openRepoTools is a bash script")
