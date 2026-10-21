@@ -15,8 +15,9 @@ So this module runs the installer's OWN `place_by_rename` — its text, cut out
 of the script, never a copy written here — under each platform's bash: `bash`
 on PATH on Linux and macOS, and on Windows the Git Bash that ships with the
 `git` running this suite (skipped where there is none). The function needs
-only `die`, `$PLACING`, the `owner_of` beside it and coreutils, which is why
-the two can be run on their own.
+only `die`, `$PLACING`, the `owner_of` beside it, coreutils and a `$WORKDIR`
+for its commands' answers to pass through (#250), which is why the two can be
+run on their own.
 """
 
 from __future__ import annotations
@@ -93,18 +94,26 @@ def installer_function(name: str) -> str:
 
 def place(tmp_path: Path, source: Path, target: Path,
           mode: str = "755") -> subprocess.CompletedProcess:
-    """One placement, through the installer's function, under this bash."""
+    """One placement, through the installer's function, under this bash.
+
+    `$WORKDIR` is a directory of the test's own, as the installer's is its
+    `mktemp -d`: every caller of `place_by_rename` has staged its source there.
+    """
     harness = tmp_path / "harness.sh"
     harness.write_bytes((
         "set -euo pipefail\n"
         'PLACING=""\n'
+        'WORKDIR="$4"\n'
         "die() { printf 'REFUSED: %s\\n' \"$1\" >&2; exit 2; }\n"
         + installer_function("owner_of")
         + installer_function("place_by_rename")
         + 'place_by_rename "$1" "$2" "$3" "nothing else was placed."\n'
     ).encode("utf-8"))
+    work = tmp_path / "work"
+    work.mkdir(exist_ok=True)
     return subprocess.run([BASH, posix(harness), posix(source), posix(target),
-                           mode], capture_output=True, text=True, check=False)
+                           mode, posix(work)],
+                          capture_output=True, text=True, check=False)
 
 
 def temporaries(directory: Path) -> list[str]:

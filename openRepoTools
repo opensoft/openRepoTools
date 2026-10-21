@@ -76,12 +76,15 @@ SELF="${BASH_SOURCE[0]:-$0}"
 MODE=""
 WORKDIR=""
 STAGED=""
-# THE PREFIX OF THE TEMPORARY A PLACEMENT IS MAKING (#167), named here for the
-# `EXIT` trap `workdir` sets, which removes `"$PLACING"*`: `place_by_rename`
-# removes its temporary on every failure it sees, and this is what removes it
-# on the ones it cannot see — a signal, or an `errexit`. A PREFIX, set before
-# `mktemp` runs, so no instant exists in which the file is there and the trap
-# does not know its name (Copilot round 2 on #172).
+# THE PREFIX OF THE TEMPORARY A PLACEMENT IS MAKING (#167), named here for
+# `remove_workdir`, which the `EXIT` and `INT` traps `workdir` sets both run,
+# and which removes `"$PLACING"*`: `place_by_rename` removes its temporary on
+# every failure it sees, and this is what removes it on the ones it cannot see
+# — a signal, or an `errexit`. A PREFIX, set before `mktemp` runs, so no
+# instant exists in which the file is there and the trap does not know its
+# name (Copilot round 2 on #172). Knowing the name was not the whole of it: the
+# cleanup could stop before its `rm`, and a SIGINT could be lost outright
+# (#250). `workdir` and `place_by_rename` each say how theirs is closed.
 PLACING=""
 
 say() { printf '%s\n' "$*"; }
@@ -245,10 +248,35 @@ USAGE
 # substitution closes, so `rm -rf` would run before a single fetched byte had
 # landed and $WORKDIR out here would still be empty (openRepoShape #74). A trap
 # only ever fires in the shell that set it. Callers read $WORKDIR.
+#
+# EVERY STEP OF THE CLEANUP IS `|| :`, SO NO STEP OF IT CAN END IT (#250). A
+# SIGTERM — or a SIGINT, before it was trapped — that bash takes between
+# forking a command and closing that command's pipeline runs the `EXIT` trap
+# right there, and bash does not set that open pipeline aside for the trap, so
+# the trap's first `rm` JOINED it. Placing, that command is the `cp` into the
+# temporary: under `pipefail` the joined status was the `cp`'s, which failed
+# because the same `rm` had taken its source, so `errexit` ended the trap and
+# the `rm` of `"$PLACING"*` never ran. The run died of the signal and left the
+# temporary. The workdir still goes first, on purpose: a joined `rm` waits for
+# the `cp` as well, so nothing can write the temporary after it is removed.
+#
+# AND SIGINT IS TRAPPED, SO A SIGINT ALWAYS ENDS THE RUN (#250). Untrapped,
+# bash forgets a SIGINT that arrives while it waits for a command that then
+# exits 0 — it takes it the command handled it — and the install went on; a
+# SIGINT trap is run all the same. This one cleans up, puts SIGINT back to its
+# default and sends it again, so the run still dies of it, as from a Ctrl-C.
+# TERM is not trapped: bash runs a trap only once the command it is waiting
+# for has finished, so a TERM trap would let a hung fetch hold off a `kill`.
+# shellcheck disable=SC2317  # run by the two traps below, which it cannot see
+remove_workdir() {
+	rm -rf -- "$WORKDIR" || :
+	[ -z "$PLACING" ] || rm -f -- "$PLACING"* || :
+}
 workdir() {
 	if [ -z "$WORKDIR" ]; then
 		WORKDIR="$(mktemp -d)"
-		trap 'rm -rf -- "$WORKDIR"; [ -z "$PLACING" ] || rm -f -- "$PLACING"*' EXIT
+		trap remove_workdir EXIT
+		trap 'remove_workdir; trap - INT; kill -INT $$; exit 130' INT
 	fi
 }
 
@@ -1992,13 +2020,23 @@ owner_of() {   # <path>
 # EVERY FAILURE REMOVES THE TEMPORARY, then refuses naming the target, and a
 # run killed while one exists leaves nothing behind either: `$PLACING` holds
 # its PREFIX — `.<name>.openrepotools.<this pid>.` — from BEFORE `mktemp` runs
-# until after the `mv`, and the `EXIT` trap removes whatever starts with it. A
-# name the trap learnt only from `mktemp`'s answer had a window, between the
-# file being made and the answer being assigned, in which a signal left it
-# behind (Copilot round 2 on #172); the pid keeps the prefix this run's own.
-# The leading dot keeps it out of a listing, and the suffix after the name
-# keeps it out of every glob a reader of these directories takes (`*.md` in
-# `commands/`).
+# until after the `mv`, and `remove_workdir`, which the `EXIT` and `INT` traps
+# run, removes whatever starts with it. A name the trap learnt only from
+# `mktemp`'s answer had a window, between the file being made and the answer
+# being assigned, in which a signal left it behind (Copilot round 2 on #172);
+# the pid keeps the prefix this run's own. The leading dot keeps it out of a
+# listing, and the suffix after the name keeps it out of every glob a reader of
+# these directories takes (`*.md` in `commands/`).
+#
+# NO ANSWER HERE IS TAKEN WITH `$(…)` (#250). Bash waits for a command
+# substitution's child outside its job table, and a SIGINT that arrives in
+# that wait is lost, trapped or not: a Ctrl-C as `mktemp`'s answer came back
+# did nothing, and the install went on. So `dirname`, `mktemp` and `owner_of`
+# are plain commands writing to a file in the workdir — a wait the `INT` trap
+# is run after — and `read` takes each answer back: a path up to a NUL, which
+# no path holds, so a directory with a newline in its name comes back whole,
+# less the one newline the command ends it with. `parent` holds the directory,
+# never `$PLACING`, which the traps glob.
 #
 # THE OWNER STAYS WHO IT WAS (Copilot on #172). A rename puts the TEMPORARY's
 # inode at the path, and the temporary belongs to whoever runs this — so a root
@@ -2023,19 +2061,25 @@ owner_of() {   # <path>
 # and the planners are a phase earlier. Two installs that race (#106) each
 # still place whole files; serializing them is #106's lock, not this.
 place_by_rename() {   # <staged source> <target> <mode> <what a refusal adds>
-	local source="$1" target="$2" mode="$3" rest="$4" tmp="" was="" now=""
-	PLACING="$(dirname -- "$target")/.${target##*/}.openrepotools.$$."
-	tmp="$(mktemp -- "${PLACING}XXXXXX")" ||
+	local source="$1" target="$2" mode="$3" rest="$4" parent="" tmp="" was="" now=""
+	dirname -- "$target" >"$WORKDIR/placing"
+	IFS= read -r -d '' parent <"$WORKDIR/placing" || :
+	PLACING="${parent%$'\n'}/.${target##*/}.openrepotools.$$."
+	mktemp -- "${PLACING}XXXXXX" >"$WORKDIR/placing" ||
 		{ rm -f -- "$PLACING"*; PLACING=""; die "could not create a temporary file beside $target, so it was not placed.
     $rest"; }
+	IFS= read -r -d '' tmp <"$WORKDIR/placing" || :
+	tmp="${tmp%$'\n'}"
 	cp -- "$source" "$tmp" ||
 		{ rm -f -- "$tmp"; PLACING=""; die "could not write $target, so it was not placed and what was there is untouched.
     $rest"; }
 	chmod "$mode" "$tmp" ||
 		{ rm -f -- "$tmp"; PLACING=""; die "could not set mode $mode on $target, so it was not placed and what was there is untouched.
     $rest"; }
-	was="$(owner_of "$target")"
-	now="$(owner_of "$tmp")"
+	owner_of "$target" >"$WORKDIR/placing"
+	IFS= read -r was <"$WORKDIR/placing" || :
+	owner_of "$tmp" >"$WORKDIR/placing"
+	IFS= read -r now <"$WORKDIR/placing" || :
 	if [ -z "$was" ] && { [ -e "$target" ] || [ -L "$target" ]; }; then
 		rm -f -- "$tmp"
 		PLACING=""

@@ -32,6 +32,7 @@ import shutil
 import signal
 import stat
 import subprocess
+import sys
 import time
 
 from datetime import datetime
@@ -955,6 +956,269 @@ def test_a_run_killed_mid_placement_leaves_no_temporary(tmp_path, signame,
         if run.poll() is None:
             os.killpg(run.pid, signal.SIGKILL)
             run.communicate()
+    assert run.returncode in (-sig, 128 + sig), (
+        f"the run did not die of {signame}: exit {run.returncode}\n{out}{err}")
+    assert placement_temporaries(tmp_path) == []
+
+
+#: THE INSTANTS THE TEST ABOVE MEETS ABOUT ONCE IN A HUNDRED RUNS, MET EVERY
+#: TIME (#250). That test signals when a temporary shows up, and bash takes the
+#: signal wherever it happens to be. This library is built at test time and
+#: preloaded into the installer's bash, and it sends the signal from INSIDE the
+#: shell, at one instant (`ORT_HOOK_AT`), once a `.openrepotools.` name is in
+#: `ORT_HOOK_DIR`:
+#:
+#: * `fork`: just after the shell forks a command, in the parent, while bash
+#:   still has the signal blocked, so bash takes it before it has closed that
+#:   command's pipeline;
+#: * `waitpid`: while the shell is blocked waiting for a child, polling until
+#:   a temporary exists, which is the wait for `mktemp` once it made the file;
+#: * `forkwait`: armed by the first such fork, in the shell's next blocking
+#:   wait, which is the wait for that command.
+#:
+#: Only the process-group leader fires (the installer, started in a session of
+#: its own), and only once. It leaves `ORT_HOOK_MARK` first, so a case that
+#: never reached its instant fails as that, rather than passing.
+SIGNAL_HOOK_C = r"""
+#define _GNU_SOURCE
+#include <dirent.h>
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
+
+static int fired, armed;
+
+static int temporary_exists(void)
+{
+	const char *dir = getenv("ORT_HOOK_DIR");
+	DIR *d;
+	struct dirent *e;
+	int found = 0;
+
+	if (dir == NULL || (d = opendir(dir)) == NULL)
+		return 0;
+	while ((e = readdir(d)) != NULL)
+		if (strstr(e->d_name, ".openrepotools.") != NULL) {
+			found = 1;
+			break;
+		}
+	closedir(d);
+	return found;
+}
+
+static int wanted(const char *at)
+{
+	const char *want = getenv("ORT_HOOK_AT");
+
+	return !fired && want != NULL && strcmp(want, at) == 0 &&
+	       getpid() == getpgrp();
+}
+
+static void fire(void)
+{
+	const char *sig = getenv("ORT_HOOK_SIG");
+	const char *mark = getenv("ORT_HOOK_MARK");
+	int fd;
+
+	fired = 1;
+	if (mark != NULL &&
+	    (fd = open(mark, O_WRONLY | O_CREAT | O_TRUNC, 0644)) >= 0)
+		close(fd);
+	kill(getpid(), sig != NULL ? atoi(sig) : SIGINT);
+}
+
+pid_t fork(void)
+{
+	static pid_t (*real)(void);
+	int now, then;
+	pid_t pid;
+
+	if (real == NULL)
+		real = (pid_t (*)(void))dlsym(RTLD_NEXT, "fork");
+	now = wanted("fork") && temporary_exists();
+	then = wanted("forkwait") && !armed && temporary_exists();
+	pid = real();
+	if (pid > 0 && now)
+		fire();
+	if (pid > 0 && then)
+		armed = 1;
+	return pid;
+}
+
+pid_t waitpid(pid_t pid, int *status, int options)
+{
+	static pid_t (*real)(pid_t, int *, int);
+	struct timespec pause = { 0, 1000000 };
+	pid_t got;
+
+	if (real == NULL)
+		real = (pid_t (*)(pid_t, int *, int))dlsym(RTLD_NEXT, "waitpid");
+	if ((options & WNOHANG) == 0 && wanted("forkwait") && armed) {
+		fire();
+	} else if ((options & WNOHANG) == 0 && wanted("waitpid")) {
+		for (;;) {
+			if (temporary_exists()) {
+				fire();
+				break;
+			}
+			got = real(pid, status, options | WNOHANG);
+			if (got != 0) {
+				if (got > 0 && temporary_exists())
+					fire();
+				return got;
+			}
+			nanosleep(&pause, NULL);
+		}
+	}
+	return real(pid, status, options);
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def signal_hook(tmp_path_factory) -> Path:
+    """`SIGNAL_HOOK_C` built, and seen to fire in this bash at a fork and at a
+    wait, or a skip that names which of the three it lacks: Linux's loader, a
+    `cc`, or a bash whose own `fork` and `waitpid` the library can stand in
+    front of. The proof is a bash that forks and waits once, with a temporary
+    already in the hook's directory and signal 0, which sends nothing."""
+    if not sys.platform.startswith("linux"):
+        pytest.skip("the signal hook is an LD_PRELOAD library for Linux's loader")
+    cc = shutil.which("cc")
+    if cc is None:
+        pytest.skip("no `cc` to build the signal hook with")
+    where = tmp_path_factory.mktemp("signal-hook")
+    source, hook = where / "hook.c", where / "hook.so"
+    source.write_text(SIGNAL_HOOK_C, encoding="utf-8")
+    built = subprocess.run([cc, "-shared", "-fPIC", "-o", str(hook),
+                            str(source), "-ldl"],
+                           capture_output=True, text=True, check=False)
+    if built.returncode != 0:
+        pytest.skip(f"`cc` could not build the signal hook: {built.stderr}")
+    probe = where / "probe"
+    probe.mkdir()
+    (probe / ".probe.openrepotools.0").touch()
+    sh = shutil.which("sh") or "/bin/sh"
+    for at in ("fork", "waitpid"):
+        mark = where / f"fired-{at}"
+        ran = subprocess.run(
+            ["bash", "-c", '"$0" -c :; "$0" -c :', sh],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            check=False, timeout=60, start_new_session=True,
+            env={**os.environ, "LD_PRELOAD": str(hook),
+                 "ORT_HOOK_DIR": str(probe), "ORT_HOOK_AT": at,
+                 "ORT_HOOK_SIG": "0", "ORT_HOOK_MARK": str(mark)})
+        if not mark.exists():
+            pytest.skip(f"bash never reached the signal hook at `{at}` "
+                        f"(exit {ran.returncode}): {ran.stderr.strip()}")
+    return hook
+
+
+#: WAITS FOR THE HOOK'S MARK, BOUNDED: after ten seconds it goes on regardless.
+WAIT_FOR_MARK = ('i=0; while [ ! -e "$ORT_HOOK_MARK" ] && [ "$i" -lt 200 ]; '
+                 'do sleep 0.05; i=$((i + 1)); done\n')
+
+#: THE STAND-IN EACH CASE PUTS FIRST ON `$PATH`, different for a temporary
+#: only: a `cp` that refuses to write one; a `mktemp` that makes one, answers,
+#: closes its output and stays until the hook has fired, so the shell is
+#: still waiting for it; and a `cp` that holds the copy until the hook has
+#: fired, then makes it.
+HOOKED_TOOLS = {
+    "cp-refuses": ("cp", 'for arg in "$@"; do\n'
+                         '\tcase "$arg" in *.openrepotools.*)\n'
+                         "\t\tprintf 'fake cp: refused\\n' >&2\n"
+                         '\t\texit 1 ;;\n'
+                         '\tesac\n'
+                         'done\n'
+                         'exec {real} "$@"\n'),
+    "mktemp-stays": ("mktemp", 'made=$({real} "$@") || exit $?\n'
+                               "printf '%s\\n' \"$made\"\n"
+                               'case "$made" in *.openrepotools.*)\n'
+                               '\texec >&-\n'
+                               '\t' + WAIT_FOR_MARK +
+                               '\t;;\n'
+                               'esac\n'),
+    "cp-holds": ("cp", 'for arg in "$@"; do\n'
+                       '\tcase "$arg" in *.openrepotools.*)\n'
+                       '\t\t' + WAIT_FOR_MARK +
+                       '\t\t;;\n'
+                       '\tesac\n'
+                       'done\n'
+                       'exec {real} "$@"\n'),
+}
+
+
+@pytest.mark.parametrize("at, signame, tool", [
+    ("fork", "SIGINT", "cp-refuses"),
+    ("fork", "SIGTERM", "cp-refuses"),
+    ("waitpid", "SIGINT", "mktemp-stays"),
+    ("forkwait", "SIGINT", "cp-holds"),
+], ids=["SIGINT-at-the-fork-of-cp", "SIGTERM-at-the-fork-of-cp",
+        "SIGINT-in-the-wait-for-mktemp", "SIGINT-in-the-wait-for-cp"])
+@NEEDS_JQ
+def test_a_signal_at_each_instant_of_a_placement_ends_the_run_and_leaves_no_temporary(
+        tmp_path, signal_hook, at, signame, tool):
+    """A SIGNAL AT ANY INSTANT OF A PLACEMENT ENDS THE RUN, AND LEAVES NO
+    TEMPORARY (#250). These are the three instants where it did not, each
+    reached on purpose by `SIGNAL_HOOK_C`, with a stand-in first on `$PATH`:
+
+    * AT THE FORK of the `cp` into the temporary, with a `cp` that refuses.
+      bash ran the `EXIT` trap before it had closed that `cp`'s pipeline, the
+      trap's first `rm` joined the pipeline and took the `cp`'s failure under
+      `pipefail`, and `errexit` ended the trap before its `rm` of the
+      temporary. The run died of the signal and left the temporary, for a
+      SIGINT and for a `kill`'s SIGTERM alike.
+    * IN THE WAIT FOR `mktemp`, once the file is made. A SIGINT that arrives
+      in the wait for a `$(…)` is lost, so the install went on to exit 0.
+    * IN THE WAIT FOR A `cp` THAT THEN SUCCEEDS. bash took it that `cp` had
+      handled the SIGINT, so the install went on to exit 0.
+
+    THE CHILD STARTS WITH BOTH SIGNALS AT THEIR DEFAULT, for the reason the
+    test above gives.
+    """
+    name, body = HOOKED_TOOLS[tool]
+    real = shutil.which(name)
+    if real is None:
+        pytest.skip(f"no real `{name}` on PATH for the stand-in to defer to")
+    shim = tmp_path / f"hooked-{name}"
+    shim.mkdir()
+    (shim / name).write_text("#!/bin/sh\n" + body.format(real=real),
+                             encoding="utf-8")
+    (shim / name).chmod(0o755)
+    sig = getattr(signal, signame)
+    mark = tmp_path / "fired"
+    preload = os.environ.get("LD_PRELOAD")
+
+    def default_signals() -> None:
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+    run = subprocess.Popen(
+        ["bash", str(COMMAND), "--install"], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=command_env(tmp_path, {
+            "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
+            "LD_PRELOAD": f"{signal_hook}:{preload}" if preload
+                          else str(signal_hook),
+            "ORT_HOOK_DIR": str(tmp_path / ".local" / "bin"),
+            "ORT_HOOK_AT": at, "ORT_HOOK_SIG": str(int(sig)),
+            "ORT_HOOK_MARK": str(mark)}),
+        start_new_session=True, preexec_fn=default_signals)
+    try:
+        out, err = run.communicate(timeout=60)
+    finally:
+        if run.poll() is None:
+            os.killpg(run.pid, signal.SIGKILL)
+            run.communicate()
+    assert mark.exists(), (
+        f"the hook never fired at `{at}`, so no signal landed: exit "
+        f"{run.returncode}\n{out}{err}")
     assert run.returncode in (-sig, 128 + sig), (
         f"the run did not die of {signame}: exit {run.returncode}\n{out}{err}")
     assert placement_temporaries(tmp_path) == []
