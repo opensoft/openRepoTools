@@ -3378,6 +3378,12 @@ the generation, so this is the one state in which a matching pair names a
 finished operation. An observation filed under no transition is a
 `set-lane-tree` with neither flag.
 
+`lane-state` finds the snapshot under the lane's control root, which its log's
+`dir` places, and reads that log once, with its status: a log git could not
+read is **10** as well — where the snapshot is kept is not known, which is not
+a lane that has none — and `lanes-index` holds such a lane's rows for that
+reason, in `lane-state`'s own words (opensoft/openRepoTools#290).
+
 `RUNNING` is written by the act that CONFIRMS the binding and never by the
 SessionStart hook: `session-start` never writes, never touches the network and
 always exits 0 (Amendment 8, `R-A8-1`), and a hook that writes is a hook that
@@ -3836,7 +3842,7 @@ lanes-index reconcile --source inventory [--dry-run]
 | `path`, `branch`, `dirty_count`, `unpushed_count`, `last_seen_utc` | the tree's sidecar: the last observation, `detached <sha>` for a detached head, an `unknown` count as NULL. A sidecar that could not be read is `unreadable sidecar`, one of another schema `unknown schema <n>`, each with the record's id where its path would be |
 | `base`, `last_commit` | two git reads of the RECORDED head, in the tree or, once it is gone, its recorded checkout: its merge-base with `origin/main` (else `main`, else `origin/HEAD`), and `<sha> <subject>` |
 | `lifecycle`, `generation`, `operation` | the lane's snapshot (`lane-state`): `RUNNING`, `SWAPPING`, `SWAPPED` or `CLOSED` for a **legacy** lane; `INDETERMINATE` for a managed or unknown one, whose lifecycle this tooling does not pronounce on, and for a snapshot that is missing, unreadable or of another schema |
-| `writer_live` | the listing's own LIVE — a session record on this workstation naming one of the row's ids — and NULL where those records could not be read or the lane is bound on another host, from where liveness is unknown and never dead (Amendment 18(b)) |
+| `writer_live` | the listing's own LIVE — a session record on this workstation naming one of the row's ids — and NULL where those records could not be read, the lane is bound on another host, or the register's ids or the lane's log — its binding — could not be read, from where liveness is unknown and never dead (Amendment 18(b), #290) |
 | `pr_number`, `pr_state` | `gh` at sync, best effort, the newest pull request whose head is the branch; NULL wherever it was not asked (`LANES_NO_GITHUB=1`) or did not answer. A MERGED or CLOSED answer is not asked again while the branch and its last commit stand |
 | `provenance`, `indexed_utc` | the generation the TREE'S OWN record was filed under — behind `generation` exactly when the observation predates the lane's current transition — and the sync |
 
@@ -3904,7 +3910,13 @@ could not name would have needed a marker for each of them, one for the listing
 itself — a first sync has no rows to hold — and a one-lane `--index` read that
 knew of it. An indexer from before #173's item c1 refuses the line too, as one
 it does not read. A read of one NAMED lane goes by that name, which no listing
-gives, and never prints `PARTIAL`.
+gives, and never prints `PARTIAL`. It reads the lane's log once, and where
+that read fails and no `LANES_LANE_STATE_ROOT` names the root, the lane is one
+`UNREAD <ws> <lane> its object log <path> could not be read, …` line and exit
+**0**, never the **8** of "none"; so is a name whose register read failed
+where no tree was found under it, because the register is what spells it
+(opensoft/openRepoTools#290). `lanes --worktrees <lane>` prints either as
+`inventory NOT READ`.
 
 Where those reads succeed, the listing makes each of them once, except the list
 of the logs, which it makes twice (the review of #289). The register, the
@@ -3923,8 +3935,9 @@ one with none (review r2 of #289). What is still read twice, besides the list
 of the logs: with no `origin` (`LANES_NO_GIT=1`, or a checkout with no
 `origin/<branch>`), the log directory is asked — there and not a directory this
 account can list and search is `PARTIAL` — and is then listed again for the
-names and again for the events, and a log file in it that will not open leaves
-no warning naming it; and the events ask for themselves whether
+names and again for the events; a log file in it that will not open is named,
+as a published log git could not read is, and the logs after it are still
+read (#290); and the events ask for themselves whether
 `origin/<branch>` is there, so a `rev-parse` that failed in that one read alone
 reads this checkout's logs in place of origin's.
 

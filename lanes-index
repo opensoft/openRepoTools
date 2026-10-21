@@ -1896,12 +1896,26 @@ def inventory_digest(record: dict) -> str:
 def lane_generation(lane: str) -> tuple:
     """`(generation, None)` of a lane's lifecycle snapshot, asked of `lanes-edit.sh
     lane-state` - 0 where the lane has no snapshot or no control root here - or
-    `(None, why)` where the snapshot is there and could not be read."""
+    `(None, why)` where its generation could not be read.
+
+    THE REASON IS THE HELPER'S OWN FIRST SENTENCE (opensoft/openRepoTools#290,
+    review r3 of #289's NIT-A). `lane-state` is 10 where the snapshot is there
+    and could not be read, and where the lane's object log could not be read,
+    so where the snapshot is kept is not known; the hold says which, in its
+    words. It said "its lifecycle snapshot could not be read" for both - and
+    a helper older than #290 said 8 for the second, which is read as 0 here
+    still: the hold that makes is a hold, for the reason it gives."""
     proc = _helper_run(["lane-state", lane], 120, f"lane {lane}'s lifecycle snapshot")
     if proc.returncode in (1, 8):
         return 0, None
     if proc.returncode != 0:
-        return None, f"its lifecycle snapshot could not be read (lane-state exited {proc.returncode})"
+        said = (proc.stderr.strip().splitlines() or [""])[-1]
+        if said.startswith("lanes-edit: "):
+            said = said[len("lanes-edit: "):]
+        said = said.split(". ", 1)[0].rstrip(".")
+        return None, (f"its lifecycle generation could not be read - "
+                      f"{said or 'lane-state said nothing more'} "
+                      f"(lane-state exited {proc.returncode})")
     fields = dict(line.split("\t", 1) for line in proc.stdout.splitlines() if "\t" in line)
     if fields.get("state") == "UNKNOWN-SCHEMA":
         return None, f"its lifecycle snapshot records schema {fields.get('schema')}"

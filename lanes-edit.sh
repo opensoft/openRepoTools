@@ -3380,6 +3380,15 @@ log_files() {
   done
 }
 
+# ONE PARSER RUN PER FILE, AND A FILE THAT WILL NOT OPEN IS SAID
+# (opensoft/openRepoTools#290). With no `origin` the logs are this checkout's
+# files, and they were ONE `awk` run: a file it could not open left no line
+# naming it - the listing took its lane for one with no log, and the
+# inventory's read for whole - and `mawk` (Debian's and Ubuntu's `awk`) ends at
+# the first file it cannot open, so every log after it was gone too. Each file
+# is its own run now, as each published log is its own `git show`, and one
+# that fails is said with the prefix `remote_log_events` says a published one
+# with, which the listing and the inventory read back out of the warnings.
 log_events() {
   le_files=()
   if [ "$#" -gt 0 ]; then
@@ -3390,7 +3399,13 @@ $(log_files)
 EOF
   fi
   [ "${#le_files[@]}" -gt 0 ] || return 0
-  awk -v FN="" "$LOG_AWK" "${le_files[@]}"
+  le_rc=0
+  for le_f in "${le_files[@]}"; do
+    awk -v FN="" "$LOG_AWK" "$le_f" && continue
+    le_rc=$?
+    note "unreadable log: $LANES_LOG_PREFIX${le_f##*/} — the file could not be read, so none of its lines are in this read"
+  done
+  return "$le_rc"
 }
 
 # Is there an `origin/<branch>` to read from at all? Outside a repository, and
@@ -3518,7 +3533,21 @@ state_events_flush() {
 # ambiguous and refuses. One resolver now answers both, and its 2 is carried:
 # `lane_log_exists` spends it rather than 1, so "there are two logs" is never
 # read as "there is no log".
-lane_log_events() {
+#
+# `checked` MAKES THE READ SAY WHETHER IT HAPPENED (opensoft/openRepoTools#290).
+# Without it, the published branch's status is the parser's: a `git show` that
+# failed is an empty stream and 0, exactly a lane with no log, and a named read
+# took that for a lane whose log records no `dir` - its root fell to the third
+# rung and its trees read as none. With it, a log `origin`'s tree names and git
+# could not show is 1, and so is a tree that could not be listed to ask; a path
+# the tree does not name is still no log and 0. With no `origin`, a log
+# directory that is there and cannot be searched is 1, and so is a file that is
+# there and will not open. The callers that read this status without asking
+# for it are left as they are: making it the default changes what `lane-dir`,
+# `lane-profile`, `lane-agent`, `lane-transcript`, `history`, `lane-last` and the
+# binding reads answer over a log git cannot read, which #290 lists for a
+# ruling rather than changing beside a named read.
+lane_log_events() {   # <lane> [checked]
   ll_rel="$(log_path_ci "$1")" || return 2
   if [ -n "$LANES_IDX_DIR" ]; then
     # A LOG THE INDEX DOES NOT HOLD IS A LOG `origin` DID NOT HOLD at the
@@ -3536,10 +3565,25 @@ lane_log_events() {
     return 0
   elif have_remote_ref; then
     git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$ll_rel" 2>/dev/null | parse_log_stream "$ll_rel"
+    ll_st=("${PIPESTATUS[@]}")
+    [ "${2-}" = checked ] || return "${ll_st[1]}"
+    [ "${ll_st[0]}" != 0 ] || return "${ll_st[1]}"
+    ll_in=""
+    ll_in="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$ll_rel" 2>/dev/null)" || return 1
+    [ -z "$ll_in" ] || return 1
+    return 0
   else
     ll_f="$LANES_LOG_DIR/${ll_rel##*/}"
-    [ -f "$ll_f" ] || return 0
-    log_events "$ll_f"
+    if [ ! -f "$ll_f" ]; then
+      [ "${2-}" = checked ] || return 0
+      [ ! -e "$ll_f" ] && [ ! -L "$ll_f" ] || return 1
+      if [ -e "$LANES_LOG_DIR" ] || [ -L "$LANES_LOG_DIR" ]; then
+        [ -d "$LANES_LOG_DIR" ] && [ -x "$LANES_LOG_DIR" ] || return 1
+      fi
+      return 0
+    fi
+    [ "${2-}" = checked ] || { log_events "$ll_f"; return; }
+    log_events "$ll_f" || return 1
   fi
 }
 lane_log_exists() {
@@ -4199,6 +4243,16 @@ home_of_lane() {
 # `ls-tree` that could fail after it (the review of #289, SHOULD-1(b)).
 PIN_LOGS=0
 PIN_LOGS_TEXT=""
+# `PIN_LANE_LOG` IS A NAMED READ'S ONE READ OF ITS LANE'S LOG, and its status
+# (opensoft/openRepoTools#290): `worktree_rows <lane>` reads it once and the
+# listing it asks for its row takes it from here, as the whole listing takes
+# `PIN_LOGS`.
+PIN_LANE_LOG=0
+PIN_LANE_LOG_TEXT=""
+PIN_LANE_LOG_RC=0
+# 0 · 1 the published list of the logs could not be made, which lists nothing
+# and is NOT a list with no logs in it (opensoft/openRepoTools#290): `lanes_rows`
+# says that the lanes it would have named are missing.
 known_lanes() {
   if [ -n "$LANES_IDX_DIR" ]; then
     while IFS= read -r kl_f; do
@@ -4210,16 +4264,20 @@ known_lanes() {
     return 0
   fi
   if [ "$PIN_LOGS" = 1 ] || have_remote_ref; then
-    { if [ "$PIN_LOGS" = 1 ]; then printf '%s' "$PIN_LOGS_TEXT"
-      else git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_LOG_PREFIX" 2>/dev/null
-      fi; } \
+    kl_list=""; kl_rc=0
+    if [ "$PIN_LOGS" = 1 ]; then kl_list="$PIN_LOGS_TEXT"
+    else
+      kl_list="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_LOG_PREFIX" 2>/dev/null && printf x)" || kl_rc=1
+      kl_list="${kl_list%x}"
+    fi
+    printf '%s' "$kl_list" \
     | while IFS= read -r kl_f; do
         [ -n "$kl_f" ] || continue
         kl_n="${kl_f##*/}"
         case "$kl_n" in README.md) continue ;; esac
         printf '%s\n' "${kl_n%.md}"
       done
-    return 0
+    return "$kl_rc"
   fi
   while IFS= read -r kl_f; do
     [ -n "$kl_f" ] || continue
@@ -7118,9 +7176,11 @@ lane_row_facts() {   # events on stdin, ONE LINE PER LANE
 # under Amendment 11 yet"* — the pre-cutover answer that sends `restart`,
 # `lane-start` and both skills to the rungs beneath a record they never
 # established was readable. The read is its own step now and its status decides.
-lane_payload_field() {   # <lane> <name> [all]
+# `checked` IS `lane_log_events`' (#290): without it the published read's
+# status is still the parser's, so a log git could not show is still the 8.
+lane_payload_field() {   # <lane> <name> [all] [checked]
   lpf_lines=""; lpf_rc=0
-  lpf_lines="$(lane_log_events "$1")" || lpf_rc=$?
+  lpf_lines="$(lane_log_events "$1" "${4-}")" || lpf_rc=$?
   [ "$lpf_rc" = 0 ] || return 1
   # The scan is over EVERY lane-kind payload, newest last, and the answer is
   # the last one that actually carries the sub-field.
@@ -8169,6 +8229,7 @@ lanes_rows() {
   # EACH NAME CARRIES ITS OWN LOWER-CASED KEY, emitted by the pass that already
   # computes it for the de-duplication: the three lookups below join on that key
   # and `lc` is two processes (ruling 12).
+  lr_klrc=0
   if [ -n "$lr_one" ]; then
     lr_names="$(printf '%s\n' "$lr_one" | awk -v sep="$US" 'NF { print tolower($0) sep $0 }')"
     lr_here=0; lr_repo=""; lr_dir=""; lr_prefix=""
@@ -8180,9 +8241,16 @@ lanes_rows() {
     # canonical one. Read the other way round, a lane whose log file predates
     # its row's spelling was listed under the file name, and column 10's
     # line that binds the lane offered that spelling back to the reader.
-    lr_names="$( { register_lanes 2>/dev/null || :; known_lanes 2>/dev/null || :; } | awk -v sep="$US" 'NF && !seen[tolower($0)]++ { print tolower($0) sep $0 }')"
+    # AND THE LIST OF THE LOGS SAYS WHETHER IT WAS MADE (opensoft/openRepoTools#290).
+    # It is what names a lane that has a log and no row, and a list that failed
+    # named none of them: they were missing from the listing, and nothing said
+    # so. It is said below. An empty listing is decided there too, after every
+    # read it rests on has been asked, because one over reads that failed is
+    # not "no lane".
+    lr_kl=""
+    lr_kl="$(known_lanes 2>/dev/null)" || lr_klrc=$?
+    lr_names="$( { register_lanes 2>/dev/null || :; printf '%s\n' "$lr_kl"; } | awk -v sep="$US" 'NF && !seen[tolower($0)]++ { print tolower($0) sep $0 }')"
   fi
-  [ -n "$lr_names" ] || return 8
   # ONE PASS OVER EVERY LANE'S EVENTS, NOT ONE READ PER LANE PER FIELD.
   # `lanes` asks about every lane the register and the logs know, and this loop
   # used to make a `git show` of each lane's log — and then a fork per sub-field
@@ -8196,8 +8264,21 @@ lanes_rows() {
   # lane's profile and nothing else, and `state_events` is a `git show` per log
   # file — nine seconds on the live register. The same parser over the same
   # grammar either way, so the two answers cannot differ.
+  # AND THAT ONE LOG IS READ ONCE, WITH ITS STATUS (opensoft/openRepoTools#290).
+  # Piped straight into the facts, a `git show` that failed was a lane whose
+  # log carries no lane-kind line: no `dir`, no binding, and a class of
+  # DORMANT. The read is its own step now. A named `worktrees` read has made it
+  # already and hands it here (`PIN_LANE_LOG`), so the row it lists and the
+  # root its trees are found under come out of one read and not two.
+  lr_evrc=0
   if [ -n "$lr_one" ]; then
-    lr_facts="$(lane_log_events "$lr_one" 2>/dev/null | lane_row_facts)"
+    lr_ev=""
+    if [ "$PIN_LANE_LOG" = 1 ]; then
+      lr_ev="$PIN_LANE_LOG_TEXT"; lr_evrc="$PIN_LANE_LOG_RC"
+    else
+      lr_ev="$(lane_log_events "$lr_one" checked 2>/dev/null)" || lr_evrc=$?
+    fi
+    lr_facts="$(printf '%s\n' "$lr_ev" | lane_row_facts)"
   else
     lr_facts="$(state_events 2>/dev/null | lane_row_facts)"
   fi
@@ -8207,19 +8288,34 @@ lanes_rows() {
   # and those lanes are fenced out of the class here. Without the warnings file
   # (no temporary file could be made) no read can be told from a failed one, so
   # no row is classed dormant at all.
-  lr_unread=" "; lr_unread_ok=1; lr_unread_paths=""
+  # AND THE EVENTS' OWN LIST OF THE LOGS IS ASKED THE SAME WAY (#290): where it
+  # could not be made, no lane's lines are in the facts, and every row with no
+  # log of its own here read as one with no object log - DORMANT, hidden, and
+  # offered to the sweep.
+  lr_unread=" "; lr_unread_ok=1; lr_unread_paths=""; lr_unlisted=""
   if [ -z "$lr_one" ] && [ -z "$LANES_IDX_DIR" ]; then
     if [ -n "$SE_WARN_FILE" ]; then
-      lr_unread_paths="$(sed -n -e 's/^lanes-edit: unreadable log: \(.*\) — git could not read it.*$/\1/p' "$SE_WARN_FILE" 2>/dev/null)"
+      lr_unread_paths="$(sed -n -e 's/^lanes-edit: unreadable log: \(.*\) — git could not read it.*$/\1/p' -e 's/^lanes-edit: unreadable log: \(.*\) — the file could not be read.*$/\1/p' "$SE_WARN_FILE" 2>/dev/null)"
       lr_unread=" $(printf '%s\n' "$lr_unread_paths" | awk 'NF { n = $0; sub(/^.*\//, "", n); sub(/\.md$/, "", n); print tolower(n) }' | tr '\n' ' ')"
+      lr_unlisted="$(sed -n -e '/^lanes-edit: unlisted logs: /p' "$SE_WARN_FILE" 2>/dev/null)"
     else
       lr_unread_ok=0
     fi
+  fi
+  # THE NAMED LANE'S ONE READ IS FENCED THE SAME WAY (#290): a log this listing
+  # could not read is not one that carries no lane-kind line.
+  if [ -n "$lr_one" ] && [ "$lr_evrc" != 0 ]; then
+    lr_unread_paths="$(log_path_ci "$lr_one" 2>/dev/null || log_path_for "$lr_one")"
+    lower_into "$lr_one"; lr_unread=" $LOWER_OUT "
   fi
   [ -z "$lr_unread_paths" ] ||
     note "these published logs could not be read, so no lane of theirs is classed DORMANT: $(printf '%s\n' "$lr_unread_paths" | tr '\n' ' ')"
   [ "$lr_unread_ok" = 1 ] ||
     note "no temporary file could be made for the read's warnings, so whether any published log failed to read is not known, and no row is classed DORMANT here."
+  [ -z "$lr_unlisted" ] ||
+    note "the object logs under origin/$LANES_BRANCH:$LANES_LOG_PREFIX could not be listed for their lines, so no lane's log is read in this listing, and no row is classed DORMANT here."
+  [ "$lr_klrc" = 0 ] ||
+    note "the object logs under origin/$LANES_BRANCH:$LANES_LOG_PREFIX could not be listed, so a lane with a log and no row in the register or the archive is missing from this listing."
   # AND A REGISTER THAT COULD NOT BE READ IS SAID, ONCE (the re-review of #230).
   # Every row above came out of `register_text`, which drops the status
   # `register_text_checked` keeps (#67), and a published register git cannot
@@ -8246,8 +8342,18 @@ lanes_rows() {
   # front of a launch), so it says it, exactly as it says a session-record read
   # that failed; the POSITION is the half that must not guess, and
   # `lane_next_free` refuses there rather than offering one over a partial read.
+  lr_arch_ok=1
   if ! archive_text >/dev/null 2>&1; then
+    lr_arch_ok=0
     note "$LANES_ARCH_PATH exists and could not be read, so the RETIRED rows it holds are not in this listing — and \`next-free\` will refuse a position rather than offer one over a partial read."
+  fi
+  # AN EMPTY LISTING OVER READS THAT FAILED IS NOT "NO LANE" (#290). It was
+  # 8 before any of the notes above, so `lanes` printed "no lane is recorded"
+  # over a register, an archive and a list of the logs it could not read. It
+  # is 1, the listing could not be read, after each read that failed is said.
+  if [ -z "$lr_names" ]; then
+    [ "$lr_reg_ok" = 1 ] && [ "$lr_arch_ok" = 1 ] && [ "$lr_klrc" = 0 ] || return 1
+    return 8
   fi
   lr_index="$GS$(lanes_register_index 2>/dev/null | tr '\n' "$GS" || :)"
   # THE CELLS ARE BUILT ON FIRST USE AND NOT BEFORE (see `lanes_register_index
@@ -8522,7 +8628,7 @@ EOF2
         # row stays listed and the sweep is never offered it.
         if [ -n "$lr_row" ] && [ "$lr_lanekind" = 0 ] && [ "$lr_live_rc" = 0 ] &&
            [ "$lr_cellrow" = 1 ] && [ "$lr_logs_rc" = 0 ] && [ "$lr_unread_ok" = 1 ] &&
-           [ "$lr_reg_ok" = 1 ]; then
+           [ "$lr_reg_ok" = 1 ] && [ -z "$lr_unlisted" ]; then
           lr_class=dormant
           # A LOG THIS CHECKOUT HAS AND `origin` HAS NOT IS STILL AN OBJECT LOG,
           # AND SO IS ONE `origin` HAS AND GIT COULD NOT READ (item 11).
@@ -14856,19 +14962,41 @@ LRC_PAIRED
 # says what that leaves. An empty listing over a failed read is that line
 # alone, and never 8.
 #
+# AND A NAMED READ IS NEVER "NONE" OVER A READ THAT FAILED
+# (opensoft/openRepoTools#290, the review of #289's SHOULD-3). Its lane's trees
+# are found under the root its log's `dir` places, and the listing's one read of
+# that log threw a failed `git show` away: no `dir`, the third rung, no `trees`,
+# and 8 - "no worktree is inventoried". The log is read here ONCE, with its
+# status, and handed to the listing (`PIN_LANE_LOG`); where it could not be read
+# and no override names the root, the lane is ONE `UNREAD` line naming the log.
+# A lane's name is the register's spelling, and the caller says whether the
+# register read it was resolved by was made (`register-unread`): where it was
+# not, a name typed in another case named a root no lane has, so a read that
+# finds no tree there is an `UNREAD` line naming the register.
+#
+# AND NO WRITER IS PRONOUNCED `0` OVER A READ NOBODY MADE (#290). `0` is "no
+# live record here names one of the lane's ids, and its binding is here or
+# nowhere": where the register's ids were not read, or the lane's log - its
+# binding - was not, that is not established, and the field is EMPTY, unknown,
+# as it is for a lane bound elsewhere. A live record that names one of the ids
+# that WERE read is still `1`.
+#
 # The rows are sorted bytewise, which is the order the index's copy is written
 # in too: the two reads of one inventory are the same bytes.
 #   0 rows, with a PARTIAL line where the listing was not whole · 8 none ·
 #   1 the lane listing could not be read
-worktree_rows() {   # [<canonical lane>]
+worktree_rows() {   # [<canonical lane> [register-unread]]
   wr_one="${1-}"; wr_out=""
   wr_live_ok=1
   live_session_ids >/dev/null 2>&1 || wr_live_ok=0
   wr_partial=""
   wr_unlisted="the object logs under origin/$LANES_BRANCH:$LANES_LOG_PREFIX could not be listed"
+  wr_reg_ok=1; wr_evrc=0; wr_lp=""; wr_unread_lanes=" "; wr_binding_unread=0
   if [ -z "$wr_one" ]; then
-    register_text_checked >/dev/null 2>&1 ||
+    if ! register_text_checked >/dev/null 2>&1; then
       wr_partial="the register $LANES_PATH could not be read"
+      wr_reg_ok=0
+    fi
     # THE ARCHIVE AND THE LOG LIST ARE PINNED, NOT ONLY ASKED (SHOULD-1(b)):
     # each read that succeeds here is the text every read of the listing below
     # is handed, as the register's is its cache. `x` keeps the text's last
@@ -14895,6 +15023,12 @@ worktree_rows() {   # [<canonical lane>]
         wr_partial="${wr_partial:+$wr_partial; }the log directory $LANES_LOG_DIR is there and could not be listed"
       fi
     fi
+  else
+    [ "${2-}" != register-unread ] || wr_reg_ok=0
+    wr_ev=""
+    wr_ev="$(lane_log_events "$wr_one" checked 2>/dev/null)" || wr_evrc=$?
+    PIN_LANE_LOG_TEXT="$wr_ev"; PIN_LANE_LOG_RC="$wr_evrc"; PIN_LANE_LOG=1
+    [ "$wr_evrc" = 0 ] || wr_lp="$(log_path_ci "$wr_one" 2>/dev/null || log_path_for "$wr_one")"
   fi
   wr_lanes=""; wr_lrc=0
   if [ -n "$wr_one" ]; then
@@ -14903,21 +15037,29 @@ worktree_rows() {   # [<canonical lane>]
     wr_lanes="$(lanes_rows --all --closed)" || wr_lrc=$?
   fi
   PIN_ARCHIVE=0; PIN_ARCHIVE_TEXT=""; PIN_LOGS=0; PIN_LOGS_TEXT=""
+  PIN_LANE_LOG=0; PIN_LANE_LOG_TEXT=""; PIN_LANE_LOG_RC=0
+  # 1 IS ALSO A LISTING THAT READS THAT FAILED LEFT EMPTY (#290), which the
+  # PARTIAL line below says where this read found those reads failed too.
   case "$wr_lrc" in
     0) : ;;
-    8) [ -n "$wr_partial" ] || return 8 ;;
+    8|1) [ -n "$wr_partial" ] || return "$wr_lrc" ;;
     *) return 1 ;;
   esac
   if [ -z "$wr_one" ] && [ "$wr_lrc" = 0 ]; then
     wr_ulogs=""; wr_urc=0; wr_ulist=""
     if [ -n "$SE_WARN_FILE" ] && [ -f "$SE_WARN_FILE" ]; then
-      wr_ulogs="$(sed -n -e 's/^lanes-edit: unreadable log: \(.*\) — git could not read it.*$/\1/p' "$SE_WARN_FILE" 2>/dev/null)" || wr_urc=1
+      wr_ulogs="$(sed -n -e 's/^lanes-edit: unreadable log: \(.*\) — git could not read it.*$/\1/p' -e 's/^lanes-edit: unreadable log: \(.*\) — the file could not be read.*$/\1/p' "$SE_WARN_FILE" 2>/dev/null)" || wr_urc=1
       # THE EVENTS' OWN LIST OF THE LOGS (SHOULD-1(a)): where it failed, no
       # lane has the `dir` its trees are found under.
       wr_ulist="$(sed -n -e '/^lanes-edit: unlisted logs: /p' "$SE_WARN_FILE" 2>/dev/null)" || wr_urc=1
     else
       wr_urc=1
     fi
+    # A LANE WHOSE LOG WAS NOT READ HAS NO BINDING ANYBODY READ (#290), and
+    # where the list of the logs or the warnings of their read could not be
+    # had, no lane has one: liveness is pronounced for none of them below.
+    wr_unread_lanes=" $(printf '%s\n' "$wr_ulogs" | awk 'NF { n = $0; sub(/^.*\//, "", n); sub(/\.md$/, "", n); print tolower(n) }' | tr '\n' ' ')"
+    [ "$wr_urc" = 0 ] && [ -z "$wr_ulist" ] || wr_binding_unread=1
     if [ "$wr_urc" != 0 ]; then
       wr_partial="${wr_partial:+$wr_partial; }whether every object log could be read is not known, because the warnings of their read could not be kept"
     else
@@ -14953,6 +15095,11 @@ worktree_rows() {   # [<canonical lane>]
     # just found read as a lane with none. The listing's `dir` is now the root
     # of all three, so the read that could fail is not made.
     wr_pay="dir ${wr_dir:-none}"
+    if [ -n "$wr_one" ] && [ "$wr_evrc" != 0 ] && [ -z "${LANES_LANE_STATE_ROOT:-}" ]; then
+      wr_out="${wr_out}UNREAD$US$WS$US$wr_l${US}its object log $wr_lp could not be read, so the directory its trees are recorded under is not known
+"
+      continue
+    fi
     wr_root=""; wr_rrc=0
     wr_root="$(lane_control_root "$wr_l" "$wr_pay" 2>/dev/null)" || wr_rrc=$?
     [ "$wr_rrc" = 0 ] || continue
@@ -14987,6 +15134,10 @@ worktree_rows() {   # [<canonical lane>]
     # binding elsewhere has now.
     wr_live=0
     [ "$wr_st" = LIVE ] && wr_live=1
+    [ "$wr_live" = 1 ] || [ "$wr_reg_ok" = 1 ] || wr_live=""
+    [ "$wr_evrc" = 0 ] && [ "$wr_binding_unread" = 0 ] || wr_live=""
+    lower_into "$wr_l"
+    case "$wr_unread_lanes" in *" $LOWER_OUT "*) wr_live="" ;; esac
     [ "${wr_loc:-none}" = elsewhere ] && wr_live=""
     [ "$wr_live_ok" = 1 ] || wr_live=""
     wr_own=""; wr_orc=0
@@ -15056,6 +15207,10 @@ WR_TREES
   done <<WR_LANES
 $wr_lanes
 WR_LANES
+  if [ -n "$wr_one" ] && [ "$wr_reg_ok" = 0 ] && [ -z "$wr_out" ]; then
+    wr_out="UNREAD$US$WS$US$wr_one${US}the register $LANES_PATH could not be read, so how lane $wr_one is spelled, and the root its trees are recorded under, is not established
+"
+  fi
   [ -z "$wr_partial" ] || wr_out="${wr_out}PARTIAL$US$WS$US$wr_partial
 "
   [ -n "$wr_out" ] || return 8
@@ -18509,7 +18664,10 @@ EOF
   #       on*; 10 tells it *this lane may be mid-crash and nobody could look*.
   #       (It was 9 until main's #61 spent 9 on `claim`'s abandoned takeover.)
   #       A snapshot of this schema that is not a whole record is 10 as well
-  #       (#115): nothing can be read out of it as a snapshot.
+  #       (#115): nothing can be read out of it as a snapshot. And `lane-state`
+  #       is 10 where the lane's object log could not be read, so the
+  #       directory its snapshot is kept beside is not known (#290): where
+  #       nobody could look is not where there is nothing.
   #  64   a usage error of this subcommand's own — for `set-lane-tree`, a
   #       partial observation, a `--dirty`/`--unpushed` that is not a count
   #       (`unknown` is one for `--unpushed`), or a field that is only blanks
@@ -18520,15 +18678,33 @@ EOF
     check_lane_name "$lane"
     log_sync
     lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
+    # THE LANE'S `dir` IS READ ONCE, AND THE READ SAYS WHETHER IT HAPPENED
+    # (#290, review r3 of #289's NIT-A). The root was worked out from the log
+    # with a failed `git show` thrown away, so a log that could not be read
+    # placed the root at the third rung, where no snapshot is: 8, which
+    # `lanes-index` read as generation 0 and held a lane for "reading 0".
+    # Read here with its status, it is handed on as the payload the root is
+    # found by - quoted, so a `dir` with a space in it is whole - and a log
+    # that could not be read is the 10 below, never the 8 of none.
+    lst_pay=""
+    if [ -z "${LANES_LANE_STATE_ROOT:-}" ]; then
+      lst_dir=""; lst_drc=0
+      lst_dir="$(lane_payload_field "$lane" dir "" checked 2>/dev/null)" || lst_drc=$?
+      case "$lst_drc" in
+        0) lst_pay="dir \"$lst_dir\"" ;;
+        8) lst_pay="dir none" ;;
+        *) die "lane $lane's object log could not be read, so the directory its lifecycle snapshot is kept beside is NOT established. That is NOT 'this lane has no snapshot' — 8 says that, and a launcher answers an 8 by going on, over a snapshot nobody could look for (R22, Amendment 7(d)). Re-run once git can read the log." 10 ;;
+      esac
+    fi
     lst_out=""; lst_rc=0
-    lst_out="$(lane_state_read "$lane")" || lst_rc=$?
+    lst_out="$(lane_state_read "$lane" "$lst_pay")" || lst_rc=$?
     case "$lst_rc" in
       0) : ;;
       8) exit 8 ;;
       10)
         # WHICH OF THE TWO 10s (#115): a record that opens and is not a whole
         # one of this schema is said as that, for the person who reads it.
-        lst_f="$(lane_control_root "$lane" 2>/dev/null || printf '<no control root>')/lane-state.yaml"
+        lst_f="$(lane_control_root "$lane" "$lst_pay" 2>/dev/null || printf '<no control root>')/lane-state.yaml"
         lst_what="it could not be read"
         if [ -r "$lst_f" ] && ! lane_sidecar_schema_ok "$lst_f"; then lst_what="it is of this schema and $LSS_WHY, so nothing can be read out of it as a snapshot"; fi
         die "lane $lane HAS a lifecycle snapshot at its control root and $lst_what. That is NOT 'this lane has no snapshot' — 8 says that, and a launcher answers an 8 by going on, which over an unreadable record would be a launch made in ignorance of a crash nobody could look at (R22, Amendment 7(d)). Read it by hand: $lst_f" 10 ;;
@@ -18910,8 +19086,10 @@ EOF
   #
   # Local by default, as `lanes` is: `--fetch` refreshes the register first.
   #   0 rows (`--all`: with one PARTIAL line where the lane listing they were
-  #   read through was not whole, #173) · 8 none · 2 a lane name refused
-  #   (Amendment 15) · 64 usage · 1 a read failed
+  #   read through was not whole, #173; a named lane: one UNREAD line where its
+  #   object log, or the register its name is resolved by, could not be read,
+  #   #290) · 8 none · 2 a lane name refused (Amendment 15) · 64 usage · 1 a
+  #   read failed
   worktrees)
     wt_lane=""; wt_all=0; wt_index=0; wt_fetch=0
     wt_usage="worktrees [<lane> | --all] [--index] [--fetch]"
@@ -18929,7 +19107,13 @@ EOF
     [ -z "$wt_lane" ] || check_lane_name "$wt_lane"
     [ "$wt_fetch" = 1 ] || LANES_NO_FETCH=1
     log_sync
+    # THE REGISTER IS ASKED BEFORE THE NAME IS RESOLVED BY IT (#290). A read
+    # that succeeds is the one `canon_lane` and the listing then take, out of
+    # its cache; one that fails is not kept, and the name it could not resolve
+    # is read as not established - never as a lane with no trees.
+    wt_reg=""
     if [ -n "$wt_lane" ]; then
+      register_text_checked >/dev/null 2>&1 || wt_reg=register-unread
       wt_lane="$(canon_lane "$wt_lane")" || exit 2          # Amendment 15
     fi
     if [ "$wt_index" = 1 ] && index_open worktrees; then
@@ -18938,7 +19122,7 @@ EOF
       printf '%s\n' "$wt_out"
     else
       wt_out=""; wt_rc=0
-      wt_out="$(worktree_rows "$wt_lane")" || wt_rc=$?
+      wt_out="$(worktree_rows "$wt_lane" "$wt_reg")" || wt_rc=$?
       case "$wt_rc" in
         0) : ;;
         8) exit 8 ;;
