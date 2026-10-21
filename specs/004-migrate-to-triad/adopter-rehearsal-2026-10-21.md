@@ -10,8 +10,9 @@ checkout agree at setup, and `190133d` is on its `main`), with
 (`runD/run-header.txt`, `logs/shape-clone.log`, `logs/setup-filter-repo.log`).
 **Source:** main `33ce26dffc5286e68f1d29ab5c6458edef0330c0`, the EXPECT, read
 with `git ls-remote` at 2026-10-21T16:22:30Z just before cloning. It is #299's
-squash of `076fa70` on `50d05d4`, lane 1's `composed.yml` runner pin, landed
-2026-10-21T14:08:04Z: the last landing before the freeze. The clone has 156
+squash of `076fa70` on `50d05d4`, lane 1's `composed.yml` runner pin, merged
+2026-10-21T14:07:41Z (GitHub's `merged_at`; lane 3's LANDED line is stamped 14:08:04Z):
+the last landing before the freeze. The clone has 156
 commits and 200 files, and its `upstream/openRepoShape` gitlink and
 `contracts/openreposhape-pin.yaml` both name `190133d`
 (`logs/source-clone.log`, `<S>.observe/before-setup.txt`).
@@ -20,7 +21,10 @@ commits and 200 files, and its `upstream/openRepoShape` gitlink and
 "yes to e2 and D7, names only" (2026-10-20T22:56:11Z); "yes to one rehearsal and
 e4; include P7, P8, P10" (2026-10-21T10:31:16Z); "yes to the link-only 70 fallback"
 (2026-10-21T13:43:26Z). The start, which lane 1's freeze notice quotes: "continue;
-start D when the freeze is ready" (2026-10-21T13:55:01Z).
+start D when the freeze is ready" (2026-10-21T13:55:01Z). All four turns carry
+`promptSource: suggestion_accepted` with `turnOrigin: human` in that transcript and stand
+by the house test (lane 2, #186 6327441086); Brett is asked to confirm them in a word at
+Gate C.
 **Private receipt:** `rehearsal-d`, with its observation directory
 `rehearsal-d.observe`, under `work-20261021`.
 
@@ -30,7 +34,8 @@ directory, `<P>` the prep directory `rehearsal-prep` (`PLAN.md` and `scripts/`),
 names its file relative to `<S>`, `<S>.observe` or `<P>`.
 
 **The freeze (e2).** Lane 1's notice, #186 comment 6320876769, was created
-2026-10-21T16:21:27Z, 33 seconds before the first observation. Its heading says
+2026-10-21T16:21:27Z, before the first observation (16:22:00Z on the bench's clock, which
+reads about 10 s ahead of GitHub's: lane 2). Its heading says
 "16:3xZ", which was lane 1's slip (the post was drafted before it went up): GitHub's
 time stands, and the comment is left unedited, because an edit re-fires other lanes'
 `since=` watchers. It says "Main stays at `33ce26d` until the cutover", and its
@@ -47,9 +52,9 @@ rules hold until lane 1 posts D's end:
 - Brett's ruling: a P10 exit 70 whose difference is only the `claude` or `codex`
   link row is recorded as attributed.
 
-The register's last HOLD, LANDING and LANDED lines before it are lane 3's for #299
-(14:05:43Z to 14:08:49Z, `<S>.observe/before-setup.txt`), and lane 1 asked every lane
-to land nothing more at 14:12Z (#186 6318207326).
+The register's last HOLD, LANDING and LANDED lines on `opensoft/openRepoTools main`
+before it are lane 3's for #299 (14:05:43Z to 14:08:49Z, `<S>.observe/before-setup.txt`),
+and lane 1 asked every lane to land nothing more at 14:12Z (#186 6318207326).
 
 **Reviewed bytes.** `<P>/scripts/REVIEWED.sha256` (13 lines, sha256
 `fcfe0653d2f08d04e4a81252ca3c4e41dfccd57b92697d0bbbeec50b3929d9b4`) was written by
@@ -65,7 +70,7 @@ names each review):
 | `env-d.sh` | `e5c12db0…` | Lane 3, 6315175076 (rounds 5, 5b) and 6320744628 (5c): read unchanged since round 4, READY |
 | `run_rehearsal_d.sh` | `4ec81498…` | Lane 3, 6320744628: READY, no MUST, no SHOULD (NITs 131–135 and 141–144 left for after D) |
 | `observe_d.sh` | `a157c257…` | Lane 3, 6315175076 and 6320744628: read unchanged since round 4, READY. Not copied: it runs from `<P>/scripts` |
-| `resolve_plan_d.py` | `89bb3490…` | Lane 2, #186 6289380127 and 6290828597: READY |
+| `resolve_plan_d.py` | `89bb3490…` | Lane 2, #186 6290828597: READY at these bytes (6289380127, the first round, read earlier bytes and had one MUST; the sandbox re-run under fix round 4's caller is 6297569490) |
 | `publish_plan_d.py` | `2d40606f…` | The same |
 | `independent_accounting_d.py` | `e0160b89…` | The same |
 | `decisions-new-paths.json` | `5a5a50f1…` | The same (lane 1's D2 of 2026-10-20, amended at 11:1xZ) |
@@ -78,9 +83,8 @@ names each review):
 Lane 1 ran D on round 5c's reviewed bytes, not on lane 3's suggested round 5d (#186
 6320876769). NIT 142 cannot fire in D: the real git configuration holds no URL with
 a query (`runD/realcfg-names.txt` has no `?`). NIT 141 needs a second stage
-invocation while `stage2` runs, and `runD/exits.txt` has one `stage2 begins` line.
-NITs 121–123, 131–135 and 141–144, with the tested fixes for 141 and 142, go into a
-round after D and before the cutover.
+invocation while `stage2` runs, and `runD/exits.txt` has one `stage2 begins` line. The
+NITs go into a round after D and before the cutover (Remaining gates).
 
 **Run D supersedes nothing.** Runs A (`c4864ac`) and B (the repin candidate `e43b243`)
 stand as recorded in [adopter-rehearsal-2026-10-07.md](adopter-rehearsal-2026-10-07.md),
@@ -90,9 +94,10 @@ rehearsal Brett approved for the cutover: one `execute`, in a fresh sandbox, wit
 tool at v1.1.0 and the source frozen at `33ce26d`. Every check on its outputs can be
 repeated; a second `execute`, in a new sandbox, happens only on Brett's word. Its
 plan, as published, stays with this record on an evidence branch until the root-split
-PR (e2), so the
-[mapping](../../openspec/changes/migrate-to-triad/adoption-plan.yaml) on main stays
-run C's plan. Like run C, it is kept host-local outside every repository. Clone
+PR (e2), so the mapping on main stays run C's plan: the link is
+[main's plan at `33ce26d`](https://github.com/opensoft/openRepoTools/blob/33ce26dffc5286e68f1d29ab5c6458edef0330c0/openspec/changes/migrate-to-triad/adoption-plan.yaml)
+(sha256 `5321b736…`), because on this branch the path opens D's plan. Like run C, it is
+kept host-local outside every repository. Clone
 paths, local remote URLs, exact command lines and complete logs stay in the private
 receipt.
 
@@ -179,8 +184,11 @@ plan has 34.
   lists: the header block, `generated_on`, `source:` (commit `33ce26df…`, 200 files,
   9,368,104 bytes, 156 commits, `cloned: false`), the pins comment, `.github/` (4
   files, rule `consensus`, medium), `.gitmodules` and `upstream/` (rule
-  `ambiguous-gitmodules`), the two new entries, new counts, `review_required: true`
-  where a question was asked, the follow-ups and the summary.
+  `ambiguous-gitmodules`), the two new entries, the shortened `reason:` of `contracts/`,
+  `docs/`, `openspec/` and `specs/` (4 entries, 8 lines: #628), new counts,
+  `review_required: true` where a question was asked, the follow-ups and the summary, and
+  two comments that list omits: the default-rule comment (2 lines) and the `cloned:`
+  comment (3 lines).
 - **`check`** of the executed plan, and **`check-published`** of the published copy:
   each exit 0, `plan ok`, 0 FINDING lines and one NOTE (it did not ask whether the url
   of `upstream/openRepoShape`, a network url, answers). The two logs are equal byte
@@ -191,16 +199,18 @@ plan has 34.
   plan's header says the new top-level paths were "answered as
   scripts/decisions-new-paths.json of the private receipt records". That sentence is
   the publish step's fixed text and overstates D's case: resolve applied none of the
-  file's path answers, though both say code, as the tool did. A NIT for the post-D
-  round.
+  file's path answers, though both say code, as the tool did. The header also drops run
+  C's "Gate B remains open (T006-T011)". Both are NITs for the post-D round.
 - **`check-realcfg`** (ledger I4, D7, names only), `check` of the published copy under
   the real shell's git configuration, started with `D7_REALCFG=1`: exit 0, no FINDING
   or REFUSED code kept (`runD/check-realcfg.log`). `runD/realcfg-names.txt` (12 lines,
   726 bytes, sha256 `15d9494e…`) holds 12 name rows from one file, the global
   configuration (7 `credential`, 2 `url`, 2 `user`, 1 `safe`; 10 distinct names), no
-  value and no redaction mark. The names stay out of this record. Lane 3 asked for two
-  counts, with no name printed (#186 6323118228): lines with a byte outside printable
-  ASCII and blanks, and url rows whose userinfo is not redacted. Lane 1 ran both at
+  value and no redaction mark. The names stay out of this record. Two rows hold an at
+  sign: the 2 `url` rows, in scp form (user name and host, no scheme, no password), which
+  neither count below reads. Lane 3 asked for two counts, with no name printed (#186
+  6323118228): lines with a byte outside printable ASCII and blanks, and url rows whose
+  userinfo is not redacted. Lane 1 ran both at
   18:11:29Z, before this record: **0 and 0**, with a planted control (a 0xff byte and a
   url with userinfo) giving 1 and 1 (#186 6323149947). `XDG_CONFIG_HOME` was unset in
   the real shell, so git read `~/.config` (`runD/run-header.txt`).
@@ -213,17 +223,20 @@ plan has 34.
 
 The gate observation passed (16:24:57Z, `<S>.observe/gate.txt`): origin main `33ce26df…`
 FROZEN, both leg repositories absent on GitHub (HTTP 404), no `adopt/` ref on origin, no
-register line since the first observation, and the shared checkout's `HEAD`, status and
-refs as at the start. `STAGE1-REVIEWED` was made at 16:25:11Z, once it had passed and its
+register line for `opensoft/openRepoTools main` since the first observation, and the
+shared checkout's `HEAD`, status and refs as at the start. `STAGE1-REVIEWED` was made at 16:25:11Z, once it had passed and its
 last line was `verdict OK` (`<W>/d-operator-log/act3-gate.log`).
 
 **What lane 1 read before the mark** is in the extract of its session transcript,
 `<W>/d-operator-log/act9-transcript-extract-1619-1634.txt` (sha256 `309d978e…`, read
-only, written 17:16:22Z): every Bash call from 16:19:50Z to 16:34Z with its result. The
-gate reads are its calls `tvZ1mEmK` (16:23:38Z, stage 1's output), `M7cWkvuf` (16:23:51Z,
-the FINDING counts), `h5YC1X5L` (16:24:03Z, `check-realcfg` and the real-config names by
-count), and `zrRZP87o` (16:24:23Z) and `8HwsX145` (16:24:37Z), on the published plan;
-`eYWgV1do` (16:24:57Z) is the gate act itself. Lane 1 checked:
+only; its header says 17:16:22Z, the file's time before a header edit at 17:18:01Z, its
+mtime, which gives the digest; call `CDdSNjEi`'s result header has no time there, the
+transcript has 16:28:41.154Z): every Bash call from 16:19:50Z to 16:34Z with its result.
+The gate reads are its calls `tvZ1mEmK` (16:23:38Z, stage 1's output), `M7cWkvuf`
+(16:23:51Z, the FINDING counts and the real-config names by count), `h5YC1X5L`
+(16:24:03Z, `check-realcfg.log` and the answered-paths and submodules counts), and
+`zrRZP87o` (16:24:23Z) and `8HwsX145` (16:24:37Z), on the published plan; `eYWgV1do`
+(16:24:57Z) is the gate act itself. Lane 1 checked:
 
 - 22 resolutions; a header naming `33ce26d`, `190133d` and Run D; the `pyproject.toml`,
   `src/` and `.github/` rows; `ambiguous-gitmodules` for `.gitmodules` and `upstream/`;
@@ -240,9 +253,9 @@ and `33ce26df…`, where `a157c257…` is the `observe_d.sh reviewed` value of
 one verdict line, `verdict OK`, last. `before-setup.txt` and `after-execute.txt` carry
 the same line 2.
 
-| Observation | Time | Register lines in its window | Verdict |
+| Observation | Start | HOLD, LANDING, LANDED or WITHDRAWN lines on `opensoft/openRepoTools main` in its window | Verdict |
 | --- | --- | --- | --- |
-| `before-setup` | 16:22:00Z | 18 HOLD, LANDING, LANDED or WITHDRAWN lines in the 24 hours before (no earlier phase), 9 of them a HOLD or a LANDING, the last at 14:08:49Z | OK |
+| `before-setup` | 16:22:00Z | 18 in the 24 hours before (no earlier phase), 9 of them a HOLD or a LANDING; the last of those is a LANDING at 14:07:21Z, and the last line a HOLD RELEASED at 14:08:49Z | OK |
 | `gate` | 16:24:57Z | 0 since 16:22:00Z | OK |
 | `after-execute` | 16:25:51Z | 0 since 16:24:57Z | OK |
 | `end` | 20:40:44Z | 0 since 16:25:51Z | OK |
@@ -297,8 +310,8 @@ clone. Spec took 4 plan paths and code 26. Spec's tree digest is
 
 **Observation.** `after-execute` (16:25:51Z) passed: origin main FROZEN at
 `33ce26df…`, still no leg repository and no `adopt/` ref on GitHub (`execute` made its
-legs only in the sandbox), no register line since the gate. The prerequisites block is
-identical in `before-setup`, `gate` and `after-execute`.
+legs only in the sandbox), no register line for that repository since the gate. The
+prerequisites block is identical in `before-setup`, `gate` and `after-execute`.
 
 **stage2v, attempt v1** (16:26:08Z to `STAGE2-PASSED` at 16:26:19Z, every command at
 EXIT 0 in `runD/exits.txt`):
@@ -355,7 +368,7 @@ empty). Every step exited 0 in `runD/exits.txt`, and `inputs.txt` records
 | --- | --- | --- |
 | Spec leg | `f41ac906b8f707fd8969e307b658d79aa3827f83` | 1 commit, spec-0001 (70 in all) |
 | Code leg | `56142ed741f9cb1d66c62d5d19b3ebf9620a500d` | 3: code-0001, T010's workflow, the T009 caps (148 in all) |
-| Assembly, `candidate-v0` | `c67b0e6838c2c1ae25733df2c0b8316bb7e72452` | 5 past the split: assembly-0001, T010's exact-pin job, T007's front door, and two `bump-leg.py` bumps (spec to `f41ac906b8f7`, then code to `56142ed741f9`), each with the trailer `Rehearsal: D v0` |
+| Assembly, `candidate-v0` | `c67b0e6838c2c1ae25733df2c0b8316bb7e72452` | 5 past the split: assembly-0001, T010's exact-pin job, T007's front door, and two `bump-leg.py` bumps (spec to `f41ac906b8f7`, `2833b34`; then code to `56142ed741f9`, `c67b0e6`), each bump with the trailer `Rehearsal: D v0` (the three patch commits have none) |
 | Nested `upstream/openRepoShape` | `190133d5e704e380c430f87ca9c4e31746de0012` | none |
 
 The candidate's pins are spec tree `bc2d1813…`, code tree `45b3f125…` and the shape
@@ -386,7 +399,8 @@ the attempt with `sha256sum -c --strict RECEIPT.sha256`. The window is `attempt.
 `attempt.txt`'s `argv`: P3 `v0 --state-root` a state root under the system temporary
 directory, `must`; P4, P5 and P7 `v0`; P10 `--original-repo` the shared checkout. Lane 1's
 milestone, #186 comment 6321243191 (2026-10-21T16:38:23Z), agrees with this record's stage
-times and with the PASS counts of P4, P7 and P10, and says the freeze still held.
+times and with the PASS counts of P4, P7 and P10, and says the freeze still held; its
+16:26:03Z for `after-execute` is that observation's end (16:25:51Z here is its start).
 
 | Script | Attempt | Window | Exit | PASS / FAIL / NOTE | Receipt (`sha256sum -c --strict`) | Surfaces |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -396,11 +410,13 @@ times and with the PASS counts of P4, P7 and P10, and says the freeze still held
 | P3, `suites_d.sh`, `must` | `suites-v0/a1` | 16:27:48Z to 19:57:58Z | **1** | jobs: 2 GREEN, 2 RED | exit 0, 32 rows OK | unchanged |
 | P5, `wheel_d.sh` | `wheel-v0/a1` | 16:28:08Z to 18:20:03Z | **2** | 10 / 0 / 1 SKIP | exit 0, 36 rows OK | unchanged |
 
-No script exited 70, 71 or 72: the exits are 0, 0, 0, 1 and 2. For each of the five
-attempts, and for the two SMOKE attempts under P3, the shim log is empty and
-`surfaces.diff` is empty, and `SUMMARY.txt` says "real surfaces: unchanged". P3's 1 is its
-two RED jobs; P5's 2, which its header defines as no FAIL but a step SKIPPED, is the
-skipped pipx step. Neither is the watch's 70.
+No script exited 70, 71 or 72: the exits are 0, 0, 0, 1 and 2. In a script, 70 means a
+watched surface changed, 71 that the surfaces could not be watched, 72 that there is no
+sealed record; in `observe_d.sh`, 71 is origin main MOVED and 72 a leg repository EXISTS
+(PLAN 10.1, 10.2). For each of the five attempts, and for the two SMOKE attempts under P3,
+the shim log and `surfaces.diff` are empty, and `SUMMARY.txt` says "real surfaces:
+unchanged". P3's 1 is its two RED jobs; P5's 2, which its header defines as no FAIL but a
+step SKIPPED, is the skipped pipx step. Neither is the watch's 70.
 
 **P4, the install comparison** (`install-v0/a1`; seeds s1 and s2, the `p11` seed, a
 pre-#237 workstation, not selected). Each seed ran, in a disposable home inside the
@@ -464,8 +480,12 @@ checkout; no `--expect-spec`, because the anchors check `results.txt`'s counts; 
 - **Hash resolution (NOTE):** 648 distinct hex tokens in those documents (558 with a
   letter a to f). By the file's stated rule, 400 are not an openRepoTools commit here, 17
   are openRepoShape's, 143 resolve only in the original repository and 88 in the source's
-  main history; 46 resolve in the spec leg itself. The file says its classes follow its
-  own rule and are not comparable with the earlier record's figures.
+  main history; 46 resolve in the spec leg itself, which the file flags as unexpected.
+  Lane 2 reads them as earlier runs' spec-leg commits that this deterministic `execute`
+  made again (`03818f50c581`, `0c2b499dc1b4` and `2374d2ec8f8f` are in D's spec leg, absent
+  from the source clone and cited in `root-guidance-2026-10-08.md`; #186 6327441086). The
+  file says its classes follow its own rule and are not comparable with the earlier
+  record's figures.
 - **Recount (NOTE)** of cross-leg citations in feature 004's working files (40 files):
   by directory entries only, 306 mentions by lines in 34 files (380 by occurrences);
   with the distinctive file names, 435 in 35 (591); with every code-leg entry, the upper
@@ -475,45 +495,63 @@ checkout; no `--expect-spec`, because the anchors check `results.txt`'s counts; 
 ### P3, the suites (`suites-v0/a1`)
 
 Exit **1**, 16:27:48Z to 19:57:58Z. Its `pytest-version.txt` reads
-`pytest 7.4.4 (python3 = /usr/bin/python3)`. The state root was `rehearsal-d-state0`
-under the system temporary directory, which gives run.sh a TMPDIR of 70 characters.
+`pytest 7.4.4 (python3 = /usr/bin/python3)`: run.sh found no repository venv (no log holds
+its "runs from the repository venv" line), so the suite ran under the system's Python and
+pytest. The state root was `rehearsal-d-state0` under the system temporary directory (23
+characters with `/tmp/`), which gives run.sh a predicted TMPDIR of 70 (`suites-v0.out`).
 
 | Job | Verdict | Seconds | Result |
 | --- | --- | ---: | --- |
 | `upstream-pin` | GREEN | 20 | 15 tests, 0 failed, 0 skipped |
-| `composed` | **RED** | 6584 | 3009 tests: 4 failed, 6 skipped; started at a load average of 63.28 |
+| `composed` | **RED** | 6584 | 3009 tests: 4 failed, 6 skipped; started 16:28:13Z at a load average of 63.28 |
 | `refusals` | GREEN | 144 | 6 of 6 broken layouts refused as expected, each exit 4; cases 1 and 5 say "a named root is never replaced by a found one" (#193 item 15) |
-| `standalone` | **RED** | 5854 | 3009 tests: 1 failed, 33 skipped; started at a load of 3.89 |
+| `standalone` | **RED** | 5854 | 3009 tests: 1 failed, 33 skipped; started 18:20:23Z at a load of 3.89 |
 
 **The failures** (5 results, 4 tests; `composed.log`, `standalone.log` and the junit files):
 
 - **(a) `test_repo_hygiene::test_no_committed_file_names_a_host_absolute_path`, composed
   only.** Its four offenders are the rehearsal's own local URLs: lines 3 and 6 of the
   assembly root's `.gitmodules` (D's local leg remotes) and lines 15 and 33 of its
-  `shape/README.md` (a `git clone --recurse-submodules` of D's local source clone). At the
-  cutover they are GitHub's URLs, which the test does not name; D cannot show that.
+  `shape/README.md` (a `git clone --recurse-submodules` of D's local source clone). They
+  come from the tool: with `--local-remote-dir`, openRepoShape `190133d`'s `execute` writes
+  the local remotes and source path there (`adopt-project.py:10670-10671`, `_remote_urls` at
+  `:10734`, `:10749`, `:11921`; `templates/assembly-root/README.md:15,33`), and without it
+  `https://github.com/opensoft/` URLs (`:10741`). Lane 3's run of the test on a copy of
+  `cand-v0/clone`, as the composed job runs it, failed on exactly these four lines, and with
+  the cutover's URLs in them gave `1 passed, 3008 deselected`, no other offender and 0 shim
+  calls (#186 6327470307). The rule never matches an `https://` URL
+  (`tests/test_repo_hygiene.py:2592-2617`), so local remotes outside a home or the bench
+  root would turn the test green and prove nothing (lane 2).
 - **(b) `test_lane_helpers_suite::test_the_lane_helper_suite_passes`, in both jobs,** one
   case each time, "…with clause (c)'s directory and window in the tail, for the person
   reading the row" (composed 4890 passed, 1 failed; standalone 4872 passed, 1 failed, 3
   skipped). The suite's text: "expected to contain [; dir …/projects/repoA; window ]", and
-  the row's cell it got ends `; dir …/projects/repoA; ...`, with no window. This is #180's
-  row-stamp length limit (the pre-review's S5): `lane-start` cuts the stamp line at 230
-  characters.
-  PLAN 10.2 and `suites_d.sh`'s header put the limit at "about 72" for run.sh's TMPDIR,
-  but the stamp through `; window ` was 231 characters at P3's 70. Lane 1's record writer ran
-  `lane-start`'s own cut on a line built from the logged text: the case passes at 69 and
-  fails at 70.
+  the row's cell it got ends `; dir …/projects/repoA; ...`, with no window: `lane-start`
+  cuts the stamp line at 230 characters (`cut_to_line`, `lane-start:3762-3771`), and the
+  case's HOME is under `mktemp -d`, so the stamp grows with run.sh's TMPDIR. Lane 1's record
+  writer, lane 2 and lane 3 each recomputed the cut: through `; window ` it is 230 characters
+  at a TMPDIR of 69 (a pass) and 231 at 70, and under a C locale, where the em dash counts
+  3, it fails from 68. **This is not a condition of the rehearsal.** The case is r2's F3,
+  `tests/test_lane_helpers.sh:1272` (`repoA-1`), which #215 left when it closed #180 (it
+  moved only `repoA11b`); r2's F4 case, `:8551-8552`, fails from 71 (lane 3). CI's
+  `exact-pins` job (T010; `composed.yml:106` in the candidate) runs
+  `bash code/tests/run.sh -rs` with no `XDG_STATE_HOME`, at a TMPDIR of 65 plus the pid's
+  digits: 69 at four (a pass, no margin), 70 at five (D's failure). "About 72", in PLAN 10.2
+  and `suites_d.sh`'s header, was wrong. Tracked as #304.
 - **(c) two `test_claude_current` cases, composed only:**
   `test_a_native_another_launch_finished_while_this_one_waited_is_read_again` (it asserts
   "updated by another launch" in stderr, which says only "updating the native install
   toward 2.1.284 … updated") and
   `test_a_copy_ahead_of_npm_that_appears_during_the_wait_is_ahead` (exit 1: "no runnable
   Claude Code was found by absolute path … the update lock … was not free within 4s").
-  Both are lock-timing races with a lock holder of 2 s and 1.5 s, and both passed in
-  standalone.
+  Both are lock-timing races with a lock holder of 2 s and 1.5 s. Both passed in
+  standalone and in `s2`, composed's other 99 `test_claude_current` tests passed, and
+  composed began at a load average of 63.28 with D's own P5, P4 and P7 starting around it
+  (16:28:08Z to 16:28:36Z). Tracked as #305.
 
 **The skips,** from `composed.xml` and `standalone.xml` (function names without their
-`test_`). The 6 of composed are also standalone's first 6: five `test_package` wheel
+`test_`). The 6 of composed are among standalone's 33 (its 11th to 16th): five
+`test_package` wheel
 tests, "OPENREPOTOOLS_TEST_WHEEL is unset"
 (`wheel_payload_is_the_commits_blobs_byte_for_byte_and_mode_for_mode`,
 `wheel_modules_are_the_commits_own`,
@@ -555,23 +593,27 @@ spec root and skips 27 more:
 EVIDENCE", and they stand beside P3's results, never in place of them. Each receipt
 verifies (15 rows OK), `surfaces.diff` is empty, and each reads P3's pytest line.
 
-| Attempt | Selection (`composed`) | State root, TMPDIR | Window | Result |
+| Attempt | Selection (`composed`) | State root, predicted TMPDIR | Window | Result |
 | --- | --- | --- | --- | --- |
-| `s1` | the lane-helper suite case | `rds2` (9 characters), about 56 | 20:00:06Z to 20:39:25Z | GREEN: 1 passed in 2357 s, exit 0 |
-| `s2` | the hygiene case and the two timing cases | `rehearsal-d-state1` (23, as P3's), 70 | 20:00:30Z to 20:39:47Z | RED: 2 passed, 1 failed in 12.81 s, exit 1 |
+| `s1` | the lane-helper suite case | `rds2` (9 characters with `/tmp/`), 56 | 20:00:06Z to 20:39:25Z | GREEN: 1 passed in 2357 s, exit 0 |
+| `s2` | the hygiene case and the two timing cases | `rehearsal-d-state1` (23 with `/tmp/`, as P3's), 70 | 20:00:30Z to 20:39:47Z | RED: 2 passed, 1 failed in 12.81 s, exit 1 |
 
-`s1` passing says (b) is the length. In `s2` both timing cases pass, at a start load of
-3.70, which says (c) is load; the hygiene case fails with the same four offenders, which
-says (a) is deterministic, from the local URLs. `s2`'s pytest began at 20:39:34Z, after
-`s1` ended: it had waited for the pytest lock. A first start at P3's own state root was
+`s1` passing says (b) is the length. In `s2` both timing cases pass, but its start load of
+3.70 was read at 20:00:31Z, before its wait for the pytest lock (its pytest began at
+20:39:34Z, after `s1` ended), so its cases ran with no reading; the stronger evidence for
+(c) is standalone, which passed both at a start load of 3.89. The hygiene case fails in
+`s2` with the same four offenders, which says (a) is deterministic, from the local URLs. A
+first start at P3's own state root was
 refused (`runD/suites-v0.out`), because that root was not empty: P3's tests had left
 `lanes-index.lock` and `lanes-index.status.json` in it (under the system temporary
 directory, not a real surface). P3 and `s1` left their roots, as their notes say; nothing
 was removed.
 
-What D shows: P3 is RED, on three conditions of the rehearsal (local URLs, a TMPDIR one
-character past this case's limit, a load of 63). None is shown to be a defect of the
-candidate, and none is shown to be absent at the cutover. D has no green `composed` run.
+What D shows: P3 is RED for three reasons. (a) is the rehearsal's own local URLs, shown
+absent with the cutover's URLs (lane 3's run, above). (c) is load on two timing cases
+(#305). (b) is a case #215 left, which CI's `exact-pins` job can hit (#304): it is not a
+condition of the rehearsal, and it is not shown absent at the cutover. D has no green
+`composed` run.
 
 ### P5, the wheel (`wheel-v0/a1`)
 
@@ -598,38 +640,70 @@ SKIPPED". Ten steps PASS and one is SKIP (`steps.tsv`, `SUMMARY.txt`):
 39614104431, a push created 14:07:44Z) is `success`, and its `package` job's pipx steps (8
 to 11) are each `success`: "pipx from its hash lock", "install the wheel with pipx", "the
 unstamped --version, line for line" and the `--install` step beside pipx's link. That job
-runs Python 3.9 and pipx 1.11.1 from the lock, on the single repository's `tests.yml`
-(blob `46feb68`), not on D's candidate. The candidate code leg's `tests.yml` (blob
-`a24d126`) has the same four steps, which only the code leg's own CI can run.
+runs Python 3.9.25 and pipx 1.11.1 from the lock, on the single repository's `tests.yml`
+(blob `46feb68`), not on D's candidate, and installed main's own wheel, `c23aebce…`, not
+D's `b93503b1…` (both 1,078,902 bytes; lane 2 finds them equal but for timestamps, from
+different `SOURCE_DATE_EPOCH` values, #186 6327441086). The candidate code leg's
+`tests.yml` (blob `a24d126`) has the same four steps and a byte-identical `package` job,
+which only the code leg's own CI can run. That is enough for row 33 (its ledger evidence
+is P5); for row 34 pipx first runs on the candidate in that CI, after Gate C, unless Brett
+accepts that (lane 3).
 
 What D's record says of P3 and P5, whatever their results:
 
-- **Jobs:** P3's job word is `must`, jobs 1–4: `upstream-pin`, `composed`, `refusals`,
-  `standalone` (`attempt.txt`).
 - **pytest** is the system's, with no `--pytest-wheels` and no `--pytest-sha256sums`
-  (`attempt.txt` of both). P3's `pytest-version.txt` reads
+  (`attempt.txt` of both), so no pytest hash was recorded. P3's `pytest-version.txt` reads
   `pytest 7.4.4 (python3 = /usr/bin/python3)` and P5's reads `pytest 7.4.4`, not the
   8.3.4 CI pins: the isolated HOME hides the user-site pytest the real HOME has
-  (`suites-v0.out`, WARNING; `pytest-setup.log`). Any pytest hash the scripts record is
-  self-consistency only. P5 ran Python 3.12.3 with pip 24.0, where CI runs Python 3.9.
+  (`suites-v0.out`, WARNING; `pytest-setup.log`), and run.sh found no repository venv (see
+  P3). D and main's CI collect the same 3,009 tests, and CI's two `tests` jobs, at 8.3.4,
+  are green (lane 3). P5 ran Python 3.12.3 with pip 24.0, where CI runs Python 3.9.
 - **The wheel build** is `--no-index`, but pip's isolated build installs the build's own
   dependencies (hatchling and what it needs) from the find-links directory with no hash
   check. Only the venv's install of the lock is hash-checked.
-- **No claim of a run without the network** is made for either: the shims and
-  `GIT_ALLOW_PROTOCOL=file` stop only `gh`, `curl`, `wget` and git's non-file
-  transports, and Python, pip and raw sockets are not stopped.
+- **No claim of a run without the network** is made for either (Setup, Transport).
 
 **What did not run in D.** P3's job 5, no-submodule, runs only when it is named, and D did
 not name it; P9, lane 2's matrix rerun, does not run in D. Both follow Brett's "include
-P7, P8, P10". So Gate C's checklist row 31 rests on r2's 242-skip classification and
-main's CI, and row 27 on lane 2's 15/15 matrix (#186 6073209094, final at `13cc752`). This
-record does not say that D ran either. P7, P8 and P10 are the optional evidence that does
-run in D.
+P7, P8, P10". This record does not say that D ran either. P7, P8 and P10 are the optional
+evidence that does run in D. What Gate C's two rows rest on instead:
+
+- **Row 31 rests on main's CI at `33ce26d`** (run 39614104431) and D's runs, not on r2's
+  242-skip classification (`candidate-2026-10-09.md:224-242`, over `run-53-r2-nosub.log`),
+  which is of a suite of 1,416 tests; D and CI collect 3,009. The `tests-no-submodule` job
+  (`-rs`) has 2050 passed and 959 skipped. Lane 3 classified the 959 (#186 6327470307),
+  lane 2 parsed the log on its own (6327803546), and the job log repeats it: 884 the
+  documented no-submodule skip (the pinned openRepoShape is not checked out), 60 zsh absent
+  on the runner, 9 composed acceptance, 5 `OPENREPOTOOLS_TEST_WHEEL` unset, 1 the
+  byte-count case. The `tests` job (plain `-q`, no skip list: 2934 passed, 75 skipped) has
+  the other four classes' 75, so job 5 adds only the 884; the 717 more than r2's 242 are
+  +666 submodule-gated tests, +2 composed-acceptance tests and +66 conditional skips, minus
+  17 (documents now resolving to the code root). With D's refusals (6 of 6) and
+  standalone's skip list, both lanes accept row 31 without job 5.
+- **Row 27 rests on lane 2's T008 matrix, not on "15/15, final at `13cc752`".** Its runs are
+  four comments: 6073209094, an interim on `2411f40` (the 15/15); 6088812080, the final at
+  `13cc752`, with seven open items; 6103618033 at `cddd1f7`; and 6152491855, R4, at #191's
+  `8246983` (landed as `a74c7fc`), unchanged from `cddd1f7`, with 3 FAIL and 4 CHANGED among
+  its 341 verdicts. R4 measured `a74c7fc`'s installer, blob `7aa697c`; D ships `ca4fc44`,
+  four commits later (#209, #237's hook gate, #228's package and #292: 980 lines added, 72
+  removed). None of that diff's 35 hunks lies in the resolution, pin, collect or receipt
+  code (lines 255–546 and 762–2074 at `33ce26d`; lane 2, #186 6327803546), so R4's verdicts
+  still hold for rows 3, 5–11, 13, 14a and 16–26 and, except their hook clause, for rows 1
+  and 2. The gaps: seven verdicts flip by design, because #237's gate is closed in a fresh
+  HOME (04a, 12, 15a–e); there is no fresh bash 3.2.57 evidence on the new code, and 14b and
+  14c were last run at `2411f40`; and no cell covers the gate-open path, the strip path,
+  `wip init`'s reconcile or pipx and package mode, which the in-repo tests and main's CI
+  cover. D adds its composed run of `test_install_payload_source` (r01–r15, 109 passed) and
+  P4's local installs with the gate open and closed. At a main head the old harness measures
+  run C's installer (`9b7cbd2`), so a new run needs a corrected one: Brett's option is a
+  delta P9 (lane 3 endorses it, #186 6327831170), which lane 2 makes and runs on his word,
+  over rows 1, 2, 4, 11–13 and 15 with the gate open and closed and one pipx-link cell,
+  compared with R4. If he declines, the gaps above stand.
 
 ### The surface watch
 
 Each script took a snapshot of the real install surfaces when it started and again when it
-ended, and exits 70 when the two differ.
+ended, and exits 70 when the two differ (71 and 72 are defined under the post-run table).
 
 - **The watched places,** as every attempt's `surfaces-before.txt` names them: under `~`,
   `installed.tsv` in `.local/state/openRepoTools/` (absent) and in
@@ -641,15 +715,15 @@ ended, and exits 70 when the two differ.
   mode, size, mtime, path and link target; a change that keeps all of those is not seen,
   nor is a subtree the listing cannot read. A skills directory's `synced/` and `.trash/`,
   which Claude Code's skill sync writes many times a day, are left out.
-- **Every lane and profile on the bench shares those places,** so a 70 would say that a
-  place changed during the run, not who changed it. This record does not claim that
-  nothing was written outside an attempt: the watch, like the command scan below, is a
-  reader's aid. P3 and `s1` left lane-index files under their state roots, and P8 saw
-  other actors' churn outside the watch.
-- **Windows** (`attempt.txt`'s `started` to `pid.txt`'s `finished`): P3 16:27:48Z to
-  19:57:58Z, P5 16:28:08Z to 18:20:03Z, P4 16:28:17Z to 16:28:55Z, P7 16:28:36Z to
-  16:29:05Z, P10 16:32:56Z to 16:33:02Z, `s1` 20:00:06Z to 20:39:25Z and `s2` 20:00:30Z to
-  20:39:47Z; exits 1, 2, 0, 0, 0, 0 and 1. None is 70.
+- **Every lane and profile in this container shares those places,** so a 70 would say that
+  a place changed during the run, not who changed it; `~/.claude` is shared across the
+  bench's containers and `~/.local` is not (lane 2's `installed.tsv` is `3fe26405…`, D's
+  `5d0ccba5…`), so an install in another container is outside the watch altogether (#186
+  6327441086). This record does not claim that nothing was written outside an attempt: the
+  watch, like the command scan below, is a reader's aid. P3 and `s1` left lane-index files
+  under their state roots, and P8 saw other actors' churn outside the watch.
+- **Windows** (`attempt.txt`'s `started` to `pid.txt`'s `finished`) are those of the post-run
+  and SMOKE tables; their exits are in the same tables, and none is 70.
 - **Installs and setups in the windows.** In all seven attempts `surfaces.diff` is empty
   and the before- and after-snapshots hold the same 207 lines: those of P3, P4, P5, P7,
   `s1` and `s2` are byte-identical (sha256 `b812e02a…`), and P10's, which
@@ -715,10 +789,12 @@ are the first and third of the three notes below (workstation 1, a local origin,
 
 **T18's eleven follow-ups (its section 5): none is fixed.** Each was checked with its log.
 The overlay scripts they belong to are byte-identical between workBenches `ffd5516` and
-its `origin/main` `d89869b`, and none of the 60 code-leg commits dated after 2026-10-09
-touches these behaviours. Follow-up 7 is one change worse (the third failing spec change).
-Not exercised: macOS, the `gh`-backed fork and shape-currency checks, and
-`setup-openspeckit` from workBenches `origin/main` (476 lines different).
+its `origin/main` `d89869b`, and none of the subjects of the candidate code leg's 60
+commits dated from 2026-10-09 on (59 after that day; 3 are the rehearsal's own patches)
+names these behaviours: P8 read the subjects, not the diffs. Follow-up 7 is one change
+worse (the third failing spec change). Not exercised: macOS, the `gh`-backed fork and
+shape-currency checks, and `setup-openspeckit` from workBenches `origin/main` (476
+insertions and 6 deletions different).
 
 **Judgement calls:** (1) in P8's own copy of the root remote, `main` is fast-forwarded
 to the candidate `c67b0e6`: D's remote holds it as `candidate-v0`, with `main` at the
@@ -753,10 +829,16 @@ attempts had ended (`<W>/d-operator-log/act10-end.log`; 0 STOP lines in exits.tx
 verdict is **OK** (`<S>.observe/end.txt`):
 
 - origin main `33ce26df…` FROZEN; 0 `adopt/` refs; `openRepoTools-spec` and
-  `openRepoTools-code` absent (HTTP 404); the shared checkout as at the start (0 status
-  lines, 0 `adopt/` branches);
-- 0 HOLD, LANDING, LANDED or WITHDRAWN lines after 16:25:51Z; with the windows of the gate
-  and after-execute, none from 16:22:00Z to 20:40:44Z;
+  `openRepoTools-code` absent (HTTP 404); the shared checkout's `HEAD` (`21e0829e…`),
+  status (0 lines) and `adopt/` branches (0) as at the start. Its refs digest moved
+  (`35a1e2d9ed5f9b44` to `f469bb3c0ca732e7`) because six worktree heads moved, local
+  branches the freeze's rules do not cover: lane 2's `gap-275`, `gap-278`, `gap-279` and
+  `gap-287`, lane 4's `ort4-290-named-read` and `ort4-291-control-root`;
+- 0 HOLD, LANDING, LANDED or WITHDRAWN lines on `opensoft/openRepoTools main` after
+  16:25:51Z; with the windows of the gate and after-execute, none from 16:22:00Z to
+  20:40:44Z. The observation reads only that repository's lines: lane openRepoShape-1's
+  HOLD, LANDING (#430), LANDED (`038dafb`) and HOLD RELEASED on
+  `opensoft/openRepoShape main`, 18:41:48Z to 18:43:16Z, are in this window and not counted;
 - line 2 is `observe_d.sh sha256 a157c257…; S=<S>; expect 33ce26df…`, equal to the
   `observe_d.sh reviewed` value of `logs/setup-scripts.log` and to the sha256 of
   `<P>/scripts/observe_d.sh` (PLAN 10.1, F8); `before-setup`, `gate` and `after-execute`
@@ -793,15 +875,17 @@ proof that nothing else is there.
 **D's remotes at the end.** Lane 1 read their refs at 20:40:54Z with `git for-each-ref`
 (`<W>/d-operator-log/act10b-remotes-at-end.txt`): D's execute remotes hold `main` at
 `de756faf8797` (spec) and `d9e7d568011b` (code), 1 ref each; the candidate's copies hold
-`f41ac906b8f7` (spec), `56142ed741f9` (code) and `92e4e4172779` (assembly, 2 refs: `main`
-and `candidate-v0`); the source clone is at `33ce26dffc52` (6 refs). They are the commits
-`results.txt` and stage 4 recorded.
+`f41ac906b8f7` (spec), `56142ed741f9` (code) and `92e4e4172779` (assembly, 2 refs: `main`,
+the commit printed, and `candidate-v0`, which the file does not print: its digest
+`bd515adc2eee30f0` recomputes with `candidate-v0` at `c67b0e6838c2`); the source clone is
+at `33ce26dffc52` (6 refs). They are the commits `results.txt` and stage 4 recorded.
 
 ## Private log SHA256s
 
 Each digest was computed for this record from the file as it stands; the private receipt
 keeps the files. The act logs and the extract are under `<W>/d-operator-log/`, the
-observations under `<S>.observe/`, the rest under `<S>/runD/`.
+observations, `command-scan.txt` and `prereq.diff` under `<S>.observe/`, P8's two files
+under `<W>/p8-t018-d/`, the rest under `<S>/runD/`.
 
 | File | sha256 |
 | --- | --- |
@@ -849,12 +933,24 @@ The published plan is the file on the evidence branch under
 name the revisions, the leg repositories, their visibility and the final plan. Still to
 come after this record:
 
-- the review of this record by lane 3 and lane 2 (lane 3 asked to review it with lane 2,
-  #186 6323118228);
+- lane 3's re-check of this version's fixes, with the post-D round (the reviews of
+  `3845c53` are lane 2's #186 6327441086 and lane 3's 6327470307);
 - P3's `composed` and `standalone` jobs stand RED in D, and the SMOKE attempts do not turn
-  them green: whether P3 runs again before Gate C, on a quiet bench, at a TMPDIR of at
-  most 69 characters and with GitHub's URLs in the candidate's `.gitmodules` and
-  `shape/README.md`, is lane 1's and Brett's call;
+  them green. Row 34 stays PARTLY:
+  - **(b), #304, is open and needs a cutover decision (lane 1 and Brett).** Before
+    `exact-pins` becomes a required check (e9), port #215's fix to
+    `tests/test_lane_helpers.sh:1272` and `:8551-8552` as a reviewed code-leg follow-up at
+    T014, or give `exact-pins` a short `XDG_STATE_HOME`; or Brett accepts row 34 resting on
+    P3, `s1`, `s2` and lane 3's run, with (b)'s zero margin at a 4-digit pid. A rerun at a
+    TMPDIR of 69 or less would hide (b), and a full rerun adds nothing until it is fixed;
+  - (a) is shown absent at the cutover, and (c) is load (#305). After a fix for (b), lane 2
+    would take one run of the case at a TMPDIR of 70 or more (about 40 minutes) and lane 3
+    one green composed run at CI's run-root length, on a quiet bench, with the cutover's
+    URLs on a copy and pytest 8.3.4 (`--pytest-wheels`); the composed run of record is the
+    cutover's T010 job and T015, and the legs' first CI comes after Gate C;
+  - row 33 rests on CI for pipx; row 31 is evidenced without job 5 (which would meet #304
+    at a TMPDIR of 70 or more: lane 2); row 27 rests on `7aa697c` with the gaps above,
+    unless Brett orders the delta P9;
 - the plan, regenerated from the frozen source at the cutover: D's published plan is a
   rehearsal input with `execution_authorized: false`, and stays on an evidence branch with
   this record until the root-split PR (e2);
@@ -863,14 +959,28 @@ come after this record:
   follow-up names (the testpypi and pypi environments and the tag ruleset in
   `openRepoTools-code`, a test.pypi.org trusted publisher for it, and a pypi.org pending
   publisher naming `openRepoTools-code`, `release.yml` and the pypi environment: #228);
+- also inside the cutover, D7's other half (Brett: "yes to e2 and D7, names only"): `check`
+  run in the real cutover environment, its `git config --show-origin --list` names recorded
+  and never their values; D ran only the I4 half (Mapping);
 - a round after D and before the cutover: lane 3's NITs 121–123, 131–135 and 141–144, with
-  the tested fixes for 141 and 142 (#186 6320876769); the message text at
-  `setup_d.sh:237` (`pin_expect`);
-  #299's four NITs on the dated notes (lane 3's review of #299, comment 6317075196); the
-  published plan's header sentence, which overstates what the decisions file did
-  (Mapping); starting the stage acts from a neutral directory (Setup); and the "about
-  72" that PLAN 10.2 and `suites_d.sh`'s header give for run.sh's TMPDIR, which P3's 70
-  disproved for case (b);
+  lane 3's tested fixes for 141 and 142 (#186 6320744628; the round is listed in 6320876769); the message text at
+  `setup_d.sh:237` (`pin_expect`); the published plan's header, which overstates what the
+  decisions file did and drops "Gate B remains open (T006-T011)", both fixed in
+  `publish_plan_d.py`; starting the stage acts from a neutral directory (Setup); the "about
+  72" in PLAN 10.2 and `suites_d.sh`'s header (the defect is #304); `pid_write`, which
+  restamps `started` at every rewrite in `suites_d.sh` and `wheel_d.sh` (the line is also
+  in `install_d.sh` and `rollback_d.sh`): P3's `pid.txt` reads 19:57:57Z and P5's 18:20:03Z,
+  where `attempt.txt` has 16:27:48Z and 16:28:08Z, which this record uses; and an
+  observation: the lane-helper suite sets HOME (`tests/test_lane_helpers.sh:269`) but never
+  `XDG_STATE_HOME`, which `lanes-index` prefers (`lanes-index:174`), so P3 and `s1` wrote
+  their index files into their state roots and, under a real `XDG_STATE_HOME`, it would
+  write into the live index's directory (lane 2);
+- notes that cannot land before the cutover (e2), because they edit main's own documents
+  or a landed PR's body: #299's four NITs on the dated notes (lane 3's review of #299,
+  comment 6317075196; `gate-b-checklist.md:202`, `candidate-2026-10-09.md:104`,
+  `gate-b-status-2026-10-09.md:187`), and `gate-b-status-2026-10-09.md:186`'s "none fires
+  on `ubuntu-24.04`", which is stale: 66 conditional skips fire there (lane 2, #186
+  6327803546). Where they go, for example the spec leg after the split, is lane 1's call;
 - T18's eleven follow-ups, all still present (the P8 section), for the cutover runbook;
 - the e2 freeze: main stays at `33ce26d` until the cutover, and a second `execute`, in a
   new sandbox, happens only on Brett's word.
