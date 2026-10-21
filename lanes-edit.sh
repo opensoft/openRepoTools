@@ -15703,8 +15703,9 @@ ws_pending_refuse() {   # <canonical lane> <its checkout>
 # refused, "expected exactly 1 row", leaving the clone. So where the lane has
 # no checkout yet and the verb's arm needs exactly one row of that lane (the
 # four routed `row_line` callers; `rename-lane` goes through its OLD name,
-# whose row it needs), a lane with no row in the published register refuses
-# first, and nothing is cloned.
+# whose row it needs; `write-handoff`, slice 2a, writes the handoff the row
+# names, so a lane with no row has none), a lane with no row in the
+# published register refuses first, and nothing is cloned.
 #   * AND THE WRITES THAT NAME A LANE WITH NO ROW (lane openRepoTools-3's
 #     re-check of #282, R4-1, for slice 1b): `log`, `commit`, `request-handoff`
 #     and `append-line` take a lane with no row — an archived lane keeps its
@@ -15737,7 +15738,7 @@ lrg_known() {   # <canonical lane> <1 = its published log answers too> — 0 kno
 }
 lane_row_gate() {   # <canonical lane> <its checkout>
   case "$cmd" in
-    set-row-state|replace-in-row|append-session-id|rename-lane) lrg_log=0 ;;
+    set-row-state|replace-in-row|append-session-id|rename-lane|write-handoff) lrg_log=0 ;;
     log|commit|request-handoff|append-line) lrg_log=1 ;;
     *) return 0 ;;
   esac
@@ -15755,7 +15756,9 @@ lane_row_gate() {   # <canonical lane> <its checkout>
   if [ "$lrg_log" = 1 ]; then
     die "lane $1 has no row and no object log on origin/$LANES_BRANCH (fetched just now into W), so no lane of that name was ever started or archived, and \`$cmd\` would write for it: its checkout $2/ was not cloned (Amendment 23 S1, S2). Nothing was written. Check the name — \`$SELF lanes\` lists every lane, and \`$SELF lanes --closed\` the closed ones — or start the lane first (lane-start; its \`add-row\` makes the row)." 2
   fi
-  die "lane $1 has no row in the register on origin/$LANES_BRANCH (fetched just now into W), and \`$cmd\` edits that lane's row: there is nothing for it to edit, so its checkout $2/ was not cloned (Amendment 23 S1, S2). Nothing was written. Check the name — \`$SELF lanes\` lists every lane — or add the row first (\`add-row\`)." 2
+  lrg_needs="edits that lane's row: there is nothing for it to edit"
+  [ "$cmd" != write-handoff ] || lrg_needs="writes the handoff that lane's row names: there is none to write"
+  die "lane $1 has no row in the register on origin/$LANES_BRANCH (fetched just now into W), and \`$cmd\` $lrg_needs, so its checkout $2/ was not cloned (Amendment 23 S1, S2). Nothing was written. Check the name — \`$SELF lanes\` lists every lane — or add the row first (\`add-row\`)." 2
 }
 
 # S2, IN ITS ORDER, for a write: (1) an explicit `LANES_REPO` keeps its meaning
