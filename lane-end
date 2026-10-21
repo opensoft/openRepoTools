@@ -1118,6 +1118,27 @@ SC_IDX
       die "lane $sc_runner, which LANES_LANE names, has no row in the register and no log (\`lanes --all\` does not list it), so the NOTED line this act ends with has no lane to be written for. Name your own lane: LANES_LANE=<your lane> $prog --sweep-checkouts --yes. Nothing was removed." 2
     fi
   fi
+  # THE NOTED LINE'S SESSION FIELD, found before anything is removed. It is
+  # the runner's transcript uuid and only that (Amendment 7(b)): the caller's
+  # `LANES_SESSION`, or the lane's last recorded session. A line the writer
+  # would refuse for want of one is refused here instead, while nothing is
+  # gone, rather than met after the removals it was to record. The writer
+  # asks again when the line is written, and its answer is the decision.
+  sc_uuid=""
+  if [ "$sweep_yes" = 1 ]; then
+    sc_uuid="${LANES_SESSION:-}"
+    if [ -z "$sc_uuid" ]; then
+      sc_uuid="$(LANES_NO_FETCH=1 "$LANES_EDIT" last-session "$sc_runner" 2>/dev/null)" || sc_uuid=""
+    fi
+    if ! is_fork_uuid "$sc_uuid"; then
+      if [ -n "${LANES_SESSION:-}" ]; then
+        sc_uwhy="LANES_SESSION is '$LANES_SESSION', which is not a transcript uuid"
+      else
+        sc_uwhy="LANES_SESSION is unset, and \`lanes-edit.sh last-session $sc_runner\` names none"
+      fi
+      die "lane $sc_runner has no transcript uuid for the session field of the NOTED line this act ends with (Amendment 7(b)): $sc_uwhy. Name your session: LANES_SESSION=\"\$CLAUDE_CODE_SESSION_ID\" LANES_LANE=$sc_runner $prog --sweep-checkouts --yes. Nothing was removed." 2
+    fi
+  fi
   # THE CHECKOUT A CALLER'S `LANES_REPO` NAMES, by its real toplevel. Eagle's
   # lane windows export one at the lane's own checkout, and a write may go
   # through it; it is never swept.
@@ -1385,10 +1406,14 @@ SH_REFS
       done < "$sds_a"
     done
   }
+  # A REPOSITORY LEANS ON A CLONE when its alternates file names an object
+  # directory AT OR UNDER that clone — its own `.git/objects`, or a store kept
+  # anywhere inside it — because removing the clone removes that store too.
   sc_dependents() {   # <path> [<paths gone in this run>] — what leans on it
-    scd_obj="$1/.git/objects"; scd_out=""
+    scd_out=""
     while IFS="$sc_tab" read -r scd_d scd_t; do
-      [ -n "$scd_d" ] && [ "$scd_t" = "$scd_obj" ] && [ "$scd_d" != "$1" ] || continue
+      [ -n "$scd_d" ] && [ "$scd_d" != "$1" ] || continue
+      case "$scd_t" in "$1" | "$1"/*) : ;; *) continue ;; esac
       case " ${2-} " in *" $scd_d "*) continue ;; esac
       scd_out="${scd_out:+$scd_out }$scd_d"
     done <<SCD
@@ -1548,22 +1573,70 @@ SS_ROW
   fi
   sc_dep_scan
 
-  printf '\n  under %s/:\n' "$sc_home"
-  sc_gone=""; sc_n_removed=0; sc_n_held=0; sc_n_removable=0; sc_partial=""
+  # LEAVES FIRST (S6.2 (b): *"so leaves go first"*). The candidates are taken
+  # in dependency order, every clone before the clones it borrows objects
+  # from, so one run can remove a whole chain of closed lanes' checkouts: a
+  # candidate is placed once no candidate not yet placed leans on it. Each
+  # pass places every candidate that is ready, in the order they were listed.
+  # A cycle — two clones naming each other's objects — places nothing more,
+  # and what is left goes last, in its listed order, where each is held by
+  # what leans on it. The order is a plan and never a decision: `--yes` reads
+  # what leans on each candidate again just before it is removed, so a
+  # dependent held earlier in the run keeps the whole chain it borrows from.
+  sc_placed=(); sc_order=()
+  sc_i=0
+  while [ "$sc_i" -lt "${#sc_cands[@]}" ]; do sc_placed[$sc_i]=0; sc_i=$((sc_i + 1)); done
+  sc_leaned_on_by_unplaced() {   # <index> — 0 when a candidate not yet placed leans on it
+    slu_c="${sc_cands[$1]}"
+    while IFS="$sc_tab" read -r slu_d slu_t; do
+      [ -n "$slu_d" ] && [ "$slu_d" != "$slu_c" ] || continue
+      case "$slu_t" in "$slu_c" | "$slu_c"/*) : ;; *) continue ;; esac
+      slu_j=0
+      while [ "$slu_j" -lt "${#sc_cands[@]}" ]; do
+        if [ "${sc_placed[$slu_j]}" = 0 ] && [ "${sc_cands[$slu_j]}" = "$slu_d" ]; then return 0; fi
+        slu_j=$((slu_j + 1))
+      done
+    done <<SLU
+$sc_dep_lines
+SLU
+    return 1
+  }
+  sc_more=1
+  while [ "$sc_more" = 1 ]; do
+    sc_more=0; sc_pass=()
+    sc_i=0
+    while [ "$sc_i" -lt "${#sc_cands[@]}" ]; do
+      if [ "${sc_placed[$sc_i]}" = 0 ] && ! sc_leaned_on_by_unplaced "$sc_i"; then sc_pass+=("$sc_i"); fi
+      sc_i=$((sc_i + 1))
+    done
+    for sc_i in ${sc_pass[@]+"${sc_pass[@]}"}; do
+      sc_placed[$sc_i]=1; sc_order+=("$sc_i"); sc_more=1
+    done
+  done
   sc_i=0
   while [ "$sc_i" -lt "${#sc_cands[@]}" ]; do
+    if [ "${sc_placed[$sc_i]}" = 0 ]; then sc_order+=("$sc_i"); fi
+    sc_i=$((sc_i + 1))
+  done
+
+  printf '\n  under %s/:\n' "$sc_home"
+  sc_gone=""; sc_n_removed=0; sc_n_held=0; sc_n_removable=0; sc_partial=""
+  sc_removed_names=""; sc_held_names=""; sc_partial_names=""
+  sc_say_held() {   # <path> <why it was a candidate> <what holds it>
+    printf '    hold       %s  %s; holds: %s\n' "$1" "$2" "$3"
+    sc_n_held=$((sc_n_held + 1)); sc_held_names="${sc_held_names:+$sc_held_names }${1##*/}"
+  }
+  for sc_i in ${sc_order[@]+"${sc_order[@]}"}; do
     sc_c="${sc_cands[$sc_i]}"; sc_why="${sc_cand_why[$sc_i]}"
     sc_l="${sc_cand_lane[$sc_i]}"; sc_new="${sc_cand_new[$sc_i]}"
-    sc_i=$((sc_i + 1))
     if ! sc_under_home "$sc_c"; then
       printf '    hold       %s  %s; it is not directly under %s/, and nothing else is ever removed\n' "$sc_c" "$sc_why" "$sc_home"
-      sc_n_held=$((sc_n_held + 1)); continue
+      sc_n_held=$((sc_n_held + 1)); sc_held_names="${sc_held_names:+$sc_held_names }${sc_c##*/}"; continue
     fi
     if [ "$sweep_yes" != 1 ]; then
       sc_judge_holds "$sc_c" 0 "$sc_gone"
       if [ -n "$SC_HOLD" ]; then
-        printf '    hold       %s  %s; holds: %s\n' "$sc_c" "$sc_why" "$SC_HOLD"
-        sc_n_held=$((sc_n_held + 1))
+        sc_say_held "$sc_c" "$sc_why" "$SC_HOLD"
       else
         printf '    remove     %s  %s%s\n' "$sc_c" "$sc_why" "${SC_IGN:+; $SC_IGN}"
         sc_gone="${sc_gone:+$sc_gone }$sc_c"; sc_n_removable=$((sc_n_removable + 1))
@@ -1577,8 +1650,7 @@ SS_ROW
     # then, it is moved aside under `<W>-lanes/` — so its S1 path is absent at
     # once and the next write there clones afresh — and the aside removed.
     if ! sc_lock_take "$sc_c"; then
-      printf '    hold       %s  %s; holds: %s\n' "$sc_c" "$sc_why" "$SC_WHY"
-      sc_n_held=$((sc_n_held + 1)); continue
+      sc_say_held "$sc_c" "$sc_why" "$SC_WHY"; continue
     fi
     sc_act_hold=""
     if ! sc_fetch "$sc_c"; then
@@ -1592,22 +1664,22 @@ SS_ROW
     fi
     if [ -n "$sc_act_hold" ]; then
       sc_lock_drop
-      printf '    hold       %s  %s; holds: %s\n' "$sc_c" "$sc_why" "$sc_act_hold"
-      sc_n_held=$((sc_n_held + 1)); continue
+      sc_say_held "$sc_c" "$sc_why" "$sc_act_hold"; continue
     fi
     sc_aside="$sc_home/.${sc_c##*/}.removing-$sc_utc-$$"
     if ! sc_under_home "$sc_c" || [ -e "$sc_aside" ] || [ -L "$sc_aside" ] || ! mv -- "$sc_c" "$sc_aside" 2>/dev/null; then
       sc_lock_drop
-      printf '    hold       %s  %s; holds: it could not be moved aside to %s\n' "$sc_c" "$sc_why" "$sc_aside"
-      sc_n_held=$((sc_n_held + 1)); continue
+      sc_say_held "$sc_c" "$sc_why" "it could not be moved aside to $sc_aside"; continue
     fi
     SC_LOCK=""   # it went with the checkout
     if sc_under_home "$sc_aside"; then rm -rf -- "$sc_aside" 2>/dev/null || :; fi
     if [ -e "$sc_aside" ] || [ -L "$sc_aside" ]; then
       printf '    PARTLY     %s  %s; moved aside to %s, which could not all be removed\n' "$sc_c" "$sc_why" "$sc_aside"
       sc_partial="${sc_partial:+$sc_partial }$sc_aside"
+      sc_partial_names="${sc_partial_names:+$sc_partial_names }${sc_aside##*/}"
     else
       printf '    removed    %s  %s\n' "$sc_c" "$sc_why"
+      sc_removed_names="${sc_removed_names:+$sc_removed_names }${sc_c##*/}"
     fi
     sc_gone="${sc_gone:+$sc_gone }$sc_c"; sc_n_removed=$((sc_n_removed + 1))
   done
@@ -1642,6 +1714,33 @@ SS_ROW
   fi
   printf '\n  %s removed, %s held under %s/; %s clone(s) beside W left.\n' \
     "$sc_n_removed" "$sc_n_held" "$sc_home" "${#sc_beside[@]}"
+  # THE NOTED LINE (S6.2; S2 lists the sweep among the writers): ONE line in
+  # the runner's own log, naming what was removed and what was held, written
+  # by `lanes-edit.sh log` and so through the runner's own checkout under S3
+  # and S4. It is written with `LANES_NO_FETCH` UNSET, because S3 refuses a
+  # writer whose fetch did not run (ratified choice 2; rv1b's MUST 3 on
+  # `lane-worktrees`). Nothing removed is nothing to record, and nothing is
+  # written. The paths are spelled from the projects root, `<W>-lanes/<name>`,
+  # never from the host's own root, and every name in the line is one this
+  # sweep already holds to letters, digits, `.`, `_` and `-`, so the free
+  # text's own rules (no ` — `, no newline, no leading arrow) hold for it.
+  if [ "$sc_n_removed" -gt 0 ]; then
+    sc_rel="${sc_home##*/}"
+    case "$sc_rel" in '' | *[!A-Za-z0-9._-]*) sc_rel="<W>-lanes" ;; esac
+    sc_text="sweep-checkouts (Amendment 23 S6.2): removed $sc_n_removed register checkout(s) under $sc_rel/ that held nothing unpublished"
+    if [ -n "$sc_removed_names" ]; then sc_text="$sc_text: $sc_removed_names"; fi
+    if [ -n "$sc_partial_names" ]; then sc_text="$sc_text; moved aside and not all removed: $sc_partial_names"; fi
+    if [ -n "$sc_held_names" ]; then sc_text="$sc_text; held and left: $sc_held_names"; fi
+    sc_text="$sc_text; ${#sc_beside[@]} clone(s) beside W listed and left"
+    sc_noted_rc=0
+    ( unset LANES_NO_FETCH
+      LANES_LANE="$sc_runner" LANES_SESSION="$sc_uuid" "$LANES_EDIT" log NOTED "lane:$sc_runner" "$sc_text" ) >&2 ||
+      sc_noted_rc=$?
+    if [ "$sc_noted_rc" != 0 ]; then
+      die "the NOTED line recording this sweep was NOT written (\`lanes-edit.sh log\` exited $sc_noted_rc, above), so lane $sc_runner's log does not say what was removed. Nothing was lost: each checkout removed held nothing unpublished. Write the line by hand: LANES_LANE=$(printf '%q' "$sc_runner") LANES_SESSION=$sc_uuid lanes-edit.sh log NOTED $(printf '%q' "lane:$sc_runner") $(printf '%q' "$sc_text")" 1
+    fi
+    printf '  NOTED in lane %s'"'"'s log: %s\n' "$sc_runner" "$sc_text"
+  fi
   if [ -n "$sc_partial" ]; then
     die "the removal of $sc_partial did not finish (above): what is left is no checkout, under a hidden name, so the next write of that lane clones afresh. Remove it by hand once you have looked at why." 1
   fi
