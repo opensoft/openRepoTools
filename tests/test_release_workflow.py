@@ -95,11 +95,13 @@ and `TMUX*` variable is removed first, and `gh` and `curl` are fakes that
 write down that they were asked and refuse, unless a case puts a forge of its
 own ahead of them. A heredoc is cut out as the model's `heredoc()` cuts one,
 and run with this Python under `-I`: the stamp writer with the two copies as
-its arguments, and the wheel check with the wheel as its one argument. Both
-read the release's values from `VERSION`, `TAG`, `COMMIT`, `DIGEST` and
-`REPOSITORY` (contracts/stamp.md), and the wheel check reads the run's own
-commit and repository from `GITHUB_SHA` and `GITHUB_REPOSITORY` as well,
-which carry the same values (the model's reads `GITHUB_SHA`).
+its arguments, the wheel check with the wheel as its one argument, and the 3.9
+leg's compile step with no arguments, which reads `PIPX_HOME` and is run as the
+Python the case names (`AS_ANOTHER_PYTHON`). The first two read the release's
+values from `VERSION`, `TAG`, `COMMIT`, `DIGEST` and `REPOSITORY`
+(contracts/stamp.md), and the wheel check reads the run's own commit and
+repository from `GITHUB_SHA` and `GITHUB_REPOSITORY` as well, which carry the
+same values (the model's reads `GITHUB_SHA`).
 
 WITHOUT THE SUBMODULE every test that reads YAML or the standard SKIPS, as the
 command tests do (`NEEDS_UPSTREAM`), and a composed run fails instead. Nothing
@@ -198,7 +200,7 @@ INSTALL_LEGS = [("ubuntu-latest", "3.x"), ("macos-latest", "3.x"),
 
 #: THE BUILD'S STEPS ADAPTED FROM THE MODEL, BY THE MODEL'S OWN NAMES, each
 #: a prefix the step's `name:` begins with (contracts/workflows.md's build
-#: steps 2 to 13; the model's are at `release.yml:206-665` at v1.1.0). Step 1,
+#: steps 2 to 14; the model's are at `release.yml:206-665` at v1.1.0). Step 1,
 #: the version and the repository guard, is found by the outputs it records.
 REF_STEP = "the dispatched ref is the annotated tag v<version> at this commit"
 ON_BRANCH_STEP = "the commit is on main or on the version's release branch"
@@ -2494,7 +2496,8 @@ with zipfile.ZipFile(template) as source:
 #: the writer wrote, in both extractions: the assignment line `STAMP_WAS`
 #: becomes `STAMP_NOW`. It refuses a stamp that does not hold that line, so a
 #: case cannot pass for want of a stamp to rewrite.
-REWRITES_THE_STAMP = '''python3 -I - "$TREE_A/src/openrepotools/_release.py" "$TREE_B/src/openrepotools/_release.py" <<'PY'
+REWRITES_THE_STAMP = '''python3 -I - "$TREE_A/src/openrepotools/_release.py" \\
+    "$TREE_B/src/openrepotools/_release.py" <<'PY'
 import os, sys
 for path in sys.argv[1:]:
     with open(path, encoding="utf-8", newline="") as handle:
@@ -2546,7 +2549,9 @@ def run_from_the_stamp_writer_to_the_wheel_check(
     for tree in trees:
         copy = tree / "src" / "openrepotools" / "_release.py"
         copy.parent.mkdir(parents=True)
-        copy.write_bytes(STAMP.read_bytes())
+        # The build's `git archive` extracts the commit, so each copy is HEAD's
+        # blob, whatever the work tree's file holds.
+        copy.write_bytes(head_blob("src/openrepotools/_release.py"))
     members, info = wheel_members(release_)
     template = write_wheel(tmp_path / "template" / "openrepotools-1.1.0-py3-none-any.whl",
                            members, info)
