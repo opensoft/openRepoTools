@@ -2213,9 +2213,11 @@ def test_release_build_the_wheel_check_refuses_a_wheel_that_is_not_the_commit_s(
 #: `.dist-info/` prefix, how it is damaged)`. Reading it raises, in turn,
 #: `zipfile`'s `BadZipFile` ("Bad CRC-32"), `zlib.error`,
 #: `NotImplementedError` and `lzma.LZMAError`, and each must end in an
-#: `::error::` line naming the member, never in a traceback. The last is the
-#: one error here that is neither an `OSError` nor a `ValueError`: it derives
-#: from `Exception` alone, so the step's read loop has to name it (#278).
+#: `::error::` line naming the member, never in a traceback. None of the four
+#: is an `OSError` or a `ValueError`. What set the last apart is that the read
+#: loop's `except` tuple did not name it, as it names `BadZipFile`, `zlib.error`
+#: and `RuntimeError` (`NotImplementedError`'s base): it derives from
+#: `Exception` alone, so it ended in a traceback until the tuple did (#278).
 UNREADABLE_MEMBERS = {
     "a-payload-file-with-a-bad-crc": (layout.PAYLOAD_PREFIX + "lanes-edit.sh", "crc"),
     "a-module-with-a-broken-deflate-stream": ("openrepotools/cli.py", "deflate"),
@@ -3479,9 +3481,12 @@ def test_release_upload_the_empty_index_check_passes_no_file_or_the_verified_whe
 #: the step makes, what its refusal's `::error::` line names, or None where
 #: it passes)`. It reads until the index serves exactly the verified wheel,
 #: through a 404, an empty listing, a server error, a connection closed with
-#: no response or an answer cut off, up to 20 reads, and refuses the wheel
-#: yanked, any other file, a client error and an answer that is not the
-#: index's JSON at once, each named and never in a traceback (#278).
+#: no response or an answer cut off, up to 20 reads. It refuses at the first
+#: read the wheel yanked, a client error and an answer that is not the
+#: index's JSON, and after the 20 an index that never serves exactly the
+#: wheel (another file beside it every time, its digest another every time,
+#: or the wheel only at the 21st read), each named and never in a traceback
+#: (#278).
 SERVED_CASES = {
     "served-at-the-first-read": ([SERVED], 1, None),
     "not-yet-then-served": ([NOT_YET, SERVED], 2, None),
@@ -4115,17 +4120,41 @@ PLACED = re.compile(r"^(\S+): installed at (.+)/\1$", re.M)
 UNCHANGED = re.compile(r"^(\S+): already installed at (.+)/\1 \(unchanged\)$", re.M)
 
 #: THE RERUN'S SECOND `--install`, into the bin directory the first one placed
-#: the sixteen commands in (#278): `(a command that a `cmp` ahead of the
-#: system's reports as different in that directory, or None; whether the step
-#: passes)`. The placing loop calls `cmp -s` on each command it finds in
-#: place, and says `already installed at ... (unchanged)` where the bytes are
-#: the same and the mode is 755. With the system's `cmp` the second run finds
-#: all sixteen so, and the step passes. With one command reported different
-#: the loop updates it instead, only 15 are unchanged, and the step must
-#: refuse, because its count requires 16.
+#: the sixteen commands in (#278): `(the system's tool that a stand-in ahead
+#: of it answers wrongly for one command in that directory, or None; that
+#: command; whether the step passes)`. The placing loop calls `cmp -s` on each
+#: command it finds in place, then `mode_is`, which calls `find -perm`, and
+#: says `already installed at ... (unchanged)` only where the bytes are the
+#: same and the mode is 755. With the system's tools the second run finds all
+#: sixteen so, and the step passes. With a `cmp` that reports one command
+#: different the loop updates it, and with a `find` that prints nothing for
+#: one command, as it does for a mode that is not 755, the loop says `(mode
+#: restored to 755)` of it. Either way only 15 are `(unchanged)`, and the
+#: step must refuse, because its count requires 16. The `find` case is the
+#: one that holds the ` (unchanged)` in that count: the updated command is no
+#: `already installed` line, but the restored one is, so a count of every
+#: `already installed` line would still refuse the first case, at 15, and
+#: pass the second, at 16.
 RERUN_SECOND_RUN = {
-    "all-sixteen-found-already-installed-and-unchanged": (None, True),
-    "one-command-the-second-run-would-update": ("lane", False),
+    "all-sixteen-found-already-installed-and-unchanged": (None, None, True),
+    "one-command-the-second-run-would-update": ("cmp", "lane", False),
+    "one-command-whose-mode-the-second-run-would-restore": ("find", "lane", False),
+}
+
+#: THE STAND-INS OF `RERUN_SECOND_RUN`: `(the shell lines of a stand-in that
+#: answers wrongly for the one command `{command}` and hands every other call
+#: to the system's tool; what the second run then says of that command)`. The
+#: placing loop asks `cmp -s <source> <target>`, so the target is the last
+#: argument, and `mode_is` asks `find <target> -maxdepth 0 -perm 755 -print`,
+#: so the target is the first. A `cmp` that exits 1 says the bytes differ, and
+#: a `find` that prints nothing says the mode is not 755.
+RERUN_STAND_INS = {
+    "cmp": ('for last in "$@"; do :; done\n'
+            'case "$last" in */bin-bin-bash/{command}) exit 1 ;; esac\n',
+            "{command}: updated at {bin}/{command}"),
+    "find": ('case "$1" in */bin-bin-bash/{command}) exit 0 ;; esac\n',
+             "{command}: already installed at {bin}/{command} "
+             "(mode restored to 755)"),
 }
 
 
@@ -4147,10 +4176,11 @@ def test_release_install_check_the_macos_rerun_places_the_sixteen_commands_in_a_
     and place none under 3.2. The rerun then runs `--install` a second time
     into that bin directory, and the placing loop's other arm, under the same
     bash, must find all sixteen `already installed at ... (unchanged)`: the
-    step passes. Where one command is reported different
-    (`RERUN_SECOND_RUN`) the second run updates it, 15 are unchanged, and the
-    step exits 1 naming that count."""
-    differs, passes = RERUN_SECOND_RUN[which]
+    step passes. Where one command is reported different, or its mode is not
+    755 (`RERUN_SECOND_RUN`), the second run updates it, or says `(mode
+    restored to 755)` of it, 15 are unchanged, and the step exits 1 naming
+    that count."""
+    wrong, differs, passes = RERUN_SECOND_RUN[which]
     workflow = release()
     steps = install_steps(workflow)
     offline = offline_install_step(steps, "release.yml's install job")
@@ -4163,15 +4193,13 @@ def test_release_install_check_the_macos_rerun_places_the_sixteen_commands_in_a_
     (apple_bin / "bash").write_text(
         APPLE_BIN_BASH.replace("@BASH@", shlex.quote(host_bash)), encoding="utf-8")
     (apple_bin / "bash").chmod(0o755)
-    if differs is not None:
-        real_cmp = shutil.which("cmp")
-        assert real_cmp, "the case needs the system's cmp to hand every other file to"
-        (apple_bin / "cmp").write_text(
-            "#!/bin/sh\n"
-            'for last in "$@"; do :; done\n'
-            f'case "$last" in */bin-bin-bash/{differs}) exit 1 ;; esac\n'
-            f'exec {shlex.quote(real_cmp)} "$@"\n', encoding="utf-8")
-        (apple_bin / "cmp").chmod(0o755)
+    if wrong is not None:
+        system = shutil.which(wrong)
+        assert system, f"the case needs the system's {wrong} to hand every other call to"
+        (apple_bin / wrong).write_text(
+            "#!/bin/sh\n" + RERUN_STAND_INS[wrong][0].format(command=differs)
+            + f'exec {shlex.quote(system)} "$@"\n', encoding="utf-8")
+        (apple_bin / wrong).chmod(0o755)
     text = run_text(reruns[0])
     assert text.count('PATH="/bin:') == 3, (
         "the rerun no longer puts /bin first for its version probe and for each of "
@@ -4221,7 +4249,8 @@ def test_release_install_check_the_macos_rerun_places_the_sixteen_commands_in_a_
     else:
         assert sorted(n for n, _ in unchanged) == sorted(
             n for n, _ in placed_first if n != differs), transcript(again)
-        assert f"{differs}: updated at {counts[0]}/{differs}" in finding, transcript(again)
+        says = RERUN_STAND_INS[wrong][1].format(command=differs, bin=counts[0])
+        assert says in finding, transcript(again)
         assert [line for line in again.stdout.splitlines()
                 if line.startswith("::error::")
                 and "found 15 commands already installed and unchanged in "
