@@ -39,7 +39,11 @@ write under a root nobody could look for fails there and is filed nowhere else
 (it used to fall to `$PROJECTS_ROOT`'s root, where nothing of the lane's is and
 the record was stranded once the block lifted), and a `.lane-state` link whose
 target is gone is the same 10, since stat cannot tell it from a link into a
-directory that cannot be searched.
+directory that cannot be searched. And a `trees` that is a link nobody can
+follow, with the snapshot beside it read, has one too: the verdict is then
+`indeterminate` for the inventory alone, and `lane-reconcile`'s reason says,
+as `lane-trees` does, that whether the inventory directory is there could not
+be read - never that it is there.
 
 Beside them: a `trees` directory that is there and cannot be searched (the
 read #157 item 4e already made `UNREAD`, kept as it is), and a tree record that
@@ -308,6 +312,55 @@ def test_a_lane_state_link_whose_target_is_gone_is_unread_not_none(inv):
         aside.rename(target)
     assert inv.e.edit("lane-trees", LANE, env=env).returncode == 0
     assert inv.e.edit("lane-state", LANE, env=env).returncode == 8  # none, and looked for
+
+
+def test_a_trees_link_that_cannot_be_followed_is_never_said_to_be_there(inv):
+    """`lane-reconcile` SAYS IT AS `lane-trees` DOES (#291, the review's NIT-1).
+    `trees` is a link onto a volume, and the lane is SWAPPED with no holder
+    live: while the link can be followed, the tree is read through it and the
+    verdict is `resumable`. With the volume gone the snapshot beside it still
+    reads, so the verdict is `indeterminate` for the inventory alone - and its
+    reason says that whether the inventory directory is there could not be
+    read, and why, never that it is there and could not be listed: a link
+    that cannot be followed never saw whether it is. A `trees` directory that
+    is there and cannot be listed keeps those words
+    (test_lifecycle_fail_open_113_114_115)."""
+    env = {"LANES_LANE_STATE_ROOT": None}
+    root = _a_lane_with_trees(inv, inv.root / "elsewhere", env)
+    for move in (("SWAPPING", "--operation", "op-test-b1s"),
+                 ("SWAPPED", "--expect", "SWAPPING", "--expect-operation", "op-test-b1s")):
+        put = inv.e.edit("set-lane-state", LANE, *move, env=env)
+        assert put.returncode == 0, (move, put.stdout, put.stderr)
+    volume, gone = inv.root / "usb", inv.root / "usb-gone"
+    trees, target = root / "trees", volume / "trees"
+    volume.mkdir()
+    trees.rename(target)
+    trees.symlink_to(target)
+
+    def reconcile() -> tuple[dict, str]:
+        rec = inv.e.edit("lane-reconcile", LANE, env=env)
+        assert rec.returncode == 0, (rec.returncode, rec.stdout, rec.stderr)
+        return _reconcile(rec.stdout), rec.stdout
+
+    facts, out = reconcile()
+    assert facts.get("STATE", [""])[0] == "SWAPPED", out
+    assert f"TREES{US}1 inventoried{US}" in out, out  # read through the link
+    assert facts.get("VERDICT", [""])[0] == "resumable", out  # the clearance at stake
+    unread = f"whether its worktree inventory directory {trees} is there could not be read: " \
+        f"{trees} is a symbolic link that cannot be followed"
+    volume.rename(gone)
+    try:
+        assert trees.is_symlink() and not trees.exists(), "the link does not dangle: nothing to prove"
+        facts, out = reconcile()
+        assert facts.get("ROOT") == [str(root)], out
+        assert facts.get("STATE", [""])[0] == "SWAPPED", out  # the snapshot reads
+        assert facts.get("VERDICT", [""])[0] == "indeterminate", out
+        assert f"({unread})" in facts["VERDICT"][1], out
+        assert "is there and could not be listed" not in out, out
+    finally:
+        gone.rename(volume)
+    facts, out = reconcile()
+    assert facts.get("VERDICT", [""])[0] == "resumable", out
 
 
 def test_a_trees_directory_that_cannot_be_searched_is_still_unread(inv):

@@ -14449,15 +14449,24 @@ LRC_BIND
   lrc_seen=""; lrc_n=0; lrc_recover=0; lrc_dirty=0
   # AN INVENTORY NOBODY COULD LIST IS NOT AN EMPTY ONE (#113, the unreadable
   # sidecar's rule one level up). `lane_trees_list` answers 10 for a `trees`
-  # directory that is there and cannot be listed (#157 item 4e), and this read
-  # ended in `|| :`, so every tree the lane recorded vanished from the report and
-  # its verdict could still be `resumable`. `lrc_unread` gathers what the
-  # inventory and the sweeps below could not read, and the verdict says so.
+  # directory that is there and cannot be listed (#157 item 4e), and for one
+  # that could not even be looked for (#291), and this read ended in `|| :`, so
+  # every tree the lane recorded vanished from the report and its verdict could
+  # still be `resumable`. `lrc_unread` gathers what the inventory and the sweeps
+  # below could not read, and the verdict says so. Which of the two 10s it was
+  # is asked again here, as `lane-trees` asks it, because the reason
+  # `lookup_blocked` gives is lost in the `$( )` the list is read in: a `trees`
+  # nobody could look for is never said to be there.
   lrc_unread=""; lrc_tl=""; lrc_tlrc=0
   lrc_tl="$(lane_trees_list "$lrc_lane" 2>/dev/null)" || lrc_tlrc=$?
   case "$lrc_tlrc" in
     0|8) : ;;
-    10) lrc_unread="its worktree inventory directory $lrc_root/trees is there and could not be listed" ;;
+    10)
+      if [ ! -d "$lrc_root/trees" ] && lookup_blocked "$lrc_root/trees"; then
+        lrc_unread="whether its worktree inventory directory $lrc_root/trees is there could not be read: $LOOKUP_BLOCKED_WHY"
+      else
+        lrc_unread="its worktree inventory directory $lrc_root/trees is there and could not be listed"
+      fi ;;
     *)  lrc_unread="its worktree inventory could not be read (exit $lrc_tlrc)" ;;
   esac
   while IFS="$US" read -r lrc_id lrc_p lrc_b lrc_h lrc_u lrc_d lrc_np lrc_w lrc_ob lrc_co lrc_tg lrc_to lrc_sch; do
