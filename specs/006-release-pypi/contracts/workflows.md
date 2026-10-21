@@ -367,6 +367,11 @@ These are the model's grants (`release.yml:1133-1136` at v1.1.0).
   setup-python has no Python `3.9`.
 - Its `tomli` comes from the build lock's own entry, and the job holds no
   `--hash` of its own.
+- The pipx lock's `tomli` entry is the build lock's: its requirement line,
+  which holds the version and the marker, and every digest. Step 4 installs
+  the build lock's `tomli` and step 7 the whole pipx lock, so the package's
+  tests run on the pipx lock's entry, and a resolution that moves one and not
+  the other fails.
 - Its wheel-check heredoc (step 6) is run on the same four synthetic wheels
   as the release build's, with the same four outcomes, and on four more, one
   for each check those four never reach ([wheel.md](wheel.md)'s checks 3, 4

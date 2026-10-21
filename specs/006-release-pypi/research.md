@@ -299,7 +299,9 @@ were read read-only.
     hashed `tomli`, which satisfies pytest's requirement on Python below
     3.11.
   - A test holds that the step reads its `tomli` entry from the build lock,
-    and that the job holds no `--hash` of its own.
+    and that the job holds no `--hash` of its own. Another holds that the
+    pipx lock's `tomli` entry is the build lock's, its requirement line and
+    every digest, so a resolution that moves one and not the other fails.
 - **Rationale**:
   - design.md Decision 9 asks for tomli at a pinned version, by hash,
     beside pytest.
