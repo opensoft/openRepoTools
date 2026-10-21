@@ -79,6 +79,7 @@ from conftest import NEEDS_UPSTREAM, REPO, UPSTREAM, WINDOWS_SKIP
 
 WORKFLOW = REPO / ".github" / "workflows" / "tests.yml"
 BUILD_LOCK = REPO / ".github" / "release-build-requirements.txt"
+PIPX_LOCK = REPO / ".github" / "release-pipx-requirements.txt"
 PINNED_READER = UPSTREAM / "scripts" / "repo_shape.py"
 
 #: THE RELEASE GATE'S FOUR JOB IDS (FR-046), in the file's order. The gate
@@ -967,6 +968,26 @@ def test_tests_yml_holds_no_digest_of_its_own():
     assert not digests, f"tests.yml holds a digest of its own: {digests}"
 
 
+def test_tests_yml_pipx_lock_carries_the_build_locks_own_tomli_entry():
+    """THE TWO LOCKS' `tomli` ENTRIES ARE ONE ENTRY (research R12, and both
+    locks' headers). Step 4 installs the build lock's `tomli`, and step 7
+    installs the whole pipx lock, which has an entry of its own for it below
+    Python 3.11, so the package's tests run on the pipx lock's. The pipx
+    lock's entry is the build lock's: its requirement line, which holds the
+    version and the marker, and every one of its digests. A resolution that
+    moves one lock's `tomli` and not the other's fails here."""
+    requirement, digests = build_lock_tomli()
+    entries = lock_entries(PIPX_LOCK.read_text(encoding="utf-8"))
+    tomli = [name for name in entries if name.startswith("tomli==")]
+    assert tomli == [requirement], (
+        f"{PIPX_LOCK.name} holds {tomli} and {BUILD_LOCK.name} holds "
+        f"{[requirement]}: the two entries move together")
+    assert sorted(entries[requirement]) == sorted(digests), (
+        f"{PIPX_LOCK.name}'s {requirement} carries "
+        f"{len(entries[requirement])} digests, and {BUILD_LOCK.name}'s "
+        f"{len(digests)}: the same ones, and only those")
+
+
 # --- the package job, read ------------------------------------------------------
 
 @NEEDS_UPSTREAM
@@ -1352,9 +1373,9 @@ def test_tests_yml_package_offline_install_step_holds_its_two_lines_and_28_rows(
     prints the lines a case gives it and writes the receipt it gives it
     (#275). The step passes the skip line and the count line once each with
     28 receipt rows, and refuses a run with no skip line, with no count line
-    or with it twice, and with a receipt of 27 rows, of 29, or of 28 rows and
-    a line that is no row. A refusal is exit 1 and an `::error::` line that
-    names what is wrong."""
+    or with it twice, and with a receipt of 27 rows, of 29, or of 28 or 27
+    rows and a line that is no row. A refusal is exit 1 and an `::error::`
+    line that names what is wrong."""
     skips, counts, rows, strays, error = INSTALL_CASES[case]
     job = package_job(workflow)
     step = job["steps"][locate(job)[10]]

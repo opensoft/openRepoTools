@@ -12,6 +12,15 @@
 # `.github/workflows/tests.yml`'s `package` job, on 3.9, with `PIPX_HOME`
 # and `PIPX_BIN_DIR` under `$RUNNER_TEMP`.
 #
+# ONE ENTRY IS ALSO THE BUILD LOCK'S: `tomli`, which pipx needs below Python
+# 3.11. `.github/release-build-requirements.txt` carries the same entry, its
+# requirement line and every hash under it, because the `package` job
+# installs that lock's `tomli` first (step 4), for its tests, and this whole
+# lock after the two builds and the wheel check (step 7), so what its tests
+# run on is this lock's `tomli`. The two entries must move together,
+# re-resolved in one act, and `tests/test_tests_workflow.py` fails when they
+# differ.
+#
 # UNIVERSAL, for Linux, macOS and Windows, though no job here runs on
 # Windows: pipx 1.11.1 below Python 3.10, the newest pipx that installs on
 # 3.9 (the package's oldest Python), and 1.17.8 from 3.10, the newest on

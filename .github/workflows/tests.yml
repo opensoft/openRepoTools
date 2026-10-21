@@ -199,10 +199,12 @@ jobs:
       # THE TEST TOOLS, tomli FIRST AND BY HASH (research R12). The step copies
       # the build lock's whole tomli entry, its requirement line and every hash
       # line under it, into a file of its own and installs that, wheels only, so
-      # this file holds no digest. The pipx lock carries the same entry, and
-      # step 7 installs it after this, so the package's tests run on that tomli,
-      # which on 3.9 reads `pyproject.toml`. Then pytest at the other jobs' pin
-      # keeps that tomli: it meets pytest's own requirement below Python 3.11.
+      # this file holds no digest. Then, in the same step, pytest at the other
+      # jobs' pin, which keeps that tomli: it meets pytest's own requirement
+      # below Python 3.11. The pipx lock carries the same entry, and step 7,
+      # after the two builds and the wheel check, installs that whole lock by
+      # hash, so the package's tests (step 11), which on 3.9 read
+      # `pyproject.toml` with tomli, run on the pipx lock's.
       - name: the test tools, tomli by hash from the build lock, then pytest
         run: |
           set -euo pipefail
@@ -273,8 +275,9 @@ jobs:
       # It names every problem, then fails if there was one. INLINE, as the
       # release build's own check is (research R13), and
       # `tests/test_tests_workflow.py` runs this heredoc on the wheels it makes
-      # from HEAD's blobs: the wheel as built, and one for each way the check
-      # refuses a wheel.
+      # from HEAD's blobs: the wheel as built, three with one thing wrong, and
+      # four more, one for each check those four never reach: a module, the
+      # stamp, a member contracts/wheel.md does not list, and a member twice.
       - name: the wheel holds this commit's files, byte for byte and mode for mode
         run: |
           set -euo pipefail
