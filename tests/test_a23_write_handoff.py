@@ -808,7 +808,7 @@ def test_write_handoff_for_a_lane_with_no_row_is_8(box: Box):
     before = box.snapshot(c)
     result = box.helper("write-handoff", "repoS4-9", "--stamp", STAMP, "--subject", SUBJECT)
     assert result.returncode == 8, result.stderr
-    assert "row names no handoff, so there is none to write" in result.stderr
+    assert "lane repoS4-9 has no row in the register" in result.stderr
     assert f"the stamp line it would have written under the handoff's header block: {STAMP}" in result.stderr
     assert result.stdout == ""
     assert box.snapshot(c) == before
@@ -1170,3 +1170,37 @@ def test_with_LANES_NO_GIT_the_handoff_is_written_and_nothing_committed(box: Box
     assert box.origin_head() == tip
     assert box.net_ops() == []
     _released(box, c)
+
+
+def test_a_target_for_a_lane_with_no_row_is_8_and_nothing_committed(box: Box):
+    """NIT 3: the row is needed whatever `--target` says. Through the seam
+    (and in default mode) a `--target` write for a lane with no row went on
+    and committed `Lane: <a lane with no row>`; now it is 8 with nothing
+    written, as the opt-in's gate refuses it before the clone."""
+    c = box.seam()
+    before = box.snapshot(c)
+    result = box.helper("write-handoff", "repoS4-9", "--stamp", STAMP, "--subject", SUBJECT,
+                        "--target", str(c / HANDOFF_REL))
+    assert result.returncode == 8, result.stderr
+    assert "lane repoS4-9 has no row in the register" in result.stderr
+    assert result.stdout == ""
+    assert box.snapshot(c) == before
+    assert (c / HANDOFF_REL).read_text(encoding="utf-8") == HANDOFF
+    _released(box, c)
+
+
+def test_handoff_path_over_an_unreadable_register_is_1_never_8(box: Box):
+    """NIT 1 (R22): a register read that fails is never "no handoff". With
+    the published register unreadable, `handoff-path` is 1 and prints
+    nothing, where it answered 8."""
+    box.seam()
+    real = shutil.which("git", path=os.environ.get("PATH"))
+    shim = box.fakebin / "git"
+    shim.write_text('#!/usr/bin/env bash\ncase " $* " in\n'
+                    f'  *"origin/main:{REGISTER}"*) echo "test shim: git $* refused" >&2; exit 128 ;;\n'
+                    f'esac\nexec "{real}" "$@"\n', encoding="utf-8")
+    shim.chmod(0o755)
+    result = box.helper("handoff-path", LANE)
+    assert result.returncode == 1, result.stderr
+    assert "a read that failed is never 'no handoff' (R22)" in result.stderr
+    assert result.stdout == ""

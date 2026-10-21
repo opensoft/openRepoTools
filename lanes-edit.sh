@@ -453,7 +453,9 @@
 #   1  environment (no register, no writer) — and, AMENDMENT 23 S1, a lane
 #      checkout's path that holds something other than a clone of the register
 #      (every routed write, and `lane-checkout`), which is refused and never
-#      deleted, moved or repaired; `refresh-workspace` with no W
+#      deleted, moved or repaired; `refresh-workspace` with no W;
+#      `handoff-path` and `write-handoff`, a register that could not be read
+#      (R22: never 8)
 #   2  refusal: bad arguments, the object is held, an unknown alias, —
 #      Amendment 15 — a register holding
 #      two rows whose lane names differ only by case, which every writer and
@@ -565,7 +567,8 @@
 #      `history` READ the lane's log and it carries no `NOTED` or `RULED` line;
 #      `window-session` found no live session in the window; `lane-checkout`
 #      found no checkout for the lane (Amendment 23); `handoff-path` and
-#      `write-handoff` found no handoff for the lane — its row names none, or
+#      `write-handoff` found no handoff for the lane — there is no row for it
+#      (`write-handoff` with `--target` too), its row names none, or
 #      (`write-handoff`) the file is not there — and wrote nothing. A read that could
 #      not be performed is never 8 (R22). `session-start` never exits 8, or
 #      anything but 0: it is a hook. `guard` never exits 8 either — it is a hook
@@ -6009,6 +6012,19 @@ handoff_of_lane() {
   hl_row="$(row_of_lane "$1")"
   [ -n "$hl_row" ] || return 1
   row_cell "$hl_row" 7 | sed 's/^ *//; s/ *$//'
+}
+
+# THE SAME CELL, AND WHETHER IT WAS READ (rv2a's pre-review of slice 2a, NITs
+# 1 and 3), for `write-handoff` and `handoff-path`: 0 with the row's handoff
+# cell on stdout (empty where the row names none); 8 where the register WAS
+# read and has no row for the lane; 1 where it could not be read. The read
+# above answers a failed read as an empty cell, which its callers take for "no
+# handoff"; a read that failed is never that (R22).
+handoff_cell_of() {   # <canonical lane>
+  hcl_reg="$(register_text_checked 2>/dev/null)" || return 1
+  hcl_row="$(printf '%s\n' "$hcl_reg" | awk -v lane="$1" "$ROW_AWK")" || return 1
+  [ -n "$hcl_row" ] || return 8
+  row_cell "$hcl_row" 7 | sed 's/^ *//; s/ *$//'
 }
 
 short_ws() { printf '%s' "${1%%.*}" | tr 'A-Z' 'a-z'; }
@@ -19202,12 +19218,14 @@ EOF
   # STDOUT: `<file><TAB><sha256>` once the file is written (`HANDOFF_OUT`).
   #   0 pushed, or nothing to commit (another repository's file, S3's refusal
   #     of this checkout or not; LANES_NO_GIT)
-  #   1 environment: a checkout that cannot be entered, an unreadable file
+  #   1 environment: a checkout that cannot be entered, an unreadable file,
+  #     a register that could not be read (R22: never 8)
   #   2 refused: S3 (step 6), S5, a target that is not under handoffs/ (S2), a
   #     restart's bound file or pre-image, a proof
   #   3 pushed, not confirmed · 4 a lock · 6 kept on HEAD, named
   #   7 a restart fence, or the handoff changed under the write
-  #   8 no handoff to write: the row names none, or its file is not there
+  #   8 no handoff to write: no row for the lane (with `--target` too), the
+  #     row names none, or its file is not there
   #  64 usage
   write-handoff)
     whf_use="usage: write-handoff <lane> (--stamp \"<line>\" | --prepend <block file> | --whole <prepared file> --expect-digest <sha>) --subject \"<subject>\" [--target <path>] [--restart <operation> <generation> <attempt> <state> <transcript> [--expected-digest <sha>]]"
@@ -19289,8 +19307,22 @@ EOF
     # ask read. A refusal here writes nothing.
     cs_flush
     managed_seam_refuse "$lane" "write-handoff"
-    # ---- 2. the target, translated.
-    if [ -n "$whf_target" ]; then whf_cell="$whf_target"; else whf_cell="$(handoff_of_lane "$lane" 2>/dev/null || :)"; fi
+    # ---- 2. the target, translated. THE ROW FIRST, WHATEVER `--target`
+    # SAYS (rv2a's pre-review of slice 2a, NITs 1 and 3): a lane with no row
+    # has no handoff to write, and no commit may carry `Lane: <it>` — through
+    # the seam and in default mode too, where no `lane_row_gate` asked before
+    # the lock — and a register that could not be read is 1, never "no
+    # handoff" (R22). The seam above refuses an unreadable register first (1),
+    # so that 1 is this read's own only where the register failed between them.
+    whf_hrc=0; whf_cell="$(handoff_cell_of "$lane")" || whf_hrc=$?
+    case "$whf_hrc" in
+      0) : ;;
+      8) whf_stamp_said
+         die "lane $lane has no row in the register, so it has no handoff to write, and no commit may carry \`Lane: $lane\`. Nothing was written." 8 ;;
+      *) whf_stamp_said
+         die "the register could not be read, so whether lane $lane's row names a handoff cannot be said — a read that failed is never 'no handoff' (R22). Nothing was written." 1 ;;
+    esac
+    if [ -n "$whf_target" ]; then whf_cell="$whf_target"; fi
     if [ -z "$whf_cell" ]; then
       whf_stamp_said
       die "lane $lane's row names no handoff, so there is none to write. Nothing was written." 8
@@ -19449,7 +19481,8 @@ EOF
   # Not routed: it writes nothing.
   #   0 the path (another repository's too, said on stderr) · 8 no row, or a
   #   row that names no handoff, and nothing cloned · 1 a checkout there that
-  #   is not a clone · 2 a name refused,
+  #   is not a clone, or a register that could not be read (R22: never 8) ·
+  #   2 a name refused,
   #   or the clone failed · 4 the creation lock · 64 usage
   handoff-path)
     hp_lane=""; hp_create=0
@@ -19469,9 +19502,15 @@ EOF
     check_lane_name "$hp_lane"
     # THE CELL FIRST: a lane with no row, or a row with no handoff, has nothing
     # to write, and `--create` clones nothing for it (R4-1's rule for writes).
-    hp_cell="$(handoff_of_lane "$hp_lane" 2>/dev/null || :)"
+    hp_hrc=0; hp_cell="$(handoff_cell_of "$hp_lane")" || hp_hrc=$?
+    case "$hp_hrc" in
+      0) : ;;
+      8) note "lane $hp_lane has no handoff: there is no row for it in the register"
+         exit 8 ;;
+      *) die "the register could not be read, so whether lane $hp_lane's row names a handoff cannot be said — a read that failed is never 'no handoff' (R22). Nothing was cloned." 1 ;;
+    esac
     if [ -z "$hp_cell" ]; then
-      note "lane $hp_lane's row names no handoff, or there is no row for it in the register"
+      note "lane $hp_lane's row names no handoff"
       exit 8
     fi
     handoff_checkout_of "$hp_lane" "$hp_create"
