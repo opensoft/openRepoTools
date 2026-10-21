@@ -277,10 +277,10 @@ while pgrep -af 'python3 -m pytest' | grep -v pgrep >/dev/null; do sleep 20; don
 It NEVER WAITED — under the harness `grep` is a shell function whose status is 1
 when its stdout is `/dev/null`, even where it matched, so four suites ran at
 once — and the pattern is unanchored, so it also matches the guard's own command
-line. Read `command grep` wherever an exit status matters. A poll ALONE is the
-second defect: every waiter starts the instant the run it watched ends, which is
-the same collision one step later. Anchored, split so it cannot match itself,
-and locked:
+line. Read `command grep` in your shell wherever an exit status matters, never
+in a `set -e` script: bash 3.2 exits (#292). A poll ALONE is the second defect:
+every waiter starts the instant the run it watched ends, which is the same
+collision one step later. Anchored, split so it cannot match itself, and locked:
 
 ```sh
 pat='^python3 -m pyt'"est"                       # split so it cannot match itself

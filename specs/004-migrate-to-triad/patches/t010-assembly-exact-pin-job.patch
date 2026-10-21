@@ -1,4 +1,4 @@
-From 386be81959ea32836be0777c1af8547cac044e2d Mon Sep 17 00:00:00 2001
+From 247f63df27ae493f961dc4e6f91df400c9cc6531 Mon Sep 17 00:00:00 2001
 From: openRepoTools CI <ci@openrepotools.invalid>
 Date: Thu, 8 Oct 2026 21:52:59 +0000
 Subject: [PATCH] Add the assembly's exact-pin integration job as its own
@@ -10,16 +10,16 @@ T010 of specs/004-migrate-to-triad/tasks.md (#186).
 
 Lane: openRepoTools-1
 ---
- .github/workflows/composed.yml | 103 +++++++++++++++++++++++++++++++++
- 1 file changed, 103 insertions(+)
+ .github/workflows/composed.yml | 106 +++++++++++++++++++++++++++++++++
+ 1 file changed, 106 insertions(+)
  create mode 100644 .github/workflows/composed.yml
 
 diff --git a/.github/workflows/composed.yml b/.github/workflows/composed.yml
 new file mode 100644
-index 0000000..ef28e08
+index 0000000..113f094
 --- /dev/null
 +++ b/.github/workflows/composed.yml
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,106 @@
 +name: composed
 +
 +# THE EXACT-PIN INTEGRATION GATE (opensoft/openRepoTools#186, T010 of
@@ -60,7 +60,10 @@ index 0000000..ef28e08
 +
 +jobs:
 +  exact-pins:
-+    runs-on: ubuntu-latest
++    # THIS UBUNTU RUNNER IS ON 24.04: `ubuntu-latest` became Ubuntu 26.04 on
++    # 2026-10-21. There the `[host]` case of the TERM-ignoring kill test, which
++    # this job's suite runs, fails. Pinned until 26.04 support is decided.
++    runs-on: ubuntu-24.04
 +    steps:
 +      # PINNED BY COMMIT, the same two actions the code leg pins. RECURSIVE:
 +      # the legs, and the dependency nested in the code leg.

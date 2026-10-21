@@ -22,6 +22,7 @@ and [patches/t010-assembly-exact-pin-job.patch](patches/t010-assembly-exact-pin-
 **Superseded 2026-10-19:** the code-leg workflow patch above is regenerated at the same path, sha256
 `1406ead3…ef6d56`, against the `tests.yml` #228's PR 2 leaves (blob `2cfa173`). The earlier file (`7ee3c6d0…786c3b`,
 base `e27bc64`) stopped applying when #227 rewrote `tests.yml` (`gate-b-status-2026-10-09.md`, checklist lines 32 and 33).
+**Superseded 2026-10-21:** the assembly patch above is regenerated at the same path, sha256 `60245cb9…f0f653`, with `runs-on: ubuntu-24.04` under a three-line comment, because #296 pinned the code leg's Ubuntu runners (`gate-b-status-2026-10-09.md`, checklist line 32).
 T009's assembly-root length caps are a third patch beside them,
 [patches/t009-assembly-caps.patch](patches/t009-assembly-caps.patch) (sha256 `2dd4aac2…b2bbe5`, code leg, after
 `code-0001` and the workflow patch). It sets the caps the re-cut `assembly-0001` needs, 354 and 529.
@@ -219,8 +220,9 @@ without the validator would accept that leg. The follow-up is in section 9.
 on `tests`. #227 removed the macOS and Windows jobs. The regenerated file keeps the four jobs #228's PR 2 leaves
 (`guard-launch-mode`, `tests`, `tests-no-submodule` and `package`) and puts no `-rs` on `tests` or
 `guard-launch-mode`, by lane 1's ruling of 2026-10-19: the leg's skip reasons are read in `tests-no-submodule`.
-The `composed.yml` patch is not regenerated, and its header comments still name the removed jobs
+The `composed.yml` patch was not regenerated for that, and its header comments still name the removed jobs
 (`gate-b-status-2026-10-09.md`, checklist line 32).
+*Superseded 2026-10-21 (the assembly patch):* the `composed.yml` patch is regenerated for the runner pin alone, sha256 `60245cb9…f0f653`: `runs-on: ubuntu-24.04` under a three-line comment, because #296 pinned the code leg's Ubuntu runners. Its header comments are as they were, and still name the removed jobs.
 
 **Code leg, `.github/workflows/tests.yml`** (against run C's code leg
 `73b04d6`, whose copy is byte-identical to `main`'s). The six jobs and their
@@ -300,7 +302,7 @@ The failures, recorded rather than deleted:
   - This record first sent it to the run-root work of #162/#184. It was
     corrected on 2026-10-11, after lane 3's 6089801221, finding 13 (i).
   - `composed.yml` runs the suite through `code/tests/run.sh` (assembly patch,
-    line 125), so `exact-pins` inherits #180. It would be red on these two
+    line 128, which was 125 before the runner pin of 2026-10-21), so `exact-pins` inherits #180. It would be red on these two
     assertions until #180 is fixed (section 8).
 * **The lane suite ABORTED in P3**, after those two FAILs, at
   `test_lane_helpers.sh: line 6595: ln_doc: unbound variable`. This is a
