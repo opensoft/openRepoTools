@@ -976,3 +976,56 @@ def test_a_target_outside_handoffs_is_refused_and_nothing_written(box: Box, how:
     assert box.origin_head() == tip
     assert result.stdout == ""
     _released(box, c)
+
+
+def _managed_row(box: Box) -> tuple:
+    """The lane's row as a peer republishes it, with a managed-owner marker
+    that parses, so the seam's answer is "owned", not "unknown"."""
+    return (f"| handoffs/repoS4/{LANE}.md | LIVE · seeded |",
+            f"| handoffs/repoS4/{LANE}.md | LIVE · 2026-10-21T00:00:00Z · managed-owner mode=managed "
+            f"daemon=ledger-a23 generation=3 bound-lane={LANE} |")
+
+
+def test_a_managed_marker_landing_at_S3s_fetch_refuses_even_where_S3_refused(box: Box):
+    """SHOULD 3: the seam is asked again on what S3 fetched WHATEVER S3
+    answered. A peer's managed-owner marker lands at S3's fetch, and S3 then
+    refuses (a foreign staged entry): a `--prepend`, which S3's refusal leaves
+    written (R-A11-11), is refused by the managed ledger instead, with nothing
+    written, nothing printed, and the staged entry left as it was."""
+    c = box.seam()
+    f = c / HANDOFF_REL
+    box.peer_prepares(REGISTER, *_managed_row(box), "a peer's row names a managed owner")
+    peer = shlex.quote(str(box.peer))
+    count = shlex.quote(str(box.count))
+    box.use_net('[ "$1" = fetch ] || exit 0\n'
+                f'[ -e {count} ] && exit 0\n'
+                f"echo 1 > {count}\n"
+                f"git -C {peer} push -q origin main\n"
+                "exit 0\n")
+    _staged_foreign(box, c)
+    result = box.write_handoff("--prepend", str(_block(box)), "--subject", "handoff: PAUSED")
+    assert result.returncode == 2, result.stderr
+    assert "is owned by the managed ledger (owner ledger-a23" in result.stderr
+    assert "the handoff is WRITTEN" not in result.stderr
+    assert f.read_text(encoding="utf-8") == HANDOFF, "a managed lane's handoff is never written"
+    assert "daemon=ledger-a23" in box.origin_register(), "the peer's row landed at S3's fetch"
+    assert result.stdout == ""
+    assert box.git("-C", str(c), "diff", "--cached", "--name-only").split() == ["handoffs/README.md"]
+    _released(box, c)
+
+
+def test_a_managed_marker_already_fetched_is_refused_before_the_lock(box: Box):
+    """The FIRST ask, before the lock: a marker this checkout's origin/main
+    already carries refuses the write before S3 runs, so no fetch is made and
+    nothing is written."""
+    box.peer_edits(REGISTER, *_managed_row(box), "a peer's row names a managed owner")
+    c = box.seam()
+    f = c / HANDOFF_REL
+    box.use_net()
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT)
+    assert result.returncode == 2, result.stderr
+    assert "is owned by the managed ledger (owner ledger-a23" in result.stderr
+    assert box.net_ops() == [], "refused before the lock: S3's fetch never ran"
+    assert f.read_text(encoding="utf-8") == HANDOFF
+    assert result.stdout == ""
+    _released(box, c)

@@ -19170,7 +19170,8 @@ EOF
   # caller holds a lock or commits a handoff by hand (plan §2.7; Open question
   # 1's reading: the lock's holder is this process). In order:
   #   1. THE CHECKOUT'S LOCK, then S3 (`checkout_sync`), run in a subshell so
-  #      that its refusal is this arm's to answer (step 6).
+  #      that its refusal is this arm's to answer (step 6); then the managed
+  #      seam asked again on what S3 fetched, whatever S3 answered.
   #   2. THE TARGET: the row's handoff cell in the published register, read
   #      after S3's fetch — or `--target`, the old callers' spelling — and
   #      TRANSLATED into the checkout this write goes through, never followed
@@ -19275,14 +19276,18 @@ EOF
     # ---- 1. S3, answered here.
     whf_s3=0; whf_cs=""
     whf_cs="$(checkout_sync write-handoff "$lane" write && printf 'ok%s' "$CS_NO_ORIGIN_BRANCH")" || whf_s3=$?
-    if [ "$whf_s3" = 0 ]; then
-      CS_NO_ORIGIN_BRANCH="${whf_cs##*ok}"; cs_flush; LOG_SYNC_FETCH=yes
-      # THE SEAM ASKED AGAIN, ON WHAT S3 JUST FETCHED (the pre-review of 1b,
-      # MUST 1's shape): the ask before the lock read this checkout's
-      # origin/$LANES_BRANCH as it last stood, and a managed-owner marker that
-      # landed since would otherwise go unread. A refusal here writes nothing.
-      managed_seam_refuse "$lane" "write-handoff"
-    fi
+    if [ "$whf_s3" = 0 ]; then CS_NO_ORIGIN_BRANCH="${whf_cs##*ok}"; LOG_SYNC_FETCH=yes; fi
+    # THE SEAM ASKED AGAIN, ON WHAT S3 JUST FETCHED (the pre-review of 1b,
+    # MUST 1's shape): the ask before the lock read this checkout's
+    # origin/$LANES_BRANCH as it last stood, and a managed-owner marker that
+    # landed since would otherwise go unread. WHATEVER S3 ANSWERED (rv2a's
+    # pre-review of slice 2a, SHOULD 3): S3 can refuse AFTER its fetch — a
+    # staged entry, a diverged branch — and `--prepend` and `--whole` still
+    # write there (step 6), so the marker that fetch brought is read before
+    # them too. Where S3 refused before any fetch, this reads what the first
+    # ask read. A refusal here writes nothing.
+    cs_flush
+    managed_seam_refuse "$lane" "write-handoff"
     # ---- 2. the target, translated.
     if [ -n "$whf_target" ]; then whf_cell="$whf_target"; else whf_cell="$(handoff_of_lane "$lane" 2>/dev/null || :)"; fi
     if [ -z "$whf_cell" ]; then
