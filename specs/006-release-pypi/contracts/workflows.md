@@ -165,7 +165,8 @@ jobs: {build, testpypi, install, pypi}
      - the ruleset is on the tags `v*`, and only the admin role creates,
        moves or deletes one.
 
-     The workflow reads the reviewer and the deployment limit, in the build's
+     The workflow reads that each environment names a required reviewer (any,
+     not brettheap in particular) and the deployment limit, in the build's
      step 5 and again in each upload job, and nothing else of these.
      Self-review, administrator bypass and the ruleset are not checked, and
      the header says so.
