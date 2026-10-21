@@ -14952,7 +14952,21 @@ worktree_rows() {   # [<canonical lane>]
     # third rung, where no `trees` is, and a lane whose trees this loop had
     # just found read as a lane with none. The listing's `dir` is now the root
     # of all three, so the read that could fail is not made.
-    wr_pay="dir ${wr_dir:-none}"
+    # AND IT GOES BACK QUOTED WHERE IT HOLDS A SPACE (#295), by the rule
+    # `lane-start`'s `quote_subfield` writes it with. Column 7 is the `dir` with
+    # its quotes already taken off, and `payload_subfield` reads a bare value
+    # only up to its first space: `<root>/My Projects/x` handed on bare came
+    # back as `<root>/My`, whose parent is a directory, so the lane's root was a
+    # `.lane-state` with no `trees` in it and the lane left this listing and
+    # the index in silence. NOT QUOTED WHERE IT HOLDS NONE, because a quoted
+    # value ends at its first `"`: a bare `dir` carrying one (which `lane-start`
+    # refuses to write, and a hand-written line can hold) is read whole bare
+    # and would be cut short quoted. Column 7 is read by `payload_subfield`'s
+    # own rule, so it never holds both, and this hands back every value it can.
+    case "${wr_dir:-none}" in
+      *' '*) wr_pay="dir \"$wr_dir\"" ;;
+      *)     wr_pay="dir ${wr_dir:-none}" ;;
+    esac
     wr_root=""; wr_rrc=0
     wr_root="$(lane_control_root "$wr_l" "$wr_pay" 2>/dev/null)" || wr_rrc=$?
     [ "$wr_rrc" = 0 ] || continue
