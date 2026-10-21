@@ -251,7 +251,7 @@ pushed commit's `package` job is green.
 - [X] T017 [US4] [S] Rewrite AGENTS.md's CI paragraph (point 1 of "Testing your changes to this repository") to match FR-025 and FR-026, as detailed below — files: `AGENTS.md`, `tests/test_repo_hygiene.py` — verify: `bash tests/run.sh -k repo_hygiene`
   - `tests.yml` runs `guard-launch-mode`, `tests`, `tests-no-submodule` and `package`, all on ubuntu;
   - it runs on `pull_request`, push to `main` and `release/v*`, nightly, and `workflow_dispatch`;
-  - the release workflow's macOS install leg, which runs on dispatch only, is the one place the payload runs under bash 3.2.
+  - the release workflow's macOS install leg, which runs on dispatch only, runs `openRepoTools --install` under `/bin/bash` 3.2. It is the one 3.2 run anywhere, and it runs no other command.
 
   Keep AGENTS.md within `test_agents_md_is_short_enough_to_be_read`'s cap, or add that test's dated entry for the lines this buys.
 
