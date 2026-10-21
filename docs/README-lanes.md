@@ -3159,13 +3159,14 @@ they are.
 
 **Nothing is half-PUBLISHED, because the commit is the only thing that
 publishes.** Every refusal above is made in the scan, before a byte is written.
-That includes the commit of a peer's uncommitted register edit, which the act
-makes as its own `LANES(pre-existing@…)` commit: it is made only after the
-scan, so a refusal leaves HEAD where it was. A failure in the writes themselves — a log whose append could not be proved, a
-row whose rewrite touched more than one line — leaves this checkout DIRTY and
-the register unpublished: that is what `git status` then shows, `git checkout --
-lanes` undoes it whole, and the next run is REFUSED by the dirty-checkout guard
-rather than made twice. `migrate-state-cells` has the same shape for the same
+A peer's uncommitted edit to a path the act commits is one of them: Amendment 23
+S3 refuses the act over it (2) and leaves it as it was, for its author to commit
+by its own act, `commit`; no write captures it any more. A failure in the writes
+themselves — a log whose append could not be proved, a row whose rewrite touched
+more than one line — leaves this checkout DIRTY and the register unpublished:
+that is what `git status` then shows, `git checkout -- lanes` undoes it whole,
+and the next run is REFUSED by S3, which refuses a write over a pending change to
+a path it commits, rather than made twice. `migrate-state-cells` has the same shape for the same
 reason.
 
 ### The archive — a second act on a second word
@@ -4465,17 +4466,19 @@ leave it sitting uncommitted while you do something else. Prefer
 first place: they commit in the same call, so there is no window where the
 edit sits uncommitted at all.
 
-An uncommitted hand edit left in the worktree is captured by the *next* lane's
-helper run, not by yours — and that capture now comes with a warning and, by
-default, a **separate** `LANES(pre-existing@<workstation>): …` commit (see
-above), rather than silently landing inside that other lane's own commit with
-no trace of whose it was (which is what happened in 0d84d34 and a1f2438:
-content intact, authorship lost). The separation only helps if you commit
-promptly — a hand edit is never truly "yours" in the history until it is
-committed under your own lane's message. `lanes-edit.sh commit` itself cannot
-split a hand edit that mixes your row with someone else's: it warns and
-annotates its subject the same way when the dirty diff it is about to wrap
-touches a row other than the one named by `$LANES_LANE`.
+An uncommitted hand edit left in the worktree is no longer taken into anyone's
+commit (Amendment 23 S3, ratified choice 9). A pending edit to the register
+refuses every write but `commit` (2, nothing written), and a pending edit to a
+path a write commits refuses that write. The capture that used to sweep it into
+the next lane's own commit, or into a separate `LANES(pre-existing@…)` commit,
+is withdrawn: the edit may be a peer's in this shared checkout, and only its
+author knows what it is (0d84d34 and a1f2438 were captures: content intact,
+authorship lost). So commit promptly — a hand edit is never truly "yours" in the
+history until it is committed under your own lane's message, and until then it
+stops the other writes from this checkout. `lanes-edit.sh commit` itself cannot
+split a hand edit that mixes your row with someone else's: it warns, and
+annotates its subject, when the dirty diff it is about to wrap touches a row
+other than the one named by `$LANES_LANE`.
 
 ## What is forbidden
 
@@ -4557,9 +4560,9 @@ every target in the bin directory and dies naming every one that is not a regula
 what it is, and the one `rm` that clears them. `cp` FOLLOWS A SYMLINK, so an
 install over these would leave the two commands UNINSTALLED — the targets stay
 links — and would write the post-move bytes into `opensoft/brett-wip`'s working
-tree, which is the repository every lane writes: `lanes-edit.sh`'s
-`refuse_dirty_checkout` then refuses `log`, `claim` and `release` on that
-workstation until somebody runs `git checkout -- lanes/`.
+tree, which is the repository every lane writes: `lanes-edit.sh`'s Amendment
+23 S3 then refuses each write whose paths, or whose fast-forward, those bytes are
+in the way of, on that workstation, until somebody runs `git checkout -- lanes/`.
 
 It is not tidiness. workBenches' `setup-estate-commands.sh` refuses the WHOLE
 estate install when any target "already exists as a symlink", and `setup.sh`

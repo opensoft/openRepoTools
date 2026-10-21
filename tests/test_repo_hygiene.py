@@ -3272,7 +3272,7 @@ def test_the_exit_3_rule_is_green_on_a_rewording_that_keeps_the_meaning(
 _NO_PULL_FILES = ("lanes-edit.sh",)
 #: A `pull` that rebases: `--rebase`, `-r` or `--rebase=…`, on a line that is
 #: not a comment.
-_PULL_REBASE = re.compile(r"\bpull\b[^\n#]*?(?:--rebase\b|\s-r\b)")
+_PULL_REBASE = re.compile(r"\bpull\b[^\n]*?(?:--rebase\b|\s-r\b)")
 
 
 def _pulls_with_rebase(src: str) -> list[int]:
@@ -3299,10 +3299,11 @@ def test_no_lane_writer_pulls_with_rebase(name):
     ('  git_net -C "$C" pull --rebase -q origin "$B"', True),
     ('  git pull -q -r origin main', True),
     ('  die "Pull first — `git -C $C pull --rebase` — and re-run." 2', True),
+    ('  die "pull (#198) --rebase, then re-run" 2', True),
     ("  # the old loop ran `pull --rebase` here", False),
     ('  git -C "$C" merge --ff-only -q refs/remotes/origin/main', False),
     ('  note "no writer pulls any more"', False),
-], ids=["git_net-pull", "short-flag", "a-die-that-says-it", "a-comment",
+], ids=["git_net-pull", "short-flag", "a-die-that-says-it", "a-hash-inside-it", "a-comment",
         "the-fast-forward", "the-word-alone"])
 def test_the_no_pull_rule_reads_what_it_should(line, red):
     assert bool(_pulls_with_rebase("x() {\n" + line + "\n}\n")) is red
@@ -3319,18 +3320,40 @@ _CARRY_PROMISES = (
                r"[^.|\n]{0,60}?\bcarr(?:y|ies)\b", re.I),
     re.compile(r"\bmay already carry\b", re.I),
     re.compile(r"\bown push publishes\b", re.I),
+    # AND THE CAPTURE, ITS TWIN (rv1b's pre-review of slice 1b, SHOULD 1): a
+    # pending edit taken into someone else's commit, or the deleted guard that
+    # stood in front of it, described as what happens now. The withdrawal's
+    # own sentences name the capture too, so these match what only a promise
+    # says.
+    re.compile(r"\bcaptured by the\W+next\b", re.I),
+    re.compile(r"\bas its own\W+LANES\(pre-existing@", re.I),
+    re.compile(r"\bby the dirty-checkout guard\b", re.I),
+    re.compile(r"\brefuse_dirty_checkout\b"),
 )
 
 
 def _carry_promises(text: str, *, script: bool) -> list[str]:
     """`<line>: <words>` for each promise of the carry in `text`; a script's
-    comments are history and are not read."""
+    comments are history and are not read. A document is read a PARAGRAPH at
+    a time, its lines joined (SHOULD 1: a promise wrapped across two lines got
+    past a rule that read one), and `<line>` is the paragraph's first."""
     found = []
-    for n, line in enumerate(text.splitlines(), 1):
-        if script and line.lstrip().startswith("#"):
-            continue
+    if script:
+        units = [(n, line) for n, line in enumerate(text.splitlines(), 1)
+                 if not line.lstrip().startswith("#")]
+    else:
+        units, start, para = [], 1, []
+        for n, line in enumerate(text.splitlines() + [""], 1):
+            if line.strip():
+                if not para:
+                    start = n
+                para.append(line.strip())
+            elif para:
+                units.append((start, " ".join(para)))
+                para = []
+    for n, unit in units:
         for rule in _CARRY_PROMISES:
-            m = rule.search(line)
+            m = rule.search(unit)
             if m:
                 found.append(f"{n}: {m.group(0)}")
     return found
@@ -3357,7 +3380,15 @@ def test_no_text_promises_the_carry():
     ("then re-run the refused act: its own push publishes their commits", True),
     ("no later write carries it (Amendment 23 S3 refuses every write over it)", False),
     ("every later write from that checkout refuses until it is published", False),
-], ids=["exit-3", "the-rename", "the-recovery", "the-negation", "the-refusal"])
+    ("An uncommitted hand edit left in the worktree is captured by the *next* lane's"
+     + chr(10) + "helper run, not by yours", True),
+    ("the commit of a peer's uncommitted register edit, which the act" + chr(10)
+     + "makes as its own `LANES(pre-existing@…)` commit", True),
+    ("the next run is REFUSED by the dirty-checkout guard", True),
+    ("`refuse_dirty_checkout` then refuses `log`, `claim` and `release`", True),
+    ("the `LANES(pre-existing@<workstation>)` capture and `--sweep` are withdrawn (2)", False),
+], ids=["exit-3", "the-rename", "the-recovery", "the-negation", "the-refusal",
+        "a-wrapped-capture", "a-wrapped-own-commit", "the-guard", "the-function", "the-withdrawal"])
 def test_the_carry_rule_reads_what_it_should(text, red):
     assert bool(_carry_promises(text, script=False)) is red
 
