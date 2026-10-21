@@ -165,7 +165,11 @@ is running is never started a second time.
                    WITH it, the derived index's `worktrees` table — every
                    workstation syncing into that store, so Raven sees Eagle's
                    leftovers — and stderr says which, as for the listing. It
-                   takes none of the listing's narrowing flags.
+                   takes none of the listing's narrowing flags. A lane whose
+                   inventory could not be read is a NOT READ line, and a lane
+                   listing that could not be read whole a NOT WHOLE line
+                   (opensoft/openRepoTools#173): neither is a lane with no
+                   worktrees.
   --rename <old> <new>
                    REFUSED, and it names the word that does it:
                    `lane-rename <old> <new>`. This command writes nothing
@@ -313,8 +317,12 @@ if [ "$wt_mode" = 1 ]; then
 		out="$("$LANES_EDIT" worktrees ${idx_args[@]+"${idx_args[@]}"} "${wt_args[@]}" 2>"$wt_err_file")" || rc=$?
 		wt_err="$(cat -- "$wt_err_file" 2>/dev/null || printf '')"
 		# `-e` AND NO `--` AFTER THE PATTERN: BSD's `grep` stops at its first
-		# operand, so a `--` there is a FILE it cannot open on macOS.
-		command grep -v -e 'not fetching; reading origin/' "$wt_err_file" >&2 || :
+		# operand, so a `--` there is a FILE it cannot open on macOS. A BARE
+		# `grep`, NOT `command grep` (opensoft/openRepoTools#292): this one exits
+		# 1 whenever the helper said nothing else, and macOS's bash 3.2 ends a
+		# `set -e` script where a utility run through `command` fails, `|| :`
+		# or not, which left `lanes --worktrees` at exit 1 with no output.
+		grep -v -e 'not fetching; reading origin/' "$wt_err_file" >&2 || :
 		rm -f -- "$wt_err_file"
 	else
 		out="$("$LANES_EDIT" worktrees ${idx_args[@]+"${idx_args[@]}"} "${wt_args[@]}")" || rc=$?
@@ -341,9 +349,15 @@ if [ "$wt_mode" = 1 ]; then
 	esac
 	printf '%-11s %-26s %-16s %-13s %-7s %-34s %5s %8s  %-20s  %s\n' \
 		WORKSTATION LANE OWNER LIFECYCLE WRITER BRANCH DIRTY UNPUSHED "LAST SEEN" PATH
-	n=0; nl=0; nw=0; wt_unread=0; wt_lanes=" "; wt_wss=" "
+	n=0; nl=0; nw=0; wt_unread=0; wt_partial=0; wt_lanes=" "; wt_wss=" "
 	while IFS="$US" read -r w_kind w_ws w_lane w_owner w_path w_branch w_base w_life w_gen w_op w_live w_seen w_last w_dirty w_unp w_prov; do
 		case "${w_kind:-}" in
+		PARTIAL)
+			# `PARTIAL <ws> <why>` (#173 item c1): the LANE LISTING these rows
+			# were read through was not whole, and the second field — read
+			# into `w_lane` — says which read failed.
+			printf '%-11s %-26s lane listing NOT WHOLE: %s\n' "$w_ws" "(every lane)" "$w_lane"
+			wt_partial=$((wt_partial + 1)) ;;
 		TREE)
 			case "${w_live:-}" in 1) w_wr=live ;; 0) w_wr=none ;; *) w_wr=unknown ;; esac
 			printf '%-11s %-26s %-16s %-13s %-7s %-34s %5s %8s  %-20s  %s\n' \
@@ -364,6 +378,9 @@ EOF
 	say "$n worktree(s) in $nl lane(s) on $nw workstation(s), each as its lane's inventory last recorded it (LAST SEEN); nothing here is recomputed."
 	if [ "$wt_unread" != 0 ]; then
 		say "$wt_unread lane(s) above have an inventory that is there and could not be read: that is NOT a lane with no worktrees."
+	fi
+	if [ "$wt_partial" != 0 ]; then
+		say "the lane listing above is NOT WHOLE: a lane it could not name is missing from it, and that is NOT a lane with no worktrees."
 	fi
 	# THE ACT IS NAMED WITH WHERE IT RUNS (opensoft/openRepoTools#173, Copilot's
 	# fourth review of #171). An `--index` listing holds every workstation that

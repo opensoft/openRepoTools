@@ -4007,11 +4007,14 @@ WIP_HYGIENE_LINES=(
 )
 
 # The hygiene block, less every line `$1` already carries; nothing at all when
-# it carries them all.
+# it carries them all. A bare `grep`, never `command grep`
+# (opensoft/openRepoTools#292): its failure IS the missing line, and macOS's
+# bash 3.2 ends a `set -e` script where a utility run through `command` fails,
+# even on the left of `||`.
 wip_hygiene_lines() {   # <the .gitignore as it stands>
 	local line missing=""
 	for line in "${WIP_HYGIENE_LINES[@]}"; do
-		command grep -Fqx -- "$line" "$1" 2>/dev/null || missing="$missing$line
+		grep -Fqx -- "$line" "$1" 2>/dev/null || missing="$missing$line
 "
 	done
 	[ -n "$missing" ] || return 0
