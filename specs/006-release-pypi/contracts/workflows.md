@@ -407,8 +407,11 @@ These are the model's grants (`release.yml:1133-1136` at v1.1.0).
   pipx's bin directory as it was. Its second `--install`, into that
   directory, finds the same sixteen each `already installed` and
   `(unchanged)`; with one of them reported different, it updates that one,
-  counts 15, and the rerun exits 1 naming that count. What Apple's own bash
-  makes of `--install` is the macOS leg's to show.
+  counts 15, and the rerun exits 1 naming that count. With the mode of one
+  of them reported as not 755, it says `(mode restored to 755)` of that one,
+  which is `already installed` but not `(unchanged)`, so it counts 15 here
+  too, and the rerun exits 1 naming that count. What Apple's own bash makes
+  of `--install` is the macOS leg's to show.
 - No step reads `docs/`, `openspec/`, `specs/`, `README.md`, `AGENTS.md` or
   `CLAUDE.md`.
 - The header has the RELEASING sections above.
