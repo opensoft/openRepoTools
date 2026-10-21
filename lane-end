@@ -36,6 +36,10 @@
 #                                        # the DORMANT rows of one repository,
 #                                        # dry run by default; --yes is ONE
 #                                        # commit (Amendment 19(c))
+#   lane-end --sweep-checkouts [--yes]   # the register checkouts under
+#                                        # <W>-lanes/ that CLOSED lanes left,
+#                                        # dry run by default; --yes removes
+#                                        # those nothing holds (Amendment 23 S6.2)
 #   lane-end [options] <repo> <n>        # the split form works too
 #   lane-end [options] <n>               # <repo> = basename of the cwd's git root
 #
@@ -166,9 +170,27 @@
 #                       worktrees, branches and handoffs stay exactly where they
 #                       are. An agent's stdin is not a terminal, so `--yes` is a
 #                       word a PERSON types.
+#   --sweep-checkouts   A FOURTH ACT, and it ends no lane: the sweep of register
+#                       checkouts lane-collision-protocol Amendment 23 S6.2
+#                       leaves to this command. Each lane writes the register
+#                       through its own clone, `<W>-lanes/<lane>/` (S1), and a
+#                       lane that has CLOSED (Amendment 19) leaves its clone
+#                       behind, as an old name leaves one beside its new name
+#                       after a rename. Without `--yes` this is a DRY RUN that
+#                       lists every one of them with what holds it, and every
+#                       register clone BESIDE W (a per-profile clone) with what
+#                       it holds; it fetches nothing and changes nothing.
+#                       With `--yes`, run by a PERSON and naming the lane that
+#                       runs it in `LANES_LANE`, it removes each clone under
+#                       `<W>-lanes/` that nothing holds, leaves first, and
+#                       records what it removed in one `NOTED` line of that
+#                       lane's log. A clone beside W is listed and never
+#                       removed by this build, and nothing outside
+#                       `<W>-lanes/` is ever removed
 #   --reason "<why>"    the words the sweep writes into each RETIRED line and
 #                       into each row's state cell. `--retire-dormant` only
-#   --yes               make the sweep the one act. `--retire-dormant` only
+#   --yes               make the sweep the act. `--retire-dormant` and
+#                       `--sweep-checkouts` only
 #   --dry-run           print what would be written; write nothing
 #   -h, --help
 #
@@ -240,10 +262,17 @@
 #   1  environment — no register, no writer, `lanes-edit.sh lane-objects`
 #      failed (which is NOT the same as the lane having no object log), or the
 #      close-out gate could not be read (no `lane-worktrees`, or an exit that
-#      is none of its three)
+#      is none of its three). `--sweep-checkouts`: no W, a read that failed
+#      (the listing of lanes, or a fetch `--yes` decides on), or a removal
+#      whose NOTED line could not be written
 #   2  refusal — bad arguments, no row (or two), something still in flight, or
 #      the close-out gate: the lane's trees, branches, scratch, caches or
-#      residue still on disk, or the sweep refusing the lane
+#      residue still on disk, or the sweep refusing the lane.
+#      `--sweep-checkouts`: `--yes` with no `LANES_LANE`, or with
+#      `LANES_NO_FETCH=1`; a W that is itself a lane checkout; a runner lane
+#      the register does not know
+#   3  `--sweep-checkouts`, the dry run: something under `<W>-lanes/` is
+#      removable (0 is nothing to remove)
 #   8  nothing there. `--retire-dormant`: no lane of that repository is
 #      recorded, or none of its rows is DORMANT. `--retire <pid|uuid>`: nothing
 #      of any kind is live for the lane
@@ -533,6 +562,9 @@ LANES_REG_DEFAULT=0
 if [ -z "${LANES_FILE:-}" ] || [ -z "${LANES_REPO:-}" ]; then
   LANES_WS_ROOT="$(lanes_workspace_root || :)"
 fi
+# The checkout a caller's own `LANES_REPO` names, before the default below
+# fills it in: `--sweep-checkouts` never removes it (Amendment 23 S6.2).
+LE_REPO_GIVEN="${LANES_REPO:-}"
 : "${LANES_REPO:=$LANES_WS_ROOT}"
 LANES_FILE="${LANES_FILE:-${LANES_REPO:+$LANES_REPO/lanes/LANES.md}}"
 
@@ -581,7 +613,7 @@ usage() { sed -n -e '1,2d' -e '/^#/!q' -e 's/^# \{0,1\}//' -e p "$RESOLVED"; }
 # ------------------------------------------------------------------ arguments
 
 retire=0; force=0; dry_run=0; state_was=""; home_override=""; retire_target=""
-retire_dormant=""; sweep_reason=""; sweep_yes=0; inventory_only=0
+retire_dormant=""; sweep_reason=""; sweep_yes=0; inventory_only=0; sweep_checkouts=0
 positional=()
 
 # A TRANSCRIPT UUID AND A PID, TOLD APART FROM A LANE ARGUMENT BY SHAPE.
@@ -651,6 +683,9 @@ while [ $# -gt 0 ]; do
     # which is not built — `lane-worktrees sweep --yes` is that act, on its own
     # — so the word is refused by name rather than read as an unknown option.
     --inventory-only) inventory_only=1; shift ;;
+    # AMENDMENT 23 S6.2 — THE REGISTER CHECKOUTS' SWEEP, its own act. It takes
+    # no value, so `--sweep-checkouts=<x>` is an unknown option below.
+    --sweep-checkouts) sweep_checkouts=1; shift ;;
     --sweep | --sweep=*)
                    die "--sweep is not built: retiring a lane's trees in the same run as its ending is not one act. \`lane-worktrees sweep <lane> --yes\` retires them first, on its own (it removes only what is on origin or in a bundle, never a live writer's tree), and then $prog <lane> ends the lane; or $prog <lane> --inventory-only ends the lane with its trees left where they are, in its inventory. Nothing was written." 2 ;;
     --dry-run)     dry_run=1; shift ;;
@@ -679,6 +714,7 @@ done
 # itself before it writes a byte.
 if [ -n "$retire_dormant" ]; then
   [ "$retire" = 0 ] || die "--retire and --retire-dormant are two different acts: --retire is a lane's own ending (or a live fork's), and --retire-dormant sweeps a repository's rows that have no lane left to end. Run one of them." 2
+  [ "$sweep_checkouts" = 0 ] || die "--retire-dormant and --sweep-checkouts are two different sweeps: one retires a repository's dormant ROWS in the register, the other removes the register CHECKOUTS that closed lanes left on disk. Run one of them. Nothing was written." 2
   [ "$force" = 0 ] || die "--force ends a lane that still holds something; it has no meaning for a sweep of rows whose lanes ended before Amendment 7. Nothing was written." 2
   [ "$inventory_only" = 0 ] || die "--inventory-only is the door past ONE lane's close-out gate; the sweep of dormant rows ends no lane and asks no gate. Nothing was written." 2
   [ -z "$state_was" ] || die "--state-was is for the state cell of a lane being ended; the sweep writes each row's cell itself, from the reason and the row's own last words. Nothing was written." 2
@@ -866,6 +902,375 @@ EOF
   exit $?
 fi
 
+# ---- AMENDMENT 23 S6.2: `--sweep-checkouts`, THE REGISTER CHECKOUTS' SWEEP ---
+#
+# EVERY LANE WRITES THE REGISTER THROUGH A CLONE OF ITS OWN, `<W>-lanes/<lane>/`
+# (S1), and S6.2 leaves the clones a CLOSED lane no longer writes through to
+# this command: *"The sweep has Amendment 19's shape — a dry run, then a
+# person's `--yes`"*. Like `--retire-dormant` it is not a lane argument and it
+# ends no lane, so it is answered here, before the `<lane>` derivation below.
+#
+# WHAT IT LOOKS AT. Every entry directly under `<W>-lanes/` but the hidden ones
+# (S1's creation locks and `.partial` clones, the workstation's sidecar lock),
+# and every register clone BESIDE W: a directory in W's parent with a `.git`
+# directory of its own whose origin is W's — the per-profile clones S6.2 names.
+#
+# WHAT IT MAY REMOVE, AND NOTHING ELSE: a clone of the register directly under
+# `<W>-lanes/`, at its own real path, that is the checkout of a lane the
+# register calls CLOSED (`lanes --closed`'s class, Amendment 19), or the old
+# name's checkout beside its new one after a rename (S1: *"the writer writes
+# through `<W>-lanes/<new>/` and reports `<W>-lanes/<old>/`, which S6's sweep
+# lists"*). NEVER W, never a LIVE lane's checkout, never the checkout of the
+# lane that runs the sweep or of the `LANES_REPO` its caller names, never a
+# symbolic link and never anything a link leads to. A CLONE BESIDE W IS LISTED,
+# WITH WHAT IT HOLDS, AND NEVER REMOVED BY THIS BUILD: the brief this slice was
+# written under says nothing outside `<W>-lanes/` is removed, where S6.2 says
+# the per-profile clones are swept too, and the stricter rule is kept until
+# lane openRepoTools-3 rules between them.
+if [ "$sweep_checkouts" = 1 ]; then
+  [ "$retire" = 0 ] || die "--retire and --sweep-checkouts are two different acts: --retire ends a lane (or names a live fork's act), and --sweep-checkouts removes the register checkouts closed lanes left on disk, ending no lane. Run one of them. Nothing was written." 2
+  [ "$force" = 0 ] || die "--force ends a lane that still holds something; it has no meaning for the sweep of register checkouts, which removes only what nothing holds. Nothing was removed." 2
+  [ "$inventory_only" = 0 ] || die "--inventory-only is the door past ONE lane's close-out gate; the sweep of register checkouts ends no lane and asks no gate. Nothing was removed." 2
+  [ -z "$state_was" ] || die "--state-was is for the state cell of a lane being ended; the sweep of register checkouts writes no cell. Nothing was removed." 2
+  [ -z "$home_override" ] || die "--home is for a pre-cutover lane's own log line; the sweep of register checkouts writes no home into anything. Nothing was removed." 2
+  [ -z "$sweep_reason" ] || die "--reason belongs to --retire-dormant: the sweep of register checkouts writes its own NOTED line, naming what it removed. Nothing was removed." 2
+  if [ "${#positional[@]}" -gt 0 ]; then
+    die "--sweep-checkouts takes no lane and no repository ('${positional[0]}'): it looks at every register checkout under <W>-lanes/, and the lane that RUNS it is named in LANES_LANE. Nothing was removed." 2
+  fi
+  [ "$dry_run" = 0 ] || sweep_yes=0
+  # `--yes` IS A WRITE, AND ITS WRITER IS A LANE. The NOTED line that records
+  # what was removed carries the sweeping lane's own transcript uuid (Amendment
+  # 7(b)) and goes through that lane's own checkout (S2: *"A write across lanes'
+  # rows ... goes through the checkout of the lane that runs it"*), so the lane
+  # is named by the person running it or nothing happens. And a writer whose
+  # fetch did not run is a writer S3 refuses (ratified choice 2): asked here,
+  # before the first removal, rather than met by the record after it.
+  if [ "$sweep_yes" = 1 ]; then
+    [ -n "${LANES_LANE:-}" ] ||
+      die "--sweep-checkouts --yes removes directories and writes one NOTED line into the log of the lane that runs it, through that lane's own checkout (Amendment 23 S2, S6.2), so this act needs to know which lane is doing it. Re-run it from your lane: LANES_LANE=<your lane> $prog --sweep-checkouts --yes. Nothing was removed." 2
+    [ "${LANES_NO_FETCH:-}" != 1 ] ||
+      die "--sweep-checkouts --yes fetches each checkout before it decides about it, and its NOTED line is a write, which Amendment 23 S3 refuses when its fetch did not run (ratified choice 2) — and LANES_NO_FETCH=1 is set. Unset it and re-run. Nothing was removed." 2
+    case "$LANES_LANE" in
+      *[!A-Za-z0-9._-]* | [!A-Za-z0-9]*) die "LANES_LANE='$LANES_LANE' is not a lane name (letters, digits, . _ -). Nothing was removed." 2 ;;
+    esac
+  fi
+  [ -x "$LANES_EDIT" ] || die "no register writer at $LANES_EDIT — \`lanes-edit.sh\` is installed beside this command by \`openRepoTools --install\`. Run that, or set LANES_EDIT" 1
+
+  sc_tab="$(printf '\t')"
+  sc_branch="${LANES_BRANCH:-main}"
+  case "$sc_branch" in
+    '' | -* | *[!A-Za-z0-9._/-]*) die "LANES_BRANCH='$sc_branch' is not a branch name this sweep compares against. Nothing was removed." 2 ;;
+  esac
+  sc_utc="$(date -u +%Y%m%dT%H%M%SZ)"
+
+  # A DIRECTORY'S REAL PATH, or nothing: `cd -P` resolves every link on the way.
+  sc_real() { (CDPATH='' cd -P -- "$1" 2>/dev/null && pwd -P) || :; }
+  sc_lc() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+  # A repository's git common directory, real, or nothing. `--git-common-dir`
+  # answers relative to `-C`'s directory on the gits that answer relatively.
+  sc_git_common() {   # <dir>
+    scg_d="$(git -C "$1" rev-parse --git-common-dir 2>/dev/null)" || return 0
+    case "$scg_d" in /*) : ;; *) scg_d="$1/$scg_d" ;; esac
+    sc_real "$scg_d"
+  }
+
+  # W, THE READERS' COPY — the checkout whose `<W>-lanes/` this sweeps, found
+  # the way every helper finds it (Amendment 9(a)), by its real path.
+  sc_w="$(lanes_workspace_root 2>/dev/null || :)"
+  [ -n "$sc_w" ] || die "$(lanes_workspace_why)" 1
+  sc_w_real="$(sc_real "$sc_w")"
+  [ -n "$sc_w_real" ] || die "W, $sc_w, cannot be entered, so neither it nor its lane checkouts can be read. Nothing was removed." 1
+  sc_w="$sc_w_real"
+  sc_root="${sc_w%/*}"
+  [ -n "$sc_root" ] || die "W resolves to $sc_w, at the top of the filesystem, so the directory beside it is the whole of it. The sweep reads no such directory. Nothing was removed." 2
+  # A W THAT IS ITSELF A LANE CHECKOUT IS REFUSED, AS `lanes-edit.sh`'S
+  # `lanes_home_check` REFUSES IT (the review of #282, MUST 3). Eagle's lane
+  # windows export `LANES_WORKSPACE_ROOT` at the lane's own checkout, and from
+  # there "the clones beside W" would be every OTHER lane's checkout.
+  case "${sc_root##*/}" in
+    ?*-lanes)
+      if [ -n "${LANES_WORKSPACE_ROOT:-}" ]; then
+        die "LANES_WORKSPACE_ROOT is $LANES_WORKSPACE_ROOT, so W resolves to $sc_w — but it stands in $sc_root/, where a workstation keeps its lane checkouts: it is a lane checkout, not W (Amendment 23 S1, S5), and the clones beside it are other lanes' checkouts. Unset LANES_WORKSPACE_ROOT in this window and re-run. Nothing was removed." 2
+      fi
+      die "$(lanes_ws_yaml) names path: $sc_w as W — but it stands in $sc_root/, where a workstation keeps its lane checkouts: it is a lane checkout, not W (Amendment 23 S1, S5). Point that \`path:\` at the workspace checkout itself. Nothing was removed." 2 ;;
+  esac
+  sc_home="$sc_w-lanes"
+  sc_worigin="$(git -C "$sc_w" remote get-url origin 2>/dev/null || :)"
+  [ -n "$sc_worigin" ] || die "W ($sc_w) names no origin, so no clone can be told to be the register's. Nothing was removed." 1
+  sc_wgcd="$(sc_git_common "$sc_w")"
+  [ -n "$sc_wgcd" ] || die "W's git directory could not be read ($sc_w), so W cannot be told from a clone of it. Nothing was removed." 1
+
+  # A CLONE OF THE REGISTER, BY S1'S OWN TEST: a directory (never a symbolic
+  # link) at its own real path, the root of its checkout, with a `.git`
+  # DIRECTORY of its own (not a linked worktree's file, not a link), whose
+  # origin is W's, and which is not W. 0 for one; 1 with SC_WHY saying what is
+  # there instead.
+  SC_WHY=""
+  sc_is_register_clone() {   # <path>
+    scr_p="$1"; SC_WHY=""
+    if [ -L "$scr_p" ]; then
+      SC_WHY="a symbolic link, which this sweep never follows"; return 1
+    fi
+    if [ ! -d "$scr_p" ]; then SC_WHY="not a directory"; return 1; fi
+    scr_r="$(sc_real "$scr_p")"
+    if [ "$scr_r" != "$scr_p" ]; then
+      SC_WHY="a directory whose real path is ${scr_r:-unreadable}, not the path it is listed at"; return 1
+    fi
+    if [ -L "$scr_p/.git" ] || [ ! -d "$scr_p/.git" ]; then
+      SC_WHY="no .git directory of its own (a linked worktree, a link, or no checkout at all)"; return 1
+    fi
+    scr_top="$(git -C "$scr_p" rev-parse --show-toplevel 2>/dev/null || :)"
+    if [ "$scr_top" != "$scr_p" ]; then
+      SC_WHY="not the root of a checkout (git names ${scr_top:-none})"; return 1
+    fi
+    scr_gcd="$(sc_git_common "$scr_p")"
+    if [ "$scr_gcd" = "$sc_wgcd" ] || [ "$scr_p" = "$sc_w" ]; then
+      SC_WHY="W itself, the readers' copy"; return 1
+    fi
+    if [ "$scr_gcd" != "$scr_p/.git" ]; then
+      SC_WHY="a checkout whose git directory is ${scr_gcd:-unreadable}, not its own .git"; return 1
+    fi
+    scr_o="$(git -C "$scr_p" remote get-url origin 2>/dev/null || :)"
+    if ! lanes_ws_same_repo "$scr_o" "$sc_worigin"; then
+      SC_WHY="a checkout of ${scr_o:-no origin at all}, not of the register's origin"; return 1
+    fi
+    return 0
+  }
+
+  # THE LANES, AS THE REGISTER AND THE LOGS HAVE THEM: `lanes --closed --all`,
+  # the one read that classes a lane CLOSED (Amendment 19), so this sweep and
+  # every listing can never disagree about which lanes those are. Column 2 is
+  # the state, LIVE where a live session record here names the lane, and
+  # column 14 the class. A dry run reads what W last fetched, as the listing
+  # does by default; `--yes` fetches first. ITS NOTES ARE READ, as
+  # `--retire-dormant` reads them: a listing that could not read this
+  # workstation's session records cannot say which lanes are LIVE, and one
+  # that could not read the register cannot say which are CLOSED, and neither
+  # is an answer (Amendment 7(d)).
+  sc_lanes_args=(lanes --closed --all)
+  if [ "$sweep_yes" = 1 ]; then sc_lanes_args+=(--fetch); fi
+  LE_TMP="$(mktemp "${TMPDIR:-/tmp}/lane-end-sweep.XXXXXX" 2>/dev/null || printf '')"
+  [ -n "$LE_TMP" ] ||
+    die "no temporary file could be made to capture the listing's own notes, so whether this workstation's session records could be read — which is what says a lane is LIVE — was never established. Fix \$TMPDIR and re-run. Nothing was removed." 1
+  sc_rc=0
+  sc_rows="$("$LANES_EDIT" "${sc_lanes_args[@]}" 2>"$LE_TMP")" || sc_rc=$?
+  sc_err="$(cat -- "$LE_TMP")" ||
+    die "the capture of the listing's own notes could not be read back, so whether the lanes' state was read was never established. Nothing was removed." 1
+  rm -f -- "$LE_TMP"; LE_TMP=""
+  if [ -n "$sc_err" ]; then printf '%s\n' "$sc_err" >&2; fi
+  case "$sc_err" in
+    *"session records could not be read"*)
+      die "this workstation's session records could not be read (the listing says so above), so which lanes are LIVE was never established, and a LIVE lane's checkout is never swept. Fix the read and re-run. Nothing was removed." 1 ;;
+    *"could not be read, so its rows are not in this listing"*)
+      die "the register could not be read (the listing says so above), so which lanes are CLOSED was never established. Fix the read and re-run. Nothing was removed." 1 ;;
+  esac
+  if [ "$sweep_yes" = 1 ]; then
+    case "$sc_err" in
+      *"NO FETCH WAS MADE"*)
+        die "--yes decides on a register fetched just now, and W's fetch was not made (the listing says why above). Nothing was removed." 1 ;;
+    esac
+  fi
+  case "$sc_rc" in
+    0 | 8) : ;;
+    2) die "the \`lanes-edit.sh\` on this workstation has no \`lanes\` subcommand, so it predates lane-collision-protocol Amendment 11 and cannot say which lanes are CLOSED. This workstation has not taken the install yet:  openRepoTools --install" 2 ;;
+    *) die "$LANES_EDIT ${sc_lanes_args[*]} exited $sc_rc, so which lanes are CLOSED or LIVE was never established. Run it by hand to see what it says. Nothing was removed." 1 ;;
+  esac
+  # `<lane lower-cased> TAB <lane> TAB <state> TAB <class>`, one per lane.
+  sc_index=""
+  while IFS="$sc_tab" read -r i_lane i_state i_ws i_pf i_win i_sid i_dir i_obj i_age i_cmd i_home i_fk i_loc i_class i_rest; do
+    [ -n "${i_lane:-}" ] || continue
+    sc_index="${sc_index}$(sc_lc "$i_lane")${sc_tab}${i_lane}${sc_tab}${i_state:-UNKNOWN}${sc_tab}${i_class:-none}
+"
+  done <<SC_ROWS
+$sc_rows
+SC_ROWS
+  SC_L_LANE=""; SC_L_STATE=""; SC_L_CLASS=""
+  sc_lookup() {   # <name> — 0 with SC_L_LANE/STATE/CLASS, 1 when no lane has it
+    scl_want="$(sc_lc "$1")"; SC_L_LANE=""; SC_L_STATE=""; SC_L_CLASS=""
+    while IFS="$sc_tab" read -r scl_lc scl_lane scl_state scl_class; do
+      [ -n "$scl_lc" ] && [ "$scl_lc" = "$scl_want" ] || continue
+      SC_L_LANE="$scl_lane"; SC_L_STATE="$scl_state"; SC_L_CLASS="$scl_class"
+      return 0
+    done <<SC_IDX
+$sc_index
+SC_IDX
+    return 1
+  }
+
+  # THE RUNNER: the lane `LANES_LANE` names, by its row's own spelling
+  # (Amendment 15), whose checkout the NOTED line goes through and so is never
+  # swept. A dry run without one sweeps nothing of its own and says so.
+  sc_runner=""
+  if [ -n "${LANES_LANE:-}" ]; then
+    sc_cl_rc=0
+    sc_runner="$(LANES_NO_FETCH=1 "$LANES_EDIT" canon-lane "$LANES_LANE" 2>/dev/null)" || sc_cl_rc=$?
+    if [ "$sc_cl_rc" != 0 ] || [ -z "$sc_runner" ]; then
+      die "LANES_LANE=$LANES_LANE could not be resolved to a lane (\`$LANES_EDIT canon-lane $LANES_LANE\` exited $sc_cl_rc), so whose checkout is never swept, and whose log the NOTED line goes into, is not known. Nothing was removed." 2
+    fi
+    if [ "$sweep_yes" = 1 ] && ! sc_lookup "$sc_runner"; then
+      die "lane $sc_runner, which LANES_LANE names, has no row in the register and no log (\`lanes --all\` does not list it), so the NOTED line this act ends with has no lane to be written for. Name your own lane: LANES_LANE=<your lane> $prog --sweep-checkouts --yes. Nothing was removed." 2
+    fi
+  fi
+  # THE CHECKOUT A CALLER'S `LANES_REPO` NAMES, by its real toplevel. Eagle's
+  # lane windows export one at the lane's own checkout, and a write may go
+  # through it; it is never swept.
+  sc_xrepo=""
+  if [ -n "$LE_REPO_GIVEN" ]; then
+    sc_xrepo="$(sc_real "$LE_REPO_GIVEN")"
+    if [ -n "$sc_xrepo" ]; then
+      sc_xtop="$(git -C "$sc_xrepo" rev-parse --show-toplevel 2>/dev/null || :)"
+      if [ -n "$sc_xtop" ]; then sc_xrepo="$(sc_real "$sc_xtop")"; fi
+    fi
+  fi
+
+  # ------------------------------------------------ the entries, one by one
+  #
+  # Each is a CANDIDATE, kept apart with what it is judged as, or a KEEP line
+  # that says why it is not one. Nothing below reads a clone's history: that
+  # is what holds it, and the holds are asked of candidates alone.
+  sc_cands=(); sc_cand_why=(); sc_cand_lane=(); sc_cand_new=()
+  sc_keep_lines=""
+  sc_keep() {   # <path> <why>
+    sc_keep_lines="${sc_keep_lines}    keep       $1  $2
+"
+  }
+  sc_cand() {   # <path> <lane it is judged as> <why> [<new name's checkout>]
+    sc_cands+=("$1"); sc_cand_lane+=("$2"); sc_cand_why+=("$3"); sc_cand_new+=("${4-}")
+  }
+  # A lane's checkout, judged by the lane's state: CLOSED is a candidate,
+  # LIVE never is, and every other state is a lane somebody may pick up.
+  sc_judge_lane() {   # <path> <lane>
+    if [ -n "$sc_runner" ] && [ "$(sc_lc "$2")" = "$(sc_lc "$sc_runner")" ]; then
+      sc_keep "$1" "lane $2 runs this sweep: its checkout is the one its NOTED line goes through"
+      return 0
+    fi
+    if ! sc_lookup "$2"; then
+      sc_keep "$1" "no lane $2 is in the register or the logs, so it is no CLOSED lane's"
+      return 0
+    fi
+    if [ "$SC_L_STATE" = LIVE ]; then
+      sc_keep "$1" "lane $SC_L_LANE is LIVE: a live session record here names it"
+      return 0
+    fi
+    if [ "$SC_L_CLASS" != closed ]; then
+      sc_keep "$1" "lane $SC_L_LANE is $SC_L_STATE, not CLOSED (Amendment 19)"
+      return 0
+    fi
+    sc_cand "$1" "$SC_L_LANE" "lane $SC_L_LANE is CLOSED ($SC_L_STATE)"
+  }
+  sc_judge() {   # <path> <name>
+    sj_p="$1"; sj_n="$2"
+    if ! sc_is_register_clone "$sj_p"; then
+      sc_keep "$sj_p" "$SC_WHY"; return 0
+    fi
+    if [ -n "$sc_xrepo" ] && [ "$sj_p" = "$sc_xrepo" ]; then
+      sc_keep "$sj_p" "the checkout LANES_REPO names, which a write of this window may go through"
+      return 0
+    fi
+    case "$sj_n" in
+      *[!A-Za-z0-9._-]* | [!A-Za-z0-9]*)
+        sc_keep "$sj_p" "its name is no lane name (letters, digits, . _ -)"; return 0 ;;
+    esac
+    if sc_lookup "$sj_n"; then
+      sc_judge_lane "$sj_p" "$SC_L_LANE"; return 0
+    fi
+    # NOT A LANE BY ITS OWN NAME: perhaps a FORMER name (Amendment 16(e)).
+    sj_rc=0
+    sj_c="$(LANES_NO_FETCH=1 "$LANES_EDIT" canon-lane "$sj_n" 2>/dev/null)" || sj_rc=$?
+    if [ "$sj_rc" != 0 ] || [ -z "$sj_c" ]; then
+      sc_keep "$sj_p" "whether $sj_n is a former lane name could not be read (\`canon-lane $sj_n\` exited $sj_rc)"
+      return 0
+    fi
+    if [ "$(sc_lc "$sj_c")" = "$(sc_lc "$sj_n")" ]; then
+      sc_keep "$sj_p" "no lane $sj_n is in the register or the logs, so it is no CLOSED lane's"
+      return 0
+    fi
+    # A FORMER NAME OF LANE `sj_c`. Beside the new name's own checkout it is a
+    # candidate whatever that lane's state, because nothing writes through it
+    # any more (S1); with no checkout under the new name it IS the lane's
+    # checkout until the next write renames it (S1), and is judged as one.
+    sj_new="$sc_home/$sj_c"
+    if [ -d "$sj_new" ] && [ ! -L "$sj_new" ] && [ ! "$sj_new" -ef "$sj_p" ]; then
+      sc_cand "$sj_p" "$sj_c" "a former name of lane $sj_c, beside that lane's own checkout $sj_new" "$sj_new"
+      return 0
+    fi
+    sc_judge_lane "$sj_p" "$sj_c"
+  }
+
+  # `<W>-lanes/` ITSELF must be a directory at its own real path: a link there
+  # would lead the sweep out of it, and nothing in it is then looked at.
+  sc_home_why=""; sc_hidden=0
+  if [ -L "$sc_home" ]; then
+    sc_home_why="$sc_home is a symbolic link, which this sweep never follows: nothing in it is looked at"
+  elif [ ! -e "$sc_home" ]; then
+    sc_home_why="there is no $sc_home/: no lane checkout has been made on this workstation"
+  elif [ ! -d "$sc_home" ]; then
+    sc_home_why="$sc_home is not a directory: nothing in it is looked at"
+  elif [ "$(sc_real "$sc_home")" != "$sc_home" ]; then
+    sc_home_why="$sc_home resolves through a link to $(sc_real "$sc_home"), which this sweep never follows: nothing in it is looked at"
+  elif ! ls -A -- "$sc_home" >/dev/null 2>&1; then
+    die "$sc_home cannot be listed, so what is in it is unknown — which is not an empty directory. Nothing was removed." 1
+  else
+    for sc_e in "$sc_home"/.[!.]* "$sc_home"/..?*; do
+      if [ -e "$sc_e" ] || [ -L "$sc_e" ]; then sc_hidden=$((sc_hidden + 1)); fi
+    done
+    for sc_e in "$sc_home"/*; do
+      if [ ! -e "$sc_e" ] && [ ! -L "$sc_e" ]; then continue; fi
+      sc_judge "$sc_e" "${sc_e##*/}"
+    done
+  fi
+
+  # THE CLONES BESIDE W: listed, never removed by this build (above).
+  sc_beside=()
+  if ls -A -- "$sc_root" >/dev/null 2>&1; then
+    for sc_e in "$sc_root"/*; do
+      if [ -L "$sc_e" ] || [ ! -d "$sc_e" ]; then continue; fi
+      if [ "$sc_e" = "$sc_w" ] || [ "$sc_e" = "$sc_home" ]; then continue; fi
+      if [ ! -d "$sc_e/.git" ] || [ -L "$sc_e/.git" ]; then continue; fi
+      if sc_is_register_clone "$sc_e"; then sc_beside+=("$sc_e"); fi
+    done
+  else
+    note "$sc_root, the directory W stands in, cannot be listed, so no clone beside W is listed. Nothing outside $sc_home/ is ever removed."
+  fi
+
+  # ------------------------------------------------------------ the report
+  printf '%s --sweep-checkouts — %s (lane-collision-protocol Amendment 23 S6.2)\n' \
+    "$prog" "$( [ "$sweep_yes" = 1 ] && printf 'THE ACT' || printf 'DRY RUN, nothing is removed' )"
+  printf '  W              : %s\n' "$sc_w"
+  printf '  lane checkouts : %s/\n' "$sc_home"
+  printf '  runner         : %s\n' "${sc_runner:-none named (LANES_LANE is unset)}"
+  if [ -n "$sc_home_why" ]; then printf '  (%s)\n' "$sc_home_why"; fi
+  if [ "$sc_hidden" -gt 0 ]; then
+    printf '  (%s hidden entr(ies) under %s/ - creation locks, partial clones, the sidecar lock - are never looked at)\n' "$sc_hidden" "$sc_home"
+  fi
+  printf '\n  under %s/:\n' "$sc_home"
+  sc_i=0
+  while [ "$sc_i" -lt "${#sc_cands[@]}" ]; do
+    printf '    candidate  %s  %s\n' "${sc_cands[$sc_i]}" "${sc_cand_why[$sc_i]}"
+    sc_i=$((sc_i + 1))
+  done
+  printf '%s' "$sc_keep_lines"
+  if [ "${#sc_cands[@]}" = 0 ] && [ -z "$sc_keep_lines" ]; then printf '    (nothing)\n'; fi
+  printf '\n  beside W (Amendment 23 S6.2), listed and never removed by this build:\n'
+  for sc_e in ${sc_beside[@]+"${sc_beside[@]}"}; do
+    printf '    beside     %s\n' "$sc_e"
+  done
+  if [ "${#sc_beside[@]}" = 0 ]; then printf '    (none)\n'; fi
+  printf '\n  %s candidate(s) under %s/; %s clone(s) beside W listed.\n' \
+    "${#sc_cands[@]}" "$sc_home" "${#sc_beside[@]}"
+
+  if [ "$sweep_yes" != 1 ]; then
+    if [ "${#sc_cands[@]}" -gt 0 ]; then
+      printf '\n  DRY RUN — nothing was removed. Make it the act with:\n'
+      printf '    LANES_LANE=<your lane> %s --sweep-checkouts --yes\n' "$prog"
+      exit 3
+    fi
+    printf '\n  DRY RUN — nothing was removed, and there is nothing to remove.\n'
+    exit 0
+  fi
+  die "--sweep-checkouts --yes is not built in this commit (Amendment 23 act 2, slice 4, stage 1 of 3: the holds and the removal are stage 2). Nothing was removed." 2
+fi
+
 # THE SWEEP'S OWN FLAGS BELONG TO THE SWEEP (Copilot round 3 on #93). They are
 # parsed above for every invocation, and without this `lane-end <lane> --yes`
 # ran the ORDINARY ending — a line that reads like a confirmed sweep doing
@@ -873,7 +1278,7 @@ fi
 # reason on the floor. Neither is a typo this command may interpret.
 if [ -z "$retire_dormant" ]; then
   [ "$sweep_yes" = 0 ] ||
-    die "--yes is the word that makes the SWEEP the act (Amendment 19(c)) and it belongs to --retire-dormant. Ending one lane needs no confirmation and takes none: $prog <lane>. Nothing was written." 2
+    die "--yes is the word that makes a SWEEP the act and it belongs to --retire-dormant (Amendment 19(c)) or --sweep-checkouts (Amendment 23 S6.2). Ending one lane needs no confirmation and takes none: $prog <lane>. Nothing was written." 2
   [ -z "$sweep_reason" ] ||
     die "--reason says why a repository's DORMANT ROWS are being retired (Amendment 19(c)) and it belongs to --retire-dormant; ending one lane writes its own closing line and would drop these words. Nothing was written: $prog <lane>, or $prog --retire-dormant <repo> --reason \"$sweep_reason\"." 2
 fi
