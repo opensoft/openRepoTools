@@ -542,7 +542,10 @@
 #      item 4e). And `lane-state` spends it for a snapshot of this schema that
 #      opens and is not a WHOLE record — cut short, or a key missing or out of
 #      shape (#115): nothing can be read out of it as a snapshot, so it is
-#      the same answer, and the message says which of the two it is.
+#      the same answer, and the message says which of the two it is. And it
+#      spends it where no `LANES_LANE_STATE_ROOT` names the control root and
+#      the lane's object log could not be read (#290): the log's `dir` places
+#      the snapshot, so where it is kept is not known, which is not none.
 #
 # --no-sweep (DEFAULT, added 2026-09-09 after 0d84d34/a1f2438 swept another
 #   lane's uncommitted hand edit into an unrelated commit): every mutating
@@ -17916,7 +17919,9 @@ EOF
   # DECISIONS 6 AND 7 — THE LANE LISTING, as data. `lanes` renders the
   # estate-wide one and `restart` the per-repo one from these same rows, which
   # is why the filter is an argument rather than three implementations.
-  # 0 with rows, 8 with none, 64 a usage error of its own.
+  # 0 with rows, 8 with none, 1 a listing that could not be read - an empty one
+  # over reads that failed among them, which is never none (#290) - and 64 a
+  # usage error of its own.
   lanes)
     lns_args=(); lns_fetch=0; lns_index=0
     while [ $# -gt 0 ]; do

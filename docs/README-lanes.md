@@ -1229,7 +1229,7 @@ else.
 | 6 | `git add` / `commit` / `push` failed |
 | 7 | another act got there first and this one wrote nothing: `claim`'s `CLAIM-LOST` (another lane's claim landed first), and `set-lane-state` / `set-lane-tree`'s lifecycle fence (openRepoTools#91, below) |
 | 9 | `CLAIM-LOST` — issue #30's own dead-lane verdict could not be reconfirmed before a `--force` takeover's push landed: the source lane resumed, a live session now backs it up, or that could not be read at all (`claim` only). Never 7 — that code is a RIVAL's claim, and this is the same lane the takeover was granted over |
-| 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read, or is of this schema and not a whole record, so nothing can be read out of it as a snapshot (openRepoTools#91 and #115, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim`. `lane-trees`: the lane's `trees` directory is there and could not be listed (#157 item 4e) — never the 8 that means it recorded no tree |
+| 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read, or is of this schema and not a whole record, so nothing can be read out of it as a snapshot (openRepoTools#91 and #115, below), or — where no `LANES_LANE_STATE_ROOT` names the control root — the lane's object log could not be read, so where its snapshot is kept is not known (openRepoTools#290, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim`. `lane-trees`: the lane's `trees` directory is there and could not be listed (#157 item 4e) — never the 8 that means it recorded no tree |
 | 8 | no record — and no other meaning |
 | 64 | `swapped`'s own usage error — never the dispatcher's 2 — and the lifecycle arms' own: `set-lane-tree`'s partial observation, a count that is not one, or a field that is only blanks (below) |
 
@@ -3246,9 +3246,9 @@ beside the register (so `lanes --closed` still shows those rows) and so does
 every reader of the next free position — and a published archive that cannot be
 *rendered* is a REFUSAL that says so, never a fallback to this checkout's copy,
 which may lack a retired position the published one holds: read as absent, or
-from that copy, it would put a retired position back on offer. Five more reads
+from that copy, it would put a retired position back on offer. Six more reads
 fail closed rather than answer, and for the same reason. The first three refuse
-(exit **1**); the listing withholds the class for the last two:
+(exit **1**); the listing withholds the class for the last three:
 * a local archive path that is there and not a regular file;
 * a register path that renders empty (a zero-byte register, or a broken
   symlink);
@@ -3257,7 +3257,17 @@ fail closed rather than answer, and for the same reason. The first three refuse
   an unreadable blob as for an absent path.
 * a published log git cannot read: the listing names it and never classes that
   lane DORMANT;
-* a log directory it cannot list: the listing classes no row DORMANT at all.
+* a log directory it cannot list: the listing classes no row DORMANT at all;
+* the events' own list of the published logs, which their lines are read
+  through, where it could not be made: the listing says that no lane's log is
+  read in it, and classes no row DORMANT at all (#290).
+
+The listing's other list of the logs, the one that names a lane with a log and
+no row, is said where it could not be made: such a lane is missing from the
+listing. And a listing that names no lane where the register, the archive or
+that list could not be read is exit **1**, the listing could not be read,
+after each read that failed is said — never the **8** of no lane, which
+`lanes` printed as *no lane is recorded* (#290).
 
 `add-row` refuses a lane name the archive holds, so `lane-start <repo> <n>`
 cannot reissue one by hand either. It also refuses (exit **1**) where the
