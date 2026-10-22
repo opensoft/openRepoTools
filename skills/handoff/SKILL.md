@@ -268,19 +268,15 @@ Only the second branch leaves anything blank, and it leaves it blank because not
 
 ## 2. Refresh the handoff
 
-Manual preservation and restart/resume-stamp publication is serialized by `lanes-edit.sh publish-handoff`.
-Read the current file's SHA-256, write semantic updates to a temporary file, then
-publish that complete prepared file with:
-
-```sh
-"$L" publish-handoff "$lane" "$handoff_file" "$prepared_file" --expect-digest "$prior_sha256"
-```
-
-The helper checks the expected bytes and atomically replaces the resolved target
-while holding the workspace writer mutex. It refuses an active restart owned by
-another operation. Do not edit or redirect into the canonical handoff directly;
-perform the existing explicit-pathspec commit/push after successful publication.
-Legacy `rename-lane` is a separate four-file transaction under the same mutex;
+The handoff is written by ONE call, `lanes-edit.sh write-handoff --whole` (Amendment 23, S2–S4), and this
+skill holds no lock and runs no `git` of its own. Under the lane checkout's lock the verb brings that
+checkout to origin, checks that the file still has the bytes this session read, replaces it atomically
+under the workstation's sidecar lock, commits it by its own pathspec with the Rule 5 `Lane:` trailer,
+pushes with no pull, reads origin back, and replays the one write on a refused push. It refuses an active
+restart owned by another operation. So the order below is: say where the handoff is and read its SHA-256,
+write the complete new file to a temporary file, then make the one call under "THE WRITE IS ONE CALL". Do
+not edit or redirect into the canonical handoff directly, and do not commit it: the verb is the commit.
+Legacy `rename-lane` is a separate four-file transaction under the workspace's writer mutex;
 it refuses unfinished/failed restart ownership and uses EXIT rollback. Its
 stamp now atomically replaces the handoff through a temporary file beside it
 (#158), but the four-file rename itself is still not crash-atomic (#224).
@@ -332,9 +328,49 @@ if [[ -n "$row" && -z "$uuid" ]]; then
 fi
 ```
 
-If `$handoff` came back empty, **stop here** — this row does not split the way `row_cell` expects, a
-`git add ""` below commits nothing while looking like it worked, and Amendment 6(e) exists for exactly this
-step. Read the row's own text by hand and take its handoff token; do not guess one.
+If `$handoff` came back empty, **stop here** — this row does not split the way `row_cell` expects, the call
+under "THE WRITE IS ONE CALL" would name no handoff while looking like it worked, and Amendment 6(e) exists
+for exactly this step. Read the row's own text by hand and take its handoff token; do not guess one.
+
+**WHERE THE HANDOFF IS, AND THE BYTES THIS WRITE IS MADE FROM.** `$handoff` is the row's own spelling, and the
+check above is all this skill asks of it. The file `write-handoff` writes is `handoff-path`'s answer: that cell
+translated into the lane's OWN checkout (Amendment 23 S2), derived here and never spelled. No checkout path is
+written anywhere in this step, and none is taken from the environment or from the helper's workspace root as a
+fallback. A read that failed is no answer (Amendment 7(d)), so nothing is guessed in its place. `--create`
+makes that checkout first where this is its first use, so that there is a file to read. The SHA-256 of the
+file as it stands is the digest the verb holds this write to: it replaces the file only while the file still
+has those bytes (exit 7 where it does not), so the new file is made from what was read here and never from a
+copy that has moved. Where the block below prints `HANDOFF NOT FOUND` there is no file to write into: the call
+under "THE WRITE IS ONE CALL" is not made, and the swap goes on with the gap in the report (`R-A11-11`, *a
+swap is never left unwritten*).
+
+```sh
+# WHERE THE HANDOFF IS: derived, never spelled. `handoff-path` only reads, and `--create` makes the lane's own
+# checkout first where this is its first use.
+hf_rc=0; handoff_file=""; prior_sha256=""; prepared_file=""
+handoff_file="$("$L" handoff-path "$lane" --create)" || hf_rc=$?
+if [[ "$hf_rc" == 0 && -n "$handoff_file" && -f "$handoff_file" ]]; then
+  # THE DIGEST OF WHAT IS THERE NOW, by the two tools the helper's own `lane_handoff_digest` tries:
+  # `sha256sum` on Linux, `shasum -a 256` on macOS.
+  if command -v sha256sum >/dev/null 2>&1; then
+    prior_sha256="$(sha256sum -- "$handoff_file" | awk '{print $1; exit}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    prior_sha256="$(shasum -a 256 -- "$handoff_file" | awk '{print $1; exit}')"
+  fi
+  sha_re='^[0-9a-f]{64}$'
+  [[ "$prior_sha256" =~ $sha_re ]] || prior_sha256=""
+  # THE COMPLETE NEW FILE goes in this one, whole: the top block below, a `---` line and a blank line, then
+  # every byte of the old file. The verb refuses an empty file, so a file never written is a refusal and not a
+  # blank handoff.
+  prepared_file="$(mktemp "${TMPDIR:-/tmp}/handoff-prepared.XXXXXX")" || prepared_file=""
+  printf 'handoff_file=%s\nprior_sha256=%s\nprepared_file=%s\n' \
+    "$handoff_file" "${prior_sha256:-<none>}" "${prepared_file:-<none>}"
+else
+  printf 'HANDOFF NOT FOUND: `%s handoff-path %s --create` exited %s and named %s, so there is no handoff to write into and the call under "THE WRITE IS ONE CALL" is NOT made. The swap goes on (R-A11-11); the report carries this line.\n' \
+    "$L" "$lane" "$hf_rc" "${handoff_file:-no file}"
+  handoff_file=""
+fi
+```
 
 `$uuid` is this session's own id — `$CLAUDE_CODE_SESSION_ID`, which a running session always has — else the
 **last** id in the session cell, the only one Amendment 6(b) calls the lane's. Rewrite the handoff's state line, **every word given and not yet executed**, and the resume prompt;
@@ -410,56 +446,54 @@ made, and that the row still reads as it did — so the next session knows the r
 handoff rather than believing the lane never paused. This commit is in the LANE'S OWN repository and is not
 one of the writes that stop.
 
-**COMMIT IN THE CHECKOUT THE HANDOFF WAS PUBLISHED IN, BY ITS OWN PATH, AND NOTHING ELSE** (Amendment 4(d):
-*"with explicit pathspecs — never `git add -A`, never a bare `git commit`"*; Amendment 5(c) and (d)). The
-checkout is RESOLVED, never spelled: `$LANES_REPO` first, then the helper's own `workspace-root`, which is the
-order `lane-handoff` uses — a lane window exports `LANES_REPO` to the lane's own clone, and step 4's writes go
-there. Step 2's publication target `$handoff_file` is the same file (`$LANES_REPO/$handoff` where that exists,
-else the workspace root's), so the file published is the file committed. A STAGED ENTRY THIS HANDOFF DID NOT
-MAKE IS A REFUSAL, read before the `git add`: a bare commit would publish it, and with a pathspec the pull would
-refuse on it. So is a rebase, merge, cherry-pick or revert in progress. Then the Rule 5 `Lane:` trailer,
-pull-rebase and push:
+**THE WRITE IS ONE CALL, AND IT COMMITS THE HANDOFF'S OWN PATH AND NOTHING ELSE** (Amendment 4(d):
+*"with explicit pathspecs — never `git add -A`, never a bare `git commit`"*; Amendment 5(c) and (d); Amendment 23
+S3–S5). The block under this paragraph is the whole of it, and it is the only act in this step that writes.
+THERE IS NO CHECKOUT FOR THIS SKILL TO RESOLVE AND NONE FOR IT TO SPELL: no `cd`, no commit, no pull and no push of
+its own, and no fallback from one checkout to another. The verb writes in the lane's own checkout, under that
+checkout's lock, and `LANES_LANE` names the lane. (This block used to commit in whichever checkout held the
+file, the shared workspace checkout among them, with no lock, and to rebase on a pull before its push; finding
+282 of the review of opensoft/openRepoTools#307 names it one of the three writers that did.) A STAGED ENTRY
+THIS HANDOFF DID NOT MAKE and an operation in progress are the verb's refusals now, made before anything is
+committed (2); a handoff that moved after its digest was read is exit 7, and nothing is published.
+`$hf_subject` is the commit's one-line subject: the lane, the workstation (`none` where step 1 found none) and
+the why in the operator's words, `handoff` where there is none.
 
 ```sh
-# THE CHECKOUT IS RESOLVED, NEVER SPELLED: `$LANES_REPO` first, then the
-# helper's own `workspace-root`, the order `lane-handoff` uses. Lane windows
-# export `LANES_REPO` to the lane's own clone, and step 4's writes go there.
-hc_root=""; hc_why=""; hc_staged=""
-for hc_base in "${LANES_REPO:-}" "$("$L" workspace-root 2>/dev/null)"; do
-  if [ -n "$hc_base" ] && [ -f "$hc_base/$handoff" ]; then hc_root="$hc_base"; break; fi
-done
-if [ -z "$hc_root" ]; then
-  hc_why="$handoff is under neither \$LANES_REPO nor the workspace root"
+# A CONTROL CHARACTER IS REMOVED, NOT REFUSED OVER: the verb exits 64 on one in the subject and writes nothing,
+# and a why with a stray tab must not cost the swap its handoff.
+hf_subject="handoff($lane@${ws:-none}): PAUSED, ${why:-handoff}"
+hf_subject="$(printf '%s' "$hf_subject" | LC_ALL=C tr -d '[:cntrl:]')"
+hf_rc=0; hf_out=""
+if [[ -n "$handoff_file" && -n "$prior_sha256" && -s "${prepared_file:-}" ]]; then
+  hf_out="$(LANES_LANE="$lane" "$L" write-handoff "$lane" --whole "$prepared_file" \
+    --expect-digest "$prior_sha256" --subject "$hf_subject")" || hf_rc=$?
+  # ITS STDOUT IS `<file><TAB><sha256>` ONCE THE FILE IS WRITTEN, whatever the exit; its own words are on stderr.
+  hf_path="${hf_out%%$'\t'*}"
+  hf_wrote="nothing was written"; [[ -z "$hf_out" ]] || hf_wrote="the file is written at $hf_path"
+  case "$hf_rc" in
+    0) printf 'handoff written: %s (pushed from the lane checkout; a handoff in another repository is written and never committed, and its note above says so)\n' "$hf_path" ;;
+    2) if [[ -n "$hf_out" ]]; then
+         printf 'HANDOFF NOT COMMITTED: write-handoff refused the commit (exit 2; its words are above) and the file is written at %s, uncommitted. Nothing was pushed. Do not call it again: the file no longer has the bytes the digest names, so a second call is refused (7). Answer the refusal, then commit and publish the file as the note above says.\n' "$hf_path"
+       else
+         printf 'HANDOFF NOT WRITTEN: write-handoff refused (exit 2; its words are above) and wrote nothing.\n'
+       fi ;;
+    3) printf 'HANDOFF PUSHED, NOT CONFIRMED: the push went, or timed out, and origin could not be read back to show the commit on it (exit 3; the note above names it). Do not call it published until it is read back.\n' ;;
+    6) printf 'HANDOFF NOT PUSHED: its commit is kept on HEAD of the lane checkout and named above (exit 6), and every later write from that checkout refuses until it is published; the note above names the act. Never force.\n' ;;
+    7) printf 'HANDOFF NOT WRITTEN: the handoff is no longer the bytes digest %s names, or a restart owns it (exit 7; its words above say which), and nothing was published. If it moved, read it again, make the new file from what is there now, and make the call once more; if a restart owns it, do not retry, because that restart writes this handoff.\n' "$prior_sha256" ;;
+    *) printf 'HANDOFF NOT PUBLISHED: write-handoff exited %s (its words are above); %s.\n' "$hf_rc" "$hf_wrote" ;;
+  esac
 else
-  hc_git="$(git -C "$hc_root" rev-parse --absolute-git-dir)"
-  for hc_op in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD; do
-    [ ! -e "$hc_git/$hc_op" ] || hc_why="$hc_root has an operation in progress ($hc_op)"
-  done
-  # A STAGED ENTRY THIS HANDOFF DID NOT MAKE, read BEFORE the add: a bare
-  # commit would publish it, and with a pathspec the pull would refuse on it.
-  hc_staged="$(git -C "$hc_root" diff --cached --name-only | grep -vxF -- "$handoff")"
-  [ -z "$hc_staged" ] || hc_why="${hc_why:+$hc_why; }the index of $hc_root holds $(printf '%s\n' "$hc_staged" | wc -l | tr -d ' ') staged path(s) this handoff did not make"
-fi
-if [ -n "$hc_why" ]; then
-  printf 'HANDOFF NOT COMMITTED: %s. The file is written; nothing was committed or pushed. Never commit staged entries you did not make.\n' "$hc_why"
-  [ -z "$hc_staged" ] || printf '%s\n' "$hc_staged" | head -n 20 | sed 's/^/  staged: /'
-elif ! { git -C "$hc_root" add -- "$handoff" &&
-         git -C "$hc_root" commit -m "handoff(<lane>@<ws>): PAUSED, <one-line state>" -m "Lane: <lane>" -- "$handoff"; }; then
-  printf 'HANDOFF NOT COMMITTED: git refused the add or the commit in %s (its words are above).\n' "$hc_root"
-elif git -C "$hc_root" pull --rebase origin "${LANES_BRANCH:-main}" &&
-     git -C "$hc_root" push origin "${LANES_BRANCH:-main}"; then
-  echo "handoff pushed from $hc_root"
-else
-  git -C "$hc_root" rebase --abort 2>/dev/null || :
-  printf 'HANDOFF NOT PUSHED: it is a local commit in %s, any rebase is aborted, and git said why above. Never force; look first:\n  git -C %s fetch origin && git -C %s cherry -v origin/%s HEAD\n' \
-    "$hc_root" "$hc_root" "$hc_root" "${LANES_BRANCH:-main}"
+  printf 'HANDOFF NOT WRITTEN: there is no handoff located, no digest read or no prepared file written, so write-handoff was NOT called. The swap goes on (R-A11-11); the report carries this line.\n'
 fi
 ```
 
 A refusal, a conflict or a rejected push does not stop the swap (`R-A11-11`, *a swap is never left
-unwritten*): the handoff file is written, the block prints what it did NOT do, and the report carries that
-line. On a rebase conflict the block aborts and leaves the tree clean. Never force, and never commit staged
-entries you did not make.
+unwritten*): where the lane's checkout refuses the commit (2), the verb has still written the handoff, commits
+nothing and prints git's own words; where its push is refused it replays the write on origin's new tip if
+origin's copy of the handoff is still the one this write was made from, and otherwise keeps its commit on HEAD
+and names it (6). The block prints what it did NOT do, and the report carries that line. Never force, never
+`git add -A`, and never commit staged entries you did not make.
 
 ## 3. Subagents and worktrees — the one question, and the sweep that fills WRITERS
 
@@ -740,7 +774,11 @@ LANES_LANE="$lane" LANES_SESSION="$uuid" "$L" log PAUSED "lane:$lane" \
 # is never left unwritten, so a lane whose object line was refused still gets
 # this line and the row's state cell, with the gap named in the handoff — EXCEPT
 # where there is no uuid to name, which is the `$uuid_missing` that skips both.
-"$L" append-line "PAUSED — lane $lane, session $uuid@$ws, $(date -u +%Y-%m-%dT%H:%M:%SZ), $why_text; handoff refreshed"
+# `LANES_LANE` NAMES THE LANE ON THIS WRITE AND ON (c)'S AS IT DOES ON (a)'S (Amendment
+# 23 S2): a register write goes through the lane's own checkout, and `append-line` finds
+# that lane from this variable first, so a line that names no lane with a row is not a
+# write with no lane.
+LANES_LANE="$lane" "$L" append-line "PAUSED — lane $lane, session $uuid@$ws, $(date -u +%Y-%m-%dT%H:%M:%SZ), $why_text; handoff refreshed"
 fi
 fi
 # (c) the row: ONE WRITE, which sets the whole state cell (Amendment 13(a)).
@@ -783,7 +821,7 @@ if [[ -n "$ws_missing" ]]; then
   row_write_refused=1
   echo "NOT WRITTEN: the row's state cell stays as it is, because every register write from a container with no \$LANES_WORKSTATION stops (clause (k) rule (d)). The handoff refreshed in step 2 names this gap, and step 5 prints the restart command with --lane, because a restart cannot resolve this lane from a row that was never set."
 else
-"$L" set-row-state "$lane" "PAUSED · $hs_line" || row_write_refused=1
+LANES_LANE="$lane" "$L" set-row-state "$lane" "PAUSED · $hs_line" || row_write_refused=1
 fi
 ```
 
