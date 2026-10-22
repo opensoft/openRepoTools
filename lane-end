@@ -1383,14 +1383,16 @@ SC_IDX
     # there holds, but the writer's own scratch: git's words from a write and
     # the lines a carry removed, which every write leaves.
     if [ -e "$sh_gd/lanes-edit" ] || [ -L "$sh_gd/lanes-edit" ]; then
-      if ! sh_x="$(ls -A -- "$sh_gd/lanes-edit" 2>/dev/null)"; then
+      # WHAT IS SCRATCH is decided by find's own tests, a PLAIN FILE named
+      # exactly as one of the five, and no text is parsed (lane
+      # openRepoTools-3's NIT 392): a name of blanks or with a newline in
+      # it, or a folder or link that only carries a scratch name, is not
+      # scratch. Whatever find cannot open or look at is "cannot be
+      # listed" (find exits 1).
+      if ! sh_x="$(find "$sh_gd/lanes-edit/" -mindepth 1 -maxdepth 1 ! \( -type f \( -name apply.err -o -name fetch.err -o -name ff.err -o -name reset.err -o -name removed \) \) -print 2>/dev/null)"; then
         sc_hold "its .git/lanes-edit/, where lanes-edit.sh keeps a hand edit of the register its commit could not carry, cannot be listed, so whether it keeps one is unknown"
-      else
-        sh_x="$(printf '%s\n' "$sh_x" | awk 'NF && $0 !~ /^(apply|fetch|ff|reset)\.err$/ && $0 != "removed"')" ||
-          sh_x="(the list could not be read)"
-        if [ -n "$sh_x" ]; then
-          sc_hold "lanes-edit.sh keeps $(sc_first "$sh_x") in .git/lanes-edit/: a hand edit of the register its commit could not carry, or the copy of one it carried (read it; remove it once origin has the edit)"
-        fi
+      elif [ -n "$sh_x" ]; then
+        sc_hold "lanes-edit.sh keeps $(sc_first "$(printf '%s\n' "$sh_x" | awk -F/ '{ print $NF }')") in .git/lanes-edit/: a hand edit of the register its commit could not carry, or the copy of one it carried (read it; remove it once origin has the edit)"
       fi
     fi
     sh_x="$(git -C "$sh_p" ls-files -u 2>/dev/null)" || sh_x="unreadable"

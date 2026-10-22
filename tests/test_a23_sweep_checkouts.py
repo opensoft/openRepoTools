@@ -770,6 +770,50 @@ def test_an_empty_lanes_edit_holds_nothing(sweep):
     assert not os.path.lexists(c)
 
 
+def _a_file(name: str):
+    def make(d: Path) -> Path:
+        d.mkdir()
+        (d / name).write_text("a person's note\n", encoding="utf-8")
+        return d / name
+    return make
+
+
+def _a_folder(name: str):
+    def make(d: Path) -> Path:
+        (d / name).mkdir(parents=True)
+        (d / name / "kept.diff").write_text("a person's note\n", encoding="utf-8")
+        return d / name / "kept.diff"
+    return make
+
+
+NOT_SCRATCH_BY_KIND = [
+    pytest.param(_a_file("   "), id="a name of only blanks"),
+    pytest.param(_a_file("\t"), id="a name of only a TAB"),
+    pytest.param(_a_file("removed\n"), id="removed and a newline"),
+    pytest.param(_a_file("fetch.err\nff.err"), id="fetch.err, a newline, ff.err"),
+    pytest.param(_a_folder("removed"), id="a folder named removed"),
+    pytest.param(_a_folder("fetch.err"), id="a folder named fetch.err"),
+]
+
+
+@pytest.mark.parametrize("make", NOT_SCRATCH_BY_KIND)
+def test_only_a_plain_file_with_a_scratch_name_is_scratch(sweep, make):
+    """`find` DECIDES WHAT IS SCRATCH, AND NO TEXT IS PARSED (lane
+    openRepoTools-3's NIT 392): only a plain file named exactly as one of
+    the five is the writer's. A name of blanks or with a newline in it, and
+    a folder that only carries a scratch name, are a person's, and hold the
+    checkout, in the dry run and under `--yes`; what they keep stays."""
+    box = sweep.box
+    c, d = _lanes_edit_dir(box)
+    kept = make(d)
+    for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+        result, rows = sweep(*args, **env)
+        assert rows[str(c)][0] == "hold", rows[str(c)]
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert "in .git/lanes-edit/: a hand edit" in rows[str(c)][1], rows[str(c)]
+    assert kept.is_file()
+
+
 def _names_lanes_edit_writes_there() -> list:
     """Every name `lanes-edit.sh` writes into `.git/lanes-edit/` but the hand
     edit's own (`hand-edit-<UTC>-<pid>.diff`), read from the script of the
