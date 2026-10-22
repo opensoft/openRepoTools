@@ -485,7 +485,7 @@
 #      edit; and — slice 2a — `write-handoff`'s handoff
 #      that resolves into W through a link (S5), a target in the checkout, or
 #      in another clone of the register, that is not a file under `handoffs/`
-#      (S2), a restart's bound file or
+#      (S2), a target inside a git directory, a restart's bound file or
 #      pre-image that is not this one, or a splice that does not prove out,
 #      each with nothing written; while S3's refusal of a `--prepend` or a
 #      `--whole` has WRITTEN the handoff, uncommitted (R-A11-11), and printed
@@ -19443,9 +19443,10 @@ EOF
   #      (`handoff_in_repo`, S2). One that still resolves into W, through a
   #      link, refuses (S5, 2), and so does one in the checkout, or in another
   #      clone of the register, that is not a file under `handoffs/` (S2:
-  #      never the register or `lanes/`). One in ANOTHER REPOSITORY (Amendment
-  #      8(d)) is written there and never committed, and S3's refusal of this
-  #      checkout does not stop it.
+  #      never the register or `lanes/`), and one inside a git directory —
+  #      another clone's `.git/`, a bare clone. One in ANOTHER REPOSITORY
+  #      (Amendment 8(d)) is written there and never committed, and S3's
+  #      refusal of this checkout does not stop it.
   #   3. S3 step 4 for the handoff's own path (`cs_own_pending`), and for a
   #      handoff git does not track yet, which a commit would add and a lost
   #      race's replay would drop.
@@ -19473,8 +19474,8 @@ EOF
   #     of this checkout or not; LANES_NO_GIT)
   #   1 environment: a checkout that cannot be entered, an unreadable file,
   #     a register that could not be read (R22: never 8)
-  #   2 refused: S3 (step 6), S5, a target that is not under handoffs/ (S2), a
-  #     restart's bound file or pre-image, a proof
+  #   2 refused: S3 (step 6), S5, a target that is not under handoffs/ (S2) or
+  #     is inside a git directory, a restart's bound file or pre-image, a proof
   #   3 pushed, not confirmed · 4 a lock · 6 kept on HEAD, named
   #   7 a restart fence, or the handoff changed under the write
   #   8 no handoff to write: no row for the lane (with `--target` too), the
@@ -19608,8 +19609,20 @@ EOF
     # replaced that clone's register in place, uncommitted, and its lane's
     # next write refused at S3 step 4 over a change it never made. A
     # repository that carries no register is Amendment 8(d)'s, and a path in
-    # no work tree is as it was (A44).
+    # no repository at all is as it was (A44).
+    # NEVER INSIDE A GIT DIRECTORY (rv2a-c3's re-check of slice 2a, SHOULD 1;
+    # A47). A path in another clone's `.git/`, or in a bare clone, is in no
+    # work tree, so the test below cannot see it, and it was written as
+    # another repository's handoff: `--stamp` put its line under `[core]` in
+    # that clone's `config`, `--whole` replaced it, and every git command
+    # there then failed (128), its own lane's S3 with them. No handoff of
+    # Amendment 8(d)'s lives in a git directory, so it is refused first.
     if [ "$whf_other" = 1 ]; then
+      whf_gd="$(dirname -- "$whf_phys")"
+      if [ "$(git -C "$whf_gd" rev-parse --is-inside-git-dir 2>/dev/null || :)" = true ]; then
+        whf_stamp_said
+        die "lane $lane's handoff target $whf_path is $whf_phys, inside a git directory ($whf_gd), where git keeps a repository's own files (another clone's .git/, or a bare clone): write-handoff writes a lane's handoff and nothing else, and no handoff lives in a git directory (Amendment 23 S2; Amendment 8(d)'s is a file of a work tree). Nothing was written." 2
+      fi
       whf_otop="$(git -C "$(dirname -- "$whf_phys")" rev-parse --show-toplevel 2>/dev/null || :)"
       whf_otop="$( [ -n "$whf_otop" ] && cd -P -- "$whf_otop" 2>/dev/null && pwd -P || :)"
       if [ -n "$whf_otop" ] && { [ -e "$whf_otop/$LANES_PATH" ] || [ -L "$whf_otop/$LANES_PATH" ]; } &&

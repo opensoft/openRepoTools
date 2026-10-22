@@ -1109,6 +1109,49 @@ def test_a_handoff_in_another_clone_of_the_register_is_still_another_repositorys
     _released(box, c)
 
 
+@pytest.mark.parametrize("mode", ["stamp", "whole"])
+@pytest.mark.parametrize("where", ["sibling-clone", "bare-clone"])
+def test_a_target_inside_another_clones_git_directory_is_refused_and_nothing_written(
+        box: Box, where: str, mode: str):
+    """rv2a-c3's SHOULD 1 (its probe N4): a path inside ANOTHER clone's git
+    directory — a sibling lane's `<W>-lanes/<lane>/.git/config` — or inside a
+    bare clone is in no work tree, so A44's test could not see it, and it was
+    written as another repository's handoff (8(d)), exit 0: `--stamp` put its
+    line under `[core]`, `--whole` replaced the file, and every git command in
+    that clone then failed (128), its own lane's S3 with them. No handoff
+    lives in a git directory (A47): 2 before a byte, nothing written there or
+    here, that clone's git still reads its config, and nothing on stdout."""
+    c = box.seam()
+    if where == "sibling-clone":
+        d = box.clone(box.lanes_root / NEIGHBOUR)
+        gd = d / ".git"
+    else:
+        d = None
+        gd = box.root / "bare.git"
+        box.git("clone", "-q", "--bare", str(box.origin), str(gd))
+        box.quiet(gd, bare=True)
+    cfg = gd / "config"
+    if mode == "stamp":
+        args = ("--stamp", STAMP)
+    else:
+        args = ("--whole", str(_prepared(box, "[core\n")), "--expect-digest", sha(cfg))
+    before, mine = cfg.read_bytes(), box.snapshot(c)
+    theirs = box.snapshot(d) if d is not None else None
+    result = box.write_handoff(*args, "--subject", "handoff: PAUSED", "--target", str(cfg))
+    assert result.returncode == 2, result.stderr
+    assert f"is {cfg}, inside a git directory ({gd})" in result.stderr
+    assert "Nothing was written." in result.stderr
+    assert "another repository's handoff" not in result.stderr
+    assert cfg.read_bytes() == before
+    assert box.git("--git-dir", str(gd), "config", "core.bare").strip() == (
+        "true" if d is None else "false"), "that clone's git still reads its config"
+    if d is not None:
+        assert box.snapshot(d) == theirs
+    assert box.snapshot(c) == mine
+    assert result.stdout == ""
+    _released(box, c)
+
+
 def _managed_row(box: Box) -> tuple:
     """The lane's row as a peer republishes it, with a managed-owner marker
     that parses, so the seam's answer is "owned", not "unknown"."""
