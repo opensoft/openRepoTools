@@ -18692,14 +18692,25 @@ EOF
     # placed the root at the third rung, where no snapshot is: 8, which
     # `lanes-index` read as generation 0 and held a lane for "reading 0".
     # Read here with its status, it is handed on as the payload the root is
-    # found by - quoted, so a `dir` with a space in it is whole - and a log
-    # that could not be read is the 10 below, never the 8 of none.
+    # found by, and a log that could not be read is the 10 below, never the 8
+    # of none. IT GOES ON QUOTED ONLY WHERE IT HOLDS A SPACE, the rule
+    # `lane-start`'s `quote_subfield` writes it by, as Brett Heap's ruling of
+    # 2026-10-21 for #295 has it ("quote only where a space is"). Bare, a
+    # space would end it; quoted, a `"` does. A bare `dir` holding one (which
+    # `lane-start` refuses to write and a hand-written line can hold) was cut
+    # there when every value was quoted, the root it placed held no snapshot,
+    # and this said 8 where main reads one. The value is `payload_subfield`'s
+    # own read, which never holds both a space and a `"`.
     lst_pay=""
     if [ -z "${LANES_LANE_STATE_ROOT:-}" ]; then
       lst_dir=""; lst_drc=0
       lst_dir="$(lane_payload_field "$lane" dir "" checked 2>/dev/null)" || lst_drc=$?
       case "$lst_drc" in
-        0) lst_pay="dir \"$lst_dir\"" ;;
+        0)
+          case "$lst_dir" in
+            *' '*) lst_pay="dir \"$lst_dir\"" ;;
+            *)     lst_pay="dir $lst_dir" ;;
+          esac ;;
         8) lst_pay="dir none" ;;
         *) die "lane $lane's object log could not be read, so the directory its lifecycle snapshot is kept beside is NOT established. That is NOT 'this lane has no snapshot' — 8 says that, and a launcher answers an 8 by going on, over a snapshot nobody could look for (R22, Amendment 7(d)). Re-run once git can read the log." 10 ;;
       esac
