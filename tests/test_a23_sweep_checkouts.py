@@ -763,6 +763,32 @@ def test_a_mount_inside_a_checkout_holds(sweep, where):
     assert (c / where / "shown.txt").is_file()
 
 
+def test_a_mount_in_a_checkout_whose_own_path_has_a_space_holds(tmp_path):
+    """THE CHECKOUT'S OWN PATH IS SPELLED AS THE MOUNT TABLE SPELLS IT (SHOULD
+    371): `/proc/self/mountinfo` writes a space in a mount point as `\\040`,
+    so a checkout whose own path holds one (here W's parent, `with space/`)
+    matches its mount points only once that path is escaped the same way.
+    The dry run holds it, naming the mount point as the table spells it."""
+    root = Path(os.path.realpath(tmp_path)) / "with space"
+    box = Sweep(root)
+    try:
+        assert " " in str(box.lanes_root)
+        c = box.checkout(CLOSED)
+        (c / ".git" / "info" / "exclude").write_text("ignored-mnt/\n", encoding="utf-8")
+        box.write(c, "ignored-mnt/shown.txt", "what the mount shows\n")
+        table = _mount_table(box, c / "ignored-mnt")
+        result = subprocess.run(["bash", str(REPO / "lane-end"), "--sweep-checkouts"],
+                                env=dict(box.env, LANE_END_MOUNTINFO=table), cwd=str(box.root),
+                                capture_output=True, text=True, timeout=300, check=False)
+        rows = _rows(result.stdout)
+        assert rows[str(c)][0] == "hold", (rows.get(str(c)), result.stdout, result.stderr)
+        assert (f"a file system is mounted at or under it: 1 ({_mountinfo_path(c / 'ignored-mnt')})"
+                in rows[str(c)][1]), rows[str(c)]
+        assert result.returncode == 0, (result.stdout, result.stderr)
+    finally:
+        box.close()
+
+
 def test_a_mount_made_after_the_listing_holds(sweep):
     """THE MOUNT TABLE IS READ AGAIN UNDER THE LOCK (SHOULD 371: "under the
     lock, just before the mv"): the table names nothing in the checkout at
