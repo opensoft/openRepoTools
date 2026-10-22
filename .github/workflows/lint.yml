@@ -42,7 +42,8 @@ name: lint
 #
 # THE BASELINE, MEASURED ON main `33ce26d` WITH THE TWO PINNED TOOLS. Every
 # count, size and time below is from that one tree, except where it names
-# another.
+# another. Memory is in MiB, the unit it was measured in: the peak resident
+# set of the shellcheck process, `ru_maxrss` in KiB divided by 1,024.
 #
 #   THE WORKFLOWS carry none. actionlint reports nothing on `release.yml`,
 #   `tests.yml` and this file, at any severity, so its step has no `-ignore`,
@@ -62,23 +63,34 @@ name: lint
 #       and so is every script added from now on;
 #     * those twelve, named in `baselined` below, are held to
 #       `--severity=warning` less the ten codes in `excluded`, each of which
-#       fires on main today. What that leaves out is the 132 notes and the
-#       190 warnings of those ten codes, and nothing more: an error, or a
-#       warning of any other code, fails the job, in any script;
+#       fires on main today. What that leaves out is the 190 warnings of those
+#       ten codes, which `excluded` hides, and the 132 notes of eleven other
+#       codes, which `--severity=warning` hides, and nothing more: an error,
+#       or a warning of any other code, fails the job, in any script;
 #     * `tests/test_lane_helpers.sh` is not run. It is the lane helpers' own
-#       test suite and nothing ships it, and shellcheck needs 16.2 GB for it,
-#       which a runner with 16 GB does not have. Run on its own, it finds 43
-#       warnings and 218 notes. Those three figures and its 151 s were
-#       measured on `a42946e`, and the file is the same on `33ce26d`.
+#       test suite and nothing ships it, and shellcheck peaked at 16,222 MiB
+#       (15.8 GiB) on it. A 16 GB runner is 16,384 MiB if GitHub's GB is
+#       binary, which is 162 MiB over that peak for the kernel, the runner
+#       agent and the step's shell, and 15,259 MiB if it is decimal, which is
+#       under the peak: either way no margin, and it was not tried on a
+#       runner. Run on its own, it finds 43 warnings and 218 notes. Those
+#       three figures and its 151 s were measured on `a42946e`, and the file
+#       is the same on `33ce26d`.
 #       `lanes-edit.sh` is run: on `33ce26d` it took 100 to 123 s over three
-#       runs and peaked at 10.8 GB under the job's flags and at 10.9 GB at
-#       every severity, and 145 of the 322 findings are in it.
+#       runs and peaked at 10,754 and 10,756 MiB in two runs under the job's
+#       flags and at 10,888 MiB at every severity, and 145 of the 322
+#       findings are in it.
 #
 #   THE RUNNER'S MEMORY. The 16 GB above is GITHUB'S STANDARD LINUX RUNNER FOR
 #   A PUBLIC REPOSITORY, which this repository is. The standard runner of a
-#   private repository has 7 GB, and shellcheck over `lanes-edit.sh`, which
-#   peaks at 10.9 GB, does not fit in that: if this repository, or the leg
+#   private repository has 8 GB, and shellcheck over `lanes-edit.sh`, which
+#   peaks at 10,888 MiB, does not fit in that: if this repository, or the leg
 #   that carries this file, goes private, give the job a larger runner first.
+#   Both sizes are in GitHub's table of standard runners, in the row of
+#   `ubuntu-24.04`, which this job uses: 4 CPU and 16 GB for a public
+#   repository, 2 CPU and 8 GB for a private one. The table is at
+#   https://docs.github.com/en/actions/reference/runners/github-hosted-runners
+#   and was read on 2026-10-22; read it again before you rely on either size.
 #   The shellcheck step prints `MemTotal` and `MemAvailable` before it runs
 #   anything, so that a kill of `lanes-edit.sh` (exit 137), which the step
 #   reports like a finding, can be read against the memory the runner had.

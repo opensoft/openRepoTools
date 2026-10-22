@@ -97,8 +97,8 @@ BASELINED = ("claude-current", "claude-restart-check", "lane", "lane-end",
              "lanes-edit.sh", "link-estates", "openRepoTools", "tests/run.sh")
 CLEAN_SCRIPTS = ("park", "resume", "status")
 #: The lane helpers' own suite: 1.1 MB of bash that nothing ships, and
-#: shellcheck needs 16.2 GB for it (measured on `a42946e`; the file is the
-#: same on `33ce26d`), more than a 16 GB runner has.
+#: shellcheck peaked at 16,222 MiB on it (measured on `a42946e`; the file is
+#: the same on `33ce26d`), which leaves a 16 GB runner no margin.
 NOT_RUN = "tests/test_lane_helpers.sh"
 
 NEEDS_BASH = pytest.mark.skipif(shutil.which("bash") is None,
@@ -864,8 +864,9 @@ def test_lint_yml_header_names_its_tree_and_its_totals_agree():
     main it was measured on, and a figure from another tree names that tree
     where it stands. Its totals agree with each other, so that a re-measure
     that moves one moves them all: the findings are the warnings and the
-    notes, every `N of the M findings` names that same M, and the notes and
-    warnings the header says it leaves out are the ones it counts."""
+    notes, every `N of the M findings` names that same M, and what the header
+    says it leaves out is the ones it counts: the warnings of the ten codes
+    and the notes of eleven other codes."""
     words = header_of(WORKFLOW.read_text(encoding="utf-8"))
     tree = re.search(r"MEASURED ON main `([0-9a-f]{7,40})`", words)
     assert tree, "the header does not name the main its baseline was measured on"
@@ -876,20 +877,28 @@ def test_lint_yml_header_names_its_tree_and_its_totals_agree():
     assert total == warnings + notes, held.groups()
     for of_the in re.findall(r"(\d+) of the (\d+) findings", words):
         assert int(of_the[1]) == total, (of_the, total)
-    assert f"the {notes} notes and the {warnings} warnings of those ten codes" in words, \
-        "the header's left-out notes and warnings are not the ones it counts"
+    assert f"the {warnings} warnings of those ten codes" in words, \
+        "the header's left-out warnings are not the ones it counts"
+    assert f"the {notes} notes of eleven other codes" in words, \
+        "the header's left-out notes are not the ones it counts"
 
 
 def test_lint_yml_header_names_the_runner_its_16_gb_assumes_and_the_memory_print():
-    """`lanes-edit.sh` peaks at about 10.9 GB, which fits the 16 GB of GitHub's
-    standard Linux runner for a PUBLIC repository and not the 7 GB of a private
-    one's. The header says so, and names the `MemTotal` and `MemAvailable`
-    print as the aid for diagnosing a kill, which is only an aid while the step
-    still prints them before it runs anything."""
+    """`lanes-edit.sh` peaks at 10,888 MiB, which fits the 16 GB of GitHub's
+    standard Linux runner for a PUBLIC repository and not the 8 GB of a private
+    one's. The header says so, in the MiB the memory was measured in, with the
+    docs page the two sizes come from and the day it was read, and names the
+    `MemTotal` and `MemAvailable` print as the aid for diagnosing a kill, which
+    is only an aid while the step still prints them before it runs anything."""
     text = WORKFLOW.read_text(encoding="utf-8")
     words = header_of(text)
     assert "STANDARD LINUX RUNNER FOR A PUBLIC REPOSITORY" in words
-    assert "private repository has 7 GB" in words
+    assert "private repository has 8 GB" in words
+    assert "Memory is in MiB, the unit it was measured in" in words
+    assert ("https://docs.github.com/en/actions/reference/runners/github-hosted-runners"
+            in words), "the header does not say where the runner sizes come from"
+    assert re.search(r"was read on 20\d\d-\d\d-\d\d", words), \
+        "the header does not say when the runner sizes were read"
     assert "`MemTotal` and `MemAvailable`" in words
     assert "grep -E '^(MemTotal|MemAvailable)' /proc/meminfo || true" in text, \
         "the shellcheck step does not print the runner's memory"
