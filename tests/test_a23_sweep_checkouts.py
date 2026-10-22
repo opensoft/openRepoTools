@@ -1467,6 +1467,150 @@ def test_a_removal_that_does_not_finish_exits_1(sweep):
             (c / "scratch").chmod(0o755)
 
 
+# ------------------------------------------- a stopped act, and its leftovers
+
+def _run_own_group(box: Sweep, *args: str, **env: str):
+    """`lane-end --sweep-checkouts` in a process group of its own, so a
+    signal sent to the group, as a terminal's Ctrl-C is, reaches the sweep and
+    its children and nothing of the test's."""
+    result = subprocess.run(["bash", str(REPO / "lane-end"), "--sweep-checkouts", *args],
+                            env=dict(box.env, **env), cwd=str(box.root), capture_output=True,
+                            text=True, timeout=300, check=False, start_new_session=True)
+    return result, _rows(result.stdout)
+
+
+def _rm_shim(box: Sweep, lane: str, action: str) -> None:
+    """An `rm` first on PATH: for the aside of `lane`'s checkout it runs
+    `action` (a signal) first; every `rm` then runs the real one."""
+    real = shutil.which("rm")
+    assert real, "no rm on the test's own PATH"
+    shim = box.fakebin / "rm"
+    shim.write_text("#!/usr/bin/env bash\n"
+                    f'case "$*" in *"/.{lane}.removing-"*) {action} ;; esac\n'
+                    f'exec {real} "$@"\n', encoding="utf-8")
+    shim.chmod(0o755)
+
+
+@pytest.mark.parametrize("send,code", [
+    pytest.param("kill -INT 0", 130, id="INT to its process group, as a Ctrl-C"),
+    pytest.param("kill -TERM $PPID", 143, id="TERM to the sweep alone"),
+])
+def test_a_signal_during_a_removal_lets_it_finish_and_prints_the_record(sweep, send, code):
+    """AN INTERRUPTED `--yes` LEAVES ITS RECORD, AND NO CHECKOUT HALF REMOVED
+    (lane openRepoTools-3's SHOULD 372). Two CLOSED lanes' checkouts are
+    removed, and the signal comes as the second one's `rm` starts. The `rm`
+    finishes, so no aside is left, and the sweep then exits with the
+    signal's code and the NOTED line by hand for both removals; no line is
+    written. Run as printed, it lands once."""
+    box = sweep.box
+    c, other = box.checkout(CLOSED), _closed_checkout(box)
+    _rm_shim(box, other.name, send)
+    result, rows = _run_own_group(box, "--yes", LANES_LANE=RUNNER)
+    assert result.returncode == code, (result.stdout, result.stderr)
+    assert rows[str(c)][0] == "removed", rows
+    assert rows[str(other)][0] == "removed", rows
+    assert not os.path.lexists(c)
+    assert not os.path.lexists(other)
+    _no_aside(box)
+    assert not list(box.lanes_root.glob("*/lanes/.lanes-edit.lock")), "no lock is left"
+    assert not _noted_on_origin(box)
+    assert "a signal stopped this sweep after the removals above" in result.stderr, result.stderr
+    remedies = _remedies(result.stderr)
+    assert len(remedies) == 1, remedies
+    assert remedies[0].startswith(
+        f"LANES_LANE={RUNNER} LANES_SESSION={UUID[RUNNER]} lanes-edit.sh log NOTED "), remedies
+    done = _by_hand(box, remedies[0])
+    assert done.returncode == 0, (done.stdout, done.stderr)
+    noted = _noted_on_origin(box)
+    assert len(noted) == 1, noted
+    assert (f"removed 2 register checkout(s) under brett-wip-lanes/ that held nothing "
+            f"unpublished: {CLOSED} {other.name};") in noted[0], noted
+    assert noted[0].endswith("; the sweep was stopped by a signal"), noted
+
+
+def test_a_signal_while_the_noted_line_is_written_never_writes_it_twice(sweep):
+    """A SIGNAL DURING THE NOTED WRITE MAY COME AFTER THE LINE LANDED (SHOULD
+    372): here the write finishes and the sweep is then sent TERM. It exits
+    143, says the line may be on origin already, and hands out the publish
+    act first, which finds nothing to send: origin holds the line once."""
+    box = sweep.box
+    stopping = _wrapped(box, "lanes-edit-stopped-log", "log", (
+        '  bash "$REAL" "$@"; rc=$?\n'
+        "  trap '' TERM; kill -TERM 0\n"
+        '  exit "$rc"\n'))
+    result, rows = _run_own_group(box, "--yes", LANES_LANE=RUNNER, LANES_EDIT=stopping)
+    assert result.returncode == 143, (result.stdout, result.stderr)
+    assert _tagged(rows, "removed") == {str(box.checkout(CLOSED))}, rows
+    assert len(_noted_on_origin(box)) == 1
+    assert "the line may be on origin already" in result.stderr, result.stderr
+    remedies = _remedies(result.stderr)
+    assert len(remedies) == 2, remedies
+    assert remedies[0].startswith(f"LANES_LANE={RUNNER} lanes-edit.sh commit "), remedies
+    done = _by_hand(box, remedies[0])
+    assert done.returncode == 0, (done.stdout, done.stderr)
+    assert len(_noted_on_origin(box)) == 1, "the publish act wrote no second line"
+
+
+def test_a_removal_left_unfinished_is_named_by_every_run(sweep, tmp_path):
+    """AN ASIDE A REMOVAL LEFT IS NAMED AGAIN, BY NAME, IN EVERY RUN (SHOULD
+    372), apart from the hidden entries it would otherwise be counted with,
+    and with the command that removes it; no sweep removes it. The command,
+    run as printed, removes it, a read-only directory inside included."""
+    box = sweep.box
+    aside = box.lanes_root / f".{CLOSED}.removing-20261020T100000Z-1"
+    box.write(aside, "scratch/kept.txt", "what an earlier sweep could not remove\n")
+    (aside / ".git").mkdir()
+    (aside / "scratch").chmod(0o555)
+    try:
+        for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+            result, rows = sweep(*args, **env)
+            assert result.returncode in (0, 3), (result.stdout, result.stderr)
+            assert rows[str(aside)][0] == "leftover", rows
+            assert "(1 hidden entr(ies) under" in result.stdout, "the creation lock alone"
+            assert aside.is_dir()
+        command = rows[str(aside)][1].split("remove it by hand: ", 1)[1]
+        assert command == f"chmod -R u+rwX -- {aside} && rm -rf -- {aside}", command
+        done = subprocess.run(["bash", "-c", command], cwd=str(box.root), capture_output=True,
+                              text=True, env=box.env, timeout=60, check=False)
+        assert done.returncode == 0, (done.stdout, done.stderr)
+        _assert_under(Path(os.path.realpath(tmp_path)), [aside])
+        assert not os.path.lexists(aside)
+    finally:
+        if (aside / "scratch").is_dir():
+            (aside / "scratch").chmod(0o755)
+
+
+@pytest.mark.skipif(getattr(os, "geteuid", lambda: 1)() == 0,
+                    reason="root removes what a read-only directory holds")
+def test_a_removal_that_does_not_finish_is_said_when_the_noted_write_fails(sweep):
+    """A REMOVAL THAT DID NOT FINISH IS SAID BEFORE THE NOTED WRITE (SHOULD
+    372), so a write that is refused, and exits at once, cannot leave it
+    unsaid: the PARTLY aside is named, the run exits 1, and the by-hand line
+    names it too."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    (c / ".git" / "info" / "exclude").write_text("scratch/\n", encoding="utf-8")
+    box.write(c, "scratch/kept.txt", "an ignored file in a read-only directory\n")
+    (c / "scratch").chmod(0o555)
+    refusing = _wrapped(box, "lanes-edit-refusing-log", "log", (
+        "  printf 'FAKE: the register refused this line\\n' >&2\n"
+        "  exit 2\n"))
+    try:
+        result, rows = sweep("--yes", LANES_LANE=RUNNER, LANES_EDIT=refusing)
+        asides = list(box.lanes_root.glob(f".{CLOSED}.removing-*"))
+        assert rows[str(c)][0] == "PARTLY", rows[str(c)]
+        assert result.returncode == 1, (result.stdout, result.stderr)
+        assert len(asides) == 1, asides
+        assert f"the removal of {asides[0]} did not finish" in result.stderr, result.stderr
+        assert "was NOT written" in result.stderr, result.stderr
+        assert not _noted_on_origin(box)
+    finally:
+        for aside in box.lanes_root.glob(f".{CLOSED}.removing-*"):
+            (aside / "scratch").chmod(0o755)
+        if (c / "scratch").is_dir():
+            (c / "scratch").chmod(0o755)
+
+
 # ----------------------------------------------------------- the NOTED line
 
 def test_noted_line_written_through_runner_checkout(sweep):

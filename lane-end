@@ -279,7 +279,9 @@
 #      recorded, or none of its rows is DORMANT. `--retire <pid|uuid>`: nothing
 #      of any kind is live for the lane
 #   130, 143  stopped by INT or TERM (128 plus the signal): the run ends where
-#      the signal found it and removes its temporary file, never resumes
+#      the signal found it and removes its temporary file, never resumes.
+#      `--sweep-checkouts --yes` lets a checkout's move and removal in hand
+#      finish first, and after any removal prints its NOTED line by hand
 #
 # ENVIRONMENT
 #   LANES_FILE  default <the workspace repository>/lanes/LANES.md
@@ -1274,7 +1276,16 @@ SC_IDX
 
   # `<W>-lanes/` ITSELF must be a directory at its own real path: a link there
   # would lead the sweep out of it, and nothing in it is then looked at.
-  sc_home_why=""; sc_hidden=0
+  #
+  # A REMOVAL THAT DID NOT FINISH IS NAMED AGAIN BY EVERY RUN (lane
+  # openRepoTools-3's SHOULD 372). Its aside, `.<name>.removing-<UTC>-<pid>`,
+  # is hidden, so a later run would count it with the creation locks and say
+  # no more: a checkout moved aside by a sweep that was stopped, or whose
+  # `rm` met a file it could not remove, would be named nowhere again. Each
+  # one is listed by name, apart from the hidden count, with the command that
+  # removes it. The sweep never removes one itself: a person looks at why
+  # first, and one may be another sweep's, still running.
+  sc_home_why=""; sc_hidden=0; sc_leftovers=()
   if [ -L "$sc_home" ]; then
     sc_home_why="$sc_home is a symbolic link, which this sweep never follows: nothing in it is looked at"
   elif [ ! -e "$sc_home" ]; then
@@ -1287,7 +1298,11 @@ SC_IDX
     die "$sc_home cannot be listed, so what is in it is unknown — which is not an empty directory. Nothing was removed." 1
   else
     for sc_e in "$sc_home"/.[!.]* "$sc_home"/..?*; do
-      if [ -e "$sc_e" ] || [ -L "$sc_e" ]; then sc_hidden=$((sc_hidden + 1)); fi
+      if [ ! -e "$sc_e" ] && [ ! -L "$sc_e" ]; then continue; fi
+      case "${sc_e##*/}" in
+        .?*.removing-*) sc_leftovers+=("$sc_e") ;;
+        *) sc_hidden=$((sc_hidden + 1)) ;;
+      esac
     done
     for sc_e in "$sc_home"/*; do
       if [ ! -e "$sc_e" ] && [ ! -L "$sc_e" ]; then continue; fi
@@ -1848,6 +1863,68 @@ SLU
     printf '    hold       %s  %s; holds: %s\n' "$1" "$2" "$3"
     sc_n_held=$((sc_n_held + 1)); sc_held_names="${sc_held_names:+$sc_held_names }${1##*/}"
   }
+  # THE NOTED LINE'S TEXT, from what this run has done so far, and the two
+  # commands that finish its record by hand. The paths are spelled from the
+  # projects root, `<W>-lanes/<name>`, never from the host's own root, and
+  # every name in the line is one this sweep already holds to letters,
+  # digits, `.`, `_` and `-`, so the free text's own rules (no ` — `, no
+  # newline, no leading arrow) hold for it.
+  sc_rel="${sc_home##*/}"
+  case "$sc_rel" in '' | *[!A-Za-z0-9._-]*) sc_rel="<W>-lanes" ;; esac
+  sc_noted_text() {   # [<what ended the run early>]
+    snt_t="sweep-checkouts (Amendment 23 S6.2): removed $sc_n_removed register checkout(s) under $sc_rel/ that held nothing unpublished"
+    if [ -n "$sc_removed_names" ]; then snt_t="$snt_t: $sc_removed_names"; fi
+    if [ -n "$sc_partial_names" ]; then snt_t="$snt_t; moved aside and not all removed: $sc_partial_names"; fi
+    if [ -n "$sc_held_names" ]; then snt_t="$snt_t; held and left: $sc_held_names"; fi
+    snt_t="$snt_t; ${#sc_beside[@]} clone(s) beside W listed and left"
+    if [ -n "${1-}" ]; then snt_t="$snt_t; $1"; fi
+    printf '%s' "$snt_t"
+  }
+  sc_by_hand_of() {   # <the line's text>
+    printf 'LANES_LANE=%q LANES_SESSION=%s lanes-edit.sh log NOTED %q %q' \
+      "$sc_runner" "$sc_uuid" "lane:$sc_runner" "$1"
+  }
+  sc_publish="LANES_LANE=$(printf '%q' "$sc_runner") lanes-edit.sh commit $(printf '%q' "the NOTED line of lane-end --sweep-checkouts")"
+  sc_partial_said=0
+  sc_say_partial() {
+    if [ -n "$sc_partial" ] && [ "$sc_partial_said" = 0 ]; then
+      sc_partial_said=1
+      note "the removal of $sc_partial did not finish (above): what is left is no checkout, under a hidden name, so the next write of that lane clones afresh. Remove it by hand once you have looked at why; every later run names it again, with the command."
+    fi
+  }
+  # A SIGNAL NEVER CUTS A REMOVAL IN TWO, AND ONE THAT ENDS THE ACT LEAVES
+  # ITS RECORD (lane openRepoTools-3's SHOULD 372). INT and TERM wait while a
+  # checkout is moved aside, removed and counted: the `mv` and the `rm` run
+  # in subshells that ignore both, and an ignored signal stays ignored across
+  # `exec`, so a Ctrl-C to the process group does not stop them halfway, and
+  # this shell takes the signal once they are done. A signal ends the act
+  # then, or at once outside those steps, and after any removal it prints
+  # the NOTED line by hand for what was done. One that comes while the line
+  # is being written says the line may be on origin already, and hands out
+  # the publish act first, so the sweep is never recorded twice.
+  sc_sig=""; sc_noting=0; sc_text=""
+  sc_on_signal() {   # <the exit code, 128 plus the signal>
+    trap '' INT TERM
+    if [ "$sc_noting" = 1 ]; then
+      note "a signal stopped this sweep while its NOTED line was being written, so the line may be on origin already, or committed in the checkout it went through and not yet published. Nothing was lost: each checkout removed held nothing unpublished. Look at lane $sc_runner's log on origin first. Where origin lacks the line, the publish act sends a commit that is kept:"
+      note "  $sc_publish"
+      note "Only where origin lacks the line and the publish act finds nothing to send is it written by hand:"
+      note "  $(sc_by_hand_of "$sc_text")"
+    elif [ $((sc_n_removed + sc_n_partial)) -gt 0 ]; then
+      note "a signal stopped this sweep after the removals above, before its NOTED line was written, so lane $sc_runner's log does not say what was removed. Nothing was lost: each checkout removed held nothing unpublished. Write the line by hand:"
+      note "  $(sc_by_hand_of "$(sc_noted_text "the sweep was stopped by a signal")")"
+    else
+      note "a signal stopped this sweep. Nothing was removed."
+    fi
+    sc_say_partial
+    exit "$1"
+  }
+  sc_sig_defer() { sc_sig=""; trap 'sc_sig=130' INT; trap 'sc_sig=143' TERM; }
+  sc_sig_arm() {
+    trap 'sc_on_signal 130' INT; trap 'sc_on_signal 143' TERM
+    if [ -n "$sc_sig" ]; then sc_on_signal "$sc_sig"; fi
+  }
+  if [ "$sweep_yes" = 1 ]; then sc_sig_arm; fi
   for sc_i in ${sc_order[@]+"${sc_order[@]}"}; do
     sc_c="${sc_cands[$sc_i]}"; sc_why="${sc_cand_why[$sc_i]}"
     sc_l="${sc_cand_lane[$sc_i]}"; sc_new="${sc_cand_new[$sc_i]}"
@@ -1899,12 +1976,17 @@ SLU
       sc_say_held "$sc_c" "$sc_why" "$sc_act_hold"; continue
     fi
     sc_aside="$sc_home/.${sc_c##*/}.removing-$sc_utc-$$"
-    if ! sc_under_home "$sc_c" || [ -e "$sc_aside" ] || [ -L "$sc_aside" ] || ! mv -- "$sc_c" "$sc_aside" 2>/dev/null; then
+    sc_sig_defer
+    if ! sc_under_home "$sc_c" || [ -e "$sc_aside" ] || [ -L "$sc_aside" ] ||
+       ! ( trap '' INT TERM; exec mv -- "$sc_c" "$sc_aside" ) 2>/dev/null; then
       sc_lock_drop
-      sc_say_held "$sc_c" "$sc_why" "it could not be moved aside to $sc_aside"; continue
+      sc_say_held "$sc_c" "$sc_why" "it could not be moved aside to $sc_aside"
+      sc_sig_arm; continue
     fi
     SC_LOCK=""   # it went with the checkout
-    if sc_under_home "$sc_aside"; then rm -rf ${sc_rm_x:+"$sc_rm_x"} -- "$sc_aside" 2>/dev/null || :; fi
+    if sc_under_home "$sc_aside"; then
+      ( trap '' INT TERM; exec rm -rf ${sc_rm_x:+"$sc_rm_x"} -- "$sc_aside" ) 2>/dev/null || :
+    fi
     if [ -e "$sc_aside" ] || [ -L "$sc_aside" ]; then
       printf '    PARTLY     %s  %s; moved aside to %s, which could not all be removed%s\n' "$sc_c" "$sc_why" "$sc_aside" "${sc_act_ign:+; $sc_act_ign}"
       sc_partial="${sc_partial:+$sc_partial }$sc_aside"
@@ -1916,9 +1998,14 @@ SLU
       sc_n_removed=$((sc_n_removed + 1))
     fi
     sc_gone="${sc_gone:+$sc_gone }$sc_c"
+    sc_sig_arm
   done
   printf '%s' "$sc_keep_lines"
-  if [ "${#sc_cands[@]}" = 0 ] && [ -z "$sc_keep_lines" ]; then printf '    (nothing)\n'; fi
+  for sc_e in ${sc_leftovers[@]+"${sc_leftovers[@]}"}; do
+    printf '    leftover   %s  the aside of a removal that did not finish (a sweep stopped by a signal, or an rm that met what it could not remove; or one still running): no checkout, and no write goes through it. Look at why, then remove it by hand: chmod -R u+rwX -- %q && rm -rf -- %q\n' \
+      "$sc_e" "$sc_e" "$sc_e"
+  done
+  if [ "${#sc_cands[@]}" = 0 ] && [ -z "$sc_keep_lines" ] && [ "${#sc_leftovers[@]}" = 0 ]; then printf '    (nothing)\n'; fi
 
   printf '\n  beside W (Amendment 23 S6.2), listed and never removed by this build:\n'
   for sc_e in ${sc_beside[@]+"${sc_beside[@]}"}; do
@@ -1944,6 +2031,9 @@ SLU
       exit 3
     fi
     printf '\n  DRY RUN — nothing was removed, and there is nothing to remove.\n'
+    if [ "${#sc_leftovers[@]}" -gt 0 ]; then
+      printf '  (%s leftover aside(s), above, are a person'"'"'s to remove: no sweep removes one)\n' "${#sc_leftovers[@]}"
+    fi
     exit 0
   fi
   printf '\n  %s removed, %s moved aside and not all removed, %s held under %s/; %s clone(s) beside W left.\n' \
@@ -1954,19 +2044,15 @@ SLU
   # and S4. It is written with `LANES_NO_FETCH` UNSET, because S3 refuses a
   # writer whose fetch did not run (ratified choice 2; rv1b's MUST 3 on
   # `lane-worktrees`). Nothing removed is nothing to record, and nothing is
-  # written. The paths are spelled from the projects root, `<W>-lanes/<name>`,
-  # never from the host's own root, and every name in the line is one this
-  # sweep already holds to letters, digits, `.`, `_` and `-`, so the free
-  # text's own rules (no ` — `, no newline, no leading arrow) hold for it.
+  # written (`sc_noted_text`, above, says how the line is spelled). A removal
+  # that did not finish is said FIRST, before the write, so no exit of the
+  # write can leave it unsaid (SHOULD 372). From the moment the write starts,
+  # a signal says the line may be on origin already (`sc_noting`).
+  sc_say_partial
   if [ $((sc_n_removed + sc_n_partial)) -gt 0 ]; then
-    sc_rel="${sc_home##*/}"
-    case "$sc_rel" in '' | *[!A-Za-z0-9._-]*) sc_rel="<W>-lanes" ;; esac
-    sc_text="sweep-checkouts (Amendment 23 S6.2): removed $sc_n_removed register checkout(s) under $sc_rel/ that held nothing unpublished"
-    if [ -n "$sc_removed_names" ]; then sc_text="$sc_text: $sc_removed_names"; fi
-    if [ -n "$sc_partial_names" ]; then sc_text="$sc_text; moved aside and not all removed: $sc_partial_names"; fi
-    if [ -n "$sc_held_names" ]; then sc_text="$sc_text; held and left: $sc_held_names"; fi
-    sc_text="$sc_text; ${#sc_beside[@]} clone(s) beside W listed and left"
+    sc_text="$(sc_noted_text)"
     sc_noted_rc=0
+    sc_noting=1
     ( unset LANES_NO_FETCH
       LANES_LANE="$sc_runner" LANES_SESSION="$sc_uuid" "$LANES_EDIT" log NOTED "lane:$sc_runner" "$sc_text" ) >&2 ||
       sc_noted_rc=$?
@@ -1982,8 +2068,7 @@ SLU
     # nothing, so it is safe to run whichever happened. Only a 6 whose publish
     # act finds nothing to send, and every other refusal, gets the line by hand.
     if [ "$sc_noted_rc" != 0 ]; then
-      sc_by_hand="LANES_LANE=$(printf '%q' "$sc_runner") LANES_SESSION=$sc_uuid lanes-edit.sh log NOTED $(printf '%q' "lane:$sc_runner") $(printf '%q' "$sc_text")"
-      sc_publish="LANES_LANE=$(printf '%q' "$sc_runner") lanes-edit.sh commit $(printf '%q' "the NOTED line of lane-end --sweep-checkouts")"
+      sc_by_hand="$(sc_by_hand_of "$sc_text")"
       case "$sc_noted_rc" in
         3)
           note "the NOTED line recording this sweep was committed and pushed, and the read-back could not confirm it on origin (\`lanes-edit.sh log\` exited 3, above), so it may be on origin already, and it is not to be written again. Nothing was lost: each checkout removed held nothing unpublished. The publish act sends its commit only where origin lacks it by content, and says so where origin has it:"
@@ -2000,9 +2085,8 @@ SLU
     fi
     printf '  NOTED in lane %s'"'"'s log: %s\n' "$sc_runner" "$sc_text"
   fi
-  if [ -n "$sc_partial" ]; then
-    die "the removal of $sc_partial did not finish (above): what is left is no checkout, under a hidden name, so the next write of that lane clones afresh. Remove it by hand once you have looked at why." 1
-  fi
+  # A removal that did not finish was said before the write (above).
+  if [ -n "$sc_partial" ]; then exit 1; fi
   exit 0
 fi
 
