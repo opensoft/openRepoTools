@@ -1853,8 +1853,10 @@ def tree_line(row: dict, provenance) -> str:
 #: sync, and why. A MARKER IS ITS KEY, `unread_key(<lane>)` - `<lane>:` and a
 #: US - and nothing else decides it (the review of #219 and its delta check):
 #: no tree's key can carry a US after the colon but its own `<US><n>`, while a
-#: tree's path can be empty (a current-schema sidecar with no `path:`) and a
-#: hand-made sidecar's branch can read like this one.
+#: hand-made sidecar's branch can read like this one, and so can the row an
+#: older helper printed for a sidecar with no `path:`, which has an EMPTY path.
+#: (The helper no longer prints that row: the id of such a record stands where
+#: its path would be, and the lane is `UNREAD` beside it, #302.)
 UNREAD_BRANCH = "unreadable inventory"
 
 
@@ -1950,9 +1952,11 @@ def collect_inventory() -> tuple[dict, dict]:
                                 f"is the helper on PATH another version?")
         record = tree_record(fields)
         # TWO TREES OF ONE LANE WITH ONE PATH ARE TWO ROWS (the review of #219):
-        # a current-schema sidecar with no `path:` is a tree whose path is
-        # EMPTY, and a second one replaced the first here. A later one is keyed
-        # with its place among them, after a US, which no path in a
+        # it was found for two sidecars with no `path:`, each a tree whose path
+        # was EMPTY, and a second one replaced the first here. The helper no
+        # longer lists such a tree (its lane is `UNREAD`, #302), but a record
+        # that is not whole can still name the path of a whole one. A later
+        # one is keyed with its place among them, after a US, which no path in a
         # US-separated line can carry. The read is sorted, so a place holds
         # while those trees keep their order; a change that reorders them - a
         # renamed branch, say - moves both keys, and that sync upserts both.

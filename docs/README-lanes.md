@@ -3846,7 +3846,7 @@ lanes-index reconcile --source inventory [--dry-run]
 |---|---|
 | `workstation`, `lane` | the workstation's name (`lanes-edit.sh workstation`) and the lane's canonical one |
 | `owner` | `legacy`, `managed <owner>` or `unknown` — the read `managed-projection` makes, never a parser of the indexer's |
-| `path`, `branch`, `dirty_count`, `unpushed_count`, `last_seen_utc` | the tree's sidecar: the last observation, `detached <sha>` for a detached head, an `unknown` count as NULL. A sidecar that could not be read is `unreadable sidecar`, one of another schema `unknown schema <n>`, each with the record's id where its path would be; the lane of a sidecar that could not be read is `UNREAD` beside it, so a sync keeps that lane's rows rather than replace the tree's row with one keyed by the record's id (#291) |
+| `path`, `branch`, `dirty_count`, `unpushed_count`, `last_seen_utc` | the tree's sidecar: the last observation, `detached <sha>` for a detached head, an `unknown` count as NULL. A sidecar that could not be read is `unreadable sidecar`, one of another schema `unknown schema <n>`, and one of this schema that is not whole `malformed sidecar` (#115); each keeps the path it names, and has the record's id where it names none. The lane of a record that could not be read, or that was read and names no absolute path (none, an empty one, or a relative one), is `UNREAD` beside its row, so a sync keeps that lane's rows rather than replace the tree's row with one keyed by the record's id, or by the relative text (#291, #302). One such record holds EVERY row of its lane — the lane's other trees, and any new ones, stop reaching the index until it is put right — while one that names an absolute path keeps its key, is rewritten in place and holds nothing |
 | `base`, `last_commit` | two git reads of the RECORDED head, in the tree or, once it is gone, its recorded checkout: its merge-base with `origin/main` (else `main`, else `origin/HEAD`), and `<sha> <subject>` |
 | `lifecycle`, `generation`, `operation` | the lane's snapshot (`lane-state`): `RUNNING`, `SWAPPING`, `SWAPPED` or `CLOSED` for a **legacy** lane; `INDETERMINATE` for a managed or unknown one, whose lifecycle this tooling does not pronounce on, and for a snapshot that is missing, unreadable or of another schema |
 | `writer_live` | the listing's own LIVE — a session record on this workstation naming one of the row's ids — and NULL where those records could not be read or the lane is bound on another host, from where liveness is unknown and never dead (Amendment 18(b)) |
@@ -3861,7 +3861,8 @@ that is `lane-reconcile`'s act. Nothing is recomputed: `dirty` and `unpushed`
 are what the handoff saw, and `LAST SEEN` says when.
 
 **Rows follow the inventory.** Keyed by (source, `<lane>:<path>`) — a second
-tree of one lane with the same path (two with no `path:`, say) as
+tree of one lane with the same path (a record that is not whole and names a
+whole one's path, say) as
 `<lane>:<path><US><n>`, numbered from 2 in the read's sorted order, and a lane's
 unread marker as `<lane>:<US>unread` — and versioned by a digest of the row and
 its provenance, so a replay writes nothing (a change that reorders two trees of
@@ -3872,17 +3873,28 @@ the inventory no longer names — removed at landing, or by a sweep's dispositio
 written at (a snapshot moved aside and begun again) writes nothing for that lane
 and says so, and `reconcile --source inventory` is the act that takes the lane
 as it now stands. A lane whose `trees` directory is there and cannot be listed,
-could not even be looked for, or holds a record that could not be read (#291)
-keeps its rows — it is not a lane with no worktrees — and gets ONE MARKER ROW,
+could not even be looked for, holds a record that could not be read (#291), or
+holds one that was read and names no absolute path (#302: no `path:` line, an
+empty one or a relative one, in a record that is not whole or is of another
+schema — its row is keyed by the record's id or by the relative text, and a
+sync took that for the tree) keeps its rows — it is not a lane with no
+worktrees — and gets ONE MARKER ROW,
 keyed `<lane>:<US>unread`, with no `path` and the `branch` `unreadable inventory
-(<why>)` — the key is what makes it one, because a tree's path can be empty (a
-sidecar with no `path:`) and a hand-made sidecar's branch can read the same —
+(<why>)` — the key is what makes it one, because a hand-made sidecar's branch
+can read the same, and so can an older helper's row for a sidecar with no
+`path:`, which has an empty path —
 which the `--index` read prints as the same `inventory NOT READ` line the sidecars
 give (opensoft/openRepoTools#173): a FIRST sync that cannot read a lane has no
 rows to keep and is still not an empty answer, and rows held over from an
 earlier sync are said to be, on that line. The marker leaves with the first
 sync that reads the lane, and `lanes-index status` counts it apart from the
-worktrees. The schema stays 1, so an indexer from before #173 sharing a
+worktrees. THE HOLD IS THE WHOLE LANE'S: one record that could not be read, or
+that names no absolute path, keeps every row of its lane as the last sync that
+read it left them, so the lane's other trees, and any new ones, stop reaching
+the index until that record is put right. A record that is not whole or is of
+another schema but names an ABSOLUTE path keeps its key and holds nothing: its
+row is rewritten in place as `malformed sidecar` or `unknown schema <n>`, with
+its counts empty. The schema stays 1, so an indexer from before #173 sharing a
 Postgres store reads a marker as a tree: its `export --worktrees` prints it as
 a `TREE` line with an empty path and that branch, and its `status` counts it as
 a worktree. An older and a newer indexer syncing ONE store each converge to their
@@ -3920,8 +3932,9 @@ knew of it. An indexer from before #173's item c1 refuses the line too, as one
 it does not read. A read of one NAMED lane goes by that name, which no listing
 gives, and never prints `PARTIAL`. Nor does a lane the listing DID name and
 could not read — its `trees` directory, its control root or a directory above
-it cannot be listed or searched, or a record of its trees cannot be read: that
-is the lane's own `UNREAD` line, and only that lane's rows are held (#291).
+it cannot be listed or searched, a record of its trees cannot be read, or one
+that was read names no absolute path: that is the lane's own `UNREAD` line, and
+only that lane's rows are held (#291, #302).
 
 Where those reads succeed, the listing makes each of them once, except the list
 of the logs, which it makes twice (the review of #289). The register, the
