@@ -1586,3 +1586,62 @@ def test_a_moved_handoff_the_replay_cannot_follow_is_kept_on_HEAD_exit_6(box: Bo
     assert [line.split()[1] for line in box.unpublished(c)] == [kept]
     assert result.stdout == _line(f)
     _released(box, c)
+
+
+#: Where a peer moves the lane's handoff OUT of `handoffs/` (A48's third case).
+OUTSIDE_REL = "notes/moved-handoff.md"
+
+
+def _peer_repoints_the_cell(box: Box, cell: str) -> None:
+    """In one commit the peer clone does NOT push (the race hook lands it at
+    this write's push), the lane's handoff leaves origin and the row's cell
+    stops naming it (rv2a-c3's probe N5): "moved-no-file" deletes it and
+    points the cell at MOVED_REL, which origin has no file for; "emptied"
+    deletes it and empties the cell; "moved-out-of-handoffs" `git mv`s it to
+    OUTSIDE_REL and points the cell there."""
+    p = box.peer
+    box.git("-C", str(p), "fetch", "-q", "origin")
+    box.git("-C", str(p), "merge", "-q", "--ff-only", "refs/remotes/origin/main")
+    if cell == "moved-out-of-handoffs":
+        (p / OUTSIDE_REL).parent.mkdir(parents=True, exist_ok=True)
+        box.git("-C", str(p), "mv", "--", HANDOFF_REL, OUTSIDE_REL)
+    else:
+        box.git("-C", str(p), "rm", "-q", "--", HANDOFF_REL)
+    new = {"moved-no-file": MOVED_REL, "emptied": "", "moved-out-of-handoffs": OUTSIDE_REL}[cell]
+    reg = p / REGISTER
+    text = reg.read_text(encoding="utf-8")
+    assert text.count(f"| {HANDOFF_REL} |") == 1
+    reg.write_text(text.replace(f"| {HANDOFF_REL} |", f"| {new} |"), encoding="utf-8")
+    box.git("-C", str(p), "add", "--", REGISTER)
+    box.git("-C", str(p), "commit", "-q", "-m", f"a peer repoints the lane's handoff cell ({cell})")
+
+
+@pytest.mark.parametrize("cell", ["moved-no-file", "emptied", "moved-out-of-handoffs"])
+def test_a_cell_a_peer_repoints_where_no_replay_can_write_keeps_the_write_on_HEAD_exit_6(box: Box, cell: str):
+    """rv2a-c3's NIT 1 (its probe N5): A46 replayed wherever origin's row
+    named another cell, though the re-run writes only a handoff that is
+    there. A peer that deleted the handoff and pointed the cell at a name
+    origin has no file for, or emptied it, while this write's push was in
+    flight had the commit dropped and the re-run say "Nothing was written"
+    (8): the write was only in the reflog. Another cell is followed now only
+    to a file under `handoffs/` that origin has (A48); otherwise — no file,
+    no cell, or a file the re-run refuses (2, outside `handoffs/`) — A37's
+    keep holds: 6, the write in this checkout, one commit unpublished,
+    nothing replayed."""
+    c = box.seam()
+    f = c / HANDOFF_REL
+    _peer_repoints_the_cell(box, cell)
+    box.race(prepared=True)
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT)
+    err = result.stderr
+    assert result.returncode == 6, err
+    kept = box.head(c)
+    assert f"origin's copy of {HANDOFF_REL} was deleted while this write's push was in flight" in err, err
+    assert f"kept on HEAD: {kept}" in err
+    assert "push refused (attempt" not in err, "nothing is dropped or replayed"
+    assert box.subject(c) == SUBJECT
+    assert f.read_text(encoding="utf-8") == stamped(HANDOFF), "the write is in this checkout"
+    assert not _origin_has(box, HANDOFF_REL)
+    assert [line.split()[1] for line in box.unpublished(c)] == [kept], "one commit unpublished, this write's"
+    assert result.stdout == _line(f)
+    _released(box, c)
