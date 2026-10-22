@@ -3022,9 +3022,32 @@ cp_under() {   # <sha> <subject> <origin's tip>
 # unpublished one, which S3 refuses every writer over, so it is published by
 # the publish act. Said where the migration, `retire-rows` and `archive-rows`
 # meet one.
+#
+# UNDER THE OPT-IN, NEVER A COMMIT IN W (lane 3's re-check of #307, 331). The
+# migration's and the archive's dry runs are not routed, so they read W, and
+# a commit made there as they said was stranded: the publish act routed to
+# the lane's own checkout, found nothing to publish there and exited 0, and
+# W, holding the commit, was then refused by S5 and by `refresh-workspace`.
+# So where `LANES_REPO` is W (by repository, as S5 compares it) the file is
+# moved into its maker's own lane checkout and written from there, or
+# removed. Anywhere else the publish act names the lane whose checkout this
+# is — a routed sweep's runner — so that it routes back here.
 untracked_recovery() {   # <the path, relative to the checkout>
-  printf 'Whoever made it commits it as their own write, in this checkout (git -C %s add -- %s && git -C %s commit -m "<lane>(<what it is>)" -- %s), and publishes it with the publish act (LANES_LANE=<lane> %s commit "<what it is>")' \
-    "$LANES_REPO" "$1" "$LANES_REPO" "$1" "$SELF"
+  if [ "$LANES_ROUTE_ON" = 1 ] && repo_is_w; then
+    printf 'This checkout is W, the readers'"'"' copy, which under LANES_ROUTE_WRITES=1 takes no commit (Amendment 23 S5). Whoever made it moves it into their own lane'"'"'s checkout (mv -- %s/%s %s-lanes/<lane>/%s, after %s lane-checkout <lane> --create where that checkout is not there yet), commits it there as their own write (git -C %s-lanes/<lane> add -- %s && git -C %s-lanes/<lane> commit -m "<lane>(<what it is>)" -- %s) and publishes it with the publish act (LANES_LANE=<lane> %s commit "<what it is>"); or removes it if it is nobody'"'"'s (rm -- %s/%s)' \
+      "$LANES_REPO" "$1" "$LANES_WS_REAL" "$1" "$SELF" "$LANES_WS_REAL" "$1" "$LANES_WS_REAL" "$1" "$SELF" "$LANES_REPO" "$1"
+    return 0
+  fi
+  printf 'Whoever made it commits it as their own write, in this checkout (git -C %s add -- %s && git -C %s commit -m "<lane>(<what it is>)" -- %s), and publishes it with the publish act (LANES_LANE=%s %s commit "<what it is>")' \
+    "$LANES_REPO" "$1" "$LANES_REPO" "$1" "${LANES_ROUTED:-${LANES_LANE:-<lane>}}" "$SELF"
+}
+# 0 where `LANES_REPO` is W, by repository and not by spelling, as S5 compares
+# it (`lane_checkout_enter`): its git common directory is W's, which W
+# itself, a directory inside W and a linked worktree of W all share.
+repo_is_w() {
+  [ -n "$LANES_WS_REAL" ] || return 1
+  riw_g="$(git_common_real "$LANES_REPO")"
+  [ -n "$riw_g" ] && [ "$riw_g" = "$(git_common_real "$LANES_WS_REAL")" ]
 }
 
 # 0 when origin's `main` holds <sha>, after a fresh fetch; 1 when it does not;
