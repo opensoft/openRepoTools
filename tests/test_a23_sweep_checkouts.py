@@ -183,19 +183,37 @@ def _tagged(rows: dict, tag: str) -> set:
     return {path for path, (t, _) in rows.items() if t == tag}
 
 
+def _closed_checkout(box: Sweep) -> Path:
+    """The first CHAIN lane's checkout, made, borrowing from W alone: a CLOSED
+    lane's checkout for a case that needs a candidate besides repoS4-2's."""
+    return box.clone(box.checkout(CHAIN[0]), reference=box.w)
+
+
+def _new_name_ended(box: Sweep) -> None:
+    """Lane repoS4-9, OLD's new name, ENDS on origin (its log and its row),
+    and W reads it, since a dry run reads what W last fetched: OLD's checkout
+    is then a former name of a CLOSED lane, and repoS4-9's own is CLOSED too."""
+    box.peer_edits(f"lanes/log/{NEW}.md", _log(NEW, "STARTED"), _log(NEW, "STARTED", "ENDED"),
+                   f"{NEW} ends")
+    box.peer_edits(REGISTER, _row(NEW, "LIVE · renamed from repoS4-8"), _row(NEW, "ENDED · closed"),
+                   f"{NEW}'s row says so")
+    box.git("-C", str(box.w), "pull", "-q", "--ff-only", "origin", "main")
+
+
 # ------------------------------------------------------------- the dry run
 
 def test_dry_run_lists_and_removes_nothing(sweep):
-    """THE DEFAULT IS THE DRY RUN: it names the CLOSED lane's checkout and the
-    former name's beside its new one as candidates, and removes, fetches and
-    locks nothing (Amendment 19(c)'s shape, S6.2). 3 says something is there
-    to remove."""
+    """THE DEFAULT IS THE DRY RUN: it names the CLOSED lane's checkout as a
+    candidate, keeps the former name's beside its new one while that lane is
+    not CLOSED (D29), and removes, fetches and locks nothing (Amendment
+    19(c)'s shape, S6.2). 3 says something is there to remove."""
     box = sweep.box
     before, head = box.everything(), box.origin_head()
     result, rows = sweep()
     assert result.returncode == 3, (result.stdout, result.stderr)
     assert "DRY RUN" in result.stdout, result.stdout
-    assert _tagged(rows, "remove") == {str(box.checkout(CLOSED)), str(box.checkout(OLD))}, rows
+    assert _tagged(rows, "remove") == {str(box.checkout(CLOSED))}, rows
+    assert rows[str(box.checkout(OLD))][0] == "keep", rows
     assert rows[str(box.checkout(OLD))][1].startswith(f"a former name of lane {NEW}"), rows
     assert box.everything() == before, "a dry run changes nothing under <W>-lanes/ or beside W"
     assert box.origin_head() == head, "nothing reached origin"
@@ -204,11 +222,10 @@ def test_dry_run_lists_and_removes_nothing(sweep):
 
 
 def test_dry_run_with_nothing_to_remove_exits_0(sweep):
-    """0 is nothing to remove: with the CLOSED lane's checkout and the former
-    name's gone, every entry is kept."""
+    """0 is nothing to remove: with the CLOSED lane's checkout gone, every
+    entry is kept, the former name's too (its lane is not CLOSED, D29)."""
     box = sweep.box
-    for lane in (CLOSED, OLD):
-        box.checkout(lane).rename(box.root / f"aside-{lane}")
+    box.checkout(CLOSED).rename(box.root / f"aside-{CLOSED}")
     result, rows = sweep()
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert not _tagged(rows, "remove"), rows
@@ -295,7 +312,7 @@ def test_W_and_live_lane_never_candidates(sweep):
     assert f"lane {NEW} is IDLE" in keep[str(box.checkout(NEW))], keep
     assert not any(".lock" in path for path in rows), "hidden entries are never looked at"
     assert "1 hidden entr(ies)" in result.stdout, result.stdout
-    assert _tagged(rows, "remove") == {str(box.checkout(CLOSED)), str(box.checkout(OLD))}
+    assert _tagged(rows, "remove") == {str(box.checkout(CLOSED))}, rows
 
 
 def test_a_paused_lane_is_kept_without_LANES_REPO(sweep):
@@ -330,27 +347,29 @@ def test_a_live_lanes_checkout_is_kept_by_the_live_rule(sweep, lane):
 @pytest.mark.parametrize("yes", [False, True], ids=["dry run", "--yes"])
 def test_a_closed_runner_keeps_its_own_checkout(sweep, yes):
     """THE RUNNER'S OWN CHECKOUT IS NEVER A CANDIDATE, even where the runner's
-    own lane is CLOSED: the NOTED line goes through that checkout. Only the
-    former name's checkout is swept."""
+    own lane is CLOSED: the NOTED line goes through that checkout. Only
+    another CLOSED lane's checkout is swept."""
     box = sweep.box
+    other = _closed_checkout(box)
     result, rows = sweep(*(("--yes",) if yes else ()), LANES_LANE=CLOSED)
     assert rows[str(box.checkout(CLOSED))] == (
         "keep", f"lane {CLOSED} runs this sweep: its checkout is the one its NOTED line goes through"), rows
     assert result.returncode == (0 if yes else 3), (result.stdout, result.stderr)
-    assert _tagged(rows, "removed" if yes else "remove") == {str(box.checkout(OLD))}, rows
+    assert _tagged(rows, "removed" if yes else "remove") == {str(other)}, rows
     assert box.checkout(CLOSED).is_dir()
-    assert os.path.lexists(box.checkout(OLD)) is not yes
+    assert os.path.lexists(other) is not yes
 
 
 def test_a_closed_lanes_checkout_named_by_LANES_REPO_is_kept(sweep):
     """THE CHECKOUT A CALLER'S `LANES_REPO` NAMES IS NEVER A CANDIDATE, even a
     CLOSED lane's: a write of that window may go through it."""
     box = sweep.box
+    other = _closed_checkout(box)
     result, rows = sweep(LANES_REPO=str(box.checkout(CLOSED)))
     assert rows[str(box.checkout(CLOSED))] == (
         "keep", "the checkout LANES_REPO names, which a write of this window may go through"), rows
     assert result.returncode == 3, (result.stdout, result.stderr)
-    assert _tagged(rows, "remove") == {str(box.checkout(OLD))}, rows
+    assert _tagged(rows, "remove") == {str(other)}, rows
 
 
 def test_a_W_that_is_a_lane_checkout_is_refused(sweep):
@@ -391,14 +410,15 @@ def _no_aside(box: Sweep) -> None:
 
 
 def test_closed_lane_checkout_removed_live_kept(sweep, tmp_path):
-    """`--yes`, run by a lane, removes the CLOSED lane's checkout and the former
-    name's beside its new one, and leaves every other entry — the LIVE lane's,
-    the PAUSED one's, a non-clone, a link — and every clone beside W exactly
-    as they were. Its own checkout moves only by the NOTED commit it pushed."""
+    """`--yes`, run by a lane, removes the CLOSED lane's checkout, and leaves
+    every other entry — the LIVE lane's, the PAUSED one's, the former name's
+    beside its new one while that lane is not CLOSED (D29), a non-clone, a
+    link — and every clone beside W exactly as they were. Its own checkout
+    moves only by the NOTED commit it pushed."""
     box = sweep.box
     before = box.everything()
     runner = str(box.checkout(RUNNER))
-    gone = {str(box.checkout(CLOSED)), str(box.checkout(OLD))}
+    gone = {str(box.checkout(CLOSED))}
     result, rows = sweep("--yes", LANES_LANE=RUNNER)
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert _tagged(rows, "removed") == gone, rows
@@ -408,7 +428,7 @@ def test_closed_lane_checkout_removed_live_kept(sweep, tmp_path):
     after = box.everything()
     assert {k: v for k, v in before.items() if k not in gone and k != runner} == \
         {k: v for k, v in after.items() if k != runner}, \
-        "nothing but the two removed entries changed, under <W>-lanes/ or beside W"
+        "nothing but the removed entry changed, under <W>-lanes/ or beside W"
     assert box.git("-C", runner, "rev-parse", "HEAD").strip() == box.origin_head(), \
         "the runner's checkout moved only to the NOTED commit it pushed"
     assert after[runner][1:] == before[runner][1:], "and holds nothing new"
@@ -688,11 +708,13 @@ def test_a_lane_resumed_after_the_listing_is_kept(sweep):
 
 def test_a_former_name_whose_new_checkout_goes_after_the_listing_is_kept(sweep):
     """A FORMER NAME IS ASKED AGAIN UNDER THE LOCK (rv4's SHOULD 1, R3). The
-    listing finds repoS4-8's checkout beside its new name's; at its own fetch
-    the new name's checkout goes, so the former name's checkout IS that
-    lane's own again until its next write renames it (S1), and is kept."""
+    listing finds repoS4-8's checkout beside its new name's, a CLOSED lane's
+    (D29); at its own fetch the new name's checkout goes, so the former
+    name's checkout IS that lane's own again until its next write renames it
+    (S1), and is kept."""
     box = sweep.box
     old, new = box.checkout(OLD), box.checkout(NEW)
+    _new_name_ended(box)
     _, rows = sweep()
     assert rows[str(old)][0] == "remove", rows[str(old)]
     _hook_on_fetch_of(box, old, f"mv -- {new} {box.root / 'aside-new'}")
@@ -718,31 +740,97 @@ def _live_session_of(box: Sweep, lane: str) -> str:
     return f"printf '%s\\n' '{body}' > {record}"
 
 
+def _former_name_kept(lane_said: str) -> str:
+    """The keep reason of OLD's checkout beside repoS4-9's (D29)."""
+    return (f"a former name of lane {NEW}, beside that lane's own checkout, kept until that "
+            f"lane is CLOSED: a process started before the rename may still write through "
+            f"this path; {lane_said}")
+
+
+def test_a_former_name_of_a_lane_not_closed_is_kept(sweep):
+    """A FORMER NAME'S CHECKOUT IS SWEPT ONLY ONCE ITS LANE IS CLOSED, as every
+    other checkout is (rv4-c3's SHOULD c3-1, P1; D29, superseding D27's LIVE
+    test). Since 10-19 the launcher exports `LANES_REPO=<W>-lanes/<lane>`, and
+    a process started before the rename still names the old path: here a
+    landing pilot's stand-in, a `sleep` carrying `LANES_REPO=<W>-lanes/OLD`,
+    working elsewhere, that outlived its window's session, so repoS4-9 is
+    IDLE and not LIVE. The checkout is kept by the dry run and by `--yes`."""
+    box = sweep.box
+    old = box.checkout(OLD)
+    pilot = subprocess.Popen(["sleep", "600"], cwd=str(box.root),
+                             env=dict(box.env, LANES_REPO=str(old)))
+    try:
+        for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+            result, rows = sweep(*args, **env)
+            assert rows[str(old)] == ("keep", _former_name_kept(
+                f"lane {NEW} is IDLE, not CLOSED (Amendment 19)")), rows[str(old)]
+            assert result.returncode in (0, 3), (result.stdout, result.stderr)
+        assert old.is_dir()
+    finally:
+        pilot.kill()
+        pilot.wait()
+
+
+def test_a_former_name_of_a_closed_lane_is_removed(sweep):
+    """ONCE ITS LANE IS CLOSED, A FORMER NAME'S CHECKOUT BESIDE ITS NEW ONE IS A
+    CANDIDATE (S1: *"reports `<W>-lanes/<old>/`, which S6's sweep lists"*;
+    D29): repoS4-9 ENDS, so the dry run lists repoS4-8's checkout as a former
+    name to remove, and `--yes` removes it, and repoS4-9's own CLOSED one."""
+    box = sweep.box
+    old, new = box.checkout(OLD), box.checkout(NEW)
+    _new_name_ended(box)
+    result, rows = sweep()
+    assert result.returncode == 3, (result.stdout, result.stderr)
+    assert rows[str(old)] == ("remove", f"a former name of lane {NEW}, beside that lane's own "
+                              f"checkout {new}; lane {NEW} is CLOSED (ENDED)"), rows[str(old)]
+    assert rows[str(new)][0] == "remove", rows[str(new)]
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert _tagged(rows, "removed") == {str(box.checkout(CLOSED)), str(old), str(new)}, rows
+    assert not os.path.lexists(old)
+    assert not os.path.lexists(new)
+
+
+def test_a_former_name_whose_lane_resumes_after_the_listing_is_kept(sweep):
+    """A FORMER NAME'S LANE IS ASKED AGAIN UNDER THE LOCK, as every lane is
+    (D29): repoS4-9 is CLOSED at the listing and RESUMES on origin at its
+    former name's own fetch, so the re-ask reads it IDLE, and the checkout
+    is kept."""
+    box = sweep.box
+    old = box.checkout(OLD)
+    _new_name_ended(box)
+    _hook_on_fetch_of(box, old, _resumed_on_origin(box, NEW))
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert rows[str(old)][0] == "hold", rows[str(old)]
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert f"lane {NEW} is IDLE now, not CLOSED" in rows[str(old)][1], rows[str(old)]
+    assert old.is_dir()
+
+
 def test_a_former_name_of_a_live_lane_is_kept(sweep):
-    """A FORMER NAME'S CHECKOUT IS KEPT WHILE ITS LANE IS LIVE (rv4's SHOULD 4,
-    D27). Since 10-19 the launcher exports `LANES_REPO=<W>-lanes/<lane>`, and
-    a window of the lane started before the rename still names the old path,
-    so removing it makes that window's writes fail until it is relaunched.
-    Here repoS4-9 is LIVE: a live session record names its transcript. Its
-    former name's checkout is kept by the dry run and by `--yes`."""
+    """A FORMER NAME'S CHECKOUT IS KEPT WHILE ITS LANE IS LIVE (rv4's SHOULD 4),
+    as while it is anything but CLOSED (D29). Here repoS4-9 is LIVE: a live
+    session record names its transcript. Its former name's checkout is kept
+    by the dry run and by `--yes`."""
     box = sweep.box
     old = box.checkout(OLD)
     record, body = _live_record(box, NEW)
     record.write_text(body + "\n", encoding="utf-8")
     for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
         result, rows = sweep(*args, **env)
-        assert rows[str(old)][0] == "keep", rows[str(old)]
+        assert rows[str(old)] == ("keep", _former_name_kept(
+            f"lane {NEW} is LIVE: a live session record here names it")), rows[str(old)]
         assert result.returncode in (0, 3), (result.stdout, result.stderr)
-        assert f"a former name of lane {NEW}, which is LIVE" in rows[str(old)][1], rows[str(old)]
     assert old.is_dir()
 
 
 def test_a_former_name_whose_lane_goes_live_after_the_listing_is_kept(sweep):
-    """THE SAME RULE, ASKED AGAIN UNDER THE LOCK (D27): repoS4-9 comes LIVE at
-    its former name's own fetch, after the listing found that checkout a
-    candidate. It is kept."""
+    """THE SAME RULE, ASKED AGAIN UNDER THE LOCK (D29): repoS4-9 is CLOSED at
+    the listing, so its former name's checkout is a candidate, and comes LIVE
+    at that checkout's own fetch. It is kept."""
     box = sweep.box
     old = box.checkout(OLD)
+    _new_name_ended(box)
     _hook_on_fetch_of(box, old, _live_session_of(box, NEW))
     result, rows = sweep("--yes", LANES_LANE=RUNNER)
     assert rows[str(old)][0] == "hold", rows[str(old)]
@@ -1077,6 +1165,7 @@ def test_a_removal_that_does_not_finish_exits_1(sweep):
     the run exits 1, and the aside stays, hidden, under `<W>-lanes/`."""
     box = sweep.box
     c = box.checkout(CLOSED)
+    other = _closed_checkout(box)
     (c / ".git" / "info" / "exclude").write_text("scratch/\n", encoding="utf-8")
     box.write(c, "scratch/kept.txt", "an ignored file in a read-only directory\n")
     (c / "scratch").chmod(0o555)
@@ -1097,7 +1186,7 @@ def test_a_removal_that_does_not_finish_exits_1(sweep):
         noted = _noted_on_origin(box)
         assert len(noted) == 1, noted
         assert (f"removed 1 register checkout(s) under brett-wip-lanes/ that held nothing "
-                f"unpublished: {OLD}; moved aside and not all removed: {asides[0].name};") in noted[0], noted
+                f"unpublished: {other.name}; moved aside and not all removed: {asides[0].name};") in noted[0], noted
     finally:
         for aside in box.lanes_root.glob(f".{CLOSED}.removing-*"):
             (aside / "scratch").chmod(0o755)
@@ -1119,14 +1208,14 @@ def test_noted_line_written_through_runner_checkout(sweep):
     w_head = box.git("-C", str(box.w), "rev-parse", "HEAD").strip()
     result, rows = sweep("--yes", LANES_LANE=RUNNER)
     assert result.returncode == 0, (result.stdout, result.stderr)
-    assert _tagged(rows, "removed") == {str(box.checkout(CLOSED)), str(box.checkout(OLD))}, rows
+    assert _tagged(rows, "removed") == {str(box.checkout(CLOSED))}, rows
     noted = [line for line in box.origin_file(f"lanes/log/{RUNNER}.md").splitlines()
              if line.startswith("NOTED")]
     assert len(noted) == 1, noted
     assert f"lane {RUNNER}, session {UUID[RUNNER]}@" in noted[0], noted
     assert noted[0].endswith(
-        "sweep-checkouts (Amendment 23 S6.2): removed 2 register checkout(s) under "
-        f"brett-wip-lanes/ that held nothing unpublished: {CLOSED} {OLD}; "
+        "sweep-checkouts (Amendment 23 S6.2): removed 1 register checkout(s) under "
+        f"brett-wip-lanes/ that held nothing unpublished: {CLOSED}; "
         "3 clone(s) beside W listed and left"), noted
     assert str(box.root) not in noted[0], "no host path is written into the log"
     assert box.git("-C", str(runner), "rev-parse", "HEAD").strip() == box.origin_head(), \
@@ -1144,10 +1233,9 @@ def test_noted_line_written_through_runner_checkout(sweep):
 
 def test_nothing_removed_writes_nothing(sweep):
     """Nothing removed is nothing to record: with the CLOSED lane's checkout
-    held and the former name's gone, `--yes` removes nothing, writes no line
-    and makes no commit."""
+    held, and the former name's kept (its lane is not CLOSED, D29), `--yes`
+    removes nothing, writes no line and makes no commit."""
     box = sweep.box
-    box.checkout(OLD).rename(box.root / f"aside-{OLD}")
     _commit_unpushed(box, box.checkout(CLOSED))
     head = box.origin_head()
     runner_head = box.git("-C", str(box.checkout(RUNNER)), "rev-parse", "HEAD").strip()
@@ -1200,7 +1288,7 @@ def test_noted_line_not_written_exits_1_with_the_command(sweep):
         "  exit 2\n"))
     result, rows = sweep("--yes", LANES_LANE=RUNNER, LANES_EDIT=refusing)
     assert result.returncode == 1, (result.stdout, result.stderr)
-    assert _tagged(rows, "removed") == {str(box.checkout(CLOSED)), str(box.checkout(OLD))}, rows
+    assert _tagged(rows, "removed") == {str(box.checkout(CLOSED))}, rows
     assert "the NOTED line recording this sweep was NOT written" in result.stderr, result.stderr
     assert "Nothing was lost" in result.stderr
     by_hand = result.stderr.split("Write the line by hand: ", 1)[1].strip()
@@ -1208,7 +1296,7 @@ def test_noted_line_not_written_exits_1_with_the_command(sweep):
     assert not _noted_on_origin(box)
     done = _by_hand(box, by_hand)
     assert done.returncode == 0, (done.stdout, done.stderr)
-    assert "sweep-checkouts (Amendment 23 S6.2): removed 2" in box.origin_file(f"lanes/log/{RUNNER}.md")
+    assert "sweep-checkouts (Amendment 23 S6.2): removed 1" in box.origin_file(f"lanes/log/{RUNNER}.md")
 
 
 def test_noted_line_unconfirmed_is_never_written_again(sweep):
@@ -1225,7 +1313,7 @@ def test_noted_line_unconfirmed_is_never_written_again(sweep):
         '  exit "$rc"\n'))
     result, rows = sweep("--yes", LANES_LANE=RUNNER, LANES_EDIT=exit3)
     assert result.returncode == 1, (result.stdout, result.stderr)
-    assert _tagged(rows, "removed") == {str(box.checkout(CLOSED)), str(box.checkout(OLD))}, rows
+    assert _tagged(rows, "removed") == {str(box.checkout(CLOSED))}, rows
     assert len(_noted_on_origin(box)) == 1
     assert "was NOT written" not in result.stderr, result.stderr
     assert "Write the line by hand" not in result.stderr, result.stderr
@@ -1251,7 +1339,7 @@ def test_noted_line_kept_unpublished_is_published_not_written_again(sweep):
     box.use_net(hook=f'case "$1" in push) if [ -e {gate} ]; then exit 1; fi ;; esac\nexit 0\n')
     result, rows = sweep("--yes", LANES_LANE=RUNNER)
     assert result.returncode == 1, (result.stdout, result.stderr)
-    assert _tagged(rows, "removed") == {str(box.checkout(CLOSED)), str(box.checkout(OLD))}, rows
+    assert _tagged(rows, "removed") == {str(box.checkout(CLOSED))}, rows
     assert not _noted_on_origin(box)
     assert "was NOT written" not in result.stderr, result.stderr
     assert "kept on HEAD" in result.stderr, result.stderr

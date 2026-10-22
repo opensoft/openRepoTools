@@ -937,7 +937,8 @@ fi
 # register calls CLOSED (`lanes --closed`'s class, Amendment 19), or the old
 # name's checkout beside its new one after a rename (S1: *"the writer writes
 # through `<W>-lanes/<new>/` and reports `<W>-lanes/<old>/`, which S6's sweep
-# lists"*). NEVER W, never a LIVE lane's checkout, never the checkout of the
+# lists"*) once that lane is CLOSED too. NEVER W, never a LIVE lane's
+# checkout, never a lane's that is not CLOSED, never the checkout of the
 # lane that runs the sweep or of the `LANES_REPO` its caller names, never a
 # symbolic link and never anything a link leads to. A CLONE BESIDE W IS LISTED,
 # WITH WHAT IT HOLDS, AND NEVER REMOVED BY THIS BUILD: the brief this slice was
@@ -1184,25 +1185,32 @@ SC_IDX
     sc_cands+=("$1"); sc_cand_lane+=("$2"); sc_cand_why+=("$3"); sc_cand_new+=("${4-}")
   }
   # A lane's checkout, judged by the lane's state: CLOSED is a candidate,
-  # LIVE never is, and every other state is a lane somebody may pick up.
-  sc_judge_lane() {   # <path> <lane>
+  # LIVE never is, and every other state is a lane somebody may pick up. A
+  # former name's checkout beside the new name's own (its third argument) is
+  # judged by the same rule, and says first what it is.
+  sc_judge_lane() {   # <path> <lane> [<the new name's checkout, beside it>]
+    sjl_new="${3-}"; sjl_keep=""; sjl_cand=""
+    if [ -n "$sjl_new" ]; then
+      sjl_keep="a former name of lane $2, beside that lane's own checkout, kept until that lane is CLOSED: a process started before the rename may still write through this path; "
+      sjl_cand="a former name of lane $2, beside that lane's own checkout $sjl_new; "
+    fi
     if [ -n "$sc_runner" ] && [ "$(sc_lc "$2")" = "$(sc_lc "$sc_runner")" ]; then
-      sc_keep "$1" "lane $2 runs this sweep: its checkout is the one its NOTED line goes through"
+      sc_keep "$1" "${sjl_keep}lane $2 runs this sweep: its checkout is the one its NOTED line goes through"
       return 0
     fi
     if ! sc_lookup "$2"; then
-      sc_keep "$1" "no lane $2 is in the register or the logs, so it is no CLOSED lane's"
+      sc_keep "$1" "${sjl_keep}no lane $2 is in the register or the logs, so it is no CLOSED lane's"
       return 0
     fi
     if [ "$SC_L_STATE" = LIVE ]; then
-      sc_keep "$1" "lane $SC_L_LANE is LIVE: a live session record here names it"
+      sc_keep "$1" "${sjl_keep}lane $SC_L_LANE is LIVE: a live session record here names it"
       return 0
     fi
     if [ "$SC_L_CLASS" != closed ]; then
-      sc_keep "$1" "lane $SC_L_LANE is $SC_L_STATE, not CLOSED (Amendment 19)"
+      sc_keep "$1" "${sjl_keep}lane $SC_L_LANE is $SC_L_STATE, not CLOSED (Amendment 19)"
       return 0
     fi
-    sc_cand "$1" "$SC_L_LANE" "lane $SC_L_LANE is CLOSED ($SC_L_STATE)"
+    sc_cand "$1" "$SC_L_LANE" "${sjl_cand}lane $SC_L_LANE is CLOSED ($SC_L_STATE)" "$sjl_new"
   }
   sc_judge() {   # <path> <name>
     sj_p="$1"; sj_n="$2"
@@ -1231,23 +1239,24 @@ SC_IDX
       sc_keep "$sj_p" "no lane $sj_n is in the register or the logs, so it is no CLOSED lane's"
       return 0
     fi
-    # A FORMER NAME OF LANE `sj_c`. Beside the new name's own checkout it is a
-    # candidate, because no write of the lane's goes through it any more (S1),
-    # UNLESS THE LANE IS LIVE (rv4's SHOULD 4, D27): since 10-19 the launcher
-    # exports `LANES_REPO=<W>-lanes/<lane>`, and a window of the lane started
-    # before the rename still names the old path, so removing it would fail
-    # that window's writes until it is relaunched. A window of the lane on
-    # this workstation is a live session record naming it, which is what
-    # LIVE is. With no checkout under the new name it IS the lane's checkout
+    # A FORMER NAME OF LANE `sj_c`, JUDGED AS THAT LANE'S OWN CHECKOUT IS: a
+    # candidate only once the lane is CLOSED (rv4-c3's SHOULD c3-1, D29, which
+    # supersedes D27's LIVE test). Beside the new name's own checkout, no
+    # write the tooling starts goes through it any more (S1). But since 10-19
+    # the launcher exports `LANES_REPO=<W>-lanes/<lane>`, and whatever was
+    # started before the rename still names the old path: a window, or a
+    # landing pilot that outlives its window's session, so that the lane no
+    # longer reads LIVE; or one in another container that shares `<W>-lanes/`,
+    # where no session record here names it. LIVE sees neither, and removing
+    # the path would refuse that process's next register write (S3: it is no
+    # git checkout), a HOLD's release among them. CLOSED is the rule every
+    # other checkout is swept by: the lane has ended, and its own checkout
+    # goes then too. The cost is the old checkout's tree, kept until the lane
+    # closes. With no checkout under the new name it IS the lane's checkout
     # until the next write renames it (S1), and is judged as one.
     sj_new="$sc_home/$sj_c"
     if [ -d "$sj_new" ] && [ ! -L "$sj_new" ] && [ ! "$sj_new" -ef "$sj_p" ]; then
-      if sc_lookup "$sj_c" && [ "$SC_L_STATE" = LIVE ]; then
-        sc_keep "$sj_p" "a former name of lane $SC_L_LANE, which is LIVE: a window of it started before the rename may still write through this path, which its LANES_REPO names"
-        return 0
-      fi
-      sc_cand "$sj_p" "$sj_c" "a former name of lane $sj_c, beside that lane's own checkout $sj_new" "$sj_new"
-      return 0
+      sc_judge_lane "$sj_p" "$sj_c" "$sj_new"; return 0
     fi
     sc_judge_lane "$sj_p" "$sj_c"
   }
@@ -1635,15 +1644,13 @@ SCC
     IFS="$sc_tab" read -r ss_lane ss_state ss_ws ss_pf ss_win ss_sid ss_dir ss_obj ss_age ss_cmd ss_home ss_fk ss_loc ss_class ss_rest <<SS_ROW
 $ss_row
 SS_ROW
+    # A FORMER NAME'S CHECKOUT is asked both: still a former name of the lane
+    # beside that lane's own checkout, and the lane still CLOSED (D29).
     if [ -n "$3" ]; then
       ss_c="$(LANES_NO_FETCH=1 "$LANES_EDIT" canon-lane "${1##*/}" 2>/dev/null)" || ss_c=""
       if [ "$(sc_lc "$ss_c")" != "$(sc_lc "$2")" ] || [ ! -d "$3" ] || [ -L "$3" ] || [ "$3" -ef "$1" ]; then
         SC_WHY="it is no longer a former name of lane $2 beside that lane's own checkout"; return 1
       fi
-      if [ "${ss_state:-}" = LIVE ]; then
-        SC_WHY="lane $2 is LIVE now, and a window of it started before the rename may still write through this path (D27)"; return 1
-      fi
-      return 0
     fi
     if [ "${ss_state:-}" = LIVE ]; then SC_WHY="lane $2 is LIVE now"; return 1; fi
     if [ "${ss_class:-}" != closed ]; then SC_WHY="lane $2 is ${ss_state:-in no state} now, not CLOSED"; return 1; fi
