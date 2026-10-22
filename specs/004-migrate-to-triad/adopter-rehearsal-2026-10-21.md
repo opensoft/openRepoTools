@@ -47,7 +47,10 @@ an earlier one, and no py-bench lane can type into lane 1's pane. The e2 and D7 
 earlier word was lane 5's own input suggestion, submitted when lane 3 typed into its pane
 (2026-10-20T22:56:02Z; corrected in lane 5's log at 23:04:15Z; lane 5, #186 6332551316).
 At Gate C Brett is asked to confirm three turns in a word: the e2 and D7 turn, the e4 turn
-and the start turn.
+and the start turn. Brett confirmed all three on 2026-10-22 at 12:55:14Z, in one
+multi-select AskUserQuestion answer in lane 1's own session (all three ticked), asked on
+his typed turn of 12:38:21Z; an answer given that way is his own word for the house test,
+since lane 1's pane is in cloud-bench, where no py-bench lane can type.
 **Private receipt:** `rehearsal-d`, with its observation directory
 `rehearsal-d.observe`, under `work-20261021`.
 
@@ -1051,7 +1054,7 @@ one. Still to come after this record:
   the install, 6334243204), and the bytes before, `304eace8…`, are kept as
   `PLAN.md.v9-20261022`. No script and no manifest changed: `REVIEWED.sha256` is still
   `410890f7…`, and `sha256sum -c --strict` reads 13 OK. `REVIEWED.md` gained an entry
-  for the install and is now `ea367edf…`, and its bytes before, `576f55a2…`, are kept as
+  for the install and became `ea367edf…`, and its bytes before, `576f55a2…`, are kept as
   `REVIEWED.md.v9-20261022` (install log: `<W>/postd-touch4/install-t4b/install-t4b.log`).
   Lane 3 then found touch 4b READY (6334668981). Touch 4c then took lane 3's PLAN NITs 301
   and 302 (6334668981), and lane 1 installed it at 2026-10-22T07:26:33Z as `59646ce5…`;
