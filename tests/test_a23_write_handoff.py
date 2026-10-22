@@ -1276,3 +1276,94 @@ def test_whole_refusal_names_a_rewritten_commit_as_rewritten(box: Box):
     assert len(box.unpublished(c)) == 1, "the rewritten copy waits for the publish act"
     assert result.stdout == _line(f)
     _released(box, c)
+
+
+# ------------------------------------------------- a handoff a peer deletes mid-push (A37)
+
+def _peer_deletes_the_handoff(box: Box) -> None:
+    """The peer clone commits the deletion of the lane's handoff WITHOUT
+    pushing it: the race hook lands it at the moment this write pushes. The
+    row still names the file."""
+    box.git("-C", str(box.peer), "fetch", "-q", "origin")
+    box.git("-C", str(box.peer), "merge", "-q", "--ff-only", "refs/remotes/origin/main")
+    box.git("-C", str(box.peer), "rm", "-q", "--", HANDOFF_REL)
+    box.git("-C", str(box.peer), "commit", "-q", "-m", f"a peer deletes {HANDOFF_REL}")
+
+
+def _origin_has(box: Box, rel: str) -> bool:
+    return rel in box.git("--git-dir", str(box.origin), "ls-tree", "-r", "--name-only", "main").split()
+
+
+@pytest.mark.parametrize("mode", ["stamp", "prepend"])
+@pytest.mark.parametrize("peer", ["deletes-it", "keeps-it"])
+def test_a_handoff_a_peer_deletes_mid_push_keeps_the_write_on_HEAD_exit_6(box: Box, peer: str, mode: str):
+    """A37: `--stamp` and `--prepend` edit the handoff IN PLACE. A peer that
+    deleted it while this write's push was in flight left the replay nothing
+    to write into: the re-run said "Nothing was written" (8), and the write
+    was only in the commit the replay had dropped. `write-handoff` now names
+    the handoff in slice 1b's `CP_KEEP_IF_GONE`, so the commit is kept on
+    HEAD and named (6) before anything is dropped: the write is in this
+    checkout, origin has no such file, and one commit is unpublished, this
+    write's. A peer's commit that KEEPS the handoff, and changes it, is an
+    ordinary lost race: the write is replayed on the peer's copy and lands
+    (0)."""
+    c = box.seam()
+    f = c / HANDOFF_REL
+    if mode == "stamp":
+        args, written = ("--stamp", STAMP), stamped
+    else:
+        args, written = ("--prepend", str(_block(box))), prepended
+    if peer == "deletes-it":
+        _peer_deletes_the_handoff(box)
+    else:
+        box.peer_prepares(HANDOFF_REL, "Preserved task.\n", "Preserved task, and a peer's line.\n",
+                          "a peer edits the handoff")
+    box.race(prepared=True)
+    result = box.write_handoff(*args, "--subject", SUBJECT)
+    err = result.stderr
+    if peer == "deletes-it":
+        assert result.returncode == 6, err
+        kept = box.head(c)
+        assert f"origin's copy of {HANDOFF_REL} was deleted while this write's push was in flight" in err, err
+        assert f"kept on HEAD: {kept}" in err
+        assert "push refused (attempt" not in err, "nothing is dropped or replayed"
+        assert box.subject(c) == SUBJECT
+        assert f.read_text(encoding="utf-8") == written(HANDOFF), "the write is in this checkout"
+        assert not _origin_has(box, HANDOFF_REL), "origin has no such file"
+        assert [line.split()[1] for line in box.unpublished(c)] == [kept], "one commit unpublished, this write's"
+    else:
+        base = HANDOFF.replace("Preserved task.\n", "Preserved task, and a peer's line.\n")
+        assert result.returncode == 0, err
+        assert "push refused (attempt 1 of 6)" in err
+        assert "was deleted while this write's push was in flight" not in err
+        assert box.origin_file(HANDOFF_REL) == written(base)
+        assert f.read_text(encoding="utf-8") == written(base)
+        assert box.unpublished(c) == []
+    assert result.stdout == _line(f)
+    _released(box, c)
+
+
+def test_whole_over_a_handoff_a_peer_deletes_mid_push_is_S4_4s_exit_6(box: Box):
+    """`--whole` never names its file in `CP_KEEP_IF_GONE` (A37 is
+    `--stamp`'s and `--prepend`'s): a handoff origin deleted is a copy that
+    is no longer the one it started from, so S4.4 answers, before the
+    replay, and keeps the commit on HEAD (6) in its own words."""
+    c = box.seam()
+    f = c / HANDOFF_REL
+    _peer_deletes_the_handoff(box)
+    box.race(prepared=True)
+    result = box.write_handoff("--whole", str(_prepared(box)), "--expect-digest", sha(f),
+                               "--subject", "handoff: PAUSED")
+    err = result.stderr
+    assert result.returncode == 6, err
+    kept = box.head(c)
+    assert f"origin/main's {HANDOFF_REL} is gone now" in err, err
+    assert "is no longer the one this whole-file write started from" in err
+    assert f"kept on HEAD: {kept}" in err
+    assert "was deleted while this write's push was in flight" not in err
+    assert "push refused (attempt" not in err, "no replay"
+    assert f.read_text(encoding="utf-8") == "# the handoff, written whole\n"
+    assert not _origin_has(box, HANDOFF_REL)
+    assert [line.split()[1] for line in box.unpublished(c)] == [kept]
+    assert result.stdout == _line(f)
+    _released(box, c)

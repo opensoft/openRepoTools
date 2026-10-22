@@ -551,7 +551,9 @@
 #      commit, so it never takes another), a push (a write's, or the publish act's)
 #      refused with origin unmoved, which no replay can mend, or a
 #      whole-file `write-handoff` whose copy origin changed meanwhile, which
-#      no replay may overwrite (S4.4). Or another
+#      no replay may overwrite (S4.4), or a `--stamp` or `--prepend` one
+#      whose handoff origin deleted meanwhile, which a replay would find
+#      nothing to write into. Or another
 #      writer in the checkout REWROTE this write's commit (a `pull --rebase`
 #      with no lock): it is not on HEAD at all, and what reached origin is
 #      read by content. Or, where the drop's tree step was refused and
@@ -19429,7 +19431,9 @@ EOF
   #   7. `commit_publish`, by pathspec, with `Lane: <lane>` as its trailer: the
   #      push, the read-back, and a refused push replays the whole verb on
   #      origin's new tip — a `--whole` only where origin's copy is still the
-  #      one it read (S4.4).
+  #      one it read (S4.4), and a `--stamp` or `--prepend` only where origin
+  #      still has the handoff it edits in place (A37, `CP_KEEP_IF_GONE`);
+  #      otherwise the commit is kept on HEAD and named (6).
   # STDOUT: `<file><TAB><sha256>` once the file is written (`HANDOFF_OUT`).
   #   0 pushed, or nothing to commit (another repository's file, S3's refusal
   #     of this checkout or not; LANES_NO_GIT)
@@ -19681,7 +19685,17 @@ EOF
     fi
     # ---- 7. the commit, the push, the read-back.
     CP_TRAILER="Lane: $lane"
-    if [ "$whf_mode" = whole ]; then CP_WHOLE_REL="$whf_rel"; CP_WHOLE_BLOB="$whf_blob"; fi
+    # A WRITE IN PLACE IS NEVER REPLAYED INTO NOTHING (A37, through slice 1b's
+    # `CP_KEEP_IF_GONE`): `--stamp` and `--prepend` edit the handoff in place,
+    # so where another writer deleted it while this write's push was in
+    # flight, the replay's re-run would find no file (8, "Nothing was
+    # written") and the write would be only in the commit it dropped; the
+    # commit is kept on HEAD and named instead (6). `--whole` is S4.4's: a
+    # copy origin deleted is a copy that moved.
+    case "$whf_mode" in
+      whole) CP_WHOLE_REL="$whf_rel"; CP_WHOLE_BLOB="$whf_blob" ;;
+      *)     CP_KEEP_IF_GONE="$whf_rel" ;;
+    esac
     commit_publish "$whf_subject" "$whf_rel"
     ;;
 
