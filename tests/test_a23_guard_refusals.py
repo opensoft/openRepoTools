@@ -22,6 +22,7 @@ off. The sandbox is the real `lanes-edit.sh`; nothing reaches a real remote.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 from pathlib import Path
 
@@ -407,3 +408,154 @@ def test_W_behind_is_fast_forwarded_by_a_write_through_it(tmp_path: Path):
     assert "LIVE · moved on origin" in box.origin_register()
     assert box.unpublished(box.w) == []
     assert box.git("-C", str(box.w), "rev-parse", "HEAD") == box.origin_head() + "\n"
+
+
+@pytest.mark.parametrize("state", ["untracked", "committed"])
+def test_a_migration_dry_run_names_a_rename_that_never_landed_and_never_says_pull(box: Box, state: str):
+    """rv1b-c2's NIT 4: migrate-state-cells' dry run met a lane whose log is
+    published under one case while this checkout has it under another, and
+    said "Pull first, or merge them (15(d))". No writer pulls now, a hand pull
+    in a shared checkout is the 1312Z hazard, and a hand merge of a stray copy
+    would publish a second file for one lane. The skip line now says which
+    state it is: the copy a rename's two `mv`s left, NOT TRACKED, with
+    `ensure_log`'s recovery (compare, remove the copy, put the published log
+    back, re-run); or a rename committed here and never published, with the
+    publish act. The dry run writes nothing either way."""
+    c = box.seam()
+    old_cased = f"lanes/log/{NEIGHBOUR.lower()}.md"
+    canonical = f"lanes/log/{NEIGHBOUR}.md"
+    header = f"# lane {NEIGHBOUR} — object log (lane-collision-protocol Amendment 7)\n"
+    box.peer_pushes(old_cased, header)
+    box.git("-C", str(c), "fetch", "-q", "origin")
+    box.git("-C", str(c), "merge", "-q", "--ff-only", "refs/remotes/origin/main")
+    (c / old_cased).rename(c / canonical)
+    if state == "committed":
+        box.git("-C", str(c), "add", "-A", "--", "lanes/log")
+        box.git("-C", str(c), "commit", "-q", "-m", f"LANES({NEIGHBOUR}@Eagle): a rename that never landed")
+    before = box.snapshot(c)
+    result = box.helper("migrate-state-cells")
+    out = result.stdout
+    assert result.returncode == 0, (out, result.stderr)
+    assert "DRY RUN — nothing was written" in out, out
+    line = next((l for l in out.splitlines() if l.strip().startswith(f"{NEIGHBOUR} ")), "")
+    assert "a case-only rename whose commit never landed" in line, out
+    assert "Pull first" not in out, "no writer pulls, so no recovery is a pull"
+    assert "merge them" not in line, "15(d)'s hand merge is not this state's recovery"
+    if state == "untracked":
+        assert f"{NEIGHBOUR}.md NOT TRACKED" in line, line
+        assert f'rm -- "{c / canonical}"' in line, line
+        assert f"git -C {c} checkout HEAD -- {old_cased}" in line, line
+    else:
+        assert "committed here and not on origin" in line, line
+        assert "The publish act refuses it" in line, "#214's fence takes no rename, so it is not the recovery"
+        assert f"git -C {c} push origin HEAD:refs/heads/archive/{NEIGHBOUR}-stranded-" in line, line
+        assert f"git -C {c} reset --keep origin/main" in line, line
+    assert box.snapshot(c) == before, "a dry run writes nothing"
+    if state == "untracked":
+        (c / canonical).unlink()
+        box.git("-C", str(c), "checkout", "HEAD", "--", old_cased)
+    else:
+        box.git("-C", str(c), "push", "-q", "origin", f"HEAD:refs/heads/archive/{NEIGHBOUR}-stranded-test")
+        box.git("-C", str(c), "reset", "-q", "--keep", "refs/remotes/origin/main")
+    again = box.helper("migrate-state-cells")
+    assert again.returncode == 0, (again.stdout, again.stderr)
+    assert "SKIPPED" not in again.stdout, "the recovery the line gives settles it"
+
+
+def test_a_migration_dry_run_never_calls_a_staged_rename_committed(box: Box):
+    """rv1b-c3's NIT D (its probe P1): the dry run asked `ls-files
+    --error-unmatch` whether the rename was committed, and that reads the
+    INDEX. A case-only rename that was STAGED and never committed (a write's
+    `git commit` failed after its `add`) was called "committed here and not
+    on origin" and given the archive recovery: an archive branch identical to
+    main on origin, and a `reset --keep` that only unstaged it, which left the
+    stray copy for the next dry run to name. "Committed" is said only where
+    HEAD holds the file; a rename that is only staged is unstaged
+    (`restore --staged`), with no archive step, and the stray-copy recovery
+    that follows is the one the next line gives. The dry run writes nothing."""
+    c = box.seam()
+    old_cased = f"lanes/log/{NEIGHBOUR.lower()}.md"
+    canonical = f"lanes/log/{NEIGHBOUR}.md"
+    header = f"# lane {NEIGHBOUR} — object log (lane-collision-protocol Amendment 7)\n"
+    box.peer_pushes(old_cased, header)
+    box.git("-C", str(c), "fetch", "-q", "origin")
+    box.git("-C", str(c), "merge", "-q", "--ff-only", "refs/remotes/origin/main")
+    (c / old_cased).rename(c / canonical)
+    box.git("-C", str(c), "add", "-A", "--", "lanes/log")
+    assert box.git("-C", str(c), "rev-parse", "HEAD").strip() == box.origin_head(), "nothing is committed"
+    before = box.snapshot(c)
+    result = box.helper("migrate-state-cells")
+    out = result.stdout
+    assert result.returncode == 0, (out, result.stderr)
+    line = next((l for l in out.splitlines() if l.strip().startswith(f"{NEIGHBOUR} ")), "")
+    assert line, out
+    assert "committed here" not in line, "a staged rename is not a committed one"
+    assert f"{NEIGHBOUR}.md STAGED and not committed" in line, line
+    assert "a case-only rename whose commit never landed" in line, line
+    assert "push origin HEAD:refs/heads/archive/" not in line, "there is no commit to archive"
+    assert "reset --keep" not in line, "that only unstages it, after an archive nobody needed"
+    unstage = f"git -C {c} restore --staged -- {old_cased} {canonical}"
+    assert unstage in line, line
+    assert box.snapshot(c) == before, "a dry run writes nothing"
+    # The recovery the line gives, step by step: unstaged, the copy is the
+    # NOT TRACKED state and the next line says so; its own recovery then
+    # settles it.
+    box.git(*shlex.split(unstage)[1:])
+    mid = box.helper("migrate-state-cells")
+    mid_line = next((l for l in mid.stdout.splitlines() if l.strip().startswith(f"{NEIGHBOUR} ")), "")
+    assert f"{NEIGHBOUR}.md NOT TRACKED" in mid_line, mid.stdout
+    (c / canonical).unlink()
+    box.git("-C", str(c), "checkout", "HEAD", "--", old_cased)
+    again = box.helper("migrate-state-cells")
+    assert again.returncode == 0, (again.stdout, again.stderr)
+    assert "SKIPPED" not in again.stdout, "the recovery the line gives settles it"
+
+
+@pytest.mark.parametrize("pair", ["stray-copy", "committed-rename"])
+def test_a_migration_dry_run_names_a_stray_copy_beside_the_published_log_as_one(box: Box, pair: str):
+    """NIT 4's neighbour: the same scan's line for a checkout holding two logs
+    whose names differ only by case said "15(d)'s hand merge" of the
+    stray-copy state, `ensure_log`'s B36 state: the published log tracked
+    and, beside it, the untracked copy a case-only rename whose commit never
+    landed leaves. A hand merge would commit the copy as a second published
+    file for one lane. The line now gives B36's recovery (compare, remove
+    the copy, re-run), the dry run writes nothing, and the recovery settles
+    it. Where the tracked one is NOT the published log (a rename committed
+    here, the published spelling back beside it untracked), removing the
+    untracked one would remove the published spelling, so that recovery is
+    never given there."""
+    c = box.seam()
+    old_cased = f"lanes/log/{NEIGHBOUR.lower()}.md"
+    canonical = f"lanes/log/{NEIGHBOUR}.md"
+    header = f"# lane {NEIGHBOUR} — object log (lane-collision-protocol Amendment 7)\n"
+    box.peer_pushes(old_cased, header)
+    box.git("-C", str(c), "fetch", "-q", "origin")
+    box.git("-C", str(c), "merge", "-q", "--ff-only", "refs/remotes/origin/main")
+    if pair == "stray-copy":
+        untracked = box.write(c, canonical, header)
+    else:
+        (c / old_cased).rename(c / canonical)
+        box.git("-C", str(c), "add", "-A", "--", "lanes/log")
+        box.git("-C", str(c), "commit", "-q", "-m", f"LANES({NEIGHBOUR}@Eagle): a rename that never landed")
+        untracked = box.write(c, old_cased, header)
+    before = box.snapshot(c)
+    result = box.helper("migrate-state-cells")
+    out = result.stdout
+    assert result.returncode == 0, (out, result.stderr)
+    assert "DRY RUN — nothing was written" in out, out
+    line = next((l for l in out.splitlines() if l.strip().startswith(f"{NEIGHBOUR} ")), "")
+    assert line, out
+    assert box.snapshot(c) == before, "a dry run writes nothing"
+    if pair == "committed-rename":
+        assert "NOT TRACKED" not in line, line
+        assert "rm --" not in line, "the untracked file is the published spelling, never to be removed"
+        return
+    assert "hand merge" not in line, "15(d)'s hand merge is not this state's recovery"
+    assert "a case-only rename whose commit never landed" in line, line
+    assert f"published as {old_cased}, and this checkout also has {NEIGHBOUR}.md beside it, NOT TRACKED" in line, line
+    assert f'diff -- "{c / old_cased}" "{untracked}"' in line, line
+    assert f'rm -- "{untracked}"' in line, line
+    untracked.unlink()
+    again = box.helper("migrate-state-cells")
+    assert again.returncode == 0, (again.stdout, again.stderr)
+    assert "SKIPPED" not in again.stdout, "the recovery the line gives settles it"

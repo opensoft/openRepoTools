@@ -35,7 +35,7 @@ from pathlib import Path
 import pytest
 
 from a23_box import REGISTER, RegisterBox, register_text
-from conftest import WINDOWS_SKIP
+from conftest import REPO, WINDOWS_SKIP
 
 pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
                                  reason="lanes-edit.sh is a bash script"),
@@ -336,6 +336,76 @@ def test_push_refused_with_origin_unmoved_is_kept_exit_6(box: Box):
     _settled(box, c)
 
 
+def _refuse_push_after(box: Box, body: str) -> str:
+    """A push hook that runs `body` (another writer in this write's
+    checkout, with no lock) while the push is in flight, then refuses the
+    push with origin unmoved, as a hook or a protected branch would. Returns
+    origin's tip, which nothing moves."""
+    box.use_net('[ "$1" = push ] || exit 0' + "\n" + body +
+                'echo "remote: refusing this push" >&2; exit 1' + "\n")
+    return box.origin_head()
+
+
+def test_a_push_refused_with_origin_unmoved_names_a_commit_on_top_exit_6(box: Box):
+    """w2a-c6's note on slice 1b: the refusal with origin unmoved said "the
+    commit is local and kept on HEAD: <sha>" without reading HEAD, the shape
+    slice 2a's A41 took out of its S4.4. An unlocked writer's stamp committed
+    on top while the push was in flight then sat at HEAD, and the words named
+    this write's commit as HEAD. Now HEAD is read first, and `cp_not_head`'s
+    words name both, kept and neither dropped, with no replay (6)."""
+    c = box.seam()
+    cq = shlex.quote(str(c))
+    tip = _refuse_push_after(box,
+        f"printf 'stamp' > {cq}/handoffs/stamp.md" + "\n" +
+        f"git -C {cq} add -- handoffs/stamp.md" + "\n" +
+        f"git -C {cq} commit -q -m 'handoff(repoS4-2@Eagle): a stamp from an unlocked writer' -- handoffs/stamp.md" + "\n")
+    result = box.helper("set-row-state", LANE, "LIVE · refused, a stamp on top")
+    assert result.returncode == 6, result.stderr
+    err = result.stderr
+    assert "refused with origin/main unmoved (no lost race: a replay would meet the same refusal)" in err
+    assert "is no longer HEAD, so it is not replayed" in err
+    assert "in this checkout while its push was in flight." in err, "no drop is offered as the reason"
+    assert "kept on HEAD: " not in err, "HEAD is not this write's commit"
+    assert box.subject(c) == "handoff(repoS4-2@Eagle): a stamp from an unlocked writer"
+    assert box.subject(c, "HEAD~1").startswith(f"LANES({LANE}@"), "this write's commit is under it"
+    mine = _mine_named_on_head(box, c, err)
+    assert mine and all(on for _, on in mine), mine
+    assert "push refused (attempt" not in err, "no replay"
+    assert box.pushes() == 1
+    assert box.origin_head() == tip
+    assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the publish act"
+    _settled(box, c)
+
+
+def test_a_push_refused_with_origin_unmoved_names_a_rewritten_commit_exit_6(box: Box):
+    """w2a-c6's note, its second case: another writer rewrote this write's
+    commit while the push was in flight (here an amend, a rewrite that keeps
+    the tree). The refusal said "kept on HEAD: <sha>" of a sha HEAD no longer
+    holds. Now it says the commit was rewritten, in `cp_rewritten`'s words,
+    names no commit of this write's as on HEAD, and replays nothing (6)."""
+    c = box.seam()
+    cq = shlex.quote(str(c))
+    tip = _refuse_push_after(box,
+        f"git -C {cq} commit -q --amend -m 'an unlocked writer reworded it'" + "\n")
+    result = box.helper("set-row-state", LANE, "LIVE · refused, then rewritten")
+    assert result.returncode == 6, result.stderr
+    err = result.stderr
+    assert "refused with origin/main unmoved (no lost race: a replay would meet the same refusal)" in err
+    assert "rewrote this write's commit" in err
+    assert "kept on HEAD" not in err, "nothing of this write's is on HEAD under its own sha"
+    named = re.search(r"so it is not replayed: ([0-9a-f]{40}) ", err)
+    assert named, err
+    assert box.git("-C", str(c), "log", "-1", "--format=%s", named.group(1)).startswith(f"LANES({LANE}@")
+    on_head = subprocess.run(["git", "-C", str(c), "merge-base", "--is-ancestor", named.group(1), "HEAD"],
+                             env=box.env, capture_output=True, check=False)
+    assert on_head.returncode == 1, "the named commit is not on HEAD"
+    assert box.subject(c) == "an unlocked writer reworded it"
+    assert "push refused (attempt" not in err, "no replay"
+    assert box.pushes() == 1
+    assert box.origin_head() == tip
+    _settled(box, c)
+
+
 def test_replay_refused_by_a_change_in_the_way_keeps_the_commit_exit_6(box: Box):
     """The drop never moves the tree over an uncommitted change: a hand edit of
     the register made while the push was in flight stops the replay, and the
@@ -408,6 +478,64 @@ def test_timed_out_push_is_read_back(box: Box, landed: bool):
         assert "origin/main, read back, does not hold it" in result.stderr
     assert box.pushes() == 1
     assert "push refused (attempt" not in result.stderr
+    _settled(box, c)
+
+
+def _another_writer(c: Path, state: str) -> str:
+    """What an unlocked writer in `c` does while a push is in flight, as the
+    lines of a hook: a stamp committed on top of this write's commit, or an
+    amend that rewrites it (a rebase's effect, with the tree kept)."""
+    cq = shlex.quote(str(c))
+    if state == "on-top":
+        return (f"printf 'stamp' > {cq}/handoffs/stamp.md" + "\n" +
+                f"git -C {cq} add -- handoffs/stamp.md" + "\n" +
+                f"git -C {cq} commit -q -m 'handoff(repoS4-2@Eagle): a stamp from an unlocked writer' -- handoffs/stamp.md" + "\n")
+    return f"git -C {cq} commit -q --amend -m 'an unlocked writer reworded it'" + "\n"
+
+
+@pytest.mark.parametrize("state", ["on-top", "rewritten"])
+def test_an_unconfirmed_push_reads_head_before_it_says_kept_on_head_exit_3(box: Box, state: str):
+    """rv1b-c3's neighbour of NIT 4, found by w1b-c6 with item 1: the exit-3
+    die said "the commit is kept on HEAD" without reading HEAD. Another
+    writer's stamp committed on top while the push was in flight sat at HEAD,
+    and an amend took this write's commit off the branch altogether. The push
+    landed and the read-back's fetch fails, so the number stays 3 (the one
+    cause the table gives it: pushed, not confirmed), and HEAD is read first:
+    `cp_not_head`'s words for a commit on top, `cp_rewritten`'s for a rewrite,
+    each with this refusal's own clause in place of "origin moved"."""
+    c = box.seam()
+    mark = shlex.quote(str(box.root / "pushed"))
+    box.use_net('if [ "$1" = push ]; then\n'
+                '  shift; git "$@" || exit $?\n' + _another_writer(c, state) +
+                f"  touch {mark}; exit 97\n"
+                "fi\n"
+                f'[ "$1" = fetch ] && [ -e {mark} ] && {{ echo "fatal: the read-back cannot reach origin" >&2; exit 128; }}\n'
+                "exit 0\n")
+    result = box.helper("set-row-state", LANE, "LIVE · sent, then something moved under it")
+    assert result.returncode == 3, result.stderr
+    err = result.stderr
+    named = re.search(r"pushed, not confirmed: ([0-9a-f]{40}) ", err)
+    assert named, err
+    sha = named.group(1)
+    assert box.origin_head() == sha, "it did land: exit 3 never says it did not"
+    assert "the read-back fetch of origin main failed" in err
+    assert "pushed origin/main (attempt" not in err, "never the success line"
+    assert "the commit is kept on HEAD, and this is never reported as success" not in err, \
+        "the old words claim a HEAD nobody read"
+    assert "push refused (attempt" not in err, "no replay"
+    on_head = subprocess.run(["git", "-C", str(c), "merge-base", "--is-ancestor", sha, "HEAD"],
+                             env=box.env, capture_output=True, check=False).returncode
+    if state == "on-top":
+        assert on_head == 0, "this write's commit is under the stamp"
+        assert f"HEAD is {box.head(c)}, not this write's commit {sha}" in err, err
+        assert "in this checkout while its push was in flight." in err
+        assert "it and the commit on top of it are kept on HEAD" in err
+        assert len(box.unpublished(c)) == 1, "the stamp is not on origin; this write's commit is"
+    else:
+        assert on_head == 1, "this write's commit is not on HEAD"
+        assert "rewrote this write's commit" in err
+        assert "kept on HEAD" not in err, "nothing of this write's is on HEAD under its own sha"
+    assert box.pushes() == 1
     _settled(box, c)
 
 
@@ -613,6 +741,46 @@ def test_publish_act_on_moved_origin_refuses(box: Box):
     _settled(box, c)
 
 
+@pytest.mark.parametrize("state", ["head-is-the-tip", "on-top", "rewritten"])
+def test_a_publish_act_push_refused_with_origin_unmoved_reads_head_exit_6(box: Box, state: str):
+    """w1b-c6's second find, with item 1: the publish act's refusal with
+    origin unmoved (a hook, a permission, a protected branch) said "they are
+    kept on HEAD" without reading HEAD, the shape 638b13a took out of
+    `commit_publish`'s. Where HEAD is still the commit the fence read, the
+    words are what they were. Where an unlocked writer's stamp is on top, or
+    an amend took the queue's tip off the branch while the push was in
+    flight, `cp_not_head`'s and `cp_rewritten`'s words answer, with this
+    refusal's own clause (6). Nothing is pushed twice, and nothing replayed."""
+    c = box.seam()
+    shas = _queue(box, c, n=2)
+    tip = _refuse_push_after(box, "" if state == "head-is-the-tip" else _another_writer(c, state))
+    result = box.helper("commit", "publish the queue", LANES_LANE=LANE)
+    assert result.returncode == 6, result.stderr
+    err = result.stderr
+    assert "failed with origin/main unmoved" in err
+    assert "push refused (attempt" not in err, "no replay: there is no edit to repeat"
+    assert box.pushes() == 1
+    assert box.origin_head() == tip
+    if state == "head-is-the-tip":
+        assert "they are kept on HEAD, and nothing of them reached origin by this push" in err
+        assert "is no longer HEAD" not in err and "rewrote" not in err
+        assert box.head(c) == shas[-1]
+        assert len(box.unpublished(c)) == 2
+    elif state == "on-top":
+        assert f"HEAD is {box.head(c)}, not this write's commit {shas[-1]}" in err, err
+        assert "it and the commit on top of it are kept on HEAD" in err
+        assert "they are kept on HEAD, and nothing of them reached origin" not in err
+        assert len(box.unpublished(c)) == 3, "the queue's two and the stamp, all kept for the publish act"
+    else:
+        assert "rewrote this write's commit" in err
+        assert "kept on HEAD" not in err, "the queue's tip is not on HEAD under its own sha"
+        on_head = subprocess.run(["git", "-C", str(c), "merge-base", "--is-ancestor", shas[-1], "HEAD"],
+                                 env=box.env, capture_output=True, check=False).returncode
+        assert on_head == 1, "the commit the words name is not on HEAD"
+        assert shas[-1] in err
+    _settled(box, c)
+
+
 # ------------------------------------------------------------ --sweep
 
 @pytest.mark.parametrize("argv", [
@@ -742,10 +910,44 @@ def test_a_commit_made_on_top_before_the_replay_is_kept_exit_6(box: Box):
     result = box.helper("set-row-state", LANE, "LIVE · the write under it")
     assert result.returncode == 6, result.stderr
     assert "is no longer HEAD, so it is not replayed" in result.stderr
+    assert "in this checkout while its push was in flight" in result.stderr, "the HEAD check fired, not the drop's"
     assert "push refused (attempt 1 of 6)" not in result.stderr, "no reset was made"
     assert box.subject(c) == "handoff(repoS4-2@Eagle): a stamp from an unlocked writer"
     assert box.subject(c, "HEAD~1").startswith(f"LANES({LANE}@"), "this write's commit is under it"
     assert (c / "handoffs" / "stamp.md").is_file(), "the other writer's file is still there"
+    assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the publish act"
+    _settled(box, c)
+
+
+def test_a_commit_made_on_top_at_the_sixth_push_is_named_before_the_bound_exit_6(box: Box):
+    """m1b-c2's mutant B04 (the replay's HEAD check removed) survived every
+    case, because the drop's compare-and-swap refuses a commit on top as
+    well, in other words. The HEAD check comes before the six-attempt bound,
+    so a commit that lands on top during the sixth push is named as not this
+    write's, and is never folded into the bound's "kept on HEAD"."""
+    c = box.seam()
+    peer = shlex.quote(str(box.peer))
+    cq = shlex.quote(str(c))
+    count = shlex.quote(str(box.root / "push.count"))
+    box.use_net(
+        '[ "$1" = push ] || exit 0' + "\n" +
+        f"n=$(cat {count} 2>/dev/null || echo 0)" + "\n" +
+        f"echo $((n + 1)) > {count}" + "\n" +
+        f"git -C {peer} fetch -q origin" + "\n" +
+        f"git -C {peer} merge -q --ff-only refs/remotes/origin/main" + "\n" +
+        f"git -C {peer} commit -q --allow-empty -m \"a peer's commit lands first ($((n + 1)))\"" + "\n" +
+        f"git -C {peer} push -q origin main" + "\n" +
+        '[ "$n" = 5 ] || exit 0' + "\n" +
+        f"printf 'stamp' > {cq}/handoffs/stamp.md" + "\n" +
+        f"git -C {cq} add -- handoffs/stamp.md" + "\n" +
+        f"git -C {cq} commit -q -m 'handoff(repoS4-2@Eagle): a stamp from an unlocked writer' -- handoffs/stamp.md" + "\n" +
+        "exit 0" + "\n")
+    result = box.helper("set-row-state", LANE, "LIVE · beaten five times, then a stamp on top")
+    assert result.returncode == 6, result.stderr
+    assert "push refused (attempt 5 of 6)" in result.stderr
+    assert "is no longer HEAD, so it is not replayed" in result.stderr
+    assert "after six attempts" not in result.stderr, "the HEAD check comes before the bound"
+    assert box.subject(c) == "handoff(repoS4-2@Eagle): a stamp from an unlocked writer"
     assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the publish act"
     _settled(box, c)
 
@@ -1046,6 +1248,39 @@ def test_a_commit_landing_before_the_replays_drop_is_never_dropped_exit_6(box: B
     _settled(box, c)
 
 
+def test_a_drop_refused_for_another_reason_names_git_and_no_commit_on_top_exit_6(box: Box):
+    """rv1b-c3's NIT E (its probe P2): the drop's compare-and-swap is refused
+    for a reason other than a moved branch: another git process holds
+    `refs/heads/main.lock` (a peer's commit, or a `pack-refs`, in flight), and
+    HEAD is still this write's commit. The refusal went to `cp_not_head`,
+    which said "HEAD is X, not this write's commit X: another commit was made
+    on top of it" and "it and the commit on top of it are kept", and git's own
+    words, in the file the helper read them into, were never shown. Now git's
+    words are printed, and where HEAD is still this write's commit the words
+    say that git could not move the branch and that nothing was moved (6),
+    with no commit on top named."""
+    c = box.seam()
+    box.race()
+    gd = box.git("-C", str(c), "rev-parse", "--absolute-git-dir").strip()
+    lock = shlex.quote(f"{gd}/refs/heads/main.lock")
+    env = _git_shim(box, DROP_STARTS, before=f"    : > {lock}\n")
+    result = box.helper("set-row-state", LANE, STATE, **env)
+    assert (box.root / "fired").exists(), "the lock was held at the drop"
+    assert result.returncode == 6, result.stderr
+    err = result.stderr
+    sha = box.head(c)
+    assert box.subject(c).startswith(f"LANES({LANE}@"), "HEAD is still this write's commit"
+    assert re.search(r"git said: .*(cannot lock ref|main\.lock)", err), "git's own words are shown"
+    assert "another commit was made on top" not in err, "no commit is on top"
+    assert "it and the commit on top of it" not in err
+    assert f"not this write's commit {sha}" not in err
+    assert f"HEAD is still this write's commit {sha}" in err
+    assert f"git could not move the branch off this write's commit to drop it, so nothing was moved and it is kept on HEAD: {sha}" in err
+    assert "push refused (attempt 1 of 6)" not in err, "nothing is replayed"
+    assert len(box.unpublished(c)) == 1, "the one commit is kept, for the publish act"
+    _settled(box, c)
+
+
 def test_an_up_to_date_pull_after_the_replays_drop_is_no_commit_on_top(box: Box):
     """SHOULD C of rv1b-c2's re-check, its case A: no commit lands anywhere,
     and an unlocked `pull --rebase` that is up to date runs just after the
@@ -1093,4 +1328,192 @@ def test_a_stamp_committed_and_pulled_around_the_replays_drop_is_never_lost(box:
         named = _mine_named_on_head(box, c, result.stderr)
         assert named, result.stderr
         assert all(on for _, on in named), f"called kept, and not on HEAD: {named}"
+    _settled(box, c)
+
+
+# NIT 3 of rv1b-c2's re-check, re-aimed by SHOULD C: the drop's two refusals
+# that had no case. `commit`'s carry form dropped with `reset -q --mixed` at
+# d9ff4e6; since SHOULD C it takes the same compare-and-swap, then the index
+# alone (`read-tree -m -i`). The keep form's tree step (`read-tree -m -u`) is
+# SHOULD C's own, so d9ff4e6 has nothing for its pattern to match.
+CARRY_DROP_STARTS = '*" reset -q --mixed "*|*" update-ref -m lanes-edit: the replay drops "*'
+TREE_STEP = '*" read-tree -m -u "*'
+STAMP_SUBJECT = "handoff(repoS4-2@Eagle): a stamp from an unlocked writer"
+
+
+def test_a_commit_landing_before_the_carry_forms_drop_is_never_dropped_exit_6(box: Box):
+    """`commit`'s carry form gives its commit back as the hand edit it was,
+    and its drop is guarded as the keep form's is: an unlocked commit landing
+    on top just before it makes the compare-and-swap fail, and nothing moves.
+    The hand-edit commit and the one on top of it are kept on HEAD and named
+    (6), the working tree is clean, and nothing is replayed. A drop that took
+    the carry form's branch without the compare-and-swap would drop the
+    stamp with it."""
+    c = box.seam()
+    box.peer_prepares(REGISTER, _row(NEIGHBOUR, uuid=UUID2),
+                      _row(NEIGHBOUR, uuid=UUID2, state="LIVE · landed mid-push"),
+                      "a peer's row lands first")
+    box.race(prepared=True)
+    box.hand_edit(c)
+    env = _git_shim(box, CARRY_DROP_STARTS, before=_stamp(c))
+    result = box.helper("commit", "the hand edit", LANES_LANE=LANE, **env)
+    assert (box.root / "fired").exists(), "the commit landed in the window"
+    assert result.returncode == 6, result.stderr
+    err = result.stderr
+    assert "between the replay's HEAD check and its drop" in err, err
+    assert "is no longer HEAD, so it is not replayed" in err
+    assert "push refused (attempt 1 of 6)" not in err, "nothing is replayed"
+    assert box.subject(c) == STAMP_SUBJECT
+    assert box.subject(c, "HEAD~1") == f"LANES({LANE}@Eagle): the hand edit", "the hand-edit commit is under it"
+    assert "LIVE · a hand edit" in box.git("-C", str(c), "show", f"HEAD:{REGISTER}"), "the hand edit is on HEAD"
+    assert box.git("-C", str(c), "status", "--porcelain").strip() == "", "nothing was turned back into an edit"
+    assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the publish act"
+    assert "the replay drops" not in box.git("-C", str(c), "reflog", "refs/heads/main"), "the branch never moved"
+    _settled(box, c)
+
+
+def test_a_drop_whose_tree_step_and_put_back_are_both_refused_is_named_off_HEAD_exit_6(box: Box):
+    """The drop moved the branch, git refused the tree step after it, and an
+    unlocked writer committed on the branch in that moment, so the put-back's
+    compare-and-swap is refused too. Nothing more is moved: the other writer's
+    commit stays HEAD, and this write's commit is named as off HEAD with the
+    reflog that names it (6), never as kept. A `git` first on PATH makes the
+    moment exact: at the tree step it commits the stamp, then refuses."""
+    c = box.seam()
+    box.race()
+    refuse = "    echo 'error: the tree step is refused here (the test)' >&2; exit 1" + "\n"
+    env = _git_shim(box, TREE_STEP, before=_stamp(c) + refuse)
+    result = box.helper("set-row-state", LANE, STATE, **env)
+    assert (box.root / "fired").exists(), "the drop's tree step ran, with the stamp landing first"
+    assert result.returncode == 6, result.stderr
+    err = result.stderr
+    assert "could be neither dropped cleanly nor put back" in err, err
+    assert "is off HEAD" in err
+    assert f"git -C {c} reflog -5" in err
+    assert "kept on" not in err, "nothing of this write's is said to be kept"
+    assert "push refused (attempt 1 of 6)" not in err, "nothing is replayed"
+    named = _mine_named_on_head(box, c, err)
+    assert named, err
+    assert not any(on for _, on in named), f"named, and on HEAD: {named}"
+    reflog = box.git("-C", str(c), "reflog", "--format=%H", "refs/heads/main").split()
+    assert named[0][0] in reflog, "the reflog names this write's commit"
+    assert box.subject(c) == STAMP_SUBJECT, "the other writer's commit is still HEAD"
+    assert box.git("-C", str(c), "show", "HEAD:handoffs/stamp.md") == "stamp"
+    assert _set(STATE) not in box.origin_register(), "nothing of this write's reached origin"
+    _settled(box, c)
+
+
+CARRY_TREE_STEP = '*" read-tree -m -i "*'
+
+
+def test_a_carry_forms_drop_whose_tree_step_is_refused_keeps_the_commit_exit_6(box: Box):
+    """`commit`'s carry form drops its commit to the parent in the index alone
+    (`read-tree -m -i`), to give the change back as the hand edit it was.
+    Where git refuses that step, the branch is put back on this write's
+    commit by a compare-and-swap from where the drop put it, and the commit
+    is kept on HEAD and named (6): the hand edit is in it, nothing is turned
+    back into an edit, and nothing is replayed. A `git` first on PATH refuses
+    the step."""
+    c = box.seam()
+    box.peer_prepares(REGISTER, _row(NEIGHBOUR, uuid=UUID2),
+                      _row(NEIGHBOUR, uuid=UUID2, state="LIVE · landed mid-push"),
+                      "a peer's row lands first")
+    box.race(prepared=True)
+    box.hand_edit(c)
+    refuse = "    echo 'error: the tree step is refused here (the test)' >&2; exit 1" + "\n"
+    env = _git_shim(box, CARRY_TREE_STEP, before=refuse)
+    result = box.helper("commit", "the hand edit", LANES_LANE=LANE, **env)
+    assert (box.root / "fired").exists(), "the carry form's tree step ran"
+    assert result.returncode == 6, result.stderr
+    err = result.stderr
+    assert "git said: error: the tree step is refused here (the test)" in err, err
+    named = re.search(r"could not be turned back into the hand edit it was to replay it, "
+                      r"so it is kept on HEAD: ([0-9a-f]{40}) ", err)
+    assert named, err
+    assert named.group(1) == box.head(c), "the commit it names is HEAD: the branch was put back"
+    assert box.subject(c) == f"LANES({LANE}@Eagle): the hand edit"
+    assert "LIVE · a hand edit" in box.git("-C", str(c), "show", f"HEAD:{REGISTER}"), "the hand edit is on HEAD"
+    assert box.git("-C", str(c), "status", "--porcelain").strip() == "", "nothing was turned back into an edit"
+    assert "the replay puts back" in box.git("-C", str(c), "reflog", "refs/heads/main")
+    assert "push refused (attempt 1 of 6)" not in err, "nothing is replayed"
+    assert "LIVE · a hand edit" not in box.origin_register(), "nothing of this write's reached origin"
+    assert len(box.unpublished(c)) == 1, "the one commit is kept, for the publish act"
+    _settled(box, c)
+
+
+# ------------------------------- a file the write edits in place (slice 2a's A37)
+
+def _helper_naming(box: Box, rel: str) -> list:
+    """A copy of the helper whose one load-time line names `rel` as the file
+    this write edits in place, as slice 2a's `write-handoff` names its handoff
+    for `--stamp` and `--prepend`. No verb of slice 1b sets the global, so the
+    copy is how 1b tests its check: it differs from the helper in that one
+    line, and sits in a folder of its own with the shipped `repos.tsv` beside
+    it, as an install places it."""
+    src = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
+    line = 'CP_KEEP_IF_GONE=""\n'
+    assert src.count(line) == 1, "the global is set at load, once"
+    bindir = box.root / "bin-a37"
+    bindir.mkdir()
+    shutil.copy2(REPO / "repos.tsv", bindir / "repos.tsv")
+    copy = bindir / "lanes-edit.sh"
+    copy.write_text(src.replace(line, f"CP_KEEP_IF_GONE={shlex.quote(rel)}\n"), encoding="utf-8")
+    copy.chmod(0o755)
+    return ["bash", str(copy)]
+
+
+@pytest.mark.parametrize("peer", ["deletes-it", "keeps-it", "never-had-it", "creates-it"])
+def test_a_file_the_write_edits_in_place_deleted_on_origin_keeps_the_commit_exit_6(box: Box, peer: str):
+    """A37 of slice 2a, whose global is 1b's: a peer that deletes the file a
+    write edits in place, while that write's push is in flight, left the
+    replay nothing to write into, and the write only in the commit it
+    dropped. With `CP_KEEP_IF_GONE` naming the file, the commit is kept on
+    HEAD and named (6) before anything is dropped: the write is in this
+    checkout, origin has no such file, and one commit is unpublished. The
+    lane's own log stands in for the handoff here; the check is the same for
+    any path. A peer's commit that leaves the file where it was is an
+    ordinary lost race, replayed and landed (0), and so is a named file the
+    write's base never had: it is never "gone". That holds for a file nobody
+    has, and, rv1b-c3's NIT F, for one THE WRITE ITSELF CREATES (a lane's
+    first log line: origin lacks the log both before and after, and the
+    write's commit has it), which the `^` in `$1^:<file>` is for: asked of
+    the commit and not its base, that file would read as deleted."""
+    log = f"lanes/log/{LANE}.md"
+    if peer == "creates-it":
+        # Origin has no log for the lane when this write starts: the write
+        # creates it, and the peer that beats it to the push touches nothing.
+        box.git("-C", str(box.peer), "rm", "-q", "--", log)
+        box.git("-C", str(box.peer), "commit", "-q", "-m", f"the lane has no log yet: {log}")
+        box.git("-C", str(box.peer), "push", "-q", "origin", "main")
+    c = box.seam()
+    if peer == "creates-it":
+        assert not (c / log).exists(), "the write's base has no log"
+    rel = "handoffs/repoS4/never-had-it.md" if peer == "never-had-it" else log
+    if peer == "deletes-it":
+        box.git("-C", str(box.peer), "rm", "-q", "--", log)
+        box.git("-C", str(box.peer), "commit", "-q", "-m", f"a peer deletes {log}")
+        box.race(prepared=True)
+    else:
+        box.race()
+    cmd = _helper_naming(box, rel)
+    result = subprocess.run([*cmd, "log", "NOTED", f"lane:{LANE}", "the in-place write", *HOME_FLAG],
+                            env=dict(box.env, LANES_LANE=LANE, LANES_SESSION=UUID), cwd=str(box.root),
+                            capture_output=True, text=True, timeout=180, check=False)
+    err = result.stderr
+    if peer == "deletes-it":
+        assert result.returncode == 6, err
+        sha = box.head(c)
+        assert f"origin's copy of {log} was deleted while this write's push was in flight" in err, err
+        assert f"kept on HEAD: {sha}" in err
+        assert "push refused (attempt" not in err, "nothing is dropped or replayed"
+        assert "the in-place write" in (c / log).read_text(encoding="utf-8"), "the write is in this checkout"
+        assert log not in box.git("--git-dir", str(box.origin), "ls-tree", "-r", "--name-only", "main").split(), \
+            "origin has no such file"
+        assert [line.split()[1] for line in box.unpublished(c)] == [sha], "one commit unpublished, this write's"
+    else:
+        assert result.returncode == 0, err
+        assert "push refused (attempt 1 of 6)" in err
+        assert "pushed origin/main (attempt 2)" in err
+        assert "the in-place write" in box.origin_file(log)
+        assert box.unpublished(c) == []
     _settled(box, c)

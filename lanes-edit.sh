@@ -1265,6 +1265,15 @@ CP_FENCE_AHEAD=0
 # `NAME=value` words a verb wants carried across its replay's `exec` (only
 # `claim` fills it: the takeover it decided on). Never from the environment.
 CP_REPLAY_ENV=()
+# The one file a write edits IN PLACE and does not create, where a refused
+# push must not replay over its absence: set by `write-handoff` alone (slice
+# 2a), for `--stamp` and `--prepend`, and never from the environment. A peer
+# that deletes that file while this write's push is in flight leaves the
+# replay nothing to write into, so its re-run says "Nothing was written" and
+# the write is only in the commit it dropped. Where origin no longer has the
+# file and this write's base did, the commit is kept on HEAD and named
+# instead (6), before anything is dropped (`cp_replay`).
+CP_KEEP_IF_GONE=""
 # Set by `commit`'s carry form alone: its edit is the hand edit in the working
 # tree, which no argv can make again, so a replay gives it back as the hand
 # edit it was instead of dropping it with the commit (`cp_replay`).
@@ -2859,8 +2868,16 @@ EOF
   # A REFUSAL WITH ORIGIN UNMOVED IS NOT A LOST RACE: the replay would send the
   # same commit onto the same tip and meet the same refusal six times (a hook,
   # a permission, a protected branch). git's own words are above; the commit
-  # is kept on HEAD and named, as at the bound.
+  # is kept on HEAD and named, as at the bound. "KEPT ON HEAD" IS READ HERE
+  # TOO (w2a-c6's note on slice 1b, the shape slice 2a's A41 took out of its
+  # S4.4): an unlocked writer's commit on top, or a rewrite that took this
+  # write's commit off the branch while its push was in flight, is named in
+  # `cp_not_head`'s words, as the replay names it, with this refusal's own.
   if git -C "$LANES_REPO" merge-base --is-ancestor "refs/remotes/origin/$LANES_BRANCH" "$cp_sha" 2>/dev/null; then
+    cp_head="$(git -C "$LANES_REPO" rev-parse -q --verify HEAD 2>/dev/null || :)"
+    [ "$cp_head" = "$cp_sha" ] ||
+      cp_not_head "$cp_sha" "$msg" "while its push was in flight" \
+        "the push of $cp_sha was refused with origin/$LANES_BRANCH unmoved (no lost race: a replay would meet the same refusal)"
     note "look at it: git -C $LANES_REPO show $cp_sha"
     note "every later write from this checkout refuses (S3's unpushed row) until it is published — LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act — or archived (S6.3) and \`git -C $LANES_REPO reset --keep origin/$LANES_BRANCH\` run."
     die "the push of $cp_sha was refused with origin/$LANES_BRANCH unmoved, so this is no lost race and a replay would meet the same refusal; the commit is local and kept on HEAD: $cp_sha $msg" 6
@@ -2896,11 +2913,23 @@ cp_pushed() {   # <sha>
 # the next write's S3 finds it by content either way: published, it reads as
 # nothing to do; not published, as an unpushed commit, refused until the lane
 # publishes or archives it.
+#
+# "KEPT ON HEAD" IS READ HERE TOO (rv1b-c3's neighbour of NIT 4, found by
+# w1b-c6): an unlocked writer's commit on top, or a rewrite that took this
+# write's commit off the branch while its push was in flight, is named in
+# `cp_not_head`'s and `cp_rewritten`'s words, with this die's own clause and
+# its own number. It stays 3, the one cause the table gives it, because what
+# no writer can settle is where the push went, and a commit on top does not
+# change that; `cp_not_head`'s optional fifth argument carries the number.
 cp_not_confirmed() {   # <sha> <subject> <why>
   note "this write committed $1 ($2) and cannot say whether it reached origin/$LANES_BRANCH: $3."
   note "LOOK, by content: git -C $LANES_REPO fetch origin $LANES_BRANCH && git -C $LANES_REPO cherry -v origin/$LANES_BRANCH HEAD"
   note "  no line, or a '-' line for it: it is on origin, and there is nothing to do."
   note "  a '+' line: it is not, and every later write from this checkout refuses until it is published — LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act — or archived (S6.3)."
+  cnc_head="$(git -C "$LANES_REPO" rev-parse -q --verify HEAD 2>/dev/null || :)"
+  cnc_rc=3   # the die below's number, passed on as `cp_not_head`'s fifth argument
+  [ "$cnc_head" = "$1" ] ||
+    cp_not_head "$1" "$2" "while its push was in flight" "pushed, not confirmed: $1 — $3 (never reported as success)" "$cnc_rc"
   die "pushed, not confirmed: $1 — $3; the commit is kept on HEAD, and this is never reported as success (Amendment 23 S4)" 3
 }
 # ANOTHER WRITER REWROTE THIS WRITE'S COMMIT (rv1b-c's SHOULD A on slice 1b).
@@ -2910,30 +2939,48 @@ cp_not_confirmed() {   # <sha> <subject> <why>
 # push its copy. HEAD then does not hold this sha at all: nothing of this
 # write's is "kept on HEAD", and nothing is lost either. What the rewrite made
 # is read by content, and the words say so.
-cp_rewritten() {   # <sha> <subject> <HEAD>
+cp_rewritten() {   # <sha> <subject> <HEAD> [<the refusal>, as `cp_not_head` takes it] [<the exit status, 6 unless given>]
   note "HEAD is $3, and this write's commit $1 is not in it: another writer in this checkout rewrote it while its push was in flight (a rebase with no lock: lane-start's stamp, lane-handoff), so it is not replayed."
   note "read what reached origin, by content: git -C $LANES_REPO fetch origin $LANES_BRANCH && git -C $LANES_REPO cherry -v origin/$LANES_BRANCH HEAD"
   note "  no '+' line: everything here is on origin, this write's change too if the other writer pushed its copy; that copy went out without this write's own checks on origin's new tip, so read it there: git -C $LANES_REPO log --oneline -5 origin/$LANES_BRANCH"
   note "  a '+' line: it is not on origin, and every later write from this checkout refuses (S3's unpushed row) until it is published (LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act) or archived (S6.3)."
-  die "the push was refused because origin/$LANES_BRANCH moved, and another writer in this checkout rewrote this write's commit, so it is not replayed: $1 $2 is no longer on HEAD (Amendment 23 S4)" 6
+  die "${4:-the push was refused because origin/$LANES_BRANCH moved}, and another writer in this checkout rewrote this write's commit, so it is not replayed: $1 $2 is no longer on HEAD (Amendment 23 S4)" "${5:-6}"
 }
 # THE COMMIT ON HEAD IS NOT THIS WRITE'S (rv1b's MUST 4 on slice 1b, and
-# rv1b-c2's SHOULD C). Asked before the drop, and again where the drop's
-# compare-and-swap was refused. "Kept on HEAD" is said only where HEAD holds
-# this write's commit, read by `merge-base --is-ancestor`, never assumed.
-cp_not_head() {   # <sha> <subject> <when another commit was made>
+# rv1b-c2's SHOULD C). Asked before the drop, again where the drop's
+# compare-and-swap was refused, and before the refusal with origin unmoved
+# (w2a-c6's note). "Kept on HEAD" is said only where HEAD holds this write's
+# commit, read by `merge-base --is-ancestor`, never assumed. The fourth
+# argument, given by the refusals that are not a lost race (origin unmoved, the
+# publish act's, and a push that could not be confirmed), is their own clause
+# in place of "origin moved", and no drop is named, since none would be made;
+# every other caller (slice 2a's S4.4 among them) gives three. A fifth, given
+# only by `cp_not_confirmed`, is the exit status, which stays 3 there. WHERE
+# HEAD IS STILL THIS WRITE'S COMMIT (rv1b-c3's NIT E: the drop's compare-and-
+# swap refused for a reason that is not a moved branch, a `refs/heads/<b>.lock`
+# held), no commit was made on top, and none is named: git could not move the
+# branch, and nothing was moved.
+cp_not_head() {   # <sha> <subject> <when another commit was made> [<the refusal, where origin did not move>] [<the exit status, 6 unless given>]
+  cnh_why="${4:-the push was refused because origin/$LANES_BRANCH moved}"
+  cnh_drop=", and dropping this write's commit to replay it would drop that one too"
+  [ -z "${4:-}" ] || cnh_drop=""
   cnh_head="$(git -C "$LANES_REPO" rev-parse -q --verify HEAD 2>/dev/null || :)"
   if [ -z "$cnh_head" ]; then
     note "HEAD cannot be read, so whether this write's commit $1 is still on it is unknown: read git -C $LANES_REPO status and git -C $LANES_REPO reflog -5 once nothing else writes here."
-    die "the push was refused because origin/$LANES_BRANCH moved, and HEAD cannot be read, so it is not replayed: $1 $2 (Amendment 23 S4)" 6
+    die "$cnh_why, and HEAD cannot be read, so it is not replayed: $1 $2 (Amendment 23 S4)" "${5:-6}"
+  fi
+  if [ "$cnh_head" = "$1" ]; then
+    note "HEAD is still this write's commit $1, so no commit was made on top of it: git could not move refs/heads/$LANES_BRANCH off it $3, and nothing was moved."
+    note "look at it: git -C $LANES_REPO show $1; every later write from this checkout refuses (S3's unpushed row) until it is published — LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act — or archived (S6.3)."
+    die "$cnh_why, and git could not move the branch off this write's commit to drop it, so nothing was moved and it is kept on HEAD: $1 $2" "${5:-6}"
   fi
   # A COMMIT ON TOP IS ONE CASE; A REWRITE IS ANOTHER (rv1b-c's SHOULD A).
   git -C "$LANES_REPO" merge-base --is-ancestor "$1" HEAD 2>/dev/null ||
-    cp_rewritten "$1" "$2" "$cnh_head"
-  note "HEAD is $cnh_head, not this write's commit $1: another commit was made on top of it in this checkout $3, and dropping this write's commit to replay it would drop that one too."
+    cp_rewritten "$1" "$2" "$cnh_head" "$cnh_why" "${5:-6}"
+  note "HEAD is $cnh_head, not this write's commit $1: another commit was made on top of it in this checkout $3$cnh_drop."
   note "look at both: git -C $LANES_REPO log --oneline $1^..HEAD"
   note "every later write from this checkout refuses (S3's unpushed row) until they are published — LANES_LANE=<lane> $SELF commit \"<what they are>\", the publish act — or archived (S6.3)."
-  die "the push was refused because origin/$LANES_BRANCH moved, and this write's commit is no longer HEAD, so it is not replayed: it and the commit on top of it are kept on HEAD (Amendment 23 S4): $1 $2" 6
+  die "$cnh_why, and this write's commit is no longer HEAD, so it is not replayed: it and the commit on top of it are kept on HEAD (Amendment 23 S4): $1 $2" "${5:-6}"
 }
 # THE DROP MOVED THE BRANCH, ITS TREE STEP WAS REFUSED, AND THE BRANCH COULD
 # NOT BE PUT BACK: another writer committed on it in the moment between. This
@@ -2962,6 +3009,21 @@ cp_replay() {   # <sha> <subject>
   # must still be this write's commit, or both are kept on HEAD and named.
   cr_head="$(git -C "$LANES_REPO" rev-parse -q --verify HEAD 2>/dev/null || :)"
   [ "$cr_head" = "$1" ] || cp_not_head "$1" "$2" "while its push was in flight"
+  # A FILE THIS WRITE EDITS IN PLACE IS GONE FROM ORIGIN (slice 2a's A37,
+  # `CP_KEEP_IF_GONE`): the re-run would find nothing to write into and drop
+  # the write with its commit. Asked of the base this write's commit was made
+  # on, so a file the write itself creates is never "gone"; and asked after
+  # the HEAD check, so "kept on HEAD" is said only of a commit HEAD is. Origin
+  # was just fetched (`cp_confirm`), and a file its base had and origin lacks
+  # means origin moved, so the origin-unmoved refusal can never be this one.
+  if [ -n "$CP_KEEP_IF_GONE" ] &&
+     git -C "$LANES_REPO" cat-file -e "$1^:$CP_KEEP_IF_GONE" 2>/dev/null &&
+     ! git -C "$LANES_REPO" cat-file -e "refs/remotes/origin/$LANES_BRANCH:$CP_KEEP_IF_GONE" 2>/dev/null; then
+    note "origin/$LANES_BRANCH no longer has $CP_KEEP_IF_GONE, which this write edits in place and its base had: another writer deleted or moved it while this write's push was in flight."
+    note "look at it: git -C $LANES_REPO show $1; and at origin's: git -C $LANES_REPO log -1 --stat refs/remotes/origin/$LANES_BRANCH -- $CP_KEEP_IF_GONE"
+    note "every later write from this checkout refuses (S3's unpushed row) until it is published — LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act — or archived (S6.3) and \`git -C $LANES_REPO reset --keep origin/$LANES_BRANCH\` run."
+    die "the push was refused because origin/$LANES_BRANCH moved, and origin's copy of $CP_KEEP_IF_GONE was deleted while this write's push was in flight, so a replay would find nothing to write into and drop this write; the commit is local and kept on HEAD: $1 $2" 6
+  fi
   if [ "$CP_ATTEMPT" -ge 6 ]; then
     note "origin/$LANES_BRANCH moved under this write six times (Amendment 23 S4, ratified choice 4)."
     note "look at it: git -C $LANES_REPO show $1"
@@ -2993,6 +3055,12 @@ cp_replay() {   # <sha> <subject>
   cr_ref="refs/heads/$LANES_BRANCH"
   if ! git -C "$LANES_REPO" update-ref -m "lanes-edit: the replay drops $1 (attempt $CP_ATTEMPT)" \
        "$cr_ref" "$cr_to" "$1" 2>"$cr_err"; then
+    # A REFUSED COMPARE-AND-SWAP IS NOT ALWAYS A COMMIT ON TOP (rv1b-c3's
+    # NIT E): git also refuses where another process holds
+    # `refs/heads/<b>.lock` (a peer's commit or a `pack-refs` in flight), and
+    # HEAD is then still this write's commit. Git's own words are shown, as
+    # at the tree step below, and `cp_not_head` reads HEAD to say which.
+    [ ! -s "$cr_err" ] || note "git said: $(head -n 4 -- "$cr_err" 2>/dev/null | tr '\n' ' ')"
     cp_not_head "$1" "$2" "between the replay's HEAD check and its drop"
   fi
   cr_how=-u; [ "$CP_REPLAY_KEEPS_EDIT" = 1 ] && cr_how=-i
@@ -3059,6 +3127,15 @@ cp_publish_act() {
   if ! git -C "$LANES_REPO" merge-base --is-ancestor "$cpa_trk" "$CP_FENCE_TIP" 2>/dev/null; then
     cp_publish_moved
   fi
+  # "THEY ARE KEPT ON HEAD" IS READ, NOT ASSUMED (w1b-c6's second find, the
+  # shape 638b13a took out of `commit_publish`'s refusal): a commit another
+  # writer made on top, which the fence leaves local by design, or a rewrite
+  # that took the queue's tip off the branch while the push was in flight, is
+  # named in `cp_not_head`'s and `cp_rewritten`'s words.
+  cpa_head="$(git -C "$LANES_REPO" rev-parse -q --verify HEAD 2>/dev/null || :)"
+  [ "$cpa_head" = "$CP_FENCE_TIP" ] ||
+    cp_not_head "$CP_FENCE_TIP" "the publish of $cpa_n commit(s)" "while its push was in flight" \
+      "the push of the $cpa_n commit(s) up to ${CP_FENCE_TIP:0:12} failed with origin/$LANES_BRANCH unmoved"
   die "the push of the $cpa_n commit(s) up to ${CP_FENCE_TIP:0:12} failed with origin/$LANES_BRANCH unmoved; they are kept on HEAD, and nothing of them reached origin by this push. Look: git -C $LANES_REPO cherry -v origin/$LANES_BRANCH HEAD" 6
 }
 # OPEN QUESTION 2: A STACK ORIGIN HAS MOVED PAST IS NEVER REBASED. The commits
@@ -12309,11 +12386,55 @@ EOF
         msc_loc="$(log_files_named_ci "$msc_lane")"
         msc_ln="$(printf '%s' "$msc_loc" | grep -c . || :)"
         if [ "$msc_ln" -gt 1 ]; then
-          msc_why="this checkout holds $msc_ln object logs for it whose names differ only by case — 15(d)'s hand merge"
+          # THE PUBLISHED LOG TRACKED AND AN UNTRACKED COPY BESIDE IT IS THE
+          # STRAY COPY, NOT TWO LOGS TO MERGE (NIT 4's neighbour on slice 1b;
+          # `ensure_log`'s B36 refusal names the same state): what a case-only
+          # rename whose commit never landed leaves once the published log is
+          # back. A hand merge would commit the copy as a second published
+          # file for one lane. Said only where the tracked one is the log
+          # origin publishes; any other pair keeps 15(d)'s words.
+          msc_lt=""; msc_lu=""; msc_ltn=0
+          if [ "$msc_ln" = 2 ] && [ "$NO_GIT" != 1 ]; then
+            while IFS= read -r msc_lg; do
+              [ -n "$msc_lg" ] || continue
+              if git -C "$LANES_REPO" -c "$CP_EXACT" ls-files --error-unmatch -- "${LANES_LOG_PREFIX}${msc_lg##*/}" >/dev/null 2>&1; then
+                msc_lt="$msc_lg"; msc_ltn=$((msc_ltn + 1))
+              else
+                msc_lu="$msc_lg"
+              fi
+            done <<EOF
+$msc_loc
+EOF
+          fi
+          if [ "$msc_ltn" = 1 ] && [ -n "$msc_lu" ] && [ "${msc_lt##*/}" = "${msc_pub##*/}" ]; then
+            msc_why="its object log is published as $msc_pub, and this checkout also has ${msc_lu##*/} beside it, NOT TRACKED: the copy left by a case-only rename whose commit never landed, which is not merged by hand, since a commit of it would publish a second file for one lane (Amendment 15). Compare them (diff -- \"$msc_lt\" \"$msc_lu\"): a line only the copy holds belongs to a write that never landed, and is re-run as that write. Then remove the copy (rm -- \"$msc_lu\") and re-run; the lane's next write renames the published log once, inside its own commit"
+          else
+            msc_why="this checkout holds $msc_ln object logs for it whose names differ only by case — 15(d)'s hand merge"
+          fi
         elif [ "$msc_ln" = 1 ]; then
           msc_lf="$msc_loc"; msc_rel="${LANES_LOG_PREFIX}${msc_loc##*/}"
           if [ "${msc_rel##*/}" != "${msc_pub##*/}" ]; then
-            msc_why="its object log is published as $msc_pub while this checkout has ${msc_rel##*/} — a case-only rename whose commit never landed. Pull first, or merge them (15(d))"
+            # NOT A PULL, AND NOT 15(d)'s HAND MERGE (rv1b-c2's NIT 4 on slice
+            # 1b; `ensure_log`'s stray-copy refusal names the same state). The
+            # behind test above refuses a dry run first, so this checkout is at
+            # origin's tip and the other name is its own: a rename it committed
+            # and never published, or the copy a rename's two `mv`s left when
+            # its commit was never made. A commit of both would publish a second
+            # file for one lane, and no writer pulls.
+            #
+            # "COMMITTED" IS ASKED OF HEAD, NOT OF THE INDEX (rv1b-c3's NIT
+            # D): `ls-files --error-unmatch` answers for a STAGED rename too,
+            # which a failed `git commit` leaves, and the archive below would
+            # then push a branch identical to origin's. A staged one has no
+            # commit to archive: it is unstaged, and the copy it leaves is
+            # the NOT TRACKED state.
+            if [ "$NO_GIT" != 1 ] && git -C "$LANES_REPO" cat-file -e "HEAD:$msc_rel" 2>/dev/null; then
+              msc_why="its object log is published as $msc_pub while this checkout has ${msc_rel##*/}, committed here and not on origin: a case-only rename whose commit never landed. The publish act refuses it (#194: a rename deletes and re-adds the log) and no later write carries it (S3 refuses every write over it), so archive it (S6.3): git -C $LANES_REPO push origin HEAD:refs/heads/archive/${msc_lane}-stranded-$(date -u +%Y%m%dT%H%MZ), then git -C $LANES_REPO reset --keep origin/$LANES_BRANCH, and re-run; the lane's next write renames the log once, inside its own commit"
+            elif [ "$NO_GIT" != 1 ] && git -C "$LANES_REPO" -c "$CP_EXACT" ls-files --error-unmatch -- "$msc_rel" >/dev/null 2>&1; then
+              msc_why="its object log is published as $msc_pub while this checkout has ${msc_rel##*/} STAGED and not committed: a case-only rename whose commit never landed (a write's \`git commit\` failed after its \`add\`), so there is no commit to archive and nothing on origin to keep. Unstage it (git -C $LANES_REPO restore --staged -- $msc_pub $msc_rel), which leaves the copy NOT TRACKED, then compare them (git -C $LANES_REPO show refs/remotes/origin/$LANES_BRANCH:$msc_pub | diff - \"$msc_lf\"): a line only the copy holds belongs to a write that never landed, and is re-run as that write. Then remove the copy (rm -- \"$msc_lf\"), put the published log back (git -C $LANES_REPO checkout HEAD -- $msc_pub) and re-run; the lane's next write renames it once, inside its own commit"
+            else
+              msc_why="its object log is published as $msc_pub while this checkout has ${msc_rel##*/} NOT TRACKED: the copy left by a case-only rename whose commit never landed, which is not merged by hand, since a commit of it would publish a second file for one lane (Amendment 15). Compare them (git -C $LANES_REPO show refs/remotes/origin/$LANES_BRANCH:$msc_pub | diff - \"$msc_lf\"): a line only the copy holds belongs to a write that never landed, and is re-run as that write. Then remove the copy (rm -- \"$msc_lf\"), put the published log back (git -C $LANES_REPO checkout HEAD -- $msc_pub) and re-run; the lane's next write renames it once, inside its own commit"
+            fi
           elif [ "$NO_GIT" != 1 ] && ! git -C "$LANES_REPO" ls-files --error-unmatch -- "$msc_rel" >/dev/null 2>&1; then
             # AN UNTRACKED LOG IS SOMEBODY'S UNCOMMITTED WORK, AND THIS ACT WOULD
             # COMMIT IT (Copilot round 2 on openRepoTools#82). A log that is
