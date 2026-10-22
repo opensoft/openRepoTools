@@ -6793,9 +6793,19 @@ lane_of_session() {
 #              quoted value. `dir` and `profile` are read this way.
 #   all        EVERY REF — the whole sub-field, which is what `window` is:
 #              two refs that a caller splits itself.
+#
+# THE PAYLOAD GOES IN THROUGH THE ENVIRONMENT, NEVER `-v` (#301). `awk -v`
+# processes escapes in the value it is handed, so a stored `dir` holding
+# `back\tslash` read back holding a TAB, `\\` as one backslash, `\n` as a
+# newline that cut the answer in two and `\101` as `A` — and `lane-dir`, both
+# control roots and the writers' own checks of what they write all took that
+# answer. `lane_sidecar_schema_ok` reads its id through `ENVIRON` for the same
+# reason. `want` and `mode` stay on `-v`: they are the callers' own words, and
+# none of them holds a backslash.
 payload_subfield() {   # <payload> <name> [all]
-  awk -v pay="$1" -v want="$2" -v mode="${3-}" '
+  PSF_PAY="${1-}" awk -v want="$2" -v mode="${3-}" '
     BEGIN {
+      pay = ENVIRON["PSF_PAY"]
       want = want " "
       n = split(pay, sf, "; ")
       for (i = 1; i <= n; i++) {
