@@ -1809,3 +1809,181 @@ def test_a_handoff_that_links_out_of_the_checkout_is_another_repositorys(box: Bo
     assert box.snapshot(c) == before
     assert result.stdout == _line(other / "handoff.md")
     _released(box, c)
+
+
+# ------------------------------------------------- m2a's battery, its second half
+
+def test_stamp_into_an_empty_handoff_is_refused_1_and_says_the_line(box: Box):
+    """m2a's G05: an empty handoff has no header block to stamp under, so the
+    stamp is refused (1) and the line it wants is said, as `lane-start` said
+    it. Without that check the splice went on, and its proof refused it in
+    other words (2, "did not prove out"). Nothing written, committed or
+    pushed."""
+    c = box.seam()
+    f = c / HANDOFF_REL
+    box.write(c, HANDOFF_REL, "")
+    box.commit(c, "an empty handoff", HANDOFF_REL)
+    box.git("-C", str(c), "push", "-q", "origin", "main")
+    tip = box.origin_head()
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT)
+    assert result.returncode == 1, result.stderr
+    assert f"the handoff at {f} is empty, so it has no header block to stamp under" in result.stderr
+    assert f"The line it wants: {STAMP}" in result.stderr
+    assert "did not prove out" not in result.stderr
+    assert f.read_text(encoding="utf-8") == ""
+    assert box.origin_head() == tip
+    assert result.stdout == ""
+    _released(box, c)
+
+
+#: A handoff the row names under `handoffs/` and nobody ever wrote.
+GONE_REL = "handoffs/repoS4/no-such-handoff.md"
+
+
+@pytest.mark.parametrize("mode", ["stamp", "prepend", "whole"])
+def test_a_row_naming_a_handoff_the_checkout_does_not_have_is_8_and_nothing_written(box: Box, mode: str):
+    """m2a's G06: the row names a file under `handoffs/` that is not there.
+    There is nothing to write into: 8, the path said (and, for `--stamp`, the
+    line it would have written), never "unreadable" (1). Nothing is made,
+    committed or pushed."""
+    box.cell_is(GONE_REL)
+    c = box.seam()
+    gone = c / GONE_REL
+    args = {"stamp": ("--stamp", STAMP),
+            "prepend": ("--prepend", str(_block(box))),
+            "whole": ("--whole", str(_prepared(box)), "--expect-digest", "0" * 64)}[mode]
+    before = box.snapshot(c)
+    result = box.write_handoff(*args, "--subject", SUBJECT)
+    err = result.stderr
+    assert result.returncode == 8, err
+    assert f"lane {LANE}'s handoff is not at {gone}, so there is nothing to write into. Nothing was written." in err
+    assert "unreadable" not in err
+    said = f"the stamp line it would have written under the handoff's header block: {STAMP}" in err
+    assert said == (mode == "stamp"), err
+    assert not gone.exists()
+    assert not gone.is_symlink()
+    assert box.snapshot(c) == before
+    assert result.stdout == ""
+    _released(box, c)
+
+
+def test_a_prepend_fenced_at_preparing_takes_expected_digest_none(box: Box):
+    """m2a's H03: `lane-handoff` binds its prepend at `preparing`, before the
+    restart has a digest, and `--expected-digest none` says so: `none` is no
+    digest to compare, so the fenced write goes ahead (0) and reserves
+    nothing. Compared as a digest, it was refused (2, "the restart handoff
+    changed before this owned write")."""
+    c = box.seam()
+    f = c / HANDOFF_REL
+    box.intent("preparing", "--expect", "none", "--operation", FENCE[0], "--generation", FENCE[1],
+               "--handoff", str(f))
+    result = box.write_handoff("--prepend", str(_block(box)), "--subject", "handoff: PAUSED",
+                               "--restart", FENCE[0], FENCE[1], "0", "preparing", "none",
+                               "--expected-digest", "none")
+    assert result.returncode == 0, result.stderr
+    assert "the restart handoff changed before" not in result.stderr
+    assert f.read_text(encoding="utf-8") == prepended(HANDOFF)
+    assert box.origin_file(HANDOFF_REL) == prepended(HANDOFF)
+    assert box.intent_field("prepared_digest") == "none"
+    assert result.stdout == _line(f)
+    _released(box, c)
+
+
+#: A link under `handoffs/` to the lane's handoff, which a row's cell may name.
+LINK_REL = "handoffs/repoS4/link-to-handoff.md"
+
+
+def _cell_spelled(box: Box, spelling: str) -> None:
+    """The peer points the lane's cell at its handoff in another spelling than
+    the checkout's own path: the estate's `~/...` through the estate link, or
+    a link under `handoffs/` to the lane's handoff, published first."""
+    if spelling == "estate":
+        box.cell_is(_estate_link(box))
+        return
+    seed = box.seed
+    box.git("-C", str(seed), "pull", "-q", "--ff-only", "origin", "main")
+    (seed / LINK_REL).symlink_to(Path(HANDOFF_REL).name)
+    box.commit(seed, "a link to the lane's handoff", LINK_REL)
+    box.git("-C", str(seed), "push", "-q", "origin", "main")
+    box.cell_is(LINK_REL)
+
+
+@pytest.mark.parametrize("mode", ["stamp", "prepend"])
+@pytest.mark.parametrize("spelling", ["estate", "link"])
+def test_a_cell_spelled_otherwise_whose_file_a_peer_deletes_mid_push_keeps_the_write_on_HEAD_exit_6(
+        box: Box, spelling: str, mode: str):
+    """m2a's J01 and J02: A37's keep names the file by its path in this
+    checkout, and A46 compares origin's cell with the cell this write
+    followed, each in its own spelling. Where the cell is not that path (the
+    estate's `~/...`, or a link under `handoffs/` to the lane's handoff) and a
+    peer deletes the file while this write's push is in flight, the row left
+    as it was, the write is kept on HEAD (6) and never replayed into nothing
+    (8, the write only in the reflog)."""
+    _cell_spelled(box, spelling)
+    c = box.seam()
+    f = c / HANDOFF_REL
+    if mode == "stamp":
+        args, written = ("--stamp", STAMP), stamped
+    else:
+        args, written = ("--prepend", str(_block(box))), prepended
+    _peer_deletes_the_handoff(box)
+    box.race(prepared=True)
+    result = box.write_handoff(*args, "--subject", SUBJECT)
+    err = result.stderr
+    assert result.returncode == 6, err
+    kept = box.head(c)
+    assert f"origin's copy of {HANDOFF_REL} was deleted while this write's push was in flight" in err, err
+    assert f"kept on HEAD: {kept}" in err
+    assert "push refused (attempt" not in err, "nothing is dropped or replayed"
+    assert box.subject(c) == SUBJECT
+    assert f.read_text(encoding="utf-8") == written(HANDOFF), "the write is in this checkout"
+    assert not _origin_has(box, HANDOFF_REL)
+    assert [line.split()[1] for line in box.unpublished(c)] == [kept], "one commit unpublished, this write's"
+    assert result.stdout == _line(f)
+    _released(box, c)
+
+
+def test_a_peer_that_deletes_the_handoff_and_the_register_mid_push_keeps_the_write_on_HEAD_exit_6(box: Box):
+    """m2a's J03: where origin's register cannot be read at the replay, A46
+    cannot say whether the row names another cell, and a read that failed is
+    never "replay" (R22). A peer's commit that deletes the lane's handoff and
+    the register lands while this write's push is in flight: the write is
+    kept on HEAD (6), one commit unpublished, nothing dropped."""
+    c = box.seam()
+    f = c / HANDOFF_REL
+    p = box.peer
+    box.git("-C", str(p), "fetch", "-q", "origin")
+    box.git("-C", str(p), "merge", "-q", "--ff-only", "refs/remotes/origin/main")
+    box.git("-C", str(p), "rm", "-q", "--", HANDOFF_REL, REGISTER)
+    box.git("-C", str(p), "commit", "-q", "-m", "a peer deletes the handoff and the register")
+    box.race(prepared=True)
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT)
+    err = result.stderr
+    assert result.returncode == 6, err
+    kept = box.head(c)
+    assert f"origin's copy of {HANDOFF_REL} was deleted while this write's push was in flight" in err, err
+    assert f"kept on HEAD: {kept}" in err
+    assert "push refused (attempt" not in err, "nothing is dropped or replayed"
+    assert f.read_text(encoding="utf-8") == stamped(HANDOFF), "the write is in this checkout"
+    assert not _origin_has(box, REGISTER)
+    assert [line.split()[1] for line in box.unpublished(c)] == [kept], "one commit unpublished, this write's"
+    assert result.stdout == _line(f)
+    _released(box, c)
+
+
+def test_a_routed_bind_of_the_rows_cell_clones_no_checkout(box: Box):
+    """m2a's K03: routed, the lane has no checkout yet, and
+    `set-restart-intent --handoff <the row's cell>` binds the path that
+    checkout will have, as `handoff-path` derives it without `--create`. A
+    bind writes the sidecar and nothing else: no checkout is cloned for it,
+    and W is as it was."""
+    box.use_net()
+    c = box.checkout(LANE)
+    w_before = box.w_state()
+    made = _bound(box, HANDOFF_REL)
+    assert made.returncode == 0, made.stderr
+    assert f"--handoff {HANDOFF_REL} is bound as {c / HANDOFF_REL}" in made.stderr
+    assert box.intent_field("handoff") == str(c / HANDOFF_REL)
+    assert not c.exists(), "a bind makes no checkout"
+    assert "clone" not in box.net_ops()
+    assert box.w_state() == w_before
