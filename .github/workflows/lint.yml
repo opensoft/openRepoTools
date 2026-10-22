@@ -1,0 +1,300 @@
+name: lint
+
+# actionlint OVER EVERY WORKFLOW, AND shellcheck OVER THE SHELL SCRIPTS THIS
+# REPOSITORY TRACKS (#277). Before this file no job ran either tool, so a
+# warning on a workflow or a script showed nowhere. Lane openRepoTools-2's
+# review of #228's `release.yml` found three mutants of it that actionlint's
+# own shellcheck rule flags and that the suite let through: I4 (the macOS
+# leg's `3.2.*)` made `*)`, SC2221 and SC2222), I13 (the install check's link
+# fingerprint left unchecked, SC2034) and N3 (`exit 0` as the clean step's
+# first line, SC2317, which is only `info`). No CI job would have said so.
+#
+# A WORKFLOW FILE OF ITS OWN, on purpose. `tests.yml` is the release gate's
+# file: `release.yml` requires exactly its four jobs, `guard-launch-mode`,
+# `tests`, `tests-no-submodule` and `package`, to have passed on the release
+# commit, and `tests/test_tests_workflow.py` holds that set to those four. A
+# fifth job there would break both, and rehearsal D rewrites that file for the
+# code leg. This file is no part of the gate. It runs on every pull request,
+# on `main` and every `release/v*` branch, and by dispatch.
+#
+# PINNED THE WAY THE RELEASE TOOLING IS, BY HASH. Each tool is a release
+# archive from its own project, at one exact version and one sha256 that this
+# file holds, and the step checks the digest before it unpacks a byte. Neither
+# tool comes from the runner image, whose shellcheck is whatever the image
+# carries that week, and nothing is installed from a package index. The pins
+# are actionlint 1.7.12 and shellcheck 0.11.0. To move one, download the new
+# archive, compute its sha256 yourself, compare it with the digest GitHub
+# shows for the release asset (and, for actionlint, with upstream's
+# `checksums.txt`), and change the version and the digest in one commit, with
+# the baseline below measured again. On every actionlint bump, also re-check
+# the message the actionlint step greps for, `Rule "shellcheck" was disabled`:
+# it is actionlint's own wording, the tests give the step a hand-written copy
+# of it, and a release that rewords it would leave the guard dead with every
+# test green. Run the new actionlint in this repository with `-verbose
+# -shellcheck=/nonexistent` and see that it still prints that line and exits
+# 0. shellcheck 0.11.0 is the first release that has SC2329, which `park`,
+# `resume` and `status` already name in their `# shellcheck disable=`.
+#
+# actionlint RUNS WITH THAT shellcheck, because its shellcheck rule is what
+# checks every `run:` script in a workflow. It is given the binary by path,
+# and the step fails if actionlint reports the rule disabled, which it does
+# silently when it cannot start the binary.
+#
+# THE BASELINE, MEASURED ON main `33ce26d` WITH THE TWO PINNED TOOLS. Every
+# count, size and time below is from that one tree, except where it names
+# another. Memory is in MiB, the unit it was measured in: the peak resident
+# set of the shellcheck process, `ru_maxrss` in KiB divided by 1,024.
+#
+#   THE WORKFLOWS carry none. actionlint reports nothing on `release.yml`,
+#   `tests.yml` and this file, at any severity, so its step has no `-ignore`,
+#   no severity floor and no `.github/actionlint.yaml`: the first warning
+#   anyone adds is a failure, and the three mutants above are each reported.
+#
+#   THE SHELL SCRIPTS: 16 tracked files start with a bash shebang, and
+#   `lane-worktrees` and `lanes-index`, which are Python, are not among them.
+#   shellcheck 0.11.0 with no flag finds no error in any of them. `park`,
+#   `resume` and `status` have no finding at all. Twelve scripts hold 322
+#   findings between them, 190 warnings and 132 notes (info and style):
+#   `claude-current`, `claude-restart-check`, `lane`, `lane-end`,
+#   `lane-handoff`, `lane-rename`, `lane-start`, `lanes`, `lanes-edit.sh`,
+#   `link-estates`, `openRepoTools` and `tests/run.sh`. So:
+#
+#     * a script with no finding is held to EVERY severity and every code,
+#       and so is every script added from now on;
+#     * those twelve, named in `baselined` below, are held to
+#       `--severity=warning` less the ten codes in `excluded`, each of which
+#       fires on main today. What that leaves out is the 190 warnings of those
+#       ten codes, which `excluded` hides, and the 132 notes of eleven other
+#       codes, which `--severity=warning` hides, and nothing more: an error,
+#       or a warning of any other code, fails the job, in any script;
+#     * `tests/test_lane_helpers.sh` is not run. It is the lane helpers' own
+#       test suite and nothing ships it, and shellcheck peaked at 16,222 MiB
+#       (15.8 GiB) on it. A 16 GB runner is 16,384 MiB if GitHub's GB is
+#       binary, which is 162 MiB over that peak for the kernel, the runner
+#       agent and the step's shell, and 15,259 MiB if it is decimal, which is
+#       under the peak: either way no margin, and it was not tried on a
+#       runner. Run on its own, it finds 43 warnings and 218 notes. Those
+#       three figures and its 151 s were measured on `a42946e`, and the file
+#       is the same on `33ce26d`.
+#       `lanes-edit.sh` is run: on `33ce26d` it took 100 to 123 s over three
+#       runs and peaked at 10,754 and 10,756 MiB in two runs under the job's
+#       flags and at 10,888 MiB at every severity, and 145 of the 322
+#       findings are in it.
+#
+#   THE RUNNER'S MEMORY. The 16 GB above is GITHUB'S STANDARD LINUX RUNNER FOR
+#   A PUBLIC REPOSITORY, which this repository is. The standard runner of a
+#   private repository has 8 GB, and shellcheck over `lanes-edit.sh`, which
+#   peaks at 10,888 MiB, does not fit in that: if this repository, or the leg
+#   that carries this file, goes private, give the job a larger runner first.
+#   Both sizes are in GitHub's table of standard runners, in the row of
+#   `ubuntu-24.04`, which this job uses: 4 CPU and 16 GB for a public
+#   repository, 2 CPU and 8 GB for a private one. The table is at
+#   https://docs.github.com/en/actions/reference/runners/github-hosted-runners
+#   and was read on 2026-10-22; read it again before you rely on either size.
+#   The shellcheck step prints `MemTotal` and `MemAvailable` before it runs
+#   anything, so that a kill of `lanes-edit.sh` (exit 137), which the step
+#   reports like a finding, can be read against the memory the runner had.
+#
+#   THE TEN CODES, with their count on main `33ce26d`, and why each is left
+#   out:
+#   SC2034  157  "appears unused". Nearly all are fields of a fixed-layout
+#                `read -r a b c ...` of a tab or unit-separator record, which
+#                names every field so that each keeps its place, and no reader
+#                uses every field: 101 of the 157 are in `lanes-edit.sh`. The
+#                rest are a handful of loop counters and variables set and not
+#                read. It is also the code that flags I13, which is why the
+#                workflows keep it.
+#   SC2088   14  "tilde does not expand in quotes". These scripts print or
+#                match a literal `~/...` on purpose; `resume` and `status` say
+#                so in their own `# shellcheck disable=SC2088`.
+#   SC2209    4  `x=bg` twice and `x=pr` twice: `bg` is a builtin's name and
+#                `pr` a command's, and each word is meant literally, in
+#                `lane-start` and `lanes-edit.sh`.
+#   SC1007    4  `CDPATH= cd -- ...` in `openRepoTools`, the idiom for an
+#                empty assignment before a command.
+#   SC2154    3  `lane-handoff` fills `row_uuid` and its neighbours by name,
+#                through its `sread` helper, which shellcheck cannot see.
+#   SC2069    2  `2>&1 >/dev/null` in `lane` and `lanes` sends stderr to the
+#                terminal and drops stdout, on purpose.
+#   SC2178    2  `wip_init` in `openRepoTools` holds the array `written` and
+#                ends by declaring `local written="$checkout"` again, which
+#                bash keeps as element 0 of that array, so it works.
+#   SC2128    2  The same two uses, expanding that array without an index.
+#   SC2141    1  A LATENT BUG, not a style: `session_start_block` in
+#                `lanes-edit.sh` splits the tab-joined live-fork rows of
+#                `lane_forks` with `IFS='\t'`, which is a backslash and a
+#                `t`, so a row `id<TAB>4242<TAB>interactive` reads as
+#                `id<TAB>4242<TAB>in`, `erac` and `ive`. Left out so that main
+#                passes; fix it, then drop this code from `excluded`.
+#   SC2318    1  A LATENT BUG too: `wip_fetch_template_file` in
+#                `openRepoTools` opens with `local rel="$1" ...
+#                path="$WIP_TEMPLATE_DIR/$rel"`, and bash expands `$rel`
+#                before that `local` takes effect, so `path` carries the
+#                caller's `rel`. It is right only because `wip_init` calls it
+#                from a loop over its own `rel`.
+#
+#   TO TIGHTEN: fix a script and take it out of `baselined`, or take a code
+#   out of `excluded` once none of the twelve fires it. A test holds the two
+#   lists to this comment.
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'release/v*']
+  workflow_dispatch:
+
+jobs:
+  lint:
+    # 24.04 WITH EVERY OTHER UBUNTU JOB HERE (#296): `ubuntu-latest` became
+    # Ubuntu 26.04 on 2026-10-21, and 26.04 is left to #297. Both tools are
+    # static binaries, so the runner decides only which `curl`, `sha256sum`
+    # and `tar` the install step meets, and never what either tool reports.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      # The same commit every job in this repository pins. The submodule is
+      # not needed: neither tool reads `upstream/`.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          submodules: false
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: install actionlint and shellcheck, each at its pinned version and by its sha256
+        env:
+          ACTIONLINT_VERSION: '1.7.12'
+          ACTIONLINT_SHA256: '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8'
+          SHELLCHECK_VERSION: '0.11.0'
+          SHELLCHECK_SHA256: '8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198'
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/lint-tools"
+          mkdir -p "$tools/actionlint" "$tools/shellcheck" "$tools/bin"
+          actionlint_archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors \
+              -o "$tools/actionlint/$actionlint_archive" \
+              "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/$actionlint_archive"
+          echo "$ACTIONLINT_SHA256  $tools/actionlint/$actionlint_archive" | sha256sum --strict -c -
+          tar -xzf "$tools/actionlint/$actionlint_archive" -C "$tools/bin" actionlint
+          shellcheck_archive="shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors \
+              -o "$tools/shellcheck/$shellcheck_archive" \
+              "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/$shellcheck_archive"
+          echo "$SHELLCHECK_SHA256  $tools/shellcheck/$shellcheck_archive" | sha256sum --strict -c -
+          tar -xJf "$tools/shellcheck/$shellcheck_archive" -C "$tools/bin" --strip-components=1 \
+              "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          echo "$tools/bin" >> "$GITHUB_PATH"
+          found="$("$tools/bin/actionlint" -version | sed -n 1p)"
+          if [ "$found" != "$ACTIONLINT_VERSION" ]; then
+            echo "::error::the unpacked actionlint says '$found', and the pin is $ACTIONLINT_VERSION"
+            exit 1
+          fi
+          found="$("$tools/bin/shellcheck" --version | sed -n 's/^version: //p')"
+          if [ "$found" != "$SHELLCHECK_VERSION" ]; then
+            echo "::error::the unpacked shellcheck says '$found', and the pin is $SHELLCHECK_VERSION"
+            exit 1
+          fi
+          echo "actionlint $ACTIONLINT_VERSION and shellcheck $SHELLCHECK_VERSION, by their digests"
+
+      # EVERY FILE UNDER .github/workflows, `.yml` OR `.yaml`, which actionlint
+      # finds itself. No exclusion and no severity floor, and no config file:
+      # main is clean, so the first warning anyone adds is a failure.
+      - name: actionlint, with the pinned shellcheck, over every workflow
+        run: |
+          set -euo pipefail
+          shellcheck_bin="$(command -v shellcheck)"
+          if [ "$shellcheck_bin" != "$RUNNER_TEMP/lint-tools/bin/shellcheck" ]; then
+            echo "::error::the shellcheck first on PATH is $shellcheck_bin, not the pinned one"
+            exit 1
+          fi
+          status=0
+          actionlint -verbose -shellcheck="$shellcheck_bin" > "$RUNNER_TEMP/actionlint.out" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/actionlint.out"
+          if grep -q 'Rule "shellcheck" was disabled' "$RUNNER_TEMP/actionlint.out"; then
+            echo "::error::actionlint ran without its shellcheck rule, so no run: script was checked"
+            exit 1
+          fi
+          exit "$status"
+
+      # THE SHELL SCRIPTS ARE FOUND BY THEIR SHEBANG, never from a list, so a
+      # script added next month is checked without anyone remembering to come
+      # here: every tracked regular file whose first line names bash or sh.
+      # Each is checked on its own, so that one file's findings, time and
+      # memory are its own, and every file is checked even after one fails.
+      # The baseline is the comment at the top of this file.
+      #
+      # THE SELECTION TAKES FOUR SHEBANGS, `#!/usr/bin/env bash`, which every
+      # shell script here writes, `#!/bin/bash`, `#!/usr/bin/env sh` and
+      # `#!/bin/sh`, AND FAILS CLOSED ON THE REST. A tracked file whose first
+      # line is a shebang that names bash or sh any other way
+      # (`#!/usr/bin/bash`, `#! /bin/bash`, `#!/usr/bin/env -S bash`) would
+      # drop out of lint without a word, so the step names each such file in
+      # an error and fails, before it runs shellcheck on anything. The fix is
+      # the shebang the repository writes.
+      #
+      # THE FIRST LINE IS READ WITH `|| true`, on purpose: `read` returns 1 at
+      # the end of its input, so an empty file, or a one-line file with no
+      # final newline, would end the step under `set -e`. What it did read is
+      # still in `first`, so a one-line script with no final newline is
+      # selected. The test's throwaway repository holds both files.
+      - name: shellcheck over every tracked shell script, at the baseline
+        run: |
+          set -euo pipefail
+          not_run='tests/test_lane_helpers.sh'
+          baselined='claude-current claude-restart-check lane lane-end lane-handoff lane-rename lane-start lanes lanes-edit.sh link-estates openRepoTools tests/run.sh'
+          excluded='SC1007,SC2034,SC2069,SC2088,SC2128,SC2141,SC2154,SC2178,SC2209,SC2318'
+          grep -E '^(MemTotal|MemAvailable)' /proc/meminfo || true
+          checked=()
+          refused=()
+          while IFS= read -r -d '' path; do
+            if [ -f "$path" ] && [ ! -L "$path" ] && [ "$path" != "$not_run" ]; then
+              first=
+              IFS= read -r first < "$path" || true
+              case "$first" in
+                '#!/usr/bin/env bash'*|'#!/bin/bash'*|'#!/usr/bin/env sh'*|'#!/bin/sh'*)
+                  checked+=("$path")
+                  ;;
+                '#!'*)
+                  case " $first " in
+                    *[[:space:]/]bash[[:space:]]*|*[[:space:]/]sh[[:space:]]*) refused+=("$path") ;;
+                  esac
+                  ;;
+              esac
+            fi
+          done < <(git ls-files -z)
+          if [ "${#refused[@]}" -ne 0 ]; then
+            for odd in "${refused[@]}"; do
+              echo "::error::$odd: its first line is a shebang that names bash or sh in a form this step does not select, so shellcheck would skip the file; write #!/usr/bin/env bash"
+            done
+            exit 1
+          fi
+          if [ "${#checked[@]}" -eq 0 ]; then
+            echo "::error::no tracked file starts with a bash or sh shebang, so the selection is wrong"
+            exit 1
+          fi
+          failed=()
+          for path in "${checked[@]}"; do
+            case " $baselined " in
+              *" $path "*)
+                flags=(--severity=warning "--exclude=$excluded")
+                level='at warning, less the baseline codes'
+                ;;
+              *)
+                flags=()
+                level='at every severity'
+                ;;
+            esac
+            started=$SECONDS
+            status=0
+            shellcheck "${flags[@]}" "$path" || status=$?
+            echo "$path: shellcheck $level exited $status in $((SECONDS - started)) s"
+            if [ "$status" -ne 0 ]; then
+              failed+=("$path")
+            fi
+          done
+          if [ "${#failed[@]}" -ne 0 ]; then
+            echo "::error::shellcheck reported findings in: ${failed[*]}"
+            exit 1
+          fi
