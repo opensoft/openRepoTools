@@ -5161,20 +5161,26 @@ wip_dispatch() {
 		die "--login '$WIP_LOGIN' cannot form a compliant \`<user>-wip\` name: openRepoShape's
     naming contract requires \`^[a-z0-9]+(-[a-z0-9]+)*-wip\$\`. Nothing was created."
 	fi
-	# THE REPOSITORY AND THE REF ARE ASKED HERE, BEFORE `wip_init` DOES ANYTHING
-	# (#241). Step 7 asks `wip_shape_ref` for the standard's pin, and where no
+	# THE REPOSITORY, THE REF AND THE DIRECTORY ARE ASKED HERE, BEFORE `wip_init`
+	# DOES ANYTHING (#241). The repository and the ref: step 7 asks
+	# `wip_shape_ref` for the standard's pin, and where no
 	# `contracts/openreposhape-pin.yaml` sits beside this file (an installed
 	# copy) that goes to the source, with `$OPENREPOTOOLS_REPO` at
 	# `$OPENREPOTOOLS_REF` as typed in a `gh api` call, a raw URL and the
-	# refusals that name them. ONCE, AND NOT IN `wip_shape_ref`: step 5 has made
+	# refusals that name them. The directory: step 10 runs the `link-estates`
+	# in it, and that command names the directory as typed in its own `Error`,
+	# `STALE` and `NOTE` lines. ONCE, AND NOT IN `wip_shape_ref`: step 5 has made
 	# the repository and step 6 has cloned it by then, and "Nothing was fetched,
 	# installed or replaced" would not be true. `wip` has one verb, so this is
 	# every `wip init`: from a checkout, an installed copy or a package, and
-	# `--dry-run` too, which reads neither value but is the rehearsal of a run
-	# that refuses. The arguments and `--login` are refused above, as they
-	# always were. The directory is not asked here: the comment headed `the
-	# values no line can print as they read`, below, says why.
+	# `--dry-run` too, which prints and sends none of the three but is the
+	# rehearsal of a run that refuses. The values come first and the directory
+	# second, the order `--install` asks them in, and the directory's `:` rule
+	# comes with it: the comment headed `the values no line can print as they
+	# read`, below, says why. The arguments and `--login` are refused above, as
+	# they always were.
 	refuse_bad_values
+	refuse_bad_bin_dir wip
 	wip_init
 }
 
@@ -5183,14 +5189,16 @@ wip_dispatch() {
 # THREE VALUES REACH THIS COMMAND FROM THE ENVIRONMENT AND ARE NAMED IN ITS
 # LINES AS THEY WERE TYPED: the directory `--install` places into, which is in
 # the `$PATH` note, in every `installed at` line and in every refusal that
-# names a target; and `$OPENREPOTOOLS_REPO` and `$OPENREPOTOOLS_REF`, which
+# names a target, and which `wip init` runs `link-estates` from, whose own lines
+# name it; and `$OPENREPOTOOLS_REPO` and `$OPENREPOTOOLS_REF`, which
 # `--version` prints and every fetch and every refusal about the source sends
 # or names. What a person typed into one of them is not always what a line that
 # prints it shows:
 #
 #   * A `:` splits a `$PATH` whatever the quoting, so no `export PATH=` line can
-#     name a directory that holds one (the directory only; a repository or a
-#     ref is no `$PATH`).
+#     name a directory that holds one, nor the `NOTE` about `$PATH` that
+#     `link-estates` prints (the directory only; a repository or a ref is no
+#     `$PATH`).
 #   * A newline breaks the line it is printed in into two, so the second can
 #     be made to say anything; a carriage return rewrites the line on the
 #     terminal (`/tmp/x^MFORGED is not on $PATH`); an escape, and the C1
@@ -5204,24 +5212,31 @@ wip_dispatch() {
 #
 # EACH IS ASKED ONCE, BEFORE ANYTHING IS PLACED, FETCHED OR NAMED, and a refusal
 # says which KIND of character it found and never repeats the value, so the
-# refusal cannot forge a line either. The directory is asked by
-# `refuse_bad_bin_dir`, straight before `install_commands`; the repository and
-# the ref by `refuse_bad_values`, before `--version` prints them (where it does
-# print them: a package's `--version` names its stamp and neither value), before
+# refusal cannot forge a line either. The repository and the ref are asked by
+# `refuse_bad_values`, before `--version` prints them (where it does print
+# them: a package's `--version` names its stamp and neither value), before
 # `--install` names or fetches with them, in a package as in a checkout, and in
-# `wip_dispatch`, before `wip init` does anything. `--help` and the bare usage
-# name the variables and never their values, so they answer past all three.
+# `wip_dispatch`, before `wip init` does anything. The directory is asked by
+# `refuse_bad_bin_dir`, straight before `install_commands` and, in
+# `wip_dispatch`, straight after `refuse_bad_values`. `--help` and the bare
+# usage name the variables and never their values, so they answer past all
+# three.
 #
-# `wip init` ASKS THE REPOSITORY AND THE REF, AND NOT THE DIRECTORY. Its step 7
-# asks `wip_shape_ref` for the standard's pin, and where no
-# `contracts/openreposhape-pin.yaml` sits beside this file (an installed copy)
-# that goes to the source: `payload_probe` and `fetch_from_repo` SEND
-# `$OPENREPOTOOLS_REPO` and `$OPENREPOTOOLS_REF` as typed, in a `gh api` call and
-# a raw URL, and `resolve_refuse` names them. The directory is left out: `wip
-# init`'s own lines never name it, because `wip_run_link_estates` only EXECUTES
-# `$OPENREPOTOOLS_BIN_DIR/link-estates`. (The `link-estates` it runs does name
-# the directory, as typed, in its own `Error`, `STALE` and `NOTE` lines, as it
-# does when run by hand: those are that command's lines, outside #241's.)
+# `wip init` ASKS ALL THREE, FROM EVERY ROUTE AND WITH `--dry-run`. The
+# repository and the ref: its step 7 asks `wip_shape_ref` for the standard's
+# pin, and where no `contracts/openreposhape-pin.yaml` sits beside this file (an
+# installed copy) that goes to the source: `payload_probe` and `fetch_from_repo`
+# SEND `$OPENREPOTOOLS_REPO` and `$OPENREPOTOOLS_REF` as typed, in a `gh api`
+# call and a raw URL, and `resolve_refuse` names them (the review of #241,
+# MUST-1). The directory: `wip init`'s own lines never name it, because
+# `wip_run_link_estates` only EXECUTES `$OPENREPOTOOLS_BIN_DIR/link-estates`, but
+# the `link-estates` it runs names the directory as typed, in its own `Error`,
+# `STALE` and `NOTE` lines, as it does when run by hand, so a directory no line
+# can print as it reads is refused before `wip init` runs it. THE `:` RULE
+# COMES WITH THE DIRECTORY: `wip init` refuses a `:` in it, because the
+# directory goes on a `$PATH` (that `NOTE` is a line about one) and a `:` splits
+# a `$PATH` whatever the quoting, and takes a `:` in the repository and the ref
+# as `--version` does.
 #
 # THE RULE IS openRepoShape's, as its `install.sh` and `openRepoShape
 # --install` hold it, and it is read in bytes, under `LC_ALL=C` in a subshell,
@@ -5404,27 +5419,41 @@ value_fault() {   # <value> [locale]
 	return 1
 }
 
-#: THE DIRECTORY `--install` PLACES INTO, ASKED BEFORE ANYTHING IS PLACED,
-#: FETCHED OR NAMED: refused for a control character, a misdrawn character or a
-#: `:`, in that order, naming the kind and never the directory. It is the
-#: directory as `install_commands` computes it, so a `$HOME` holding one is
-#: refused when `$OPENREPOTOOLS_BIN_DIR` is unset. A WINDOWS SPELLING (`D:\tools`)
-#: holds a `:` and is refused with the rest: nothing here spells one the way
-#: bash does, and on Windows the way in is WSL2.
-refuse_bad_bin_dir() {
-	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}" fault
+#: THE DIRECTORY `--install` PLACES INTO AND `wip init` RUNS `link-estates`
+#: FROM, ASKED BEFORE ANYTHING IS PLACED, FETCHED OR NAMED: refused for a
+#: control character, a misdrawn character or a `:`, in that order, naming the
+#: kind and never the directory. It is the directory as `install_commands` and
+#: `wip_run_link_estates` compute it, so a `$HOME` holding one is refused when
+#: `$OPENREPOTOOLS_BIN_DIR` is unset. A `:` IS REFUSED IN BOTH RUNS, because the
+#: directory goes on a `$PATH` (`--install`'s note about one, and the `NOTE`
+#: `link-estates` prints about one) and a `:` splits a `$PATH` whatever the
+#: quoting. A WINDOWS SPELLING (`D:\tools`) holds a `:` and is refused with the
+#: rest: nothing here spells one the way bash does, and on Windows the way in
+#: is WSL2. `wip_dispatch` calls it with `wip`, and the refusal is then in `wip
+#: init`'s words (it places nothing, and names `link-estates`); without an
+#: argument it is `--install`'s, byte for byte as it was before `wip init` asked.
+refuse_bad_bin_dir() {   # [wip]
+	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}" fault holds because
 	if fault="$(value_fault "$dir" locale)"; then
-		die "\`--install\` would place the ${#INSTALLABLES[@]} commands in a directory whose name holds $fault, so no line about \$PATH can print the name as it reads.
-    NOTHING was installed and nothing already installed was replaced. Set
-    \$OPENREPOTOOLS_BIN_DIR to a directory without one, then run this again."
+		holds="$fault"
+		because="so no line about \$PATH can print the name as it reads."
+	else
+		case "$dir" in
+		*:*)
+			holds="a ':', and a ':' is what splits a \$PATH into its directories"
+			because="so no line about \$PATH can name it."
+			;;
+		*) return 0 ;;
+		esac
 	fi
-	case "$dir" in
-	*:*)
-		die "\`--install\` would place the ${#INSTALLABLES[@]} commands in a directory whose name holds a ':', and a ':' is what splits a \$PATH into its directories, so no line about \$PATH can name it.
+	if [ "${1-}" = wip ]; then
+		die "\`wip init\` would run \`link-estates\` from a directory whose name holds $holds. That command names the directory as typed, in its own lines and in a note about \$PATH, so none of them can print it as it reads.
+    Nothing was fetched, created or changed. Set \$OPENREPOTOOLS_BIN_DIR to a
+    directory without one, then run this again."
+	fi
+	die "\`--install\` would place the ${#INSTALLABLES[@]} commands in a directory whose name holds $holds, $because
     NOTHING was installed and nothing already installed was replaced. Set
     \$OPENREPOTOOLS_BIN_DIR to a directory without one, then run this again."
-		;;
-	esac
 }
 
 #: THE REPOSITORY AND THE REF, CHECKED ONCE, BEFORE ANY LINE NAMES EITHER AND
