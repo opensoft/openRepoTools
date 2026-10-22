@@ -2998,6 +2998,18 @@ cp_under() {   # <sha> <subject> <origin's tip>
   die "the push was refused because origin/$LANES_BRANCH moved, and this write's commit sits on $cu_n commit(s) it did not make, so it is not replayed: it and they are kept on HEAD (Amendment 23 S4): $1 $2" 6
 }
 
+# THE RECOVERY FOR AN UNTRACKED FILE A WRITE WOULD COMMIT (lane
+# openRepoTools-3's review of #307, NIT 288). `git commit -- <path>` of a path
+# git does not track answers "pathspec ... did not match any file(s) known to
+# git" and exits 1, so the file is added first; and the commit made is then an
+# unpublished one, which S3 refuses every writer over, so it is published by
+# the publish act. Said where the migration, `retire-rows` and `archive-rows`
+# meet one.
+untracked_recovery() {   # <the path, relative to the checkout>
+  printf 'Whoever made it commits it as their own write, in this checkout (git -C %s add -- %s && git -C %s commit -m "<lane>(<what it is>)" -- %s), and publishes it with the publish act (LANES_LANE=<lane> %s commit "<what it is>")' \
+    "$LANES_REPO" "$1" "$LANES_REPO" "$1" "$SELF"
+}
+
 # 0 when origin's `main` holds <sha>, after a fresh fetch; 1 when it does not;
 # 2 when the fetch failed. Never a guess.
 cp_confirm() {   # <sha>
@@ -12572,7 +12584,7 @@ EOF
             # into this migration's one commit under this migration's message.
             # The row is skipped and the file named, exactly as the other five
             # reasons are, and its cell keeps every character.
-            msc_why="its object log ${msc_rel} exists here but is NOT TRACKED — somebody's uncommitted work, which this act would commit inside the migration's own commit. Commit it first (\`git -C $LANES_REPO commit -m \"<what it is>\" -- $msc_rel\`) and re-run"
+            msc_why="its object log ${msc_rel} exists here but is NOT TRACKED — somebody's uncommitted work, which this act would commit inside the migration's own commit. $(untracked_recovery "$msc_rel"); then re-run"
           fi
         else
           msc_rel="$msc_pub"; msc_lf="$LANES_LOG_DIR/${msc_pub##*/}"
@@ -13422,7 +13434,7 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
     # the file this meets.)
     if [ "$rr_ln2" = 1 ] && [ "$NO_GIT" != 1 ] &&
        ! git -C "$LANES_REPO" ls-files --error-unmatch -- "$(log_path_for "$rr_l")" >/dev/null 2>&1; then
-      die "lane $rr_l's object log $(log_path_for "$rr_l") exists in this checkout but is NOT TRACKED — somebody's uncommitted work, which this sweep would commit inside its own commit and under its own message. Commit it first (\`git -C $LANES_REPO commit -m \"<what it is>\" -- $(log_path_for "$rr_l")\`) and re-run. Nothing was written." 2
+      die "lane $rr_l's object log $(log_path_for "$rr_l") exists in this checkout but is NOT TRACKED — somebody's uncommitted work, which this sweep would commit inside its own commit and under its own message. $(untracked_recovery "$(log_path_for "$rr_l")"); then re-run. Nothing was written." 2
     fi
     # THE PUBLISHED PATH IS THE ONE THE READABILITY PROBE ALREADY RESOLVED —
     # `log_path_ci` is a `ls-tree` of the whole log directory and this loop runs
@@ -13562,7 +13574,7 @@ archive_rows() {   # <repo> <1 = the act, 0 = the dry run>
     # why the test is made HERE — before anything is written.
     if [ -f "$LANES_ARCH_FILE" ] && [ "$NO_GIT" != 1 ] &&
        ! git -C "$LANES_REPO" ls-files --error-unmatch -- "$LANES_ARCH_PATH" >/dev/null 2>&1; then
-      die "$LANES_ARCH_PATH exists in this checkout but is NOT TRACKED — somebody's uncommitted work, which this move would commit inside its own commit. Commit it first (\`git -C $LANES_REPO commit -m \"<what it is>\" -- $LANES_ARCH_PATH\`) and re-run. Nothing was written." 2
+      die "$LANES_ARCH_PATH exists in this checkout but is NOT TRACKED — somebody's uncommitted work, which this move would commit inside its own commit. $(untracked_recovery "$LANES_ARCH_PATH"); then re-run. Nothing was written." 2
     fi
     # AN ARCHIVE THAT IS A SYMLINK, OR THERE AND NOT A REGULAR FILE, IS REFUSED
     # (Copilot on #93's `afd5481`, #138 item 10). The rows are appended with

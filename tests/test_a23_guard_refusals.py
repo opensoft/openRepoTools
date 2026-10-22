@@ -658,3 +658,56 @@ def test_a_diverged_checkout_holding_a_hand_merge_is_told_to_archive_first(box: 
     assert "the content is already published" not in err, "a merge's content is not"
     assert box.snapshot(c) == before, "nothing was written"
     assert not box.lock_of(c).exists()
+
+
+def test_a_migration_dry_run_gives_an_untracked_log_a_recovery_that_works(box: Box):
+    """NIT 288 of lane openRepoTools-3's review of #307 (pre-existing): the
+    migration's line for a lane whose log is here and NOT TRACKED said
+    "Commit it first (`git -C <c> commit -m ... -- <log>`)", and git answers
+    that pathspec of an untracked file with "did not match any file(s) known
+    to git" (1). And such a commit is an unpublished one, which S3 then
+    refuses every writer over. The line now says `git add`, then the pathspec
+    commit in this checkout, then the publish act, and following it settles
+    the skip."""
+    c = box.seam()
+    rel = f"lanes/log/{NEIGHBOUR}.md"
+    box.write(c, rel, f"# lane {NEIGHBOUR} — object log (lane-collision-protocol Amendment 7)" + "\n")
+    result = box.helper("migrate-state-cells")
+    out = result.stdout
+    assert result.returncode == 0, (out, result.stderr)
+    assert "DRY RUN — nothing was written" in out, out
+    line = next((l for l in out.splitlines() if l.strip().startswith(f"{NEIGHBOUR} ")), "")
+    assert "NOT TRACKED" in line, out
+    assert f"git -C {c} add -- {rel} && git -C {c} commit -m" in line, line
+    assert "the publish act (LANES_LANE=<lane>" in line, line
+    box.git("-C", str(c), "add", "--", rel)
+    box.git("-C", str(c), "commit", "-q", "-m", f"{NEIGHBOUR}(its log)", "--", rel)
+    published = box.helper("commit", "its log", LANES_LANE=NEIGHBOUR)
+    assert published.returncode == 0, published.stderr
+    assert box.origin_file(rel).startswith(f"# lane {NEIGHBOUR}"), "the publish act sent it"
+    again = box.helper("migrate-state-cells")
+    assert again.returncode == 0, (again.stdout, again.stderr)
+    assert "NOT TRACKED" not in again.stdout, "the recovery the line gives settles it"
+
+
+def test_retire_rows_gives_an_untracked_log_the_same_recovery_and_it_works(box: Box):
+    """NIT 288's siblings: `retire-rows` (and `archive-rows`, for the archive
+    file) refused an untracked file with the same `commit -m … -- <path>`
+    that git refuses. They say what the migration now says, and following it
+    lets the sweep run."""
+    c = box.seam()
+    rel = f"lanes/log/{NEIGHBOUR}.md"
+    box.write(c, rel, f"# lane {NEIGHBOUR} — object log (lane-collision-protocol Amendment 7)" + "\n")
+    result = box.helper("retire-rows", NEIGHBOUR, LANES_LANE=LANE, LANES_SESSION=UUID)
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "NOT TRACKED" in result.stderr, result.stderr
+    assert f"git -C {c} add -- {rel} && git -C {c} commit -m" in result.stderr, result.stderr
+    assert "the publish act (LANES_LANE=<lane>" in result.stderr
+    assert "Nothing was written" in result.stderr
+    box.git("-C", str(c), "add", "--", rel)
+    box.git("-C", str(c), "commit", "-q", "-m", f"{NEIGHBOUR}(its log)", "--", rel)
+    published = box.helper("commit", "its log", LANES_LANE=NEIGHBOUR)
+    assert published.returncode == 0, published.stderr
+    again = box.helper("retire-rows", NEIGHBOUR, LANES_LANE=LANE, LANES_SESSION=UUID)
+    assert again.returncode == 0, (again.stdout, again.stderr)
+    assert f"RETIRED — lane {NEIGHBOUR}" in box.origin_file(rel)
