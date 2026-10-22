@@ -1414,17 +1414,26 @@ def test_a_store_kept_inside_a_clone_is_leaned_on(sweep):
     box.git("-C", str(borrower), "fsck", "--connectivity-only")
 
 
-def test_a_git_file_naming_a_clones_git_directory_holds_it(sweep):
+GIT_FILES = [
+    pytest.param(lambda c, sharer: f"gitdir: {c}/.git\n", id="absolute"),
+    pytest.param(lambda c, sharer: f"gitdir: {c}/.git\r\n", id="CRLF, whose CR git strips"),
+]
+
+
+@pytest.mark.parametrize("spelled", GIT_FILES)
+def test_a_git_file_naming_a_clones_git_directory_holds_it(sweep, spelled):
     """A `.git` FILE IS READ AS AN ALTERNATES FILE IS (rv4's NIT 1, P3): a
     directory beside W whose `.git` file names the CLOSED lane's `.git` works
     in that clone's git directory, and removing the clone takes it away. The
-    clone is held, by the dry run and by `--yes`, naming the directory."""
+    clone is held, by the dry run and by `--yes`, naming the directory. The
+    file is read as git reads it, so a CRLF line works in that directory too
+    (rv4-c3's NIT c3-3, P3)."""
     box = sweep.box
     c = box.checkout(CLOSED)
     sharer = box.w.parent / "sharer"
     sharer.mkdir()
-    (sharer / ".git").write_text(f"gitdir: {c}/.git\n", encoding="utf-8")
-    assert box.git("-C", str(sharer), "rev-parse", "--git-dir").strip() == f"{c}/.git"
+    (sharer / ".git").write_bytes(spelled(c, sharer).encode("utf-8"))
+    assert box.git("-C", str(sharer), "rev-parse", "--absolute-git-dir").strip() == f"{c}/.git"
     for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
         result, rows = sweep(*args, **env)
         assert rows[str(c)][0] == "hold", rows[str(c)]

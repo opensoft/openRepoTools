@@ -1431,7 +1431,9 @@ SH_REFS
     for sds_e in "$sc_w" "$sc_root"/* "$sc_home"/* "$sc_home"/.[!.]* "$sc_home"/..?*; do
       [ -d "$sds_e" ] || continue
       if [ -f "$sds_e/.git" ] && [ ! -L "$sds_e/.git" ]; then
-        sds_g="$(sed -n -e '1s/^gitdir: //p' -- "$sds_e/.git" 2>/dev/null)" || sds_g=""
+        # git strips a trailing CR from the line (rv4-c3's NIT c3-3), and so
+        # does `tr`, first: BSD `sed` reads no `\r` in its script.
+        sds_g="$(tr -d '\r' 2>/dev/null < "$sds_e/.git" | sed -n -e '1s/^gitdir: //p')" || sds_g=""
         case "$sds_g" in '') : ;; /*) : ;; *) sds_g="$sds_e/$sds_g" ;; esac
         if [ -n "$sds_g" ]; then
           sds_r="$(sc_real "$sds_g")"
