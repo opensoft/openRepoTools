@@ -15409,6 +15409,9 @@ lane_checkout_enter() {   # <write_lane_of's status> <its lane, or empty>
   LANES__CHECKOUT_LANE="$lcn_c"; LANES__PID="$$"
   export LANES_REPO LANES_DIR LANES_FILE LANES__CHECKOUT_LANE LANES__PID
   cleanup_for_exec
+  # THE `exec` IS DELIBERATE: it hands this one write to the routed checkout's copy and does not
+  # return, and the `die` after it runs only if the `exec` itself fails.
+  # shellcheck disable=SC2093
   exec "${BASH:-bash}" "$RESOLVED" ${ORIG_ARGV[@]+"${ORIG_ARGV[@]}"}
   die "could not run $RESOLVED again in lane $lcn_c's checkout $lcn_p. Nothing was written." 1
 }
