@@ -1363,18 +1363,23 @@ def test_an_add_row_whose_retirement_a_reader_fetched_in_after_S3s_compare_refus
 CLAIM_URL = "https://github.com/opensoft/repoS4/issues/1#issuecomment-284"
 
 
-def _network_reads_logged(box: Box, c: Path) -> tuple:
+def _network_reads_logged(box: Box, c: Path, bulk: int = 0) -> tuple:
     """`gh`, and `git ls-remote` of a GitHub URL, each logged with whether
     `c`'s lock is held at that moment; `gh issue view ... --json comments`
-    answers a claim comment's URL. Nothing reaches the network. Returns the
-    log and the env that puts both first and lets the claim ask GitHub."""
+    answers a claim comment's URL, and with `bulk`, `gh issue view
+    --comments` answers that many `CLAIMED —` lines of about 100 bytes each.
+    Nothing reaches the network. Returns the log and the env that puts both
+    first and lets the claim ask GitHub."""
     lock = shlex.quote(str(box.lock_of(c)))
     log = shlex.quote(str(box.root / "net-reads.log"))
     held = f'if [ -d {lock} ]; then s="LOCK HELD"; else s="no lock"; fi'
+    many = (f'*"issue view"*"--comments"*) i=0; while [ "$i" -lt {bulk} ]; do i=$((i + 1)); '
+            f'printf "CLAIMED — lane bulk-%05d, session {UUID2}@Eagle, 2026-10-01T00:00:00Z, {OBJ}\\n" "$i"; '
+            f'done ;; ') if bulk else ""
     gh = box.fakebin / "gh"
     gh.write_text("#!/usr/bin/env bash" + "\n" + held + "\n" +
                   f'printf "gh %s :: %s\\n" "$*" "$s" >> {log}' + "\n" +
-                  f'case "$*" in *"--json comments"*) echo "{CLAIM_URL}" ;; esac' + "\n" +
+                  f'case "$*" in *"--json comments"*) echo "{CLAIM_URL}" ;; {many}esac' + "\n" +
                   "exit 0" + "\n", encoding="utf-8")
     gh.chmod(0o755)
     real = shutil.which("git")
