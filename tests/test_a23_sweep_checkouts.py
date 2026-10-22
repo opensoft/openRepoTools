@@ -224,7 +224,8 @@ def test_yes_without_LANES_LANE_is_refused(sweep):
     assert result.returncode == 2, (result.stdout, result.stderr)
     assert "LANES_LANE=<your lane> lane-end --sweep-checkouts --yes" in result.stderr
     assert "Nothing was removed" in result.stderr, result.stderr
-    assert box.everything() == before and box.origin_head() == head
+    assert box.everything() == before
+    assert box.origin_head() == head
 
 
 def test_yes_under_LANES_NO_FETCH_is_refused(sweep):
@@ -236,7 +237,8 @@ def test_yes_under_LANES_NO_FETCH_is_refused(sweep):
     result, _ = sweep("--yes", LANES_LANE=RUNNER, LANES_NO_FETCH="1")
     assert result.returncode == 2, (result.stdout, result.stderr)
     assert "LANES_NO_FETCH=1 is set" in result.stderr, result.stderr
-    assert box.everything() == before and box.origin_head() == head
+    assert box.everything() == before
+    assert box.origin_head() == head
 
 
 @pytest.mark.parametrize("extra", [
@@ -305,7 +307,8 @@ def test_clones_beside_W_are_listed_and_never_candidates(sweep):
     assert _tagged(rows, "beside") == {str(c) for c in box.profile_clones}, rows
     assert str(box.w.parent / "otherrepo") not in rows, rows
     judged = _tagged(rows, "remove") | _tagged(rows, "hold")
-    assert judged and all(Path(p).parent == box.lanes_root for p in judged), rows
+    assert judged, rows
+    assert all(Path(p).parent == box.lanes_root for p in judged), rows
     assert "listed and never removed by this build" in result.stdout
 
 
@@ -481,7 +484,8 @@ def test_holds(sweep, make, said):
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert rows[str(c)][0] == "hold", rows[str(c)]
     assert said in rows[str(c)][1], rows[str(c)]
-    assert c.is_dir() and box.everything()[str(c)] == before, "the held checkout is as it was"
+    assert c.is_dir()
+    assert box.everything()[str(c)] == before, "the held checkout is as it was"
     if make is not _lock:
         assert not (c / "lanes" / ".lanes-edit.lock").exists(), "the sweep's own lock is released"
     _no_aside(box)
@@ -631,7 +635,8 @@ def test_a_fetch_that_fails_holds(sweep):
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert rows[str(c)][0] == "hold", rows[str(c)]
     assert "its fetch of origin main failed" in rows[str(c)][1], rows[str(c)]
-    assert c.is_dir() and not (c / "lanes" / ".lanes-edit.lock").exists()
+    assert c.is_dir()
+    assert not (c / "lanes" / ".lanes-edit.lock").exists(), "its lock is released"
 
 
 @pytest.mark.parametrize("op,note", [
@@ -940,7 +945,9 @@ def test_noted_line_written_through_runner_checkout(sweep):
     mine = [i for i, line in enumerate(lines) if f"-C {runner} " in line]
     fetches = [i for i in mine if lines[i].startswith("fetch ")]
     pushes = [i for i in mine if lines[i].startswith("push ")]
-    assert fetches and pushes and fetches[0] < pushes[0], lines
+    assert fetches, lines
+    assert pushes, lines
+    assert fetches[0] < pushes[0], lines
     assert "NOTED in lane" in result.stdout, result.stdout
 
 
@@ -956,7 +963,8 @@ def test_nothing_removed_writes_nothing(sweep):
     result, rows = sweep("--yes", LANES_LANE=RUNNER)
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert not _tagged(rows, "removed"), rows
-    assert box.origin_head() == head and "NOTED" not in box.origin_file(f"lanes/log/{RUNNER}.md")
+    assert box.origin_head() == head
+    assert "NOTED" not in box.origin_file(f"lanes/log/{RUNNER}.md")
     assert box.git("-C", str(box.checkout(RUNNER)), "rev-parse", "HEAD").strip() == runner_head
     assert "NOTED in lane" not in result.stdout
 
@@ -1077,7 +1085,8 @@ def test_yes_without_a_session_uuid_is_refused(sweep):
     assert result.returncode == 2, (result.stdout, result.stderr)
     assert "has no transcript uuid for the session field" in result.stderr, result.stderr
     assert "Nothing was removed" in result.stderr
-    assert box.everything() == before and box.origin_head() == head
+    assert box.everything() == before
+    assert box.origin_head() == head
 
 
 def test_a_store_kept_inside_a_clone_is_leaned_on(sweep):
@@ -1105,7 +1114,8 @@ def test_a_store_kept_inside_a_clone_is_leaned_on(sweep):
         assert result.returncode in (0, 3), (result.stdout, result.stderr)
         assert rows[str(c)][0] == "hold", rows[str(c)]
         assert f"leaned on by {borrower} " in rows[str(c)][1], rows[str(c)]
-    assert c.is_dir() and store.is_dir()
+    assert c.is_dir()
+    assert store.is_dir()
     box.git("-C", str(borrower), "fsck", "--connectivity-only")
 
 
@@ -1125,4 +1135,5 @@ def test_a_directory_sharing_Ws_git_directory_is_kept_as_W(sweep):
         result, rows = sweep(*args, **env)
         assert result.returncode in (0, 3), (result.stdout, result.stderr)
         assert rows[str(d)] == ("keep", "W itself, the readers' copy"), rows[str(d)]
-    assert d.is_dir() and box.w_state() == w_before
+    assert d.is_dir()
+    assert box.w_state() == w_before
