@@ -27,8 +27,9 @@ FOUR GROUPS, ONE PREFIX EACH (plan.md, "The test layout"), so that a task's
   `openRepoTools` with the person's arguments unchanged and with neither
   signal Python ignores at start-up still ignored, and must refuse, running
   nothing, where there is no `bash`, a `PATH` whose last entry is a file
-  included, and where no `bash` on PATH can be run (design.md Decision 3 as
-  amended on 2026-10-18, FR-003, FR-004; #256).
+  included, and where no `bash` on PATH can be run, each after putting back
+  the signals it set for the exec (design.md Decision 3 as amended on
+  2026-10-18, FR-003, FR-004; #256).
 
 THE HELPERS ARE THE SUITE'S OWN. `command_env`, `placement_temporaries`,
 `path_without`, `SLOW_TOOLS`, `NEEDS_JQ` and `NOT_ROOT` come from
@@ -1158,6 +1159,104 @@ def test_entry_goes_past_a_bash_it_cannot_run_to_one_it_can(
     assert record.is_file() and read_record(record)[1][1:] == ["--version"], (
         "the runnable bash was not run with the person's arguments")
     assert not never.exists(), "the bash that cannot be run was run"
+
+
+#: WHAT A PYTHON PROCESS ENDS IN WHEN IT CANNOT FLUSH ITS STDERR AT EXIT: 120,
+#: the status `Py_RunMain` returns where `Py_FinalizeEx` fails. A refusal
+#: written to a pipe nobody reads ends so once SIGPIPE is ignored, as Python
+#: starts it: the write fails with `EPIPE`, the `BrokenPipeError` is not
+#: caught, and the bytes it could not write are still in stderr at exit.
+#: An unbuffered stderr (`PYTHONUNBUFFERED`) holds none: the run ends in 1.
+STDERR_UNFLUSHABLE = 120
+
+
+def run_entry_with_stderr_unread(
+        script: Path, *args: str, home: Path, env: dict | None = None,
+        cwd: Path | None = None) -> subprocess.CompletedProcess:
+    """`run_entry`, with stderr a pipe whose READ END IS ALREADY CLOSED.
+
+    The first byte the run writes there is an `EPIPE`: an error in the writer
+    where SIGPIPE is ignored, and a SIGPIPE that kills it where it is not.
+    Nothing is read from stderr, so the result's `stderr` is `None`.
+    """
+    read_end, write_end = os.pipe()
+    os.close(read_end)
+    try:
+        return subprocess.run(
+            [str(script), *args], stdout=subprocess.PIPE, stderr=write_end,
+            text=True, check=False, input="", env=command_env(home, env),
+            cwd=None if cwd is None else str(cwd), timeout=60)
+    finally:
+        os.close(write_end)
+
+
+@pytest.mark.parametrize("kind", ["no-bash", "no-execute-bit"])
+@WINDOWS_SKIP
+def test_entry_puts_the_signals_back_before_either_refusal_is_printed(
+        installed, tmp_path, kind):
+    """#256 (NIT-2): THE SIGNALS GO BACK BEFORE EITHER REFUSAL, AND A STDERR
+    NOBODY READS IS WHERE THAT SHOWS.
+
+    `main()` sets SIGPIPE and SIGXFSZ to `SIG_DFL` for its exec, and where the
+    exec fails it puts each back to what it was, as Python starts with both
+    ignored, in ONE loop that runs before either message is printed, so that
+    a refusal runs exactly as it did before the exec change. Without that loop
+    the lines, the exit status and the empty stdout are the same, and every
+    test above still passes. A write to a pipe with no reader is what differs:
+    with SIGPIPE ignored it fails with `EPIPE` and the run ends in 120
+    (`STDERR_UNFLUSHABLE`), and with SIGPIPE left at `SIG_DFL` it kills the run
+    with SIGPIPE.
+
+    So the console script is run that way, on both paths: with no `bash` at
+    all (`NO_BASH`) and with a `bash` that has no execute bit
+    (`UNRUNNABLE_BASH`). `--version` is its argument, which could place
+    nothing. The case is checked first, in the console script's own
+    interpreter, so this cannot pass by reaching the other arm. The run must
+    not be killed by SIGPIPE and must end in 120. Then the same run with a
+    stderr that CAN be read must be the refusal itself, its line and exit 2,
+    so that the 120 is the refusal's: a Python that writes anything to that
+    pipe ends in 120, and it need not be this one's refusal. SIGXFSZ goes back
+    in the same loop, and a pipe cannot show it: this holds SIGPIPE.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    record = tmp_path / "bash-was-run"
+    if kind == "no-bash":
+        search_path = path_without(tmp_path, "bash")
+        name, number, line = "FileNotFoundError", errno.ENOENT, NO_BASH
+    else:
+        directory = tmp_path / kind
+        unrunnable_bash(directory, kind, record)
+        search_path = str(directory)
+        name, number = UNRUNNABLE_BASHES[kind]
+        line = UNRUNNABLE_BASH.format(why=os.strerror(number))
+    # PYTHONUNBUFFERED is emptied, which Python reads as unset: an unbuffered
+    # stderr would end the same run in 1 and not in 120.
+    env = {"PATH": search_path, "PYTHONUNBUFFERED": ""}
+    probe = execvp_error(installed, search_path)
+    assert (probe.returncode, probe.stdout) == (
+        0, f"{name} {errno.errorcode[number]}\n"), (
+        "the case is wrong: on this PATH execvp does not raise "
+        f"{name} ({errno.errorcode[number]}):\n{said(probe)}")
+    unread = run_entry_with_stderr_unread(
+        installed.script, "--version", home=home, env=env, cwd=tmp_path)
+    assert unread.returncode != -signal.SIGPIPE, (
+        "the console script was killed by SIGPIPE writing its refusal to a "
+        "stderr nobody reads: the entry module did not put SIGPIPE back to "
+        "ignored, as Python starts it, before it printed, so the refusal does "
+        "not run as it did before the exec change")
+    assert (unread.returncode, unread.stdout) == (STDERR_UNFLUSHABLE, ""), (
+        "the refusal did not end as a Python process ends when its stderr "
+        f"cannot be written: exit {unread.returncode} with stdout "
+        f"{unread.stdout!r}, not exit {STDERR_UNFLUSHABLE} and nothing on "
+        "stdout")
+    readable = run_entry(installed.script, "--version", home=home, env=env,
+                         cwd=tmp_path)
+    assert (readable.returncode, readable.stdout, readable.stderr) == (
+        2, "", line + "\n"), (
+        "the run held to exit 120 above is not the refusal: with a stderr "
+        f"that can be read, the console script says:\n{said(readable)}")
+    assert not record.exists(), "the bash that cannot be run was run"
 
 
 #: What `wip_shape_ref` reaches only when there is no pin beside the
