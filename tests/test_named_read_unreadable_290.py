@@ -27,7 +27,10 @@ none has where the events' own list of the logs failed; a row whose log could
 not be listed is never classed DORMANT; and `lane-state`'s 10 for a snapshot it
 could not read names the file its one read of the log placed. The hold
 `lanes-index` makes over that 10 gives `lane-state`'s sentence with
-`LANES_DEBUG` set too, not the `(exit 10)` line `die` adds after it.
+`LANES_DEBUG` set too, not the `(exit 10)` line `die` adds after it. And
+`lane-state` hands the `dir` it read on as `lane-start` writes one, quoted
+only where it holds a space, so a bare `dir` holding a `"` is read whole, as
+on main.
 
 Every case runs on `test_lanes_index`'s own estate and its helpers.
 """
@@ -35,11 +38,13 @@ Every case runs on `test_lanes_index`'s own estate and its helpers.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
-from test_lanes_index import (HEADS, LANES, SHOW_LOG_B1, US, _a_lane_found_through_its_log,
-                              _git_shim, _row, _shim_calls, _sidecar, _unreadable, _wt, inv)
+from test_lanes_index import (HEADS, LANES, SHOW_LOG_B1, US, UUID_B1,
+                              _a_lane_found_through_its_log, _git_shim, _row, _shim_calls,
+                              _sidecar, _unreadable, _wt, inv)
 
 __all__ = ["inv"]  # the fixture, imported so that pytest finds it here
 
@@ -508,3 +513,54 @@ def test_an_unreadable_snapshot_is_named_where_the_lanes_one_read_placed_it(inv)
         assert f"Read it by hand: {snap}" in res.stderr, res.stderr
     finally:
         snap.chmod(0o644)
+
+
+# ----------------- `lane-state` hands its `dir` on as `lane-start` writes one
+
+
+def _a_lane_resumed_under(inv, parent: str) -> tuple[dict, Path]:
+    """repoB-1 RESUMED in `<root>/<parent>/repoB`, its `dir` spelled as
+    `lane-start`'s `quote_subfield` spells one - quoted where it holds a
+    space, bare where it does not - and taken RUNNING by `set-lane-state`,
+    which files the snapshot under the root the log's own read of that `dir`
+    places. No override names a control root. Returns that environment and
+    the snapshot."""
+    checkout = inv.root / parent / "repoB"
+    checkout.mkdir(parents=True)
+    spelled = f'"{checkout}"' if " " in str(checkout) else str(checkout)
+    log = inv.e.wip / "lanes" / "log" / "repoB-1.md"
+    log.write_text(log.read_text(encoding="utf-8") +
+                   f"RESUMED — lane repoB-1, session {UUID_B1}@Eagle, 2026-10-05T00:00:00Z, "
+                   f"lane:repoB-1 → dir {spelled}; profile team-02a\n", encoding="utf-8")
+    inv.e._git("add", "-A")
+    inv.e._git("commit", "-q", "-m", "repoB-1 resumed in a checkout of its own")
+    inv.e._git("push", "-q", "origin", "main")
+    by_dir = {"LANES_LANE_STATE_ROOT": None}
+    put = inv.e.edit("set-lane-state", "repoB-1", "RUNNING", "--operation", "op-test-b1",
+                     env=by_dir)
+    assert put.returncode == 0, put.stderr
+    return by_dir, checkout.parent / ".lane-state" / "repoB-1" / "lane-state.yaml"
+
+
+@pytest.mark.parametrize("parent", ['q"uote', "My Projects"], ids=["quote-mark", "space"])
+def test_lane_state_hands_the_dir_it_read_on_as_lane_start_writes_it(inv, parent):
+    """THE `dir` GOES ON QUOTED ONLY WHERE IT HOLDS A SPACE (#290, by Brett
+    Heap's ruling for #295, "quote only where a space is"). `lane-state` reads
+    the lane's `dir` once and hands it to the snapshot's read as a payload. It
+    quoted every value there, and a quoted value ends at its first `"`: the
+    bare `<root>/q"uote/repoB`, which `lane-start` refuses to write and a line
+    written by hand can hold, came back as `<root>/q`. That one's parent is a
+    directory, so the read looked under `<root>/.lane-state` and said 8, "no
+    snapshot", over the one `set-lane-state` had filed and main reads. A `dir`
+    holding a space is still read whole: handed on bare, it would end at the
+    space and look in the same wrong place."""
+    by_dir, snap = _a_lane_resumed_under(inv, parent)
+    named = inv.e.edit("lane-dir", "repoB-1", env=by_dir)
+    assert named.returncode == 0, (named.returncode, named.stdout, named.stderr)
+    assert named.stdout.strip() == str(inv.root / parent / "repoB"), named.stdout  # read whole
+    assert snap.is_file(), snap  # filed where the whole `dir` places it
+    assert not (inv.root / ".lane-state").exists()  # where a cut `dir` looks: not vacuous
+    res = inv.e.edit("lane-state", "repoB-1", env=by_dir)
+    assert res.returncode == 0, (res.returncode, res.stdout, res.stderr)
+    read = dict(line.split("\t", 1) for line in res.stdout.splitlines() if "\t" in line)
+    assert (read.get("state"), read.get("file")) == ("RUNNING", str(snap)), res.stdout
