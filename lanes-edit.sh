@@ -6631,6 +6631,14 @@ write_event() {
   # the register for a LANDING or a LANDED. A pending change to any of them —
   # or to the register, whoever made it — refuses; nothing is captured.
   checkout_sync "write $we_verb" "$we_lane" write "${we_paths[@]}" "$we_lp"
+  # THE SEAM AGAIN, ON WHAT S3 BROUGHT IN (lane openRepoTools-3's review of
+  # #307, 283). The ask above read the ref as last fetched; S3's fetch and
+  # fast-forward may have brought in the managed ledger's marker for this
+  # lane since, and a legacy line written over it is the act the ruling
+  # forbids. Asked here, under the lock and before a byte, it refuses (2)
+  # with nothing written. The same line follows S3 in the row verbs and
+  # `rename-lane`.
+  is_lane_verb "$we_verb" && managed_seam_refuse "$we_lane" "a $we_verb line in its object log"   # 283: again, on what S3 brought in
   # AMENDMENT 15 — `ensure_log` may RENAME the lane's log to the row's own
   # spelling, and that rename lands "in that same commit" as the write. The
   # old path joins the pathspecs so the deletion is committed beside the append.
@@ -16362,6 +16370,7 @@ Nothing was written." 2
     # hands without the ledger: refused before the lock, nothing written.
     managed_seam_refuse "$lane" "set-row-state"
     acquire_lock; checkout_sync set-row-state "$lane" write "$LANES_PATH"   # Amendment 23 S3
+    managed_seam_refuse "$lane" "set-row-state"   # 283: again, on what S3 brought in (write_event says why)
     n="$(row_line "$lane")" || exit 2
     row="$(sed -n -e "${n}p" "$LANES_FILE")"
     srs_rc=0; row_split_state_cell "$row" || srs_rc=$?
@@ -16401,6 +16410,7 @@ Nothing was written." 2
       die "the replacement text carries managed-owner vocabulary ('managed owner', 'managed binding', 'mode=managed' or 'managed:'), and only the managed ledger's own writer writes a managed-owner marker, and a legacy writer that wrote its vocabulary into a row would forge that lane's ownership (ruling 2026-10-04: \"managed ledger owns enrolled lanes; #97 owns legacy\"). Nothing was written." 2
     fi
     acquire_lock; checkout_sync replace-in-row "$lane" write "$LANES_PATH"   # Amendment 23 S3
+    managed_seam_refuse "$lane" "replace-in-row"   # 283: again, on what S3 brought in
     n="$(row_line "$lane")" || exit 2
     row="$(sed -n -e "${n}p" "$LANES_FILE")"
     c="$(count_occurrences "$row" "$old")" || exit 2
@@ -16465,6 +16475,7 @@ Nothing was written." 2
     lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
     managed_seam_refuse "$lane" "append-session-id"   # Copilot round 3 on #97
     acquire_lock; checkout_sync append-session-id "$lane" write "$LANES_PATH"   # Amendment 23 S3
+    managed_seam_refuse "$lane" "append-session-id"   # 283: again, on what S3 brought in
     n="$(row_line "$lane")" || exit 2
     row="$(sed -n -e "${n}p" "$LANES_FILE")"
     row_split_session_cell "$row" || die "lane $lane's row (line $n) does not have three '|' before its session cell ends; refusing to touch it" 2
@@ -16825,6 +16836,7 @@ Nothing was written." 2
     # checkout at origin's tip (Amendment 23 S3).
     acquire_lock
     checkout_sync "rename lane $rl_old" "$rl_old" write "$LANES_PATH"
+    managed_seam_refuse "$rl_old" "rename-lane"   # 283: again, on what S3 brought in
 
     # Refuse a spelling-only rename before probing both roots: on a
     # case-insensitive filesystem they are the same intent, whose stored lane

@@ -559,3 +559,72 @@ def test_a_migration_dry_run_names_a_stray_copy_beside_the_published_log_as_one(
     again = box.helper("migrate-state-cells")
     assert again.returncode == 0, (again.stdout, again.stderr)
     assert "SKIPPED" not in again.stdout, "the recovery the line gives settles it"
+
+
+# -------------------------------------------- the managed seam, after S3 too
+#
+# 283 of lane openRepoTools-3's review of #307 (its P2). The legacy row verbs,
+# `rename-lane` and `write_event`'s lane verbs asked the managed seam before
+# the lock, on the ref as last fetched (`set-row-state` runs no `log_sync` at
+# all), and S3's fetch and fast-forward then brought in what the seam never
+# saw: the managed ledger's marker in the lane's state cell. `set-row-state`
+# wrote over it (0), and the marker was gone from origin. Ruled 2026-10-04:
+# "managed ledger owns enrolled lanes; #97 owns legacy".
+
+MARKER = "MANAGED OWNER · ledger-1"
+S3_REFSPEC = "+refs/heads/main:refs/remotes/origin/main"
+
+#: Each legacy act the seam guards, on lane LANE: (argv, extra environment,
+#: what must not be on origin after it).
+SEAM_ACTS = {
+    "set-row-state": (("set-row-state", LANE, "LIVE · a legacy write"), {}, " · a legacy write |"),
+    "replace-in-row": (("replace-in-row", LANE, "tester", "tester-x", "a legacy replace"), {}, "tester-x"),
+    "append-session-id": (("append-session-id", LANE, UUID, "harness `a23b3009-a2a2-4000-8000-a23b3009a2a2`"),
+                          {}, "a23b3009"),
+    "rename-lane": (("rename-lane", LANE, "repoS3-9", "a legacy rename", "--no-github"),
+                    {"LANES_SESSION": UUID}, "repoS3-9"),
+    "log-PAUSED": (("log", "PAUSED", f"lane:{LANE}", "→", "swap; dir /nowhere", "a legacy pause"),
+                   {"LANES_LANE": LANE, "LANES_SESSION": UUID}, "a legacy pause"),
+}
+
+
+def _the_ledger_enrols_at_s3s_fetch(box: Box) -> str:
+    """The managed ledger writes its marker into lane LANE's state cell, and
+    its commit lands on origin at this write's S3 fetch (its refspec): after
+    the write's own seam check before the lock, before the fast-forward.
+    Returns the row as the ledger left it."""
+    seed = shlex.quote(str(box.seed))
+    box.git("-C", str(box.seed), "pull", "-q", "--ff-only", "origin", "main")
+    path = box.seed / REGISTER
+    text = path.read_text(encoding="utf-8")
+    enrolled = _row(LANE, state=MARKER)
+    path.write_text(text.replace(_row(LANE), enrolled), encoding="utf-8")
+    box.commit(box.seed, "the ledger enrols the lane", REGISTER)
+    count = shlex.quote(str(box.root / "s3hook.count"))
+    box.use_net('[ "$1" = fetch ] || exit 0' + "\n" +
+                f'case "$*" in *"{S3_REFSPEC}"*) : ;; *) exit 0 ;; esac' + "\n" +
+                f"[ -e {count} ] && exit 0" + "\n" +
+                f"echo 1 > {count}" + "\n" +
+                f"git -C {seed} push -q origin main" + "\n" + "exit 0" + "\n")
+    return enrolled
+
+
+@pytest.mark.parametrize("act", sorted(SEAM_ACTS))
+def test_a_marker_S3_brings_in_is_asked_again_and_refuses_the_legacy_act(box: Box, act: str):
+    """283: the seam is asked again right after S3, on what the fast-forward
+    brought in. A marker that landed under the write refuses it (2), nothing
+    is written, and origin keeps the ledger's row as the ledger wrote it."""
+    c = box.seam()
+    enrolled = _the_ledger_enrols_at_s3s_fetch(box)
+    argv, env, never = SEAM_ACTS[act]
+    result = box.helper(*argv, **env)
+    assert (box.root / "s3hook.count").exists(), "the marker landed at S3's fetch"
+    assert result.returncode == 2, result.stderr
+    assert f"lane {LANE} is owned by the managed ledger" in result.stderr, result.stderr
+    assert "Nothing was written" in result.stderr
+    register = box.origin_register()
+    assert enrolled in register.splitlines(), "the ledger's row is as the ledger wrote it"
+    assert never not in register and never not in box.origin_file(f"lanes/log/{LANE}.md")
+    assert "push" not in box.net_ops(), "refused before any push"
+    assert box.unpublished(c) == []
+    assert not box.lock_of(c).exists()
