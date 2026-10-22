@@ -528,6 +528,15 @@ def _hook_on_fetch_of(box: Sweep, target: Path, body: str) -> None:
         "exit 0\n"))
 
 
+def _push_from_peer(box: Sweep, path: str, text: str, message: str) -> str:
+    """A hook's shell command: the peer that seeded origin appends `text` to
+    `path` and pushes it, as another session's write lands on origin."""
+    peer = box.seed
+    return (f"git -C {peer} pull -q --ff-only origin main && "
+            f"printf '%s' '{text}' >> {peer}/{path} && "
+            f"git -C {peer} commit -q -am {message} && git -C {peer} push -q origin main")
+
+
 def test_recheck_before_removal(sweep):
     """THE HOLDS ARE READ AGAIN UNDER THE LOCK, AFTER THE FETCH: a handoff
     written into the checkout after the listing and before its removal holds
@@ -645,6 +654,68 @@ def test_session_records_unreadable_at_the_recheck_keep_the_checkout(sweep):
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert rows[str(c)][0] == "hold", rows[str(c)]
     assert "was not read fresh" in rows[str(c)][1], rows[str(c)]
+    assert c.is_dir()
+
+
+@pytest.mark.skipif(getattr(os, "geteuid", lambda: 1)() == 0,
+                    reason="root reads a file whose mode is 000")
+def test_a_capture_that_cannot_be_read_back_holds_by_itself(sweep):
+    """THE RE-ASK'S NOTES ARE READ BACK, OR THE CHECKOUT IS HELD FOR THAT, with
+    its own reason (rv4-r2's SHOULD 1). The file `sc_still` captures the
+    re-ask's notes in goes mode 000 during the re-ask's own fetch of W, so
+    `cat` cannot read it back. The checkout is held because the capture could
+    not be read back, not by a stand-in sentence that matches another note's
+    clause and then names that note's reason."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    tmpdir = Path(box.env["TMPDIR"])
+    marker = box.root / "fetched.marker"
+    box.use_net(hook=(
+        'case " $* " in\n'
+        f'  *" -C {c} fetch "*) touch {marker} ;;\n'
+        f'  *" -C {box.w} fetch "*) if [ -e {marker} ]; then '
+        f'chmod 000 {tmpdir}/lane-end-sweep.* 2>/dev/null || :; fi ;;\n'
+        'esac\nexit 0\n'))
+    try:
+        result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    finally:
+        for p in tmpdir.glob("lane-end-sweep.*"):
+            p.chmod(0o600)
+    assert marker.exists(), box.net_log.read_text(encoding="utf-8")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+    assert "its capture could not be read back" in rows[str(c)][1], rows[str(c)]
+    assert "the register could not be read" not in rows[str(c)][1], rows[str(c)]
+    assert c.is_dir()
+
+
+def test_a_register_unreadable_at_the_recheck_keeps_the_checkout(sweep):
+    """The re-ask under the lock says the register "could not be read, so its
+    rows are not in this listing" and exits 0, as the listing does; the
+    listing's refusal is exit 1. Here the register reads at the listing; then
+    origin takes a commit that changes it, and the re-ask's own fetch of W
+    brings that commit in, after which its register blob is moved out of W's
+    objects. The tree still names the register, so it is published and `git
+    show` cannot read it: whether the lane is CLOSED is no longer established,
+    and the checkout is kept."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    marker = box.root / "pushed.marker"
+    aside = box.root / "register-blob.aside"
+    touched = _push_from_peer(box, "lanes/LANES.md", "\n", "touched")
+    box.use_net(hook=(
+        'case " $* " in\n'
+        f'  *" -C {c} fetch "*) if [ ! -e {marker} ]; then {touched} && touch {marker}; fi ;;\n'
+        f'  *" -C {box.w} fetch "*) if [ -e {marker} ]; then shift; git "$@" || exit $?; '
+        f'b="$(git -C {box.w} rev-parse refs/remotes/origin/main:lanes/LANES.md)" && '
+        f'mv -- "{box.w}/.git/objects/${{b:0:2}}/${{b:2}}" {aside} 2>/dev/null; exit 97; fi ;;\n'
+        'esac\nexit 0\n'))
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert aside.is_file(), box.net_log.read_text(encoding="utf-8")
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert ("was not read fresh under its checkout's lock: the register could not be read"
+            in rows[str(c)][1]), rows[str(c)]
     assert c.is_dir()
 
 

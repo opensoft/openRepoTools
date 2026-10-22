@@ -1545,7 +1545,9 @@ SCC
   # --fetch` exits 0 on a W fetch that failed after `ls-remote` answered
   # (`fell-back`) and on records it could not read, and says so only in its
   # notes. A row read from a stale ref is not a state "after a fetch", so a
-  # re-ask whose notes say any of these holds the checkout.
+  # re-ask whose notes say any of these holds the checkout. A capture that
+  # cannot be made, or cannot be read back, holds it by itself, with that as
+  # its reason (rv4-r2's SHOULD 1), as the listing refuses on both.
   sc_still() {   # <path> <lane> <new name's checkout, or empty>
     ss_rc=0
     LE_TMP="$(mktemp "${TMPDIR:-/tmp}/lane-end-sweep.XXXXXX" 2>/dev/null || printf '')"
@@ -1553,8 +1555,12 @@ SCC
       SC_WHY="no temporary file could be made to capture what lane $2's state read said, so whether it was read fresh under its checkout's lock was never established"; return 1
     fi
     ss_row="$("$LANES_EDIT" lanes --fetch --closed --lane "$2" 2>"$LE_TMP")" || ss_rc=$?
-    ss_err="$(cat -- "$LE_TMP" 2>/dev/null)" || ss_err="could not be read, so its rows are not in this listing (the capture of the notes)"
+    ss_cat=0
+    ss_err="$(cat -- "$LE_TMP" 2>/dev/null)" || ss_cat=$?
     rm -f -- "$LE_TMP"; LE_TMP=""
+    if [ "$ss_cat" != 0 ]; then
+      SC_WHY="what lane $2's state read said was captured, and its capture could not be read back, so whether it was read fresh under its checkout's lock was never established"; return 1
+    fi
     ss_why=""
     case "$ss_err" in
       *"reading the logs as they stand locally"*)
