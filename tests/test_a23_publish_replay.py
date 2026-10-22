@@ -604,6 +604,50 @@ def test_commit_refuses_an_insertion_whose_context_moved(box: Box):
     _settled(box, c)
 
 
+TWICE = "LANDING — lane repoS4-7, session x@Eagle, 2026-10-20T00:00:00Z, PR #7 into main"
+
+
+@pytest.mark.parametrize("dup", ["a-repeated-line", "a-blank-line"])
+def test_commit_refuses_a_hand_edit_whose_line_occurs_twice_on_origin(box: Box, dup: str):
+    """292 of lane openRepoTools-3's review of #307, its answer to Q3: B22
+    retried a failed carry with `git apply -C0` wherever every hunk removes
+    a line, and `-C0` drops the context and edits the first copy of that line
+    it finds. A hand edit of the SECOND of two identical lines, with origin
+    changing the line after it, was pushed onto the first copy (0), "anchored
+    by those lines alone"; a replaced blank line, of which the register has
+    dozens, the same. Now `-C0` is tried only where every line the edit
+    replaces occurs once in origin's version; otherwise the edit is refused
+    (2), kept in its file and named, and the register is left at origin's."""
+    line = TWICE if dup == "a-repeated-line" else ""
+    after = "| `repoS4-8` | the line after the second copy |"
+    box.peer_edits(REGISTER, _row(NEIGHBOUR, uuid=UUID2),
+                   _row(NEIGHBOUR, uuid=UUID2) + "\n" + line + "\n" +
+                   "| `repoS4-6` | a line between the copies |" + "\n" + line + "\n" + after,
+                   "the same line twice")
+    c = box.seam()
+    path = c / REGISTER
+    text = path.read_text(encoding="utf-8")
+    second = text.rindex("\n" + line + "\n" + after) + 1
+    path.write_text(text[:second] + "LANDED — the second copy, edited by hand" + text[second + len(line):],
+                    encoding="utf-8")
+    box.peer_edits(REGISTER, after, "| `repoS4-8` | the line after it, changed on origin |",
+                   "origin changes the line after the second copy")
+    tip = box.origin_head()
+    result = box.helper("commit", "the second copy, by hand", LANES_LANE=LANE)
+    assert result.returncode == 2, result.stderr
+    err = result.stderr
+    assert "no longer applies" in err
+    assert "occurs more than once" in err, err
+    assert "anchored by those lines alone" not in err
+    saved = list((c / ".git" / "lanes-edit").glob("hand-edit-*.diff"))
+    assert len(saved) == 1 and str(saved[0]) in err, "the edit is kept and named"
+    assert "the second copy, edited by hand" in saved[0].read_text(encoding="utf-8")
+    assert (c / REGISTER).read_text(encoding="utf-8") == box.origin_register()
+    assert box.origin_head() == tip, "nothing was pushed"
+    assert box.git("-C", str(c), "status", "--porcelain").strip() == ""
+    _settled(box, c)
+
+
 def test_commit_replay_keeps_the_hand_edit(box: Box):
     """`commit`'s edit is the hand edit, which no argv makes again: a refused
     push gives it back to the working tree, and the re-run carries it onto

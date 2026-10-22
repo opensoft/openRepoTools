@@ -197,7 +197,9 @@ creating a second one; two rows differing only by case are a refusal naming both
    fetch that failed, for a writer. A pending hand edit of `lanes/LANES.md`
    refuses every writer but `commit`, which carries it across the
    fast-forward and commits it as its own act. A row edit carries even where
-   origin changed the row beside it, and anything that no longer applies is
+   origin changed the row beside it, where every line it replaces occurs
+   once in origin's version (a repeated or blank line is no anchor, so such
+   an edit is refused, kept and named), and anything that no longer applies is
    kept in a file under the checkout's `.git/lanes-edit/` and named. The old
    `LANES(pre-existing@…)` capture and `--sweep` are withdrawn (2);
 3. re-reads the file, edits **exactly one line** in place, and refuses if

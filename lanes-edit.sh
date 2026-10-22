@@ -2289,6 +2289,18 @@ cs_recheck() {   # <what> <the tip the checks read> <origin's tip after S3's fet
   exec "${BASH:-bash}" "$RESOLVED" ${ORIG_ARGV[@]+"${ORIG_ARGV[@]}"}
   die "could not run $RESOLVED again on origin's new tip. Nothing was written; run this write again." 1
 }
+# 0 where every line the saved hand edit replaces (its `-` lines) occurs
+# exactly once in the register as it now stands, origin's version after the
+# fast-forward; 1 otherwise, or where that cannot be read (292, below at the
+# carry). The lines are read from a file, never through `$(…)`, so a blank
+# line at the end of the list is asked about too.
+cs_removed_unique() {   # <the saved diff>
+  awk 'p && /^-/ { print substr($0, 2) } /^@@ / { p = 1 }' "$1" > "$cs_tmp/removed" 2>/dev/null || return 1
+  while IFS= read -r cru_l || [ -n "$cru_l" ]; do
+    [ "$(LC_ALL=C grep -cxF -- "$cru_l" "$LANES_FILE" 2>/dev/null || :)" = 1 ] || return 1
+  done < "$cs_tmp/removed"
+  return 0
+}
 checkout_sync() {   # <what> <lane> <write|carry|publish> [<pathspec it commits>…]
   cs_what="$1"; cs_lane="${2:-}"; cs_mode="$3"; shift 3
   CS_NO_ORIGIN_BRANCH=0; CS_CARRY_DIFF=""
@@ -2456,15 +2468,26 @@ CS_EOF
     fi
   fi
   if [ -n "$CS_CARRY_DIFF" ]; then
-    cs_applied=0
+    cs_applied=0; cs_dup=""
     git -C "$cs_c" apply --whitespace=nowarn -- "$CS_CARRY_DIFF" 2>"$cs_tmp/apply.err" && cs_applied=1
-    if [ "$cs_applied" = 0 ] && [ "$CS_CARRY_ANCHORED" = 1 ] &&
+    # AN ANCHOR IS A LINE THAT OCCURS ONCE (lane openRepoTools-3's review of
+    # #307, 292, its answer to Q3). `-C0` drops the context and edits the
+    # first copy of a replaced line it finds, searching out from near its old
+    # line number: the second of two identical lines, a replaced blank line
+    # (the register has dozens), a table's second separator, each went to
+    # another copy and was pushed there. So `-C0` is tried only where every
+    # line the edit replaces occurs exactly once in origin's version — a real
+    # row does — and otherwise the edit is refused and kept, at the cost of
+    # one re-edit.
+    if [ "$cs_applied" = 0 ] && [ "$CS_CARRY_ANCHORED" = 1 ] && ! cs_removed_unique "$CS_CARRY_DIFF"; then
+      cs_dup=", and a line it replaces occurs more than once there, or not at all, so that line is no anchor for it and it is not placed by that line alone"
+    elif [ "$cs_applied" = 0 ] && [ "$CS_CARRY_ANCHORED" = 1 ] &&
        git -C "$cs_c" apply -C0 --whitespace=nowarn -- "$CS_CARRY_DIFF" 2>>"$cs_tmp/apply.err"; then
       cs_applied=1
-      note "origin changed a line beside the hand edit and none of the lines it replaces, so the edit was applied anchored by those lines alone"
+      note "origin changed a line beside the hand edit and none of the lines it replaces, each of which occurs once there, so the edit was applied anchored by those lines alone"
     fi
     if [ "$cs_applied" = 0 ]; then
-      cs_refuse "$cs_what" "the hand edit of $LANES_PATH no longer applies to origin's version of it, so it is KEPT in $CS_CARRY_DIFF and the register is left at origin's version (Amendment 23 S3 step 4). git said: $(head -n 3 -- "$cs_tmp/apply.err" 2>/dev/null | tr '\n' ' ')" \
+      cs_refuse "$cs_what" "the hand edit of $LANES_PATH no longer applies to origin's version of it$cs_dup, so it is KEPT in $CS_CARRY_DIFF and the register is left at origin's version (Amendment 23 S3 step 4). git said: $(head -n 3 -- "$cs_tmp/apply.err" 2>/dev/null | tr '\n' ' ')" \
         "read what you wrote: cat $CS_CARRY_DIFF" \
         "make the edit again on the register as it now is, then: LANES_LANE=${cs_lane:-<lane>} $SELF commit \"<what you wrote>\""
     fi
