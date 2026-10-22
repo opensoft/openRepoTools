@@ -1154,7 +1154,10 @@ def test_a_target_inside_another_clones_git_directory_is_refused_and_nothing_wri
     line under `[core]`, `--whole` replaced the file, and every git command in
     that clone then failed (128), its own lane's S3 with them. No handoff
     lives in a git directory (A47): 2 before a byte, nothing written there or
-    here, that clone's git still reads its config, and nothing on stdout."""
+    here, that clone's git still reads its config, and nothing on stdout.
+    A `--stamp` refused here says the line it would have written, as every
+    refusal of it does (m2a's N03): a stamp that is owed is a stamp somebody
+    writes by hand."""
     c = box.seam()
     if where == "sibling-clone":
         d = box.clone(box.lanes_root / NEIGHBOUR)
@@ -1176,6 +1179,8 @@ def test_a_target_inside_another_clones_git_directory_is_refused_and_nothing_wri
     assert f"is {cfg}, inside a git directory ({gd})" in result.stderr
     assert "Nothing was written." in result.stderr
     assert "another repository's handoff" not in result.stderr
+    said = f"the stamp line it would have written under the handoff's header block: {STAMP}" in result.stderr
+    assert said == (mode == "stamp"), result.stderr
     assert cfg.read_bytes() == before
     assert box.git("--git-dir", str(gd), "config", "core.bare").strip() == (
         "true" if d is None else "false"), "that clone's git still reads its config"
@@ -1626,13 +1631,20 @@ def test_a_moved_handoff_the_replay_cannot_follow_is_kept_on_HEAD_exit_6(box: Bo
 OUTSIDE_REL = "notes/moved-handoff.md"
 
 
+def _elsewhere(box: Box) -> Path:
+    """A file in another repository's folder, which nobody wrote."""
+    return box.root / "elsewhere" / "handoff.md"
+
+
 def _peer_repoints_the_cell(box: Box, cell: str) -> None:
     """In one commit the peer clone does NOT push (the race hook lands it at
     this write's push), the lane's handoff leaves origin and the row's cell
     stops naming it (rv2a-c3's probe N5): "moved-no-file" deletes it and
     points the cell at MOVED_REL, which origin has no file for; "emptied"
     deletes it and empties the cell; "moved-out-of-handoffs" `git mv`s it to
-    OUTSIDE_REL and points the cell there."""
+    OUTSIDE_REL and points the cell there; "another-repository" deletes it
+    and points the cell at a path in a folder of another repository, which
+    this checkout cannot translate (m2a's N05)."""
     p = box.peer
     box.git("-C", str(p), "fetch", "-q", "origin")
     box.git("-C", str(p), "merge", "-q", "--ff-only", "refs/remotes/origin/main")
@@ -1641,7 +1653,10 @@ def _peer_repoints_the_cell(box: Box, cell: str) -> None:
         box.git("-C", str(p), "mv", "--", HANDOFF_REL, OUTSIDE_REL)
     else:
         box.git("-C", str(p), "rm", "-q", "--", HANDOFF_REL)
-    new = {"moved-no-file": MOVED_REL, "emptied": "", "moved-out-of-handoffs": OUTSIDE_REL}[cell]
+    if cell == "another-repository":
+        _elsewhere(box).parent.mkdir()  # the folder is there, the file is not
+    new = {"moved-no-file": MOVED_REL, "emptied": "", "moved-out-of-handoffs": OUTSIDE_REL,
+           "another-repository": str(_elsewhere(box))}[cell]
     reg = p / REGISTER
     text = reg.read_text(encoding="utf-8")
     assert text.count(f"| {HANDOFF_REL} |") == 1
@@ -1650,7 +1665,7 @@ def _peer_repoints_the_cell(box: Box, cell: str) -> None:
     box.git("-C", str(p), "commit", "-q", "-m", f"a peer repoints the lane's handoff cell ({cell})")
 
 
-@pytest.mark.parametrize("cell", ["moved-no-file", "emptied", "moved-out-of-handoffs"])
+@pytest.mark.parametrize("cell", ["moved-no-file", "emptied", "moved-out-of-handoffs", "another-repository"])
 def test_a_cell_a_peer_repoints_where_no_replay_can_write_keeps_the_write_on_HEAD_exit_6(box: Box, cell: str):
     """rv2a-c3's NIT 1 (its probe N5): A46 replayed wherever origin's row
     named another cell, though the re-run writes only a handoff that is
@@ -1659,9 +1674,10 @@ def test_a_cell_a_peer_repoints_where_no_replay_can_write_keeps_the_write_on_HEA
     flight had the commit dropped and the re-run say "Nothing was written"
     (8): the write was only in the reflog. Another cell is followed now only
     to a file under `handoffs/` that origin has (A48); otherwise — no file,
-    no cell, or a file the re-run refuses (2, outside `handoffs/`) — A37's
-    keep holds: 6, the write in this checkout, one commit unpublished,
-    nothing replayed."""
+    no cell, a file the re-run refuses (2, outside `handoffs/`), or a path
+    this checkout cannot translate, in another repository (m2a's N05) —
+    A37's keep holds: 6, the write in this checkout, one commit unpublished,
+    nothing replayed, and nothing written in that other repository either."""
     c = box.seam()
     f = c / HANDOFF_REL
     _peer_repoints_the_cell(box, cell)
@@ -1677,6 +1693,7 @@ def test_a_cell_a_peer_repoints_where_no_replay_can_write_keeps_the_write_on_HEA
     assert f.read_text(encoding="utf-8") == stamped(HANDOFF), "the write is in this checkout"
     assert not _origin_has(box, HANDOFF_REL)
     assert [line.split()[1] for line in box.unpublished(c)] == [kept], "one commit unpublished, this write's"
+    assert not _elsewhere(box).exists(), "nothing was written in another repository either"
     assert result.stdout == _line(f)
     _released(box, c)
 
@@ -1966,6 +1983,45 @@ def test_a_peer_that_deletes_the_handoff_and_the_register_mid_push_keeps_the_wri
     assert "push refused (attempt" not in err, "nothing is dropped or replayed"
     assert f.read_text(encoding="utf-8") == stamped(HANDOFF), "the write is in this checkout"
     assert not _origin_has(box, REGISTER)
+    assert [line.split()[1] for line in box.unpublished(c)] == [kept], "one commit unpublished, this write's"
+    assert result.stdout == _line(f)
+    _released(box, c)
+
+
+def test_a_cell_a_peer_pads_otherwise_is_the_same_cell_and_the_write_is_kept_on_HEAD_exit_6(box: Box):
+    """m2a's J04b: A46 compares origin's cell with the cell this write
+    followed once the blanks round it are trimmed, as the register's readers
+    take it: padding is no part of a cell. A peer that moves the handoff to a
+    file whose name ends in a blank and writes the row's cell unpadded, with
+    that one trailing blank, has not pointed the cell anywhere else, so the
+    write is kept on HEAD (6) and is not replayed into the file whose name
+    ends in a blank (compared untrimmed, it was "another cell", a file origin
+    has: the commit dropped and the re-run writing there)."""
+    c = box.seam()
+    f = c / HANDOFF_REL
+    p = box.peer
+    odd = HANDOFF_REL + " "
+    box.git("-C", str(p), "fetch", "-q", "origin")
+    box.git("-C", str(p), "merge", "-q", "--ff-only", "refs/remotes/origin/main")
+    box.git("-C", str(p), "mv", "--", HANDOFF_REL, odd)
+    reg = p / REGISTER
+    text = reg.read_text(encoding="utf-8")
+    assert text.count(f"| {HANDOFF_REL} |") == 1
+    reg.write_text(text.replace(f"| {HANDOFF_REL} |", f"|{HANDOFF_REL} |"), encoding="utf-8")
+    box.git("-C", str(p), "add", "--", REGISTER)
+    box.git("-C", str(p), "commit", "-q", "-m", "a peer renames the file to a blank-ended name, cell unpadded")
+    box.race(prepared=True)
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT)
+    err = result.stderr
+    assert result.returncode == 6, err
+    kept = box.head(c)
+    assert f"origin's copy of {HANDOFF_REL} was deleted while this write's push was in flight" in err, err
+    assert f"kept on HEAD: {kept}" in err
+    assert "push refused (attempt" not in err, "nothing is dropped or replayed"
+    assert f.read_text(encoding="utf-8") == stamped(HANDOFF), "the write is in this checkout"
+    names = box.git("--git-dir", str(box.origin), "ls-tree", "-r", "--name-only", "main").splitlines()
+    assert HANDOFF_REL not in names and odd in names
+    assert not (c / odd).exists(), "nothing was written into the blank-ended name"
     assert [line.split()[1] for line in box.unpublished(c)] == [kept], "one commit unpublished, this write's"
     assert result.stdout == _line(f)
     _released(box, c)
