@@ -149,18 +149,21 @@ class Misread:
 
     def listing(self) -> dict[str, list[str]]:
         """`lanes --all` as the rows it prints, each split on TAB as every
-        reader of the row splits it, by the lane in its first column."""
+        reader of the row splits it, by the lane in its first column. The
+        lines are split on a newline and nothing else: `str.splitlines()` also
+        ends a line at 0x1c-0x1e, which a recorded dir can hold, and a row cut
+        there would read as two rows of the wrong shape (#301 review, 507)."""
         if self._listing is None:
             res = self.ok("lanes", "--all")
             self._listing = {line.split(TAB)[0]: line.split(TAB)
-                             for line in res.stdout.splitlines() if line}
+                             for line in res.stdout.split("\n") if line}
         return self._listing
 
     def worktrees(self, *args: str) -> tuple[subprocess.CompletedProcess, list, list]:
         """`lanes-edit.sh worktrees <args>`: the answer, its TREE rows as
         dicts, and every other line it printed (`UNREAD`, `PARTIAL`)."""
         res = self.e.edit("worktrees", *args)
-        lines = [line for line in res.stdout.splitlines() if line]
+        lines = [line for line in res.stdout.split("\n") if line]
         rows = [dict(zip(TREE_COLS, line.split(US))) for line in lines
                 if line.startswith("TREE" + US)]
         other = [line for line in lines if not line.startswith("TREE" + US)]
