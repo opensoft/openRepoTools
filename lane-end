@@ -263,8 +263,9 @@
 #      failed (which is NOT the same as the lane having no object log), or the
 #      close-out gate could not be read (no `lane-worktrees`, or an exit that
 #      is none of its three). `--sweep-checkouts`: no W, a read that failed
-#      (the listing of lanes, or a fetch `--yes` decides on), or a removal
-#      whose NOTED line could not be written
+#      (the listing of lanes, or a fetch `--yes` decides on), a removal
+#      that did not finish, or removals whose NOTED line was not written or
+#      not confirmed on origin (the commands to finish it are printed)
 #   2  refusal — bad arguments, no row (or two), something still in flight, or
 #      the close-out gate: the lane's trees, branches, scratch, caches or
 #      residue still on disk, or the sweep refusing the lane.
@@ -598,7 +599,15 @@ LE_TMP=""
 SC_LOCK=""
 cleanup() {
   [ -n "${LE_TMP:-}" ] && rm -f -- "$LE_TMP"
-  if [ -n "${SC_LOCK:-}" ]; then rm -f -- "$SC_LOCK/pid"; rmdir -- "$SC_LOCK" 2>/dev/null || :; fi
+  # A LOCK WHOSE PID LINE NAMES ANOTHER HOLDER IS LEFT AS IT IS, as
+  # `lanes-edit.sh`'s `mutex_release` leaves it (rv4's NIT 4): it was taken
+  # over while this run held it, and it is that writer's now.
+  if [ -n "${SC_LOCK:-}" ]; then
+    cl_l=""; IFS= read -r cl_l < "$SC_LOCK/pid" 2>/dev/null || :
+    if [ -z "$cl_l" ] || [ "$cl_l" = "$$ ${sc_ident:-}" ]; then
+      rm -f -- "$SC_LOCK/pid"; rmdir -- "$SC_LOCK" 2>/dev/null || :
+    fi
+  fi
   return 0
 }
 # A SIGNAL ENDS THE RUN, AND `cleanup` RUNS ON THE WAY OUT. `cleanup` returns
@@ -1401,11 +1410,28 @@ SH_REFS
   # every entry of `<W>-lanes/`, hidden ones included. Read afresh before each
   # removal, so a dependent kept earlier in the run still holds what it
   # borrows from.
-  sc_dep_lines=""
+  #
+  # AND A `.git` FILE IS READ THE SAME WAY (rv4's NIT 1): a directory whose
+  # `.git` file names a clone's git directory, or one inside it, works in it,
+  # and removing the clone takes that away. `sc_gitfile_lines` holds `<the
+  # directory> TAB <the real git directory its .git file names>`. A linked
+  # worktree is one, and is also held through `.git/worktrees/`.
+  sc_dep_lines=""; sc_gitfile_lines=""
   sc_dep_scan() {
-    sc_dep_lines=""
+    sc_dep_lines=""; sc_gitfile_lines=""
     for sds_e in "$sc_w" "$sc_root"/* "$sc_home"/* "$sc_home"/.[!.]* "$sc_home"/..?*; do
       [ -d "$sds_e" ] || continue
+      if [ -f "$sds_e/.git" ] && [ ! -L "$sds_e/.git" ]; then
+        sds_g="$(sed -n -e '1s/^gitdir: //p' -- "$sds_e/.git" 2>/dev/null)" || sds_g=""
+        case "$sds_g" in '') : ;; /*) : ;; *) sds_g="$sds_e/$sds_g" ;; esac
+        if [ -n "$sds_g" ]; then
+          sds_r="$(sc_real "$sds_g")"
+          if [ -n "$sds_r" ]; then
+            sc_gitfile_lines="${sc_gitfile_lines}${sds_e}${sc_tab}${sds_r}
+"
+          fi
+        fi
+      fi
       if [ -f "$sds_e/.git/objects/info/alternates" ]; then
         sds_a="$sds_e/.git/objects/info/alternates"; sds_o="$sds_e/.git/objects"
       elif [ -f "$sds_e/objects/info/alternates" ]; then
@@ -1427,15 +1453,15 @@ SH_REFS
   # A REPOSITORY LEANS ON A CLONE when its alternates file names an object
   # directory AT OR UNDER that clone — its own `.git/objects`, or a store kept
   # anywhere inside it — because removing the clone removes that store too.
-  sc_dependents() {   # <path> [<paths gone in this run>] — what leans on it
-    scd_out=""
+  sc_dependents() {   # <path> [<paths gone in this run>] [<lines>] — what leans on it
+    scd_out=""; scd_lines="${3-$sc_dep_lines}"
     while IFS="$sc_tab" read -r scd_d scd_t; do
       [ -n "$scd_d" ] && [ "$scd_d" != "$1" ] || continue
       case "$scd_t" in "$1" | "$1"/*) : ;; *) continue ;; esac
       case " ${2-} " in *" $scd_d "*) continue ;; esac
       scd_out="${scd_out:+$scd_out }$scd_d"
     done <<SCD
-$sc_dep_lines
+$scd_lines
 SCD
     printf '%s' "$scd_out"
   }
@@ -1486,6 +1512,8 @@ SCC
     sc_holds "$1" "$2"
     sjh_deps="$(sc_dependents "$1" "${3-}")"
     if [ -n "$sjh_deps" ]; then sc_hold "leaned on by $sjh_deps (its alternates file names this clone's objects)"; fi
+    sjh_deps="$(sc_dependents "$1" "${3-}" "$sc_gitfile_lines")"
+    if [ -n "$sjh_deps" ]; then sc_hold "its git directory is named by the .git file of $sjh_deps, which works in it"; fi
     case "$sc_cwd_mode" in
       none) sc_hold "neither /proc nor lsof is here, so whether a process works in it cannot be told" ;;
       *)
@@ -1527,8 +1555,27 @@ SCC
     printf '%s %s\n' "$$" "$sc_ident" > "$slt_d/pid" 2>/dev/null || :
     return 0
   }
+  # THE LOCK STAYS THE SWEEP'S, OR IT IS LEFT AS IT IS (rv4's NIT 4). A holder
+  # in another container is judged by the lock's age alone, so the sweep
+  # refreshes that age before each slow step, as `git_net`'s heartbeat does
+  # (`touch -c`, which never makes a lock). Its pid line is read again just
+  # before the move, and a lock whose line names another holder was taken
+  # over: the checkout is held, and that lock is left to its holder, as
+  # `mutex_release` leaves one.
+  sc_lock_beat() {
+    if [ -n "$SC_LOCK" ]; then touch -c -- "$SC_LOCK" 2>/dev/null || :; fi
+  }
+  sc_lock_holder() {   # the lock's pid line, or nothing where it cannot be read
+    slh_l=""; IFS= read -r slh_l < "$SC_LOCK/pid" 2>/dev/null || :
+    printf '%s' "$slh_l"
+  }
   sc_lock_drop() {
-    if [ -n "$SC_LOCK" ]; then rm -f -- "$SC_LOCK/pid"; rmdir -- "$SC_LOCK" 2>/dev/null || :; fi
+    if [ -n "$SC_LOCK" ]; then
+      sld_l="$(sc_lock_holder)"
+      if [ -z "$sld_l" ] || [ "$sld_l" = "$$ $sc_ident" ]; then
+        rm -f -- "$SC_LOCK/pid"; rmdir -- "$SC_LOCK" 2>/dev/null || :
+      fi
+    fi
     SC_LOCK=""
   }
   # `--yes` FETCHES EACH CHECKOUT FIRST, bounded as `lanes-edit.sh`'s network
@@ -1671,7 +1718,7 @@ SLU
   done
 
   printf '\n  under %s/:\n' "$sc_home"
-  sc_gone=""; sc_n_removed=0; sc_n_held=0; sc_n_removable=0; sc_partial=""
+  sc_gone=""; sc_n_removed=0; sc_n_partial=0; sc_n_held=0; sc_n_removable=0; sc_partial=""
   sc_removed_names=""; sc_held_names=""; sc_partial_names=""
   sc_say_held() {   # <path> <why it was a candidate> <what holds it>
     printf '    hold       %s  %s; holds: %s\n' "$1" "$2" "$3"
@@ -1703,15 +1750,25 @@ SLU
     if ! sc_lock_take "$sc_c"; then
       sc_say_held "$sc_c" "$sc_why" "$SC_WHY"; continue
     fi
-    sc_act_hold=""
+    sc_act_hold=""; sc_act_ign=""
+    sc_lock_beat
     if ! sc_fetch "$sc_c"; then
       sc_act_hold="its fetch of origin $sc_branch failed or timed out, and nothing is decided on an old origin/$sc_branch"
-    elif ! sc_still "$sc_c" "$sc_l" "$sc_new"; then
+    elif ! { sc_lock_beat; sc_still "$sc_c" "$sc_l" "$sc_new"; }; then
       sc_act_hold="$SC_WHY"
+    elif ! sc_is_register_clone "$sc_c"; then
+      sc_act_hold="it is no longer what made it a candidate: $SC_WHY"
     else
       sc_dep_scan; sc_cwd_scan
       sc_judge_holds "$sc_c" 1
-      sc_act_hold="$SC_HOLD"
+      sc_act_hold="$SC_HOLD"; sc_act_ign="$SC_IGN"
+    fi
+    if [ -z "$sc_act_hold" ]; then
+      sc_holder="$(sc_lock_holder)"
+      if [ "$sc_holder" != "$$ $sc_ident" ]; then
+        sc_act_hold="its writers' lock lanes/.lanes-edit.lock is no longer this sweep's (${sc_holder:-its pid line cannot be read}): a writer took it over, and it is left to that writer"
+        SC_LOCK=""
+      fi
     fi
     if [ -n "$sc_act_hold" ]; then
       sc_lock_drop
@@ -1725,14 +1782,16 @@ SLU
     SC_LOCK=""   # it went with the checkout
     if sc_under_home "$sc_aside"; then rm -rf -- "$sc_aside" 2>/dev/null || :; fi
     if [ -e "$sc_aside" ] || [ -L "$sc_aside" ]; then
-      printf '    PARTLY     %s  %s; moved aside to %s, which could not all be removed\n' "$sc_c" "$sc_why" "$sc_aside"
+      printf '    PARTLY     %s  %s; moved aside to %s, which could not all be removed%s\n' "$sc_c" "$sc_why" "$sc_aside" "${sc_act_ign:+; $sc_act_ign}"
       sc_partial="${sc_partial:+$sc_partial }$sc_aside"
       sc_partial_names="${sc_partial_names:+$sc_partial_names }${sc_aside##*/}"
+      sc_n_partial=$((sc_n_partial + 1))
     else
-      printf '    removed    %s  %s\n' "$sc_c" "$sc_why"
+      printf '    removed    %s  %s%s\n' "$sc_c" "$sc_why" "${sc_act_ign:+; $sc_act_ign}"
       sc_removed_names="${sc_removed_names:+$sc_removed_names }${sc_c##*/}"
+      sc_n_removed=$((sc_n_removed + 1))
     fi
-    sc_gone="${sc_gone:+$sc_gone }$sc_c"; sc_n_removed=$((sc_n_removed + 1))
+    sc_gone="${sc_gone:+$sc_gone }$sc_c"
   done
   printf '%s' "$sc_keep_lines"
   if [ "${#sc_cands[@]}" = 0 ] && [ -z "$sc_keep_lines" ]; then printf '    (nothing)\n'; fi
@@ -1763,8 +1822,8 @@ SLU
     printf '\n  DRY RUN — nothing was removed, and there is nothing to remove.\n'
     exit 0
   fi
-  printf '\n  %s removed, %s held under %s/; %s clone(s) beside W left.\n' \
-    "$sc_n_removed" "$sc_n_held" "$sc_home" "${#sc_beside[@]}"
+  printf '\n  %s removed, %s moved aside and not all removed, %s held under %s/; %s clone(s) beside W left.\n' \
+    "$sc_n_removed" "$sc_n_partial" "$sc_n_held" "$sc_home" "${#sc_beside[@]}"
   # THE NOTED LINE (S6.2; S2 lists the sweep among the writers): ONE line in
   # the runner's own log, naming what was removed and what was held, written
   # by `lanes-edit.sh log` and so through the runner's own checkout under S3
@@ -1775,7 +1834,7 @@ SLU
   # never from the host's own root, and every name in the line is one this
   # sweep already holds to letters, digits, `.`, `_` and `-`, so the free
   # text's own rules (no ` — `, no newline, no leading arrow) hold for it.
-  if [ "$sc_n_removed" -gt 0 ]; then
+  if [ $((sc_n_removed + sc_n_partial)) -gt 0 ]; then
     sc_rel="${sc_home##*/}"
     case "$sc_rel" in '' | *[!A-Za-z0-9._-]*) sc_rel="<W>-lanes" ;; esac
     sc_text="sweep-checkouts (Amendment 23 S6.2): removed $sc_n_removed register checkout(s) under $sc_rel/ that held nothing unpublished"

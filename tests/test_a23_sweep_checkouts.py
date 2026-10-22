@@ -351,6 +351,19 @@ def test_closed_lane_checkout_removed_live_kept(sweep, tmp_path):
     assert not list(box.lanes_root.glob("*/lanes/.lanes-edit.lock")), "every lock it took is released"
 
 
+def test_ignored_files_are_named_at_the_act(sweep):
+    """IGNORED FILES HOLD NOTHING, AND THE ACT NAMES THEM as the dry run does
+    (rv4's NIT 2), so what went with a removed checkout is on its line."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    (c / ".git" / "info" / "exclude").write_text("*.log\n", encoding="utf-8")
+    box.write(c, "scratch.log", "ignored\n")
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert rows[str(c)][0] == "removed", rows[str(c)]
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "ignored, which holds nothing: 1 (scratch.log)" in rows[str(c)][1], rows[str(c)]
+
+
 def _commit_unpushed(box: Sweep, c: Path) -> None:
     box.write(c, "lanes/extra.md", "a record never pushed\n")
     box.commit(c, "an unpushed record", "lanes/extra.md")
@@ -686,6 +699,40 @@ def test_a_fetch_that_fails_holds(sweep):
     assert not (c / "lanes" / ".lanes-edit.lock").exists(), "its lock is released"
 
 
+def test_a_checkout_whose_origin_changes_after_the_listing_is_held(sweep):
+    """WHAT MADE IT A REGISTER CHECKOUT IS ASKED AGAIN UNDER THE LOCK (rv4's
+    NIT 4): at its own fetch the CLOSED lane's checkout is pointed at another
+    repository (W's path here, which that fetch then reads), so it is no
+    longer a clone of the register's origin, and it is held."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    _hook_on_fetch_of(box, c, f"git -C {c} remote set-url origin {box.w}")
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert f"a checkout of {box.w}, not of the register's origin" in rows[str(c)][1], rows[str(c)]
+    assert c.is_dir()
+
+
+def test_a_lock_taken_over_under_the_sweep_holds_and_is_left(sweep):
+    """THE LOCK IS THE SWEEP'S UNTIL THE MOVE, OR NOTHING IS MOVED (rv4's NIT
+    4): at the checkout's fetch another writer's pid line replaces the
+    sweep's in its `lanes/.lanes-edit.lock`, as a takeover from another
+    container does. The checkout is held, and that writer's lock is left as
+    it is, as `lanes-edit.sh`'s `mutex_release` leaves a lock it no longer
+    holds."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    pid = c / "lanes" / ".lanes-edit.lock" / "pid"
+    _hook_on_fetch_of(box, c, f"printf '1 other-container otherhost\\n' > {pid}")
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "is no longer this sweep's (1 other-container otherhost)" in rows[str(c)][1], rows[str(c)]
+    assert c.is_dir()
+    assert pid.read_text(encoding="utf-8") == "1 other-container otherhost\n"
+
+
 @pytest.mark.parametrize("op,note", [
     ("fetch", "fetch failed — reading the logs as they stand locally"),
     ("ls-remote", "NO FETCH WAS MADE"),
@@ -954,6 +1001,15 @@ def test_a_removal_that_does_not_finish_exits_1(sweep):
         assert f"the removal of {asides[0]} did not finish" in result.stderr, result.stderr
         assert not os.path.lexists(c)
         assert (asides[0] / "scratch" / "kept.txt").is_file()
+        # A removal that did not finish is counted apart from the ones that
+        # did (rv4's NIT 3), on the summary line and in the NOTED line, and
+        # its ignored files are named at the act (NIT 2).
+        assert "ignored, which holds nothing: 1 (scratch/)" in rows[str(c)][1], rows[str(c)]
+        assert "  1 removed, 1 moved aside and not all removed, " in result.stdout, result.stdout
+        noted = _noted_on_origin(box)
+        assert len(noted) == 1, noted
+        assert (f"removed 1 register checkout(s) under brett-wip-lanes/ that held nothing "
+                f"unpublished: {OLD}; moved aside and not all removed: {asides[0].name};") in noted[0], noted
     finally:
         for aside in box.lanes_root.glob(f".{CLOSED}.removing-*"):
             (aside / "scratch").chmod(0o755)
@@ -1164,6 +1220,25 @@ def test_a_store_kept_inside_a_clone_is_leaned_on(sweep):
     assert c.is_dir()
     assert store.is_dir()
     box.git("-C", str(borrower), "fsck", "--connectivity-only")
+
+
+def test_a_git_file_naming_a_clones_git_directory_holds_it(sweep):
+    """A `.git` FILE IS READ AS AN ALTERNATES FILE IS (rv4's NIT 1, P3): a
+    directory beside W whose `.git` file names the CLOSED lane's `.git` works
+    in that clone's git directory, and removing the clone takes it away. The
+    clone is held, by the dry run and by `--yes`, naming the directory."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    sharer = box.w.parent / "sharer"
+    sharer.mkdir()
+    (sharer / ".git").write_text(f"gitdir: {c}/.git\n", encoding="utf-8")
+    assert box.git("-C", str(sharer), "rev-parse", "--git-dir").strip() == f"{c}/.git"
+    for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+        result, rows = sweep(*args, **env)
+        assert rows[str(c)][0] == "hold", rows[str(c)]
+        assert result.returncode in (0, 3), (result.stdout, result.stderr)
+        assert f"its git directory is named by the .git file of {sharer}" in rows[str(c)][1], rows[str(c)]
+    assert c.is_dir()
 
 
 def test_a_directory_sharing_Ws_git_directory_is_kept_as_W(sweep):
