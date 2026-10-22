@@ -780,21 +780,43 @@ def test_a_checkout_whose_origin_changes_after_the_listing_is_held(sweep):
     assert c.is_dir()
 
 
-def test_a_lock_taken_over_under_the_sweep_holds_and_is_left(sweep):
+@pytest.mark.parametrize("then,why", [
+    ("", "its writers' lock lanes/.lanes-edit.lock is no longer this sweep's (1 other-container otherhost)"),
+    ("; exit 1", "its fetch of origin main failed"),
+], ids=["then the move is asked", "then the fetch fails"])
+def test_a_lock_taken_over_under_the_sweep_holds_and_is_left(sweep, then, why):
     """THE LOCK IS THE SWEEP'S UNTIL THE MOVE, OR NOTHING IS MOVED (rv4's NIT
     4): at the checkout's fetch another writer's pid line replaces the
     sweep's in its `lanes/.lanes-edit.lock`, as a takeover from another
-    container does. The checkout is held, and that writer's lock is left as
-    it is, as `lanes-edit.sh`'s `mutex_release` leaves a lock it no longer
-    holds."""
+    container does. The checkout is held, by the pid line read again before
+    the move, or by whatever else holds it first (here, a fetch that fails),
+    and in both that writer's lock is left as it is, as `lanes-edit.sh`'s
+    `mutex_release` leaves a lock it no longer holds."""
     box = sweep.box
     c = box.checkout(CLOSED)
     pid = c / "lanes" / ".lanes-edit.lock" / "pid"
-    _hook_on_fetch_of(box, c, f"printf '1 other-container otherhost\\n' > {pid}")
+    _hook_on_fetch_of(box, c, f"printf '1 other-container otherhost\\n' > {pid}{then}")
     result, rows = sweep("--yes", LANES_LANE=RUNNER)
     assert rows[str(c)][0] == "hold", rows[str(c)]
     assert result.returncode == 0, (result.stdout, result.stderr)
-    assert "is no longer this sweep's (1 other-container otherhost)" in rows[str(c)][1], rows[str(c)]
+    assert why in rows[str(c)][1], rows[str(c)]
+    assert c.is_dir()
+    assert pid.read_text(encoding="utf-8") == "1 other-container otherhost\n"
+
+
+def test_a_lock_taken_over_is_left_by_a_sweep_ended_by_a_signal(sweep):
+    """THE WAY OUT LEAVES A LOCK TAKEN OVER, TOO (rv4's NIT 4): at the
+    checkout's fetch, another writer's pid line replaces the sweep's and the
+    sweep is sent TERM. It exits 143, and `cleanup`, run on the way out,
+    leaves that writer's lock as it is and the checkout where it was."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    pid = c / "lanes" / ".lanes-edit.lock" / "pid"
+    _hook_on_fetch_of(box, c, (
+        f"read -r swept _ < {pid}; printf '1 other-container otherhost\\n' > {pid}; "
+        'kill -TERM "$swept"; exit 1'))
+    result, _ = sweep("--yes", LANES_LANE=RUNNER)
+    assert result.returncode == 143, (result.stdout, result.stderr)
     assert c.is_dir()
     assert pid.read_text(encoding="utf-8") == "1 other-container otherhost\n"
 
