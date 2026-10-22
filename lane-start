@@ -1568,6 +1568,20 @@ esac
 step "this window is $this_window, named '${this_window_name:-?}'"
 step "  its record refs are $record_window"
 
+# A RESTART-INTENT ANSWER IS READ TO ITS END (slice 2b; CI run 39806108007 at
+# f1b19e9, openRepoTools#281's class). Each field used to be read with
+# `printf … | awk '… { print $2; exit }'`, and under `set -o pipefail` that is
+# a launch that can die with 141 and no word said: bash's `printf` writes the
+# answer a line at a time, an `awk` that has found its line and exited closes
+# the pipe under a writer that is not done, the writer's SIGPIPE becomes the
+# pipeline's status, and `set -e` exits on it — at a rate the scheduler
+# decides. So the answer is captured once (`x="$(…)"`), and each field is read
+# by an `awk` that reads to the end and keeps the FIRST value, as the early
+# exit did. Nothing here pipes into a reader that stops.
+intent_field() {   # <restart-intent output> <field name>
+  printf '%s\n' "$1" | awk -F'\t' -v k="$2" '$1 == k && !f { f = 1; v = $2 } END { if (f) print v }'
+}
+
 # Active restarts refuse unowned callers before any binding repair or rename.
 # Detailed prompt and launch-fact validation follows before transcript writes.
 preparation_failure_identity=""
@@ -1598,8 +1612,8 @@ eri_rc=0
 eri_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" restart-intent "$LANE" --dir "$DIR" 2>/dev/null)" || eri_rc=$?
 case "$eri_rc" in
   0)
-    eri_state="$(printf '%s\n' "$eri_out" | awk -F'\t' '$1=="state" {print $2; exit}')"
-    eri_op="$(printf '%s\n' "$eri_out" | awk -F'\t' '$1=="operation" {print $2; exit}')"
+    eri_state="$(intent_field "$eri_out" state)"
+    eri_op="$(intent_field "$eri_out" operation)"
     case "$eri_state" in
       preparing) die "this restart is still preparing its preservation records. Nothing was changed." 2 ;;
       failed) preparation_failure_resume_check "$eri_out" ;;
@@ -3270,18 +3284,19 @@ ri_state=""; ri_op=""; ri_gen=""; ri_mode=""; ri_dir=""; ri_hf=""; ri_dig=""; ri
 ri_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" restart-intent "$LANE" --dir "$DIR" 2>/dev/null)" || ri_rc=$?
 case "$ri_rc" in
   0)
-    ri_state="$(printf '%s\n' "$ri_out" | awk -F'\t' '$1 == "state" { print $2; exit }')"
-    ri_op="$(printf '%s\n'    "$ri_out" | awk -F'\t' '$1 == "operation" { print $2; exit }')"
-    ri_gen="$(printf '%s\n'   "$ri_out" | awk -F'\t' '$1 == "generation" { print $2; exit }')"
-    ri_mode="$(printf '%s\n'  "$ri_out" | awk -F'\t' '$1 == "mode" { print $2; exit }')"
-    ri_dir="$(printf '%s\n'   "$ri_out" | awk -F'\t' '$1 == "dir" { print $2; exit }')"
-    ri_hf="$(printf '%s\n'    "$ri_out" | awk -F'\t' '$1 == "handoff" { print $2; exit }')"
-    ri_dig="$(printf '%s\n'   "$ri_out" | awk -F'\t' '$1 == "digest" { print $2; exit }')"
-    ri_pane="$(printf '%s\n' "$ri_out" | awk -F'\t' '$1 == "pane" {print $2; exit}')"
-    ri_attempt="$(printf '%s\n' "$ri_out" | awk -F'\t' '$1 == "attempt" {print $2; exit}')"
-    ri_prepared="$(printf '%s\n' "$ri_out" | awk -F'\t' '$1 == "prepared_digest" {print $2; exit}')"
-    ri_agent="$(printf '%s\n' "$ri_out" | awk -F'\t' '$1 == "agent" {print $2; exit}')"
-    ri_profile="$(printf '%s\n' "$ri_out" | awk -F'\t' '$1 == "profile" {print $2; exit}')" ;;
+    # Read to the end, never by a reader that stops (`intent_field`, above).
+    ri_state="$(intent_field "$ri_out" state)"
+    ri_op="$(intent_field "$ri_out" operation)"
+    ri_gen="$(intent_field "$ri_out" generation)"
+    ri_mode="$(intent_field "$ri_out" mode)"
+    ri_dir="$(intent_field "$ri_out" dir)"
+    ri_hf="$(intent_field "$ri_out" handoff)"
+    ri_dig="$(intent_field "$ri_out" digest)"
+    ri_pane="$(intent_field "$ri_out" pane)"
+    ri_attempt="$(intent_field "$ri_out" attempt)"
+    ri_prepared="$(intent_field "$ri_out" prepared_digest)"
+    ri_agent="$(intent_field "$ri_out" agent)"
+    ri_profile="$(intent_field "$ri_out" profile)" ;;
   # 8 IS AN ANSWER — this lane has no restart in flight, which is every
   # ordinary launch — and 2 IS A HELPER THAT PREDATES THIS READ: an installed
   # `lanes-edit.sh` from before openRepoTools#94 answers 2 from its

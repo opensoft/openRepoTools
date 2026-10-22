@@ -744,6 +744,65 @@ def test_restart_missing_checksum_is_not_launch_authority(restart_box):
     assert box.claude_runs() == ""
 
 
+# A RESTART-INTENT ANSWER IS READ TO ITS END (slice 2b; CI run 39806108007 at
+# f1b19e9, where the case above exited 141 on the runner and passed in the
+# next job). `lane-start` read each field of `restart-intent`'s answer with
+# `printf … | awk '… { print $2; exit }'` under `set -o pipefail`, and bash's
+# `printf` writes that answer a line at a time: an `awk` that has found its
+# line and exited closes the pipe under a writer that is not done, the
+# writer's SIGPIPE (128 + 13) becomes the pipeline's status, and `set -e` ends
+# the launch with 141 and no word said. On a small answer that is a race the
+# scheduler decides. Fields no reader asks for, padded past every pipe and
+# reader buffer (about 4.6 MB here, against a 64 KiB pipe), leave the early
+# reader certain to stop before its writer is done, so these cases are red on
+# every run of the old reads, and green on every run of reads that go to the
+# end, whatever the timing.
+PADDING_LINES = 50000
+
+
+def pad_restart_intent_answers(box):
+    real = box.bin / "lanes-edit-real.sh"
+    (box.bin / "lanes-edit.sh").rename(real)
+    _write(box.bin / "lanes-edit.sh", f'''#!/usr/bin/env bash
+if [ "${{1-}}" = restart-intent ]; then
+  rc=0
+  out="$("$(dirname -- "$0")/lanes-edit-real.sh" "$@")" || rc=$?
+  printf '%s\\n' "$out"
+  if [ "$rc" = 0 ]; then
+    awk 'BEGIN {{ for (i = 0; i < {PADDING_LINES}; i++) printf "zz_padding\\t%080d\\n", i }}'
+  fi
+  exit "$rc"
+fi
+exec "$(dirname -- "$0")/lanes-edit-real.sh" "$@"
+''')
+
+
+@pytest.mark.parametrize("kind", ["missing-checksum", "owned-launch"])
+def test_restart_intent_answer_larger_than_a_pipe_is_read_to_its_end(restart_box, kind):
+    box = restart_box
+    source = prepare_restart(box)
+    if kind == "missing-checksum":
+        assert helper(box, "set-restart-intent", LANE, "pending", "--digest", "none").returncode == 0
+    before = source.read_bytes()
+    pad_restart_intent_answers(box)
+    padded = helper(box, "restart-intent", LANE)
+    assert padded.returncode == 0, padded.stderr
+    assert len(padded.stdout) > 4 * 1024 * 1024
+    # The fields the launch reads come first, and the padding after them.
+    assert "state\tpending" in padded.stdout.splitlines()[:40]
+    if kind == "missing-checksum":
+        result = box.start("--operation", "op-test")
+        assert result.returncode == 2, (result.returncode, result.stderr[-3000:])
+        assert "no complete handoff checksum" in result.stderr
+        assert source.read_bytes() == before
+        assert box.claude_runs() == ""
+    else:
+        result = box.start("--fresh", "--operation", "op-test", TMUX_PANE="%1")
+        assert result.returncode == 0, (result.returncode, result.stderr[-3000:])
+        assert "Preserved task." in box.claude_runs()
+        assert "RESUMED by" in source.read_text()
+
+
 def test_restart_stale_supervisor_cannot_fail_or_retry_newer_operation(restart_box):
     box = restart_box
     prepare_restart(box)
