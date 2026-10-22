@@ -2038,6 +2038,14 @@ owner_of() {   # <path>
 # less the one newline the command ends it with. `parent` holds the directory,
 # never `$PLACING`, which the traps glob.
 #
+# SO A PLACEMENT NEEDS THE WORKDIR, AND REFUSES WITHOUT ONE (#250). With
+# `$WORKDIR` empty, each answer above would be written to `/placing`, at the
+# root of the filesystem, which a root run can create. No caller reaches this
+# without one today: all three are reached from `install_commands` after
+# `collect_commands` has run `workdir`, and each stages its source in the
+# workdir. The refusal is for a caller that one day does not, and it comes
+# before anything is made.
+#
 # THE OWNER STAYS WHO IT WAS (Copilot on #172). A rename puts the TEMPORARY's
 # inode at the path, and the temporary belongs to whoever runs this — so a root
 # `--install` into another user's home, which this file goes out of its way to
@@ -2062,6 +2070,10 @@ owner_of() {   # <path>
 # still place whole files; serializing them is #106's lock, not this.
 place_by_rename() {   # <staged source> <target> <mode> <what a refusal adds>
 	local source="$1" target="$2" mode="$3" rest="$4" parent="" tmp="" was="" now=""
+	if [ -z "$WORKDIR" ] || [ ! -d "$WORKDIR" ]; then
+		die "\$WORKDIR is ${WORKDIR:-empty}${WORKDIR:+, which is not a directory}, and a placement passes each command's answer through a file in it, so $target was not placed and what was there is untouched.
+    $rest"
+	fi
 	dirname -- "$target" >"$WORKDIR/placing"
 	IFS= read -r -d '' parent <"$WORKDIR/placing" || :
 	PLACING="${parent%$'\n'}/.${target##*/}.openrepotools.$$."

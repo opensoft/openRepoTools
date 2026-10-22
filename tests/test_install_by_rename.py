@@ -92,12 +92,13 @@ def installer_function(name: str) -> str:
     return match.group(0)
 
 
-def place(tmp_path: Path, source: Path, target: Path,
-          mode: str = "755") -> subprocess.CompletedProcess:
+def place(tmp_path: Path, source: Path, target: Path, mode: str = "755",
+          workdir: str | None = None) -> subprocess.CompletedProcess:
     """One placement, through the installer's function, under this bash.
 
     `$WORKDIR` is a directory of the test's own, as the installer's is its
     `mktemp -d`: every caller of `place_by_rename` has staged its source there.
+    A `workdir` given is `$WORKDIR` as written, for the refusal without one.
     """
     harness = tmp_path / "harness.sh"
     harness.write_bytes((
@@ -109,10 +110,12 @@ def place(tmp_path: Path, source: Path, target: Path,
         + installer_function("place_by_rename")
         + 'place_by_rename "$1" "$2" "$3" "nothing else was placed."\n'
     ).encode("utf-8"))
-    work = tmp_path / "work"
-    work.mkdir(exist_ok=True)
+    if workdir is None:
+        work = tmp_path / "work"
+        work.mkdir(exist_ok=True)
+        workdir = posix(work)
     return subprocess.run([BASH, posix(harness), posix(source), posix(target),
-                           mode, posix(work)],
+                           mode, workdir],
                           capture_output=True, text=True, check=False)
 
 
@@ -186,3 +189,32 @@ def test_a_directory_at_the_target_is_refused_and_leaves_no_temporary(
         placed.stderr)
     assert sorted(p.name for p in target.iterdir()) == ["kept"]
     assert temporaries(bin_dir) == []
+
+
+@pytest.mark.parametrize("workdir", ["", "gone"],
+                         ids=["empty", "not-a-directory"])
+def test_a_placement_with_no_workdir_is_refused_and_places_nothing(tmp_path,
+                                                                   workdir):
+    """A PLACEMENT PASSES EACH COMMAND'S ANSWER THROUGH `$WORKDIR`, SO IT
+    REFUSES WITHOUT ONE (#250). With `$WORKDIR` empty, `"$WORKDIR/placing"` is
+    `/placing`, at the root of the filesystem: a root run would have made it,
+    and any other account died on the redirection with the shell's own exit 1.
+    Every caller in the installer runs `workdir` first, so this is the refusal
+    for one that does not. It names `$WORKDIR`, it comes before anything is
+    made, and the target keeps its bytes."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    target = bin_dir / "park"
+    target.write_bytes(b"old\n")
+    source = tmp_path / "staged"
+    source.write_bytes(b"#!/usr/bin/env bash\n")
+    if workdir:
+        workdir = posix(tmp_path / workdir)
+    cause = f"{workdir}, which is not a directory" if workdir else "empty"
+
+    placed = place(tmp_path, source, target, workdir=workdir)
+    assert placed.returncode == 2, placed.stdout + placed.stderr
+    assert f"REFUSED: $WORKDIR is {cause}, " in placed.stderr, placed.stderr
+    assert f"so {posix(target)} was not placed" in placed.stderr, placed.stderr
+    assert target.read_bytes() == b"old\n"
+    assert sorted(p.name for p in bin_dir.iterdir()) == ["park"]

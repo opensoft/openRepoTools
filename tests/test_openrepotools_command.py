@@ -1224,6 +1224,132 @@ def test_a_signal_at_each_instant_of_a_placement_ends_the_run_and_leaves_no_temp
     assert placement_temporaries(tmp_path) == []
 
 
+#: THE ANSWERS A PLACEMENT WAITS FOR, EACH LANDED IN ON PURPOSE (#250, SHOULD
+#: 1 of its review). Before its temporary exists, `place_by_rename` asks
+#: `dirname` for the target's directory; after the `cp` and the `chmod` it asks
+#: `owner_of` (`ls -lnd` into `awk`) who owns the target, then the temporary.
+#: Each answer came back through `$(…)`, whose wait bash keeps outside its job
+#: table, so a SIGINT there was lost however it was trapped. The test above
+#: lands only at the fork and in the wait of the `cp`, and in the wait for
+#: `mktemp`, so it passed with any of these three put back.
+#:
+#: SO A STAND-IN FIRST ON `$PATH` HOLDS EACH OF THOSE WAITS OPEN. It gives the
+#: real tool's answer and closes its output, so a shell that takes the answer
+#: through `$(…)` has all of it and waits, as one that takes it through a file
+#: does. Then, once (at the first call whose last argument `{at}` matches,
+#: while the hook has not fired), it writes what it was asked to `held`, leaves
+#: a `.openrepotools.` name in `$ORT_HOOK_DIR`, which nothing else writes to,
+#: and stays until the hook's mark. The hook, at `waitpid`, fires in the
+#: shell's first wait that sees that name. `released` follows in `held` only
+#: when the mark came before the bound: the signal reached the shell while it
+#: waited, and the command it was waiting for was the stand-in's.
+HELD_ANSWER = ('last=""\n'
+               'for arg in "$@"; do last="$arg"; done\n'
+               '{real} "$@"\n'
+               'answered=$?\n'
+               'case "$last" in\n'
+               '{at})\n'
+               '\tif [ ! -e "$ORT_HOOK_MARK" ]; then\n'
+               '\t\texec >&-\n'
+               "\t\tprintf '%s\\n' \"$*\" >\"$ORT_HOOK_DIR/held\"\n"
+               '\t\t: >"$ORT_HOOK_DIR/.held.openrepotools.$$"\n'
+               '\t\t' + WAIT_FOR_MARK +
+               '\t\t[ "$i" -ge 200 ] || '
+               "printf 'released\\n' >>\"$ORT_HOOK_DIR/held\"\n"
+               '\tfi\n'
+               '\t;;\n'
+               'esac\n'
+               'exit "$answered"\n')
+
+
+@pytest.mark.parametrize("tool, flags, held_on", [
+    ("dirname", "--", "target"),
+    ("ls", "-lnd --", "target"),
+    ("ls", "-lnd --", "temporary"),
+], ids=["SIGINT-in-the-wait-for-dirname",
+        "SIGINT-in-the-wait-for-the-owner-of-the-target",
+        "SIGINT-in-the-wait-for-the-owner-of-the-temporary"])
+@NEEDS_JQ
+def test_a_sigint_in_the_wait_for_each_answer_of_a_placement_ends_the_run_and_leaves_no_temporary(
+        tmp_path, signal_hook, tool, flags, held_on):
+    """A SIGINT IN THE WAIT FOR ANY ANSWER A PLACEMENT TAKES ENDS THE RUN, AND
+    LEAVES NO TEMPORARY (#250). The first placement, `openRepoTools` into the
+    bin directory, is held by `HELD_ANSWER` at one of three waits:
+
+    * THE WAIT FOR `dirname`, before any temporary exists;
+    * THE WAIT FOR THE OWNER OF THE TARGET, after the `cp` and the `chmod`,
+      with the temporary beside it;
+    * THE WAIT FOR THE OWNER OF THE TEMPORARY, just after that.
+
+    Taken through `$(…)`, each of these waits lost the SIGINT, and the install
+    went on to exit 0. Taken through a file, the `INT` trap is run once the
+    wait is over: the run dies of SIGINT, re-raised rather than exited with a
+    status, and nothing is left beside a target.
+
+    EACH CASE PROVES WHERE IT LANDED: the hook's mark, and `held`, which names
+    the call the stand-in held and then `released`, written only when the mark
+    came while it was holding. THE CHILD STARTS WITH BOTH SIGNALS AT THEIR
+    DEFAULT, for the reason the test of a run killed mid-placement gives.
+    """
+    real = shutil.which(tool)
+    if real is None:
+        pytest.skip(f"no real `{tool}` on PATH for the stand-in to defer to")
+    bin_dir = tmp_path / ".local" / "bin"
+    if held_on == "target":
+        target = str(bin_dir / INSTALLED[0])
+        at, call = shlex.quote(target), re.escape(f"{flags} {target}")
+    else:
+        prefix = f"{bin_dir}/.{INSTALLED[0]}.openrepotools."
+        at = shlex.quote(prefix) + "*"
+        call = re.escape(f"{flags} {prefix}") + r"[0-9]+\.[^/]{6}"
+    shim = tmp_path / f"held-{tool}"
+    shim.mkdir()
+    (shim / tool).write_text(
+        "#!/bin/sh\n" + HELD_ANSWER.format(real=shlex.quote(real), at=at),
+        encoding="utf-8")
+    (shim / tool).chmod(0o755)
+    hook_dir = tmp_path / "held"
+    hook_dir.mkdir()
+    mark = tmp_path / "fired"
+    preload = os.environ.get("LD_PRELOAD")
+
+    def default_signals() -> None:
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+    run = subprocess.Popen(
+        ["bash", str(COMMAND), "--install"], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=command_env(tmp_path, {
+            "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
+            "LD_PRELOAD": f"{signal_hook}:{preload}" if preload
+                          else str(signal_hook),
+            "ORT_HOOK_DIR": str(hook_dir), "ORT_HOOK_AT": "waitpid",
+            "ORT_HOOK_SIG": str(int(signal.SIGINT)),
+            "ORT_HOOK_MARK": str(mark)}),
+        start_new_session=True, preexec_fn=default_signals)
+    try:
+        out, err = run.communicate(timeout=60)
+    finally:
+        if run.poll() is None:
+            os.killpg(run.pid, signal.SIGKILL)
+            run.communicate()
+    record = hook_dir / "held"
+    held = (record.read_text(encoding="utf-8").splitlines()
+            if record.exists() else [])
+    assert mark.exists(), (
+        f"the hook never fired, so no signal landed: exit {run.returncode}; "
+        f"the stand-in held {held}\n{out}{err}")
+    assert run.returncode == -signal.SIGINT, (
+        f"the run did not die of SIGINT: exit {run.returncode}; the stand-in "
+        f"held {held}\n{out}{err}")
+    assert (len(held) == 2 and re.fullmatch(call, held[0])
+            and held[1] == "released"), (
+        f"the SIGINT did not land while the shell waited for `{tool} {flags}` "
+        f"on the {held_on}: the stand-in held {held}")
+    assert placement_temporaries(tmp_path) == []
+
+
 #: THE WORDS THIS INSTALLER USED TO PLACE AND DOES NOT ANY MORE. `restart` left
 #: under lane-collision-protocol Amendment 18 Addendum 2 (ratified
 #: 2026-09-14T16:50:32Z, verbatim "ratify"): `lane <name>` is that act, and the
