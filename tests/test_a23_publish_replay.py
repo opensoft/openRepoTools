@@ -643,7 +643,8 @@ EDITED = "LANDED — the second copy, edited by hand"
 
 
 @pytest.mark.parametrize("dup", ["a-repeated-line", "a-blank-line",
-                                 "a-copy-a-peer-changed", "the-registers-own-shape"])
+                                 "a-copy-a-peer-changed", "the-registers-own-shape",
+                                 "the-registers-own-shape-staged"])
 def test_commit_refuses_a_hand_edit_whose_line_occurs_twice_on_origin(box: Box, dup: str):
     """292 of lane openRepoTools-3's review of #307, its answer to Q3: B22
     retried a failed carry with `git apply -C0` wherever every hunk removes
@@ -662,10 +663,17 @@ def test_commit_refuses_a_hand_edit_whose_line_occurs_twice_on_origin(box: Box, 
     that copy left both values on origin (0), where decision 9 refuses; and
     the register's own shape, a LANDING then two identical LANDED lines, each
     side removing one LANDED, kept the LANDING with no LANDED (0), which
-    reopens Rule 6's hold. The line must now occur once in both versions."""
+    reopens Rule 6's hold. The line must now occur once in both versions.
+
+    382 of lane 3's re-check at `15e71d9`: the version the edit was made on is
+    HEAD's blob, the same version the kept diff is taken against (`diff
+    HEAD`), never the index's. A hand edit that is also STAGED is the same
+    edit: read from the index, the base would be the edited version, the
+    LANDED line would count once there, and the register's own shape would
+    be pushed onto the wrong copy again (`-staged`)."""
     line = "" if dup == "a-blank-line" else TWICE
     after = "| `repoS4-8` | the line after the second copy |"
-    if dup == "the-registers-own-shape":
+    if dup.startswith("the-registers-own-shape"):
         block = TWICE + "\n" + LANDED_TWICE + "\n" + LANDED_TWICE + "\n" + after
     else:
         block = line + "\n" + "| `repoS4-6` | a line between the copies |" + "\n" + line + "\n" + after
@@ -674,9 +682,11 @@ def test_commit_refuses_a_hand_edit_whose_line_occurs_twice_on_origin(box: Box, 
     c = box.seam()
     path = c / REGISTER
     text = path.read_text(encoding="utf-8")
-    if dup == "the-registers-own-shape":
+    if dup.startswith("the-registers-own-shape"):
         second = text.rindex("\n" + LANDED_TWICE + "\n" + after) + 1
         path.write_text(text[:second] + text[second + len(LANDED_TWICE) + 1:], encoding="utf-8")
+        if dup.endswith("-staged"):   # the diff is HEAD's, not the index's: a staged edit is the same edit
+            box.git("-C", str(c), "add", "--", REGISTER)
         box.peer_edits(REGISTER, LANDED_TWICE + "\n" + LANDED_TWICE + "\n" + after,
                        LANDED_TWICE + "\n" + after, "a peer removes one LANDED line too")
         kept = "\n-" + LANDED_TWICE + "\n"
