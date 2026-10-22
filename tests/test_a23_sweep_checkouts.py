@@ -278,6 +278,39 @@ def test_yes_is_refused_before_anything_is_removed(sweep, env, said):
     assert box.origin_head() == head
 
 
+@pytest.mark.parametrize("code,rc,said", [
+    pytest.param(1, 1, ("lane repoS4-1's transcript uuid, for the session field of the NOTED line",
+                        "could not be read: `lanes-edit.sh last-session repoS4-1` exited 1 "
+                        "(FAKE: the log of repoS4-1 cannot be read)",
+                        "That is not a lane that names none"),
+                 id="exit 1, a log that cannot be read"),
+    pytest.param(8, 2, ("has no transcript uuid for the session field",
+                        f"`lanes-edit.sh last-session {RUNNER}` names none"),
+                 id="exit 8, a lane that names none"),
+])
+def test_a_last_session_that_cannot_be_read_is_never_none(sweep, code, rc, said):
+    """ONLY `last-session`'S 8 MEANS "NAMES NONE" (lane openRepoTools-3's
+    finding 545, ahead of lane openRepoTools-4's #303). Its 1 is a register
+    or a log that could not be read: `--yes` with no `LANES_SESSION` refuses
+    then as a read that failed (1), naming the exit and the writer's own
+    words, and never as a lane with no transcript uuid (2). Nothing is
+    removed either way."""
+    box = sweep.box
+    stub = _wrapped(box, f"lanes-edit-last-session-{code}", "last-session", (
+        f"  printf 'FAKE: the log of %s cannot be read\\n' \"$2\" >&2\n"
+        f"  exit {code}\n"))
+    before, head = box.everything(), box.origin_head()
+    result, _ = sweep("--yes", LANES_LANE=RUNNER, LANES_EDIT=stub)
+    assert result.returncode == rc, (result.stdout, result.stderr)
+    for text in (*said, "Nothing was removed"):
+        assert text in result.stderr, result.stderr
+    if code != 8:
+        assert "has no transcript uuid" not in result.stderr, result.stderr
+        assert f"last-session {RUNNER}` names none" not in result.stderr, result.stderr
+    assert box.everything() == before
+    assert box.origin_head() == head
+
+
 @pytest.mark.parametrize("extra", [
     ("--retire",), ("--force",), ("--inventory-only",), ("--state-was", "x"),
     ("--home", "opensoft/repoS4"), ("--reason", "why"), ("--retire-dormant", "repoS4"),

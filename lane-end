@@ -1148,11 +1148,27 @@ SC_IDX
   # would refuse for want of one is refused here instead, while nothing is
   # gone, rather than met after the removals it was to record. The writer
   # asks again when the line is written, and its answer is the decision.
+  #
+  # ONLY `last-session`'S 8 IS "NAMES NONE" (lane openRepoTools-3's finding
+  # 545): its 1 is a register or a log that could not be read, and that is
+  # a read that failed (1), never a lane with no uuid. Its words are kept to
+  # name the reason; a capture that cannot be made names the exit alone.
   sc_uuid=""
   if [ "$sweep_yes" = 1 ]; then
     sc_uuid="${LANES_SESSION:-}"
     if [ -z "$sc_uuid" ]; then
-      sc_uuid="$(LANES_NO_FETCH=1 "$LANES_EDIT" last-session "$sc_runner" 2>/dev/null)" || sc_uuid=""
+      sc_ls_rc=0; sc_ls_err=""
+      LE_TMP="$(mktemp "${TMPDIR:-/tmp}/lane-end-sweep.XXXXXX" 2>/dev/null || printf '')"
+      sc_uuid="$(LANES_NO_FETCH=1 "$LANES_EDIT" last-session "$sc_runner" 2>"${LE_TMP:-/dev/null}")" || sc_ls_rc=$?
+      if [ -n "$LE_TMP" ]; then
+        sc_ls_err="$(awk 'NF { l = $0 } END { print l }' < "$LE_TMP" 2>/dev/null)" || sc_ls_err=""
+        rm -f -- "$LE_TMP"; LE_TMP=""
+      fi
+      case "$sc_ls_rc" in
+        0) : ;;
+        8) sc_uuid="" ;;
+        *) die "lane $sc_runner's transcript uuid, for the session field of the NOTED line this act ends with (Amendment 7(b)), could not be read: \`lanes-edit.sh last-session $sc_runner\` exited $sc_ls_rc${sc_ls_err:+ ($sc_ls_err)}. That is not a lane that names none: the register or its log could not be read. Fix the read and re-run, or name your session: LANES_SESSION=\"\$CLAUDE_CODE_SESSION_ID\" LANES_LANE=$sc_runner $prog --sweep-checkouts --yes. Nothing was removed." 1 ;;
+      esac
     fi
     if ! is_fork_uuid "$sc_uuid"; then
       if [ -n "${LANES_SESSION:-}" ]; then
