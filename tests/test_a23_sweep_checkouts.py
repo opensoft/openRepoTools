@@ -959,28 +959,40 @@ def test_a_lock_taken_over_is_left_by_a_sweep_ended_by_a_signal(sweep):
     assert pid.read_text(encoding="utf-8") == "1 other-container otherhost\n"
 
 
-@pytest.mark.skipif(getattr(os, "geteuid", lambda: 1)() == 0,
-                    reason="root writes in a directory it may not write in")
-def test_a_lock_whose_pid_line_cannot_be_written_is_let_go(sweep):
+@pytest.mark.parametrize("after", [
+    pytest.param("chmod 500 {lock}", id="the lock directory cannot be written in",
+                 marks=pytest.mark.skipif(getattr(os, "geteuid", lambda: 1)() == 0,
+                                          reason="root writes in a directory it may not write in")),
+    pytest.param("ln -s /dev/full {lock}/pid", id="the pid file's write fails, as on a full disk",
+                 marks=pytest.mark.skipif(not os.path.exists("/dev/full"),
+                                          reason="no /dev/full here to fail a write")),
+])
+def test_a_lock_whose_pid_line_cannot_be_written_is_let_go(sweep, after):
     """THE SWEEP'S PID LINE IS WRITTEN, OR ITS LOCK IS LET GO (rv4-c3's NIT
-    c3-2, P2). A lock that names no holder is one its writers wait ten
-    minutes on (`mutex_stale`), and the check before the move read the
-    sweep's own pid-less lock as taken over and left it there, so every
-    later sweep held that checkout. Here the sweep's `mkdir` of the CLOSED
-    lane's lock leaves the new directory read-only (a `mkdir` first on
-    PATH), so the line cannot be written into it: the checkout is held with
-    that reason, the lock is gone, and the next sweep removes the checkout."""
+    c3-2, P2; rv4-c4's NIT c4-2, P7). A lock that names no holder is one its
+    writers wait ten minutes on (`mutex_stale`), and the check before the
+    move read the sweep's own pid-less lock as taken over and left it there,
+    so every later sweep held that checkout. Here the sweep's `mkdir` of the
+    CLOSED lane's lock (a `mkdir` first on PATH) leaves a lock its line
+    cannot be written into, in two ways. The directory is read-only, so the
+    open fails and no pid file is made. Or a pid file is there whose writes
+    fail: on a full disk the open succeeds and leaves an EMPTY pid file, and
+    the `rmdir` takes the lock away only once the sweep's `rm -f` has removed
+    that file. Either way the checkout is held with that reason, the lock is
+    gone, and the next sweep removes the checkout."""
     box = sweep.box
     c = box.checkout(CLOSED)
     lock = box.lock_of(c)
     shim = box.fakebin / "mkdir"
     shim.write_text(f'#!/usr/bin/env bash\n{shutil.which("mkdir")} "$@" || exit\n'
-                    f'case " $* " in *" {lock} "*) chmod 500 {lock} ;; esac\n', encoding="utf-8")
+                    f'case " $* " in *" {lock} "*) {after.format(lock=lock)} ;; esac\n',
+                    encoding="utf-8")
     shim.chmod(0o755)
     result, rows = sweep("--yes", LANES_LANE=RUNNER)
     assert rows[str(c)][0] == "hold", rows[str(c)]
     assert result.returncode == 0, (result.stdout, result.stderr)
-    assert not os.path.lexists(lock), "a lock that names no holder is not left behind"
+    assert not os.path.lexists(lock), (
+        "a lock that names no holder is not left behind", sorted(os.listdir(lock)))
     assert ("its writers' lock was taken, and this sweep's pid line could not be written "
             "into it, so the lock was let go again") in rows[str(c)][1], rows[str(c)]
     shim.rename(box.root / "mkdir.aside")
