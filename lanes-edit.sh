@@ -2963,7 +2963,7 @@ EOF
   if git -C "$LANES_REPO" merge-base --is-ancestor "refs/remotes/origin/$LANES_BRANCH" "$cp_sha" 2>/dev/null; then
     cp_head="$(git -C "$LANES_REPO" rev-parse -q --verify HEAD 2>/dev/null || :)"
     [ "$cp_head" = "$cp_sha" ] ||
-      cp_not_head "$cp_sha" "$msg" "while its push was in flight" \
+      cp_not_head "$cp_sha" "$msg" "before or while its push was in flight" \
         "the push of $cp_sha was refused with origin/$LANES_BRANCH unmoved (no lost race: a replay would meet the same refusal)"
     note "look at it: git -C $LANES_REPO show $cp_sha"
     note "every later write from this checkout refuses (S3's unpushed row) until it is published — LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act — or archived (S6.3) and \`git -C $LANES_REPO reset --keep origin/$LANES_BRANCH\` run."
@@ -3016,12 +3016,22 @@ cp_untold() {   # <HEAD before the commit, or empty> <the message>
 # form's drop goes to origin's tip, and would take it too. So the drop is made
 # only where this write's commit sits on origin's history; otherwise it and
 # what is under it are kept on HEAD and named.
+#
+# WHAT IS UNDER IT IS NAMED BY WHAT IS KNOWN (lane openRepoTools-3's re-check
+# of #307, 343): commits origin lacks, which this write did not make. An
+# unlocked writer's commit here is one cause; history origin no longer has (a
+# rewrite there, at the push) or never had (a new branch's first write, raced
+# by another) is another, and nothing here tells them apart. The publish act
+# is not offered, since origin has moved past HEAD and it refuses there
+# ("moved past", 2): the list and the STOP line come first, then S6.3's
+# archive, in the publish act's own refusal's order.
 cp_under() {   # <sha> <subject> <origin's tip>
   cu_n="$(git -C "$LANES_REPO" rev-list --count "$3..$1^" 2>/dev/null || printf 'some')"
-  note "under this write's commit $1 are $cu_n commit(s) origin/$LANES_BRANCH does not have, which this write did not make: another writer in this checkout committed while this write was being made (an unlocked one: lane-start's stamp, lane-handoff), and dropping this write's commit to origin's tip would drop them too."
-  note "look at them: git -C $LANES_REPO log --oneline $3..$1"
-  note "every later write from this checkout refuses (S3's unpushed row) until they are published — LANES_LANE=<lane> $SELF commit \"<what they are>\", the publish act — or archived (S6.3); if any is not your own write, STOP and take it to the lane its subject names."
-  die "the push was refused because origin/$LANES_BRANCH moved, and this write's commit sits on $cu_n commit(s) it did not make, so it is not replayed: it and they are kept on HEAD (Amendment 23 S4): $1 $2" 6
+  note "under this write's commit $1 are $cu_n commit(s) that origin/$LANES_BRANCH lacks and this write did not make: another writer's here (an unlocked one: lane-start's stamp, lane-handoff), or history origin no longer has (rewritten there) or never had (a new branch's first write, raced by another). Dropping this write's commit to origin's tip would drop them too, so nothing is moved."
+  note "every later write from this checkout refuses (S3's unpushed row) until they are archived and dropped here. RECOVERY (S6.3), in this order:"
+  note "  list them: git -C $LANES_REPO log --oneline $3..$1; if any is not your own write, STOP and take it to the lane its subject names — never reset, stash or overwrite a peer's work"
+  cp_archive_steps
+  die "the push was refused because origin/$LANES_BRANCH moved, and this write's commit sits on $cu_n commit(s) that origin lacks and this write did not make, so it is not replayed: it and they are kept on HEAD (Amendment 23 S4): $1 $2" 6
 }
 
 # THE RECOVERY FOR AN UNTRACKED FILE A WRITE WOULD COMMIT (lane
@@ -3134,7 +3144,7 @@ cp_not_confirmed() {   # <sha> <subject> <why>
   cnc_head="$(git -C "$LANES_REPO" rev-parse -q --verify HEAD 2>/dev/null || :)"
   cnc_rc=3   # the die below's number, passed on as `cp_not_head`'s fifth argument
   [ "$cnc_head" = "$1" ] ||
-    cp_not_head "$1" "$2" "while its push was in flight" "pushed, not confirmed: $1 — $3 (never reported as success)" "$cnc_rc"
+    cp_not_head "$1" "$2" "before or while its push was in flight" "pushed, not confirmed: $1 — $3 (never reported as success)" "$cnc_rc"
   die "pushed, not confirmed: $1 — $3; the commit is kept on HEAD, and this is never reported as success (Amendment 23 S4)" 3
 }
 # ANOTHER WRITER REWROTE THIS WRITE'S COMMIT (rv1b-c's SHOULD A on slice 1b).
@@ -3211,9 +3221,11 @@ cp_replay() {   # <sha> <subject>
   # commit and the skill's commit are made in the same checkout with no lock,
   # so one can land on top of this write's commit while its push is in flight.
   # The drop below would then take that commit too, and say nothing. So HEAD
-  # must still be this write's commit, or both are kept on HEAD and named.
+  # must still be this write's commit, or both are kept on HEAD and named. One
+  # landing just after `git commit` came BEFORE the push (291's case (a)), so
+  # the words say "before or while" (343).
   cr_head="$(git -C "$LANES_REPO" rev-parse -q --verify HEAD 2>/dev/null || :)"
-  [ "$cr_head" = "$1" ] || cp_not_head "$1" "$2" "while its push was in flight"
+  [ "$cr_head" = "$1" ] || cp_not_head "$1" "$2" "before or while its push was in flight"
   # A FILE THIS WRITE EDITS IN PLACE IS GONE FROM ORIGIN (slice 2a's A37,
   # `CP_KEEP_IF_GONE`): the re-run would find nothing to write into and drop
   # the write with its commit. Asked of the base this write's commit was made
@@ -3347,7 +3359,7 @@ cp_publish_act() {
   # named in `cp_not_head`'s and `cp_rewritten`'s words.
   cpa_head="$(git -C "$LANES_REPO" rev-parse -q --verify HEAD 2>/dev/null || :)"
   [ "$cpa_head" = "$CP_FENCE_TIP" ] ||
-    cp_not_head "$CP_FENCE_TIP" "the publish of $cpa_n commit(s)" "while its push was in flight" \
+    cp_not_head "$CP_FENCE_TIP" "the publish of $cpa_n commit(s)" "before or while its push was in flight" \
       "the push of the $cpa_n commit(s) up to ${CP_FENCE_TIP:0:12} failed with origin/$LANES_BRANCH unmoved"
   die "the push of the $cpa_n commit(s) up to ${CP_FENCE_TIP:0:12} failed with origin/$LANES_BRANCH unmoved; they are kept on HEAD, and nothing of them reached origin by this push. Look: git -C $LANES_REPO cherry -v origin/$LANES_BRANCH HEAD" 6
 }
@@ -3362,10 +3374,16 @@ cp_publish_moved() {
   # in full, since a local branch named `origin/<b>` wins the short name.
   note "RECOVERY (S6.3), in this order:"
   note "  list them: git -C $LANES_REPO cherry -v refs/remotes/origin/$LANES_BRANCH HEAD; if any '+' line is not your own write, STOP and take it to the lane its subject names — never reset, stash or overwrite a peer's work"
+  cp_archive_steps
+  die "refusing to publish: origin/$LANES_BRANCH has moved past the local commits, and the publish act makes only a fast-forward push (Amendment 23 S4, Open question 2). Nothing was pushed." 2
+}
+# S6.3'S ARCHIVE, AFTER THE LIST AND THE STOP LINE: the publish act's refusal
+# above and `cp_under` (343) give it in these words. The archive goes to
+# origin first, then the drop here names the tracking ref in full.
+cp_archive_steps() {
   note "  git -C $LANES_REPO push origin HEAD:refs/heads/archive/${LANES_LANE:-<lane>}-stranded-$(date -u +%Y%m%dT%H%MZ)   # the archive, on origin"
   note "  git -C $LANES_REPO reset --keep refs/remotes/origin/$LANES_BRANCH          # then drop them here"
   note "  then make again, with lanes-edit.sh, each edit that is still wanted on the register as it now is."
-  die "refusing to publish: origin/$LANES_BRANCH has moved past the local commits, and the publish act makes only a fast-forward push (Amendment 23 S4, Open question 2). Nothing was pushed." 2
 }
 
 # ====================================================== AMENDMENT 14 =======

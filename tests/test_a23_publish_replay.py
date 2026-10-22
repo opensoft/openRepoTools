@@ -364,7 +364,7 @@ def test_a_push_refused_with_origin_unmoved_names_a_commit_on_top_exit_6(box: Bo
     err = result.stderr
     assert "refused with origin/main unmoved (no lost race: a replay would meet the same refusal)" in err
     assert "is no longer HEAD, so it is not replayed" in err
-    assert "in this checkout while its push was in flight." in err, "no drop is offered as the reason"
+    assert "in this checkout before or while its push was in flight." in err, "no drop is offered as the reason"
     assert "kept on HEAD: " not in err, "HEAD is not this write's commit"
     assert box.subject(c) == "handoff(repoS4-2@Eagle): a stamp from an unlocked writer"
     assert box.subject(c, "HEAD~1").startswith(f"LANES({LANE}@"), "this write's commit is under it"
@@ -561,7 +561,7 @@ def test_an_unconfirmed_push_reads_head_before_it_says_kept_on_head_exit_3(box: 
     if state == "on-top":
         assert on_head == 0, "this write's commit is under the stamp"
         assert f"HEAD is {box.head(c)}, not this write's commit {sha}" in err, err
-        assert "in this checkout while its push was in flight." in err
+        assert "in this checkout before or while its push was in flight." in err
         assert "it and the commit on top of it are kept on HEAD" in err
         assert len(box.unpublished(c)) == 1, "the stamp is not on origin; this write's commit is"
     else:
@@ -1136,7 +1136,7 @@ def test_a_commit_made_on_top_before_the_replay_is_kept_exit_6(box: Box):
     result = box.helper("set-row-state", LANE, "LIVE · the write under it")
     assert result.returncode == 6, result.stderr
     assert "is no longer HEAD, so it is not replayed" in result.stderr
-    assert "in this checkout while its push was in flight" in result.stderr, "the HEAD check fired, not the drop's"
+    assert "in this checkout before or while its push was in flight" in result.stderr, "the HEAD check fired, not the drop's"
     assert "push refused (attempt 1 of 6)" not in result.stderr, "no reset was made"
     assert box.subject(c) == "handoff(repoS4-2@Eagle): a stamp from an unlocked writer"
     assert box.subject(c, "HEAD~1").startswith(f"LANES({LANE}@"), "this write's commit is under it"
@@ -1812,10 +1812,27 @@ def test_a_commit_landing_just_after_this_writes_commit_is_never_taken_for_it_ex
     assert box.subject(c, "HEAD~1").startswith(f"LANES({LANE}@"), "this write's commit is under the stamp"
     assert f"Commit {stamp} is dropped" not in err, "the stamp was taken for this write's commit"
     assert f"HEAD is {stamp}, not this write's commit {mine}" in err, err
+    # 343's smaller half: the stamp came after this write's commit and BEFORE
+    # its push, so "while its push was in flight" alone was not true here.
+    assert "in this checkout before or while its push was in flight" in err, err
     assert "push refused (attempt 1 of 6)" not in err, "nothing is replayed"
     assert (c / "handoffs" / "stamp.md").is_file(), "the other writer's file is still there"
     assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the publish act"
     _settled(box, c)
+
+
+def _archive_comes_after_the_list_and_the_stop_line(err: str, base: str, mine: str) -> None:
+    """343: `cp_under`'s recovery is the list, the STOP line, then S6.3's
+    archive and the drop, in that order, and never the publish act, which
+    refuses there whatever is done (origin has moved past HEAD: "moved
+    past", 2)."""
+    listed = err.find("list them: git -C ")
+    assert listed >= 0 and f"log --oneline {base}..{mine}" in err[listed:], err
+    stop = err.find("STOP and take it to the lane its subject names", listed)
+    archive = err.find("# the archive, on origin", stop)
+    drop = err.find("reset --keep refs/remotes/origin/main", archive)
+    assert 0 <= listed < stop < archive < drop, err
+    assert 'commit "<what they are>", the publish act' not in err, "the publish act refuses here"
 
 
 def test_a_commit_landing_just_before_this_writes_commit_is_never_dropped_with_it_exit_6(box: Box):
@@ -1824,8 +1841,9 @@ def test_a_commit_landing_just_before_this_writes_commit_is_never_dropped_with_i
     write's commit, so the HEAD check passed, and the drop to origin's tip
     took the stamp with it: `stamp.md` gone, the write replayed (0). Now the
     drop is made only where this write's commit sits on origin's history;
-    here it sits on a commit it did not make, so both are kept on HEAD and
-    named (6), and nothing is replayed."""
+    here it sits on a commit origin lacks and it did not make, so both are
+    kept on HEAD and named (6), nothing is replayed, and the recovery is
+    S6.3's archive after the list and the STOP line (343)."""
     c = box.seam()
     box.race()
     env = _git_shim(box, COMMIT_CALL, before=_stamp(c))
@@ -1836,11 +1854,53 @@ def test_a_commit_landing_just_before_this_writes_commit_is_never_dropped_with_i
     mine = box.head(c)
     assert box.subject(c).startswith(f"LANES({LANE}@"), "HEAD is this write's commit"
     assert box.subject(c, "HEAD~1") == STAMP_SUBJECT, "the stamp is under it"
-    assert "sits on 1 commit(s) it did not make" in err, err
+    assert "sits on 1 commit(s) that origin lacks and this write did not make" in err, err
     assert f"it and they are kept on HEAD (Amendment 23 S4): {mine}" in err, err
     assert "push refused (attempt 1 of 6)" not in err, "nothing is replayed"
     assert (c / "handoffs" / "stamp.md").is_file(), "the other writer's file is still there"
-    assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the publish act"
+    _archive_comes_after_the_list_and_the_stop_line(err, box.origin_head(), mine)
+    assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the archive"
+    _settled(box, c)
+
+
+def test_history_origin_no_longer_has_under_this_writes_commit_is_never_called_a_writer_here_exit_6(box: Box):
+    """343 of lane openRepoTools-3's re-check of #307 at fc6f34d: `cp_under`
+    said "another writer in this checkout committed while this write was
+    being made" of every commit under this write's that origin lacks, a cause
+    it never checks. Here no writer touches the checkout: S3 fast-forwards
+    onto a peer's commit, and at the push origin's history is rewritten
+    without it (a force-push). The words now name what is known, commits
+    origin lacks that this write did not make, with both causes, and give
+    the list, the STOP line and S6.3's archive, never the publish act first,
+    which refuses there (6, both kept, nothing replayed)."""
+    c = box.seam()
+    box.peer_pushes("handoffs/rewritten.md", "on origin until the force-push")
+    peer = shlex.quote(str(box.peer))
+    count = shlex.quote(str(box.count))
+    box.use_net('[ "$1" = push ] || exit 0\n'
+                f"[ -e {count} ] && exit 0\n"
+                f"echo 1 > {count}\n"
+                f"git -C {peer} commit -q --allow-empty -m 'origin rewritten without the peer commit'\n"
+                f"git -C {peer} push -q -f origin main\n"
+                "exit 0\n")
+    result = box.helper("set-row-state", LANE, STATE)
+    assert box.count.exists(), "origin was rewritten at the push"
+    assert result.returncode == 6, result.stderr
+    err = result.stderr
+    mine = box.head(c)
+    assert box.subject(c).startswith(f"LANES({LANE}@"), "HEAD is this write's commit"
+    assert box.subject(c, "HEAD~1") == "a peer writes handoffs/rewritten.md", "the commit origin dropped is under it"
+    assert box.subjects()[0] == "origin rewritten without the peer commit"
+    assert "another writer in this checkout committed while this write was being made" not in err, \
+        "no writer here committed anything"
+    assert ("1 commit(s) that origin/main lacks and this write did not make: another writer's here "
+            "(an unlocked one: lane-start's stamp, lane-handoff), or history origin no longer has") in err, err
+    assert "sits on 1 commit(s) that origin lacks and this write did not make" in err, err
+    assert f"it and they are kept on HEAD (Amendment 23 S4): {mine}" in err, err
+    assert "push refused (attempt 1 of 6)" not in err, "nothing is replayed"
+    _archive_comes_after_the_list_and_the_stop_line(err, box.origin_head(), mine)
+    assert box.pushes() == 1
+    assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the archive"
     _settled(box, c)
 
 
