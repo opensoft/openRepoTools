@@ -15923,8 +15923,12 @@ ws_pending_refuse() {   # <canonical lane> <its checkout>
 #     log (Amendment 16(e)) — so for them a row OR the lane's object log on
 #     origin passes it, and a lane with neither is a typo: `log NOTED
 #     lane:repoX-99 …` for repoX-9 cloned a checkout for a lane that does not
-#     exist and left it. `claim`, `release` and the sweeps are not gated, and
-#     `add-row`, a new lane's first act, makes the row.
+#     exist and left it. So do `claim` and `release`, which take their lane
+#     from `LANES_LANE` as `log` does, and the three sweeps' runner lane
+#     (`retire-rows`, and `archive-rows` and `migrate-state-cells` with
+#     `--yes`; lane openRepoTools-3's review of #307, 285): `LANES_LANE=<typo>
+#     claim …` cloned `<W>-lanes/<typo>/` and published a CLAIMED for a lane
+#     nobody started. `add-row`, a new lane's first act, makes the row.
 #   * A MISS IS ASKED AGAIN after one fetch of W (`log_sync`: W is still
 #     `LANES_REPO` here), so a row, a log, or a rename's new name that another
 #     checkout published and W has not fetched yet is never refused.
@@ -15932,11 +15936,10 @@ ws_pending_refuse() {   # <canonical lane> <its checkout>
 #     (`LANES_NO_GIT=1`), IS NO ANSWER (R22): the write goes on, and its arm
 #     decides, as it always has. `LANES_NO_GIT=1` then meets
 #     `lane_checkout_ensure`'s own refusal to clone.
-#   * EXCEPT `LANES_NO_FETCH=1` (slice 1b, R4-1): every gated verb is a writer,
-#     and for a writer a fetch that did not run is a fetch that failed, so S3
-#     step 1 refuses it in the lane's checkout (ratified choice 2). Failing
-#     open there only cloned a checkout the write could never use, so on a
-#     miss the gate gives S3 step 1's refusal itself, and clones nothing.
+#   * `LANES_NO_FETCH=1` NEVER REACHES THIS GATE WITHOUT A CHECKOUT: every
+#     routed writer is refused before it, in `lane_checkout_enter`, wherever
+#     its lane's checkout does not exist yet (Q4 of #307), so a miss here is
+#     always one that a fetch, run or failed, has answered.
 # `lane_log_exists` is 0 for a log, 2 for two logs whose names differ only by
 # case (no answer: the arm refuses that itself), and otherwise whatever its
 # test gave — `cat-file -e` of a path origin's tree lacks is 128, not 1.
@@ -15950,18 +15953,14 @@ lrg_known() {   # <canonical lane> <1 = its published log answers too> — 0 kno
 lane_row_gate() {   # <canonical lane> <its checkout>
   case "$cmd" in
     set-row-state|replace-in-row|append-session-id|rename-lane) lrg_log=0 ;;
-    log|commit|request-handoff|append-line) lrg_log=1 ;;
+    log|commit|request-handoff|append-line|claim|release|retire-rows|archive-rows|migrate-state-cells) lrg_log=1 ;;
     *) return 0 ;;
   esac
   [ ! -e "$2/.git" ] || return 0
   lrg_rc=0; lrg_known "$1" "$lrg_log" || lrg_rc=$?
   [ "$lrg_rc" = 1 ] || return 0
   log_sync
-  if [ "$LOG_SYNC_FETCH" != yes ]; then
-    [ "${LANES_NO_FETCH:-0}" = 1 ] && [ "$NO_GIT" != 1 ] || return 0
-    lrg_what="no row"; [ "$lrg_log" = 0 ] || lrg_what="no row and no object log"
-    die "lane $1 is not in W's origin/$LANES_BRANCH as it stands ($lrg_what there), and LANES_NO_FETCH=1 is set, so W was not fetched to make sure. For a writer a fetch that did not run is a fetch that failed (Amendment 23 S3 step 1, ratified choice 2), and \`$cmd\` would refuse in the lane's checkout for it, so that checkout, $2/, was not cloned. Nothing was written. Run this write without LANES_NO_FETCH (reads may keep it)." 2
-  fi
+  [ "$LOG_SYNC_FETCH" = yes ] || return 0
   lrg_rc=0; lrg_known "$1" "$lrg_log" || lrg_rc=$?
   [ "$lrg_rc" = 1 ] || return 0
   if [ "$lrg_log" = 1 ]; then
@@ -16024,6 +16023,17 @@ lane_checkout_enter() {   # <write_lane_of's status> <its lane, or empty>
   lcn_p="$(lane_checkout_path "$lcn_c")" || die "$(lanes_workspace_why)" 1
   lane_checkout_inside "$lcn_p"
   ws_pending_refuse "$lcn_c" "$lcn_p"
+  # NO FETCH, NO CLONE (Q4 of lane openRepoTools-3's review of #307). For a
+  # writer a fetch that did not run is a fetch that failed, so S3 step 1
+  # refuses every write under `LANES_NO_FETCH=1` in the lane's checkout
+  # (ratified choice 2). Where that checkout does not exist yet, cloning it
+  # first is pure cost — the network, and about 0.4 GB of working tree on a
+  # nearly full volume — for a write that is then refused anyway. So every
+  # routed writer refuses here, before any clone, whatever the gate below
+  # would say; an existing checkout goes on, and S3 refuses there at no cost.
+  if [ "${LANES_NO_FETCH:-0}" = 1 ] && [ "$NO_GIT" != 1 ] && [ ! -e "$lcn_p/.git" ]; then
+    die "LANES_NO_FETCH=1 is set, and for a writer a fetch that did not run is a fetch that failed (Amendment 23 S3 step 1, ratified choice 2): \`$cmd\` would refuse in lane $lcn_c's checkout for it, so that checkout, $lcn_p/, was not cloned. Nothing was written. Run this write without LANES_NO_FETCH (reads may keep it)." 2
+  fi
   lane_row_gate "$lcn_c" "$lcn_p"
   lane_checkout_ensure "$lcn_c"
   if [ -n "$LANES_DIR_GIVEN" ]; then LANES_DIR="$LANES_DIR_GIVEN"
