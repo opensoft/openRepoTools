@@ -1195,7 +1195,15 @@ SC_IDX
       sjl_cand="a former name of lane $2, beside that lane's own checkout $sjl_new; "
     fi
     if [ -n "$sc_runner" ] && [ "$(sc_lc "$2")" = "$(sc_lc "$sc_runner")" ]; then
-      sc_keep "$1" "${sjl_keep}lane $2 runs this sweep: its checkout is the one its NOTED line goes through"
+      # A FORMER NAME OF THE RUNNER'S LANE has its own reason (rv4-c4's NIT
+      # c4-1): the lane may be CLOSED already, and the NOTED line goes through
+      # the lane's own checkout, not this one. What it is kept for is a process
+      # started before the rename, which still names the old path.
+      if [ -n "$sjl_new" ]; then
+        sc_keep "$1" "a former name of lane $2, which runs this sweep: a process it started before the rename may still write through this path"
+      else
+        sc_keep "$1" "lane $2 runs this sweep: its checkout is the one its NOTED line goes through"
+      fi
       return 0
     fi
     if ! sc_lookup "$2"; then

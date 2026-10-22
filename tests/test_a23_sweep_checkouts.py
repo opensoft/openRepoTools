@@ -361,6 +361,30 @@ def test_a_closed_runner_keeps_its_own_checkout(sweep, yes):
     assert os.path.lexists(other) is not yes
 
 
+@pytest.mark.parametrize("yes", [False, True], ids=["dry run", "--yes"])
+def test_a_former_name_of_the_runners_own_lane_is_kept_for_its_own_reason(sweep, yes):
+    """A FORMER NAME OF THE RUNNER'S OWN LANE IS KEPT FOR ITS OWN TRUE REASON
+    (rv4-c4's NIT c4-1, P6). Lane repoS4-8 is renamed repoS4-9, and repoS4-9
+    ENDS and runs the sweep: its former name's checkout is kept, but not
+    "until that lane is CLOSED", which it is already. What it may still be
+    written through is a process started before the rename, whose
+    `LANES_REPO` names the old path; the NOTED line goes through the lane's
+    own checkout, which is kept by its own reason. Only repoS4-2's, a CLOSED
+    lane that is not the runner's, is swept."""
+    box = sweep.box
+    old, new = box.checkout(OLD), box.checkout(NEW)
+    _new_name_ended(box)
+    result, rows = sweep(*(("--yes",) if yes else ()), LANES_LANE=NEW)
+    assert rows[str(old)] == (
+        "keep", f"a former name of lane {NEW}, which runs this sweep: a process it started "
+                f"before the rename may still write through this path"), rows[str(old)]
+    assert rows[str(new)] == (
+        "keep", f"lane {NEW} runs this sweep: its checkout is the one its NOTED line goes through"), rows[str(new)]
+    assert result.returncode == (0 if yes else 3), (result.stdout, result.stderr)
+    assert _tagged(rows, "removed" if yes else "remove") == {str(box.checkout(CLOSED))}, rows
+    assert old.is_dir() and new.is_dir()
+
+
 def test_a_closed_lanes_checkout_named_by_LANES_REPO_is_kept(sweep):
     """THE CHECKOUT A CALLER'S `LANES_REPO` NAMES IS NEVER A CANDIDATE, even a
     CLOSED lane's: a write of that window may go through it."""
