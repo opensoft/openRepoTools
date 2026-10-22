@@ -305,6 +305,54 @@ def test_a_paused_lane_is_kept_without_LANES_REPO(sweep):
     assert rows[str(box.checkout(PAUSED))] == ("keep", f"lane {PAUSED} is PAUSED, not CLOSED (Amendment 19)")
 
 
+@pytest.mark.parametrize("lane", [LIVE, CLOSED],
+                         ids=["a LIVE lane", "an ENDED lane a live session record names"])
+def test_a_live_lanes_checkout_is_kept_by_the_live_rule(sweep, lane):
+    """A LANE THAT IS LIVE HERE IS KEPT BY THE LIVE RULE, whose reason names
+    the live session record; so is a lane whose log says ENDED while a live
+    session record here names its transcript, which is LIVE and not CLOSED.
+    The class check would keep both as well, because `lanes` gives a LIVE
+    lane no class at all (`lanes-edit.sh`: `ENDED|RETIRED) lr_class=closed`,
+    `LIVE) :`), so no listing has a lane that is LIVE and classed closed:
+    the reason is what shows that the LIVE rule kept it."""
+    box = sweep.box
+    if lane == CLOSED:
+        record, body = _live_record(box, CLOSED)
+        record.write_text(body + "\n", encoding="utf-8")
+    for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+        result, rows = sweep(*args, **env)
+        assert rows[str(box.checkout(lane))] == (
+            "keep", f"lane {lane} is LIVE: a live session record here names it"), rows
+        assert result.returncode in (0, 3), (result.stdout, result.stderr)
+    assert box.checkout(lane).is_dir()
+
+
+@pytest.mark.parametrize("yes", [False, True], ids=["dry run", "--yes"])
+def test_a_closed_runner_keeps_its_own_checkout(sweep, yes):
+    """THE RUNNER'S OWN CHECKOUT IS NEVER A CANDIDATE, even where the runner's
+    own lane is CLOSED: the NOTED line goes through that checkout. Only the
+    former name's checkout is swept."""
+    box = sweep.box
+    result, rows = sweep(*(("--yes",) if yes else ()), LANES_LANE=CLOSED)
+    assert rows[str(box.checkout(CLOSED))] == (
+        "keep", f"lane {CLOSED} runs this sweep: its checkout is the one its NOTED line goes through"), rows
+    assert result.returncode == (0 if yes else 3), (result.stdout, result.stderr)
+    assert _tagged(rows, "removed" if yes else "remove") == {str(box.checkout(OLD))}, rows
+    assert box.checkout(CLOSED).is_dir()
+    assert os.path.lexists(box.checkout(OLD)) is not yes
+
+
+def test_a_closed_lanes_checkout_named_by_LANES_REPO_is_kept(sweep):
+    """THE CHECKOUT A CALLER'S `LANES_REPO` NAMES IS NEVER A CANDIDATE, even a
+    CLOSED lane's: a write of that window may go through it."""
+    box = sweep.box
+    result, rows = sweep(LANES_REPO=str(box.checkout(CLOSED)))
+    assert rows[str(box.checkout(CLOSED))] == (
+        "keep", "the checkout LANES_REPO names, which a write of this window may go through"), rows
+    assert result.returncode == 3, (result.stdout, result.stderr)
+    assert _tagged(rows, "remove") == {str(box.checkout(OLD))}, rows
+
+
 def test_a_W_that_is_a_lane_checkout_is_refused(sweep):
     """FROM A LANE WINDOW, `LANES_WORKSPACE_ROOT` names the lane's own checkout,
     and every OTHER lane's checkout would stand "beside W". The sweep refuses,
