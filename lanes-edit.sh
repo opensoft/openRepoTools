@@ -1157,7 +1157,7 @@ LANES_ROUTED="${LANES__CHECKOUT_LANE:-}"   # the lane, in the re-run process onl
 # process this one starts ever sees them; `claim`'s takeover decision crosses
 # the `exec` the same way, and so do Rule 1's reads and the stale claim's
 # URL that attempt 1 made before the lock (lane openRepoTools-3's review of
-# #307, 284), so a re-run makes no network read with the lock held. Not `LANES__PID`: an unrouted write has no routing
+# #307, 284), so a re-run makes no GitHub read with the lock held. Not `LANES__PID`: an unrouted write has no routing
 # markers, and exporting one would make a child helper drop its caller's
 # `LANES_REPO`, `LANES_DIR` and `LANES_FILE` (the rule above).
 CP_ATTEMPT=1; CP_REPLAYING=0; CP_CLAIM_FROM=""; CP_CLAIM_DEAD=""; CP_CLAIM_READS=""; CP_CLAIM_URL=""
@@ -17899,7 +17899,7 @@ EOF
     #    the rescan above decides the race, so attempt 1's cross the `exec`
     #    and are printed, and cited in the comment, as they were made.
     if [ "$CP_REPLAYING" = 1 ] && [ "$NO_GITHUB" != 1 ]; then
-      note "Rule 1's three reads were made at attempt 1, before the lock, and are printed as they were: this re-run holds the lock and makes no network read with it held (Amendment 23 S4; the rescan above decides the race)."
+      note "Rule 1's three reads were made at attempt 1, before the lock, and are printed as they were: this re-run holds the lock and makes no GitHub read with it held (Amendment 23 S4; the rescan above decides the race)."
       reads="$CP_CLAIM_READS"
       [ -n "$reads" ] || reads="the three reads of Rule 1: made and printed at attempt 1, before the lock"
     else

@@ -1386,6 +1386,11 @@ def test_a_claims_re_run_makes_no_network_read_while_it_holds_the_lock(box: Box)
     assert any(r.startswith("git ls-remote --heads git@github.com:") for r in reads), reads
     assert [r for r in reads if "LOCK HELD" in r] == [], reads
     assert "made at attempt 1, before the lock" in result.stderr
+    # 332 of lane 3's re-check: S3's fetch, the push and its read-back still
+    # run on the re-run, each bounded by `git_net`; what it makes none of is
+    # a GitHub read, and the note says that, not "no network read".
+    assert "makes no GitHub read with it held" in result.stderr, result.stderr
+    assert "no network read" not in result.stderr
     assert result.stdout.count("1. existing `CLAIMED —` comments on") == 2, "printed at both attempts"
     assert f"CLAIMED — lane {LANE}" in box.origin_file(f"lanes/log/{LANE}.md")
     _settled(box, c)

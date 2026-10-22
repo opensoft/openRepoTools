@@ -206,7 +206,7 @@ creating a second one; two rows differing only by case are a refusal naming both
    `claim` and `add-row`, whose own checks ran before the lock, if S3's fetch
    finds origin moved since those checks read it, nothing is written and the
    verb runs again from the top with the lock held (within S4's six attempts;
-   2 at the sixth). The re-run makes no network read: Rule 1's three reads
+   2 at the sixth). The re-run makes no GitHub read: Rule 1's three reads
    made at attempt 1 are printed and cited as they were;
 3. re-reads the file, edits **exactly one line** in place, and refuses if
    `git diff --numstat` says more than one line moved;
@@ -893,7 +893,7 @@ workstation. So:
    fast-forwarded first, no pull). If S3's fetch finds origin moved since
    steps 1–3 read it, nothing is written and the claim runs again from the
    top with the lock held (within the six attempts; 2 at the sixth), and its
-   rescan comes first, as below; the re-run makes no network read, and prints
+   rescan comes first, as below; the re-run makes no GitHub read, and prints
    and cites the three reads attempt 1 made. A push refused because origin moved drops
    the `CLAIMED` commit and runs the claim again on origin's new tip, and the
    re-run rescans first: if another lane's `CLAIMED` or `TAKEOVER` is there,
