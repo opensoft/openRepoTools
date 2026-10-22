@@ -625,6 +625,53 @@ def test_a_former_name_whose_new_checkout_goes_after_the_listing_is_kept(sweep):
     assert old.is_dir()
 
 
+def _live_record(box: Sweep, lane: str) -> tuple:
+    """A session record here naming `lane`'s transcript, held by the box's own
+    live `sleep`, which makes `lane` LIVE: its path and its text."""
+    return (box.home / ".claude" / "sessions" / f"{lane}.json",
+            '{"pid":%d,"sessionId":"%s","kind":"interactive","status":"busy"}'
+            % (box.sleeper.pid, UUID[lane]))
+
+
+def _live_session_of(box: Sweep, lane: str) -> str:
+    """A hook's shell command that writes `_live_record`."""
+    record, body = _live_record(box, lane)
+    return f"printf '%s\\n' '{body}' > {record}"
+
+
+def test_a_former_name_of_a_live_lane_is_kept(sweep):
+    """A FORMER NAME'S CHECKOUT IS KEPT WHILE ITS LANE IS LIVE (rv4's SHOULD 4,
+    D27). Since 10-19 the launcher exports `LANES_REPO=<W>-lanes/<lane>`, and
+    a window of the lane started before the rename still names the old path,
+    so removing it makes that window's writes fail until it is relaunched.
+    Here repoS4-9 is LIVE: a live session record names its transcript. Its
+    former name's checkout is kept by the dry run and by `--yes`."""
+    box = sweep.box
+    old = box.checkout(OLD)
+    record, body = _live_record(box, NEW)
+    record.write_text(body + "\n", encoding="utf-8")
+    for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+        result, rows = sweep(*args, **env)
+        assert rows[str(old)][0] == "keep", rows[str(old)]
+        assert result.returncode in (0, 3), (result.stdout, result.stderr)
+        assert f"a former name of lane {NEW}, which is LIVE" in rows[str(old)][1], rows[str(old)]
+    assert old.is_dir()
+
+
+def test_a_former_name_whose_lane_goes_live_after_the_listing_is_kept(sweep):
+    """THE SAME RULE, ASKED AGAIN UNDER THE LOCK (D27): repoS4-9 comes LIVE at
+    its former name's own fetch, after the listing found that checkout a
+    candidate. It is kept."""
+    box = sweep.box
+    old = box.checkout(OLD)
+    _hook_on_fetch_of(box, old, _live_session_of(box, NEW))
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert rows[str(old)][0] == "hold", rows[str(old)]
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert f"lane {NEW} is LIVE now" in rows[str(old)][1], rows[str(old)]
+    assert old.is_dir()
+
+
 def test_a_fetch_that_fails_holds(sweep):
     """`--yes` decides on a fetched origin: a candidate whose fetch fails is
     held, and its lock released."""

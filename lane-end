@@ -1223,11 +1223,20 @@ SC_IDX
       return 0
     fi
     # A FORMER NAME OF LANE `sj_c`. Beside the new name's own checkout it is a
-    # candidate whatever that lane's state, because nothing writes through it
-    # any more (S1); with no checkout under the new name it IS the lane's
-    # checkout until the next write renames it (S1), and is judged as one.
+    # candidate, because no write of the lane's goes through it any more (S1),
+    # UNLESS THE LANE IS LIVE (rv4's SHOULD 4, D27): since 10-19 the launcher
+    # exports `LANES_REPO=<W>-lanes/<lane>`, and a window of the lane started
+    # before the rename still names the old path, so removing it would fail
+    # that window's writes until it is relaunched. A window of the lane on
+    # this workstation is a live session record naming it, which is what
+    # LIVE is. With no checkout under the new name it IS the lane's checkout
+    # until the next write renames it (S1), and is judged as one.
     sj_new="$sc_home/$sj_c"
     if [ -d "$sj_new" ] && [ ! -L "$sj_new" ] && [ ! "$sj_new" -ef "$sj_p" ]; then
+      if sc_lookup "$sj_c" && [ "$SC_L_STATE" = LIVE ]; then
+        sc_keep "$sj_p" "a former name of lane $SC_L_LANE, which is LIVE: a window of it started before the rename may still write through this path, which its LANES_REPO names"
+        return 0
+      fi
       sc_cand "$sj_p" "$sj_c" "a former name of lane $sj_c, beside that lane's own checkout $sj_new" "$sj_new"
       return 0
     fi
@@ -1583,6 +1592,9 @@ SS_ROW
       ss_c="$(LANES_NO_FETCH=1 "$LANES_EDIT" canon-lane "${1##*/}" 2>/dev/null)" || ss_c=""
       if [ "$(sc_lc "$ss_c")" != "$(sc_lc "$2")" ] || [ ! -d "$3" ] || [ -L "$3" ] || [ "$3" -ef "$1" ]; then
         SC_WHY="it is no longer a former name of lane $2 beside that lane's own checkout"; return 1
+      fi
+      if [ "${ss_state:-}" = LIVE ]; then
+        SC_WHY="lane $2 is LIVE now, and a window of it started before the rename may still write through this path (D27)"; return 1
       fi
       return 0
     fi
