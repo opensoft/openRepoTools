@@ -868,6 +868,28 @@ def test_the_publish_acts_moved_origin_recovery_names_the_lane_and_stops_first(b
     _settled(box, c)
 
 
+def test_the_publish_acts_list_line_reads_origin_past_a_local_branch_named_origin_main(box: Box):
+    """333 of lane openRepoTools-3's re-check of #307: the publish act's
+    list line said `cherry -v origin/main HEAD`, and with a local branch
+    named `origin/main` that short name is the branch, so the line listed 0
+    `+` lines where origin lacks the whole queue, and the STOP check it
+    exists for read nothing. It names `refs/remotes/origin/main` now."""
+    c = box.seam()
+    box.use_net()
+    shas = _queue(box, c, 2)
+    box.git("-C", str(c), "branch", "origin/main", "HEAD")   # the shadow
+    box.peer_pushes("handoffs/repoS4/elsewhere.md", "a peer's file" + "\n")
+    result = box.helper("commit", "publish the queue", LANES_LANE=LANE)
+    err = result.stderr
+    assert result.returncode == 2, err
+    listed = re.search(r"list them: git (-C \S+ cherry -v \S+ HEAD);", err)
+    assert listed, err
+    out = box.git(*shlex.split(listed.group(1)))
+    assert [l.split()[1] for l in out.splitlines() if l.startswith("+ ")] == shas, (out, err)
+    assert "push" not in box.net_ops()
+    _settled(box, c)
+
+
 @pytest.mark.parametrize("state", ["head-is-the-tip", "on-top", "rewritten"])
 def test_a_publish_act_push_refused_with_origin_unmoved_reads_head_exit_6(box: Box, state: str):
     """w1b-c6's second find, with item 1: the publish act's refusal with

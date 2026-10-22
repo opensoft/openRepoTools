@@ -335,7 +335,7 @@ def test_a_peers_unpushed_commit_refuses_the_write_and_is_never_reset_away(box):
     # from resetting a peer's commit away, word for word, because lane
     # openRepoTools-5's #68 waits on these words.
     stop = _line_of(err, "if any '+' line is not your own write, STOP and take it to the lane its subject names")
-    keep = _line_of(err, "reset --keep origin/main")
+    keep = _line_of(err, "reset --keep refs/remotes/origin/main")
     assert stop < keep, err
     assert "reset --hard" not in err, err
     assert "Nothing was written." in err
@@ -576,7 +576,7 @@ def test_a_queue_origin_already_holds_by_content_is_the_diverged_refusal(box):
     result = box.helper("commit", SUBJECT)
     assert result.returncode == 2, result.stderr
     assert "this checkout has diverged" in result.stderr, result.stderr
-    assert "reset --keep origin/main" in result.stderr
+    assert "reset --keep refs/remotes/origin/main" in result.stderr
     assert "pushed origin/" not in result.stderr, result.stderr
     calls = [f" {c} " for c in box.net_calls()]
     assert not any(" pull " in c or " push " in c for c in calls), calls

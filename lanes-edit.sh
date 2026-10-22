@@ -2423,10 +2423,10 @@ CS_EOF
       note "this checkout holds $cs_plus commit(s) origin/$LANES_BRANCH lacks by content:"
       git -C "$cs_c" --no-pager cherry -v "$cs_trk" HEAD 2>/dev/null | grep '^+' | head -n 10 >&2 || :
       cs_refuse "$cs_what" "HEAD carries $cs_plus unpublished commit(s), and a write made on top of them would push them under its own name or strand itself behind them (Amendment 23 S3)" \
-        "list them: git -C $cs_c cherry -v origin/$LANES_BRANCH HEAD" \
+        "list them: git -C $cs_c cherry -v refs/remotes/origin/$LANES_BRANCH HEAD" \
         "if any '+' line is not your own write, STOP and take it to the lane its subject names; never reset, stash or overwrite a peer's work" \
         "publish them with the publish act, which pushes them and writes nothing new: LANES_LANE=${cs_lane:-<lane>} $SELF commit \"<what they are>\"   (with nothing staged and $LANES_PATH clean)" \
-        "or archive them (S6.3): git -C $cs_c push origin HEAD:refs/heads/archive/${cs_lane:-<lane>}-stranded-$(date -u +%Y%m%dT%H%MZ), then git -C $cs_c reset --keep origin/$LANES_BRANCH"
+        "or archive them (S6.3): git -C $cs_c push origin HEAD:refs/heads/archive/${cs_lane:-<lane>}-stranded-$(date -u +%Y%m%dT%H%MZ), then git -C $cs_c reset --keep refs/remotes/origin/$LANES_BRANCH"
     fi
     # ---- 6. diverged
     if [ "$cs_plus" = 0 ] && ! git -C "$cs_c" merge-base --is-ancestor HEAD "$cs_trk" 2>/dev/null; then
@@ -2444,7 +2444,7 @@ CS_EOF
           "then: git -C $cs_c reset --keep refs/remotes/origin/$LANES_BRANCH, and make again, with lanes-edit.sh, each edit that is still wanted on the register as it now is"
       fi
       cs_refuse "$cs_what" "HEAD is not an ancestor of origin/$LANES_BRANCH, and every commit on it is on origin already by content: this checkout has diverged" \
-        "git -C $cs_c reset --keep origin/$LANES_BRANCH   # the content is already published"
+        "git -C $cs_c reset --keep refs/remotes/origin/$LANES_BRANCH   # the content is already published"
     fi
   fi
 
@@ -3320,7 +3320,7 @@ cp_publish_moved() {
   # own refusal and the manual give them. And the reset names the tracking ref
   # in full, since a local branch named `origin/<b>` wins the short name.
   note "RECOVERY (S6.3), in this order:"
-  note "  list them: git -C $LANES_REPO cherry -v origin/$LANES_BRANCH HEAD; if any '+' line is not your own write, STOP and take it to the lane its subject names — never reset, stash or overwrite a peer's work"
+  note "  list them: git -C $LANES_REPO cherry -v refs/remotes/origin/$LANES_BRANCH HEAD; if any '+' line is not your own write, STOP and take it to the lane its subject names — never reset, stash or overwrite a peer's work"
   note "  git -C $LANES_REPO push origin HEAD:refs/heads/archive/${LANES_LANE:-<lane>}-stranded-$(date -u +%Y%m%dT%H%MZ)   # the archive, on origin"
   note "  git -C $LANES_REPO reset --keep refs/remotes/origin/$LANES_BRANCH          # then drop them here"
   note "  then make again, with lanes-edit.sh, each edit that is still wanted on the register as it now is."

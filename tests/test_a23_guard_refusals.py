@@ -22,6 +22,7 @@ off. The sandbox is the real `lanes-edit.sh`; nothing reaches a real remote.
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 from pathlib import Path
@@ -180,15 +181,15 @@ def _staged(box: Box, c: Path):
 
 def _unpushed(box: Box, c: Path):
     sha = _local_commit(box, c, "handoffs/repoS3/note.md", "a note\n", "an unpushed note")
-    return {}, ["1 unpublished commit(s)", f"+ {sha}", "cherry -v origin/main HEAD",
-                "the publish act", "reset --keep origin/main"]
+    return {}, ["1 unpublished commit(s)", f"+ {sha}", "cherry -v refs/remotes/origin/main HEAD",
+                "the publish act", "reset --keep refs/remotes/origin/main"]
 
 
 def _diverged(box: Box, c: Path):
     """Every commit on HEAD already on origin by content, under another sha."""
     _local_commit(box, c, "handoffs/README.md", "# handoffs\nthe same line\n", "mine")
     box.peer_pushes("handoffs/README.md", "# handoffs\nthe same line\n")
-    return {}, ["this checkout has diverged", "reset --keep origin/main"]
+    return {}, ["this checkout has diverged", "reset --keep refs/remotes/origin/main"]
 
 
 def _fetch_fails(box: Box, c: Path):
@@ -658,6 +659,36 @@ def test_a_diverged_checkout_holding_a_hand_merge_is_told_to_archive_first(box: 
     assert "the content is already published" not in err, "a merge's content is not"
     assert box.snapshot(c) == before, "nothing was written"
     assert not box.lock_of(c).exists()
+
+
+@pytest.mark.parametrize("row", ["unpushed", "diverged"])
+def test_s3s_recovery_commands_read_origin_past_a_local_branch_named_origin_main(box: Box, row: str):
+    """333 and 342 of lane openRepoTools-3's re-check of #307: a local
+    branch named `origin/main` wins the short name over the tracking ref. S3
+    compares by the full ref, but step 5's list line said `cherry -v
+    origin/main HEAD`, which then listed nothing, and steps 5 and 6 said
+    `reset --keep origin/main`, which reset to that branch, not to origin.
+    They name `refs/remotes/origin/main` now, and followed word for word
+    they read origin."""
+    c = box.seam()
+    if row == "unpushed":
+        sha = _local_commit(box, c, "handoffs/repoS3/note.md", "a note\n", "an unpushed note")
+    else:
+        _local_commit(box, c, "handoffs/README.md", "# handoffs\nthe same line\n", "mine")
+        box.peer_pushes("handoffs/README.md", "# handoffs\nthe same line\n")
+    box.git("-C", str(c), "branch", "origin/main", "HEAD")   # the shadow
+    result = run_verb(box, "set-row-state")
+    err = result.stderr
+    assert result.returncode == 2, err
+    if row == "unpushed":
+        listed = re.search(r"list them: git (-C \S+ cherry -v \S+ HEAD)", err)
+        assert listed, err
+        out = box.git(*shlex.split(listed.group(1)))
+        assert f"+ {sha}" in out, (out, err)
+    reset = re.search(r"git (-C \S+ reset --keep \S+)", err)
+    assert reset, err
+    box.git(*shlex.split(reset.group(1)))
+    assert box.git("-C", str(c), "rev-parse", "HEAD").strip() == box.origin_head(), "the reset reached origin's tip"
 
 
 def test_a_migration_dry_run_gives_an_untracked_log_a_recovery_that_works(box: Box):
