@@ -589,17 +589,24 @@ def test_a_fetch_that_fails_holds(sweep):
     assert c.is_dir() and not (c / "lanes" / ".lanes-edit.lock").exists()
 
 
-def test_a_W_fetch_that_fails_at_the_listing_refuses_yes(sweep):
-    """`--yes` decides on a register fetched just now (D14). W's fetch FAILS
-    here while `ls-remote` succeeds, which `log_sync` says as `fell-back`: it
-    reads the stale ref and exits 0, and the listing's own note is the phrase
-    "reading the logs as they stand locally" without "NO FETCH WAS MADE" (rv4's
-    MUST 1, P5). Refused before the first removal, with nothing written."""
+@pytest.mark.parametrize("op,note", [
+    ("fetch", "fetch failed — reading the logs as they stand locally"),
+    ("ls-remote", "NO FETCH WAS MADE"),
+], ids=["the fetch fails after ls-remote (fell-back)", "ls-remote fails (no fetch)"])
+def test_a_W_fetch_that_fails_at_the_listing_refuses_yes(sweep, op, note):
+    """`--yes` decides on a register fetched just now (D14). Either way W's
+    fetch can fail refuses it before the first removal, with nothing written:
+    the FETCH fails while `ls-remote` succeeds, which `log_sync` says as
+    `fell-back` — it reads the stale ref and exits 0, and the listing's own
+    note has the phrase "reading the logs as they stand locally" without "NO
+    FETCH WAS MADE" (rv4's MUST 1, P5) — or `ls-remote` fails, and no fetch is
+    made at all (rv4-r2's NIT 1)."""
     box = sweep.box
     before, head = box.everything(), box.origin_head()
-    box.use_net(hook=f'case " $* " in *" -C {box.w} fetch "*) exit 1 ;; esac\nexit 0\n')
+    box.use_net(hook=f'case " $* " in *" -C {box.w} {op} "*) exit 1 ;; esac\nexit 0\n')
     result, _ = sweep("--yes", LANES_LANE=RUNNER)
     assert result.returncode == 1, (result.stdout, result.stderr)
+    assert note in result.stderr, result.stderr
     assert "reading the logs as they stand locally" in result.stderr, result.stderr
     assert "W's fetch did not complete" in result.stderr, result.stderr
     assert "Nothing was removed" in result.stderr, result.stderr
@@ -628,6 +635,28 @@ def test_a_lane_resumed_while_W_cannot_fetch_is_kept(sweep):
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert rows[str(c)][0] == "hold", rows[str(c)]
     assert "was not read fresh" in rows[str(c)][1], rows[str(c)]
+    assert c.is_dir()
+
+
+def test_a_W_ls_remote_that_fails_at_the_recheck_holds(sweep):
+    """THE RE-ASK MAKES NO FETCH AT ALL WHEN W'S `ls-remote` FAILS (rv4-r2's
+    NIT 1): W fetches at the listing, and its `ls-remote` fails from the
+    candidate's own fetch on, so the re-ask's note is "NO FETCH WAS MADE ...
+    reading the logs as they stand locally". The checkout is kept."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    marker = box.root / "fetched.marker"
+    box.use_net(hook=(
+        'case " $* " in\n'
+        f'  *" -C {c} fetch "*) touch {marker} ;;\n'
+        f'  *" -C {box.w} ls-remote "*) if [ -e {marker} ]; then exit 1; fi ;;\n'
+        'esac\nexit 0\n'))
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert marker.exists(), box.net_log.read_text(encoding="utf-8")
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert ("was not read fresh under its checkout's lock: W's fetch did not complete"
+            in rows[str(c)][1]), rows[str(c)]
     assert c.is_dir()
 
 
