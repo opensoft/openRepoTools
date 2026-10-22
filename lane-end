@@ -1561,7 +1561,25 @@ SCC
       SC_WHY="its writers' lock lanes/.lanes-edit.lock is held: a writer is in it, or one left it behind"; return 1
     fi
     SC_LOCK="$slt_d"
-    printf '%s %s\n' "$$" "$sc_ident" > "$slt_d/pid" 2>/dev/null || :
+    # ITS PID LINE IS WRITTEN, OR THE LOCK IS LET GO AT ONCE (rv4-c3's NIT
+    # c3-2). A lock that names no holder is one its writers wait ten minutes
+    # on (`mutex_stale`), and the check before the move would read this
+    # sweep's own pid-less lock as taken over and leave it, so every later
+    # sweep would hold the checkout for it. A line that cannot be written (a
+    # full disk, a directory that cannot be written in) empties and removes
+    # the lock just made, which no writer can have taken from a live holder
+    # in under ten minutes, and holds the checkout. So a lock whose line is
+    # not this sweep's is only ever another writer's.
+    if ! printf '%s %s\n' "$$" "$sc_ident" 2>/dev/null > "$slt_d/pid"; then
+      rm -f -- "$slt_d/pid" 2>/dev/null || :
+      SC_LOCK=""
+      if rmdir -- "$slt_d" 2>/dev/null; then
+        SC_WHY="its writers' lock was taken, and this sweep's pid line could not be written into it, so the lock was let go again: one that names no holder is one its writers wait ten minutes on"
+      else
+        SC_WHY="its writers' lock was taken, and this sweep's pid line could not be written into it, and the lock could not be let go again: lanes/.lanes-edit.lock is left, and its writers wait out its ten minutes"
+      fi
+      return 1
+    fi
     return 0
   }
   # THE LOCK STAYS THE SWEEP'S, OR IT IS LEFT AS IT IS (rv4's NIT 4). A holder
