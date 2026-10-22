@@ -702,12 +702,85 @@ def test_retire_rows_gives_an_untracked_log_the_same_recovery_and_it_works(box: 
     assert result.returncode == 2, (result.stdout, result.stderr)
     assert "NOT TRACKED" in result.stderr, result.stderr
     assert f"git -C {c} add -- {rel} && git -C {c} commit -m" in result.stderr, result.stderr
-    assert "the publish act (LANES_LANE=<lane>" in result.stderr
+    assert f"the publish act (LANES_LANE={LANE} " in result.stderr, "331: the lane it ran for"
     assert "Nothing was written" in result.stderr
     box.git("-C", str(c), "add", "--", rel)
     box.git("-C", str(c), "commit", "-q", "-m", f"{NEIGHBOUR}(its log)", "--", rel)
+    published = box.helper("commit", "its log", LANES_LANE=LANE)
+    assert published.returncode == 0, published.stderr
+    again = box.helper("retire-rows", NEIGHBOUR, LANES_LANE=LANE, LANES_SESSION=UUID)
+    assert again.returncode == 0, (again.stdout, again.stderr)
+    assert f"RETIRED — lane {NEIGHBOUR}" in box.origin_file(rel)
+
+
+def _a_log_nobody_tracks(checkout: Path) -> str:
+    rel = f"lanes/log/{NEIGHBOUR}.md"
+    RegisterBox.write(checkout, rel, f"# lane {NEIGHBOUR} — object log (lane-collision-protocol Amendment 7)" + "\n")
+    return rel
+
+
+def test_under_the_opt_in_a_migration_dry_run_in_W_gives_no_commit_in_W(box: Box):
+    """331 of lane openRepoTools-3's re-check of #307: under the opt-in the
+    migration's dry run is not routed, so it reads W, and 288's recovery said
+    to commit there. Followed word for word, the commit went into W; the
+    publish act routed to the lane's own checkout, found nothing to send
+    there and exited 0; origin never got the log; and W was left holding a
+    commit that S5 and `refresh-workspace` then refused. The line now says W
+    takes no commit and gives the move into its maker's own lane checkout,
+    and following that, with the maker's lane for `<lane>`, publishes the
+    log and leaves W with nothing of its own."""
+    rel = _a_log_nobody_tracks(box.w)
+    result = box.helper("migrate-state-cells")
+    out = result.stdout
+    assert result.returncode == 0, (out, result.stderr)
+    line = next((l for l in out.splitlines() if l.strip().startswith(f"{NEIGHBOUR} ")), "")
+    assert "NOT TRACKED" in line, out
+    assert "takes no commit (Amendment 23 S5)" in line, line
+    assert f"git -C {box.w} add" not in line and f"git -C {box.w} commit" not in line, line
+    assert f"mv -- {box.w}/{rel} {box.lanes_root}/<lane>/{rel}" in line, line
+    assert f"git -C {box.lanes_root}/<lane> add -- {rel} && git -C {box.lanes_root}/<lane> commit -m" in line, line
+    assert "the publish act (LANES_LANE=<lane>" in line, line
+    assert f"rm -- {box.w}/{rel}" in line, line
+    # Word for word, with the maker's own lane for <lane>.
+    lc = box.checkout(NEIGHBOUR)
+    made = box.helper("lane-checkout", NEIGHBOUR, "--create")
+    assert made.returncode == 0 and made.stdout.strip() == str(lc), (made.stdout, made.stderr)
+    (box.w / rel).rename(lc / rel)
+    box.git("-C", str(lc), "add", "--", rel)
+    box.git("-C", str(lc), "commit", "-q", "-m", f"{NEIGHBOUR}(its log)", "--", rel)
     published = box.helper("commit", "its log", LANES_LANE=NEIGHBOUR)
     assert published.returncode == 0, published.stderr
+    assert box.origin_file(rel).startswith(f"# lane {NEIGHBOUR}"), "the publish act sent it"
+    assert box.unpublished(box.w) == [], "W holds no commit of its own"
+    assert box.git("-C", str(box.w), "status", "--porcelain", "--untracked-files=all") == ""
+    refreshed = box.helper("refresh-workspace")
+    assert refreshed.returncode == 0, refreshed.stderr
+    again = box.helper("migrate-state-cells")
+    assert again.returncode == 0, (again.stdout, again.stderr)
+    assert "NOT TRACKED" not in again.stdout, "the recovery the line gives settles it"
+
+
+def test_a_routed_sweep_names_its_runners_lane_in_the_publish_act(box: Box):
+    """331's other half: a routed `retire-rows` goes through its runner's own
+    checkout, and the publish act it printed said `LANES_LANE=<lane>`, which
+    routes back to that checkout only if the reader puts in the runner's
+    lane. It now prints that lane, and following the line word for word
+    publishes the log and lets the sweep run."""
+    made = box.helper("lane-checkout", LANE, "--create")
+    lc = box.checkout(LANE)
+    assert made.returncode == 0 and made.stdout.strip() == str(lc), (made.stdout, made.stderr)
+    rel = _a_log_nobody_tracks(lc)
+    result = box.helper("retire-rows", NEIGHBOUR, LANES_LANE=LANE, LANES_SESSION=UUID)
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    err = result.stderr
+    assert "NOT TRACKED" in err and "Nothing was written" in err, err
+    assert f"git -C {lc} add -- {rel} && git -C {lc} commit -m" in err, err
+    assert f"the publish act (LANES_LANE={LANE} " in err, err
+    box.git("-C", str(lc), "add", "--", rel)
+    box.git("-C", str(lc), "commit", "-q", "-m", f"{NEIGHBOUR}(its log)", "--", rel)
+    published = box.helper("commit", "its log", LANES_LANE=LANE)
+    assert published.returncode == 0, published.stderr
+    assert box.origin_file(rel).startswith(f"# lane {NEIGHBOUR}"), "the publish act sent it"
     again = box.helper("retire-rows", NEIGHBOUR, LANES_LANE=LANE, LANES_SESSION=UUID)
     assert again.returncode == 0, (again.stdout, again.stderr)
     assert f"RETIRED — lane {NEIGHBOUR}" in box.origin_file(rel)
