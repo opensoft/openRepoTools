@@ -513,7 +513,8 @@
 #      filed over the current inventory. ONE MEANING ON THE NUMBER, in three
 #      places: you lost the race.
 #   8  no record — `who` found nothing; `lane-objects` has no log file for the
-#      lane; `live-holder` READ this workstation's session records and none of
+#      lane (one that is there and could not be read is 1, #303);
+#      `live-holder` READ this workstation's session records and none of
 #      them holds it; `swapped` found no lane swapped on the workstation;
 #      `history` READ the lane's log and it carries no `NOTED` or `RULED` line;
 #      `window-session` found no live session in the window. A read that could
@@ -546,6 +547,8 @@
 #      spends it where no `LANES_LANE_STATE_ROOT` names the control root and
 #      the lane's object log could not be read (#290): the log's `dir` places
 #      the snapshot, so where it is kept is not known, which is not none.
+#      `lane-trees` spends it for the same read (#303): the trees are kept
+#      under the same root, and a log nobody read is not a lane with no tree.
 #
 # --no-sweep (DEFAULT, added 2026-09-09 after 0d84d34/a1f2438 swept another
 #   lane's uncommitted hand edit into an unrelated commit): every mutating
@@ -3229,12 +3232,42 @@ valid_uuid() { [[ "${1-}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a
 # `resolve-home` preflight fetched first already; `log`, `claim` and `release`
 # now do too, so the preflight and the write can still never disagree.
 #
-# Called as `home="$(resolve_home "$lane" "$override")" || exit $?` — a `die`
-# in here runs inside the command substitution, so the caller must pass the
-# code on rather than carry on with an empty home.
-resolve_home() {
-  rh_lane="${1-}"; rh_over="${2-}"; rh_log=""
-  [ -n "$rh_lane" ] && rh_log="$(home_of_lane "$rh_lane" 2>/dev/null || :)"
+# Called as `home="$(resolve_home "$lane" "$override" "$object")" || exit $?` —
+# a `die` in here runs inside the command substitution, so the caller must pass
+# the code on rather than carry on with an empty home.
+#
+# A LOG THAT COULD NOT BE READ IS REFUSED ONLY WHERE THE HOME IS NEEDED
+# (opensoft/openRepoTools#303, the review's 542). `home_of_lane` said "no home"
+# for it, so `--home` was taken over a log that records one and a `#n` was
+# refused as having no home on record. Refused now (1) where the answer
+# matters: `--home`, whose one refusal is a log that records a home; an object
+# typed `#n`, the shorthand only the home expands; and a caller that names no
+# object at all, which is asking for the home itself (`resolve-home`). Every
+# other object is spelled whole and needs no home, so the write goes on with
+# none: `log PAUSED lane:<lane>` and `log NOTED` land over a log nobody could
+# read, as a swap must (`R-A11-11` in `skills/handoff/SKILL.md`, which
+# openspec/changes/add-supervised-context-restart/design.md calls `R-A11-5`:
+# "a swap is never left unwritten"). Two logs differing only by case are still
+# no home here, as they always were: every writer refuses them on its own.
+resolve_home() {   # <lane> <override> [<each object as typed>...]
+  rh_lane="${1-}"; rh_over="${2-}"; rh_log=""; rh_hrc=0
+  if [ -n "$rh_lane" ]; then
+    rh_log="$(home_of_lane "$rh_lane" 2>/dev/null)" || rh_hrc=$?
+    if [ "$rh_hrc" = 1 ]; then
+      rh_log=""
+      if [ -n "$rh_over" ]; then
+        die "lane $rh_lane's object log could not be read, so whether it already records a home — which --home may not override: the flag is for a pre-cutover lane, one whose log has no STARTED line — is NOT established. That is NOT 'no home on record', and --home is not taken over a log nobody read (Amendment 7(d)). Nothing was written. Re-run once git can read the log." 1
+      fi
+      [ "$#" -ge 3 ] ||
+        die "lane $rh_lane's object log could not be read, so its home is NOT established. That is NOT 'this lane records no home' — 8 says that, and a caller that read it that way would go on with a home nobody looked for (Amendment 7(d)). Re-run once git can read the log." 1
+      shift 2
+      for rh_o in "$@"; do
+        case "$rh_o" in
+          '#'*) die "lane $rh_lane's object log could not be read, so the home '$rh_o' is shorthand for is NOT established — which is not the same as a lane that records none (Amendment 7(d)). Nothing was written. Spell the object owner/repo$rh_o, or re-run once git can read the log." 1 ;;
+        esac
+      done
+    fi
+  fi
   if [ -n "$rh_over" ]; then
     if [ -n "$rh_log" ]; then
       note "lane $rh_lane's own log already records its home: $rh_log (from its STARTED line)."
@@ -3375,12 +3408,23 @@ END { if (nbad > 0) printf "%d unreadable line(s) above — an append-only log i
 
 parse_log_stream() { awk -v FN="${1:-}" "$LOG_AWK"; }
 
+# 0 · 1 THE LOG DIRECTORY IS THERE AND COULD NOT BE LISTED OR SEARCHED, so which
+# logs are in it is not known (opensoft/openRepoTools#303). The glob needs to
+# list it and `[ -e ]` needs to search it: a directory that lists and cannot be
+# searched (`r--`) named files no test could open, one that cannot be listed
+# named none, and both printed nothing and answered 0 - a directory with no log
+# in it. With no `origin` that directory is where the lanes with only a log are
+# named from (`known_lanes`), so it is asked here as `worktree_rows` asks it.
 log_files() {
+  if [ -e "$LANES_LOG_DIR" ] || [ -L "$LANES_LOG_DIR" ]; then
+    [ -d "$LANES_LOG_DIR" ] && [ -r "$LANES_LOG_DIR" ] && [ -x "$LANES_LOG_DIR" ] || return 1
+  fi
   for le_f in "$LANES_LOG_DIR"/*.md; do
     [ -e "$le_f" ] || continue
     case "${le_f##*/}" in README.md) continue ;; esac
     printf '%s\n' "$le_f"
   done
+  return 0
 }
 
 # ONE PARSER RUN PER FILE, AND A FILE THAT WILL NOT OPEN IS SAID
@@ -3537,20 +3581,21 @@ state_events_flush() {
 # `lane_log_exists` spends it rather than 1, so "there are two logs" is never
 # read as "there is no log".
 #
-# `checked` MAKES THE READ SAY WHETHER IT HAPPENED (opensoft/openRepoTools#290).
-# Without it, the published branch's status is the parser's: a `git show` that
-# failed is an empty stream and 0, exactly a lane with no log, and a named read
-# took that for a lane whose log records no `dir` - its root fell to the third
-# rung and its trees read as none. With it, a log `origin`'s tree names and git
-# could not show is 1, and so is a tree that could not be listed to ask; a path
-# the tree does not name is still no log and 0. With no `origin`, a log
+# THE READ SAYS WHETHER IT HAPPENED, FOR EVERY CALLER (opensoft/openRepoTools#290,
+# and #303 for the default). The published branch's status was the parser's: a
+# `git show` that failed is an empty stream and 0, exactly a lane with no log,
+# so `lane-dir`, `lane-profile`, `lane-agent`, `lane-transcript`, `history`,
+# `lane-last`, `binding` and every read behind them answered 8, "none", over a
+# log nobody read - and a lane's root fell to the third rung, where its trees
+# read as none and its lifecycle writes were filed beside the real ones. #290
+# made the check an opt-in, `checked`, for the named worktree read and
+# `lane-state` alone; it is the only behaviour now. A log `origin`'s tree names
+# and git could not show is 1, and so is a tree that could not be listed to ask;
+# a path the tree does not name is still no log and 0. With no `origin`, a log
 # directory that is there and cannot be searched is 1, and so is a file that is
-# there and will not open. The callers that read this status without asking
-# for it are left as they are: making it the default changes what `lane-dir`,
-# `lane-profile`, `lane-agent`, `lane-transcript`, `history`, `lane-last` and the
-# binding reads answer over a log git cannot read, which #290 lists for a
-# ruling rather than changing beside a named read.
-lane_log_events() {   # <lane> [checked]
+# there and will not open, where the parser's own status (awk's 2) used to read
+# as the two-logs refusal.
+lane_log_events() {   # <lane>
   ll_rel="$(log_path_ci "$1")" || return 2
   if [ -n "$LANES_IDX_DIR" ]; then
     # A LOG THE INDEX DOES NOT HOLD IS A LOG `origin` DID NOT HOLD at the
@@ -3569,7 +3614,6 @@ lane_log_events() {   # <lane> [checked]
   elif have_remote_ref; then
     git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$ll_rel" 2>/dev/null | parse_log_stream "$ll_rel"
     ll_st=("${PIPESTATUS[@]}")
-    [ "${2-}" = checked ] || return "${ll_st[1]}"
     [ "${ll_st[0]}" != 0 ] || return "${ll_st[1]}"
     ll_in=""
     ll_in="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$ll_rel" 2>/dev/null)" || return 1
@@ -3578,25 +3622,49 @@ lane_log_events() {   # <lane> [checked]
   else
     ll_f="$LANES_LOG_DIR/${ll_rel##*/}"
     if [ ! -f "$ll_f" ]; then
-      [ "${2-}" = checked ] || return 0
       [ ! -e "$ll_f" ] && [ ! -L "$ll_f" ] || return 1
       if [ -e "$LANES_LOG_DIR" ] || [ -L "$LANES_LOG_DIR" ]; then
         [ -d "$LANES_LOG_DIR" ] && [ -x "$LANES_LOG_DIR" ] || return 1
       fi
       return 0
     fi
-    [ "${2-}" = checked ] || { log_events "$ll_f"; return; }
     log_events "$ll_f" || return 1
   fi
 }
+# 0 the lane has a log · 1 it has none · 2 two logs differ only by case
+# (`log_path_ci`'s refusal, said on stderr) · 3 THE LOG IS THERE AND COULD NOT
+# BE READ, or whether it is there could not be asked (opensoft/openRepoTools#303)
+# - never the 1 of no log.
+#
+# WHETHER THE PATH IS PUBLISHED IS THE TREE'S ANSWER, AND WHETHER IT READS IS
+# `show`'s, as `retire_rows` asks both (#138 item 17). This was `cat-file -e`,
+# which fails for a blob git cannot read exactly as for a path the tree does not
+# name - so `lane-objects` answered 8, "this lane has no object log", over a log
+# nobody read, and `lane-end`'s gate then ended the lane on its row's state
+# cell, over the claims that log holds. With no `origin` the file is asked as
+# `lane_log_events` asks it: one that is there and will not open, and a log
+# directory that is there and cannot be searched, are 3.
 lane_log_exists() {
   lle_rel="$(log_path_ci "$1")" || return 2
   if [ -n "$LANES_IDX_DIR" ]; then
     command grep -Fqx -- "$lle_rel" "$LANES_IDX_DIR/logs" 2>/dev/null
   elif have_remote_ref; then
-    git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$lle_rel" 2>/dev/null
+    lle_in=""
+    lle_in="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$lle_rel" 2>/dev/null)" || return 3
+    [ -n "$lle_in" ] || return 1
+    git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$lle_rel" >/dev/null 2>&1 || return 3
+    return 0
   else
-    [ -f "$LANES_LOG_DIR/${lle_rel##*/}" ]
+    lle_f="$LANES_LOG_DIR/${lle_rel##*/}"
+    if [ -f "$lle_f" ]; then
+      [ -r "$lle_f" ] || return 3
+      return 0
+    fi
+    [ ! -e "$lle_f" ] && [ ! -L "$lle_f" ] || return 3
+    if [ -e "$LANES_LOG_DIR" ] || [ -L "$LANES_LOG_DIR" ]; then
+      [ -d "$LANES_LOG_DIR" ] && [ -x "$LANES_LOG_DIR" ] || return 3
+    fi
+    return 1
   fi
 }
 
@@ -4041,13 +4109,36 @@ lane_objects() {
   # carried through rather than flattened into it (Copilot round 4): `who --lane`
   # and `lane-end`'s refusal would otherwise report a lane whose history is split
   # across two files as a pre-cutover lane with no log at all.
+  # AND A LOG THAT IS THERE AND COULD NOT BE READ IS 1, NOT EITHER OF THEM
+  # (opensoft/openRepoTools#303). It was 8, and `lane-end` read that 8 as a
+  # pre-cutover lane and ended it on its row's state cell, over the claims the
+  # log holds. This read is silent about it: each caller says it in its own
+  # words, as `lane-objects`, `who --lane` and the hook's `open:` line do.
   lo_ex=0
   lane_log_exists "$1" || lo_ex=$?
   case "$lo_ex" in
     0) : ;;
     2) return 2 ;;
+    3) return 1 ;;
     *) return 8 ;;
   esac
+  # AND THE ANSWER IS THE READ'S OWN, NOT A SECOND READ'S (the review of #303,
+  # 544). The log was proved readable above and the rows then come out of
+  # `state_events`, which reads every log again: a log that failed between the
+  # two left no line of this lane's in the stream, and "holds nothing" was the
+  # answer. The stream's build says which logs it could not read, or that it
+  # could not list them, in the warnings it keeps (`lanes_rows` reads them the
+  # same way), and either of those for this lane's log is 1. `lle_rel` is the
+  # path `lane_log_exists` just resolved. Where no temporary file could be made
+  # for the warnings, nothing kept them, and the stream answers as it always did.
+  lo_ev="$(state_events)"
+  if [ -n "$SE_WARN_FILE" ] && [ -f "$SE_WARN_FILE" ]; then
+    lo_wrc=0
+    LO_UNREAD="lanes-edit: unreadable log: $lle_rel — " awk '
+      index($0, ENVIRON["LO_UNREAD"]) == 1 || index($0, "lanes-edit: unlisted logs: ") == 1 { hit = 1; exit }
+      END { if (hit) exit 3 }' "$SE_WARN_FILE" 2>/dev/null || lo_wrc=$?
+    [ "$lo_wrc" = 0 ] || return 1
+  fi
   # AMENDMENT 15 — THE LANE FIELD OF A LOG LINE IS MATCHED CASE-INSENSITIVELY,
   # and the caller has already resolved `$1` to the row's spelling. The line's
   # own spelling is whatever was TYPED on the day it was appended, and an
@@ -4061,7 +4152,7 @@ lane_objects() {
   #
   # `mel` IS COMPUTED ONCE IN `BEGIN`, not per line: this stream is every line
   # of every lane's log on the estate.
-  state_events | awk -v sep="$US" -v me="$1" '
+  printf '%s\n' "$lo_ev" | awk -v sep="$US" -v me="$1" '
     function pos(pf, pn) { return pf "\034" sprintf("%09d", pn) }
     BEGIN { FS = sep; mel = tolower(me) }
     $6 ~ /^lane:/ { next }
@@ -4227,15 +4318,28 @@ superseded_by() {   # <object> <lane> <that lane's own last verb on it>
 # Every comparison of an object's repository against a home — canon_object's
 # `#n`, cross_repo_warn, same_project, who's CROSS-REPO note — resolves BOTH
 # sides, and resolving here is what makes that true of all of them at once.
+#
+# 0 with the home · 8 the log was read and records none, or there is no log ·
+# 2 two logs differ only by case · 1 THE LOG COULD NOT BE READ
+# (opensoft/openRepoTools#303). The read was piped into the `awk`, whose status
+# was the answer, so a log git could not show was a lane with no home: `--home`
+# was taken over a log that records one, and `#n` was refused as "no home is on
+# record". `resolve_home` decides what each of its callers may do with the 1.
 home_of_lane() {
-  lane_log_exists "$1" || return 1
-  hol_h="$(lane_log_events "$1" | awk -v sep="$US" '
+  hol_ev=""; hol_rc=0
+  hol_ev="$(lane_log_events "$1")" || hol_rc=$?
+  case "$hol_rc" in
+    0) : ;;
+    2) return 2 ;;
+    *) return 1 ;;
+  esac
+  hol_h="$(printf '%s\n' "$hol_ev" | awk -v sep="$US" '
     BEGIN { FS = sep }
     $3 == "STARTED" || $3 == "RESUMED" {
       if (match($8, /home [^ ;]+/)) h = substr($8, RSTART + 5, RLENGTH - 5)
     }
-    END { if (h != "" && h != "unknown") print h; else exit 1 }')" || return 1
-  [ -n "$hol_h" ] || return 1
+    END { if (h != "" && h != "unknown") print h }')"
+  [ -n "$hol_h" ] || return 8
   hol_c="$(alias_lookup "$hol_h" 2>/dev/null || :)"
   printf '%s\n' "${hol_c:-$hol_h}"
 }
@@ -4255,7 +4359,9 @@ PIN_LANE_LOG_TEXT=""
 PIN_LANE_LOG_RC=0
 # 0 · 1 the published list of the logs could not be made, which lists nothing
 # and is NOT a list with no logs in it (opensoft/openRepoTools#290): `lanes_rows`
-# says that the lanes it would have named are missing.
+# says that the lanes it would have named are missing. WITH NO `origin` THE SAME
+# for this checkout's log directory, which is there and could not be listed or
+# searched (`log_files`, #303): it named nothing, and said 0.
 known_lanes() {
   if [ -n "$LANES_IDX_DIR" ]; then
     while IFS= read -r kl_f; do
@@ -4282,12 +4388,15 @@ known_lanes() {
       done
     return "$kl_rc"
   fi
+  kl_files=""; kl_rc=0
+  kl_files="$(log_files)" || kl_rc=$?
   while IFS= read -r kl_f; do
     [ -n "$kl_f" ] || continue
     kl_n="${kl_f##*/}"; printf '%s\n' "${kl_n%.md}"
   done <<EOF
-$(log_files)
+$kl_files
 EOF
+  return "$kl_rc"
 }
 
 # ---------------------------------------------------------- age and staleness
@@ -6459,10 +6568,23 @@ who_lane() {
 $wl_fk
 EOF
   fi
-  if ! lane_log_exists "$wl_lane"; then
-    printf 'no log for %s; see its row'"'"'s state cell\n' "$wl_lane"
-    return 8
-  fi
+  # THE OBJECTS ARE READ WITH THEIR STATUS (opensoft/openRepoTools#303, the
+  # review's 543). They were read inside the here-document below, whose
+  # command substitution's status nothing tests, after a `lane_log_exists` that
+  # took a log git could not read for no log: `no log for <lane>`, exit 8, or
+  # "none open", exit 0 - a lane's claims reported as not there. 8 is still a
+  # lane with no log and 2 two logs (said on stderr already); anything else is
+  # a read that did not happen, said, and 1.
+  wl_objs=""; wl_orc=0
+  wl_objs="$(lane_objects "$wl_lane")" || wl_orc=$?
+  case "$wl_orc" in
+    0) : ;;
+    8) printf 'no log for %s; see its row'"'"'s state cell\n' "$wl_lane"
+       return 8 ;;
+    2) return 2 ;;
+    *) printf 'UNKNOWN  lane %s'"'"'s object log could not be read, so what it holds open is NOT established — which is not the same as none (Amendment 7(d)). Re-run once git can read it: lanes-edit.sh who --lane %s\n' "$wl_lane" "$wl_lane"
+       return 1 ;;
+  esac
   wl_n=0
   # FIVE fields, because `lane_objects` prints five. Read into four, the fifth —
   # the superseded-by cell — arrived glued to the payload and printed where a
@@ -6474,7 +6596,7 @@ EOF
       "${wl_ref:+ $wl_ref}" "${wl_sup:+  (taken over by lane:${wl_sup%@*} at ${wl_sup#*@} — release it to close this line)}"
     wl_n=$((wl_n + 1))
   done <<EOF
-$(lane_objects "$wl_lane")
+$wl_objs
 EOF
   # An empty answer is an answer: 8 stays reserved for "there is no log".
   if [ "$wl_n" = 0 ]; then printf 'none open — lane %s holds nothing open\n' "$wl_lane"; return 0; fi
@@ -7179,11 +7301,12 @@ lane_row_facts() {   # events on stdin, ONE LINE PER LANE
 # under Amendment 11 yet"* — the pre-cutover answer that sends `restart`,
 # `lane-start` and both skills to the rungs beneath a record they never
 # established was readable. The read is its own step now and its status decides.
-# `checked` IS `lane_log_events`' (#290): without it the published read's
-# status is still the parser's, so a log git could not show is still the 8.
-lane_payload_field() {   # <lane> <name> [all] [checked]
+# AND THAT STATUS IS THE READ'S FOR A PUBLISHED LOG TOO (#303): `lane_log_events`
+# says 1 for a log git could not show, where its status used to be the parser's
+# and the 8 came back over it. #290's `checked`, which asked for that, is gone.
+lane_payload_field() {   # <lane> <name> [all]
   lpf_lines=""; lpf_rc=0
-  lpf_lines="$(lane_log_events "$1" "${4-}")" || lpf_rc=$?
+  lpf_lines="$(lane_log_events "$1")" || lpf_rc=$?
   [ "$lpf_rc" = 0 ] || return 1
   # The scan is over EVERY lane-kind payload, newest last, and the answer is
   # the last one that actually carries the sub-field.
@@ -7346,12 +7469,19 @@ EOF
 # A uuid whose transcript is not in the lane's directory IS STILL A UUID, and
 # the caller says so rather than resuming a title into a picker.
 #
-# 0 with the uuid, 8 where neither source names one.
+# 0 with the uuid, 8 where neither source names one, 1 where the cell names
+# none and the lane's log, the second source, could not be read
+# (opensoft/openRepoTools#303). The log was piped into the `awk`, whose status
+# was the answer, so a log git could not show was a log naming no session: 8,
+# the one state in which Amendment 8(d)'s title fallback is reachable.
 last_session_of() {   # <lane>
   lso_l="${1-}"; [ -n "$lso_l" ] || return 64
   lso_id="$(session_ids_of_lane "$lso_l" 2>/dev/null | tail -n1 || :)"
   if [ -n "$lso_id" ]; then printf '%s\n' "$lso_id"; return 0; fi
-  lso_id="$(lane_log_events "$lso_l" 2>/dev/null | awk -F"$US" '
+  lso_ev=""; lso_rc=0
+  lso_ev="$(lane_log_events "$lso_l" 2>/dev/null)" || lso_rc=$?
+  [ "$lso_rc" = 0 ] || return 1
+  lso_id="$(printf '%s\n' "$lso_ev" | awk -F"$US" '
     ($3 == "PAUSED" || $3 == "RESUMED") && $4 ~ /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/ { id = $4 }
     END { if (id != "") print tolower(id) }')"
   [ -n "$lso_id" ] || return 8
@@ -8279,7 +8409,7 @@ lanes_rows() {
     if [ "$PIN_LANE_LOG" = 1 ]; then
       lr_ev="$PIN_LANE_LOG_TEXT"; lr_evrc="$PIN_LANE_LOG_RC"
     else
-      lr_ev="$(lane_log_events "$lr_one" checked 2>/dev/null)" || lr_evrc=$?
+      lr_ev="$(lane_log_events "$lr_one" 2>/dev/null)" || lr_evrc=$?
     fi
     lr_facts="$(printf '%s\n' "$lr_ev" | lane_row_facts)"
   else
@@ -8317,8 +8447,17 @@ lanes_rows() {
     note "no temporary file could be made for the read's warnings, so whether any published log failed to read is not known, and no row is classed DORMANT here."
   [ -z "$lr_unlisted" ] ||
     note "the object logs under origin/$LANES_BRANCH:$LANES_LOG_PREFIX could not be listed for their lines, so no lane's log is read in this listing, and no row is classed DORMANT here."
-  [ "$lr_klrc" = 0 ] ||
+  # WITH NO `origin` THE LOGS ARE THIS CHECKOUT'S DIRECTORY (opensoft/openRepoTools
+  # #303), and one that is there and could not be listed or searched named no
+  # lane and gave no lane's lines - in silence, and the lanes with a row read
+  # as `NO LOG`. Said in the words `worktree_rows` says it in.
+  lr_origin=1
+  [ -n "$LANES_IDX_DIR" ] || have_remote_ref || lr_origin=0
+  if [ "$lr_klrc" != 0 ] && [ "$lr_origin" = 1 ]; then
     note "the object logs under origin/$LANES_BRANCH:$LANES_LOG_PREFIX could not be listed, so a lane with a log and no row in the register or the archive is missing from this listing."
+  elif [ "$lr_klrc" != 0 ]; then
+    note "the log directory $LANES_LOG_DIR is there and could not be listed, so no lane's log is read in this listing, and a lane with a log and no row in the register or the archive is missing from this listing."
+  fi
   # AND A REGISTER THAT COULD NOT BE READ IS SAID, ONCE (the re-review of #230).
   # Every row above came out of `register_text`, which drops the status
   # `register_text_checked` keeps (#67), and a published register git cannot
@@ -8413,13 +8552,24 @@ lanes_rows() {
   # AND A DIRECTORY THAT IS THERE AND CANNOT BE LISTED IS NOT ONE WITH NO LOG IN
   # IT (#138 item 4): the fence would be empty and a lane whose only log is here
   # classed DORMANT. It is said, and no row is classed dormant over it below.
+  # NOR IS ONE THAT LISTS AND CANNOT BE SEARCHED (#303): `ls` names the files of
+  # an `r--` directory and no read can open one, so with no `origin` - where
+  # those files are the logs this listing reads - every lane's lines were gone
+  # and the class was still handed out. It is asked as `worktree_rows` asks it.
   lr_logfiles=""; lr_logs_rc=0
   if [ -e "$LANES_LOG_DIR" ]; then
-    lr_logfiles="$(ls -- "$LANES_LOG_DIR" 2>/dev/null)" || lr_logs_rc=1
+    if [ -d "$LANES_LOG_DIR" ] && [ -r "$LANES_LOG_DIR" ] && [ -x "$LANES_LOG_DIR" ]; then
+      lr_logfiles="$(ls -- "$LANES_LOG_DIR" 2>/dev/null)" || lr_logs_rc=1
+    else
+      lr_logs_rc=1
+    fi
   fi
   lr_logfiles=" $(printf '%s\n' "$lr_logfiles" | awk '{ print tolower($0) }' | tr '\n' ' ')"
-  [ "$lr_logs_rc" = 0 ] ||
+  if [ "$lr_logs_rc" != 0 ] && [ "$lr_origin" = 1 ]; then
     note "$LANES_LOG_DIR exists and could not be listed, so whether a row has a log this checkout has and origin has not is not known, and no row is classed DORMANT here. Fix the read and re-run before sweeping."
+  elif [ "$lr_logs_rc" != 0 ]; then
+    note "$LANES_LOG_DIR exists and could not be listed, so whether a row has a log at all is not known — with no origin, the logs are that directory's files — and no row is classed DORMANT here. Fix the read and re-run before sweeping."
+  fi
   if [ "$lr_live_rc" != 0 ] || [ "$lr_fork_rc" != 0 ]; then
     note "this workstation's session records could not be read, so the STATE column below is the LOG's verb alone: a lane that is live may show as IDLE or PAUSED here, and no fork of any lane is established either way. Fix the read and re-run before acting on a restart line."
   fi
@@ -9209,18 +9359,30 @@ EOF
 # The lane's open objects on ONE line, for the hook's block. `who --lane` prints
 # a line per object and a heading; a hook has one line's worth of a reader's
 # attention, and the objects are what the next act needs to know.
+# AND IT SAYS A LOG IT COULD NOT READ (opensoft/openRepoTools#303, the review's
+# 543). The objects were read inside the here-document, whose command
+# substitution's status nothing tests, after a `lane_log_exists` that took a log
+# git could not read for no log: the first line a session reads said `no log
+# for <lane> (pre-cutover lane)`, or `none open`, over a lane's open claims.
+# This hook never fails, so it is a line and not a refusal.
 lane_open_summary() {
-  los_l="$1"; los_out=""
-  if ! lane_log_exists "$los_l"; then
-    printf 'no log for %s (pre-cutover lane) — see its row'"'"'s state cell\n' "$los_l"
-    return 0
-  fi
+  los_l="$1"; los_out=""; los_objs=""; los_rc=0
+  los_objs="$(lane_objects "$los_l" 2>/dev/null)" || los_rc=$?
+  case "$los_rc" in
+    0) : ;;
+    8) printf 'no log for %s (pre-cutover lane) — see its row'"'"'s state cell\n' "$los_l"
+       return 0 ;;
+    2) printf 'UNKNOWN — lane %s has two object logs whose names differ only by case, so what it holds open is NOT established (Amendment 15(d)); see: lanes-edit.sh who --lane %s\n' "$los_l" "$los_l"
+       return 0 ;;
+    *) printf 'UNKNOWN — lane %s'"'"'s object log could not be read, so what it holds open is NOT established, which is not the same as none (Amendment 7(d)); see: lanes-edit.sh who --lane %s\n' "$los_l" "$los_l"
+       return 0 ;;
+  esac
   while IFS="$US" read -r lo_utc lo_verb lo_obj lo_ref lo_sup; do
     [ -n "${lo_verb:-}" ] || continue
     is_open_verb "$lo_verb" || continue
     los_out="${los_out}${los_out:+; }$lo_verb $lo_obj${lo_sup:+ (taken over by lane:${lo_sup%@*})}"
   done <<EOF
-$(lane_objects "$los_l" 2>/dev/null || :)
+$los_objs
 EOF
   printf '%s\n' "${los_out:-none open}"
 }
@@ -10984,6 +11146,9 @@ EOF
 # the guard's answer the offer, told a person their rename was newer than a
 # binding nobody read. Read as "not newer" it would type over a person's own
 # `/rename`, which (h) rule 4 forbids, so the caller is told and names the read.
+# AND A LOG GIT COULD NOT SHOW REACHES THE 5 NOW TOO (opensoft/openRepoTools
+# #303): `lane_binding_utc` answered 8, no binding, for it - the read's status
+# was the parser's - and the rename was taken as the person's instruction.
 #   0 newer · 1 not newer, or no `nameSince` · 5 the lane's log could not be read
 guard_rename_is_newer() {   # <lane> <nameSince, epoch ms>
   grn_lane="${1-}"; grn_since="${2-}"
@@ -13553,6 +13718,9 @@ managed_local_remedy() {
 #     No answer is 8, "this lane has no control root", exactly as `lane-dir`
 #     answers 8 for a lane that has not started under Amendment 11 — and the
 #     pre-cutover lane is the ordinary case, not a failure (Amendment 7(i)).
+#     A lane whose log could not be read for rung 2 is on NO rung: whether its
+#     record names a directory is not known, and rung 3 is for a record that
+#     names none (opensoft/openRepoTools#303).
 #
 # IT IS WRITTEN WHERE `R-A11-14` STOPS THE REGISTER AND THE OBJECT LOG. That
 # rule refuses a record FILED UNDER A WORKSTATION where no workstation is
@@ -13592,7 +13760,17 @@ lane_state_word_ok() {   # <word>
 }
 
 # THE CONTROL ROOT — the three rungs above, in order. 0 with the path (which
-# need not exist yet), 8 where no rung answers.
+# need not exist yet), 8 where no rung answers, 1 where the lane's object log,
+# read for its `dir` because the caller handed none, could not be read
+# (opensoft/openRepoTools#303).
+#
+# THAT 1 IS NOT A RUNG. The read ended in `|| :`, so a log nobody read and a log
+# that records no `dir` were the same empty string, and the root fell to the
+# third rung for both: `lane-trees` said 8 there, `lane-reconcile` said
+# `no-state`, and `set-lane-state` and `set-lane-tree` FILED the lane's records
+# there, beside the real root, where no reader looks. A caller that already
+# holds the `dir` hands it in the payload (`lane_dir_read`), and this read is
+# not made at all.
 lane_control_root() {   # <lane> [<a payload that may carry `dir`>]
   lcr_lane="${1-}"; lcr_pay="${2-}"; lcr_dir=""; lcr_par=""
   [ -n "$lcr_lane" ] || return 8
@@ -13602,7 +13780,13 @@ lane_control_root() {   # <lane> [<a payload that may carry `dir`>]
   fi
   [ -n "$lcr_pay" ] && lcr_dir="$(payload_subfield "$lcr_pay" dir)"
   if [ -z "$lcr_dir" ]; then
-    lcr_dir="$(lane_payload_field "$lcr_lane" dir 2>/dev/null || :)"
+    lcr_drc=0
+    lcr_dir="$(lane_payload_field "$lcr_lane" dir 2>/dev/null)" || lcr_drc=$?
+    case "$lcr_drc" in
+      0) : ;;
+      8) lcr_dir="" ;;
+      *) return 1 ;;
+    esac
   fi
   case "$lcr_dir" in
     /*) lcr_par="${lcr_dir%/*}" ;;
@@ -13617,6 +13801,36 @@ lane_control_root() {   # <lane> [<a payload that may carry `dir`>]
     return 0
   fi
   return 8
+}
+
+# THE LANE'S `dir`, READ ONCE AND WITH ITS STATUS, AND THE PAYLOAD THAT HANDS IT
+# ON (#290 for `lane-state`; #303 for `lane-trees` and `lane_reconcile`). A
+# reader that finds a lane's records under its root reads the log here, once,
+# and hands `LDP_PAY` to `lane_control_root`, `lane_state_read` and
+# `lane_trees_list`, so the root, the snapshot and the trees all come out of
+# one read, and a read that failed is said by the caller that made it. `none`
+# is not absolute, so it falls to the third rung exactly as a record that names
+# no directory does. IT GOES ON QUOTED ONLY WHERE IT HOLDS A SPACE, the rule
+# `lane-start`'s `quote_subfield` writes it by, as Brett Heap's ruling of
+# 2026-10-21 for #295 has it ("quote only where a space is"): bare, a space
+# would end it; quoted, a `"` does. The value is `payload_subfield`'s own read,
+# which never holds both. It sets its answer in the caller's shell, as
+# `lower_into` does, so call it directly and never inside `$( )`.
+#   0 `LDP_DIR` the `dir` (empty where the log records none) and `LDP_PAY`
+#     `dir <d>` or `dir none` · 1 the lane's object log could not be read
+lane_dir_read() {   # <lane>
+  LDP_DIR=""; LDP_PAY=""; ldr_rc=0
+  LDP_DIR="$(lane_payload_field "${1-}" dir 2>/dev/null)" || ldr_rc=$?
+  case "$ldr_rc" in
+    0)
+      case "$LDP_DIR" in
+        *' '*) LDP_PAY="dir \"$LDP_DIR\"" ;;
+        *)     LDP_PAY="dir $LDP_DIR" ;;
+      esac ;;
+    8) LDP_DIR=""; LDP_PAY="dir none" ;;
+    *) LDP_DIR=""; return 1 ;;
+  esac
+  return 0
 }
 
 # ONE FIELD OUT OF ONE OF THESE FILES. They are flat `key: value` lines and
@@ -13792,7 +14006,8 @@ lane_op_id() {
 # here parses with one `awk`. 0 with the fields, 8 where the lane has no
 # snapshot at all (the pre-cutover lane, and not a failure), 10 where a snapshot
 # IS there and could not be read — or is of this schema and not a whole record
-# (#115) — 1 where the control root could not be derived.
+# (#115) — 1 where the control root could not be derived, or the lane's object
+# log could not be read to derive it (#303).
 #
 # THE 10 IS THE POINT OF THIS ROUND (Copilot round 6 on openRepoTools#97, where
 # it was 9 — main's #61 has since spent 9 on `claim`, so this one moved). A bare
@@ -13936,7 +14151,16 @@ lane_state_follow() {   # <lane> <verb> <payload> <uuid> <pre-image> <seam verdi
   [ -n "$lsf_pre" ] || return 0
   lsf_root=""; lsf_rc=0
   lsf_root="$(lane_control_root "$lsf_lane" "$lsf_pay")" || lsf_rc=$?
-  [ "$lsf_rc" = 0 ] || return 0
+  # A LOG THAT COULD NOT BE READ FOR THE ROOT IS SAID, AND NOTHING IS MOVED
+  # (opensoft/openRepoTools#303). It used to place the root at the third rung
+  # and move a snapshot there, beside the real one. It is not the silent
+  # pre-cutover 8: the line landed, and the snapshot is one act behind it.
+  case "$lsf_rc" in
+    0) : ;;
+    8) return 0 ;;
+    *) note "the lane lifecycle snapshot for $lsf_lane was NOT moved to $lsf_new: its object log could not be read, so the directory the snapshot is kept beside is not known, and a snapshot is never moved to a root nobody established. The $lsf_verb line itself landed; the snapshot is one act behind until the next transition, and \`lanes-edit.sh lane-reconcile $lsf_lane\` says what it holds once git can read the log."
+       return 0 ;;
+  esac
   lsf_f="$lsf_root/lane-state.yaml"
   lsf_own=0
   if [ "$LOCK_HELD" != 1 ]; then
@@ -14099,7 +14323,10 @@ lane_tree_put() {   # <root> <lane> <path> <checkout> <branch> <head> <upstream>
 # EVERY RECORDED TREE, ONE PER LINE, US-separated:
 #   <id><US><path><US><branch><US><head><US><upstream><US><dirty><US><unpushed><US><writer><US><observed><US><checkout><US><generation><US><operation><US><schema>
 # 0 with rows, 8 with none, 1 where no control root could be derived, 10 where
-# the `trees` directory is there and cannot be listed.
+# the `trees` directory is there and cannot be listed — or where the lane's
+# object log could not be read to find the root it is under (#303): the trees
+# may be there and nobody could look, which is `lane-state`'s 10 for the same
+# read (#290), and never the 1 `lane-worktrees` reads as no inventory at all.
 #
 # THAT 10 IS NOT AN 8 (#157 item 4e). A directory this process may not read or
 # search yields an empty glob, which read as a lane that recorded no tree — the
@@ -14130,7 +14357,11 @@ lane_tree_put() {   # <root> <lane> <path> <checkout> <branch> <head> <upstream>
 lane_trees_list() {   # <lane> [<a payload that may carry `dir`>]
   ltl_root=""; ltl_rc=0; ltl_n=0
   ltl_root="$(lane_control_root "${1-}" "${2-}")" || ltl_rc=$?
-  [ "$ltl_rc" = 0 ] || return 1
+  case "$ltl_rc" in
+    0) : ;;
+    8) return 1 ;;
+    *) return 10 ;;
+  esac
   [ -d "$ltl_root/trees" ] || return 8
   [ -r "$ltl_root/trees" ] && [ -x "$ltl_root/trees" ] || return 10
   for ltl_f in "$ltl_root"/trees/*.yaml; do
@@ -14360,8 +14591,27 @@ lane_reconcile() {   # <lane>
         "$US" "$US" "$lrc_lane" "$lrc_lane"
       return 0 ;;
   esac
+  # THE LANE'S `dir`, READ ONCE, FIRST (opensoft/openRepoTools#303, R3). Its
+  # root, its snapshot and its trees are all under the directory its log's
+  # `dir` places, and the root was found by a read that threw a failure away:
+  # the third rung, no snapshot, no tree and no binding - `no-state`, exit 0,
+  # for a lane whose real root held a SWAPPING snapshot. Where no override
+  # names the root and the log could not be read, nothing of the lane is read
+  # off any root, and the verdict is `indeterminate` with no ROOT, STATE or
+  # BINDING beside it, as for an ownership nobody could read above. Under the
+  # override the root is known without the log, and the reads go on: the
+  # binding and the coordinator directory are what is unknown, and the verdict
+  # below says so.
+  lrc_drc=0
+  lane_dir_read "$lrc_lane" || lrc_drc=1
+  lrc_dir="$LDP_DIR"; lrc_pay="$LDP_PAY"
+  if [ "$lrc_drc" != 0 ] && [ -z "${LANES_LANE_STATE_ROOT:-}" ]; then
+    printf 'VERDICT%sindeterminate%slane %s'"'"'s object log could not be read, so the directory its lifecycle snapshot and its worktree inventory are kept beside is NOT established, and neither is where it is bound: no root, no state and no binding are read off a log nobody read, and no crash, clearance or closure is pronounced. That is NOT no-state, a lane with no snapshot, which a launcher goes past (Amendment 7(d)). Re-run once git can read the log\n' \
+      "$US" "$US" "$lrc_lane"
+    return 0
+  fi
   lrc_root=""; lrc_rc=0
-  lrc_root="$(lane_control_root "$lrc_lane")" || lrc_rc=$?
+  lrc_root="$(lane_control_root "$lrc_lane" "$lrc_pay")" || lrc_rc=$?
   if [ "$lrc_rc" != 0 ]; then
     note "lane $lrc_lane has no control root: its record names no directory (Amendment 11(c)) and \$PROJECTS_ROOT is not a directory here, so there is nothing to reconcile against. This is the pre-cutover answer, not a failure — the lane's next start or handoff creates one."
     return 8
@@ -14370,7 +14620,7 @@ lane_reconcile() {   # <lane>
   # 1. THE SNAPSHOT.
   lrc_state=""; lrc_gen=""; lrc_op=""; lrc_owner=""; lrc_upd=""
   lrc_snap=""; lrc_srrc=0
-  lrc_snap="$(lane_state_read "$lrc_lane")" || lrc_srrc=$?
+  lrc_snap="$(lane_state_read "$lrc_lane" "$lrc_pay")" || lrc_srrc=$?
   if [ "$lrc_srrc" = 0 ]; then
     lrc_state="$(printf '%s\n' "$lrc_snap" | awk -F'\t' '$1 == "state" { print $2; exit }')"
     lrc_gen="$(printf '%s\n' "$lrc_snap"   | awk -F'\t' '$1 == "generation" { print $2; exit }')"
@@ -14479,10 +14729,8 @@ LRC_BIND
   # one empty string, the second skipped both sweeps below — the registrations
   # `git worktree list` holds and the trees on disk — and a SWAPPED lane with no
   # holder then read as resumable over paths nobody inspected. The 1 is kept,
-  # and the verdict below is `indeterminate` for it.
-  lrc_dir=""; lrc_drc=0
-  lrc_dir="$(lane_payload_field "$lrc_lane" dir 2>/dev/null)" || lrc_drc=$?
-  [ "$lrc_drc" = 0 ] || lrc_dir=""
+  # and the verdict below is `indeterminate` for it. It is the read made at the
+  # top (#303): `lrc_dir` and `lrc_drc` are that read's.
   lrc_seen=""; lrc_n=0; lrc_recover=0; lrc_dirty=0
   # AN INVENTORY NOBODY COULD LIST IS NOT AN EMPTY ONE (#113, the unreadable
   # sidecar's rule one level up). `lane_trees_list` answers 10 for a `trees`
@@ -14491,7 +14739,7 @@ LRC_BIND
   # its verdict could still be `resumable`. `lrc_unread` gathers what the
   # inventory and the sweeps below could not read, and the verdict says so.
   lrc_unread=""; lrc_tl=""; lrc_tlrc=0
-  lrc_tl="$(lane_trees_list "$lrc_lane" 2>/dev/null)" || lrc_tlrc=$?
+  lrc_tl="$(lane_trees_list "$lrc_lane" "$lrc_pay" 2>/dev/null)" || lrc_tlrc=$?
   case "$lrc_tlrc" in
     0|8) : ;;
     10) lrc_unread="its worktree inventory directory $lrc_root/trees is there and could not be listed" ;;
@@ -15032,7 +15280,7 @@ worktree_rows() {   # [<canonical lane> [register-unread]]
   else
     [ "${2-}" != register-unread ] || wr_reg_ok=0
     wr_ev=""
-    wr_ev="$(lane_log_events "$wr_one" checked 2>/dev/null)" || wr_evrc=$?
+    wr_ev="$(lane_log_events "$wr_one" 2>/dev/null)" || wr_evrc=$?
     PIN_LANE_LOG_TEXT="$wr_ev"; PIN_LANE_LOG_RC="$wr_evrc"; PIN_LANE_LOG=1
     [ "$wr_evrc" = 0 ] || wr_lp="$(log_path_ci "$wr_one" 2>/dev/null || log_path_for "$wr_one")"
   fi
@@ -16554,7 +16802,13 @@ EOF
     # `log_sync` has moved the ref — and what it answers is the lane this line
     # is WRITTEN with, the file it is written to, and the commit subject.
     lane="$(canon_lane "$lane")" || exit 2
-    home="$(resolve_home "$lane" "$home_override")" || exit $?
+    # THE OBJECTS THE HOME MAY BE NEEDED FOR (#303): the line's own, and a
+    # RULED's payload, which is canonicalised against the home below. Over a
+    # log that could not be read, only a `#n` among them - or `--home` - is
+    # refused; `log PAUSED lane:<lane>` and `log NOTED` land.
+    log_home_pay=""
+    [ "$verb" = RULED ] && log_home_pay="$payload"
+    home="$(resolve_home "$lane" "$home_override" "$obj_raw" "$log_home_pay")" || exit $?
     obj="$(canon_object "$obj_raw" "$home")" || exit 2
     # AMENDMENT 13(b) — THE TWO NARRATIVE VERBS, AND WHAT EACH OF THEM TAKES.
     # `NOTED` is a status note about the lane; `RULED` is a ruling recorded
@@ -16667,7 +16921,7 @@ EOF
     #    a peer recorded is on `origin/<branch>` and nowhere else here.
     log_sync
     lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
-    home="$(resolve_home "$lane" "$home_override")" || exit $?
+    home="$(resolve_home "$lane" "$home_override" "$obj_raw")" || exit $?
     obj="$(canon_object "$obj_raw" "$home")" || exit 2
     ! is_lane_object "$obj" || die "a lane is not a claimable object" 2
     takeover_payload=""; takeover_note=""; takeover_from=""; takeover_reason_phrase=""; takeover_dead=""
@@ -16886,7 +17140,7 @@ EOF
     [ -n "$obj_raw" ] || die "usage: release <object> [\"<why>\"] [--no-github] [--home owner/repo]" 2
     log_sync                      # R30 — the fetch, then --home and the STARTED line
     lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
-    home="$(resolve_home "$lane" "$home_override")" || exit $?
+    home="$(resolve_home "$lane" "$home_override" "$obj_raw")" || exit $?
     obj="$(canon_object "$obj_raw" "$home")" || exit 2
     ! is_lane_object "$obj" || die "a lane is not a releasable object" 2
     mine="$(state_events | lane_states_on "$obj" | awk -v sep="$US" -v lane="$lane" 'BEGIN{FS=sep} tolower($2) == tolower(lane)' || :)"
@@ -16935,7 +17189,7 @@ EOF
         case "$wl_repo" in */*) : ;; *) die "--landing needs owner/repo (or an alias in ${LANES_LOG_PREFIX%log/}repos.tsv); '$arg' is neither" 2 ;; esac
         who_landing "$wl_repo" || exit $? ;;
       *)
-        home="$(resolve_home "${LANES_LANE:-}" "$home_override")" || exit $?
+        home="$(resolve_home "${LANES_LANE:-}" "$home_override" "$arg")" || exit $?
         obj="$(canon_object "$arg" "$home")" || exit 2
         who_object "$obj" || exit $? ;;
     esac
@@ -18069,11 +18323,21 @@ EOF
     printf '%s\n' "$rr_c"
     ;;
 
+  # 0 with the rows · 8 the lane has no object log · 2 two logs differ only by
+  # case · 1 THE LOG IS THERE AND COULD NOT BE READ (opensoft/openRepoTools#303),
+  # which was 8 or 0 with no rows: `lane-end`'s gate read either as a lane that
+  # holds nothing and ended it over its open claims.
   lane-objects)
     lane="${1-}"; [ -n "$lane" ] || die "usage: lane-objects <lane>" 2
     log_sync
     lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
-    lane_objects "$lane" || exit $?
+    lob_rc=0
+    lane_objects "$lane" || lob_rc=$?
+    case "$lob_rc" in
+      0) : ;;
+      2 | 8) exit "$lob_rc" ;;
+      *) die "lane-objects could not read lane $lane's object log (exit $lob_rc), so what it holds open is NOT established. That is NOT 'this lane has no object log' — 8 says that, and \`lane-end\` reads an 8 as a pre-cutover lane and ends it on its row's state cell, over claims this read never saw (Amendment 7(d)). Re-run once git can read the log." 1 ;;
+    esac
     ;;
 
   # The lane's ROW as it has LANDED — fetched, and read from
@@ -18190,7 +18454,9 @@ EOF
   # `--home`'s validation, WITHOUT a write — the same `resolve_home` the writers
   # call, so a preflight and the write can never disagree. 0 with the canonical
   # home, 8 when the lane has none and none was given, 2 when the option is
-  # refused (the lane's log already records its home) or is not owner/repo.
+  # refused (the lane's log already records its home) or is not owner/repo, 1
+  # when the lane's object log could not be read, which is never the 8 of none
+  # (opensoft/openRepoTools#303).
   # `lane-end` forwards `--home` to its own ENDED line, which is written AFTER
   # the row has been closed: without this the refusal arrived too late to
   # refuse anything, and left a closed row with no ENDED line behind it.
@@ -18693,27 +18959,16 @@ EOF
     # `lanes-index` read as generation 0 and held a lane for "reading 0".
     # Read here with its status, it is handed on as the payload the root is
     # found by, and a log that could not be read is the 10 below, never the 8
-    # of none. IT GOES ON QUOTED ONLY WHERE IT HOLDS A SPACE, the rule
-    # `lane-start`'s `quote_subfield` writes it by, as Brett Heap's ruling of
-    # 2026-10-21 for #295 has it ("quote only where a space is"). Bare, a
-    # space would end it; quoted, a `"` does. A bare `dir` holding one (which
-    # `lane-start` refuses to write and a hand-written line can hold) was cut
-    # there when every value was quoted, the root it placed held no snapshot,
-    # and this said 8 where main reads one. The value is `payload_subfield`'s
-    # own read, which never holds both a space and a `"`.
+    # of none. IT GOES ON QUOTED ONLY WHERE IT HOLDS A SPACE (`lane_dir_read`,
+    # which `lane-trees` and `lane_reconcile` read it through too, #303): a
+    # bare `dir` holding a `"` (which `lane-start` refuses to write and a
+    # hand-written line can hold) was cut there when every value was quoted,
+    # the root it placed held no snapshot, and this said 8 where main reads one.
     lst_pay=""
     if [ -z "${LANES_LANE_STATE_ROOT:-}" ]; then
-      lst_dir=""; lst_drc=0
-      lst_dir="$(lane_payload_field "$lane" dir "" checked 2>/dev/null)" || lst_drc=$?
-      case "$lst_drc" in
-        0)
-          case "$lst_dir" in
-            *' '*) lst_pay="dir \"$lst_dir\"" ;;
-            *)     lst_pay="dir $lst_dir" ;;
-          esac ;;
-        8) lst_pay="dir none" ;;
-        *) die "lane $lane's object log could not be read, so the directory its lifecycle snapshot is kept beside is NOT established. That is NOT 'this lane has no snapshot' — 8 says that, and a launcher answers an 8 by going on, over a snapshot nobody could look for (R22, Amendment 7(d)). Re-run once git can read the log." 10 ;;
-      esac
+      lane_dir_read "$lane" ||
+        die "lane $lane's object log could not be read, so the directory its lifecycle snapshot is kept beside is NOT established. That is NOT 'this lane has no snapshot' — 8 says that, and a launcher answers an 8 by going on, over a snapshot nobody could look for (R22, Amendment 7(d)). Re-run once git can read the log." 10
+      lst_pay="$LDP_PAY"
     fi
     lst_out=""; lst_rc=0
     lst_out="$(lane_state_read "$lane" "$lst_pay")" || lst_rc=$?
@@ -18773,8 +19028,15 @@ EOF
     managed_seam_refuse "$lane" "set-lane-state"    # ruling 2026-10-04
     sls_root=""; sls_rrc=0
     sls_root="$(lane_control_root "$lane")" || sls_rrc=$?
-    [ "$sls_rrc" = 0 ] ||
-      die "lane $lane has no lifecycle control root, so there is nowhere to record that it is $sls_state: its record names no directory (Amendment 11(c)) and \$PROJECTS_ROOT is not a directory here. Set \$LANES_LANE_STATE_ROOT, or start the lane through lane-start so that its record carries a dir." 1
+    # A LOG THAT COULD NOT BE READ FOR THE ROOT WRITES NOTHING
+    # (opensoft/openRepoTools#303). It placed the root at the third rung, and
+    # the transition was filed there, exit 0, beside the real root whose own
+    # snapshot stayed as it was.
+    case "$sls_rrc" in
+      0) : ;;
+      8) die "lane $lane has no lifecycle control root, so there is nowhere to record that it is $sls_state: its record names no directory (Amendment 11(c)) and \$PROJECTS_ROOT is not a directory here. Set \$LANES_LANE_STATE_ROOT, or start the lane through lane-start so that its record carries a dir." 1 ;;
+      *) die "lane $lane's object log could not be read, so the directory its lifecycle snapshot is kept beside is NOT established, and NOTHING was written: recording that it is $sls_state anywhere else would file a snapshot beside the real one, where no reader looks (R22, Amendment 7(d)). Re-run once git can read the log." 1 ;;
+    esac
     # THE FENCE, read under the same mutex the write takes, so that two
     # transitions cannot both read the state before either writes it.
     acquire_lock
@@ -18842,12 +19104,25 @@ EOF
     check_lane_name "$lane"
     log_sync
     lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
+    # THE LANE'S `dir` IS READ ONCE, AS `lane-state` READS IT, AND A LOG THAT
+    # COULD NOT BE READ IS 10 (opensoft/openRepoTools#303, R2). The root was
+    # found by a read that threw a failure away, so the lane's trees were
+    # looked for at the third rung, where none is, and this said 8 - which
+    # `lane-handoff` and `lane-worktrees` read as "this lane recorded no tree".
+    # 10 and not 1 because `lane-worktrees` reads a 1 with no root as no
+    # inventory at all; 10 is what it refuses on, as for `lane-state`'s 10.
+    ltr_pay=""
+    if [ -z "${LANES_LANE_STATE_ROOT:-}" ]; then
+      lane_dir_read "$lane" ||
+        die "lane $lane's object log could not be read, so the directory its worktree inventory is kept beside is NOT established. That is NOT 'this lane recorded no tree' — 8 says that, and a reader that goes on over it relaunches writers onto trees nobody looked at (R22, Amendment 7(d)). Re-run once git can read the log." 10
+      ltr_pay="$LDP_PAY"
+    fi
     ltr_out=""; ltr_rc=0
-    ltr_out="$(lane_trees_list "$lane")" || ltr_rc=$?
+    ltr_out="$(lane_trees_list "$lane" "$ltr_pay")" || ltr_rc=$?
     case "$ltr_rc" in
       0) : ;;
       8) exit 8 ;;
-      10) die "lane $lane's worktree inventory directory $(lane_control_root "$lane" 2>/dev/null || printf '<no control root>')/trees is there and could not be listed. That is NOT 'this lane recorded no tree' — 8 says that, and a reader that goes on over it relaunches writers onto trees nobody looked at (R22, Amendment 7(d)). Read it by hand." 10 ;;
+      10) die "lane $lane's worktree inventory directory $(lane_control_root "$lane" "$ltr_pay" 2>/dev/null || printf '<no control root>')/trees is there and could not be listed. That is NOT 'this lane recorded no tree' — 8 says that, and a reader that goes on over it relaunches writers onto trees nobody looked at (R22, Amendment 7(d)). Read it by hand." 10 ;;
       *) die "lane $lane has no lifecycle control root, so its worktree inventory could not be read. That is NOT 'this lane owns no worktree' (Amendment 7(d))." 1 ;;
     esac
     printf '%s\n' "$ltr_out"
@@ -18890,8 +19165,14 @@ EOF
     managed_seam_refuse "$lane" "set-lane-tree"     # ruling 2026-10-04
     slt_root=""; slt_rrc=0
     slt_root="$(lane_control_root "$lane")" || slt_rrc=$?
-    [ "$slt_rrc" = 0 ] ||
-      die "lane $lane has no lifecycle control root, so its worktree inventory has nowhere to go: its record names no directory (Amendment 11(c)) and \$PROJECTS_ROOT is not a directory here." 1
+    # AND A LOG THAT COULD NOT BE READ FOR IT WRITES NOTHING, as
+    # `set-lane-state`'s does (#303): it made a `trees` directory at the third
+    # rung, beside the real inventory.
+    case "$slt_rrc" in
+      0) : ;;
+      8) die "lane $lane has no lifecycle control root, so its worktree inventory has nowhere to go: its record names no directory (Amendment 11(c)) and \$PROJECTS_ROOT is not a directory here." 1 ;;
+      *) die "lane $lane's object log could not be read, so the directory its worktree inventory is kept beside is NOT established, and NOTHING was written: a tree recorded anywhere else is a record beside the real inventory, where no reader looks (R22, Amendment 7(d)). Re-run once git can read the log." 1 ;;
+    esac
     # WHAT THE CALLER SAW BEATS WHAT THIS PROCESS SEES, because a poll and a
     # record written from it are ONE observation and a second reading of the
     # same tree a moment later is a different one. Where the caller passed
