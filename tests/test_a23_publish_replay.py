@@ -481,6 +481,39 @@ def test_timed_out_push_is_read_back(box: Box, landed: bool):
     _settled(box, c)
 
 
+def test_a_push_git_called_failed_that_landed_under_a_peers_commit_is_written_once(box: Box):
+    """293 of lane openRepoTools-3's review of #307 (its E17): the read-back
+    after a refused push ("it may have landed", decision 5) had no case, and
+    its mutant PB-2 (`0) cp_pushed "$cp_sha"; return 0 ;;` made `0) : ;;`)
+    survived all 80 cases of the replay and #194 modules. A `log NOTED`
+    whose push lands, a peer's commit lands on top of it at once, and git
+    still reports the push as failed ("the remote end hung up"): origin holds
+    this write's commit, so it is pushed (0), and the line is in the
+    append-only log ONCE. Without the read-back, origin's tip is not under
+    this write's commit, so it replays, and the line is written twice."""
+    c = box.seam()
+    peer = shlex.quote(str(box.peer))
+    box.use_net('if [ "$1" = push ]; then' + "\n" +
+                '  shift; git "$@" || exit $?' + "\n" +
+                f"  git -C {peer} fetch -q origin" + "\n" +
+                f"  git -C {peer} merge -q --ff-only refs/remotes/origin/main" + "\n" +
+                f"  git -C {peer} commit -q --allow-empty -m \"a peer's commit lands on top at once\"" + "\n" +
+                f"  git -C {peer} push -q origin main" + "\n" +
+                '  echo "fatal: the remote end hung up unexpectedly" >&2; exit 1' + "\n" +
+                "fi" + "\n" + "exit 0" + "\n")
+    text = "a note whose push landed and was called failed"
+    result = box.helper("log", "NOTED", f"lane:{LANE}", text, *HOME_FLAG,
+                        LANES_LANE=LANE, LANES_SESSION=UUID)
+    assert result.returncode == 0, result.stderr
+    assert "pushed origin/main (attempt 1)" in result.stderr
+    assert "push refused (attempt" not in result.stderr, "it landed, so nothing is replayed"
+    assert box.origin_file(f"lanes/log/{LANE}.md").count(text) == 1, "the append-only log has it once"
+    assert box.subjects()[0] == "a peer's commit lands on top at once"
+    assert box.pushes() == 1
+    assert box.unpublished(c) == []
+    _settled(box, c)
+
+
 def _another_writer(c: Path, state: str) -> str:
     """What an unlocked writer in `c` does while a push is in flight, as the
     lines of a hook: a stamp committed on top of this write's commit, or an
