@@ -1091,6 +1091,112 @@ def test_an_add_row_whose_name_a_reader_fetched_into_the_shared_checkout_refuses
     _settled(box, c)
 
 
+# 281 of lane openRepoTools-3's review of #307 (its P1 and P7): the window
+# between S3's compare and S3's fast-forward.
+
+def _clean_words(box: Box, **extra: str) -> str:
+    """An `env -i` prefix for a nested helper run: the box's own environment,
+    with none of this case's shims or hooks."""
+    env = {k: v for k, v in box.env.items() if k not in ("LANES_GIT", "FAKE_NET_LOG", "FAKE_NET_HOOK")}
+    env.update(extra)
+    return "env -i " + " ".join(shlex.quote(f"{k}={v}") for k, v in sorted(env.items()))
+
+
+def _between_s3s_compare_and_its_ff(box: Box, c: Path, body: str) -> dict:
+    """`body` runs once, after S3's fetch and its compare (`cs_now` against
+    the tip the checks read) and before its fast-forward: at step 3's
+    `symbolic-ref -q HEAD` in `c`, the first git call after the compare. The
+    net hook arms it at S3's own fetch (its refspec), and a `git` first on
+    PATH fires it; `@GIT@` in `body` is the real git. Returns the env that
+    puts the shim on PATH."""
+    real = shutil.which("git")
+    assert real, "git is on PATH"
+    armed = shlex.quote(str(box.root / "armed"))
+    fired = shlex.quote(str(box.root / "fired"))
+    box.use_net('[ "$1" = fetch ] || exit 0' + "\n" +
+                f'case "$*" in *"{S3_REFSPEC}"*) : ;; *) exit 0 ;; esac' + "\n" +
+                f"[ -e {fired} ] || [ -e {armed} ] || echo 1 > {armed}" + "\n" +
+                "exit 0" + "\n")
+    shim = box.root / "gitshim"
+    shim.mkdir()
+    step3 = shlex.quote(f"-C {c} symbolic-ref -q HEAD")
+    (shim / "git").write_text(
+        "#!/usr/bin/env bash" + "\n" +
+        f'if [ -e {armed} ] && [ "$*" = {step3} ]; then' + "\n" +
+        f"  mv -- {armed} {fired}" + "\n" +
+        body.replace("@GIT@", shlex.quote(real)) +
+        "fi" + "\n" +
+        f'exec {shlex.quote(real)} "$@"' + "\n", encoding="utf-8")
+    (shim / "git").chmod(0o755)
+    return {"PATH": f"{shim}{os.pathsep}{box.env['PATH']}"}
+
+
+def _a_reader_runs_in(box: Box, c: Path) -> str:
+    """Any reader's `log_sync` in the shared checkout, as a line of the shim:
+    it fetches, which moves `c`'s own `refs/remotes/origin/main`, takes no
+    lock, and writes nothing."""
+    who = " ".join(shlex.quote(a) for a in box.cmd("who", OBJ, *HOME_FLAG))
+    return f"  {_clean_words(box, LANES_REPO=str(c))} {who} >/dev/null 2>&1 || :" + "\n"
+
+
+def test_a_rival_claim_a_reader_fetched_in_after_S3s_compare_loses_exit_7(box: Box):
+    """281 of lane openRepoTools-3's review of #307 (its P1): S3 compared the
+    tip the claim's checks read with the one its own fetch found (decision
+    22), and then fast-forwarded to `refs/remotes/origin/main` BY NAME, about
+    ten git calls later. A reader's `log_sync` in the shared checkout moved
+    that ref in between, to a rival's CLAIMED that had just landed: it was
+    fast-forwarded in unchecked, this claim was written on top of it, and its
+    push, a plain fast-forward, landed at attempt 1 (exit 0). Two lanes held
+    one object. Now the fast-forward goes to the sha S3's fetch read, so the
+    push is refused, and the replay's rescan finds the rival: CLAIM-LOST (7),
+    and one holder."""
+    c = box.seam()
+    c2 = box.clone(box.root / "c2")
+    rival = " ".join(shlex.quote(a) for a in box.cmd("claim", OBJ, "--no-github", *HOME_FLAG))
+    out = shlex.quote(str(box.root / "rival.out"))
+    env = _between_s3s_compare_and_its_ff(box, c,
+        f"  {_clean_words(box, LANES_REPO=str(c2), LANES_LANE=NEIGHBOUR, LANES_SESSION=UUID2)} {rival} > {out} 2>&1" + "\n" +
+        f"  echo $? > {out}.rc" + "\n" + _a_reader_runs_in(box, c))
+    result = box.helper("claim", OBJ, "--no-github", *HOME_FLAG, LANES_LANE=LANE, LANES_SESSION=UUID, **env)
+    assert (box.root / "fired").exists(), "the rival landed, and a reader fetched it in, inside the window"
+    assert (box.root / "rival.out.rc").read_text(encoding="utf-8").strip() == "0", \
+        (box.root / "rival.out").read_text(encoding="utf-8")
+    assert f"CLAIMED — lane {NEIGHBOUR}" in box.origin_file(f"lanes/log/{NEIGHBOUR}.md")
+    mine = box.origin_file(f"lanes/log/{LANE}.md")
+    assert f"CLAIMED — lane {LANE}" not in mine, "two lanes hold one object"
+    assert result.returncode == 7, result.stderr
+    assert "push refused (attempt 1 of 6)" in result.stderr
+    assert f"another lane's claim landed on main before this one: @{NEIGHBOUR}" in result.stderr
+    assert f"CLAIM-LOST — lane {LANE}" in mine
+    assert box.unpublished(c) == []
+    _settled(box, c)
+
+
+def test_an_add_row_whose_retirement_a_reader_fetched_in_after_S3s_compare_refuses(box: Box):
+    """281's P7: the same window for `add-row`. A peer's retirement of the
+    name lands and a reader fetches it into the shared checkout after S3's
+    compare and before its fast-forward. It was fast-forwarded in unchecked,
+    and the retired name was issued again at attempt 1 (exit 0). Now the row
+    is made on the sha S3's fetch read, its push is refused, and the re-run
+    on origin's new tip refuses (2): the name is not issued again."""
+    c = box.seam()
+    row = _row(NEW_LANE, uuid=UUID3)
+    box.peer_prepares(ARCHIVE, None,
+                      "# retired rows" + "\n" + "\n" + "| lane | session id |" + "\n" + "|---|---|" + "\n" +
+                      f"| `{NEW_LANE}` | harness `{UUID3}` |" + "\n", "a peer retires the name")
+    env = _between_s3s_compare_and_its_ff(box, c,
+        f"  @GIT@ -C {shlex.quote(str(box.peer))} push -q origin main" + "\n" + _a_reader_runs_in(box, c))
+    result = box.helper("add-row", row, **env)
+    assert (box.root / "fired").exists(), "the retirement landed, and a reader fetched it in, inside the window"
+    assert f"`{NEW_LANE}`" in box.origin_file(ARCHIVE), "the retirement landed"
+    assert box.origin_register().count(f"`{NEW_LANE}`") == 0, "a retired name was issued again"
+    assert result.returncode == 2, result.stderr
+    assert "push refused (attempt 1 of 6)" in result.stderr
+    assert f"lane '{NEW_LANE}' is RETIRED" in result.stderr, result.stderr
+    assert box.unpublished(c) == []
+    _settled(box, c)
+
+
 def test_a_claim_that_meets_a_move_at_every_S3_fetch_stops_at_six_exit_2(box: Box):
     """SHOULD B of rv1b-c's re-check: `cs_recheck`'s six-attempt bound. A
     peer moves origin at every one of S3's fetches, so every attempt finds

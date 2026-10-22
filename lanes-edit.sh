@@ -2321,11 +2321,22 @@ checkout_sync() {   # <what> <lane> <write|carry|publish> [<pathspec it commits>
         "re-run this write once origin answers: git -C $cs_c fetch origin $LANES_BRANCH"
     fi
   fi
+  # THE TIP THIS WRITE IS MADE ON IS READ ONCE, HERE, RIGHT AFTER S3's OWN
+  # FETCH, AS A SHA (lane openRepoTools-3's review of #307, 281). The compare
+  # below and the fast-forward at step 8 both use it. The fast-forward went to
+  # `refs/remotes/origin/<b>` BY NAME, about ten git calls after the compare,
+  # and in a checkout several processes share, anything that fetches without
+  # the lock moves that ref in between: every reader's `log_sync` (`who`,
+  # `history`, `lane-dir` …), every other writer's pre-lock one. What it moved
+  # in was fast-forwarded in unchecked: a rival's CLAIMED under this claim, a
+  # peer's retirement under this `add-row`, and the push, a plain fast-forward,
+  # landed at attempt 1. Made on this sha, the write's push is refused where
+  # origin moved since, and S4's replay decides on the new tip.
+  cs_now="$(git -C "$cs_c" rev-parse -q --verify "$cs_trk" 2>/dev/null || :)"
   if [ "$CS_RECHECK" = 1 ] && [ "$CS_NO_ORIGIN_BRANCH" != 1 ]; then
     # AGAINST THE TIP THE CHECKS READ (`CS_SEEN`), and against the one just
     # before this fetch: in a shared checkout another process may have moved
     # the ref while this write waited on the lock (`cs_seen_mark`).
-    cs_now="$(git -C "$cs_c" rev-parse -q --verify "$cs_trk" 2>/dev/null || :)"
     cs_base="$cs_was"; [ "$CS_SEEN_SET" = 1 ] && cs_base="$CS_SEEN"
     if [ "$cs_now" != "$cs_base" ] || [ "$cs_now" != "$cs_was" ]; then
       cs_recheck "$cs_what" "$cs_base" "$cs_now"
@@ -2421,10 +2432,14 @@ CS_EOF
   [ -z "$cs_reg_pending" ] || cs_refuse_register "$cs_what" "$cs_lane"
   [ "$#" -eq 0 ] || cs_own_pending "$cs_what" "$cs_lane" "$@"
 
-  # ---- 8. the fast-forward
+  # ---- 8. the fast-forward, to the sha S3's fetch read (281 above). Steps 5
+  # and 6 read the ref by name, and rightly: a newer ref there only finds more
+  # of HEAD published, while the sha would call a commit an unlocked writer's
+  # `pull` brought in from origin since "unpublished", and refuse for it.
+  cs_to="${cs_now:-$cs_trk}"
   if [ "$cs_mode" != publish ] && [ "$CS_NO_ORIGIN_BRANCH" != 1 ] &&
-     ! git -C "$cs_c" merge-base --is-ancestor "$cs_trk" HEAD 2>/dev/null; then
-    if ! LC_ALL=C git -C "$cs_c" -c gc.auto=0 -c maintenance.auto=false merge --ff-only -q "$cs_trk" >"$cs_tmp/ff.err" 2>&1; then
+     ! git -C "$cs_c" merge-base --is-ancestor "$cs_to" HEAD 2>/dev/null; then
+    if ! LC_ALL=C git -C "$cs_c" -c gc.auto=0 -c maintenance.auto=false merge --ff-only -q "$cs_to" >"$cs_tmp/ff.err" 2>&1; then
       cs_ffw="$(head -n 8 -- "$cs_tmp/ff.err" 2>/dev/null | tr '\n' ' ')"
       if [ -n "$CS_CARRY_DIFF" ]; then
         # The hand edit was made on HEAD's version, so it goes back exactly.
