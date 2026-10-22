@@ -1272,6 +1272,44 @@ def test_a_drop_whose_tree_step_and_put_back_are_both_refused_is_named_off_HEAD_
     _settled(box, c)
 
 
+CARRY_TREE_STEP = '*" read-tree -m -i "*'
+
+
+def test_a_carry_forms_drop_whose_tree_step_is_refused_keeps_the_commit_exit_6(box: Box):
+    """`commit`'s carry form drops its commit to the parent in the index alone
+    (`read-tree -m -i`), to give the change back as the hand edit it was.
+    Where git refuses that step, the branch is put back on this write's
+    commit by a compare-and-swap from where the drop put it, and the commit
+    is kept on HEAD and named (6): the hand edit is in it, nothing is turned
+    back into an edit, and nothing is replayed. A `git` first on PATH refuses
+    the step."""
+    c = box.seam()
+    box.peer_prepares(REGISTER, _row(NEIGHBOUR, uuid=UUID2),
+                      _row(NEIGHBOUR, uuid=UUID2, state="LIVE · landed mid-push"),
+                      "a peer's row lands first")
+    box.race(prepared=True)
+    box.hand_edit(c)
+    refuse = "    echo 'error: the tree step is refused here (the test)' >&2; exit 1" + "\n"
+    env = _git_shim(box, CARRY_TREE_STEP, before=refuse)
+    result = box.helper("commit", "the hand edit", LANES_LANE=LANE, **env)
+    assert (box.root / "fired").exists(), "the carry form's tree step ran"
+    assert result.returncode == 6, result.stderr
+    err = result.stderr
+    assert "git said: error: the tree step is refused here (the test)" in err, err
+    named = re.search(r"could not be turned back into the hand edit it was to replay it, "
+                      r"so it is kept on HEAD: ([0-9a-f]{40}) ", err)
+    assert named, err
+    assert named.group(1) == box.head(c), "the commit it names is HEAD: the branch was put back"
+    assert box.subject(c) == f"LANES({LANE}@Eagle): the hand edit"
+    assert "LIVE · a hand edit" in box.git("-C", str(c), "show", f"HEAD:{REGISTER}"), "the hand edit is on HEAD"
+    assert box.git("-C", str(c), "status", "--porcelain").strip() == "", "nothing was turned back into an edit"
+    assert "the replay puts back" in box.git("-C", str(c), "reflog", "refs/heads/main")
+    assert "push refused (attempt 1 of 6)" not in err, "nothing is replayed"
+    assert "LIVE · a hand edit" not in box.origin_register(), "nothing of this write's reached origin"
+    assert len(box.unpublished(c)) == 1, "the one commit is kept, for the publish act"
+    _settled(box, c)
+
+
 # ------------------------------- a file the write edits in place (slice 2a's A37)
 
 def _helper_naming(box: Box, rel: str) -> list:
