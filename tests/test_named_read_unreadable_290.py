@@ -542,7 +542,8 @@ def _a_lane_resumed_under(inv, parent: str) -> tuple[dict, Path]:
     return by_dir, checkout.parent / ".lane-state" / "repoB-1" / "lane-state.yaml"
 
 
-@pytest.mark.parametrize("parent", ['q"uote', "My Projects"], ids=["quote-mark", "space"])
+@pytest.mark.parametrize("parent", ['q"uote', "My Projects", 'tab\tq"uote'],
+                         ids=["quote-mark", "space", "tab-and-quote"])
 def test_lane_state_hands_the_dir_it_read_on_as_lane_start_writes_it(inv, parent):
     """THE `dir` GOES ON QUOTED ONLY WHERE IT HOLDS A SPACE (#290, by Brett
     Heap's ruling for #295, "quote only where a space is"). `lane-state` reads
@@ -553,7 +554,9 @@ def test_lane_state_hands_the_dir_it_read_on_as_lane_start_writes_it(inv, parent
     directory, so the read looked under `<root>/.lane-state` and said 8, "no
     snapshot", over the one `set-lane-state` had filed and main reads. A `dir`
     holding a space is still read whole: handed on bare, it would end at the
-    space and look in the same wrong place."""
+    space and look in the same wrong place. The rule is a space and not any
+    whitespace: a bare `dir` holding a TAB and a `"` and no space is read whole
+    as well, as on main."""
     by_dir, snap = _a_lane_resumed_under(inv, parent)
     named = inv.e.edit("lane-dir", "repoB-1", env=by_dir)
     assert named.returncode == 0, (named.returncode, named.stdout, named.stderr)
