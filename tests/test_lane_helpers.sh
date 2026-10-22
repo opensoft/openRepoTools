@@ -14982,10 +14982,11 @@ is    "…which a later session reads as an interrupted swap and not as a clean 
 # on CI with the two before them green — `expected [SWAPPING], got [RUNNING]`
 # and `expected [interrupted-swap], got [ungraceful-stop]`, in run
 # 39142719296's `tests-no-submodule` and run 39278403461's `tests`, both on
-# ubuntu-24.04, whose awk is gawk. That was #280's race, before #283:
-# `lifecycle_begin` read the lane as `lane-state | awk '$1 == "state" { print
-# $2; exit }'` under `pipefail`. gawk hands the `state` line over the moment it
-# arrives and leaves, while `lanes-edit.sh`'s builtin `printf` is still writing
+# ubuntu-24.04, with an awk that acts at the first record (which awk is not
+# confirmed). That was #280's race, before #283: `lifecycle_begin` read the
+# lane as `lane-state | awk '$1 == "state" { print $2; exit }'` under
+# `pipefail`. Such an awk hands the `state` line over the moment it arrives and
+# leaves, while `lanes-edit.sh`'s builtin `printf` is still writing
 # the snapshot a line at a time, so its next write met a closed pipe, SIGPIPE
 # made the read's status 141, and the handoff took a reader that had stopped
 # listening for a lifecycle that could not be read: no RUNNING -> SWAPPING at
