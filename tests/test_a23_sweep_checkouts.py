@@ -537,6 +537,14 @@ def _push_from_peer(box: Sweep, path: str, text: str, message: str) -> str:
             f"git -C {peer} commit -q -am {message} && git -C {peer} push -q origin main")
 
 
+def _resumed_on_origin(box: Sweep, lane: str) -> str:
+    """A hook's shell command: `lane` RESUMES on origin, so it is no longer
+    CLOSED there."""
+    line = (f"RESUMED — lane {lane}, session {UUID[lane]}@Eagle, "
+            f"2026-10-21T09:00:00Z, lane:{lane}\n")
+    return _push_from_peer(box, f"lanes/log/{lane}.md", line, "resumed")
+
+
 def test_recheck_before_removal(sweep):
     """THE HOLDS ARE READ AGAIN UNDER THE LOCK, AFTER THE FETCH: a handoff
     written into the checkout after the listing and before its removal holds
@@ -560,13 +568,7 @@ def test_a_lane_resumed_after_the_listing_is_kept(sweep):
     is kept."""
     box = sweep.box
     c = box.checkout(CLOSED)
-    resumed = (f"RESUMED — lane {CLOSED}, session {UUID[CLOSED]}@Eagle, "
-               f"2026-10-21T09:00:00Z, lane:{CLOSED}\n")
-    peer = box.seed
-    _hook_on_fetch_of(box, c, (
-        f"git -C {peer} pull -q --ff-only origin main && "
-        f"printf '%s' '{resumed}' >> {peer}/lanes/log/{CLOSED}.md && "
-        f"git -C {peer} commit -q -am resumed && git -C {peer} push -q origin main"))
+    _hook_on_fetch_of(box, c, _resumed_on_origin(box, CLOSED))
     result, rows = sweep("--yes", LANES_LANE=RUNNER)
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert rows[str(c)][0] == "hold", rows[str(c)]
@@ -616,17 +618,11 @@ def test_a_lane_resumed_while_W_cannot_fetch_is_kept(sweep):
     box = sweep.box
     c = box.checkout(CLOSED)
     marker = box.root / "resumed.marker"
-    resumed = (f"RESUMED — lane {CLOSED}, session {UUID[CLOSED]}@Eagle, "
-               f"2026-10-21T09:00:00Z, lane:{CLOSED}\n")
-    peer = box.seed
     box.use_net(hook=(
-        f'case " $* " in\n'
-        f'  *" -C {c} fetch "*) git -C {peer} pull -q --ff-only origin main && '
-        f"printf '%s' '{resumed}' >> {peer}/lanes/log/{CLOSED}.md && "
-        f"git -C {peer} commit -q -am resumed && git -C {peer} push -q origin main && "
-        f'touch {marker} ;;\n'
+        'case " $* " in\n'
+        f'  *" -C {c} fetch "*) {_resumed_on_origin(box, CLOSED)} && touch {marker} ;;\n'
         f'  *" -C {box.w} fetch "*) if [ -e {marker} ]; then exit 1; fi ;;\n'
-        f'esac\nexit 0\n'))
+        'esac\nexit 0\n'))
     result, rows = sweep("--yes", LANES_LANE=RUNNER)
     assert marker.exists(), box.net_log.read_text(encoding="utf-8")
     assert result.returncode == 0, (result.stdout, result.stderr)
