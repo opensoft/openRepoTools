@@ -2422,6 +2422,19 @@ CS_EOF
     fi
     # ---- 6. diverged
     if [ "$cs_plus" = 0 ] && ! git -C "$cs_c" merge-base --is-ancestor HEAD "$cs_trk" 2>/dev/null; then
+      # A MERGE IS NOT "ON ORIGIN BY CONTENT" (lane openRepoTools-3's review
+      # of #307, NIT 287). `git cherry` skips merge commits, so a hand merge
+      # carrying a line of its own reads as nothing unpublished, and the reset
+      # below would drop that line. Where HEAD holds a merge origin lacks, the
+      # archive comes first. The refusal is the same: no hand merge belongs
+      # in a register checkout.
+      cs_merges="$(git -C "$cs_c" rev-list --merges --count "$cs_trk..HEAD" 2>/dev/null || printf '?')"
+      if [ "$cs_merges" != 0 ]; then
+        cs_refuse "$cs_what" "HEAD is not an ancestor of origin/$LANES_BRANCH, and it holds $cs_merges merge commit(s) origin lacks, which \`git cherry\` cannot compare by content: this checkout has diverged, and what the merge carries may be on no branch of origin's" \
+          "look: git -C $cs_c log --oneline --graph refs/remotes/origin/$LANES_BRANCH..HEAD; if any commit there is not your own write, STOP and take it to the lane its subject names" \
+          "archive it first (S6.3): git -C $cs_c push origin HEAD:refs/heads/archive/${cs_lane:-<lane>}-stranded-$(date -u +%Y%m%dT%H%MZ)" \
+          "then: git -C $cs_c reset --keep refs/remotes/origin/$LANES_BRANCH, and make again, with lanes-edit.sh, each edit that is still wanted on the register as it now is"
+      fi
       cs_refuse "$cs_what" "HEAD is not an ancestor of origin/$LANES_BRANCH, and every commit on it is on origin already by content: this checkout has diverged" \
         "git -C $cs_c reset --keep origin/$LANES_BRANCH   # the content is already published"
     fi

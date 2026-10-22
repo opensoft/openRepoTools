@@ -628,3 +628,33 @@ def test_a_marker_S3_brings_in_is_asked_again_and_refuses_the_legacy_act(box: Bo
     assert "push" not in box.net_ops(), "refused before any push"
     assert box.unpublished(c) == []
     assert not box.lock_of(c).exists()
+
+
+def test_a_diverged_checkout_holding_a_hand_merge_is_told_to_archive_first(box: Box):
+    """NIT 287 of lane openRepoTools-3's review of #307: S3 step 6 said
+    "every commit on it is on origin already by content" and printed
+    `reset --keep origin/main`. `git cherry` skips merge commits, so a hand
+    merge carrying a line of its own read as nothing unpublished, and the
+    printed reset would drop that line. Where HEAD holds a merge origin
+    lacks, the refusal (2, nothing written) now says so, and gives S6.3's
+    archive before the reset."""
+    c = box.seam()
+    box.peer_pushes("handoffs/repoS3/peer.md", "a peer's file" + "\n")
+    box.git("-C", str(c), "fetch", "-q", "origin")
+    box.git("-C", str(c), "merge", "-q", "--no-ff", "-m", "a hand merge", "refs/remotes/origin/main")
+    box.write(c, "handoffs/repoS3/only-in-the-merge.md", "a line the merge alone carries" + "\n")
+    box.git("-C", str(c), "add", "--", "handoffs/repoS3/only-in-the-merge.md")
+    box.git("-C", str(c), "commit", "-q", "--amend", "--no-edit")
+    assert box.unpublished(c) == [], "cherry calls the merge published"
+    before = box.snapshot(c)
+    result = run_verb(box, "set-row-state")
+    assert result.returncode == 2, result.stderr
+    err = result.stderr
+    assert "holds 1 merge commit(s) origin lacks" in err, err
+    archive = err.find(f"git -C {c} push origin HEAD:refs/heads/archive/{LANE}-stranded-")
+    reset = err.find(f"git -C {c} reset --keep refs/remotes/origin/main")
+    assert 0 <= archive < reset, err
+    assert "STOP and take it to the lane its subject names" in err
+    assert "the content is already published" not in err, "a merge's content is not"
+    assert box.snapshot(c) == before, "nothing was written"
+    assert not box.lock_of(c).exists()
