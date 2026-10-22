@@ -504,6 +504,35 @@ fi
 # BE EMPTY: a tab is IFS whitespace, so an empty one is no field at all and
 # every name after it takes its neighbour's value — which is why the read
 # prints `none` in 13 rather than leaving it empty.
+#
+# AND COLUMN 7 COMES ESCAPED (#301). `lanes-edit.sh lanes` writes a backslash,
+# a TAB, a newline and a carriage return in a lane's directory as `\\`, `\t`,
+# `\n` and `\r` - `lane-worktrees`' porcelain escape - so a directory holding a
+# TAB is still one column of the seventeen. `split_row` decodes it before
+# `go_available` tests it with `[ -d ]` and `cd`s into it, and before a pick
+# shows it. `row_field_unescape_into` is the decoder `lanes-edit.sh` and
+# `lanes` carry too, and `tests/test_subfield_misreads_301.py` runs all three.
+ROW_FIELD_OUT=""
+row_field_unescape_into() {   # <field> ; sets ROW_FIELD_OUT
+	ROW_FIELD_OUT=""; rfu_in="${1-}"; rfu_bs='\'
+	while : ; do
+		case "$rfu_in" in
+		*"$rfu_bs"*) : ;;
+		*) ROW_FIELD_OUT="$ROW_FIELD_OUT$rfu_in"; return 0 ;;
+		esac
+		rfu_pre=${rfu_in%%"$rfu_bs"*}
+		rfu_in=${rfu_in#*"$rfu_bs"}
+		ROW_FIELD_OUT="$ROW_FIELD_OUT$rfu_pre"
+		case "$rfu_in" in
+		t*) ROW_FIELD_OUT="$ROW_FIELD_OUT"$'\t' ;;
+		n*) ROW_FIELD_OUT="$ROW_FIELD_OUT"$'\n' ;;
+		r*) ROW_FIELD_OUT="$ROW_FIELD_OUT"$'\r' ;;
+		"$rfu_bs"*) ROW_FIELD_OUT="$ROW_FIELD_OUT$rfu_bs" ;;
+		*) ROW_FIELD_OUT="$ROW_FIELD_OUT$rfu_bs"; continue ;;
+		esac
+		rfu_in=${rfu_in#?}
+	done
+}
 R_LANE=""; R_STATE=""; R_WS=""; R_PF=""; R_WIN=""; R_SID=""; R_DIR=""
 R_OBJ=""; R_AGE=""; R_CMD=""; R_HOME=""; R_FK=""; R_LOC=""
 R_CLASS=""; R_START=""; R_WAS=""; R_FLAGS=""
@@ -512,6 +541,7 @@ split_row() {   # <row>
 ${1-}
 EOF
 	case "${R_DIR:-none}" in none) R_DIR="" ;; esac
+	case "$R_DIR" in *'\'*) row_field_unescape_into "$R_DIR"; R_DIR="$ROW_FIELD_OUT" ;; esac
 	case "${R_PF:-none}" in none) R_PF="" ;; esac
 	case "${R_WIN:-none}" in none) R_WIN="" ;; esac
 	case "${R_HOME:-none}" in none) R_HOME="" ;; esac

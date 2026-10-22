@@ -35,13 +35,23 @@ payload, and three reads of them give back something the log does not hold.
    the host: `write_event` checks the sub-fields named `host`, `os` and
    `container`, and `by host` is none of them.
 
-WHAT IS RED AT THE BRANCH'S HEAD AND WHAT IS NOT. The cases that name the three
-defects fail; the control cases (an ordinary dir, a dir with a space, a host
-with none) pass before the fix and have to keep passing, and so does
-`test_the_worktree_listing_keeps_every_lanes_trees` for the lanes whose dir
-holds a backslash: it passes today only because the listing and the writers are
-wrong in the same way, and a fix of the writers' read that left the listing's
-alone would lose those lanes in `worktrees --all`.
+WHAT WAS RED AT `e0970a8`, WHERE THIS BRANCH BEGAN, AND WHAT WAS NOT. The cases
+that name the three defects failed; the control cases (an ordinary dir, a dir
+with a space, a host with none) passed before the fix and have to keep passing,
+and so does `test_the_worktree_listing_keeps_every_lanes_trees` for the lanes
+whose dir holds a backslash: it passed then only because the listing and the
+writers were wrong in the same way, and a fix of the writers' read that left
+the listing's alone would lose those lanes in `worktrees --all`.
+
+THE FIX, ONE ITEM AT A TIME.
+
+1. COLUMN 7 IS ESCAPED (lane 3's ruling 1, option C). `lanes_rows` writes the
+   dir the way `lane-worktrees`' porcelain `pesc` writes a field (a backslash
+   as `\\`, a TAB as `\t`, a newline as `\n`, a carriage return as `\r`), at the
+   print and only where the dir holds one of them, and every reader that
+   shows the dir or takes it for a path decodes it: `worktree_rows`, `lane`'s
+   `split_row` and the `lanes` renderer. The row keeps its seventeen columns
+   whatever the dir holds, and `lane` reaches the dir the log records.
 
 THE `by host` CASES ASK WHAT A READER GETS BACK, NOT HOW THE LINE IS SPELLED.
 Whether the writer quotes a host that holds a space (the grammar's own rule for
@@ -57,7 +67,9 @@ defects in the first two items cannot be seen at all.
 from __future__ import annotations
 
 import os
+import random
 import re
+import shutil
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -110,7 +122,10 @@ class Misread:
 
     `bs-octal` has a sibling, `octAx`, where `awk -v` expands the name of its
     parent to: a read that expands `\\101` places that lane in a directory
-    that is somebody else's."""
+    that is somebody else's.
+
+    Each recorded dir is a real directory too, as a lane's checkout is, so
+    `lane <name>` can be asked to reach it."""
 
     def __init__(self, root: Path):
         self.root = root
@@ -125,6 +140,7 @@ class Misread:
             parent = root / parent_rel
             parent.mkdir(parents=True)
             recorded = f"{parent}/{leaf}"
+            Path(recorded).mkdir()
             field = f'"{recorded}"' if " " in recorded else recorded
             uuid = f"66666666-{n:04d}-4000-8000-00000000{6000 + n}"
             (log / f"{lane}.md").write_text(_started(lane, uuid, field), encoding="utf-8")
@@ -141,6 +157,7 @@ class Misread:
                     "--dirty", "0", "--unpushed", "0")
         self._listing: dict[str, list[str]] | None = None
         self._worktrees: tuple | None = None
+        self._lanes: subprocess.CompletedProcess | None = None
 
     def ok(self, *args: str) -> subprocess.CompletedProcess:
         res = self.e.edit(*args)
@@ -168,6 +185,12 @@ class Misread:
                 if line.startswith("TREE" + US)]
         other = [line for line in lines if not line.startswith("TREE" + US)]
         return res, rows, other
+
+    def lanes_command(self) -> subprocess.CompletedProcess:
+        """The `lanes` command's `--all`, the listing a person reads, run once."""
+        if self._lanes is None:
+            self._lanes = self.e.run("bash", LANES, "--all")
+        return self._lanes
 
     def all_trees(self) -> tuple[subprocess.CompletedProcess, list, list]:
         if self._worktrees is None:
@@ -248,11 +271,66 @@ def test_the_lanes_command_prints_no_defect_for_a_dir_with_a_tab(misread):
     which is not 0, so the listing printed `DEFECT: opensoft/repoT live
     fork(s) of this lane transcript` under a lane nobody had forked, and its
     AGE column held the objects it holds. No lane in this estate has a fork."""
-    res = misread.e.run("bash", LANES, "--all")
+    res = misread.lanes_command()
     assert res.returncode == 0, (res.stdout, res.stderr)
     assert "repoT-1" in res.stdout, res.stdout
     assert "DEFECT" not in res.stdout, "\n".join(
         line for line in res.stdout.splitlines() if "DEFECT" in line or "repoT-1" in line)
+
+
+def _pesc(value: str) -> str:
+    """`lane-worktrees`' porcelain escape, `pesc`, which column 7 is written in:
+    a backslash as `\\\\`, a TAB as `\\t`, a newline as `\\n`, a carriage
+    return as `\\r`."""
+    return (value.replace("\\", "\\\\").replace("\t", "\\t")
+            .replace("\n", "\\n").replace("\r", "\\r"))
+
+
+@pytest.mark.parametrize("cid", list(CASES))
+def test_column_seven_is_the_recorded_dir_escaped_as_pesc_escapes_a_field(misread, cid):
+    """COLUMN 7'S BYTES (lane 3's review of #301, 501). The dir is written into
+    the row the way `lane-worktrees`' porcelain writes a field, so a TAB in it
+    is `\\t` and no separator, and a backslash is `\\\\` so that a dir that
+    really holds `\\t` is not decoded as a TAB. A dir holding none of the
+    four is the dir as it was, which the plain and space cases hold. Before the
+    fix the TAB cut the column, and a backslash went out undoubled."""
+    lane = misread.lane[cid]
+    row = misread.listing().get(lane)
+    assert row is not None, sorted(misread.listing())
+    assert len(row) == 17, f"{len(row)} columns: " + _shown("|".join(row))
+    assert row[6] == _pesc(misread.dir[cid]), \
+        f"column 7 is {row[6]!r}; the dir {misread.dir[cid]!r} escaped is {_pesc(misread.dir[cid])!r}"
+
+
+@pytest.mark.parametrize("cid", list(CASES))
+def test_the_lanes_command_shows_each_dir_as_it_was_recorded(misread, cid):
+    """The `lanes` command decodes column 7 before it shows it: its DIRECTORY
+    is the dir the log records, byte for byte. Before the fix the lane whose
+    dir holds a TAB showed it cut at the TAB; decoded nowhere, a backslash
+    lane would show its backslashes doubled."""
+    res = misread.lanes_command()
+    assert res.returncode == 0, (res.stdout, res.stderr)
+    lane = misread.lane[cid]
+    lines = [line for line in res.stdout.split("\n") if line.startswith(lane + " ")]
+    assert len(lines) == 1, lines
+    assert lines[0].endswith(" " + misread.dir[cid]), \
+        f"{_shown(lines[0])!r} does not end with {_shown(misread.dir[cid])!r}"
+
+
+@pytest.mark.parametrize("cid", list(CASES))
+def test_lane_reaches_each_lanes_recorded_dir(misread, cid):
+    """`lane <name>` decodes column 7 in `split_row`, so `go_available` tests
+    and enters the directory the log records (#301, lane 3's ruling 1). Before
+    the fix the lane whose dir holds a TAB was refused as "does not exist", for
+    the dir cut at the TAB; decoded nowhere, every backslash lane would be. A
+    dry run prints the act and launches nothing."""
+    lane = misread.lane[cid]
+    res = misread.e.run("bash", REPO / "lane", lane, "--dry-run",
+                        env={"PCLAUDE": shutil.which("true") or "/bin/true"})
+    assert res.returncode == 0, (res.returncode, res.stdout, res.stderr)
+    first = res.stdout.split("\n", 1)[0]
+    assert first == f"lane {lane} · dir {misread.dir[cid]} · profile team-02a · from the lane record", \
+        _shown(res.stdout)
 
 
 @pytest.mark.parametrize("cid", list(CASES))
@@ -340,12 +418,13 @@ def test_the_writers_file_a_lane_beside_its_recorded_dir(misread, cid):
 # ----------------------------------------------- `payload_subfield`, on its own
 
 
-def _function(name: str) -> str:
-    """One top-level function of lanes-edit.sh as it is written there: the
-    code that runs is the file's own, cut out and run in `bash`."""
-    text = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
+def _function(name: str, source: str = "lanes-edit.sh") -> str:
+    """One top-level function of a shipped file (lanes-edit.sh unless named) as
+    it is written there: the code that runs is the file's own, cut out and run
+    in `bash`."""
+    text = (REPO / source).read_text(encoding="utf-8")
     match = re.search(rf"^{re.escape(name)}\(\) \{{[^\n]*\n.*?^\}}\n", text, re.M | re.S)
-    assert match, f"`{name}() {{` ... `}}` is no longer in lanes-edit.sh"
+    assert match, f"`{name}() {{` ... `}}` is no longer in {source}"
     return match.group(0)
 
 
@@ -404,6 +483,60 @@ def test_payload_subfield_gives_back_what_was_stored(payload, name, want):
     and the real TAB, are the controls."""
     got = payload_subfield(payload, name)
     assert got == want, f"stored {payload!r}, read {name!r} back as {got!r}, not {want!r}"
+
+
+# ------------------------------------------------- column 7's escape, on its own
+
+#: What column 7 may be asked to carry, as bytes: each escape and each near
+#: miss of one, a backslash before a real TAB, a trailing backslash, bytes
+#: outside ASCII and one that is no UTF-8 at all, and then two hundred strings
+#: drawn over the same alphabet. No NUL: no path holds one, and no argument can.
+CODEC_FIXED = [b"", b"/plain/path", b"/r/a\tb/x", b"/r/a\\tb/x", b"/r/a\\\\b/x",
+               b"/r/a\\nb/x", b"/r/a\\101b/x", b"/r/trail\\", b"\\", b"\\\\", b"\\t",
+               b"\t", b"\n", b"\r", b"a\\\tb", b"x\\\\\\ty", b"\\q", b"a\\qb\\",
+               "caf\u00e9/\u2014/\u00e9\\t".encode(), b"\xff\xfe\\\t\x80",
+               b"/r/My Projects/a b", b'/r/q"uote', b"a\x1fb", b"a\x1cb\x1e",
+               b"tt\\ttt\\\\tt", b"\\n\\r\\t\\\\"]
+_ALPHABET = [b"\\", b"\t", b"\n", b"\r", b"t", b"n", b"r", b"a", b" ", b"/", b"\xc3\xa9",
+             b"\xff", b"\x1f", b'"']
+_DRAW = random.Random(301)
+CODEC = CODEC_FIXED + [b"".join(_DRAW.choice(_ALPHABET) for _ in range(_DRAW.randint(1, 12)))
+                       for _ in range(200)]
+
+
+def _pesc_bytes(value: bytes) -> bytes:
+    return (value.replace(b"\\", b"\\\\").replace(b"\t", b"\\t")
+            .replace(b"\n", b"\\n").replace(b"\r", b"\\r"))
+
+
+@pytest.mark.parametrize("locale", ["C", "C.UTF-8"])
+@pytest.mark.parametrize("decoder", ["lanes-edit.sh", "lane", "lanes"])
+def test_column_seven_round_trips_through_each_decoder(decoder, locale):
+    """THE ESCAPE IS EXACT BOTH WAYS, for every reader that decodes it.
+    `lanes-edit.sh`'s `row_field_escape` writes each value, and the copy of
+    `row_field_unescape_into` in `lanes-edit.sh` (`worktree_rows`), in `lane`
+    (`split_row`) and in `lanes` (the renderer) reads it back: the escaped text
+    is `pesc`'s, holds no TAB, newline or carriage return, and decodes to the
+    value byte for byte. Each copy runs under `set -euo pipefail`, as `lane`
+    and `lanes` do, and under both locales."""
+    script = (_function("row_field_escape") + _function("row_field_unescape_into", decoder)
+              + "set -euo pipefail\n"
+              + 'for v in "$@"; do\n'
+              + '  e="$(row_field_escape "$v")"\n'
+              + '  row_field_unescape_into "$e"\n'
+              + "  printf '%s\\0%s\\0' \"$e\" \"$ROW_FIELD_OUT\"\n"
+              + "done\n")
+    res = subprocess.run(["bash", "-c", script, "bash", *CODEC], capture_output=True, check=False,
+                         env={"PATH": os.environ["PATH"], "LC_ALL": locale})
+    assert res.returncode == 0, res.stderr
+    out = res.stdout.split(b"\0")
+    assert len(out) == 2 * len(CODEC) + 1 and out[-1] == b"", (len(out), len(CODEC))
+    bad = []
+    for i, value in enumerate(CODEC):
+        enc, dec = out[2 * i], out[2 * i + 1]
+        if enc != _pesc_bytes(value) or dec != value or any(b in enc for b in (b"\t", b"\n", b"\r")):
+            bad.append((value, enc, dec))
+    assert not bad, f"{len(bad)} of {len(CODEC)} miss, first: {bad[:3]}"
 
 
 # ---------------------------------------------------------- item 3: `by host`

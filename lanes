@@ -105,6 +105,35 @@ selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
 say() { printf '%s\n' "$*"; }
 die() { printf '\n%s: REFUSED: %s\n' "$prog" "$1" >&2; exit "${2:-64}"; }
 
+# COLUMN 7 OF THE LISTING COMES ESCAPED (#301): `lanes-edit.sh lanes` writes a
+# backslash, a TAB, a newline and a carriage return in a lane's directory as
+# `\\`, `\t`, `\n` and `\r`, `lane-worktrees`' porcelain escape, so a directory
+# holding a TAB is still one column of the seventeen. The renderer below shows
+# the directory decoded, as it was recorded. `row_field_unescape_into` is the
+# decoder `lanes-edit.sh` and `lane` carry too, and
+# `tests/test_subfield_misreads_301.py` runs all three.
+ROW_FIELD_OUT=""
+row_field_unescape_into() {   # <field> ; sets ROW_FIELD_OUT
+	ROW_FIELD_OUT=""; rfu_in="${1-}"; rfu_bs='\'
+	while : ; do
+		case "$rfu_in" in
+		*"$rfu_bs"*) : ;;
+		*) ROW_FIELD_OUT="$ROW_FIELD_OUT$rfu_in"; return 0 ;;
+		esac
+		rfu_pre=${rfu_in%%"$rfu_bs"*}
+		rfu_in=${rfu_in#*"$rfu_bs"}
+		ROW_FIELD_OUT="$ROW_FIELD_OUT$rfu_pre"
+		case "$rfu_in" in
+		t*) ROW_FIELD_OUT="$ROW_FIELD_OUT"$'\t' ;;
+		n*) ROW_FIELD_OUT="$ROW_FIELD_OUT"$'\n' ;;
+		r*) ROW_FIELD_OUT="$ROW_FIELD_OUT"$'\r' ;;
+		"$rfu_bs"*) ROW_FIELD_OUT="$ROW_FIELD_OUT$rfu_bs" ;;
+		*) ROW_FIELD_OUT="$ROW_FIELD_OUT$rfu_bs"; continue ;;
+		esac
+		rfu_in=${rfu_in#?}
+	done
+}
+
 usage() {
 	cat <<'USAGE'
 lanes [--fetch] [--index] [--all] [--here] [--closed] [--repo <owner/repo>]
@@ -681,6 +710,7 @@ defects=0
 # empty one between two tabs is no field at all to this `read`.
 while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_obj r_age r_restart r_home r_fk r_loc r_class r_start r_was r_flags; do
 	[ -n "${r_lane:-}" ] || continue
+	case "$r_dir" in *'\'*) row_field_unescape_into "$r_dir"; r_dir="$ROW_FIELD_OUT" ;; esac
 	printf '%-26s %-8s %-10s %-12s %-22s %-38s %-9s %s\n' \
 		"$r_lane" "$r_state" "$r_ws" "$r_pf" "$r_win" "$r_sid" "$r_age" "$r_dir"
 	case "$r_obj" in
