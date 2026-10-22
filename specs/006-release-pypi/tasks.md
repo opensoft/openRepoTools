@@ -126,6 +126,7 @@ The tests use fake venv layouts, with no pipx and no wheel.
     - a SIGTERM mid-placement leaves no placement temporary (`placement_temporaries`);
     - with no `bash` on `PATH`, the exact no-bash refusal, exit 2, and nothing run;
     - `wip_shape_ref`, cut out with `installer_function`, reads the packaged pin.
+  - **Amended 2026-10-22, for #256:** `test_entry_*` also holds the entry module's second refusal (contracts/cli-output.md, "A `bash` on PATH that cannot be run"). Where the only `bash` on `PATH` is a file with no execute bit, a file in a directory that cannot be searched, or a file that is not a program, it prints the exact refusal with the system's reason, exits 2 and runs nothing. Where a runnable `bash` comes later on `PATH`, that one runs instead.
 - [X] T006 [P] [US1] [S] Add the standard-library test to `tests/test_repo_hygiene.py`, and widen its compile test, as detailed below — files: `tests/test_repo_hygiene.py` — verify: `bash tests/run.sh -k 'standard_library or python_files_compile'`
   - add `test_the_package_imports_only_the_standard_library`. It parses every module under `src/openrepotools/` with `ast`, and holds its imports to an explicit allowlist. Where `sys.stdlib_module_names` exists, the allowlist is itself checked against it, so the test never skips on Python 3.9.
   - extend `test_the_python_files_compile` to compile `src/openrepotools/*.py`.
@@ -136,6 +137,7 @@ The tests use fake venv layouts, with no pipx and no wheel.
   - it calls `os.execvp("bash", ["bash", <payload>/openRepoTools, *sys.argv[1:]])`, where `<payload>` is the `payload` directory beside the module's own file;
   - on `FileNotFoundError`, it prints contracts/cli-output.md's no-bash refusal to stderr and returns 2;
   - it reads no stamp, and passes nothing else.
+  - **Amended 2026-10-22, for #256:** `main()` now catches every `OSError`, not only `FileNotFoundError`. The two not-found errors, `FileNotFoundError` and `NotADirectoryError` (T026), keep the no-bash refusal above. Every other one prints contracts/cli-output.md's second refusal, for a `bash` on `PATH` that cannot be run, to stderr and returns 2 (design.md Decision 3, amended again 2026-10-21).
 - [X] T008 [P] [US1] [O] Teach `openRepoTools` to recognise and skip pipx's link, holding to bash 3.2 throughout, as detailed below — files: `openRepoTools` — verify: `bash tests/run.sh -k 'test_pipx_link_ or test_pipx_skip_ or test_pipx_offline_ or openrepotools_command or install_skill or install_by_rename or install_payload'`
   - add `link_resolve`, `package_payload_dir`, `pipx_link_match` and `venv_shaped_link` (contracts/pipx-link.md);
   - call the pipx match in `plan_install_targets`, for `openRepoTools`, before `unplaceable_kind`;
@@ -150,6 +152,7 @@ The tests use fake venv layouts, with no pipx and no wheel.
     - a payload `bash` that reads its own ignored-signal set finds neither SIGPIPE nor SIGXFSZ ignored. On Linux it reads `/proc/self/status`'s `SigIgn`; elsewhere, a `yes | head -n 1` pipeline under `pipefail` ends in status 141;
     - with no `bash` on `PATH` and `PATH`'s last entry a file, the exact no-bash refusal, exit 2, and nothing run.
   - It runs after T007 and before T009. It was added after T025 by the lead's ruling, so its number is out of order.
+  - **Amended 2026-10-22, for #256:** `FileNotFoundError` and `NotADirectoryError` still get the no-bash refusal. Every other `OSError` now gets contracts/cli-output.md's second refusal, for a `bash` on `PATH` that cannot be run, with exit 2. Both are printed after the exec has failed and the two signals have gone back to what they were before it (design.md Decision 3, amended again 2026-10-21).
 
 **Checkpoint**: User Story 1 works and is tested on its own.
 
