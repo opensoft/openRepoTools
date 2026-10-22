@@ -1322,8 +1322,9 @@ SC_IDX
   #       assume-unchanged or skip-worktree, which `git status` does not look
   #       at; untracked files ANYWHERE, not only under `handoffs/` and
   #       `lanes/`, because no tool can tell a person's work from scratch; an
-  #       operation in progress, unmerged entries, a held `index.lock`, and
-  #       the checkout's own writers' lock. No `origin/<branch>` to compare
+  #       operation in progress, unmerged entries, a held `index.lock`, the
+  #       checkout's own writers' lock, and a hand edit of the register that
+  #       `lanes-edit.sh commit` keeps in `.git/lanes-edit/`. No `origin/<branch>` to compare
   #       with is itself a hold: nothing can be proved published. IGNORED
   #       files do not hold — the register's own rules keep them out of every
   #       commit — and they are named, so a person sees them first;
@@ -1353,6 +1354,24 @@ SC_IDX
       if [ -e "$sh_gd/$sh_op" ]; then sc_hold "an operation in progress ($sh_op)"; fi
     done
     if [ -e "$sh_gd/index.lock" ]; then sc_hold "a git process holds its index.lock"; fi
+    # A HAND EDIT `lanes-edit.sh commit` KEPT (lane openRepoTools-3's MUST
+    # 351). S3 step 4's carry saves a hand edit of the register to
+    # `.git/lanes-edit/hand-edit-<UTC>-<pid>.diff`, and where it no longer
+    # applies it is KEPT there with the register left at origin's version, so
+    # git status sees nothing: that file may be a person's only copy. Anything
+    # there holds, but the writer's own scratch: git's words from a write and
+    # the lines a carry removed, which every write leaves.
+    if [ -e "$sh_gd/lanes-edit" ] || [ -L "$sh_gd/lanes-edit" ]; then
+      if ! sh_x="$(ls -A -- "$sh_gd/lanes-edit" 2>/dev/null)"; then
+        sc_hold "its .git/lanes-edit/, where lanes-edit.sh keeps a hand edit of the register its commit could not carry, cannot be listed, so whether it keeps one is unknown"
+      else
+        sh_x="$(printf '%s\n' "$sh_x" | awk 'NF && $0 !~ /^(apply|fetch|ff|reset)\.err$/ && $0 != "removed"')" ||
+          sh_x="(the list could not be read)"
+        if [ -n "$sh_x" ]; then
+          sc_hold "lanes-edit.sh keeps $(sc_first "$sh_x") in .git/lanes-edit/: a hand edit of the register its commit could not carry, or the copy of one it carried (read it; remove it once origin has the edit)"
+        fi
+      fi
+    fi
     sh_x="$(git -C "$sh_p" ls-files -u 2>/dev/null)" || sh_x="unreadable"
     if [ -n "$sh_x" ]; then sc_hold "unmerged entries"; fi
     if ! git -C "$sh_p" rev-parse -q --verify "$sh_o^{commit}" >/dev/null 2>&1; then

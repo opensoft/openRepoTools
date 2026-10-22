@@ -633,6 +633,76 @@ def test_no_origin_main_holds_the_dry_run(sweep):
     _no_aside(box)
 
 
+def _hand_edit_kept(box: Sweep, c: Path) -> Path:
+    """S3 step 4's carry, refused (lane openRepoTools-3's MUST 351): the
+    CLOSED lane's row is edited by hand in its checkout, a peer changes the
+    same row on origin, and `lanes-edit.sh commit` KEEPS the edit in a file
+    under `.git/lanes-edit/` and leaves the register at origin's version, so
+    `git status` and the untracked list see nothing. The kept file's path."""
+    reg = c / REGISTER
+    reg.write_text(reg.read_text(encoding="utf-8").replace(
+        _row(CLOSED, "ENDED · closed"), _row(CLOSED, "ENDED · closed, and a person's hand note")),
+        encoding="utf-8")
+    box.peer_edits(REGISTER, _row(CLOSED, "ENDED · closed"),
+                   _row(CLOSED, "ENDED · closed, and a peer's note"), "a peer's note")
+    done = box.helper("commit", "a person's hand note", LANES_LANE=CLOSED)
+    assert done.returncode == 2, (done.stdout, done.stderr)
+    kept = list((c / ".git" / "lanes-edit").glob("hand-edit-*.diff"))
+    assert len(kept) == 1, (kept, done.stderr)
+    assert box.git("-C", str(c), "status", "--porcelain") == "", "git status sees nothing"
+    return kept[0]
+
+
+@pytest.mark.parametrize("listable", [
+    True,
+    pytest.param(False, marks=pytest.mark.skipif(getattr(os, "geteuid", lambda: 1)() == 0,
+                                                 reason="root lists a directory whose mode is 000")),
+], ids=["the kept edit is named", "its directory cannot be listed"])
+def test_a_hand_edit_lanes_edit_kept_holds(sweep, listable):
+    """A HAND EDIT THAT `commit` KEPT IN `.git/lanes-edit/` HOLDS THE CHECKOUT
+    (lane openRepoTools-3's MUST 351): it may be a person's only copy of the
+    edit, and nothing else in the checkout shows it. The dry run and `--yes`
+    both hold the checkout and name the file, and both stay. A directory
+    that cannot be listed holds it as well: what it keeps is unknown."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    kept = _hand_edit_kept(box, c)
+    said = (f"lanes-edit.sh keeps 1 ({kept.name}) in .git/lanes-edit/: a hand edit" if listable
+            else "its .git/lanes-edit/, where lanes-edit.sh keeps a hand edit of the register "
+                 "its commit could not carry, cannot be listed")
+    if not listable:
+        kept.parent.chmod(0)
+    try:
+        for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+            result, rows = sweep(*args, **env)
+            assert rows[str(c)][0] == "hold", rows[str(c)]
+            assert result.returncode == 0, (result.stdout, result.stderr)
+            assert said in rows[str(c)][1], rows[str(c)]
+    finally:
+        kept.parent.chmod(0o755)
+    assert c.is_dir()
+    assert kept.is_file()
+
+
+def test_lanes_edit_scratch_alone_holds_nothing(sweep):
+    """`.git/lanes-edit/` ALSO HOLDS `lanes-edit.sh`'S OWN SCRATCH, git's words
+    from a write (`apply.err`, `fetch.err`, `ff.err`, `reset.err`) and the
+    lines a carry removed (`removed`), which every write leaves behind. That
+    alone holds nothing (MUST 351's fix): the checkout is removed."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    scratch = c / ".git" / "lanes-edit"
+    scratch.mkdir()
+    for name in ("apply.err", "fetch.err", "ff.err", "removed", "reset.err"):
+        (scratch / name).write_text("git's own words\n", encoding="utf-8")
+    _, rows = sweep()
+    assert rows[str(c)][0] == "remove", rows[str(c)]
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert rows[str(c)][0] == "removed", rows[str(c)]
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert not os.path.lexists(c)
+
+
 def test_a_live_cwd_holds(sweep):
     """S6.2 (c): a live process working inside the checkout holds it. The
     process is a `sleep` started there, killed by its PID afterwards."""
