@@ -1324,6 +1324,69 @@ def test_a_lock_whose_pid_line_cannot_be_written_is_let_go(sweep, after):
     assert result.returncode == 0, (result.stdout, result.stderr)
 
 
+def test_a_lanes_folder_swapped_for_a_link_under_the_lock_holds(sweep):
+    """WHAT IS MOVED IS ASKED AGAIN AT THE MOVE: DIRECTLY UNDER `<W>-lanes/`, BY
+    ITS REAL PARENT (lane openRepoTools-3's SHOULD 374; `sc_under_home`). A
+    `git` first on PATH, after the last read of the candidate's holds under
+    its lock (its ignored files), copies `<W>-lanes/` to a decoy outside it,
+    the lock and its pid line included, and puts a link to the decoy where
+    `<W>-lanes/` was. Every check after that reads the decoy's copy as the
+    checkout and the pid line as the sweep's own; only the real parent,
+    asked again, stops the move. The checkout is held, and the decoy's copy
+    stays."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    decoy, real = box.root / "decoy-lanes", box.root / "real-lanes"
+    marker = box.root / "swapped.marker"
+    git = shutil.which("git")
+    assert git, "no git on the test's own PATH"
+    shim = box.fakebin / "git"
+    shim.write_text("#!/usr/bin/env bash\n"
+                    f'case " $* " in *" -C {c} ls-files --others --ignored "*)\n'
+                    f'  {git} "$@"; rc=$?\n'
+                    f"  if [ ! -e {marker} ]; then : > {marker} && cp -a -- {box.lanes_root} {decoy} && "
+                    f"mv -- {box.lanes_root} {real} && ln -s -- {decoy} {box.lanes_root}; fi\n"
+                    '  exit "$rc" ;;\n'
+                    "esac\n"
+                    f'exec {git} "$@"\n', encoding="utf-8")
+    shim.chmod(0o755)
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert marker.exists() and box.lanes_root.is_symlink(), "the shim swapped <W>-lanes/ for a link"
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+    assert f"it could not be moved aside to {box.lanes_root}/.{CLOSED}.removing-" in rows[str(c)][1], rows[str(c)]
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert (decoy / CLOSED / ".git").is_dir(), "the decoy's copy, outside <W>-lanes/, stays"
+    assert (real / CLOSED / ".git").is_dir(), "and so does the checkout"
+    assert not list(decoy.glob(".*.removing-*")), "nothing was moved aside in the decoy"
+
+
+def test_a_checkout_that_cannot_be_moved_aside_lets_its_lock_go(sweep):
+    """A MOVE THAT FAILS LETS THE CHECKOUT'S LOCK GO (lane openRepoTools-3's
+    SHOULD 374). An `mv` first on PATH refuses the move of the CLOSED lane's
+    checkout to its aside, as a parent it cannot write in would. It is held
+    with that reason, and the writers' lock the sweep took in it is gone:
+    the next candidate takes a lock of its own, so a lock the first one
+    left would be left for good, its writers waiting out ten minutes on it
+    (`mutex_stale`). The next candidate is removed."""
+    box = sweep.box
+    c, other = box.checkout(CLOSED), _closed_checkout(box)
+    real = shutil.which("mv")
+    assert real, "no mv on the test's own PATH"
+    shim = box.fakebin / "mv"
+    shim.write_text("#!/usr/bin/env bash\n"
+                    f'case "$*" in *"/.{CLOSED}.removing-"*) echo "FAKE: mv refused" >&2; exit 1 ;; esac\n'
+                    f'exec {real} "$@"\n', encoding="utf-8")
+    shim.chmod(0o755)
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+    assert f"it could not be moved aside to {box.lanes_root}/.{CLOSED}.removing-" in rows[str(c)][1], rows[str(c)]
+    assert rows[str(other)][0] == "removed", rows[str(other)]
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert c.is_dir()
+    assert not os.path.lexists(box.lock_of(c)), "the lock it took in the held checkout is let go"
+    _no_aside(box)
+
+
 @pytest.mark.parametrize("op,note", [
     ("fetch", "fetch failed — reading the logs as they stand locally"),
     ("ls-remote", "NO FETCH WAS MADE"),
@@ -1572,15 +1635,20 @@ def test_held_parent_keeps_its_dependents_chain(sweep, held, expect):
 
 @pytest.mark.skipif(getattr(os, "geteuid", lambda: 1)() == 0,
                     reason="root removes what a read-only directory holds")
-def test_a_removal_that_does_not_finish_exits_1(sweep):
+@pytest.mark.parametrize("finished", [True, False],
+                         ids=["beside a removal that finished", "alone"])
+def test_a_removal_that_does_not_finish_exits_1(sweep, finished):
     """A REMOVAL THAT DOES NOT FINISH IS SAID, BY PATH, AND EXITS 1 (rv4's
     SHOULD 1, R4). The CLOSED lane's checkout holds an IGNORED directory
     (ignored files hold nothing) that is read-only, so the checkout is moved
     aside and the removal of the aside stops partway: it is named PARTLY,
-    the run exits 1, and the aside stays, hidden, under `<W>-lanes/`."""
+    the run exits 1, and the aside stays, hidden, under `<W>-lanes/`. It is
+    RECORDED ALONE TOO (lane openRepoTools-3's SHOULD 374): with no other
+    removal that finished, the NOTED line is still written, for what was
+    moved aside."""
     box = sweep.box
     c = box.checkout(CLOSED)
-    other = _closed_checkout(box)
+    other = _closed_checkout(box) if finished else None
     (c / ".git" / "info" / "exclude").write_text("scratch/\n", encoding="utf-8")
     box.write(c, "scratch/kept.txt", "an ignored file in a read-only directory\n")
     (c / "scratch").chmod(0o555)
@@ -1597,11 +1665,13 @@ def test_a_removal_that_does_not_finish_exits_1(sweep):
         # did (rv4's NIT 3), on the summary line and in the NOTED line, and
         # its ignored files are named at the act (NIT 2).
         assert "ignored, which holds nothing: 1 (scratch/)" in rows[str(c)][1], rows[str(c)]
-        assert "  1 removed, 1 moved aside and not all removed, " in result.stdout, result.stdout
+        n = 1 if finished else 0
+        assert f"  {n} removed, 1 moved aside and not all removed, " in result.stdout, result.stdout
         noted = _noted_on_origin(box)
         assert len(noted) == 1, noted
-        assert (f"removed 1 register checkout(s) under brett-wip-lanes/ that held nothing "
-                f"unpublished: {other.name}; moved aside and not all removed: {asides[0].name};") in noted[0], noted
+        names = f": {other.name}" if other else ""
+        assert (f"removed {n} register checkout(s) under brett-wip-lanes/ that held nothing "
+                f"unpublished{names}; moved aside and not all removed: {asides[0].name};") in noted[0], noted
     finally:
         for aside in box.lanes_root.glob(f".{CLOSED}.removing-*"):
             (aside / "scratch").chmod(0o755)
