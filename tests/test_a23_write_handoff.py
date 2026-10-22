@@ -789,9 +789,23 @@ def test_handoff_path_names_where_write_handoff_writes(tmp_path: Path, how: str)
     ("--stamp", STAMP, "--subject", SUBJECT, "--expected-digest", "0" * 64),
     ("--stamp", "two\nlines", "--subject", SUBJECT),
     ("--stamp", STAMP, "--subject", SUBJECT, "--restart", "op"),
+    ("--stamp", "", "--subject", SUBJECT),
+    ("--stamp", STAMP, "--subject", "two\nlines"),
+    ("--whole", "x", "--expect-digest", "g" * 64, "--subject", SUBJECT),
+    ("--stamp", STAMP, "--subject", SUBJECT, "--expect-digest", "0" * 64),
+    ("--stamp", STAMP, "--subject", SUBJECT, "--restart", *FENCE, "--expected-digest", "abc"),
+    ("--stamp", STAMP, "--subject", SUBJECT, "--restart", "", *FENCE[1:]),
 ], ids=["no-mode", "no-subject", "two-modes", "whole-no-digest", "expected-no-restart",
-        "stamp-two-lines", "restart-short"])
+        "stamp-two-lines", "restart-short", "stamp-empty", "subject-two-lines",
+        "whole-digest-not-hex", "expect-digest-with-stamp", "expected-digest-short",
+        "restart-empty-fence"])
 def test_usage_is_64_and_writes_nothing(box: Box, argv):
+    """Every argument is checked before the lock, and a bad one is 64 with
+    nothing written and no fetch made. m2a's battery found six checks no case
+    supplied the bad value for (its A02-A10): an empty stamp, a subject of two
+    lines, an `--expect-digest` that is not hex, one beside `--stamp`, an
+    `--expected-digest` that is not 64 long, and an empty fence, which left
+    the operation empty, so the write went out unfenced."""
     c = box.seam()
     box.use_net()
     before = box.snapshot(c)
@@ -1026,30 +1040,50 @@ def test_the_recovery_under_another_S3_refusal_names_git_add_for_an_untracked_ha
     _released(box, c)
 
 
-@pytest.mark.parametrize("how", ["target", "cell"])
+@pytest.mark.parametrize("how", ["target", "cell", "tracked-file", "git-config", "dotdot"])
 def test_a_target_outside_handoffs_is_refused_and_nothing_written(box: Box, how: str):
     """SHOULD 1: this verb replaces a file and pushes it, so in the checkout
     it writes a file under `handoffs/` and nothing else. A `--target` naming
     the register, or a row cell that climbs out of `handoffs/` to the lane's
     append-only object log, is refused (2) before a byte: the checkout's copy
-    and origin's are as they were, and nothing is printed on stdout."""
+    and origin's are as they were, and nothing is printed on stdout. The rule
+    is `handoffs/` itself, not only the register's and `lanes/`'s exclusions
+    (m2a's E01 and E02): a tracked file elsewhere in the tree, this
+    checkout's own `.git/config`, and a target whose last part is `..` are
+    refused the same way."""
+    if how == "tracked-file":
+        box.peer_pushes("docs/plan.md", "# a plan, tracked outside handoffs/\n")
     c = box.seam()
     if how == "target":
         rel = REGISTER
         args = ("--whole", str(_prepared(box, "# not a register any more\n")),
                 "--expect-digest", sha(c / REGISTER), "--target", REGISTER)
-    else:
+    elif how == "cell":
         rel = f"lanes/log/{LANE}.md"
         box.cell_is(f"handoffs/../{rel}")
         args = ("--prepend", str(_block(box)))
-    before, published, tip = (c / rel).read_bytes(), box.origin_file(rel), box.origin_head()
+    elif how == "tracked-file":
+        rel = "docs/plan.md"
+        args = ("--stamp", STAMP, "--target", str(c / rel))
+    elif how == "git-config":
+        rel = ".git/config"
+        args = ("--whole", str(_prepared(box, "[core\n")), "--expect-digest", sha(c / rel),
+                "--target", str(c / rel))
+    else:
+        rel = "handoffs/repoS4/.."
+        args = ("--stamp", STAMP, "--target", str(c / rel))
+    watched = c / (HANDOFF_REL if how == "dotdot" else rel)
+    before, tip = watched.read_bytes(), box.origin_head()
+    published = None if how in ("git-config", "dotdot") else box.origin_file(rel)
     result = box.write_handoff(*args, "--subject", "handoff: PAUSED")
     assert result.returncode == 2, result.stderr
     assert f"is {rel} in the checkout {c}, which is not a file under handoffs/" in result.stderr
     assert "Nothing was written." in result.stderr
-    assert (c / rel).read_bytes() == before
-    assert box.origin_file(rel) == published
+    assert watched.read_bytes() == before
+    if published is not None:
+        assert box.origin_file(rel) == published
     assert box.origin_head() == tip
+    assert box.git("-C", str(c), "config", "gc.auto").strip() == "0", "git still reads the checkout's config"
     assert result.stdout == ""
     _released(box, c)
 
@@ -1644,4 +1678,134 @@ def test_a_cell_a_peer_repoints_where_no_replay_can_write_keeps_the_write_on_HEA
     assert not _origin_has(box, HANDOFF_REL)
     assert [line.split()[1] for line in box.unpublished(c)] == [kept], "one commit unpublished, this write's"
     assert result.stdout == _line(f)
+    _released(box, c)
+
+
+# ------------------------------------------------- m2a's battery: what no case asked
+
+@pytest.mark.parametrize("mode", ["prepend", "whole"])
+def test_an_empty_block_or_prepared_file_is_refused(box: Box, mode: str):
+    """m2a's A11: an empty `--prepend` block would put `---` and a blank
+    line on top of the handoff, and an empty `--whole` file would empty the
+    handoff and push that. Each is refused (1) before the lock, as
+    `publish-handoff` refuses an empty prepared file: nothing written,
+    committed or pushed, no fetch made, nothing on stdout."""
+    c = box.seam()
+    f = c / HANDOFF_REL
+    empty = box.root / "empty.md"
+    empty.write_text("", encoding="utf-8")
+    args = (("--prepend", str(empty)) if mode == "prepend" else
+            ("--whole", str(empty), "--expect-digest", sha(f)))
+    box.use_net()
+    before = box.snapshot(c)
+    result = box.write_handoff(*args, "--subject", "handoff: PAUSED")
+    assert result.returncode == 1, result.stderr
+    assert f"the {mode} file {empty} is unreadable or empty. Nothing was written." in result.stderr
+    assert f.read_text(encoding="utf-8") == HANDOFF
+    assert box.snapshot(c) == before
+    assert box.net_ops() == []
+    assert result.stdout == ""
+    _released(box, c)
+
+
+def test_routed_a_flag_where_the_lane_goes_is_usage_and_routes_nowhere(box: Box):
+    """m2a's A13: routed, the lane is `write-handoff`'s first word, and a
+    flag there is the arm's own usage refusal (64), never a lane to route
+    to: no checkout is cloned for it, no fetch is made, and W and origin are
+    as they were."""
+    box.use_net()
+    w_before, tip = box.w_state(), box.origin_head()
+    result = box.helper("write-handoff", "--stamp", STAMP, "--subject", SUBJECT)
+    assert result.returncode == 64, result.stderr
+    assert "usage: write-handoff <lane>" in result.stderr
+    assert box.net_ops() == []
+    assert not box.checkout("--stamp").exists()
+    assert box.w_state() == w_before
+    assert box.origin_head() == tip
+    assert result.stdout == ""
+
+
+def test_handoff_path_for_a_row_that_names_no_handoff_is_8(box: Box):
+    """m2a's B02: a row whose handoff cell is empty names no file, so there
+    is no path to answer: 8, said, nothing on stdout (never the checkout's
+    own directory), and routed, `--create` clones nothing for it."""
+    box.cell_is("")
+    for argv in ((LANE,), (LANE, "--create")):
+        result = box.helper("handoff-path", *argv)
+        assert result.returncode == 8, result.stderr
+        assert f"lane {LANE}'s row names no handoff" in result.stderr
+        assert result.stdout == ""
+    assert not box.checkout(LANE).exists(), "a row that names no handoff gets no checkout"
+
+
+def test_handoff_path_reads_the_cell_from_the_register_as_published(box: Box):
+    """m2a's B04: `handoff-path` fetches before it reads the row, as
+    `write-handoff` does, so a peer that points the lane's cell at another
+    file after this checkout last fetched is answered with that file."""
+    c = box.seam()
+    box.cell_is(MOVED_REL)
+    result = box.helper("handoff-path", LANE)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == f"{c / MOVED_REL}\n"
+
+
+def test_handoff_path_refuses_a_lane_path_that_holds_no_clone(box: Box):
+    """m2a's C02: routed, the lane's checkout path is a directory that is not
+    a clone of the register. The path it would print is not one a write can
+    go through: refused (1), nothing on stdout, and nothing there deleted,
+    moved or written."""
+    d = box.checkout(LANE)
+    d.mkdir(parents=True)
+    (d / "notes.md").write_text("a person's notes\n", encoding="utf-8")
+    result = box.helper("handoff-path", LANE)
+    assert result.returncode == 1, result.stderr
+    assert f"{d} is not a clone of the register: it is a directory that is not a git checkout" in result.stderr
+    assert result.stdout == ""
+    assert [p.name for p in d.iterdir()] == ["notes.md"]
+    assert (d / "notes.md").read_text(encoding="utf-8") == "a person's notes\n"
+
+
+def test_handoff_path_through_a_directory_inside_the_seam_names_its_top_level(box: Box):
+    """m2a's C03: an explicit `LANES_REPO` that names a directory inside the
+    checkout is raised to that checkout's top level, so the row's
+    repository-relative cell is joined to the top level and never to the
+    directory as given. `LANES_REPO` alone would name no register there (1,
+    "registry not found"), so `LANES_FILE` names the checkout's."""
+    c = box.seam()
+    box.env["LANES_REPO"] = str(c / "handoffs")
+    box.env["LANES_FILE"] = str(c / REGISTER)
+    result = box.helper("handoff-path", LANE)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == f"{c / HANDOFF_REL}\n"
+
+
+def test_a_handoff_that_links_out_of_the_checkout_is_another_repositorys(box: Box):
+    """m2a's D08: the row's cell names a file of this checkout, and that file
+    is a link to another repository's file outside W. The path is followed
+    to the physical file, and that file is another repository's (Amendment
+    8(d)): written there, said, its line printed, 0, committed nowhere. This
+    checkout and origin are as they were, the link still a link."""
+    other = box.root / "other"
+    box.git("init", "-q", "-b", "main", str(other))
+    box.write(other, "handoff.md", HANDOFF)
+    box.commit(other, "another repository's handoff", "handoff.md")
+    other_head = box.git("-C", str(other), "rev-parse", "HEAD").strip()
+    seed = box.seed
+    box.git("-C", str(seed), "pull", "-q", "--ff-only", "origin", "main")
+    (seed / HANDOFF_REL).unlink()
+    (seed / HANDOFF_REL).symlink_to(other / "handoff.md")
+    box.commit(seed, "the lane's handoff is a link into another repository", HANDOFF_REL)
+    box.git("-C", str(seed), "push", "-q", "origin", "main")
+    c = box.seam()
+    assert (c / HANDOFF_REL).is_symlink()
+    before = box.snapshot(c)
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT)
+    assert result.returncode == 0, result.stderr
+    assert "another repository's handoff (Amendment 8(d))" in result.stderr
+    assert (other / "handoff.md").read_text(encoding="utf-8") == stamped(HANDOFF)
+    assert box.git("-C", str(other), "rev-parse", "HEAD").strip() == other_head
+    assert box.git("-C", str(other), "status", "--porcelain").split() == ["M", "handoff.md"]
+    assert (c / HANDOFF_REL).is_symlink()
+    assert box.snapshot(c) == before
+    assert result.stdout == _line(other / "handoff.md")
     _released(box, c)
