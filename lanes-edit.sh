@@ -506,7 +506,9 @@
 #      CLAIM-LOST, another lane's claim landed on main first.
 #      `set-lane-state`: the lifecycle fence did not match — the state, the
 #      generation or the operation id moved under this process — so a stale
-#      finalizer cannot overwrite a newer owner (openRepoTools#91).
+#      finalizer cannot overwrite a newer owner (openRepoTools#91). A fence
+#      that could not be READ is never 7: where the snapshot could not even be
+#      looked for, both lifecycle writers answer 10, below (#309).
 #      `set-lane-tree`: the `--generation`/`--operation` this observation was
 #      taken under is no longer the lane's — or the lane is `SWAPPED` and the
 #      operation it names is finished (#114) — so a superseded poll cannot be
@@ -547,6 +549,13 @@
 #      control root, or a directory above it, that this process cannot search
 #      — or a link on the way it cannot follow — leaves stat as silent as a
 #      name that is gone, and the message says so rather than "is there".
+#      And the two lifecycle WRITERS spend it where the snapshot their fence
+#      reads could not be looked for (#309): `set-lane-state` on every call,
+#      `set-lane-tree` where it names a `--generation` or an `--operation`.
+#      Nothing is written and no state is printed, and it is never 7, since no
+#      act got there first, nor the 1 that `lane-handoff` reads as "no control
+#      root". A writer's 1 still means a snapshot that IS there and could not
+#      be read, or is not a record it can read: the one it will not replace.
 #
 # --no-sweep (DEFAULT, added 2026-09-09 after 0d84d34/a1f2438 swept another
 #   lane's uncommitted hand edit into an unrelated commit): every mutating
@@ -13953,7 +13962,23 @@ lane_state_follow() {   # <lane> <verb> <payload> <uuid> <pre-image> <seam verdi
 lane_state_rename() {   # <the old name's control root> <new lane>
   lsn_old="${1-}"; lsn_new="${2-}"
   [ -n "$lsn_old" ] && [ -n "$lsn_new" ] || return 0
-  [ -e "$lsn_old" ] || [ -L "$lsn_old" ] || return 0
+  # AN OLD ROOT NOBODY COULD LOOK FOR IS NOT ONE THAT IS NOT THERE (#309).
+  # Under a folder this process cannot search, or a link it cannot follow,
+  # `-e` and `-L` are false exactly as for a name that is gone, so a folder
+  # that turned unsearchable during the rename's push left the records under
+  # the old name without a word, and `lane-reconcile` then read `no-state` on
+  # the new one. A root established absent stays silent. One nobody could
+  # look for moves nothing, makes nothing at the new name and says so, as the
+  # five other failures to move do, and the exit stays 0: the rename has
+  # landed. Its advice names the two parts a move takes, because completed
+  # restart history stays at the old root (below) and it cannot be told here
+  # whether there is any.
+  if [ ! -e "$lsn_old" ] && [ ! -L "$lsn_old" ]; then
+    if lookup_blocked "$lsn_old"; then
+      note "the lane lifecycle snapshot and inventory could NOT be moved from $lsn_old to ${lsn_old%/*}/$lsn_new (the rename itself has landed): whether $lsn_old is there could not be read, because $LOOKUP_BLOCKED_WHY. If it is there, nothing of it was touched. Once it can be searched, move its lane-state.yaml and trees/ into ${lsn_old%/*}/$lsn_new by hand and leave any restart-intent.yaml where it is; until then \`lanes-edit.sh lane-reconcile $lsn_new\` reads no snapshot for this lane."
+    fi
+    return 0
+  fi
   lsn_to="${lsn_old%/*}/$lsn_new"
   [ "$lsn_to" != "$lsn_old" ] || return 0
   # A RENAME BY CASE ALONE is the same directory on a case-insensitive file
@@ -18621,7 +18646,8 @@ EOF
   #       this file already spends 7 on (`claim`'s CLAIM-LOST). Nothing was
   #       written and the current state is printed. `set-lane-tree` spends it
   #       too where the lane is `SWAPPED`: the operation its fence names is
-  #       finished (#114).
+  #       finished (#114). A fence that could not be READ is never 7 (#309):
+  #       that is 10, below.
   #   8   there is no such record (no snapshot, no tree)
   #  10   THE RECORD IS THERE AND COULD NOT BE READ, which is never 8 (Copilot
   #       round 6 on #97). 8 tells a launcher *this lane was never migrated, go
@@ -18632,7 +18658,11 @@ EOF
   #       record that could not even be LOOKED FOR (#291): a control root, or a
   #       directory above it, that this process cannot search — or a link on
   #       the way it cannot follow — leaves stat as silent as a name that is
-  #       gone, and the message says so rather than "is there".
+  #       gone, and the message says so rather than "is there". And so is a
+  #       WRITER's snapshot nobody could look for (#309): `set-lane-state` on
+  #       every call, `set-lane-tree` where it names a `--generation` or an
+  #       `--operation`, write nothing and print no state. A writer's 1 above
+  #       is still a record that IS there and could not be read.
   #  64   a usage error of this subcommand's own — for `set-lane-tree`, a
   #       partial observation, a `--dirty`/`--unpushed` that is not a count
   #       (`unknown` is one for `--unpushed`), or a field that is only blanks
@@ -18728,6 +18758,24 @@ EOF
       sls_now="$(lane_sidecar_field "$sls_root/lane-state.yaml" state)"
       sls_nowg="$(lane_sidecar_field "$sls_root/lane-state.yaml" generation)"
       sls_nowo="$(lane_sidecar_field "$sls_root/lane-state.yaml" operation)"
+    elif [ ! -e "$sls_root/lane-state.yaml" ] && [ ! -L "$sls_root/lane-state.yaml" ] &&
+         lookup_blocked "$sls_root/lane-state.yaml"; then
+      # A SNAPSHOT NOBODY COULD LOOK FOR IS NOT `none` (#309). Under a folder
+      # this process cannot search, or a link it cannot follow, the read above
+      # finds nothing, exactly as for a lane with no snapshot: the fence then
+      # compared `none`, `0` and `none` and answered 7 for a race nobody ran,
+      # which a finalizer takes for "superseded". It is 10, the readers' number
+      # for the same fact, and it is refused on EVERY call, fenced or not: the
+      # generation a write advances from comes from this snapshot too, and a
+      # write made blind would put generation 1 over generation n. Nothing is
+      # printed to stdout, because no state was read.
+      if [ -n "$sls_exp$sls_expg$sls_expo" ]; then
+        sls_blind="So the fence this call names could not be checked against it"
+      else
+        sls_blind="So the generation this transition would advance from could not be taken from it"
+      fi
+      release_lock
+      die "lane $lane did not move to $sls_state: whether lane $lane has a lifecycle snapshot could not be read: $sls_root/lane-state.yaml could not be looked for, because $LOOKUP_BLOCKED_WHY. $sls_blind, and nothing was written. That is NOT another act getting there first (7) and NOT 'this lane has no snapshot' (R22, Amendment 7(d)). Read it by hand once it can be searched: lanes-edit.sh lane-state $lane" 10
     fi
     sls_fence=""
     [ -z "$sls_exp" ]  || [ "$sls_exp"  = "${sls_now:-none}" ] || sls_fence="state is ${sls_now:-none} and --expect named $sls_exp"
@@ -18925,6 +18973,15 @@ EOF
         slt_ns="$(lane_sidecar_field "$slt_root/lane-state.yaml" state)"
         slt_ng="$(lane_sidecar_field "$slt_root/lane-state.yaml" generation)"
         slt_no="$(lane_sidecar_field "$slt_root/lane-state.yaml" operation)"
+      elif [ ! -e "$slt_root/lane-state.yaml" ] && [ ! -L "$slt_root/lane-state.yaml" ] &&
+           lookup_blocked "$slt_root/lane-state.yaml"; then
+        # AND THE SAME FOR THIS FENCE (#309): a snapshot nobody could look for
+        # is 10, as `set-lane-state` answers it, and never the 7 of a lane that
+        # moved while this observation was being made. Only a call that names a
+        # `--generation` or an `--operation` reads the snapshot, so one that
+        # names neither is not asked this and fails at the write, as before.
+        release_lock
+        die "the worktree $slt_path was NOT recorded for lane $lane: whether lane $lane has a lifecycle snapshot could not be read: $slt_root/lane-state.yaml could not be looked for, because $LOOKUP_BLOCKED_WHY. So the generation and operation this observation names could not be compared with anything, and nothing was written; the tree itself was not touched. That is NOT the lane moving while this observation was being made (7) and NOT 'this lane has no snapshot' (R22, Amendment 7(d)). Read it by hand once it can be searched: lanes-edit.sh lane-reconcile $lane" 10
       fi
       slt_fence=""
       [ -z "$slt_g" ]  || [ "$slt_g"  = "${slt_ng:-0}" ]    || slt_fence="generation is ${slt_ng:-0} and --generation named $slt_g"

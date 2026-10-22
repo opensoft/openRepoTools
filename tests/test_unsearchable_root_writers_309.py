@@ -42,13 +42,23 @@ searched:
     look for: nothing is moved, nothing is created at the new name, the records
     are as they were, and the note says that they COULD NOT be moved, that the
     rename has landed, and that whether the root is there could not be read -
-    and never says that they moved. The exit stays 0: the rename has landed,
-    and `lane-rename` goes on to name the window and the session on a 0.
+    and never says that they moved. Its advice is to move `lane-state.yaml`
+    and `trees/` by hand and leave any `restart-intent.yaml` where it is,
+    because completed restart history stays at the old root (#309's review,
+    563). The exit stays 0: the rename has landed, and `lane-rename` goes on
+    to name the window and the session on a 0.
   * `set-lane-state` and `set-lane-tree` over a snapshot nobody could look for
-    write nothing, answer neither 0, nor 7, nor 8, print no state, and say, in
-    the words `lane-state` uses for the same fact, that the snapshot could not
-    be looked for. The code is deliberately not pinned past that: which one it
-    is, 10 as for the readers or another, is for the rulings on the design.
+    write nothing, answer 10, print no state, and say, in the words
+    `lane-state` uses for the same fact, that the snapshot could not be looked
+    for. 10 is the readers' number for that fact (lane openRepoTools-3's ruling
+    R1 on the design), and never the 7 of a lost race or the 1 `lane-handoff`
+    reads as "no control root". A `set-lane-state` that names no fence does not
+    say that a fence went unchecked (567).
+  * `lane-handoff`, which the 10 reaches (562): `lifecycle_begin` takes it to
+    its generic arm and records no transition, and `lifecycle_finish` leaves
+    the lane `SWAPPING`, which its summary prints, and never stands down as
+    superseded. Both are cut out of `lane-handoff` and run against the real
+    helper, with the folder blocked for the one `set-lane-state` they make.
   * the controls: a root or a snapshot that is truly absent behaves as it did -
     `rename-lane` and the function are silent, a stale `--expect` or
     `--generation` over no snapshot is a true 7, `--expect none` passes - a
@@ -248,6 +258,9 @@ def _fence_problems(label: str, res: subprocess.CompletedProcess, lay: Layout, r
         meaning = {0: "done", 7: "you lost the race", 8: "there is no such record"}[res.returncode]
         problems.append(f"{label}: exit {res.returncode}, which says '{meaning}', "
                         f"for a snapshot nobody could look for")
+    elif res.returncode != 10:
+        problems.append(f"{label}: exit {res.returncode}, where a snapshot nobody could look "
+                        f"for is 10, the number `lane-state` answers for the same fact (R1)")
     if res.stdout:
         problems.append(f"{label}: printed {res.stdout!r}, a state nobody read")
     if said not in res.stderr:
@@ -323,6 +336,25 @@ def test_set_lane_tree_over_a_snapshot_nobody_could_look_for_is_not_a_lost_race(
                 problems.append(f"{label}: does not say that the tree was not recorded: {res.stderr!r}")
     assert not problems, "\n".join(problems)
     assert _contents(root) == before  # not one record written, and no half-written file left
+
+
+def test_set_lane_state_says_what_it_could_not_do_with_a_fence_and_without_one(estate, tmp_path):
+    """WHAT THE REFUSAL SAYS IT COULD NOT DO (#309's review, 567). A call that
+    names a fence could not check it. A call that names none had no fence to
+    check: what it could not take from the snapshot is the generation it would
+    advance from, so it says that and never that a fence went unchecked. The
+    link whose target is gone sets no mode, so this runs as root too."""
+    lay = Layout(tmp_path / "ls", "dangling-link")
+    env = _write_the_lane(estate, lay)
+    with lay.block():
+        fenced = estate.edit("set-lane-state", LANE, "SWAPPING", "--expect", "RUNNING", env=env)
+        bare = estate.edit("set-lane-state", LANE, "SWAPPING", env=env)
+    assert (fenced.returncode, bare.returncode) == (10, 10), (fenced.stderr, bare.stderr)
+    assert "So the fence this call names could not be checked against it" in fenced.stderr, \
+        fenced.stderr
+    assert "So the generation this transition would advance from could not be taken from it" \
+        in bare.stderr, bare.stderr
+    assert "could not be checked" not in bare.stderr, bare.stderr
 
 
 @pytest.mark.parametrize("shape", ["no-root", "root-without-snapshot"])
@@ -413,10 +445,10 @@ def test_a_snapshot_that_is_there_and_cannot_be_read_keeps_its_own_refusal(estat
 RENAME_FUNCTIONS = ("note", "lc", "lookup_blocked", "lane_state_rename")
 
 
-def _function_source(name: str) -> str:
-    lines = LANES_EDIT.read_text(encoding="utf-8").splitlines()
+def _function_source(name: str, source: Path = LANES_EDIT) -> str:
+    lines = source.read_text(encoding="utf-8").splitlines()
     starts = [i for i, line in enumerate(lines) if line.startswith(f"{name}() {{")]
-    assert starts, (f"lanes-edit.sh has no `{name}`: this file stacks on #291's "
+    assert starts, (f"{source.name} has no `{name}`: this file stacks on #291's "
                     f"`lookup_blocked` and cuts what it runs out of the source")
     start = starts[0]
     first = lines[start]
@@ -449,11 +481,14 @@ def _fill(root: Path) -> None:
 
 
 def _could_not_move(old: Path, lay: Layout) -> tuple:
-    """The three things a note for a root nobody could look for says, none of
-    which a move or an absent root says."""
+    """The four things a note for a root nobody could look for says, none of
+    which a move or an absent root says. The last is its advice (563): a move
+    takes the two parts, and completed restart history stays where it is."""
     return (f"could NOT be moved from {old} to {lay.state / NEW}",
             "the rename itself has landed",
-            f"whether {old} is there could not be read, because {lay.why}")
+            f"whether {old} is there could not be read, because {lay.why}",
+            f"move its lane-state.yaml and trees/ into {lay.state / NEW} by hand and "
+            f"leave any restart-intent.yaml where it is")
 
 
 @pytest.mark.parametrize("kind", RENAME_KINDS)
@@ -603,3 +638,121 @@ def test_rename_lane_is_still_refused_with_nothing_written_when_the_folder_is_al
     assert estate.tip() == tip
     assert estate.edit("canon-lane", LANE, env=env).stdout.strip() == LANE
     assert _contents(old) == before
+
+
+# ====================================== lane-handoff's two lifecycle arms
+
+#: `lane-handoff` beside the helper under test, and what its two lifecycle
+#: functions call that is not the shell's: its own `note` and `step`.
+LANE_HANDOFF = LANES_EDIT.parent / "lane-handoff"
+HANDOFF_FUNCTIONS = ("note", "step", "lifecycle_begin", "lifecycle_finish")
+
+#: A block made by a mode, and the one made by a link whose target is gone,
+#: which sets no mode and runs as root too: the two the rename-lane cases use.
+PIN_KINDS = [kind for kind in FENCE_KINDS if kind.values[0] in ("state-dir", "dangling-link")]
+
+
+@contextlib.contextmanager
+def _helper_blocked_for(lay: Layout, tmp_path: Path, state: str):
+    """A `$LANES_EDIT` that is the real helper, except that its one
+    `set-lane-state <lane> <state>` runs with the folder blocked: the folder
+    turns unsearchable after `lane-handoff` has read the lane and before it
+    writes, the window #309 is about. It is put back when that call returns,
+    and again when the block ends, whatever happened."""
+    if lay.kind == "dangling-link":
+        block = f"  mv -- '{lay.real}' '{lay.aside}'\n"
+        unblock = f"  mv -- '{lay.aside}' '{lay.real}'\n"
+    else:
+        block = "".join(f"  chmod {mode:04o} '{path}'\n" for path, mode in lay._changes)
+        unblock = "".join(f"  chmod {stat.S_IMODE(path.stat().st_mode):04o} '{path}'\n"
+                          for path, _ in reversed(lay._changes))
+    restore = [(path, stat.S_IMODE(path.stat().st_mode)) for path, _ in lay._changes]
+    helper = tmp_path / "lanes-edit-blocking-one-write"
+    helper.write_text(
+        "#!/bin/sh\n"
+        f'if [ "${{1-}}" = set-lane-state ] && [ "${{3-}}" = {state} ]; then\n'
+        f"{block}"
+        f"  bash '{LANES_EDIT}' \"$@\"; rc=$?\n"
+        f"{unblock}"
+        '  exit "$rc"\n'
+        "fi\n"
+        f"exec bash '{LANES_EDIT}' \"$@\"\n", encoding="utf-8")
+    helper.chmod(0o755)
+    try:
+        yield helper
+    finally:
+        if lay.kind == "dangling-link" and lay.aside.exists():
+            lay.aside.rename(lay.real)
+        for path, mode in reversed(restore):
+            path.chmod(mode)
+
+
+def _handoff_lifecycle(estate: Estate, env: dict, calls: str) -> subprocess.CompletedProcess:
+    """`lane-handoff`'s lifecycle functions, cut out of it and run as it runs
+    them (`set -uo pipefail`) for lane `LANE`; `calls` runs after them."""
+    script = ("set -uo pipefail\nprog=lane-handoff\n" +
+              "".join(_function_source(name, LANE_HANDOFF) for name in HANDOFF_FUNCTIONS) +
+              f"lane={LANE}; uuid={UUID_A1B}; agent=claude; profile_name=test-309; "
+              "handoff_kind=swap\n" + calls)
+    return estate.run("bash", "-c", script, "lane-handoff", env=env)
+
+
+@pytest.mark.parametrize("kind", PIN_KINDS)
+def test_lane_handoffs_begin_takes_the_10_to_its_generic_arm_and_records_no_transition(
+        estate, tmp_path, kind):
+    """`lifecycle_begin` READ THE LANE AND THEN COULD NOT LOOK FOR IT (#309's
+    review, 562). The folder turns unsearchable between its `lane-state` and
+    its `set-lane-state … SWAPPING --expect <what it read>`. The 7 that call
+    used to answer sent it to "Another process is acting on lane", for a race
+    nobody ran. The 10 it answers now takes the generic arm, which says the
+    lane could not be taken to SWAPPING and names the code. No transition is
+    recorded (`lc_on` stays empty), the swap goes on, and the snapshot is as
+    it was."""
+    lay = Layout(tmp_path / "ls", kind)
+    env = _write_the_lane(estate, lay)
+    snapshot = lay.state / LANE / "lane-state.yaml"
+    before = snapshot.read_bytes()
+    with _helper_blocked_for(lay, tmp_path, "SWAPPING") as helper:
+        env["LANES_EDIT"] = str(helper)
+        res = _handoff_lifecycle(estate, env, 'lifecycle_begin\n'
+                                 'printf "on=%s state=%s\\n" "$lc_on" "$lc_state"\n')
+    assert res.returncode == 0, (res.returncode, res.stdout, res.stderr)
+    assert res.stdout == "on= state=\n", (res.stdout, res.stderr)
+    assert ("lane-handoff: the lane lifecycle could not be taken to SWAPPING "
+            "(`set-lane-state` exited 10)") in res.stderr, res.stderr
+    for wrong in ("Another process is acting", "has no lifecycle control root", "-> SWAPPING"):
+        assert wrong not in res.stderr, (wrong, res.stderr)
+    assert snapshot.read_bytes() == before
+
+
+@pytest.mark.parametrize("kind", PIN_KINDS)
+def test_lane_handoffs_finish_leaves_the_lane_swapping_on_the_10_and_is_never_superseded(
+        estate, tmp_path, kind):
+    """`lifecycle_finish` COULD NOT LOOK FOR THE LANE IT HAD TAKEN (#309's
+    review, 562). `lifecycle_begin` took the lane RUNNING -> SWAPPING, and the
+    folder turns unsearchable before the `set-lane-state … SWAPPED` fenced on
+    that operation. The 7 it used to answer made this handoff `superseded`,
+    "NOT the act that finishes" a lane nobody else had touched. The 10 it
+    answers now leaves `lc_state` SWAPPING, which the handoff's summary prints
+    as `lifecycle: SWAPPING`, and the note names the code: a later session
+    reads an interrupted swap, which is what this act left. The snapshot keeps
+    the begin's SWAPPING, generation and operation."""
+    lay = Layout(tmp_path / "ls", kind)
+    env = _write_the_lane(estate, lay)
+    snapshot = lay.state / LANE / "lane-state.yaml"
+    with _helper_blocked_for(lay, tmp_path, "SWAPPED") as helper:
+        env["LANES_EDIT"] = str(helper)
+        res = _handoff_lifecycle(estate, env, 'lifecycle_begin\nlifecycle_finish ""\n'
+                                 'printf "on=%s state=%s gen=%s op=%s\\n" '
+                                 '"$lc_on" "$lc_state" "$lc_gen" "$lc_op"\n')
+    assert res.returncode == 0, (res.returncode, res.stdout, res.stderr)
+    said = dict(part.split("=", 1) for part in res.stdout.split())
+    assert (said["on"], said["state"], said["gen"]) == ("1", "SWAPPING", "2"), (res.stdout, res.stderr)
+    assert "lifecycle: RUNNING -> SWAPPING (generation 2, operation " in res.stderr, res.stderr
+    assert ("lane-handoff: the lane could not be recorded SWAPPED (`set-lane-state` exited 10), "
+            "so it stays SWAPPING") in res.stderr, res.stderr
+    for wrong in ("NOT the act that finishes", "SWAPPING -> SWAPPED"):
+        assert wrong not in res.stderr, (wrong, res.stderr)
+    text = snapshot.read_text(encoding="utf-8")
+    for line in ("state: SWAPPING", "generation: 2", f"operation: {said['op']}"):
+        assert line in text.splitlines(), (line, text)

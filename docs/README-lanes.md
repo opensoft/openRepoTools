@@ -1227,9 +1227,9 @@ else.
 | 4 | the mutex could not be taken within 60s |
 | 5 | an edit moved more than one line and was refused — or a register rewrite whose copy, write or result could not be proved (#120 item 1). The copy every proof is made against is compared with the register, and what lands with what was built; where a write cut the register short, its earlier bytes are put back and proved first, and the refusal says which of the two the register holds — never "unchanged" about a register the write truncated |
 | 6 | `git add` / `commit` / `push` failed |
-| 7 | another act got there first and this one wrote nothing: `claim`'s `CLAIM-LOST` (another lane's claim landed first), and `set-lane-state` / `set-lane-tree`'s lifecycle fence (openRepoTools#91, below) |
+| 7 | another act got there first and this one wrote nothing: `claim`'s `CLAIM-LOST` (another lane's claim landed first), and `set-lane-state` / `set-lane-tree`'s lifecycle fence (openRepoTools#91, below). Never a fence that could not be read: a snapshot nobody could look for is 10 (#309) |
 | 9 | `CLAIM-LOST` — issue #30's own dead-lane verdict could not be reconfirmed before a `--force` takeover's push landed: the source lane resumed, a live session now backs it up, or that could not be read at all (`claim` only). Never 7 — that code is a RIVAL's claim, and this is the same lane the takeover was granted over |
-| 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read, or is of this schema and not a whole record, so nothing can be read out of it as a snapshot (openRepoTools#91 and #115, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim`. `lane-trees`: the lane's `trees` directory is there and could not be listed (#157 item 4e) — never the 8 that means it recorded no tree. Both spend it, too, where the record could not even be looked for: its control root, or a directory above it, cannot be searched, or a link on the way cannot be followed (#291) |
+| 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read, or is of this schema and not a whole record, so nothing can be read out of it as a snapshot (openRepoTools#91 and #115, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim`. `lane-trees`: the lane's `trees` directory is there and could not be listed (#157 item 4e) — never the 8 that means it recorded no tree. Both spend it, too, where the record could not even be looked for: its control root, or a directory above it, cannot be searched, or a link on the way cannot be followed (#291). `set-lane-state` and `set-lane-tree`: the snapshot their fence reads could not be looked for, so nothing was written and no state is printed (#309) — never the 7 of a lost race, and never the 1 that `lane-handoff` reads as *no control root*. A writer's 1 still means a snapshot that is there and could not be read, or is not a record it can read |
 | 8 | no record — and no other meaning |
 | 64 | `swapped`'s own usage error — never the dispatcher's 2 — and the lifecycle arms' own: `set-lane-tree`'s partial observation, a count that is not one, or a field that is only blanks (below) |
 
@@ -3378,6 +3378,22 @@ the generation, so this is the one state in which a matching pair names a
 finished operation. An observation filed under no transition is a
 `set-lane-tree` with neither flag.
 
+**A fence that could not be read is not a race that was lost**
+(opensoft/openRepoTools#309). Under a folder this account cannot search, or a
+link it cannot follow, stat fails as it does for a name that is gone, so a
+fence that read the snapshot there compared `none`, `0` and `none` and answered
+**7** for a race nobody ran, and a finalizer took that 7 for *superseded*. So
+where the snapshot could not even be looked for, `set-lane-state` and
+`set-lane-tree` write nothing, print no state and exit **10**, saying so in
+`lane-state`'s words for the same fact. `set-lane-state` refuses every call
+there, fenced or not, because the generation a write advances from comes from
+the snapshot too: a write made blind would put generation 1 over generation
+*n*. `set-lane-tree` asks only where it names `--generation` or `--operation`;
+with neither it reads no snapshot and fails at the write, as before. A
+`lane-handoff` that meets the 10 says the lane could not be taken to
+`SWAPPING`, or leaves it `SWAPPING`, which a later session reads as an
+interrupted swap, and never stands down as superseded.
+
 `RUNNING` is written by the act that CONFIRMS the binding and never by the
 SessionStart hook: `session-start` never writes, never touches the network and
 always exits 0 (Amendment 8, `R-A8-1`), and a hook that writes is a hook that
@@ -3537,7 +3553,13 @@ completed, not that every tree it left is clean, published and where it was.
 
 A **renamed** lane keeps its snapshot and inventory: `rename-lane` moves its
 control root to the new name once the rename's commit has landed, and never
-over something already there (Amendment 16). Its `.lane-worktrees/<old>` root
+over something already there (Amendment 16). Where the old root could not even
+be looked for, because its folder became unsearchable during the rename's push,
+after the checks made before it, nothing is moved and nothing is made at the
+new name. The rename stands and `rename-lane` exits 0, as for every other
+failure to move, and its note says so and why: once the folder can be searched,
+move `lane-state.yaml` and `trees/` to the new name by hand and leave any
+`restart-intent.yaml` at the old root (#309). Its `.lane-worktrees/<old>` root
 holds real git worktrees and is not moved — that is a `git worktree move`, and a
 person's. A lane retired by Amendment 19's sweep is taken to `CLOSED` exactly as
 a lane that ended itself is.
