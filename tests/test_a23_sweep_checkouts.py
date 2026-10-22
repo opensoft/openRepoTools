@@ -887,13 +887,34 @@ def test_nothing_removed_writes_nothing(sweep):
     assert "NOTED in lane" not in result.stdout
 
 
-REFUSING_LOG = """#!/usr/bin/env bash
-if [ "${1-}" = log ]; then
-  printf 'FAKE: the register refused this line\\n' >&2
-  exit 2
-fi
-exec bash %s "$@"
-"""
+def _wrapped_log(box: Sweep, name: str, log_body: str) -> str:
+    """A `LANES_EDIT` that runs `log_body` for `log` and the real
+    `lanes-edit.sh`, which `$REAL` names, for every other verb."""
+    wrapper = box.fakebin / name
+    wrapper.write_text(f'#!/usr/bin/env bash\nREAL={REPO / "lanes-edit.sh"}\n'
+                       f'if [ "${{1-}}" = log ]; then\n{log_body}fi\nexec bash "$REAL" "$@"\n',
+                       encoding="utf-8")
+    wrapper.chmod(0o755)
+    return str(wrapper)
+
+
+def _noted_on_origin(box: Sweep) -> list:
+    return [line for line in box.origin_file(f"lanes/log/{RUNNER}.md").splitlines()
+            if line.startswith("NOTED")]
+
+
+def _remedies(stderr: str) -> list:
+    """The commands a failed NOTED write hands out on lines of their own."""
+    return [line.split(":", 1)[1].strip() for line in stderr.splitlines()
+            if line.startswith("lane-end:   LANES_LANE=")]
+
+
+def _by_hand(box: Sweep, command: str) -> subprocess.CompletedProcess:
+    """Runs a command the sweep printed, as a person would, with this
+    worktree's `lanes-edit.sh` first on PATH."""
+    return subprocess.run(["bash", "-c", command], cwd=str(box.root), capture_output=True,
+                          text=True, env=dict(box.env, PATH=f"{REPO}{os.pathsep}{box.env['PATH']}"),
+                          timeout=180, check=False)
 
 
 def test_noted_line_not_written_exits_1_with_the_command(sweep):
@@ -901,22 +922,75 @@ def test_noted_line_not_written_exits_1_with_the_command(sweep):
     success: exit 1, and the exact command that writes it by hand, which
     then writes it."""
     box = sweep.box
-    wrapper = box.fakebin / "lanes-edit-refusing-log"
-    wrapper.write_text(REFUSING_LOG % (REPO / "lanes-edit.sh"), encoding="utf-8")
-    wrapper.chmod(0o755)
-    result, rows = sweep("--yes", LANES_LANE=RUNNER, LANES_EDIT=str(wrapper))
+    refusing = _wrapped_log(box, "lanes-edit-refusing-log", (
+        "  printf 'FAKE: the register refused this line\\n' >&2\n"
+        "  exit 2\n"))
+    result, rows = sweep("--yes", LANES_LANE=RUNNER, LANES_EDIT=refusing)
     assert result.returncode == 1, (result.stdout, result.stderr)
     assert _tagged(rows, "removed") == {str(box.checkout(CLOSED)), str(box.checkout(OLD))}, rows
     assert "the NOTED line recording this sweep was NOT written" in result.stderr, result.stderr
     assert "Nothing was lost" in result.stderr
     by_hand = result.stderr.split("Write the line by hand: ", 1)[1].strip()
     assert by_hand.startswith(f"LANES_LANE={RUNNER} LANES_SESSION={UUID[RUNNER]} lanes-edit.sh log NOTED "), by_hand
-    assert "NOTED" not in box.origin_file(f"lanes/log/{RUNNER}.md")
-    done = subprocess.run(["bash", "-c", by_hand], cwd=str(box.root), capture_output=True, text=True,
-                          env=dict(box.env, PATH=f"{REPO}{os.pathsep}{box.env['PATH']}"),
-                          timeout=180, check=False)
+    assert not _noted_on_origin(box)
+    done = _by_hand(box, by_hand)
     assert done.returncode == 0, (done.stdout, done.stderr)
     assert "sweep-checkouts (Amendment 23 S6.2): removed 2" in box.origin_file(f"lanes/log/{RUNNER}.md")
+
+
+def test_noted_line_unconfirmed_is_never_written_again(sweep):
+    """A NOTED write that exits 3, `pushed, not confirmed`, MAY BE ON ORIGIN
+    (rv4's SHOULD 2, P2). Here the line did land and the read-back is what
+    failed. The sweep exits 1 without saying "NOT written", and hands out
+    one command, the publish act, which sends the commit only where origin
+    lacks it by content: run, it finds nothing to send, and origin still
+    holds the line once."""
+    box = sweep.box
+    exit3 = _wrapped_log(box, "lanes-edit-unconfirmed-log", (
+        '  bash "$REAL" "$@"; rc=$?\n'
+        "  if [ \"$rc\" = 0 ]; then printf 'FAKE: pushed, not confirmed\\n' >&2; exit 3; fi\n"
+        '  exit "$rc"\n'))
+    result, rows = sweep("--yes", LANES_LANE=RUNNER, LANES_EDIT=exit3)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert _tagged(rows, "removed") == {str(box.checkout(CLOSED)), str(box.checkout(OLD))}, rows
+    assert len(_noted_on_origin(box)) == 1
+    assert "was NOT written" not in result.stderr, result.stderr
+    assert "Write the line by hand" not in result.stderr, result.stderr
+    assert "may be on origin already" in result.stderr, result.stderr
+    remedies = _remedies(result.stderr)
+    assert len(remedies) == 1, remedies
+    assert remedies[0].startswith(f"LANES_LANE={RUNNER} lanes-edit.sh commit "), remedies
+    done = _by_hand(box, remedies[0])
+    assert done.returncode == 0, (done.stdout, done.stderr)
+    assert len(_noted_on_origin(box)) == 1, "the publish act wrote no second line"
+
+
+def test_noted_line_kept_unpublished_is_published_not_written_again(sweep):
+    """A NOTED write that exits 6 with its commit KEPT in the checkout it was
+    made in (rv4's SHOULD 2): every push is refused here with origin unmoved.
+    The sweep exits 1 without saying "NOT written", and hands out the publish
+    act first, and the by-hand line only for a publish act that finds nothing
+    to send. With pushes allowed again, the publish act sends the kept commit,
+    and origin holds the line once."""
+    box = sweep.box
+    gate = box.root / "push.refused"
+    gate.write_text("", encoding="utf-8")
+    box.use_net(hook=f'case "$1" in push) if [ -e {gate} ]; then exit 1; fi ;; esac\nexit 0\n')
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert _tagged(rows, "removed") == {str(box.checkout(CLOSED)), str(box.checkout(OLD))}, rows
+    assert not _noted_on_origin(box)
+    assert "was NOT written" not in result.stderr, result.stderr
+    assert "kept on HEAD" in result.stderr, result.stderr
+    remedies = _remedies(result.stderr)
+    assert len(remedies) == 2, remedies
+    publish, by_hand = remedies
+    assert publish.startswith(f"LANES_LANE={RUNNER} lanes-edit.sh commit "), remedies
+    assert by_hand.startswith(f"LANES_LANE={RUNNER} LANES_SESSION={UUID[RUNNER]} lanes-edit.sh log NOTED "), remedies
+    gate.rename(box.root / "push.allowed")
+    done = _by_hand(box, publish)
+    assert done.returncode == 0, (done.stdout, done.stderr)
+    assert len(_noted_on_origin(box)) == 1, _noted_on_origin(box)
 
 
 def test_yes_without_a_session_uuid_is_refused(sweep):

@@ -1775,8 +1775,33 @@ SLU
     ( unset LANES_NO_FETCH
       LANES_LANE="$sc_runner" LANES_SESSION="$sc_uuid" "$LANES_EDIT" log NOTED "lane:$sc_runner" "$sc_text" ) >&2 ||
       sc_noted_rc=$?
+    # A WRITE THAT DID NOT CONFIRM IS NOT A WRITE THAT DID NOT HAPPEN (rv4's
+    # SHOULD 2). `log`'s 3 is `pushed, not confirmed`: the line may be on
+    # origin already. Its 6 is, in most of its causes, the commit KEPT in the
+    # checkout the write went through and not on origin, and in the rest a
+    # `git add` or `commit` that failed, with nothing committed. Writing the
+    # line again after either would record the sweep twice, or meet S3's
+    # refusal of a checkout holding a commit origin lacks. So both are handed
+    # THE PUBLISH ACT first (Amendment 23 S4, #194): `commit` with nothing
+    # staged sends what origin lacks by content and says so where it lacks
+    # nothing, so it is safe to run whichever happened. Only a 6 whose publish
+    # act finds nothing to send, and every other refusal, gets the line by hand.
     if [ "$sc_noted_rc" != 0 ]; then
-      die "the NOTED line recording this sweep was NOT written (\`lanes-edit.sh log\` exited $sc_noted_rc, above), so lane $sc_runner's log does not say what was removed. Nothing was lost: each checkout removed held nothing unpublished. Write the line by hand: LANES_LANE=$(printf '%q' "$sc_runner") LANES_SESSION=$sc_uuid lanes-edit.sh log NOTED $(printf '%q' "lane:$sc_runner") $(printf '%q' "$sc_text")" 1
+      sc_by_hand="LANES_LANE=$(printf '%q' "$sc_runner") LANES_SESSION=$sc_uuid lanes-edit.sh log NOTED $(printf '%q' "lane:$sc_runner") $(printf '%q' "$sc_text")"
+      sc_publish="LANES_LANE=$(printf '%q' "$sc_runner") lanes-edit.sh commit $(printf '%q' "the NOTED line of lane-end --sweep-checkouts")"
+      case "$sc_noted_rc" in
+        3)
+          note "the NOTED line recording this sweep was committed and pushed, and the read-back could not confirm it on origin (\`lanes-edit.sh log\` exited 3, above), so it may be on origin already, and it is not to be written again. Nothing was lost: each checkout removed held nothing unpublished. The publish act sends its commit only where origin lacks it by content, and says so where origin has it:"
+          note "  $sc_publish"
+          exit 1 ;;
+        6)
+          note "the NOTED line recording this sweep was not published (\`lanes-edit.sh log\` exited 6, above). Nothing was lost: each checkout removed held nothing unpublished. Where that says its commit is kept, the line is committed and only origin lacks it, so it is not to be written again: the publish act sends what origin lacks by content:"
+          note "  $sc_publish"
+          note "Only where the publish act finds nothing to send (git could not add or commit the line, above) is it written by hand:"
+          note "  $sc_by_hand"
+          exit 1 ;;
+      esac
+      die "the NOTED line recording this sweep was NOT written (\`lanes-edit.sh log\` exited $sc_noted_rc, above), so lane $sc_runner's log does not say what was removed. Nothing was lost: each checkout removed held nothing unpublished. Write the line by hand: $sc_by_hand" 1
     fi
     printf '  NOTED in lane %s'"'"'s log: %s\n' "$sc_runner" "$sc_text"
   fi
