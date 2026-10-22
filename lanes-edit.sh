@@ -2330,6 +2330,9 @@ cs_recheck() {   # <what> <the tip the checks read> <origin's tip after S3's fet
   export LANES__REPLAY_PID LANES__ATTEMPT
   [ "${#CP_REPLAY_ENV[@]}" -eq 0 ] || export "${CP_REPLAY_ENV[@]}"
   [ -z "$CP_CARRY_COPIES" ] || { LANES__CARRY_COPIES="$CP_CARRY_COPIES"; export LANES__CARRY_COPIES; }
+  # THE `exec` IS DELIBERATE: it runs this one write again from the top on origin's new tip, with
+  # the lock held, and does not return; the `die` after it runs only if the `exec` itself fails.
+  # shellcheck disable=SC2093
   exec "${BASH:-bash}" "$RESOLVED" ${ORIG_ARGV[@]+"${ORIG_ARGV[@]}"}
   die "could not run $RESOLVED again on origin's new tip. Nothing was written; run this write again." 1
 }
@@ -3351,6 +3354,9 @@ cp_replay() {   # <sha> <subject>
   export LANES__REPLAY_PID LANES__ATTEMPT
   [ "${#CP_REPLAY_ENV[@]}" -eq 0 ] || export "${CP_REPLAY_ENV[@]}"
   [ -z "$CP_CARRY_COPIES" ] || { LANES__CARRY_COPIES="$CP_CARRY_COPIES"; export LANES__CARRY_COPIES; }
+  # THE `exec` IS DELIBERATE: it replays this one write on origin's new tip, with the lock held,
+  # and does not return; the `die` after it runs only if the `exec` itself fails.
+  # shellcheck disable=SC2093
   exec "${BASH:-bash}" "$RESOLVED" ${ORIG_ARGV[@]+"${ORIG_ARGV[@]}"}
   die "could not run $RESOLVED again to replay this write. Its commit was dropped, so nothing of it is on origin or here; run it again." 1
 }
