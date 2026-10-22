@@ -1124,6 +1124,10 @@ then **validated** against `owner/repo`, and it is **refused (exit 2) where the
 lane's own `STARTED` line already answers the question**, so the log and the
 flag can never disagree. All five resolve it **after the fetch**, because the
 `STARTED` line that refuses it may be a peer's and live only on `origin/main`.
+Where the lane's log could not be read at all, whether it records a home is
+not known, so `--home` is **refused (exit 1)**, and so is a `#<n>`, which only
+the home expands — while a write that needs no home, a swap's `PAUSED` or a
+`NOTED`, goes on (openRepoTools#303).
 Unvalidated it was a hole straight through the alias discipline: `--home 'not
 a repo'` wrote `not a repo#42` into the log — a line the log's own parser
 cannot read back, in a file nothing ever rewrites.
@@ -1229,7 +1233,7 @@ else.
 | 6 | `git add` / `commit` / `push` failed |
 | 7 | another act got there first and this one wrote nothing: `claim`'s `CLAIM-LOST` (another lane's claim landed first), and `set-lane-state` / `set-lane-tree`'s lifecycle fence (openRepoTools#91, below) |
 | 9 | `CLAIM-LOST` — issue #30's own dead-lane verdict could not be reconfirmed before a `--force` takeover's push landed: the source lane resumed, a live session now backs it up, or that could not be read at all (`claim` only). Never 7 — that code is a RIVAL's claim, and this is the same lane the takeover was granted over |
-| 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read, or is of this schema and not a whole record, so nothing can be read out of it as a snapshot (openRepoTools#91 and #115, below), or — where no `LANES_LANE_STATE_ROOT` names the control root — the lane's object log could not be read, so where its snapshot is kept is not known (openRepoTools#290, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim`. `lane-trees`: the lane's `trees` directory is there and could not be listed (#157 item 4e) — never the 8 that means it recorded no tree |
+| 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read, or is of this schema and not a whole record, so nothing can be read out of it as a snapshot (openRepoTools#91 and #115, below), or — where no `LANES_LANE_STATE_ROOT` names the control root — the lane's object log could not be read, so where its snapshot is kept is not known (openRepoTools#290, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim`. `lane-trees`: the lane's `trees` directory is there and could not be listed (#157 item 4e), or — where no `LANES_LANE_STATE_ROOT` names the control root — the lane's object log could not be read, so where its trees are kept is not known (openRepoTools#303) — never the 8 that means it recorded no tree |
 | 8 | no record — and no other meaning |
 | 64 | `swapped`'s own usage error — never the dispatcher's 2 — and the lifecycle arms' own: `set-lane-tree`'s partial observation, a count that is not one, or a field that is only blanks (below) |
 
@@ -1248,6 +1252,19 @@ has no home on record and none was passed, `swapped` exits 8 when no lane is
 swapped on the workstation, `idle-holders` exits 8 when no live but idle
 session holds one of the row's earlier ids, and `window-session` exits 8 when
 no live session is in the window.
+
+**A lane's log that is there and could not be read is never that 8**
+(openRepoTools#290, #303). Every read of it — `lane-dir`, `lane-profile`,
+`lane-agent`, `lane-transcript`, `lane-last`, `history <lane>`, `binding`,
+`last-session`, `resolve-home`, `lane-objects`, `who --lane` and
+`request-handoff` — exits **1** with a sentence that says so, and `lane-state`
+and `lane-trees` exit **10**: a published log git could not show, a tree of the
+logs git could not list, and, with no `origin`, a log file that will not open
+or a log directory that cannot be searched. A lane with no log at all still
+answers 8. They answered 8 before, because the read's status was the parser's,
+and every caller read that 8 as a lane that has not started: `lane-end` ended
+a lane over the claims its log holds, and the lane's lifecycle records were
+filed beside the real ones.
 
 **`swapped` exits 64 on a usage error of its own, never 2.** The launcher gates
 its whole Amendment 8 degrade on a `2` from `swapped` meaning one thing —
@@ -1479,9 +1496,11 @@ stamped by lane-start — follow its top block`; no handoff in the row at all �
 `the row records no handoff path — there is none to stamp or to follow`.
 
 The third line is the lane's open objects, `who --lane`'s answer on one line;
-`open: none open` when it holds nothing, and
+`open: none open` when it holds nothing,
 `open: no log for <lane> (pre-cutover lane) — see its row's state cell` when it
-has no log at all.
+has no log at all, and `open: UNKNOWN — lane <lane>'s object log could not be
+read, …` when its log is there and could not be read — which is not a lane
+that holds nothing (openRepoTools#303).
 
 **Two different mismatches, and the block says which.** An id the cell *carries*
 but does not end on is a superseded transcript of this lane — the 2026-09-11
@@ -1734,7 +1753,7 @@ falls to its next rung there rather than refusing.
 | `lanes-edit.sh lane-profile <lane>` | the same read one sub-field along — the `profile ` of that last line. An addition to the amendment's own table, so that `lane <name>` can learn a profile with one `git show` instead of a listing that reads every log on the workstation |
 | `lanes-edit.sh window-lane [<ws>] <@id>\|<session>:<index>` | the lane bound to a window **of the asking workstation** — the register row whose name is the window's name, else that workstation's swap record naming that ref. Both rungs answer in the **register row's own spelling** (Amendment 15): what this prints is renamed to, `--name`d with and typed as `lane <name>` |
 | `lanes-edit.sh session-lane <uuid>` | the lane whose register row's **session cell** names that transcript uuid. Adoption act 0's; it is the read the `SessionStart` hook already made. **0** the lane · **8** no row's cell names it · **64** usage — like every other read in this table, by A11 Addendum 4 ruling 1, which corrects act 0's `2` · **2** a helper predating the read |
-| `lanes-edit.sh last-session <lane>` | the lane's resume target: the last uuid in the published cell **whatever shape it is in**, and failing that the session of its last `PAUSED`/`RESUMED`. This is what `/restart`'s step 4 reads, by A11 Addendum 4 ruling 14, rather than clause (f)'s `register-row` alone — so a lane whose row was never stamped but whose log records the session it paused in still has a resume target |
+| `lanes-edit.sh last-session <lane>` | the lane's resume target: the last uuid in the published cell **whatever shape it is in**, and failing that the session of its last `PAUSED`/`RESUMED`. This is what `/restart`'s step 4 reads, by A11 Addendum 4 ruling 14, rather than clause (f)'s `register-row` alone — so a lane whose row was never stamped but whose log records the session it paused in still has a resume target. **0** the uuid · **8** neither source names one · **1** the cell names none and the log could not be read (openRepoTools#303) |
 | `lanes-edit.sh forks <lane>` | the **live forks** of the lane's transcript — never holders, and a defect to retire |
 | `lanes-edit.sh lanes [--repo\|--dir\|--prefix\|--ws\|--lane\|--here\|--all\|--closed\|--fetch]` | every lane, newest write first, tab-separated: clause (j)'s **ten columns in clause (j)'s order** — name, state, workstation, profile, window, last transcript uuid, directory, held objects, age, the line that binds it — then the read's own three, `home`, the count of live forks, and — since Amendment 18(b) — whether THIS place may pronounce on that binding (`here`, `elsewhere`, or `none` for a row with no binding line at all), which is what `lane-groups` files an `IDLE` row by — then Amendment 19's four: the row's **class** (`closed`, `dormant` or `none`), its `started` cell, its state cell's **head** and the **flag words** in that cell. The last two are carried **for a row with no object log** — 19(a)'s dormant row, whose cell is all this read has to show — and are `none` for a row that has one, which has its log instead: they are free text of up to 280 characters per row and the table the listing joins on is walked once per lane, so carrying them for every row cost the whole estate 3x (42 s against 14 on a register of 132 rows, measured). **No column is ever empty**, because three readers split the row with a tab-IFS `read`, to which an empty field between two tabs is no field at all. **CLOSED and DORMANT rows are left out unless `--closed` is passed** (19(b)); `--lane <name>` is never filtered, because its caller has named the lane. `lanes` and `lane` each render the subset their surface needs (A11 Addendum 4 ruling 7), and column 10 is the read's so the two cannot offer different commands; since Amendment 18 Addendum 2 the word it names is `lane <name>`. **The one read whose default is local**, and `--lane <lane>` answers about one without walking the estate. `--prefix <repo>` is the LABEL fallback the checkout narrowing and `lane-start <repo>` both ask for, used only where a lane has neither a home nor a `dir` |
 | `lanes-edit.sh lane-groups [<ws>]` | **the rows on STDIN**, each with the group the pick puts it in: `available` (PARKED, or a binding that workstation **and container** prove dead), `live`, `elsewhere` — an `IDLE` row whose binding is another container on this same host is **elsewhere**, because IDLE means this host saw no live record and across that seam the pid it would have read is in another namespace (Amendment 18(b)). Closed and dormant rows are DROPPED (Amendment 19). It reads nothing itself — the caller has already paid for `lanes`, and two surfaces computing one partition is how they come to disagree |
@@ -3257,7 +3276,12 @@ fail closed rather than answer, and for the same reason. The first three refuse
   an unreadable blob as for an absent path.
 * a published log git cannot read: the listing names it and never classes that
   lane DORMANT;
-* a log directory it cannot list: the listing classes no row DORMANT at all;
+* a log directory it cannot list, or one it can list and cannot search (`r--`,
+  whose files no read can open): the listing classes no row DORMANT at all.
+  With no `origin` those files are the logs it reads, so it also says that no
+  lane's log is read in it and that a lane with a log and no row is missing
+  from it (#303) — the lanes with a row used to read as `NO LOG` and the lanes
+  with only a log were dropped, in silence;
 * the events' own list of the published logs, which their lines are read
   through, where it could not be made: the listing says that no lane's log is
   read in it, and classes no row DORMANT at all (#290).
@@ -3356,6 +3380,7 @@ RUNNING --/handoff begins--> SWAPPING --record + row + handoff all landed--> SWA
 | **`MALFORMED`** | — | `indeterminate`: a snapshot of this schema that is not a WHOLE record — cut short, or edited by hand (opensoft/openRepoTools#115). `lane-state` exits **10** for it too, and every writer refuses to replace it. |
 | any | — and a worktree read **failed** | `indeterminate`, whatever the snapshot and the holder say: an inventory directory, the checkout's registrations or a lane root that could not be listed hides trees the report never saw (opensoft/openRepoTools#113). |
 | any | — and the lane is **bound elsewhere** | `indeterminate`. Amendment 18(b): liveness is pronounced only from inside the binding's own host and container, and from anywhere else a binding is UNKNOWN, never dead — and this workstation's snapshot is this workstation's alone. The one exception is clause (b)'s own: a binding whose window is gone from this host's tmux is dead, and the local read decides. |
+| — | — and the lane's **object log could not be read** | `indeterminate`, exit **0**, and nothing beside it: where no `LANES_LANE_STATE_ROOT` names the control root, the log's `dir` places the snapshot and the inventory, and the log is where the binding is read, so no `ROOT`, `STATE` or `BINDING` line is printed and the reason names the log. It was `no-state` off the third rung — *this lane has not started under this capability*, which a launcher goes past — for a lane whose real root held a `SWAPPING` snapshot (openRepoTools#303). |
 | — | — and the lane is **managed-owned** | `managed-owned`, and nothing else is read or pronounced: see *Managed-owned lanes* below. |
 
 ### The fence
@@ -3392,7 +3417,13 @@ finished operation. An observation filed under no transition is a
 `dir` places, and reads that log once, with its status: a log git could not
 read is **10** as well — where the snapshot is kept is not known, which is not
 a lane that has none — and `lanes-index` holds such a lane's rows for that
-reason, in `lane-state`'s own words (opensoft/openRepoTools#290).
+reason, in `lane-state`'s own words (opensoft/openRepoTools#290). The writers
+beside it ask the same root and refuse (**1**) where the log could not be read
+for it: `set-lane-state` and `set-lane-tree` write NOTHING, where they used to
+file the transition or the tree under `$PROJECTS_ROOT/.lane-state/<lane>`,
+beside the real root, where no reader looks. A `STARTED`, `RESUMED`, `ENDED` or
+`RETIRED` line still lands over such a log, and the snapshot it would move is
+left as it is, with a note saying why (openRepoTools#303).
 
 `RUNNING` is written by the act that CONFIRMS the binding and never by the
 SessionStart hook: `session-start` never writes, never touches the network and
@@ -3440,7 +3471,8 @@ lanes-edit.sh lane-tree-now <worktree path>
 
 A `trees` directory that is there and cannot be listed is `lane-trees`' exit
 **10**, never the **8** of a lane that recorded no tree (opensoft/openRepoTools#157
-item 4e). Every lane's records on this workstation, one row per tree, are `lanes
+item 4e), and so is a lane whose object log could not be read, where its log's
+`dir` is what places the root its trees are under (openRepoTools#303). Every lane's records on this workstation, one row per tree, are `lanes
 --worktrees`; the derived index keeps them as its `worktrees` table, which no
 act reads (*The derived index*, below).
 
