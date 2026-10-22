@@ -720,6 +720,91 @@ def test_a_live_cwd_holds(sweep):
         sleeper.wait()
 
 
+def _mountinfo_path(path: Path) -> str:
+    """A path as `/proc/self/mountinfo` spells it: space, TAB, newline and
+    backslash as octal escapes."""
+    return (str(path).replace("\\", "\\134").replace(" ", "\\040")
+            .replace("\t", "\\011").replace("\n", "\\012"))
+
+
+def _mount_table(box: Sweep, *points: Path, name: str = "mountinfo") -> str:
+    """A mount table in `/proc/self/mountinfo`'s form, naming `/` and each of
+    `points`, for `LANE_END_MOUNTINFO`, the test seam: this suite mounts
+    nothing (a bind mount needs privileges a test host does not give)."""
+    table = box.root / name
+    lines = ["21 1 0:20 / / rw,relatime - overlay overlay rw",
+             "22 21 0:21 / /proc rw,nosuid - proc proc rw"]
+    lines += [f"{30 + i} 21 0:{40 + i} /outside-{i} {_mountinfo_path(p)} rw,relatime - ext4 /dev/x rw"
+              for i, p in enumerate(points)]
+    table.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(table)
+
+
+@pytest.mark.parametrize("where", ["ignored-mnt", ".git/mnt", "ignored mnt"],
+                         ids=["at an ignored path", "inside .git", "at a path with a space"])
+def test_a_mount_inside_a_checkout_holds(sweep, where):
+    """A FILE SYSTEM MOUNTED AT OR UNDER A CHECKOUT HOLDS IT (lane
+    openRepoTools-3's SHOULD 371, and 357). A mount point at an ignored path,
+    or inside `.git/`, holds nothing else, and the `mv` carries the mount
+    along with its directory, so `rm -rf` would delete what the mount shows,
+    which is not under `<W>-lanes/`. Here the mount table names one there:
+    the dry run and `--yes` both hold the checkout, naming the mount point."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    (c / ".git" / "info" / "exclude").write_text("ignored-mnt/\nignored mnt/\n", encoding="utf-8")
+    box.write(c, f"{where}/shown.txt", "what the mount shows, which lives elsewhere\n")
+    table = _mount_table(box, c / where)
+    for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+        result, rows = sweep(*args, LANE_END_MOUNTINFO=table, **env)
+        assert rows[str(c)][0] == "hold", rows[str(c)]
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert (f"a file system is mounted at or under it: 1 ({_mountinfo_path(c / where)})"
+                in rows[str(c)][1]), rows[str(c)]
+    assert (c / where / "shown.txt").is_file()
+
+
+def test_a_mount_made_after_the_listing_holds(sweep):
+    """THE MOUNT TABLE IS READ AGAIN UNDER THE LOCK (SHOULD 371: "under the
+    lock, just before the mv"): the table names nothing in the checkout at
+    the listing, and a mount point inside its `.git/` at its own fetch. It
+    is held."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    box.write(c, ".git/mnt/shown.txt", "what the mount shows\n")
+    table = _mount_table(box)
+    later = _mount_table(box, c / ".git" / "mnt", name="mountinfo.later")
+    _, rows = sweep(LANE_END_MOUNTINFO=table)
+    assert rows[str(c)][0] == "remove", rows[str(c)]
+    _hook_on_fetch_of(box, c, f"cp -- {later} {table}")
+    result, rows = sweep("--yes", LANES_LANE=RUNNER, LANE_END_MOUNTINFO=table)
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert f"a file system is mounted at or under it: 1 ({c}/.git/mnt)" in rows[str(c)][1], rows[str(c)]
+    assert (c / ".git" / "mnt" / "shown.txt").is_file()
+
+
+@pytest.mark.parametrize("table", ["no table", "a table that names no /"])
+def test_a_mount_table_that_cannot_be_read_holds(sweep, table):
+    """WHERE NO MOUNT TABLE CAN BE READ, WHETHER A FILE SYSTEM IS MOUNTED IN A
+    CHECKOUT CANNOT BE TOLD, AND IT IS HELD (SHOULD 371): `LANE_END_MOUNTINFO`
+    names no file and `mount` fails, or names a table without `/`, which is
+    no host's mount table. The dry run and `--yes` both hold it."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    path = box.root / "mountinfo"
+    if table != "no table":
+        path.write_text("30 21 0:40 /x /elsewhere rw,relatime - ext4 /dev/x rw\n", encoding="utf-8")
+    shim = box.fakebin / "mount"
+    shim.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+    shim.chmod(0o755)
+    for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+        result, rows = sweep(*args, LANE_END_MOUNTINFO=str(path), **env)
+        assert rows[str(c)][0] == "hold", rows[str(c)]
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert "whether a file system is mounted in it cannot be told" in rows[str(c)][1], rows[str(c)]
+    assert c.is_dir()
+
+
 def test_a_cwd_that_appears_after_the_listing_holds(sweep):
     """S6.2 (c) IS READ AGAIN UNDER THE LOCK, AFTER THE FETCH (rv4's SHOULD 1,
     R1, P4): a process that starts working in the checkout after the listing,

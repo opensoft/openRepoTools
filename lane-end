@@ -288,6 +288,9 @@
 #               gate's sweep
 #   LANES_WORKSPACE_ROOT  the workspace repository, overriding workspace.yaml's
 #               `path:` — the test seam
+#   LANE_END_MOUNTINFO  the mount table `--sweep-checkouts` reads, in
+#               `/proc/self/mountinfo`'s form (default that file) — the test
+#               seam; one that names no `/` holds every checkout
 #   AGENT_PROTOCOL_ROOT   dir holding workspace.yaml (default ~/.agents)
 #   OPENREPOTOOLS_BIN_DIR where `--install` put the commands (default
 #               ~/.local/bin) — searched for lanes-edit.sh
@@ -1335,7 +1338,10 @@ SC_IDX
   #       held as "cannot tell". A process whose directory cannot be read
   #       (another user's, or one that ended meanwhile) is counted and said,
   #       and does not hold — `lsof` has the same reach, and (a) is what keeps
-  #       the work.
+  #       the work;
+  #   and a file system mounted at or under it (lane openRepoTools-3's
+  #       SHOULD 371), whose files are not the checkout's, or a mount table
+  #       that cannot be read.
   SC_HOLD=""; SC_IGN=""
   sc_hold() { SC_HOLD="${SC_HOLD:+$SC_HOLD; }$1"; }
   sc_first() {   # <lines> — the count and the first three, as `N (a b c)`
@@ -1545,7 +1551,48 @@ SCC
     printf '%s' "$scc_out"
   }
 
-  # ALL THREE, for one candidate: SC_HOLD empty means nothing holds it.
+  # A FILE SYSTEM MOUNTED AT OR UNDER IT (lane openRepoTools-3's SHOULD 371,
+  # and 357). A mount point at an ignored path, or inside `.git/`, holds
+  # nothing else, and the `mv` carries a mount along with its directory, so
+  # `rm -rf` would delete what the mount shows, which is not under
+  # `<W>-lanes/`. The mount table is read: `/proc/self/mountinfo`'s field 5,
+  # its octal escapes kept and each path spelled the same way to match it, or
+  # `mount`'s output where there is no such file. A table that cannot be
+  # read, or that names no `/`, is no mount table, and with none the sweep
+  # cannot tell, and holds. `LANE_END_MOUNTINFO` names another table: the
+  # test seam.
+  sc_mount_pts=""; sc_mount_mode=none
+  sc_mount_scan() {
+    sc_mount_pts=""; sc_mount_mode=none
+    sms_f="${LANE_END_MOUNTINFO:-/proc/self/mountinfo}"
+    if [ -r "$sms_f" ] && sms_t="$(awk '{ print $5 }' < "$sms_f" 2>/dev/null)"; then
+      sms_m=mountinfo
+    elif sms_t="$(mount 2>/dev/null | awk '{ i = index($0, " on "); if (!i) next; s = substr($0, i + 4); j = 0
+           for (k = length(s) - 1; k > 0; k--) if (substr(s, k, 2) == " (") { j = k; break }
+           if (j) s = substr(s, 1, j - 1); sub(/ type [^ ]*$/, "", s); print s }')"; then
+      sms_m=mount
+    else
+      return 0
+    fi
+    case "
+$sms_t
+" in
+      *"
+/
+"*) sc_mount_pts="$sms_t"; sc_mount_mode="$sms_m" ;;
+    esac
+  }
+  sc_mounts_inside() {   # <path> — the mount points at or under it, one per line
+    smi_e="$1"
+    if [ "$sc_mount_mode" = mountinfo ]; then
+      smi_e="${smi_e//\\/\\134}"; smi_e="${smi_e// /\\040}"; smi_e="${smi_e//$sc_tab/\\011}"
+    fi
+    SC_MOUNT_AT="$smi_e" awk '$0 == ENVIRON["SC_MOUNT_AT"] || index($0, ENVIRON["SC_MOUNT_AT"] "/") == 1' <<SMI
+$sc_mount_pts
+SMI
+  }
+
+  # ALL OF THEM, for one candidate: SC_HOLD empty means nothing holds it.
   sc_judge_holds() {   # <path> <1 when this run holds its lock> [<paths gone>]
     sc_holds "$1" "$2"
     sjh_deps="$(sc_dependents "$1" "${3-}")"
@@ -1557,6 +1604,14 @@ SCC
       *)
         sjh_pids="$(sc_cwd_inside "$1")"
         if [ -n "$sjh_pids" ]; then sc_hold "a live process works in it (pid $sjh_pids)"; fi ;;
+    esac
+    case "$sc_mount_mode" in
+      none) sc_hold "whether a file system is mounted in it cannot be told: no mount table that names / could be read (${LANE_END_MOUNTINFO:-/proc/self/mountinfo}, or mount)" ;;
+      *)
+        sjh_m="$(sc_mounts_inside "$1")" || sjh_m="(the mount table could not be matched)"
+        if [ -n "$sjh_m" ]; then
+          sc_hold "a file system is mounted at or under it: $(sc_first "$sjh_m"), and removing it would remove what that mount shows, which is not this checkout's"
+        fi ;;
     esac
     return 0
   }
@@ -1719,7 +1774,7 @@ SS_ROW
   if [ "$sc_hidden" -gt 0 ]; then
     printf '  (%s hidden entr(ies) under %s/ - creation locks, partial clones, the sidecar lock - are never looked at)\n' "$sc_hidden" "$sc_home"
   fi
-  sc_cwd_scan
+  sc_cwd_scan; sc_mount_scan
   if [ "$sc_cwd_unread" -gt 0 ]; then
     printf '  (%s process(es) whose working directory could not be read - another user'"'"'s, or ended while read - do not hold anything)\n' "$sc_cwd_unread"
   fi
@@ -1771,6 +1826,21 @@ SLU
     sc_i=$((sc_i + 1))
   done
 
+  # NEVER ACROSS A MOUNT, AS A SECOND LAYER ONLY (SHOULD 371): the mount
+  # table above is what holds a checkout with a mount in it, since a bind
+  # mount of the same file system is one `rm` cannot see. GNU `rm` takes
+  # `--one-file-system`, BSD's `-x`; each is asked once, of a path that is
+  # not there, and an `rm` that takes neither removes as before.
+  sc_rm_x=""
+  if [ "$sweep_yes" = 1 ]; then
+    sc_rm_probe="$sc_home/.sweep-checkouts-rm-probe-$$"
+    if [ ! -e "$sc_rm_probe" ] && [ ! -L "$sc_rm_probe" ]; then
+      if rm -f --one-file-system -- "$sc_rm_probe" 2>/dev/null; then sc_rm_x=--one-file-system
+      elif rm -f -x -- "$sc_rm_probe" 2>/dev/null; then sc_rm_x=-x
+      fi
+    fi
+  fi
+
   printf '\n  under %s/:\n' "$sc_home"
   sc_gone=""; sc_n_removed=0; sc_n_partial=0; sc_n_held=0; sc_n_removable=0; sc_partial=""
   sc_removed_names=""; sc_held_names=""; sc_partial_names=""
@@ -1813,7 +1883,7 @@ SLU
     elif ! sc_is_register_clone "$sc_c"; then
       sc_act_hold="it is no longer what made it a candidate: $SC_WHY"
     else
-      sc_dep_scan; sc_cwd_scan
+      sc_dep_scan; sc_cwd_scan; sc_mount_scan
       sc_judge_holds "$sc_c" 1
       sc_act_hold="$SC_HOLD"; sc_act_ign="$SC_IGN"
     fi
@@ -1834,7 +1904,7 @@ SLU
       sc_say_held "$sc_c" "$sc_why" "it could not be moved aside to $sc_aside"; continue
     fi
     SC_LOCK=""   # it went with the checkout
-    if sc_under_home "$sc_aside"; then rm -rf -- "$sc_aside" 2>/dev/null || :; fi
+    if sc_under_home "$sc_aside"; then rm -rf ${sc_rm_x:+"$sc_rm_x"} -- "$sc_aside" 2>/dev/null || :; fi
     if [ -e "$sc_aside" ] || [ -L "$sc_aside" ]; then
       printf '    PARTLY     %s  %s; moved aside to %s, which could not all be removed%s\n' "$sc_c" "$sc_why" "$sc_aside" "${sc_act_ign:+; $sc_act_ign}"
       sc_partial="${sc_partial:+$sc_partial }$sc_aside"
