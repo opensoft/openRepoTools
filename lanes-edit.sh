@@ -17248,6 +17248,29 @@ EOF
       die "lane $lane's binding IS this window ($rh_win) on this host and in this container: a handoff request is what a SECOND place makes of the first, and there is nothing here to ask. Nothing was written." 2
     fi
 
+    # ---- THE ASKING HOST IS ONE REF OF AMENDMENT 7(b)'S GRAMMAR, OR IT IS NOT
+    # WRITTEN (#301, ruling 2, R). Both paths below write it into the lane's
+    # append-only log: the request as `by host <h>`, which the bound session's
+    # guard reads back with `payload_subfield` — one ref, up to its first space —
+    # and types into that session's pane in `/handoff --exit requested by …`,
+    # and a forced release as `forced by <uuid>@<h>/<container>`. Nothing
+    # between here and `write_event` checks it: `binding_subfields_check` reads
+    # the sub-fields NAMED `host`, `os` and `container`, and neither of these
+    # is one. So `my host` was written whole and read back as `my`, and a `;`, a
+    # `"` or a control byte would be typed into a pane. The fence is the one
+    # `binding_subfields_add` holds the binding's own three values to, and it
+    # REFUSES here where that one drops: a host that fails it is a setting that
+    # can be put right at once, and neither path — `--force` included, and
+    # either one's `--dry-run`, which plans the same line — writes it.
+    if ! lanes_binding_value_ok "$LANES_HOST_NAME"; then
+      case "$LANES_HOST_SOURCE" in
+        seam)        rh_hsrc="it is the value of LANES_HOST" ;;
+        workstation) rh_hsrc="it is this workstation's name, which a container writes as its host; LANES_HOST overrides it" ;;
+        *)           rh_hsrc="it is this machine's \`hostname -s\`; LANES_HOST overrides it" ;;
+      esac
+      die "request-handoff writes this host's name into lane $lane's append-only log — \`by host <h>\` in a request, \`forced by <uuid>@<h>/<container>\` in a forced release — and '$LANES_HOST_NAME' is not one ref of Amendment 7(b)'s grammar (letters, digits, '.', '_', '-', ':'): $rh_hsrc. A space there is a second ref and a ';' a second sub-field, and the request's host is typed into the bound session's pane. Nothing was written. Set LANES_HOST to this host's name in that alphabet and ask again." 2
+    fi
+
     # ---- CLAUSE (e): `--force`, THE SECOND INVOCATION.
     if [ "$rh_force" = 1 ]; then
       [ -n "$rh_why" ] || die "--force takes a WHY, and it is not decoration: it is written into the lane's append-only log and it is the sentence the bound session reads at its next prompt, when it refuses every prompt from then on and names who forced it (Amendment 18(e)). Say what happened:

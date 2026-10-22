@@ -53,11 +53,21 @@ THE FIX, ONE ITEM AT A TIME.
    `split_row` and the `lanes` renderer. The row keeps its seventeen columns
    whatever the dir holds, and `lane` reaches the dir the log records.
 
+3. THE ASKING HOST IS FENCED (lane 3's ruling 2, R). `request-handoff` refuses,
+   with 2 and "Nothing was written", a host `lanes_binding_value_ok` rejects -
+   the fence `binding_subfields_add` holds the binding's own host to - before
+   either of the two lines that carry one is planned or written: the request's
+   `by host <h>` and the forced release's `forced by <uuid>@<h>/<container>`.
+   The refusal names `LANES_HOST`, where the value came from or what overrides
+   it.
+
 THE `by host` CASES ASK WHAT A READER GETS BACK, NOT HOW THE LINE IS SPELLED.
-Whether the writer quotes a host that holds a space (the grammar's own rule for
-a `dir` or a `profile`) or refuses or drops it is Brett Heap's and lane 3's
-to rule; the case holds every spelling that reads back whole, or is not read
-back as something else, and fails the one that reads back cut.
+Whether the writer quoted a host that holds a space (the grammar's own rule for
+a `dir` or a `profile`) or refused or dropped it was Brett Heap's and lane 3's
+to rule; that case holds every spelling that reads back whole, or is not read
+back as something else, and fails the one that reads back cut. Lane 3 ruled R,
+the refusal, and `test_a_host_the_binding_fence_refuses_is_never_written` holds
+it on both paths that write a host.
 
 EVERY CASE RUNS WITHOUT `LANES_LANE_STATE_ROOT`, the suite's usual seam for the
 control root: it answers before any payload is read, so with it set the
@@ -570,6 +580,55 @@ def _requests(e: Estate) -> list[str]:
     return [line for line in published.splitlines() if line.startswith("HANDOFF-REQUESTED")]
 
 
+#: Hosts `lanes_binding_value_ok` rejects: a space is a second ref, a `;` a
+#: second sub-field, a `"` opens a quoted value, and a backslash is no part of
+#: the alphabet. A TAB is not among them: `lanes_host_pair` hands the host on
+#: TAB-separated from its source, so a `LANES_HOST` holding one is read as the
+#: text before it, which is a host the fence takes.
+FENCED_HOSTS = {"space": "my host", "semicolon": "a;b", "quote": 'a"b', "backslash": "back\\slash"}
+
+
+@pytest.mark.parametrize("host", list(FENCED_HOSTS.values()), ids=list(FENCED_HOSTS))
+def test_a_host_the_binding_fence_refuses_is_never_written(tmp_path, host):
+    """RULING 2, R, ON BOTH PATHS (lane 3's rulings and answers on #301). A
+    host that `lanes_binding_value_ok` rejects is never written: not by the
+    request, whose `by host` the bound session's guard reads one ref deep and
+    types into its pane, and not by `--force`, whose `forced by <uuid>@<host>/…`
+    a person reads in the log. Each path, and each one's `--dry-run`, refuses
+    with 2 and "Nothing was written" and names `LANES_HOST` as the value's
+    source, and the published log is what it was."""
+    e = _bound_elsewhere(tmp_path)
+    before = e._git("show", "origin/main:lanes/log/repoH-1.md")
+    for args in (("--no-wait",), ("--no-wait", "--dry-run"),
+                 ("--force", "taking it"), ("--force", "taking it", "--dry-run")):
+        res = e.edit("request-handoff", "repoH-1", "--session", UUID_R, *args,
+                     env={"LANES_HOST": host})
+        assert res.returncode == 2, (args, res.returncode, res.stderr)
+        assert "nothing was written" in res.stderr.lower(), (args, res.stderr)
+        assert "not one ref" in res.stderr and "LANES_HOST" in res.stderr, (args, res.stderr)
+        assert e._git("show", "origin/main:lanes/log/repoH-1.md") == before, args
+
+
+@pytest.mark.parametrize("host", ["plainhost", "a.b-c_d:9"], ids=["plain", "whole-alphabet"])
+def test_a_host_the_binding_fence_takes_is_written_whole_on_both_paths(tmp_path, host):
+    """THE CONTROL FOR R: a host of the fence's own alphabet is written as it
+    is, by the request (`by host <h>`, read back whole) and by the forced
+    release that follows it (`forced by <uuid>@<h>/none`)."""
+    e = _bound_elsewhere(tmp_path)
+    res = e.edit("request-handoff", "repoH-1", "--session", UUID_R, "--no-wait",
+                 env={"LANES_HOST": host})
+    lines = _requests(e)
+    assert len(lines) == 1, (res.returncode, res.stderr, lines)
+    payload = lines[0].split(" → ", 1)[1].split(" — ", 1)[0]
+    assert payload_subfield(payload, "by host") == host + "\n", payload
+    res = e.edit("request-handoff", "repoH-1", "--session", UUID_R, "--force", "taking it",
+                 env={"LANES_HOST": host})
+    assert res.returncode == 0, (res.returncode, res.stderr)
+    last = e._git("show", "origin/main:lanes/log/repoH-1.md").splitlines()[-1]
+    assert last.startswith(f"PAUSED — lane repoH-1, session {UUID_R}@"), last
+    assert f"; forced by {UUID_R}@{host}/none; " in last, last
+
+
 @pytest.mark.parametrize("host", ["plainhost", "my host"], ids=["plain", "space"])
 def test_a_request_for_a_handoff_gives_its_host_back_as_it_was_written(tmp_path, host):
     """THE BOUND SESSION IS TOLD THE HOST THE REQUEST CAME FROM, and what it is
@@ -582,9 +641,9 @@ def test_a_request_for_a_handoff_gives_its_host_back_as_it_was_written(tmp_path,
     WHAT HOLDS IS THAT THE HOST IS NEVER READ BACK AS SOMETHING ELSE. Written
     quoted it comes back whole; written with the sub-field refused (nothing
     written at all) or dropped (the requester told) there is nothing to read
-    back wrongly. Which of those is the fix is for the rulings the design asks
-    for. The ordinary host is the control: it is written bare, as the
-    amendment spells it, and comes back as it is."""
+    back wrongly. Lane 3 ruled the refusal (R), which the case above holds. The
+    ordinary host is the control: it is written bare, as the amendment spells
+    it, and comes back as it is."""
     e = _bound_elsewhere(tmp_path)
     assert _requests(e) == []
     res = e.edit("request-handoff", "repoH-1", "--session", UUID_R, "--no-wait",
