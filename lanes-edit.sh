@@ -532,8 +532,12 @@
 #      sixth move before any edit, nothing is committed and it is 2), a
 #      replay's drop refused over an uncommitted change, a commit another
 #      writer made on top of this one in the checkout before the replay
-#      drops it (the drop moves the branch only from this write's own
-#      commit, so it never takes another), or a push (a write's, or the publish act's)
+#      drops it, or under it (this write's commit is known by what it is,
+#      never by HEAD read after the fact, and the drop moves the branch only
+#      from that commit and only where it sits on origin's history, so it
+#      never takes another), a commit made in the same moment as this
+#      write's that cannot be told from it (nothing is pushed), or a push (a
+#      write's, or the publish act's)
 #      refused with origin unmoved, which no replay can mend. Or another
 #      writer in the checkout REWROTE this write's commit (a `pull --rebase`
 #      with no lock): it is not on HEAD at all, and what reached origin is
@@ -2832,6 +2836,9 @@ commit_publish() {
     note "nothing staged for ${CP_PATHS[*]} — no commit made"
     return 0
   fi
+  # THE HEAD THIS WRITE'S COMMIT IS MADE ON, read before `git commit` (291
+  # below, at `cp_own_commit`).
+  cp_parent="$(git -C "$LANES_REPO" rev-parse -q --verify HEAD 2>/dev/null || :)"
   if [ -n "$cp_ren" ]; then
     cp_staged="$(git -C "$LANES_REPO" -c "$CP_EXACT" diff --cached --name-only)"
     cp_extra=""
@@ -2856,7 +2863,7 @@ EOF
   else
     git -C "$LANES_REPO" -c "$CP_EXACT" commit -q -m "$msg" -- "${CP_PATHS[@]}" || die "git commit failed" 6
   fi
-  cp_sha="$(git -C "$LANES_REPO" rev-parse HEAD 2>/dev/null)"
+  cp_sha="$(cp_own_commit "$cp_parent" "$msg")" || cp_untold "$cp_parent" "$msg"
   note "committed: $msg"
 
   # ---- 2. THE PUSH: the branch as S3 left it plus this one commit, no pull.
@@ -2898,6 +2905,58 @@ EOF
     die "the push of $cp_sha was refused with origin/$LANES_BRANCH unmoved, so this is no lost race and a replay would meet the same refusal; the commit is local and kept on HEAD: $cp_sha $msg" 6
   fi
   cp_replay "$cp_sha" "$msg"
+}
+
+# THIS WRITE'S OWN COMMIT, KNOWN BY WHAT IT IS AND NOT BY READING HEAD AFTER
+# THE FACT (lane openRepoTools-3's review of #307, 291). Until slices 2b and 3,
+# lane-start's stamp, lane-handoff's commit and the skill's are made in the
+# same checkout with no lock. One landing between `git commit` and a
+# `rev-parse HEAD` after it was taken for this write's commit: the HEAD check
+# and the drop's compare-and-swap then both passed on ITS sha, and the replay
+# dropped it, the other writer's file with it. So where HEAD's parent is the
+# HEAD read before the commit, HEAD is this write's commit, as it always was;
+# otherwise this write's commit is the one first-parent commit since then whose
+# message is this write's, as git stored it (`stripspace`, the cleanup `-m`
+# gets). None, or two, is no answer, and nothing is guessed.
+cp_own_commit() {   # <HEAD before the commit, or empty> <the message>
+  coc_head="$(git -C "$LANES_REPO" rev-parse -q --verify HEAD 2>/dev/null)" || return 1
+  if [ "$(git -C "$LANES_REPO" rev-parse -q --verify "$coc_head^" 2>/dev/null || :)" = "$1" ]; then
+    printf '%s\n' "$coc_head"
+    return 0
+  fi
+  coc_want="$(printf '%s\n' "$2" | git -C "$LANES_REPO" stripspace 2>/dev/null)"
+  coc_hit=""; coc_n=0
+  while IFS= read -r coc_c; do
+    [ -n "$coc_c" ] || continue
+    [ "$(git -C "$LANES_REPO" log -1 --format=%B "$coc_c" 2>/dev/null)" = "$coc_want" ] || continue
+    coc_hit="$coc_c"; coc_n=$((coc_n + 1))
+  done <<COC_EOF
+$(git -C "$LANES_REPO" rev-list --first-parent -n 20 "${1:+$1..}$coc_head" 2>/dev/null)
+COC_EOF
+  [ "$coc_n" = 1 ] || return 1
+  printf '%s\n' "$coc_hit"
+}
+# NO ANSWER (291): another commit was made in this checkout in the moment of
+# this write's own, and which one is this write's cannot be told. Nothing is
+# pushed on a guess, and nothing is moved.
+cp_untold() {   # <HEAD before the commit, or empty> <the message>
+  note "this write committed ($2), and another commit was made in this checkout in the same moment (an unlocked writer: lane-start's stamp, lane-handoff), so which one is this write's cannot be told by its message: nothing was pushed, and nothing was moved."
+  note "look at them: git -C $LANES_REPO log --oneline ${1:+$1..}HEAD"
+  note "every later write from this checkout refuses (S3's unpushed row) until they are published — LANES_LANE=<lane> $SELF commit \"<what they are>\", the publish act — or archived (S6.3); if any is not your own write, STOP and take it to the lane its subject names."
+  die "this write's commit cannot be told from another made in this checkout in the same moment, so nothing was pushed and both are kept on HEAD (Amendment 23 S4): $2" 6
+}
+# THE DROP TAKES THIS WRITE'S COMMIT ALONE (291): an unlocked writer's commit
+# that landed just BEFORE this write's `git commit`, or between S3 and it, is
+# UNDER this write's commit, where the HEAD check cannot see it. The keep
+# form's drop goes to origin's tip, and would take it too. So the drop is made
+# only where this write's commit sits on origin's history; otherwise it and
+# what is under it are kept on HEAD and named.
+cp_under() {   # <sha> <subject> <origin's tip>
+  cu_n="$(git -C "$LANES_REPO" rev-list --count "$3..$1^" 2>/dev/null || printf 'some')"
+  note "under this write's commit $1 are $cu_n commit(s) origin/$LANES_BRANCH does not have, which this write did not make: another writer in this checkout committed while this write was being made (an unlocked one: lane-start's stamp, lane-handoff), and dropping this write's commit to origin's tip would drop them too."
+  note "look at them: git -C $LANES_REPO log --oneline $3..$1"
+  note "every later write from this checkout refuses (S3's unpushed row) until they are published — LANES_LANE=<lane> $SELF commit \"<what they are>\", the publish act — or archived (S6.3); if any is not your own write, STOP and take it to the lane its subject names."
+  die "the push was refused because origin/$LANES_BRANCH moved, and this write's commit sits on $cu_n commit(s) it did not make, so it is not replayed: it and they are kept on HEAD (Amendment 23 S4): $1 $2" 6
 }
 
 # 0 when origin's `main` holds <sha>, after a fresh fetch; 1 when it does not;
@@ -3055,6 +3114,13 @@ cp_replay() {   # <sha> <subject>
   cr_to="$(git -C "$LANES_REPO" rev-parse -q --verify "$cr_to^{commit}" 2>/dev/null || :)"
   [ -n "$cr_to" ] ||
     die "the push was refused because origin/$LANES_BRANCH moved, and git could not name the commit to drop this write's to, so nothing was moved and it is kept on HEAD: $1 $2" 6
+  # THE KEEP FORM'S DROP GOES TO ORIGIN'S TIP, so it is made only where this
+  # write's commit sits on origin's history (291, `cp_under`). The carry form
+  # drops to `$1^`, which takes this write's commit alone by construction.
+  if [ "$CP_REPLAY_KEEPS_EDIT" != 1 ] && git -C "$LANES_REPO" rev-parse -q --verify "$1^" >/dev/null 2>&1 &&
+     ! git -C "$LANES_REPO" merge-base --is-ancestor "$1^" "$cr_to" 2>/dev/null; then
+    cp_under "$1" "$2" "$cr_to"
+  fi
   # THE DROP IS A COMPARE-AND-SWAP (rv1b-c2's SHOULD C on slice 1b). The
   # HEAD check above and the drop are two git calls, and an unlocked commit
   # (lane-start's stamp, lane-handoff's, until slices 2b and 3) can land

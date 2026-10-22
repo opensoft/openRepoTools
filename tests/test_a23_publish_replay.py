@@ -1437,6 +1437,90 @@ def test_a_stamp_committed_and_pulled_around_the_replays_drop_is_never_lost(box:
     _settled(box, c)
 
 
+# 291 of lane openRepoTools-3's review of #307: this write's own commit is
+# known by what it is, and the drop takes it alone. The window is the one
+# `git commit` call: a `git` first on PATH lands an unlocked writer's commit
+# just after it (E8), just before it, or with this write's own message.
+COMMIT_CALL = '*" commit -q -m LANES("*'
+
+
+def test_a_commit_landing_just_after_this_writes_commit_is_never_taken_for_it_exit_6(box: Box):
+    """291's E8: the write took its own sha from `rev-parse HEAD` after
+    `git commit`, so an unlocked writer's stamp landing between the two was
+    taken as this write's. The HEAD check and the drop's compare-and-swap
+    both passed on the stamp's sha, the replay dropped it (exit 0, "Commit
+    <the stamp> is dropped"), and `stamp.md` went from the working tree, on
+    no branch and not on origin. Now this write's commit is the one under
+    the stamp, the replay finds a commit on top of it, and both are kept on
+    HEAD and named (6), with nothing dropped."""
+    c = box.seam()
+    box.race()
+    env = _git_shim(box, COMMIT_CALL, after=_stamp(c))
+    result = box.helper("set-row-state", LANE, STATE, **env)
+    assert (box.root / "fired").exists(), "the stamp landed just after this write's commit"
+    assert result.returncode == 6, result.stderr
+    err = result.stderr
+    stamp, mine = box.head(c), box.git("-C", str(c), "rev-parse", "HEAD~1").strip()
+    assert box.subject(c) == STAMP_SUBJECT
+    assert box.subject(c, "HEAD~1").startswith(f"LANES({LANE}@"), "this write's commit is under the stamp"
+    assert f"Commit {stamp} is dropped" not in err, "the stamp was taken for this write's commit"
+    assert f"HEAD is {stamp}, not this write's commit {mine}" in err, err
+    assert "push refused (attempt 1 of 6)" not in err, "nothing is replayed"
+    assert (c / "handoffs" / "stamp.md").is_file(), "the other writer's file is still there"
+    assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the publish act"
+    _settled(box, c)
+
+
+def test_a_commit_landing_just_before_this_writes_commit_is_never_dropped_with_it_exit_6(box: Box):
+    """291's other half, the window lane 3's sketch left: a stamp landing
+    just before `git commit` is UNDER this write's commit. HEAD is this
+    write's commit, so the HEAD check passed, and the drop to origin's tip
+    took the stamp with it: `stamp.md` gone, the write replayed (0). Now the
+    drop is made only where this write's commit sits on origin's history;
+    here it sits on a commit it did not make, so both are kept on HEAD and
+    named (6), and nothing is replayed."""
+    c = box.seam()
+    box.race()
+    env = _git_shim(box, COMMIT_CALL, before=_stamp(c))
+    result = box.helper("set-row-state", LANE, STATE, **env)
+    assert (box.root / "fired").exists(), "the stamp landed just before this write's commit"
+    assert result.returncode == 6, result.stderr
+    err = result.stderr
+    mine = box.head(c)
+    assert box.subject(c).startswith(f"LANES({LANE}@"), "HEAD is this write's commit"
+    assert box.subject(c, "HEAD~1") == STAMP_SUBJECT, "the stamp is under it"
+    assert "sits on 1 commit(s) it did not make" in err, err
+    assert f"it and they are kept on HEAD (Amendment 23 S4): {mine}" in err, err
+    assert "push refused (attempt 1 of 6)" not in err, "nothing is replayed"
+    assert (c / "handoffs" / "stamp.md").is_file(), "the other writer's file is still there"
+    assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the publish act"
+    _settled(box, c)
+
+
+def test_a_commit_with_this_writes_own_message_made_with_it_is_no_answer_exit_6(box: Box):
+    """291's last word, "also match the subject": where another commit was
+    made in the moment of this write's, its own commit is the one with its
+    message. Two with that message are no answer, so nothing is guessed:
+    nothing is pushed, both are kept on HEAD, and it says so (6)."""
+    c = box.seam()
+    box.race()
+    cq = shlex.quote(str(c))
+    same = ('    m=""; prev=""; for a in "$@"; do [ "$prev" = -m ] && m="$a"; prev="$a"; done' + "\n" +
+            f"    printf 'same' > {cq}/handoffs/same.md" + "\n" +
+            f"    {{git}} -C {cq} add -- handoffs/same.md" + "\n" +
+            f'    {{git}} -C {cq} commit -q -m "$m" -- handoffs/same.md' + "\n")
+    env = _git_shim(box, COMMIT_CALL, before=same)
+    result = box.helper("set-row-state", LANE, STATE, **env)
+    assert (box.root / "fired").exists(), "a commit with this write's message landed with it"
+    assert result.returncode == 6, result.stderr
+    err = result.stderr
+    assert box.subject(c) == box.subject(c, "HEAD~1"), "two commits, one message"
+    assert "cannot be told from another made in this checkout" in err, err
+    assert box.pushes() == 0, "nothing is pushed on a guess"
+    assert len(box.unpublished(c)) == 2, "both kept on HEAD"
+    _settled(box, c)
+
+
 # NIT 3 of rv1b-c2's re-check, re-aimed by SHOULD C: the drop's two refusals
 # that had no case. `commit`'s carry form dropped with `reset -q --mixed` at
 # d9ff4e6; since SHOULD C it takes the same compare-and-swap, then the index
