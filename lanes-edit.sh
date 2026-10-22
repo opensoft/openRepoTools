@@ -19612,13 +19612,18 @@ EOF
     # push then lost a race, the replay's `reset --keep` dropped that commit
     # and the file with it, and the re-run found nothing to write into (8). So
     # it is a pending change like any other, and whoever made it adds and
-    # commits it as its own write.
+    # commits it as its own write. WHETHER IT IS TRACKED IS ASKED WHATEVER S3
+    # ANSWERED (rv2a-c2's re-review of slice 2a, NIT 1; A45): where S3 refused
+    # for a reason of its own, `--prepend` and `--whole` still write it (step
+    # 6), and the commit that note prints needs the `git add` first.
     whf_untracked=0
+    if [ "$whf_other" = 0 ] && [ "$NO_GIT" != 1 ] && { [ -e "$whf_phys" ] || [ -L "$whf_phys" ]; } &&
+       ! git --literal-pathspecs -C "$whf_c" -c "$CP_EXACT" ls-files --error-unmatch -- "$whf_rel" >/dev/null 2>&1; then
+      whf_untracked=1
+    fi
     if [ "$whf_s3" = 0 ] && [ "$whf_other" = 0 ]; then
       ( cs_own_pending write-handoff "$lane" "$whf_rel" ) || whf_s3=$?
-      if [ "$whf_s3" = 0 ] && [ "$NO_GIT" != 1 ] && { [ -e "$whf_phys" ] || [ -L "$whf_phys" ]; } &&
-         ! git --literal-pathspecs -C "$whf_c" -c "$CP_EXACT" ls-files --error-unmatch -- "$whf_rel" >/dev/null 2>&1; then
-        whf_untracked=1
+      if [ "$whf_s3" = 0 ] && [ "$whf_untracked" = 1 ]; then
         ( cs_refuse write-handoff "$whf_rel, this write's handoff, is not tracked yet: git has never had it (a new lane's first handoff, or a peer's), so this write's commit would add it under its own subject, and a replay after a lost race would drop that commit and the file with it (Amendment 23 S3 step 4)" \
             "read it: git -C $LANES_REPO status --short -- $whf_rel" \
             "whoever made it adds and commits it by pathspec, as its own write: git -C $LANES_REPO add -- $whf_rel && git -C $LANES_REPO commit -m \"<lane>(<what>)\" -- $whf_rel, then LANES_LANE=<lane> $SELF commit \"<what it is>\" (the publish act)" \

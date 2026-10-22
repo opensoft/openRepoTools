@@ -989,6 +989,43 @@ def test_an_untracked_handoff_is_refused_and_never_dropped(box: Box, mode: str):
     _released(box, c)
 
 
+@pytest.mark.parametrize("handoff", ["untracked", "tracked"])
+def test_the_recovery_under_another_S3_refusal_names_git_add_for_an_untracked_handoff(box: Box, handoff: str):
+    """rv2a-c2's NIT 1 (its probe N1): S3 refuses for a foreign staged entry,
+    and the row names a handoff git does not track. `--prepend` writes it,
+    uncommitted (2), and the recovery's commit by pathspec needs the `git
+    add` first: git refuses a pathspec it does not know. The note left the
+    `add` out wherever S3 had refused for a reason of its own. It names it
+    now (A45), and the two commands, run as printed, commit the handoff
+    alone, the foreign entry still staged. A tracked handoff's note names no
+    `add`, as before."""
+    c = box.seam()
+    rel = NEW_REL if handoff == "untracked" else HANDOFF_REL
+    if handoff == "untracked":
+        box.cell_is(NEW_REL)
+        (c / NEW_REL).write_text(HANDOFF, encoding="utf-8")
+    _staged_foreign(box, c)
+    result = box.write_handoff("--prepend", str(_block(box)), "--subject", "handoff: PAUSED")
+    err = result.stderr
+    assert result.returncode == 2, err
+    assert "staged entries this write did not make: handoffs/README.md" in err
+    assert "the handoff is WRITTEN and NOT committed" in err
+    add = f"git -C {c} add -- {rel}"
+    commit = f'git -C {c} commit -m "handoff: PAUSED" -m "Lane: {LANE}" -- {rel}'
+    if handoff == "tracked":
+        assert f"publish it: {commit}, then" in err, err
+        assert f"add -- {rel}" not in err
+        _released(box, c)
+        return
+    assert f"publish it: {add} && {commit}, then" in err, err
+    for printed in (add, commit):
+        box.git(*shlex.split(printed)[1:])
+    assert box.git("-C", str(c), "show", "--name-only", "--format=", "HEAD").split() == [NEW_REL]
+    assert (c / NEW_REL).read_text(encoding="utf-8") == prepended(HANDOFF)
+    assert box.git("-C", str(c), "diff", "--cached", "--name-only").split() == ["handoffs/README.md"]
+    _released(box, c)
+
+
 @pytest.mark.parametrize("how", ["target", "cell"])
 def test_a_target_outside_handoffs_is_refused_and_nothing_written(box: Box, how: str):
     """SHOULD 1: this verb replaces a file and pushes it, so in the checkout
