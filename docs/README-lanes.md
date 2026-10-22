@@ -201,7 +201,12 @@ creating a second one; two rows differing only by case are a refusal naming both
    once in origin's version (a repeated or blank line is no anchor, so such
    an edit is refused, kept and named), and anything that no longer applies is
    kept in a file under the checkout's `.git/lanes-edit/` and named. The old
-   `LANES(pre-existing@…)` capture and `--sweep` are withdrawn (2);
+   `LANES(pre-existing@…)` capture and `--sweep` are withdrawn (2). For
+   `claim` and `add-row`, whose own checks ran before the lock, if S3's fetch
+   finds origin moved since those checks read it, nothing is written and the
+   verb runs again from the top with the lock held (within S4's six attempts;
+   2 at the sixth). The re-run makes no network read: Rule 1's three reads
+   made at attempt 1 are printed and cited as they were;
 3. re-reads the file, edits **exactly one line** in place, and refuses if
    `git diff --numstat` says more than one line moved;
 4. commits as `LANES(<lane>@<workstation>): <what>` — workstation from
@@ -882,7 +887,11 @@ workstation. So:
    stops and reports, it does not author a successor. Nothing is written.
 3. Run Rule 1's three reads and print them; warn if this is a crossing.
 4. Append the `CLAIMED` line, commit, push (Amendment 23 S3–S4: fetched and
-   fast-forwarded first, no pull). A push refused because origin moved drops
+   fast-forwarded first, no pull). If S3's fetch finds origin moved since
+   steps 1–3 read it, nothing is written and the claim runs again from the
+   top with the lock held (within the six attempts; 2 at the sixth), and its
+   rescan comes first, as below; the re-run makes no network read, and prints
+   and cites the three reads attempt 1 made. A push refused because origin moved drops
    the `CLAIMED` commit and runs the claim again on origin's new tip, and the
    re-run rescans first: if another lane's `CLAIMED` or `TAKEOVER` is there,
    **theirs landed first** — it appends `CLAIM-LOST → lane:<winner>`, pushes
