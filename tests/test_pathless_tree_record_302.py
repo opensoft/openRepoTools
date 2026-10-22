@@ -36,6 +36,15 @@ another schema alike:
   * an EMPTY file, a record cut to nothing, which reads as `unknown schema
     <none>` with no path.
 
+and at two shapes that tell the two arms' ids apart (finding 523): a record of
+another schema is named in the line by the id it CLAIMS (`tree:`), and a record
+of this schema that is not whole by its FILE NAME, because the helper does not
+trust the id such a record claims:
+
+  * a schema 2 record with no `path:` that claims a tree id which is itself
+    absolute, so an ask made after the id stands in for the path passes it;
+  * a schema 1 record with no `path:` that claims another tree's id.
+
 For each: after a second sync the tree's row is exactly as the first left it, no
 row keyed by the record's id (or by its relative path) appears, and the sync says
 why in part F's words - `lane repoB-1: its rows are kept as they are - its
@@ -53,8 +62,9 @@ another schema but names an ABSOLUTE path keeps its key, and its row is rewritte
 in place as it was (the issue's line, and a ruling to take to lane 3); and part
 F's unreadable record keeps F's words.
 
-THE WORDS OF THE NEW CLAUSE ARE THE DESIGN'S, in `_no_absolute_path` below and
-nowhere else, so a ruling that rewords them changes one function.
+THE WORDS OF THE NEW CLAUSE ARE LANE 3'S (R1, finding 522 of the review of the
+design), in `_no_absolute_path` below and nowhere else, so a ruling that rewords
+them changes one function.
 
 The estate is #291's (`test_unsearchable_control_root_291`): `repoB-1` RESUMED
 with a `dir` of its own, one whole tree record under the control root that `dir`
@@ -113,6 +123,13 @@ def _whole_record(**changes: str | None) -> str:
     return "".join(f"{key}: {value}\n" for key, value in fields.items() if value is not None)
 
 
+#: A tree id that is itself an absolute path, for a record to claim in `tree:`.
+#: `lane_trees_list` keeps the id a record of another schema claims, so that id
+#: is what the listing's row carries where the path would be and what the new
+#: clause names the record by - not the record's file name.
+CLAIMED = f"/nowhere/{LANE}/claimed"
+
+
 class Shape(NamedTuple):
     """One record shape, and what the helper makes of it at `3e97ae5`."""
     text: str          # the record, as the shape has it
@@ -120,11 +137,14 @@ class Shape(NamedTuple):
     branch: str        # the row's branch
     trees_path: str    # `lane-trees`' second field for it
     trees_schema: str  # `lane-trees`' last field for it
+    named: str = SIDECAR_ID   # the id the new clause names the record by
 
 
-#: The four shapes of the issue first, then the two its rule reaches. Every
-#: value here was read off `lanes-edit.sh worktrees --all` and `lane-trees` at
-#: `3e97ae5`, in a sandbox estate, before this was written.
+#: The four shapes of the issue first, then the two its rule reaches, then the two
+#: that tell the arms' ids apart (finding 523). The values of the first six were
+#: read off `lanes-edit.sh worktrees --all` and `lane-trees` at `3e97ae5`, in a
+#: sandbox estate, before this was written; those of the last two are what the
+#: helper gives at the fix's head, and the asserts below are what check them.
 SHAPES = {
     "no-path-line": Shape(_whole_record(path=None), SIDECAR_ID, "malformed sidecar", "",
                           "<malformed>"),
@@ -137,6 +157,17 @@ SHAPES = {
     "schema-2-relative-path": Shape(_whole_record(schema="2", path=RELATIVE), RELATIVE,
                                     "unknown schema 2", RELATIVE, "2"),
     "empty-file": Shape("", SIDECAR_ID, "unknown schema <none>", "", "<none>"),
+    # A record of another schema is named by the id it CLAIMS, and where that id is
+    # absolute it must not pass for a path the record named: the ask is made on the
+    # record's own `path:`, before the id stands in for it.
+    "schema-2-no-path-claims-an-absolute-id": Shape(
+        _whole_record(schema="2", path=None, tree=CLAIMED), CLAIMED, "unknown schema 2", "",
+        "2", named=CLAIMED),
+    # A record of this schema that is not whole is named by its FILE NAME, whatever
+    # `tree:` it claims: the helper does not trust the id such a record gives.
+    "no-path-line-claims-another-id": Shape(
+        _whole_record(path=None, tree=f"c9-claimed-{LANE}"), SIDECAR_ID, "malformed sidecar",
+        "", "<malformed>"),
 }
 
 
@@ -148,10 +179,14 @@ def _unreadable(root: Path, ids: str) -> str:
 
 def _no_absolute_path(root: Path, ids: str) -> str:
     """#302's clause for a record that WAS read and names no absolute path -
-    none, an empty one, or one that is relative. The design's wording, and the
-    one place it is written in this file."""
-    return (f"these records under {root}/trees were read and name no absolute path, so "
-            f"the tree each stands for is not known: {ids}")
+    none, an empty one, or one that is relative. Lane 3's wording (the review
+    of the design, finding 522 and ruling R1), and the one place it is written
+    in this file. It does not say that the record was read: the indexer's own
+    words around it (`its inventory could not be read (...)`, `unreadable
+    inventory (...)`, and `lanes`' footer) say the opposite, and `name no
+    absolute path` is what tells it from part F's clause."""
+    return (f"these records under {root}/trees name no absolute path, so "
+            f"which tree each records is not known: {ids}")
 
 
 def _a_lane_with_a_whole_record(inv: Inventory, env: dict) -> tuple[Path, Path, dict]:
@@ -180,14 +215,15 @@ def test_a_tree_record_that_names_no_absolute_path_holds_its_lanes_rows(inv, sha
     read and names no absolute path is listed as a row keyed by its id (or by its
     relative text), which a sync took for a tree the lane never had: it wrote
     that row and REMOVED the tree's own. The listing now says the lane is
-    `UNREAD` beside the record's row - in words that say the record WAS read,
-    and why that is not enough - so the sync holds the lane's rows, removes
+    `UNREAD` beside the record's row - in words that say what the record lacks
+    (it names no absolute path, so which tree it records is not known) and not
+    that it could not be read - so the sync holds the lane's rows, removes
     nothing, writes only the lane's marker, and says why. The record's row
     stays in the listing, for a person to read. Put right, the next sync takes
     the marker away and nothing else."""
     s = SHAPES[shape]
     root, record, before = _a_lane_with_a_whole_record(inv, ENV)
-    said = _no_absolute_path(root, SIDECAR_ID)
+    said = _no_absolute_path(root, s.named)
     record.write_text(s.text, encoding="utf-8")
 
     res = inv.sync(env=ENV)
@@ -278,6 +314,49 @@ def test_a_reconcile_beside_a_record_that_names_no_absolute_path_keeps_the_trees
     assert re.search(r"worktrees\s+\d+ kept\s+1 upserted\s+0 removed", res.stdout), res.stdout
     assert _held(said) in res.stdout, res.stdout
     assert set(before) <= set(after) and set(after) - set(before) == {MARKER}, sorted(after)
+
+
+def test_a_record_that_names_no_absolute_path_holds_every_row_of_its_lane_until_put_right(inv):
+    """THE COST IS THE LANE'S, AND THE README SAYS SO (#302, finding 524). One
+    record that names no absolute path holds its lane WHOLE, as one that could
+    not be read does: the row of another of the lane's trees stays as the last
+    sync that read the lane left it - a change in that tree is not written -
+    and a tree filed meanwhile does not reach the index either. Put right, the
+    next sync writes both, and takes the lane's marker away."""
+    root, record, _ = _a_lane_with_a_whole_record(inv, ENV)
+    other, newer = f"/nowhere/{LANE}/w2", f"/nowhere/{LANE}/w3"
+    (root / "trees" / f"{SECOND}.yaml").write_text(
+        _whole_record(tree=SECOND, path=other), encoding="utf-8")
+    first = inv.sync(env=ENV)
+    assert first.returncode == 0 and "kept as they are" not in first.stdout, first.stdout
+    synced = inv.rows()
+    assert {KEY, f"{LANE}:{other}"} <= set(synced), sorted(synced)
+
+    record.write_text(SHAPES["no-path-line"].text, encoding="utf-8")   # one tree loses its path
+    (root / "trees" / f"{SECOND}.yaml").write_text(                    # another changes
+        _whole_record(tree=SECOND, path=other, dirty="2"), encoding="utf-8")
+    (root / "trees" / f"{THIRD}.yaml").write_text(                     # a third is filed
+        _whole_record(tree=THIRD, path=newer), encoding="utf-8")
+
+    held = inv.sync(env=ENV)
+    assert held.returncode == 0, (held.stdout, held.stderr)
+    now = inv.rows()
+    assert {k: now.get(k) for k in synced} == synced, (
+        "a row of the held lane moved", held.stdout, sorted(now))
+    assert now[f"{LANE}:{other}"]["dirty_count"] == 0, now[f"{LANE}:{other}"]
+    assert f"{LANE}:{newer}" not in now, ("a tree filed meanwhile reached the index", sorted(now))
+    assert " 0 removed" in held.stdout, held.stdout
+    assert _held(_no_absolute_path(root, SIDECAR_ID)) in held.stdout, held.stdout
+    assert set(now) - set(synced) == {MARKER}, sorted(now)
+
+    record.write_text(_whole_record(), encoding="utf-8")
+    healed = inv.sync(env=ENV)
+    assert healed.returncode == 0, (healed.stdout, healed.stderr)
+    assert "2 upserted, 1 removed" in healed.stdout, healed.stdout   # the change, the new tree, the marker
+    assert "kept as they are" not in healed.stdout, healed.stdout
+    final = inv.rows()
+    assert MARKER not in final and final[KEY] == synced[KEY], sorted(final)
+    assert final[f"{LANE}:{other}"]["dirty_count"] == 2 and f"{LANE}:{newer}" in final, sorted(final)
 
 
 @NOT_AS_ROOT

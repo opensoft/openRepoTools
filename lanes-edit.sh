@@ -14912,7 +14912,8 @@ LRC_PAIRED
 # that is not whole `malformed sidecar` (#115). Each keeps the path the record
 # names where it names one, else the record's id (its file name) stands
 # there. A kept path is the record's own word, so it may be relative or
-# not a tree at all; only a whole record's path is known absolute. A count that is
+# not a tree at all; only a whole record's path is known absolute, and a record
+# that names none is the lane's `UNREAD` line, below (#302). A count that is
 # `unknown` is empty — an INTEGER column has no word for it.
 #
 # A LANE THE LISTING NAMED AND COULD NOT READ IS ITS OWN `UNREAD` LINE, whose
@@ -14920,6 +14921,21 @@ LRC_PAIRED
 # listed, one whose `trees` could not even be looked for - its control root, or
 # a directory above it, cannot be searched - and one with a record that could
 # not be read, beside that record's own row (#291).
+#
+# SO IS A LANE WITH A RECORD THAT WAS READ AND NAMES NO ABSOLUTE PATH (#302): one
+# of this schema that is not whole, or of another schema, with no `path:` line,
+# an empty one, or one that is relative. The row such a record makes is keyed
+# by its id (or by its relative text), which is not the tree's key, so a sync
+# that took the row for the whole truth REMOVED the row the record last gave
+# under the tree's real path - the loss #291 closed for a record that could not
+# be read. The row stays in the listing for a person to read, beside the lane's
+# `UNREAD` line. A record that is not whole or of another schema but names an
+# ABSOLUTE path keeps its own key, and its row is rewritten in place: it holds
+# nothing. THE COST IS THE LANE'S: one such record holds every row of its lane,
+# the tree's own and any a later sync would write, until the record is put
+# right. A lane is ONE `UNREAD` line however many records it has, because the
+# indexer keeps one reason per lane: a lane with a record of each kind says
+# both in it.
 #
 # AND THE LISTING ITSELF IS SAID TO BE WHOLE OR NOT (opensoft/openRepoTools#173
 # item c1, Copilot's fourth review of #171). Its lanes are the names three
@@ -15119,7 +15135,7 @@ worktree_rows() {   # [<canonical lane>]
       fi
     fi
     [ "$wr_owner" = legacy ] || wr_life=INDETERMINATE
-    wr_unrec=""
+    wr_unrec=""; wr_nopath=""
     while IFS="$US" read -r t_id t_p t_b t_h t_u t_d t_n t_w t_ob t_co t_g t_o t_s; do
       [ -n "${t_id:-}" ] || continue
       t_base=""; t_last=""
@@ -15128,10 +15144,21 @@ worktree_rows() {   # [<canonical lane>]
         t_d=""; t_n=""; t_g=""; t_ob=""
         wr_unrec="${wr_unrec:+$wr_unrec }$t_id"
       elif [ "${t_s:-}" = "<malformed>" ]; then
-        t_branch="malformed sidecar"; [ -n "${t_p:-}" ] || t_p="$t_id"
+        t_branch="malformed sidecar"
+        # THE RECORD'S OWN PATH IS ASKED BEFORE THE ID STANDS IN FOR IT (#302).
+        case "${t_p:-}" in /*) : ;; *) wr_nopath="${wr_nopath:+$wr_nopath }$t_id" ;; esac
+        [ -n "${t_p:-}" ] || t_p="$t_id"
         t_d=""; t_n=""; t_g=""; t_ob=""
       elif [ "${t_s:-}" != "$LANE_STATE_SCHEMA" ]; then
-        t_branch="unknown schema ${t_s:-<none>}"; [ -n "${t_p:-}" ] || t_p="$t_id"
+        t_branch="unknown schema ${t_s:-<none>}"
+        # The same, and asked BEFORE the fallback for a reason that is this
+        # arm's: `lane_trees_list` gives a record of another schema the id it
+        # CLAIMS where it claims one, so a claim that is absolute (say
+        # `tree: /x/y`) would pass an ask made after the fallback as a path
+        # the record named. What the line then names is that claim, not the
+        # record's file name.
+        case "${t_p:-}" in /*) : ;; *) wr_nopath="${wr_nopath:+$wr_nopath }$t_id" ;; esac
+        [ -n "${t_p:-}" ] || t_p="$t_id"
         t_d=""; t_n=""; t_g=""; t_ob=""
       else
         if [ "$t_b" = detached ]; then t_branch="detached $t_h"; else t_branch="$t_b"; fi
@@ -15170,7 +15197,16 @@ WR_TREES
     # gave - its path, branch and counts - as a tree the lane no longer had.
     # The row stays, for a person to read, and the lane is `UNREAD` beside it:
     # the indexer holds the lane's rows until the record can be read again.
-    [ -z "$wr_unrec" ] || wr_out="${wr_out}UNREAD$US$WS$US$wr_l${US}these records under $wr_root/trees could not be read: $wr_unrec
+    # AND SO IS A RECORD THAT WAS READ AND NAMES NO ABSOLUTE PATH (#302): its
+    # row is keyed by its id, or by its relative text, and is no more the
+    # tree's own. `wr_nopath` is the ids of those, as the two arms above asked
+    # them. THE LANE'S ONE LINE SAYS BOTH, because the indexer keeps one
+    # reason per lane (`unread[lane] = why`) and a second line would replace
+    # the first: the clause for the unreadable records, `; `, then this one.
+    wr_why=""
+    [ -z "$wr_unrec" ] || wr_why="these records under $wr_root/trees could not be read: $wr_unrec"
+    [ -z "$wr_nopath" ] || wr_why="${wr_why:+$wr_why; }these records under $wr_root/trees name no absolute path, so which tree each records is not known: $wr_nopath"
+    [ -z "$wr_why" ] || wr_out="${wr_out}UNREAD$US$WS$US$wr_l$US$wr_why
 "
   done <<WR_LANES
 $wr_lanes

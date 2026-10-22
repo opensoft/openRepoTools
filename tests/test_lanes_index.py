@@ -2400,40 +2400,46 @@ def test_a_tree_with_no_path_is_a_tree_and_not_an_unread_marker(inv):
     branch `malformed sidecar`, keeping the path it records and naming it by its
     file where it records none. So the source no longer gives a tree an empty
     path, and this test's branches are never read. The row is still a tree and
-    never the marker: counted, held over, and exported as its `TREE` line. Two
-    rows with one path now come from a record that is not whole but keeps a
-    path: `c2-samepath-y` lacks only its `upstream:` and records the path of
-    this lane's whole tree."""
+    never the marker: counted, held over, and exported as its `TREE` line.
+
+    AND SINCE #302 A RECORD THAT NAMES NO ABSOLUTE PATH HOLDS ITS LANE
+    (tests/test_pathless_tree_record_302.py): its row is keyed by its id, which
+    is not the tree's key, so the helper prints the lane `UNREAD` beside it, and
+    a lane held over such a record is no lane to prove a row's key in. This test
+    files none any more (it filed `c1-nopath-x`, whose lane read as not read
+    from the first sync). What is left of it is a record that is not whole but
+    KEEPS a path: `c2-samepath-y` lacks only its `upstream:` and records the
+    path of this lane's whole tree, so it keeps its key and holds nothing. It is
+    two rows with one path, a tree each - counted, held over, and exported as
+    `TREE` lines - and never the marker. The marker's key rule is pinned for a
+    row with no path by the forged line in the test two below."""
     trees = inv.lsr / "repoM-1" / "trees"
-    for tid, extra in (("c1-nopath-x", []),
-                       ("c2-samepath-y", ["path: /nowhere/repoM-1/w"])):
-        (trees / f"{tid}.yaml").write_text("\n".join([
-            "schema: 1", "lane: repoM-1", f"tree: {tid}", *extra, "checkout: unknown",
-            "branch: feat/" + tid[-1], "head: " + "3" * 40,
-            *([] if extra else ["upstream: none"]), "dirty: 0",
-            "unpushed: 0", "writer: none", "generation: 0", "operation: none",
-            "observed: 2026-10-04T00:00:00Z", ""]))
+    tid = "c2-samepath-y"
+    (trees / f"{tid}.yaml").write_text("\n".join([
+        "schema: 1", "lane: repoM-1", f"tree: {tid}", "path: /nowhere/repoM-1/w",
+        "checkout: unknown", "branch: feat/" + tid[-1], "head: " + "3" * 40, "dirty: 0",
+        "unpushed: 0", "writer: none", "generation: 0", "operation: none",
+        "observed: 2026-10-04T00:00:00Z", ""]))
     res = inv.sync()
     assert res.returncode == 0, res.stderr
     src, idx = _wt(inv, "repoM-1"), _wt(inv, "repoM-1", "--index")
     assert "read: index (sqlite)" in idx.stderr, idx.stderr
-    assert "c1-nopath-x" in src.stdout, src.stdout
-    assert src.stdout.count("malformed sidecar") == 2, src.stdout
+    assert src.stdout.count("malformed sidecar") == 1, src.stdout
     assert src.stdout.count("/nowhere/repoM-1/w") == 2, src.stdout
+    assert "NOT READ" not in src.stdout, src.stdout
     assert (idx.returncode, idx.stdout) == (src.returncode, src.stdout), idx.stdout
     assert "NOT READ" not in idx.stdout
     st = inv.e.index("status")
-    assert "rows:        7 worktree(s)\n" in st.stdout, st.stdout
-    # HELD OVER, ALL THREE STAY, the two with no path among them.
+    assert "rows:        6 worktree(s)\n" in st.stdout, st.stdout
+    # HELD OVER, BOTH STAY, the two with one path.
     trees.chmod(0)
     try:
         if os.access(trees, os.R_OK):
             pytest.skip("this account reads a mode-000 directory (root): nothing to prove here")
         assert inv.sync().returncode == 0
         idx = _wt(inv, "repoM-1", "--index")
-        assert "c1-nopath-x" in idx.stdout, idx.stdout
         assert idx.stdout.count("/nowhere/repoM-1/w") == 2, idx.stdout
-        assert "the 3 row(s) listed for it are kept from the last sync" in idx.stdout, idx.stdout
+        assert "the 2 row(s) listed for it are kept from the last sync" in idx.stdout, idx.stdout
     finally:
         trees.chmod(0o755)
     healed = inv.sync()
