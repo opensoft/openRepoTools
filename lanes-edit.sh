@@ -1157,17 +1157,21 @@ LANES_ROUTED="${LANES__CHECKOUT_LANE:-}"   # the lane, in the re-run process onl
 # process this one starts ever sees them; `claim`'s takeover decision crosses
 # the `exec` the same way, and so do Rule 1's reads and the stale claim's
 # URL that attempt 1 made before the lock (lane openRepoTools-3's review of
-# #307, 284), so a re-run makes no GitHub read with the lock held. Not `LANES__PID`: an unrouted write has no routing
+# #307, 284), so a re-run makes no GitHub read with the lock held. So do the
+# names of the hand-edit copies this run has written (`CP_CARRY_COPIES`, lane
+# 3's 393): a lost race replays `commit`'s carry, which writes a second copy,
+# and every one goes once origin has the edit (`cp_pushed`). Not `LANES__PID`: an unrouted write has no routing
 # markers, and exporting one would make a child helper drop its caller's
 # `LANES_REPO`, `LANES_DIR` and `LANES_FILE` (the rule above).
-CP_ATTEMPT=1; CP_REPLAYING=0; CP_CLAIM_FROM=""; CP_CLAIM_DEAD=""; CP_CLAIM_READS=""; CP_CLAIM_URL=""
+CP_ATTEMPT=1; CP_REPLAYING=0; CP_CLAIM_FROM=""; CP_CLAIM_DEAD=""; CP_CLAIM_READS=""; CP_CLAIM_URL=""; CP_CARRY_COPIES=""
 if [ -n "${LANES__REPLAY_PID:-}" ] && [ "${LANES__REPLAY_PID:-}" = "$$" ]; then
   CP_REPLAYING=1
   case "${LANES__ATTEMPT:-}" in [2-6]) CP_ATTEMPT="$LANES__ATTEMPT" ;; esac
   CP_CLAIM_FROM="${LANES__CLAIM_FROM:-}"; CP_CLAIM_DEAD="${LANES__CLAIM_DEAD:-}"
   CP_CLAIM_READS="${LANES__CLAIM_READS:-}"; CP_CLAIM_URL="${LANES__CLAIM_URL:-}"
+  CP_CARRY_COPIES="${LANES__CARRY_COPIES:-}"
 fi
-unset LANES__REPLAY_PID LANES__ATTEMPT LANES__CLAIM_FROM LANES__CLAIM_DEAD LANES__CLAIM_READS LANES__CLAIM_URL
+unset LANES__REPLAY_PID LANES__ATTEMPT LANES__CLAIM_FROM LANES__CLAIM_DEAD LANES__CLAIM_READS LANES__CLAIM_URL LANES__CARRY_COPIES
 # THE ROUTING IS OPT-IN UNTIL SLICE 1B (the review of opensoft/openRepoTools#282,
 # MUST 2). Before slice 1b a lane checkout was only as fresh as its own last
 # write, and the old push loop rebased only after a rejected push, so a
@@ -2293,6 +2297,7 @@ cs_recheck() {   # <what> <the tip the checks read> <origin's tip after S3's fet
   LANES__REPLAY_PID="$$"; LANES__ATTEMPT=$((CP_ATTEMPT + 1))
   export LANES__REPLAY_PID LANES__ATTEMPT
   [ "${#CP_REPLAY_ENV[@]}" -eq 0 ] || export "${CP_REPLAY_ENV[@]}"
+  [ -z "$CP_CARRY_COPIES" ] || { LANES__CARRY_COPIES="$CP_CARRY_COPIES"; export LANES__CARRY_COPIES; }
   exec "${BASH:-bash}" "$RESOLVED" ${ORIG_ARGV[@]+"${ORIG_ARGV[@]}"}
   die "could not run $RESOLVED again on origin's new tip. Nothing was written; run this write again." 1
 }
@@ -2457,6 +2462,9 @@ CS_EOF
     CS_CARRY_DIFF="$cs_tmp/hand-edit-$(date -u +%Y%m%dT%H%M%SZ)-$$.diff"
     git -C "$cs_c" -c "$CP_EXACT" --no-pager diff --binary HEAD -- "$LANES_PATH" > "$CS_CARRY_DIFF" 2>/dev/null && [ -s "$CS_CARRY_DIFF" ] ||
       cs_refuse "$cs_what" "the hand edit of $LANES_PATH could not be saved to $CS_CARRY_DIFF, and it is never set aside without a copy"
+    # EVERY COPY THIS RUN WRITES IS RECORDED BY NAME (393), and the record
+    # crosses the replay's `exec`: `cp_pushed` removes each once origin has it.
+    CP_CARRY_COPIES="$CP_CARRY_COPIES${CS_CARRY_DIFF##*/}"$'\n'
     # A ROW EDIT IS ANCHORED BY THE LINES IT REPLACES. Every hunk of a row edit
     # removes the row's old line; where each does, the edit may be applied
     # with no context at all, so a neighbour's row changed on origin — the
@@ -2525,7 +2533,7 @@ CS_EOF
         "read what you wrote: cat $CS_CARRY_DIFF" \
         "make the edit again on the register as it now is, then: LANES_LANE=${cs_lane:-<lane>} $SELF commit \"<what you wrote>\""
     fi
-    note "carried the hand edit of $LANES_PATH across the fast-forward (a copy is $CS_CARRY_DIFF)"
+    note "carried the hand edit of $LANES_PATH across the fast-forward (a copy is $CS_CARRY_DIFF until the read-back finds the edit on origin)"
   fi
   cs_flush
   LOG_SYNC_FETCH=yes
@@ -3074,6 +3082,37 @@ cp_why_unconfirmed() {   # <cp_confirm's status>
 cp_pushed() {   # <sha>
   LANES_INDEX_NUDGE=1
   note "pushed origin/$LANES_BRANCH (attempt $CP_ATTEMPT)"
+  cp_drop_carry_copies
+}
+# A CARRIED HAND EDIT'S COPIES GO ONCE ORIGIN HAS IT (lane openRepoTools-3's
+# 393 on #307, the companion of #308's 351). `lane-end`'s sweep holds a
+# checkout on anything in `.git/lanes-edit/` but its five scratch files, since
+# a KEPT hand edit there may be a person's only copy; a copy of one origin
+# already has would hold the checkout for good. `cp_pushed` is reached only
+# where `cp_confirm`'s fresh fetch has found this write's commit, and so the
+# edit, on origin. Each copy THIS RUN recorded is removed by its own name:
+# never by a glob, since pids recur and an older run's kept copy can carry
+# this run's pid; and never only the last, since a lost race replays the
+# carry under the same pid and writes a second copy. One that cannot be
+# removed is named, and the write is still 0: it is on origin.
+cp_drop_carry_copies() {
+  [ -n "$CP_CARRY_COPIES" ] || return 0
+  cdc_gd="$(git -C "$LANES_REPO" rev-parse --absolute-git-dir 2>/dev/null)" || cdc_gd=""
+  while IFS= read -r cdc_f; do
+    case "$cdc_f" in
+      ''|*/*) continue ;;
+      hand-edit-*-"$$".diff) ;;
+      *) continue ;;
+    esac
+    if [ -n "$cdc_gd" ] && rm -f -- "$cdc_gd/lanes-edit/$cdc_f" 2>/dev/null && [ ! -e "$cdc_gd/lanes-edit/$cdc_f" ]; then
+      note "origin has the carried hand edit, so its copy is removed: $cdc_gd/lanes-edit/$cdc_f"
+    else
+      note "origin has the carried hand edit, and its copy $cdc_f in $LANES_REPO's .git/lanes-edit/ could not be removed: remove it by hand (lane-end's sweep holds this checkout while it is there)"
+    fi
+  done <<CDC_EOF
+$CP_CARRY_COPIES
+CDC_EOF
+  CP_CARRY_COPIES=""
 }
 # S4.3 — A PUSH IT CANNOT CONFIRM IS NEVER SUCCESS. The commit stays on HEAD;
 # the next write's S3 finds it by content either way: published, it reads as
@@ -3257,6 +3296,7 @@ cp_replay() {   # <sha> <subject>
   LANES__REPLAY_PID="$$"; LANES__ATTEMPT=$((CP_ATTEMPT + 1))
   export LANES__REPLAY_PID LANES__ATTEMPT
   [ "${#CP_REPLAY_ENV[@]}" -eq 0 ] || export "${CP_REPLAY_ENV[@]}"
+  [ -z "$CP_CARRY_COPIES" ] || { LANES__CARRY_COPIES="$CP_CARRY_COPIES"; export LANES__CARRY_COPIES; }
   exec "${BASH:-bash}" "$RESOLVED" ${ORIG_ARGV[@]+"${ORIG_ARGV[@]}"}
   die "could not run $RESOLVED again to replay this write. Its commit was dropped, so nothing of it is on origin or here; run it again." 1
 }

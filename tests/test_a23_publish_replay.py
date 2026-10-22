@@ -591,10 +591,20 @@ def test_commit_carries_a_hand_edit_across_the_ff(box: Box):
     assert "LIVE · a hand edit" in register
     assert box.head(c) == box.origin_head()
     assert box.git("-C", str(c), "status", "--porcelain").strip() == ""
-    saved = list((c / ".git" / "lanes-edit").glob("hand-edit-*.diff"))
-    assert len(saved) == 1
-    assert "a hand edit" in saved[0].read_text(encoding="utf-8")
+    # 393 of lane openRepoTools-3 (#307): the copy goes once origin has the
+    # edit; left, it held the checkout in lane-end's sweep for good.
+    copies = _copies_named(result.stderr)
+    assert len(copies) == 1, result.stderr
+    assert f"its copy is removed: {copies[0]}" in result.stderr
+    assert not Path(copies[0]).exists(), "origin has the edit, so its copy is gone"
+    assert list((c / ".git" / "lanes-edit").glob("hand-edit-*.diff")) == []
     _settled(box, c)
+
+
+def _copies_named(stderr: str) -> list:
+    """The hand-edit copies a `commit` saved, as its carry notes name them
+    (the note's words after the path are not what is tested)."""
+    return re.findall(r"\(a copy is (\S+\.diff)[ )]", stderr)
 
 
 def test_commit_keeps_the_diff_when_it_no_longer_applies(box: Box):
@@ -735,6 +745,63 @@ def test_commit_replay_keeps_the_hand_edit(box: Box):
     assert "LIVE · a hand edit" in register
     assert box.head(c) == box.origin_head()
     assert box.git("-C", str(c), "status", "--porcelain").strip() == ""
+    _settled(box, c)
+
+
+def test_a_lost_races_two_copies_of_the_hand_edit_are_both_removed_once_origin_has_it(box: Box):
+    """393 of lane openRepoTools-3 (#307): a `commit` that loses one push race
+    replays its carry under the same pid, and the replay saves the hand edit
+    again under a new name, so one run leaves two copies while
+    `CS_CARRY_DIFF` names only the last. Every copy the run wrote is
+    recorded, the record crosses the replay's `exec`, and both go once the
+    read-back finds the edit on origin."""
+    c = box.seam()
+    box.peer_prepares(REGISTER, _row(NEIGHBOUR, uuid=UUID2),
+                      _row(NEIGHBOUR, uuid=UUID2, state="LIVE · landed mid-push"),
+                      "a peer's row lands first")
+    box.race(prepared=True)
+    box.hand_edit(c)
+    result = box.helper("commit", "the hand edit", LANES_LANE=LANE)
+    assert result.returncode == 0, result.stderr
+    assert "push refused (attempt 1 of 6)" in result.stderr, "the race was lost once"
+    copies = _copies_named(result.stderr)
+    assert len(copies) == 2, result.stderr
+    assert len(set(copies)) == 2, "attempt 1 and its replay each saved a copy of its own"
+    for copy in copies:
+        assert f"its copy is removed: {copy}" in result.stderr, copy
+        assert not Path(copy).exists(), copy
+    assert list((c / ".git" / "lanes-edit").glob("hand-edit-*.diff")) == []
+    assert "LIVE · a hand edit" in box.origin_register()
+    _settled(box, c)
+
+
+def test_a_carry_removes_only_the_copies_it_wrote_never_another_runs_under_the_same_pid(box: Box):
+    """393's trap: pids recur, so an older run's KEPT copy (an edit that did
+    not carry, a person's only copy of it) can bear this run's pid. A glob
+    on the pid, or on every copy, would delete it with this run's. Two kept
+    copies are there when this run carries: one under another pid, and one
+    written under this run's own pid by a `git` first on PATH at the carry's
+    own `diff` (its parent is this run). Only this run's copy goes."""
+    c = box.seam()
+    kept = c / ".git" / "lanes-edit"
+    kept.mkdir(parents=True, exist_ok=True)
+    (kept / "hand-edit-20261001T000000Z-1.diff").write_text("a kept hand edit of another run\n", encoding="utf-8")
+    plant = (f"    printf 'a kept hand edit of an older run under this pid' > "
+             f"{shlex.quote(str(kept))}/hand-edit-20261001T000000Z-$PPID.diff" + "\n")
+    env = _git_shim(box, '*" --no-pager diff --binary HEAD "*', before=plant)
+    box.hand_edit(c)
+    result = box.helper("commit", "the hand edit", LANES_LANE=LANE, **env)
+    assert (box.root / "fired").exists(), "the older run's copy was planted under this run's pid"
+    assert result.returncode == 0, result.stderr
+    copies = _copies_named(result.stderr)
+    assert len(copies) == 1, result.stderr
+    pid = re.fullmatch(r".*/hand-edit-\d{8}T\d{6}Z-(\d+)\.diff", copies[0])
+    assert pid, copies[0]
+    assert not Path(copies[0]).exists(), "this run's copy is gone"
+    assert sorted(p.name for p in kept.glob("hand-edit-*.diff")) == \
+        sorted(["hand-edit-20261001T000000Z-1.diff", f"hand-edit-20261001T000000Z-{pid.group(1)}.diff"]), \
+        "both older copies stay, the one under this run's pid included"
+    assert "LIVE · a hand edit" in box.origin_register()
     _settled(box, c)
 
 
@@ -1907,6 +1974,9 @@ def test_a_carry_forms_drop_whose_tree_step_is_refused_keeps_the_commit_exit_6(b
     assert "the replay puts back" in box.git("-C", str(c), "reflog", "refs/heads/main")
     assert "push refused (attempt 1 of 6)" not in err, "nothing is replayed"
     assert "LIVE · a hand edit" not in box.origin_register(), "nothing of this write's reached origin"
+    copies = _copies_named(err)
+    assert len(copies) == 1, err
+    assert Path(copies[0]).exists(), "origin does not have the edit, so its copy stays (393)"
     assert len(box.unpublished(c)) == 1, "the one commit is kept, for the publish act"
     _settled(box, c)
 
