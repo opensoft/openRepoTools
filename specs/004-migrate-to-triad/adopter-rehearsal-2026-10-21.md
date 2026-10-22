@@ -22,9 +22,12 @@ commits and 200 files, and its `upstream/openRepoShape` gitlink and
 e4; include P7, P8, P10" (2026-10-21T10:31:16Z); "yes to the link-only 70 fallback"
 (2026-10-21T13:43:26Z). The start, which lane 1's freeze notice quotes: "continue;
 start D when the freeze is ready" (2026-10-21T13:55:01Z). All four turns carry
-`promptSource: suggestion_accepted` with `turnOrigin: human` in that transcript and stand
-by the house test (lane 2, #186 6327441086); Brett is asked to confirm them in a word at
-Gate C.
+`promptSource: suggestion_accepted` with `turnOrigin: human` in that transcript, and they
+stand by the house test (lane 2, #186 6327441086): each answers a question lane 1 asked
+just before it, none repeats an earlier text, no other user turn follows within 3 minutes,
+and no py-bench lane can type into lane 1's pane. The e2 and D7 turn came 9 s after lane
+5's submitted-suggestion incident (2026-10-20T22:56:02Z); Brett can confirm that turn in a
+word at Gate C.
 **Private receipt:** `rehearsal-d`, with its observation directory
 `rehearsal-d.observe`, under `work-20261021`.
 
@@ -34,8 +37,10 @@ directory, `<P>` the prep directory `rehearsal-prep` (`PLAN.md` and `scripts/`),
 names its file relative to `<S>`, `<S>.observe` or `<P>`.
 
 **The freeze (e2).** Lane 1's notice, #186 comment 6320876769, was created
-2026-10-21T16:21:27Z, before the first observation (16:22:00Z on the bench's clock, which
-reads about 10 s ahead of GitHub's: lane 2). Its heading says
+2026-10-21T16:21:27Z by GitHub's stamp, before the first observation (16:22:00Z on the
+bench's clock). The bench's clock runs ahead of GitHub's: the call that posted the notice,
+`XdFtRAfU` in the extract under The STOP gate, ran from 16:21:34Z to 16:21:39Z on it, so
+the order holds on either clock. Its heading says
 "16:3xZ", which was lane 1's slip (the post was drafted before it went up): GitHub's
 time stands, and the comment is left unedited, because an edit re-fires other lanes'
 `since=` watchers. It says "Main stays at `33ce26d` until the cutover", and its
@@ -70,9 +75,9 @@ names each review):
 | `env-d.sh` | `e5c12db0…` | Lane 3, 6315175076 (rounds 5, 5b) and 6320744628 (5c): read unchanged since round 4, READY |
 | `run_rehearsal_d.sh` | `4ec81498…` | Lane 3, 6320744628: READY, no MUST, no SHOULD (NITs 131–135 and 141–144 left for after D) |
 | `observe_d.sh` | `a157c257…` | Lane 3, 6315175076 and 6320744628: read unchanged since round 4, READY. Not copied: it runs from `<P>/scripts` |
-| `resolve_plan_d.py` | `89bb3490…` | Lane 2, #186 6290828597: READY at these bytes (6289380127, the first round, read earlier bytes and had one MUST; the sandbox re-run under fix round 4's caller is 6297569490) |
+| `resolve_plan_d.py` | `89bb3490…` | Lane 2, #186 6290828597: READY at these bytes. The first round, 6289380127, read earlier bytes: READY after fixes, no MUST, three SHOULDs; the sandbox re-run under fix round 4's caller is 6297569490 |
 | `publish_plan_d.py` | `2d40606f…` | The same |
-| `independent_accounting_d.py` | `e0160b89…` | The same |
+| `independent_accounting_d.py` | `e0160b89…` | The same; the first round's one MUST, on earlier bytes, was in this file |
 | `decisions-new-paths.json` | `5a5a50f1…` | The same (lane 1's D2 of 2026-10-20, amended at 11:1xZ) |
 | `suites_d.sh` | `c452ab6a…` | Lane 3, 6319760887 (post-run rounds 4b and 4c, 2026-10-21T15:29Z): READY, no MUST, no SHOULD (NITs 121–123 left for after D) |
 | `install_d.sh` | `7bf6781c…` | The same |
@@ -208,9 +213,9 @@ plan has 34.
   configuration (7 `credential`, 2 `url`, 2 `user`, 1 `safe`; 10 distinct names), no
   value and no redaction mark. The names stay out of this record. Two rows hold an at
   sign: the 2 `url` rows, in scp form (user name and host, no scheme, no password), which
-  neither count below reads. Lane 3 asked for two counts, with no name printed (#186
-  6323118228): lines with a byte outside printable ASCII and blanks, and url rows whose
-  userinfo is not redacted. Lane 1 ran both at
+  count 2 below and the redaction, both keyed on `://`, cannot match. Lane 3 asked for two
+  counts, with no name printed (#186 6323118228): lines with a byte outside printable
+  ASCII and blanks, and url rows whose userinfo is not redacted. Lane 1 ran both at
   18:11:29Z, before this record: **0 and 0**, with a planted control (a 0xff byte and a
   url with userinfo) giving 1 and 1 (#186 6323149947). `XDG_CONFIG_HOME` was unset in
   the real shell, so git read `~/.config` (`runD/run-header.txt`).
@@ -519,9 +524,9 @@ characters with `/tmp/`), which gives run.sh a predicted TMPDIR of 70 (`suites-v
   `https://github.com/opensoft/` URLs (`:10741`). Lane 3's run of the test on a copy of
   `cand-v0/clone`, as the composed job runs it, failed on exactly these four lines, and with
   the cutover's URLs in them gave `1 passed, 3008 deselected`, no other offender and 0 shim
-  calls (#186 6327470307). The rule never matches an `https://` URL
-  (`tests/test_repo_hygiene.py:2592-2617`), so local remotes outside a home or the bench
-  root would turn the test green and prove nothing (lane 2).
+  calls, on lane 3's bench with pytest 9.1.1 (#186 6327470307). The rule never matches
+  these `https://` URLs (`tests/test_repo_hygiene.py:2592-2617`), so local remotes outside a
+  home or the bench root would turn the test green and prove nothing (lane 2).
 - **(b) `test_lane_helpers_suite::test_the_lane_helper_suite_passes`, in both jobs,** one
   case each time, "…with clause (c)'s directory and window in the tail, for the person
   reading the row" (composed 4890 passed, 1 failed; standalone 4872 passed, 1 failed, 3
@@ -531,7 +536,8 @@ characters with `/tmp/`), which gives run.sh a predicted TMPDIR of 70 (`suites-v
   case's HOME is under `mktemp -d`, so the stamp grows with run.sh's TMPDIR. Lane 1's record
   writer, lane 2 and lane 3 each recomputed the cut: through `; window ` it is 230 characters
   at a TMPDIR of 69 (a pass) and 231 at 70, and under a C locale, where the em dash counts
-  3, it fails from 68. **This is not a condition of the rehearsal.** The case is r2's F3,
+  3, it fails from 68. **This is not a condition of the rehearsal.** The case is F3 of r2,
+  the Gate B candidate of record (`candidate-2026-10-09.md:261-262`),
   `tests/test_lane_helpers.sh:1272` (`repoA-1`), which #215 left when it closed #180 (it
   moved only `repoA11b`); r2's F4 case, `:8551-8552`, fails from 71 (lane 3). CI's
   `exact-pins` job (T010; `composed.yml:106` in the candidate) runs
@@ -546,8 +552,10 @@ characters with `/tmp/`), which gives run.sh a predicted TMPDIR of 70 (`suites-v
   Claude Code was found by absolute path … the update lock … was not free within 4s").
   Both are lock-timing races with a lock holder of 2 s and 1.5 s. Both passed in
   standalone and in `s2`, composed's other 99 `test_claude_current` tests passed, and
-  composed began at a load average of 63.28 with D's own P5, P4 and P7 starting around it
-  (16:28:08Z to 16:28:36Z). Tracked as #305.
+  composed began at a load average of 63.28. The load was already 62.04 at P3's own start
+  (`attempt.txt`, 16:27:48Z), before D's own P5, P4 and P7 started (16:28:08Z to
+  16:28:36Z), and `composed.log:4`'s 5- and 15-minute averages (61.25 and 46.68) show it
+  predates them. Tracked as #305.
 
 **The skips,** from `composed.xml` and `standalone.xml` (function names without their
 `test_`). The 6 of composed are among standalone's 33 (its 11th to 16th): five
@@ -646,8 +654,8 @@ D's `b93503b1…` (both 1,078,902 bytes; lane 2 finds them equal but for timesta
 different `SOURCE_DATE_EPOCH` values, #186 6327441086). The candidate code leg's
 `tests.yml` (blob `a24d126`) has the same four steps and a byte-identical `package` job,
 which only the code leg's own CI can run. That is enough for row 33 (its ledger evidence
-is P5); for row 34 pipx first runs on the candidate in that CI, after Gate C, unless Brett
-accepts that (lane 3).
+is P5); for row 34 pipx first runs on the candidate in that CI, after Gate C, which needs
+Brett's acceptance (lane 3).
 
 What D's record says of P3 and P5, whatever their results:
 
@@ -663,8 +671,9 @@ What D's record says of P3 and P5, whatever their results:
   check. Only the venv's install of the lock is hash-checked.
 - **No claim of a run without the network** is made for either (Setup, Transport).
 
-**What did not run in D.** P3's job 5, no-submodule, runs only when it is named, and D did
-not name it; P9, lane 2's matrix rerun, does not run in D. Both follow Brett's "include
+**What did not run in D.** P3's job word was `must`, jobs 1–4 (the table in its section;
+`attempt.txt`); its job 5, no-submodule, runs only when it is named, and D did not name
+it; P9, lane 2's matrix rerun, does not run in D. Both follow Brett's "include
 P7, P8, P10". This record does not say that D ran either. P7, P8 and P10 are the optional
 evidence that does run in D. What Gate C's two rows rest on instead:
 
@@ -679,26 +688,33 @@ evidence that does run in D. What Gate C's two rows rest on instead:
   the other four classes' 75, so job 5 adds only the 884; the 717 more than r2's 242 are
   +666 submodule-gated tests, +2 composed-acceptance tests and +66 conditional skips, minus
   17 (documents now resolving to the code root). With D's refusals (6 of 6) and
-  standalone's skip list, both lanes accept row 31 without job 5.
+  standalone's skip list, both lanes' view is that row 31 needs no job 5; the row is
+  Brett's call at Gate C.
 - **Row 27 rests on lane 2's T008 matrix, not on "15/15, final at `13cc752`".** Its runs are
   four comments: 6073209094, an interim on `2411f40` (the 15/15); 6088812080, the final at
-  `13cc752`, with seven open items; 6103618033 at `cddd1f7`; and 6152491855, R4, at #191's
-  `8246983` (landed as `a74c7fc`), unchanged from `cddd1f7`, with 3 FAIL and 4 CHANGED among
-  its 341 verdicts. R4 measured `a74c7fc`'s installer, blob `7aa697c`; D ships `ca4fc44`,
-  four commits later (#209, #237's hook gate, #228's package and #292: 980 lines added, 72
-  removed). None of that diff's 35 hunks lies in the resolution, pin, collect or receipt
-  code (lines 255–546 and 762–2074 at `33ce26d`; lane 2, #186 6327803546), so R4's verdicts
-  still hold for rows 3, 5–11, 13, 14a and 16–26 and, except their hook clause, for rows 1
-  and 2. The gaps: seven verdicts flip by design, because #237's gate is closed in a fresh
-  HOME (04a, 12, 15a–e); there is no fresh bash 3.2.57 evidence on the new code, and 14b and
-  14c were last run at `2411f40`; and no cell covers the gate-open path, the strip path,
-  `wip init`'s reconcile or pipx and package mode, which the in-repo tests and main's CI
-  cover. D adds its composed run of `test_install_payload_source` (r01–r15, 109 passed) and
-  P4's local installs with the gate open and closed. At a main head the old harness measures
-  run C's installer (`9b7cbd2`), so a new run needs a corrected one: Brett's option is a
-  delta P9 (lane 3 endorses it, #186 6327831170), which lane 2 makes and runs on his word,
-  over rows 1, 2, 4, 11–13 and 15 with the gate open and closed and one pipx-link cell,
-  compared with R4. If he declines, the gaps above stand.
+  `13cc752`, with seven open items; 6103618033 at `cddd1f7`; and 6152491855, lane 2's last
+  run, R4, at #191's `8246983` (landed as `a74c7fc`), unchanged from `cddd1f7`, with 341
+  verdicts. R4 measured `a74c7fc`'s installer, blob `7aa697c`; D ships `ca4fc44`, four
+  installer commits later (#209, #237's hook gate, #228's package and #292: 980 lines
+  added, 72 removed; 14 of the other 22 payload files changed too, +5,631/−722, which the
+  cells place and compare without running them). None of that diff's 35 hunks lies in the
+  resolution, pin, collect or receipt code (lines 255–546 and 762–2074 at `33ce26d`; lane
+  2, #186 6327803546), so R4's verdicts still hold for rows 3, 5–11, 13, 14a and 16–26
+  and, except their hook clause, for rows 1 and 2. Among those that hold, R4's 3 FAIL
+  (rows 7 single-branch-moves, 8b and 9 pin-404) and 4 CHANGED (row 6 single) are not
+  passes (lane 2, same comment). The gaps: seven verdicts flip by design, because #237's
+  gate is closed in a fresh HOME (04a, 12, 15a–e); there is no fresh bash 3.2.57 evidence
+  on the new code, and 14b and 14c were last run at `2411f40`; and no cell covers the
+  gate-open path, the strip path, `wip init`'s reconcile or pipx and package mode, which
+  the in-repo tests and main's CI cover. D adds its composed run of
+  `test_install_payload_source` (r01–r15, 109 passed) and P4's local installs with the gate
+  open and closed. At a main head the old harness measures run C's installer (`9b7cbd2`),
+  so a new run needs a corrected one: Brett's option is a delta P9 (lane 3 endorses it,
+  #186 6327831170), which lane 2 makes and runs on his word, over rows 1, 2, 4, 11–13 and
+  15 with the gate open and closed and one pipx-link cell. It is judged against R4: the
+  expected differences are the seven flips, the hook lines and the shape literal, and
+  anything else is a finding. It takes about 30 minutes and 1.6 GB of disk on a quiet
+  bench, read-only, with no pytest lock (lane 2). If he declines, the gaps above stand.
 
 ### The surface watch
 
@@ -718,10 +734,13 @@ ended, and exits 70 when the two differ (71 and 72 are defined under the post-ru
 - **Every lane and profile in this container shares those places,** so a 70 would say that
   a place changed during the run, not who changed it; `~/.claude` is shared across the
   bench's containers and `~/.local` is not (lane 2's `installed.tsv` is `3fe26405…`, D's
-  `5d0ccba5…`), so an install in another container is outside the watch altogether (#186
-  6327441086). This record does not claim that nothing was written outside an attempt: the
-  watch, like the command scan below, is a reader's aid. P3 and `s1` left lane-index files
-  under their state roots, and P8 saw other actors' churn outside the watch.
+  `5d0ccba5…`), so only the `~/.local` half of an install in another container is outside
+  the watch (#186 6327441086): of an install's 29 files, 17 go under `.local/bin` and 12
+  under `.claude/commands`, `.claude/skills` and `.claude-profiles/shared`, which the watch
+  lists (`runD/install-v0/a1/s1/home/.local/share/openRepoTools/installed.tsv`; lane 3,
+  #186 6329982180). This record does not claim that nothing was written outside an
+  attempt: the watch, like the command scan below, is a reader's aid. P3 and `s1` left
+  lane-index files under their state roots, and P8 saw other actors' churn outside the watch.
 - **Windows** (`attempt.txt`'s `started` to `pid.txt`'s `finished`) are those of the post-run
   and SMOKE tables; their exits are in the same tables, and none is 70.
 - **Installs and setups in the windows.** In all seven attempts `surfaces.diff` is empty
@@ -930,23 +949,30 @@ The published plan is the file on the evidence branch under
 ## Remaining gates
 
 **Gate C is not given by this record.** It needs Brett Heap's explicit approval, which must
-name the revisions, the leg repositories, their visibility and the final plan. Still to
-come after this record:
+name the revisions, the leg repositories, their visibility and the final plan. Lanes 2 and 3
+re-checked the fixes of the reviews of `3845c53`, with the post-D round, at `2f07c53` (#186
+6329313690 and 6329982180); this version applies the items they left for the record. Still
+to come after this record:
 
-- lane 3's re-check of this version's fixes, with the post-D round (the reviews of
-  `3845c53` are lane 2's #186 6327441086 and lane 3's 6327470307);
 - P3's `composed` and `standalone` jobs stand RED in D, and the SMOKE attempts do not turn
   them green. Row 34 stays PARTLY:
   - **(b), #304, is open and needs a cutover decision (lane 1 and Brett).** Before
-    `exact-pins` becomes a required check (e9), port #215's fix to
+    `exact-pins` becomes a required check (e9, Gate B's question on which checks are
+    required: `gate-b-status-2026-10-09.md:187`), port #215's fix to
     `tests/test_lane_helpers.sh:1272` and `:8551-8552` as a reviewed code-leg follow-up at
     T014, or give `exact-pins` a short `XDG_STATE_HOME`; or Brett accepts row 34 resting on
     P3, `s1`, `s2` and lane 3's run, with (b)'s zero margin at a 4-digit pid. A rerun at a
     TMPDIR of 69 or less would hide (b), and a full rerun adds nothing until it is fixed;
-  - (a) is shown absent at the cutover, and (c) is load (#305). After a fix for (b), lane 2
-    would take one run of the case at a TMPDIR of 70 or more (about 40 minutes) and lane 3
-    one green composed run at CI's run-root length, on a quiet bench, with the cutover's
-    URLs on a copy and pytest 8.3.4 (`--pytest-wheels`); the composed run of record is the
+  - (a) is the rehearsal's own local URLs, shown absent with the cutover's URLs (lane 3's
+    run, above), and (c) is load (#305). After a fix for (b), what would settle row 34 is
+    one run of the case at a TMPDIR of 70 or more, about 40 minutes (lane 2 accepts to make
+    it, on Brett's word), and one green composed run at CI's run-root length, on a quiet
+    bench, with the cutover's URLs on a copy and pytest 8.3.4 (`--pytest-wheels`; lane 3).
+    `suites_d.sh` cannot make either at that length: the post-D round's copy refuses a state
+    root over 22 characters (D's copy allowed 23), so its runs stay at a TMPDIR of 69 or
+    less (67 or less at its default root). Each is then a direct `tests/run.sh` run, unless
+    the bound is relaxed once #304 is fixed. #304's proof is such a run at a TMPDIR of 70 or
+    more, or `exact-pins` on the code leg after T014; the composed run of record is the
     cutover's T010 job and T015, and the legs' first CI comes after Gate C;
   - row 33 rests on CI for pipx; row 31 is evidenced without job 5 (which would meet #304
     at a TMPDIR of 70 or more: lane 2); row 27 rests on `7aa697c` with the gaps above,
@@ -963,24 +989,29 @@ come after this record:
   run in the real cutover environment, its `git config --show-origin --list` names recorded
   and never their values; D ran only the I4 half (Mapping);
 - a round after D and before the cutover: lane 3's NITs 121–123, 131–135 and 141–144, with
-  lane 3's tested fixes for 141 and 142 (#186 6320744628; the round is listed in 6320876769); the message text at
-  `setup_d.sh:237` (`pin_expect`); the published plan's header, which overstates what the
-  decisions file did and drops "Gate B remains open (T006-T011)", both fixed in
-  `publish_plan_d.py`; starting the stage acts from a neutral directory (Setup); the "about
-  72" in PLAN 10.2 and `suites_d.sh`'s header (the defect is #304); `pid_write`, which
-  restamps `started` at every rewrite in `suites_d.sh` and `wheel_d.sh` (the line is also
-  in `install_d.sh` and `rollback_d.sh`): P3's `pid.txt` reads 19:57:57Z and P5's 18:20:03Z,
-  where `attempt.txt` has 16:27:48Z and 16:28:08Z, which this record uses; and an
-  observation: the lane-helper suite sets HOME (`tests/test_lane_helpers.sh:269`) but never
+  lane 3's tested fixes for 141 and 142 (#186 6320744628; the round is listed in
+  6320876769); the message text at `setup_d.sh:237` (`pin_expect`); the published plan's
+  header, which overstates what the decisions file did and drops "Gate B remains open
+  (T006-T011)", both to be fixed in the round's `publish_plan_d.py`; starting the stage
+  acts from a neutral directory (Setup); the "about 72" in PLAN 10.2 and `suites_d.sh`'s
+  header (the defect is #304), with the sentence that no `suites_d.sh` run reaches a TMPDIR
+  of 70; `pid_write`, which restamps `started` at every rewrite in `suites_d.sh` and
+  `wheel_d.sh` (the line is also in `install_d.sh` and `rollback_d.sh`): P3's `pid.txt`
+  reads 19:57:57Z and P5's 18:20:03Z, where `attempt.txt` has 16:27:48Z and 16:28:08Z,
+  which this record uses; and an observation, tracked as #306 for the code leg after the
+  split: the lane-helper suite sets HOME (`tests/test_lane_helpers.sh:269`) but never
   `XDG_STATE_HOME`, which `lanes-index` prefers (`lanes-index:174`), so P3 and `s1` wrote
   their index files into their state roots and, under a real `XDG_STATE_HOME`, it would
   write into the live index's directory (lane 2);
 - notes that cannot land before the cutover (e2), because they edit main's own documents
   or a landed PR's body: #299's four NITs on the dated notes (lane 3's review of #299,
   comment 6317075196; `gate-b-checklist.md:202`, `candidate-2026-10-09.md:104`,
-  `gate-b-status-2026-10-09.md:187`), and `gate-b-status-2026-10-09.md:186`'s "none fires
+  `gate-b-status-2026-10-09.md:187`), `gate-b-status-2026-10-09.md:186`'s "none fires
   on `ubuntu-24.04`", which is stale: 66 conditional skips fire there (lane 2, #186
-  6327803546). Where they go, for example the spec leg after the split, is lane 1's call;
+  6327803546), and seven pointers to #180 for the row-stamp cases, which are now #304's
+  (`gate-b-status-2026-10-09.md:189`, `:511` and `:640`; `candidate-2026-10-09.md:282`,
+  `:316` and `:380`; `gate-ab-evidence-2026-10-09.md:628`; lane 2). Where they go, for
+  example the spec leg after the split, is lane 1's call;
 - T18's eleven follow-ups, all still present (the P8 section), for the cutover runbook;
 - the e2 freeze: main stays at `33ce26d` until the cutover, and a second `execute`, in a
   new sandbox, happens only on Brett's word.
