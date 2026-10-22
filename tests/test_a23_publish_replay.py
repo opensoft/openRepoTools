@@ -336,6 +336,76 @@ def test_push_refused_with_origin_unmoved_is_kept_exit_6(box: Box):
     _settled(box, c)
 
 
+def _refuse_push_after(box: Box, body: str) -> str:
+    """A push hook that runs `body` (another writer in this write's
+    checkout, with no lock) while the push is in flight, then refuses the
+    push with origin unmoved, as a hook or a protected branch would. Returns
+    origin's tip, which nothing moves."""
+    box.use_net('[ "$1" = push ] || exit 0' + "\n" + body +
+                'echo "remote: refusing this push" >&2; exit 1' + "\n")
+    return box.origin_head()
+
+
+def test_a_push_refused_with_origin_unmoved_names_a_commit_on_top_exit_6(box: Box):
+    """w2a-c6's note on slice 1b: the refusal with origin unmoved said "the
+    commit is local and kept on HEAD: <sha>" without reading HEAD, the shape
+    slice 2a's A41 took out of its S4.4. An unlocked writer's stamp committed
+    on top while the push was in flight then sat at HEAD, and the words named
+    this write's commit as HEAD. Now HEAD is read first, and `cp_not_head`'s
+    words name both, kept and neither dropped, with no replay (6)."""
+    c = box.seam()
+    cq = shlex.quote(str(c))
+    tip = _refuse_push_after(box,
+        f"printf 'stamp' > {cq}/handoffs/stamp.md" + "\n" +
+        f"git -C {cq} add -- handoffs/stamp.md" + "\n" +
+        f"git -C {cq} commit -q -m 'handoff(repoS4-2@Eagle): a stamp from an unlocked writer' -- handoffs/stamp.md" + "\n")
+    result = box.helper("set-row-state", LANE, "LIVE · refused, a stamp on top")
+    assert result.returncode == 6, result.stderr
+    err = result.stderr
+    assert "refused with origin/main unmoved (no lost race: a replay would meet the same refusal)" in err
+    assert "is no longer HEAD, so it is not replayed" in err
+    assert "in this checkout while its push was in flight." in err, "no drop is offered as the reason"
+    assert "kept on HEAD: " not in err, "HEAD is not this write's commit"
+    assert box.subject(c) == "handoff(repoS4-2@Eagle): a stamp from an unlocked writer"
+    assert box.subject(c, "HEAD~1").startswith(f"LANES({LANE}@"), "this write's commit is under it"
+    mine = _mine_named_on_head(box, c, err)
+    assert mine and all(on for _, on in mine), mine
+    assert "push refused (attempt" not in err, "no replay"
+    assert box.pushes() == 1
+    assert box.origin_head() == tip
+    assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the publish act"
+    _settled(box, c)
+
+
+def test_a_push_refused_with_origin_unmoved_names_a_rewritten_commit_exit_6(box: Box):
+    """w2a-c6's note, its second case: another writer rewrote this write's
+    commit while the push was in flight (here an amend, a rewrite that keeps
+    the tree). The refusal said "kept on HEAD: <sha>" of a sha HEAD no longer
+    holds. Now it says the commit was rewritten, in `cp_rewritten`'s words,
+    names no commit of this write's as on HEAD, and replays nothing (6)."""
+    c = box.seam()
+    cq = shlex.quote(str(c))
+    tip = _refuse_push_after(box,
+        f"git -C {cq} commit -q --amend -m 'an unlocked writer reworded it'" + "\n")
+    result = box.helper("set-row-state", LANE, "LIVE · refused, then rewritten")
+    assert result.returncode == 6, result.stderr
+    err = result.stderr
+    assert "refused with origin/main unmoved (no lost race: a replay would meet the same refusal)" in err
+    assert "rewrote this write's commit" in err
+    assert "kept on HEAD" not in err, "nothing of this write's is on HEAD under its own sha"
+    named = re.search(r"so it is not replayed: ([0-9a-f]{40}) ", err)
+    assert named, err
+    assert box.git("-C", str(c), "log", "-1", "--format=%s", named.group(1)).startswith(f"LANES({LANE}@")
+    on_head = subprocess.run(["git", "-C", str(c), "merge-base", "--is-ancestor", named.group(1), "HEAD"],
+                             env=box.env, capture_output=True, check=False)
+    assert on_head.returncode == 1, "the named commit is not on HEAD"
+    assert box.subject(c) == "an unlocked writer reworded it"
+    assert "push refused (attempt" not in err, "no replay"
+    assert box.pushes() == 1
+    assert box.origin_head() == tip
+    _settled(box, c)
+
+
 def test_replay_refused_by_a_change_in_the_way_keeps_the_commit_exit_6(box: Box):
     """The drop never moves the tree over an uncommitted change: a hand edit of
     the register made while the push was in flight stops the replay, and the
