@@ -538,7 +538,10 @@
 #      drops it, or under it (this write's commit is known by what it is,
 #      never by HEAD read after the fact, and the drop moves the branch only
 #      from that commit and only where it sits on origin's history, so it
-#      never takes another), a commit made in the same moment as this
+#      never takes another; `commit`'s carry form drops to its own
+#      commit's parent by design, so one under it stays, the hand edit
+#      goes back to the working tree with its copy kept, and the re-run's
+#      S3 refuses on it: 2, not 6), a commit made in the same moment as this
 #      write's that cannot be told from it (nothing is pushed), or a push (a
 #      write's, or the publish act's)
 #      refused with origin unmoved, which no replay can mend. Or another
@@ -2965,8 +2968,18 @@ EOF
     [ "$cp_head" = "$cp_sha" ] ||
       cp_not_head "$cp_sha" "$msg" "before or while its push was in flight" \
         "the push of $cp_sha was refused with origin/$LANES_BRANCH unmoved (no lost race: a replay would meet the same refusal)"
+    # THE COMMITS UNDER IT ARE NAMED TOO (lane openRepoTools-3's re-check of
+    # #307, 344, its case (e2)): an unlocked writer's stamp landing after S3
+    # and before `git commit` sits under this write's commit, and the reset
+    # below would take it. So where this write's commit does not sit on
+    # origin's history, they are listed with the STOP line before any reset.
+    if git -C "$LANES_REPO" rev-parse -q --verify "$cp_sha^" >/dev/null 2>&1 &&
+       ! git -C "$LANES_REPO" merge-base --is-ancestor "$cp_sha^" "refs/remotes/origin/$LANES_BRANCH" 2>/dev/null; then
+      cp_un="$(git -C "$LANES_REPO" rev-list --count "refs/remotes/origin/$LANES_BRANCH..$cp_sha^" 2>/dev/null || printf 'some')"
+      note "under it are $cp_un commit(s) that origin/$LANES_BRANCH lacks and this write did not make; list them: git -C $LANES_REPO log --oneline refs/remotes/origin/$LANES_BRANCH..HEAD; if any is not your own write, STOP and take it to the lane its subject names — never reset, stash or overwrite a peer's work"
+    fi
     note "look at it: git -C $LANES_REPO show $cp_sha"
-    note "every later write from this checkout refuses (S3's unpushed row) until it is published — LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act — or archived (S6.3) and \`git -C $LANES_REPO reset --keep origin/$LANES_BRANCH\` run."
+    note "every later write from this checkout refuses (S3's unpushed row) until it is published — LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act — or archived (S6.3) and \`git -C $LANES_REPO reset --keep refs/remotes/origin/$LANES_BRANCH\` run."
     die "the push of $cp_sha was refused with origin/$LANES_BRANCH unmoved, so this is no lost race and a replay would meet the same refusal; the commit is local and kept on HEAD: $cp_sha $msg" 6
   fi
   cp_replay "$cp_sha" "$msg"

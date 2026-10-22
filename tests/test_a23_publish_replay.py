@@ -1904,6 +1904,71 @@ def test_history_origin_no_longer_has_under_this_writes_commit_is_never_called_a
     _settled(box, c)
 
 
+def test_a_push_refused_with_origin_unmoved_over_a_stamp_under_it_lists_them_and_stops_first_exit_6(box: Box):
+    """344 of lane openRepoTools-3's re-check of #307 at fc6f34d, its case
+    (e2): an unlocked writer's stamp lands after S3 and just before this
+    write's `git commit`, so it is UNDER this write's commit, and the push is
+    refused with origin unmoved. The refusal named this write's commit alone
+    and offered `reset --keep origin/main` with no STOP line, over a stamp it
+    never mentioned. Now, where this write's commit does not sit on origin's
+    history, the words list `refs/remotes/origin/main..HEAD` with the STOP
+    line before any reset, and the reset spells the tracking ref in full
+    (6, both kept, no replay)."""
+    c = box.seam()
+    tip = _refuse_push_after(box, "")
+    env = _git_shim(box, COMMIT_CALL, before=_stamp(c))
+    result = box.helper("set-row-state", LANE, STATE, **env)
+    assert (box.root / "fired").exists(), "the stamp landed just before this write's commit"
+    assert result.returncode == 6, result.stderr
+    err = result.stderr
+    mine = box.head(c)
+    assert box.subject(c).startswith(f"LANES({LANE}@"), "HEAD is this write's commit"
+    assert box.subject(c, "HEAD~1") == STAMP_SUBJECT, "the stamp is under it"
+    assert "refused with origin/main unmoved" in err, err
+    assert f"kept on HEAD: {mine}" in err, err
+    listed = re.search(r"under it are 1 commit\(s\) that origin/main lacks and this write did not make; "
+                       r"list them: git -C \S+ log --oneline refs/remotes/origin/main\.\.HEAD; if any is not "
+                       r"your own write, STOP and take it to the lane its subject names", err)
+    assert listed, err
+    reset = err.find("reset --keep refs/remotes/origin/main", listed.end())
+    assert reset > listed.end(), "the STOP line comes before the reset"
+    assert "reset --keep origin/main" not in err, "the reset names the tracking ref in full"
+    assert "push refused (attempt" not in err, "no replay"
+    assert box.pushes() == 1
+    assert box.origin_head() == tip
+    assert len(box.unpublished(c)) == 2, "both kept on HEAD"
+    _settled(box, c)
+
+
+def test_a_stamp_under_the_carry_forms_commit_stays_and_the_re_run_refuses_on_it_exit_2(box: Box):
+    """344's first half, pinned as the manual's step 5 and exit row 6 now
+    say it: `commit`'s carry form drops to its own commit's parent by
+    design (B21), which takes this write's commit alone. A stamp that lands
+    just before its `git commit`, with origin moved, stays: the hand edit
+    goes back to the working tree, the re-run's S3 refuses on the stamp,
+    which origin lacks (2, nothing written), and the copy of the edit is
+    kept. Nothing is lost, and nothing is "kept on HEAD" as row 6's 6 says."""
+    c = box.seam()
+    box.race()
+    box.hand_edit(c)
+    env = _git_shim(box, COMMIT_CALL, before=_stamp(c))
+    result = box.helper("commit", "the hand edit", LANES_LANE=LANE, **env)
+    assert (box.root / "fired").exists(), "the stamp landed just before the carry's commit"
+    assert result.returncode == 2, result.stderr
+    err = result.stderr
+    assert "push refused (attempt 1 of 6)" in err, err
+    assert "left in the working tree as the hand edit it was" in err, err
+    assert "HEAD carries 1 unpublished commit(s)" in err, err
+    assert "kept on HEAD" not in err, err
+    assert box.subject(c) == STAMP_SUBJECT, "the stamp is HEAD; the carry's commit was dropped alone"
+    assert (c / "handoffs" / "stamp.md").is_file(), "the other writer's file is still there"
+    assert "LIVE · a hand edit" in (c / REGISTER).read_text(encoding="utf-8"), "the hand edit is in the working tree"
+    assert "LIVE · a hand edit" not in box.origin_register()
+    assert list((c / ".git" / "lanes-edit").glob("hand-edit-*.diff")), "the copy of the edit is kept"
+    assert len(box.unpublished(c)) == 1, "the stamp alone"
+    _settled(box, c)
+
+
 def test_a_commit_with_this_writes_own_message_made_with_it_is_no_answer_exit_6(box: Box):
     """291's last word, "also match the subject": where another commit was
     made in the moment of this write's, its own commit is the one with its
