@@ -3103,8 +3103,10 @@ plan_install_targets() {
 		target="$dir/$name"
 		# PIPX'S LINK IS ASKED ABOUT BEFORE ANY LINK IS REFUSED (FR-015), at the
 		# one command pipx places. It is no bad target: the placement loop skips
-		# it. A venv-shaped link IS one, listed for what it is, with the
-		# paragraph that says to leave it, and kept out of the `rm -f` line.
+		# it, once it has asked again at that target's own turn and found it
+		# still pipx's (#257); a link that has gone or changed by then is
+		# refused there. A venv-shaped link IS one, listed for what it is, with
+		# the paragraph that says to leave it, and kept out of the `rm -f` line.
 		if [ "$name" = openRepoTools ]; then
 			if pipx_link_match "$target"; then
 				continue

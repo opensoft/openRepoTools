@@ -30,12 +30,13 @@ lines; this file holds both:
   first `openRepoTools` on `PATH` is not its own, and its silence where the
   package's layout names no `<prefix>` (research R7);
 - `test_pipx_upgrade_*` and `test_pipx_uninstall_*`: a second wheel in the
-  same venv, and the link and the venv gone.
+  same venv, and the link and the venv gone;
 - `test_pipx_mid_run_*`: pipx's link appearing or going between `--install`'s
   planning and its placement (#257): asked again at the target's own turn,
   left to pipx where it is pipx's link now, and refused, naming it, where it
   is any other change; a link that appears as late as the rename is refused
-  and left as it was, never replaced by a regular file.
+  and left as it was, never replaced by a regular file, at a command, a
+  `SKILL.md` or a command file alike.
 
 FAKE VENVS, NO PIPX, NO WHEEL. `tests/package_layout.py` lays each venv out
 of this checkout's own files. EVERY PACKAGE RUN HERE IS
@@ -75,12 +76,12 @@ import package_layout as layout
 from conftest import REPO, WINDOWS_SKIP
 from test_install_payload_source import (World, git, local_assembly, network,
                                          variant)
-from test_openrepotools_command import (ARTIFACTS, COMMAND, FETCHED,
-                                        HOOK_ENTRIES, INSTALLED, NEEDS_JQ,
-                                        command_env, path_without,
-                                        placed_files, placement_temporaries,
-                                        receipt_path, receipt_rows,
-                                        source_tree)
+from test_openrepotools_command import (ARTIFACTS, COMMAND, COMMAND_NAMES,
+                                        FETCHED, HOOK_ENTRIES, INSTALLED,
+                                        NEEDS_JQ, SKILL_NAMES, command_env,
+                                        path_without, placed_files,
+                                        placement_temporaries, receipt_path,
+                                        receipt_rows, source_tree)
 
 pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
                                  reason="openRepoTools is a bash script"),
@@ -1878,6 +1879,68 @@ def test_pipx_mid_run_a_link_that_appears_at_the_rename_is_refused_and_left(
         assert_refused_before_placing(again, home, {"openRepoTools", "park"})
         assert_ordinary_link_refusal(again, target)
     assert target.is_symlink() and os.readlink(target) == value
+
+
+#: THE SAME QUESTION AT THE OTHER TWO CALLERS OF `place_by_rename` (#257, the
+#: review's NIT 2). `place_skill_and_hook` places a `SKILL.md` and a command
+#: file through it too, in the shared profile directory and after all seventeen
+#: commands. The first of each is the target here. The guard asks about a
+#: target and not about the directory it is in, and one that stood at `<dir>`
+#: alone would pass every case above and put a regular file over a link made at
+#: either of these.
+LATE_LINKS_BEYOND_THE_BIN_DIRECTORY = ("a-skill-file", "a-command-file")
+
+
+@pytest.mark.parametrize("which", LATE_LINKS_BEYOND_THE_BIN_DIRECTORY)
+@NEEDS_JQ
+def test_pipx_mid_run_a_link_at_a_skill_or_command_file_is_refused_and_left(
+        tmp_path, which):
+    """#257, THE SAME LAST QUESTION, AT THE CALLERS THAT ARE NOT THE BIN
+    DIRECTORY'S. A person's own link appears as the mode is stamped on the
+    temporary of the first `SKILL.md`, or of the first command file, and the
+    rename is refused as it is at `<dir>`: exit 2, one `REFUSED:` naming the
+    link and where it points, the link as it was made, the file it points to
+    untouched, no temporary, no `rm` advised, and the run goes no further. The
+    files placed are exactly those before the link in the order `--install`
+    places them, and the refusal says the seventeen commands are among them.
+    A guard that stood at `<dir>` alone passes every case above and fails this
+    one: the rename replaces the link with a regular file and the run exits 0."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    shared = home / ".claude-profiles" / "shared"
+    if which == "a-skill-file":
+        target = shared / "skills" / SKILL_NAMES[0] / "SKILL.md"
+    else:
+        target = shared / "commands" / f"{COMMAND_NAMES[0]}.md"
+    far = root / "someones-own-file.md"
+    far.write_text("somebody's own file\n", encoding="utf-8")
+    value = str(far)
+    fake, acted = mid_run(
+        root, "chmod",
+        shlex.quote(f"{target.parent}/.{target.name}.openrepotools.") + "*",
+        f"{real_tool('ln')} -s {shlex.quote(value)} {shlex.quote(str(target))}")
+
+    result = install_as("checkout", root, home,
+                        pipx_env(home, extra=first_on_path(fake)))
+    assert acted.exists(), f"no link was made mid-run:\n{transcript(result)}"
+    assert result.returncode == 2, transcript(result)
+    assert result.stderr.count("REFUSED:") == 1, transcript(result)
+    assert (f"REFUSED: {target} is a symlink to {value} now, and was not one "
+            "when this run planned, so nothing was placed there and the link "
+            "is left as it was") in result.stderr, transcript(result)
+    assert (f"The {len(INSTALLED)} commands above are placed;"
+            in result.stderr), transcript(result)
+    assert target.is_symlink() and os.readlink(target) == value, (
+        f"the link was replaced:\n{transcript(result)}")
+    assert far.read_text(encoding="utf-8") == "somebody's own file\n"
+    assert placement_temporaries(home) == []
+    assert rm_lines_naming(result.stdout + result.stderr, target) == [], (
+        transcript(result))
+    order = list(placed_files(home))
+    there = [d for d in order if os.path.lexists(d)]
+    assert there == order[:order.index(str(target)) + 1], (
+        f"the run went past the link or stopped short of it:\n"
+        f"{transcript(result)}")
 
 
 @NEEDS_JQ
