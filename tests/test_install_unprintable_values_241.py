@@ -716,7 +716,7 @@ WIP_BAD_DIRS = [
 #: How `wip init`'s refusal of the directory opens. It is in `wip init`'s own
 #: words and not `--install`'s: `wip init` places nothing, and the lines that
 #: would name the directory are the `link-estates` it runs.
-WIP_REFUSES_THE_DIRECTORY = ("`wip init` would run `link-estates` from a "
+WIP_REFUSES_THE_DIRECTORY = ("`wip init` may run `link-estates` from a "
                              "directory whose name ")
 
 

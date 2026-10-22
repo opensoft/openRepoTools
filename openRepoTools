@@ -5168,17 +5168,21 @@ wip_dispatch() {
 	# copy) that goes to the source, with `$OPENREPOTOOLS_REPO` at
 	# `$OPENREPOTOOLS_REF` as typed in a `gh api` call, a raw URL and the
 	# refusals that name them. The directory: step 10 runs the `link-estates`
-	# in it, and that command names the directory as typed in its own `Error`,
-	# `STALE` and `NOTE` lines. ONCE, AND NOT IN `wip_shape_ref`: step 5 has made
-	# the repository and step 6 has cloned it by then, and "Nothing was fetched,
-	# installed or replaced" would not be true. `wip` has one verb, so this is
-	# every `wip init`: from a checkout, an installed copy or a package, and
-	# `--dry-run` too, which prints and sends none of the three but is the
-	# rehearsal of a run that refuses. The values come first and the directory
-	# second, the order `--install` asks them in, and the directory's `:` rule
-	# comes with it: the comment headed `the values no line can print as they
-	# read`, below, says why. The arguments and `--login` are refused above, as
-	# they always were.
+	# in it, or else the one on `PATH` (`wip_run_link_estates`), and so does a
+	# step 1 re-run whose hook target does not answer where `~/projects/xFactory`
+	# is; either names the directory as typed in its `Error`, `STALE` and `NOTE`
+	# lines and in its `KEEP`, `PLAN` and `LINK` lines. A run that finds none, or
+	# whose re-run needs none, runs nothing and is refused all the same: the
+	# directory is asked before anyone knows which a run will be. ONCE, AND NOT IN
+	# `wip_shape_ref`: step 5 has made the repository and step 6 has cloned it by
+	# then, and "Nothing was fetched, installed or replaced" would not be true.
+	# `wip` has one verb, so this is every `wip init`: from a checkout, an
+	# installed copy or a package, and `--dry-run` too, which prints and sends
+	# none of the three but is the rehearsal of a run that refuses. The values
+	# come first and the directory second, the order `--install` asks them in,
+	# and the directory's `:` rule comes with it: the comment headed `the values
+	# no line can print as they read`, below, says why. The arguments and
+	# `--login` are refused above, as they always were.
 	refuse_bad_values
 	refuse_bad_bin_dir wip
 	wip_init
@@ -5189,16 +5193,18 @@ wip_dispatch() {
 # THREE VALUES REACH THIS COMMAND FROM THE ENVIRONMENT AND ARE NAMED IN ITS
 # LINES AS THEY WERE TYPED: the directory `--install` places into, which is in
 # the `$PATH` note, in every `installed at` line and in every refusal that
-# names a target, and which `wip init` runs `link-estates` from, whose own lines
-# name it; and `$OPENREPOTOOLS_REPO` and `$OPENREPOTOOLS_REF`, which
+# names a target, and which `wip init` may run `link-estates` from, whose own
+# lines name it; and `$OPENREPOTOOLS_REPO` and `$OPENREPOTOOLS_REF`, which
 # `--version` prints and every fetch and every refusal about the source sends
 # or names. What a person typed into one of them is not always what a line that
 # prints it shows:
 #
 #   * A `:` splits a `$PATH` whatever the quoting, so no `export PATH=` line can
-#     name a directory that holds one, nor the `NOTE` about `$PATH` that
-#     `link-estates` prints (the directory only; a repository or a ref is no
-#     `$PATH`).
+#     name a directory that holds one, and the `NOTE` about `$PATH` that
+#     `link-estates` prints, which says to add the directory, cannot be followed
+#     for one. That `NOTE` prints the name as typed all the same: it is the
+#     `$PATH` a `:` breaks, not the line (the directory only; a repository or a
+#     ref is no `$PATH`).
 #   * A newline breaks the line it is printed in into two, so the second can
 #     be made to say anything; a carriage return rewrites the line on the
 #     terminal (`/tmp/x^MFORGED is not on $PATH`); an escape, and the C1
@@ -5229,10 +5235,15 @@ wip_dispatch() {
 # SEND `$OPENREPOTOOLS_REPO` and `$OPENREPOTOOLS_REF` as typed, in a `gh api`
 # call and a raw URL, and `resolve_refuse` names them (the review of #241,
 # MUST-1). The directory: `wip init`'s own lines never name it, because
-# `wip_run_link_estates` only EXECUTES `$OPENREPOTOOLS_BIN_DIR/link-estates`, but
-# the `link-estates` it runs names the directory as typed, in its own `Error`,
-# `STALE` and `NOTE` lines, as it does when run by hand, so a directory no line
-# can print as it reads is refused before `wip init` runs it. THE `:` RULE
+# `wip_run_link_estates` only EXECUTES a `link-estates`, the one in
+# `$OPENREPOTOOLS_BIN_DIR` or else the one on `PATH`, but that command names
+# the directory as typed, in its `Error`, `STALE` and `NOTE` lines and in the
+# `KEEP`, `PLAN` and `LINK` lines for the `lanes-edit.sh` link, as it does when
+# run by hand. So a directory no line can print as it reads is refused before
+# `wip init` can run it, in every run. Some runs run none: a dry run, a step 1
+# re-run that needs no link (its hook target answers, or `~/projects/xFactory`
+# is not there) and a host with no `link-estates`. They are asked all the same,
+# which is why the refusal says "may run". THE `:` RULE
 # COMES WITH THE DIRECTORY: `wip init` refuses a `:` in it, because the
 # directory goes on a `$PATH` (that `NOTE` is a line about one) and a `:` splits
 # a `$PATH` whatever the quoting, and takes a `:` in the repository and the ref
@@ -5419,7 +5430,7 @@ value_fault() {   # <value> [locale]
 	return 1
 }
 
-#: THE DIRECTORY `--install` PLACES INTO AND `wip init` RUNS `link-estates`
+#: THE DIRECTORY `--install` PLACES INTO AND `wip init` MAY RUN `link-estates`
 #: FROM, ASKED BEFORE ANYTHING IS PLACED, FETCHED OR NAMED: refused for a
 #: control character, a misdrawn character or a `:`, in that order, naming the
 #: kind and never the directory. It is the directory as `install_commands` and
@@ -5430,24 +5441,34 @@ value_fault() {   # <value> [locale]
 #: quoting. A WINDOWS SPELLING (`D:\tools`) holds a `:` and is refused with the
 #: rest: nothing here spells one the way bash does, and on Windows the way in
 #: is WSL2. `wip_dispatch` calls it with `wip`, and the refusal is then in `wip
-#: init`'s words (it places nothing, and names `link-estates`); without an
-#: argument it is `--install`'s, byte for byte as it was before `wip init` asked.
+#: init`'s words. It places nothing, and it says the run MAY run `link-estates`:
+#: a dry run, a step 1 re-run that needs no link and a host with no
+#: `link-estates` run none, and are asked all the same. It gives a reason for
+#: each kind, as `--install`'s does. For a control or misdrawn character the
+#: reason is that `link-estates` names the directory as typed, in its own lines
+#: and in its `NOTE` about a `$PATH`, so none of them can print it as it reads.
+#: For a `:` it is NOT that: `link-estates` prints the name intact, and what the
+#: `:` breaks is the `$PATH`, so that `NOTE`'s "add it" cannot be followed.
+#: Without an argument it is `--install`'s, byte for byte as it was before `wip
+#: init` asked.
 refuse_bad_bin_dir() {   # [wip]
-	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}" fault holds because
+	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}" fault holds because wip_because
 	if fault="$(value_fault "$dir" locale)"; then
 		holds="$fault"
 		because="so no line about \$PATH can print the name as it reads."
+		wip_because="That command names the directory as typed, in its own lines and in a note about \$PATH, so none of them can print it as it reads."
 	else
 		case "$dir" in
 		*:*)
 			holds="a ':', and a ':' is what splits a \$PATH into its directories"
 			because="so no line about \$PATH can name it."
+			wip_because="That command's note about \$PATH says to add the directory, which a ':' makes impossible."
 			;;
 		*) return 0 ;;
 		esac
 	fi
 	if [ "${1-}" = wip ]; then
-		die "\`wip init\` would run \`link-estates\` from a directory whose name holds $holds. That command names the directory as typed, in its own lines and in a note about \$PATH, so none of them can print it as it reads.
+		die "\`wip init\` may run \`link-estates\` from a directory whose name holds $holds. $wip_because
     Nothing was fetched, created or changed. Set \$OPENREPOTOOLS_BIN_DIR to a
     directory without one, then run this again."
 	fi
