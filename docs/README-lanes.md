@@ -326,11 +326,12 @@ pair, **64** usage — and that
 2 is RELAYED by `lane-start`, `lane-end` and `lane` rather than carried past,
 because the pair may be on `origin/<branch>` while this checkout still holds one
 row. `add-row` asks the published register as well as this copy of it for the
-same reason: a row a peer pushed is a refusal here, naming it and the `git pull
---rebase` that settles it, and never a second row. The LOG is held to the same
-rule — two files under `lanes/log/` whose names differ only by case are two logs
-for one lane, and every read and every write under that name refuses, naming
-both, until they are merged.
+same reason: a row a peer pushed is a refusal here, naming it and the row verbs
+(`set-row-state`, `replace-in-row`) that act on it, each of which fast-forwards
+this checkout to it first (Amendment 23 S3), and never a second row. The LOG is
+held to the same rule — two files under `lanes/log/` whose names differ only by
+case are two logs for one lane, and every read and every write under that name
+refuses, naming both, until they are merged.
 
 Honouring that by hand is five acts at one end of a lane and one at the other,
 and this register records where they get dropped: rows added hours late (`ROW
