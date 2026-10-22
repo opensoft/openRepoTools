@@ -22,6 +22,7 @@ off. The sandbox is the real `lanes-edit.sh`; nothing reaches a real remote.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 from pathlib import Path
 
@@ -456,6 +457,55 @@ def test_a_migration_dry_run_names_a_rename_that_never_landed_and_never_says_pul
     else:
         box.git("-C", str(c), "push", "-q", "origin", f"HEAD:refs/heads/archive/{NEIGHBOUR}-stranded-test")
         box.git("-C", str(c), "reset", "-q", "--keep", "refs/remotes/origin/main")
+    again = box.helper("migrate-state-cells")
+    assert again.returncode == 0, (again.stdout, again.stderr)
+    assert "SKIPPED" not in again.stdout, "the recovery the line gives settles it"
+
+
+def test_a_migration_dry_run_never_calls_a_staged_rename_committed(box: Box):
+    """rv1b-c3's NIT D (its probe P1): the dry run asked `ls-files
+    --error-unmatch` whether the rename was committed, and that reads the
+    INDEX. A case-only rename that was STAGED and never committed (a write's
+    `git commit` failed after its `add`) was called "committed here and not
+    on origin" and given the archive recovery: an archive branch identical to
+    main on origin, and a `reset --keep` that only unstaged it, which left the
+    stray copy for the next dry run to name. "Committed" is said only where
+    HEAD holds the file; a rename that is only staged is unstaged
+    (`restore --staged`), with no archive step, and the stray-copy recovery
+    that follows is the one the next line gives. The dry run writes nothing."""
+    c = box.seam()
+    old_cased = f"lanes/log/{NEIGHBOUR.lower()}.md"
+    canonical = f"lanes/log/{NEIGHBOUR}.md"
+    header = f"# lane {NEIGHBOUR} — object log (lane-collision-protocol Amendment 7)\n"
+    box.peer_pushes(old_cased, header)
+    box.git("-C", str(c), "fetch", "-q", "origin")
+    box.git("-C", str(c), "merge", "-q", "--ff-only", "refs/remotes/origin/main")
+    (c / old_cased).rename(c / canonical)
+    box.git("-C", str(c), "add", "-A", "--", "lanes/log")
+    assert box.git("-C", str(c), "rev-parse", "HEAD").strip() == box.origin_head(), "nothing is committed"
+    before = box.snapshot(c)
+    result = box.helper("migrate-state-cells")
+    out = result.stdout
+    assert result.returncode == 0, (out, result.stderr)
+    line = next((l for l in out.splitlines() if l.strip().startswith(f"{NEIGHBOUR} ")), "")
+    assert line, out
+    assert "committed here" not in line, "a staged rename is not a committed one"
+    assert f"{NEIGHBOUR}.md STAGED and not committed" in line, line
+    assert "a case-only rename whose commit never landed" in line, line
+    assert "push origin HEAD:refs/heads/archive/" not in line, "there is no commit to archive"
+    assert "reset --keep" not in line, "that only unstages it, after an archive nobody needed"
+    unstage = f"git -C {c} restore --staged -- {old_cased} {canonical}"
+    assert unstage in line, line
+    assert box.snapshot(c) == before, "a dry run writes nothing"
+    # The recovery the line gives, step by step: unstaged, the copy is the
+    # NOT TRACKED state and the next line says so; its own recovery then
+    # settles it.
+    box.git(*shlex.split(unstage)[1:])
+    mid = box.helper("migrate-state-cells")
+    mid_line = next((l for l in mid.stdout.splitlines() if l.strip().startswith(f"{NEIGHBOUR} ")), "")
+    assert f"{NEIGHBOUR}.md NOT TRACKED" in mid_line, mid.stdout
+    (c / canonical).unlink()
+    box.git("-C", str(c), "checkout", "HEAD", "--", old_cased)
     again = box.helper("migrate-state-cells")
     assert again.returncode == 0, (again.stdout, again.stderr)
     assert "SKIPPED" not in again.stdout, "the recovery the line gives settles it"

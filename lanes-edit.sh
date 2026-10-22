@@ -12421,8 +12421,17 @@ EOF
             # and never published, or the copy a rename's two `mv`s left when
             # its commit was never made. A commit of both would publish a second
             # file for one lane, and no writer pulls.
-            if [ "$NO_GIT" != 1 ] && git -C "$LANES_REPO" -c "$CP_EXACT" ls-files --error-unmatch -- "$msc_rel" >/dev/null 2>&1; then
+            #
+            # "COMMITTED" IS ASKED OF HEAD, NOT OF THE INDEX (rv1b-c3's NIT
+            # D): `ls-files --error-unmatch` answers for a STAGED rename too,
+            # which a failed `git commit` leaves, and the archive below would
+            # then push a branch identical to origin's. A staged one has no
+            # commit to archive: it is unstaged, and the copy it leaves is
+            # the NOT TRACKED state.
+            if [ "$NO_GIT" != 1 ] && git -C "$LANES_REPO" cat-file -e "HEAD:$msc_rel" 2>/dev/null; then
               msc_why="its object log is published as $msc_pub while this checkout has ${msc_rel##*/}, committed here and not on origin: a case-only rename whose commit never landed. The publish act refuses it (#194: a rename deletes and re-adds the log) and no later write carries it (S3 refuses every write over it), so archive it (S6.3): git -C $LANES_REPO push origin HEAD:refs/heads/archive/${msc_lane}-stranded-$(date -u +%Y%m%dT%H%MZ), then git -C $LANES_REPO reset --keep origin/$LANES_BRANCH, and re-run; the lane's next write renames the log once, inside its own commit"
+            elif [ "$NO_GIT" != 1 ] && git -C "$LANES_REPO" -c "$CP_EXACT" ls-files --error-unmatch -- "$msc_rel" >/dev/null 2>&1; then
+              msc_why="its object log is published as $msc_pub while this checkout has ${msc_rel##*/} STAGED and not committed: a case-only rename whose commit never landed (a write's \`git commit\` failed after its \`add\`), so there is no commit to archive and nothing on origin to keep. Unstage it (git -C $LANES_REPO restore --staged -- $msc_pub $msc_rel), which leaves the copy NOT TRACKED, then compare them (git -C $LANES_REPO show refs/remotes/origin/$LANES_BRANCH:$msc_pub | diff - \"$msc_lf\"): a line only the copy holds belongs to a write that never landed, and is re-run as that write. Then remove the copy (rm -- \"$msc_lf\"), put the published log back (git -C $LANES_REPO checkout HEAD -- $msc_pub) and re-run; the lane's next write renames it once, inside its own commit"
             else
               msc_why="its object log is published as $msc_pub while this checkout has ${msc_rel##*/} NOT TRACKED: the copy left by a case-only rename whose commit never landed, which is not merged by hand, since a commit of it would publish a second file for one lane (Amendment 15). Compare them (git -C $LANES_REPO show refs/remotes/origin/$LANES_BRANCH:$msc_pub | diff - \"$msc_lf\"): a line only the copy holds belongs to a write that never landed, and is re-run as that write. Then remove the copy (rm -- \"$msc_lf\"), put the published log back (git -C $LANES_REPO checkout HEAD -- $msc_pub) and re-run; the lane's next write renames it once, inside its own commit"
             fi
