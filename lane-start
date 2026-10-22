@@ -43,9 +43,13 @@
 #     as the line after its header block:
 #       RESUMED by <uuid> (lane <name>) at <UTC> — lane-start on <ws>
 #     committed on its own as `handoff(<lane>@<ws>): RESUMED by <uuid>`, with
-#     an explicit pathspec and a `Lane:` trailer (Amendment 4(d)), then pulled
-#     and pushed. It NEVER refuses the launch: a stamp that cannot be written
-#     prints the command that writes it. Seven resumes of one lane needed that
+#     an explicit pathspec and a `Lane:` trailer (Amendment 4(d)), and pushed:
+#     ONE `lanes-edit.sh write-handoff --stamp`, through the checkout every
+#     write of the lane goes through and under its lock (Amendment 23, slice
+#     2b). It NEVER refuses the launch: a stamp that cannot be written prints
+#     the line and the command that writes it, and once the first register
+#     write is made only a supervised restart's own fences stop a launch.
+#     Seven resumes of one lane needed that
 #     line written by hand, and while it was owed the counts drifted 6/4/5
 #     across the row, the object log and the handoff itself.
 #
@@ -322,12 +326,20 @@
 #                        the answer; anything but y/yes is No
 #   LANES_REPO           the checkout the register and the handoffs share
 #                        (default: the workspace repository)
+#   LANES_ROUTE_WRITES=1 Amendment 23's opt-in: with neither LANES_REPO nor
+#                        LANES_FILE set, every write of the lane goes through
+#                        its own register checkout <W>-lanes/<lane>/, made at
+#                        "5. the row", and W, the workspace repository, is
+#                        fast-forwarded (`lanes-edit.sh refresh-workspace`)
+#                        before the row is read and again before the launch
 #   LANES_WORKSPACE_ROOT the workspace repository, overriding the `path:` in
 #                        ${AGENT_PROTOCOL_ROOT:-~/.agents}/workspace.yaml — the
 #                        test seam, and the only override there is
-#   LANES_BRANCH         default main — the branch the handoff stamp is pushed on
-#   LANES_GIT_TIMEOUT    seconds bounding each git call that touches the NETWORK
-#                        (default 60; 0 or a non-number turns the bound off)
+#   LANES_BRANCH         default main — the register's branch: what every write
+#                        pushes, and what W is fast-forwarded to
+#   LANES_GIT_TIMEOUT    seconds bounding each git call `lanes-edit.sh` makes
+#                        over the NETWORK (default 60; 0 or a non-number turns
+#                        the bound off). This command makes none of its own
 #   LANES_GIT            the git binary THOSE calls use, so a test can hand them
 #                        a git that hangs without shadowing git for the script
 #   LANES_NO_GIT=1       write the handoff's stamp but commit nothing
@@ -1106,6 +1118,36 @@ if [ -z "${LANES_FILE:-}" ]; then die "$(lanes_workspace_why)" 1; fi
 [ -f "$LANES_FILE" ] || die "no register at $LANES_FILE — the workspace repository $(lanes_ws_yaml) names carries no lanes/LANES.md. \`openRepoTools wip init\` seeds one (it is idempotent); or set LANES_FILE" 1
 [ -x "$LANES_EDIT" ] || die "no register writer at $LANES_EDIT — \`lanes-edit.sh\` is installed beside this command by \`openRepoTools --install\`. Run that, or set LANES_EDIT" 1
 
+# AMENDMENT 23 S5 (slice 2b) — W IS FAST-FORWARDED BEFORE IT IS READ, AND AGAIN
+# ONCE THIS LAUNCH'S WRITES ARE DONE. Under `LANES_ROUTE_WRITES=1` and the
+# default resolution every write of this lane goes through its own register
+# checkout, `<W>-lanes/<lane>/`, and W, the readers' copy this command reads
+# the lane's row from, moves only by `lanes-edit.sh refresh-workspace` (plan
+# §2.6): its fetch, then `merge --ff-only`, and never a reset, a stash, a commit
+# or an abort. So it is asked for twice: here, before the first read through W,
+# and just before section 6, so that the next reader of W finds this launch's
+# own row, log line and stamp. Without the opt-in W is the write checkout, and
+# every write's S3 fast-forwards it under its own lock; an explicit
+# `LANES_REPO` or `LANES_FILE` is the caller's register and not W. Neither
+# refresh runs then, nor in a dry run, which plans it. Every exit is a note: a
+# launch is never refused for a read it can do without (Amendment 8(d)).
+LS_ROUTED=0
+if [ "${LANES_ROUTE_WRITES:-}" = 1 ] && [ "$LANES_REG_DEFAULT" = 1 ]; then LS_ROUTED=1; fi
+LS_REFRESH_RC=""
+ls_refresh() {   # <when, as words: "before this launch reads it" or "after its writes">
+  [ "$LS_ROUTED" = 1 ] || return 0
+  if (( dry_run )); then
+    plan "$LANES_EDIT refresh-workspace   # W, fast-forwarded $1 (Amendment 23 S5)"
+    return 0
+  fi
+  LS_REFRESH_RC=0
+  "$LANES_EDIT" refresh-workspace || LS_REFRESH_RC=$?
+  [ "$LS_REFRESH_RC" = 0 ] ||
+    note "W was not fast-forwarded $1 (\`$LANES_EDIT refresh-workspace\` exited $LS_REFRESH_RC; its words are above), and the launch goes on: W is the readers' copy, and only a person repairs it (Amendment 23 S5)."
+  return 0
+}
+ls_refresh "before this launch reads it"
+
 # ------------------------- AMENDMENT 15: THE ROW'S SPELLING IS THE LANE'S NAME
 #
 # The row wins over the directory, and over what was typed: it is what the
@@ -1164,51 +1206,38 @@ esac
 repo="${repo:-$LANE}"          # the verbatim form has no <repo> of its own
 estate="${estate:-$repo}"
 
-# AMENDMENT 23 S1, S2 — THE REGISTER THIS COMMAND READS IS THE ONE ITS WRITES GO
-# THROUGH. Under `LANES_ROUTE_WRITES=1` (opt-in until slice 1b, the review of
-# #282's MUST 2) and the default resolution, every write of this lane goes
-# through its own checkout, `<W>-lanes/<lane>/`, and W, the readers' copy, moves
-# only by `lanes-edit.sh refresh-workspace`. So W's working tree does not carry the
-# lane's own rows once they are written: a lane started through its checkout
-# read as a lane with no row, and a second start refused to add a duplicate
-# that W could not see. The row this command counts and acts on is therefore
-# read from that checkout. The helper makes the checkout here if it is not
-# there yet, exactly as this command's first write would; a dry run makes
-# nothing and reads W where there is no checkout. ONLY THE READ MOVES: the
-# handoff this command publishes is still W's until Amendment 23's later slices.
-# A helper that predates the verb writes W itself, so W is what is read. A
-# checkout that could not be made (2) or whose creation lock is held (4) is
-# SAID, and W is read (SHOULD 2): Amendment 8(d) — a launch is never refused for
-# a register act it can do without, and the writes after it say their own.
-lane_register_follow() {
-  [ "${LANES_ROUTE_WRITES:-}" = 1 ] || return 0
-  [ "$LANES_REG_DEFAULT" = 1 ] && [ -n "${LANE:-}" ] || return 0
-  case "$prog" in lane-end) lrf_none="Nothing was written." ;; *) lrf_none="Nothing was launched, renamed or written." ;; esac
-  lrf_args=(lane-checkout "$LANE")
-  [ "${dry_run:-0}" = 1 ] || lrf_args+=(--create)
-  lrf_errf="$(mktemp "${TMPDIR:-/tmp}/${prog}-register.XXXXXX" 2>/dev/null || printf '')"
-  lrf_out=""; lrf_rc=0
-  lrf_out="$("$LANES_EDIT" "${lrf_args[@]}" 2>"${lrf_errf:-/dev/null}")" || lrf_rc=$?
-  lrf_err=""
-  if [ -n "$lrf_errf" ]; then lrf_err="$(cat -- "$lrf_errf" 2>/dev/null || :)"; rm -f -- "$lrf_errf"; fi
-  case "$lrf_rc" in
-    0)
-      [ -z "$lrf_err" ] || printf '%s\n' "$lrf_err" >&2
-      [ -f "$lrf_out/lanes/LANES.md" ] ||
-        die "lane $LANE's register checkout $lrf_out carries no lanes/LANES.md, so the lane's row cannot be read (Amendment 23 S1). $lrf_none" 1
-      LANES_FILE="$lrf_out/lanes/LANES.md" ;;
-    8) : ;;                        # a dry run, and no checkout yet: W is what there is
-    2 | 4)
-      case "$lrf_err" in *"unknown subcommand 'lane-checkout'"*) return 0 ;; esac
-      [ -z "$lrf_err" ] || printf '%s\n' "$lrf_err" >&2
-      note "lane $LANE's own register checkout could not be made (\`$LANES_EDIT lane-checkout $LANE --create\` exited $lrf_rc, above), so this command reads W's register, which may not show what this lane's earlier writes put there (Amendment 23 S1, 8(d)). Each write below says for itself whether it went through." ;;
-    *)
-      [ -z "$lrf_err" ] || printf '%s\n' "$lrf_err" >&2
-      die "lane $LANE's own register checkout could not be read (\`$LANES_EDIT lane-checkout $LANE\` exited $lrf_rc, above), so the row this command acts on cannot be read where its writes go (Amendment 23 S1). $lrf_none" 1 ;;
-  esac
+# AMENDMENT 23 S1, S5 (slice 2b) — THE ROW IS READ FROM W, BROUGHT UP TO DATE
+# FIRST. Under the opt-in and the default resolution every write of this lane
+# goes through its own checkout, and W, which takes none, is fast-forwarded
+# above, so W's working tree carries every row that has landed, this lane's
+# own included. (Slice 1a read the row from the lane's checkout instead, and
+# made that checkout here to do it; it is made at "5. the row" now, where the
+# first write needs it.) Where that refresh did not fast-forward W, or in a dry
+# run, which runs none, the row is read from `origin/<branch>` as W last
+# fetched it, never from a working tree that may be behind; and where W has no
+# such ref, from the working tree, said. Without the opt-in, or with a
+# caller's `LANES_REPO` or `LANES_FILE`, the register read is `$LANES_FILE`'s
+# working tree, as it always was. Held as text, not a temporary file, because
+# the `exec` this command ends in runs no exit trap.
+LS_ROWS_FROM=file; LS_ROWS_TEXT=""
+ls_rows_source() {
+  [ "$LS_ROUTED" = 1 ] || return 0
+  [ "$LS_REFRESH_RC" != 0 ] || return 0
+  lrs_ref="refs/remotes/origin/${LANES_BRANCH:-main}"
+  if LS_ROWS_TEXT="$(git -C "$LANES_REPO" show "$lrs_ref:lanes/LANES.md" 2>/dev/null)"; then
+    LS_ROWS_FROM=ref
+    (( dry_run )) || note "so this lane's row is read from origin/${LANES_BRANCH:-main} as W last fetched it, not from W's working tree"
+  else
+    LS_ROWS_TEXT=""
+    note "W has no origin/${LANES_BRANCH:-main} to read the register from, so this lane's row is read from W's working tree, which may be behind origin (Amendment 23 S5)"
+  fi
   return 0
 }
-lane_register_follow
+ls_rows_source
+# The register text the row is counted in: the one source above, for both reads.
+ls_register_text() {
+  if [ "$LS_ROWS_FROM" = ref ]; then printf '%s\n' "$LS_ROWS_TEXT"; else cat -- "$LANES_FILE"; fi
+}
 
 # ----------------------------------------- 1b. THE LANE'S DIRECTORY
 #
@@ -1621,24 +1650,24 @@ seam_refuse "$LANE" "a lane start"
 # `openXfactory-2` at 2026-09-13T23:51:56Z. Case-insensitive, the lane is found,
 # the branch below is the RESUME branch, and `add-row` is never reached.
 rows_for_lane() {
-  awk -v lane="$1" '
+  ls_register_text | awk -v lane="$1" '
     substr($0,1,1) == "|" {
       p1 = index($0, "`"); if (p1 == 0) next
       rest = substr($0, p1 + 1); p2 = index(rest, "`"); if (p2 == 0) next
       if (tolower(substr(rest, 1, p2 - 1)) == tolower(lane)) print
-    }' "$LANES_FILE"
+    }'
 }
 # The names those rows carry — which under Amendment 15 may be two spellings of
 # ONE name, and a refusal that could not say so would send a person looking for
 # a duplicate that is not there to find.
 row_names_for_lane() {
-  awk -v lane="$1" '
+  ls_register_text | awk -v lane="$1" '
     substr($0,1,1) == "|" {
       p1 = index($0, "`"); if (p1 == 0) next
       rest = substr($0, p1 + 1); p2 = index(rest, "`"); if (p2 == 0) next
       t = substr(rest, 1, p2 - 1)
       if (tolower(t) == tolower(lane)) print t
-    }' "$LANES_FILE"
+    }'
 }
 
 row="$(rows_for_lane "$LANE" || :)"
@@ -1689,7 +1718,15 @@ if [ "$row_count" = 0 ]; then
       printf '  %s\n' "${pub_row_first:0:200}" >&2
       note "adding a row here would make two, and two rows for one lane is a register lanes-edit.sh cannot edit."
       note "RECOVERY — bring this checkout up to date, then re-run this command:"
-      note "  git -C \"$(cd -- "$(dirname -- "$LANES_FILE")/.." && pwd)\" pull --rebase origin main"
+      # NEVER A PULL (Amendment 23 S3, S5): W, the default register read, is
+      # only ever fast-forwarded, and by one act; a caller's own checkout is
+      # brought up the same two ways.
+      if [ "$LANES_REG_DEFAULT" = 1 ]; then
+        note "  $LANES_EDIT refresh-workspace   # W is only ever fast-forwarded; it says what blocks it"
+      else
+        ls_top="$(cd -- "$(dirname -- "$LANES_FILE")/.." && pwd)"
+        note "  git -C \"$ls_top\" fetch origin ${LANES_BRANCH:-main} && git -C \"$ls_top\" merge --ff-only origin/${LANES_BRANCH:-main}"
+      fi
       die "refusing to add a second row for $LANE" 2 ;;
     *)
       note "the helper's own output is above."
@@ -1710,7 +1747,15 @@ else
       note "this checkout has a row for $LANE and the register on origin/main has none — so there is no PUBLISHED session cell, and no recorded session to resume."
       unpub_ids="$(printf '%s\n' "$row" | awk -F'|' '{print $3}' | grep -oiE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tr 'A-F' 'a-f' | tr '\n' ' ' || :)"
       [ -n "$unpub_ids" ] && note "  the id(s) only this checkout's copy carries, which nothing else can see: ${unpub_ids% }"
-      note "  RECOVERY — push the register from here, then re-run: git -C \"$(cd -- "$(dirname -- "$LANES_FILE")/.." && pwd)\" push origin main" ;;
+      # THE PUBLISH ACT, NEVER A BARE PUSH (Amendment 23 S3): `commit` with
+      # nothing staged publishes what the checkout has that origin lacks, and
+      # carries a hand edit of the register as its own commit. W takes no
+      # write at all, so a row only W carries is a stray there (S5).
+      if [ "$LS_ROUTED" = 1 ]; then
+        note "  RECOVERY — that row is a stray in W, the readers' copy, where no tool writes (Amendment 23 S5; \`$LANES_EDIT refresh-workspace\` names it): make it a write of the lane's own checkout and publish it from there, LANES_LANE=$LANE $LANES_EDIT commit \"<what it is>\", or take it out of W, then re-run."
+      else
+        note "  RECOVERY — publish the register from here, then re-run: LANES_LANE=$LANE $LANES_EDIT commit \"<what it is>\" (the publish act, in $(cd -- "$(dirname -- "$LANES_FILE")/.." && pwd))"
+      fi ;;
     *)
       note "the helper's own output is above."
       die "$LANES_EDIT register-row $LANE failed (exit $pub_rc). That is NOT 'the register has no row for $LANE', and this script will not pick a resume target on an answer it did not get: resuming the working tree's id lands the operator in the lane's previous conversation and stamps that uuid on an append-only line. Fix the helper (or run it by hand: $LANES_EDIT register-row $LANE), then re-run." 1 ;;
@@ -2557,7 +2602,9 @@ if [ "$bind_rc" = 0 ]; then
     (( dry_run )) && ls_rh+=(--dry-run)
     step "$(quoted "${ls_rh[@]}")"
     ls_rh_rc=0
-    "${ls_rh[@]}" || ls_rh_rc=$?
+    # ITS LANE, NAMED (Amendment 23 S2): `request-handoff` writes the lane's
+    # record, so the lane its write belongs to is said rather than derived.
+    LANES_LANE="$LANE" "${ls_rh[@]}" || ls_rh_rc=$?
     case "$ls_rh_rc" in
       0) bind_recheck=1; step "lane $LANE is free — binding it here (Amendment 18(c))" ;;
       8) bind_recheck=1; step "lane $LANE was already free by the time the request was made — binding it here" ;;
@@ -3191,6 +3238,11 @@ hs_workspace_root() { lanes_workspace_root; }
 #       somewhere else.
 # A cell that spells a path of its own is answered by (a) alone: joining an
 # absolute path on to a root gives a path nothing has.
+# SINCE AMENDMENT 23's SLICE 2B IT IS A FALLBACK AND NEVER A TARGET: the stamp
+# is written, the restart's binding is checked and the first prompt is read in
+# the file `lanes-edit.sh handoff-path` names, the one this lane's writes go
+# to. Only an ordinary launch whose own copy is not there reads the copy this
+# finds for its first prompt, and says so (5d).
 hs_resolve() {
   local cell="$1" cand root
   [ -n "$cell" ] || return 1
@@ -3346,9 +3398,13 @@ case "$ri_state" in
           die "lane $LANE's handoff has changed since its restart intent was written: the intent records digest $ri_dig for $ri_hf and that file now digests $ri_now. The top block of that file is this launch's FIRST PROMPT, so launching now would hand the new session the block of a handoff the /ctx did not write. Nothing was renamed, written or started (operation ${ri_op:-none}). Take the handoff again:  lane-handoff --restart" 2
         fi
       fi
-      # The digest and the actual prompt must refer to the same row-bound file.
-      ri_cell="$(cell 7 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
-      ri_row_hf="$(hs_resolve "$ri_cell")" || die "the restart handoff the row names is missing. Nothing was started." 2
+      # The digest and the actual prompt must refer to the same row-bound file:
+      # THE ONE THIS LANE'S WRITES GO TO (Amendment 23, slice 2b), which
+      # `handoff-path` names from the row's cell — the lane's own checkout's
+      # copy under the opt-in — and which `lane-handoff` bound and 5c stamps.
+      ri_row_hf=""
+      ri_row_hf="$(LANES_NO_FETCH=1 "$LANES_EDIT" handoff-path "$LANE" 2>/dev/null)" && [ -f "$ri_row_hf" ] ||
+        die "the restart handoff the row names is missing. Nothing was started." 2
       [ -n "$ri_hf" ] && [ "$ri_hf" != none ] && [ -s "$ri_hf" ] &&
         [ "$ri_hf" -ef "$ri_row_hf" ] ||
         die "the restart intent and register name different handoffs. Nothing was started." 2
@@ -3847,6 +3903,23 @@ else
   session_cell="pending — set by the session's first act"
 fi
 
+# AMENDMENT 23 S1 (slice 2b) — THE LANE'S OWN CHECKOUT IS MADE HERE, before the
+# row, under the opt-in and the default resolution: the first write needs it,
+# and every write below goes through it. A dry run plans it and makes nothing.
+# A checkout that could not be made, or whose creation lock is held, is SAID
+# and the launch goes on (Amendment 8(d)): each write below makes it again, or
+# says for itself that it did not go through.
+if [ "$LS_ROUTED" = 1 ]; then
+  if (( dry_run )); then
+    plan "$LANES_EDIT lane-checkout $LANE --create"
+  else
+    lsc_rc=0
+    "$LANES_EDIT" lane-checkout "$LANE" --create >/dev/null || lsc_rc=$?
+    [ "$lsc_rc" = 0 ] ||
+      note "lane $LANE's own register checkout could not be made (\`$LANES_EDIT lane-checkout $LANE --create\` exited $lsc_rc, above). The launch goes on: each write below makes it again, or says for itself that it did not go through (Amendment 23 S1, 8(d))."
+  fi
+fi
+
 if [ "$row_count" = 0 ]; then
   # AMENDMENT 13(a) — A NEW ROW IS BORN IN THE PHRASE. The state cell opened
   # with the bare word `STARTING` for as long as the cell was a diary; it is one
@@ -4078,6 +4151,28 @@ else
   fi
 fi
 
+# THE HANDOFF'S WRITABLE PATH, BESIDE THE ROW'S SPELLING (plan §2.7). The row's
+# cell is a spelling a reader can follow, and under the opt-in a person who
+# follows it lands in W, where no tool writes (Amendment 23 S5). `handoff-path`
+# names the same file in the checkout this lane's writes go through, which is
+# where 5c stamps it, where 5d reads the first prompt from, and where a hand
+# edit belongs. A read; in a dry run it fetches nothing.
+HS_PATH=""
+ls_cell="$handoff"
+[ "$row_count" != 1 ] || ls_cell="$(cell 7 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' || :)"
+if [ -n "$ls_cell" ]; then
+  hsp_rc=0; hsp_nf=0
+  (( ! dry_run )) || hsp_nf=1
+  HS_PATH="$(LANES_NO_FETCH="$hsp_nf" "$LANES_EDIT" handoff-path "$LANE" 2>/dev/null)" || hsp_rc=$?
+  if [ "$hsp_rc" = 0 ] && [ -n "$HS_PATH" ]; then
+    step "the lane's handoff '$ls_cell' is written through $HS_PATH"
+  else
+    HS_PATH=""
+    [ "$hsp_rc" = 8 ] || (( dry_run )) ||
+      note "where this lane's handoff is written could not be read (\`$LANES_EDIT handoff-path $LANE\` exited $hsp_rc), so the first prompt below is read from the file the row's cell names"
+  fi
+fi
+
 # ------------------------------------------- 5b. the lane's own object log
 #
 # Amendment 7. AFTER the row, because the row is what `who` reads the lane's
@@ -4260,74 +4355,34 @@ fi
 # end of the header block. That puts THIS resume at the top of the block of
 # stamps, above the ones before it.
 #
-# AFTER 5b, so that every `lanes-edit.sh` write this run makes is already
-# committed before this one touches the checkout at all. The register and the
-# handoffs share one checkout, and the helper REFUSES a checkout carrying an
-# uncommitted change to a tracked file it is not itself writing (Amendment 5,
-# `dirty_elsewhere`). Stamp the handoff first and let its commit fail, and the
-# edit made for the row is the reason the row cannot be written.
+# AFTER 5b, AND THROUGH THE SAME CHECKOUT (Amendment 23, slice 2b). The stamp is
+# ONE `lanes-edit.sh write-handoff --stamp`. Under the lock of the checkout
+# every write of this lane goes through — its own `<W>-lanes/<lane>/` under the
+# opt-in, an explicit `LANES_REPO` in place, W where the opt-in is off — it
+# fast-forwards that checkout (S3), reads the row's handoff cell from what it
+# fetched and the file in that checkout, splices this line in and proves it
+# (this script's own splice, moved there unchanged), replaces the file
+# atomically under a restart's fences, commits it by pathspec with the `Lane:`
+# trailer and pushes it (S4), replaying the splice on origin's new tip where a
+# peer won the race. Its one stdout line is the file it wrote and that file's
+# digest. It used to be this script's own: published under W's lock, then
+# added, committed, pulled and pushed in W outside any lock (lane
+# openRepoTools-3's finding 282, the first of three such writers), and the
+# notes that said which later write would push a stranded stamp went with it:
+# none does (S3).
 #
-# AND IT IS NEVER A REASON TO REFUSE THE LAUNCH. A handoff that has moved, a
-# checkout with no git, a rebase conflict, a push that hangs — each one prints
-# the command that finishes the act, and the lane still starts. Rule 3's stamp
-# is the RECORD of a resume, not the licence for one, and refusing the session
-# would lose the conversation the stamp is about. (Rule 3 also says a lane that
-# finds an existing stamp stops and reports. That is addressed to the session
-# reading the resume prompt, not to the act that records the resume: the file
-# already carries one line per resume and gains one more.)
-
-# Ruling (h)'s bound, in this script's own few lines rather than reached for in
-# the helper's: every git call that touches the NETWORK runs under
-# `LANES_GIT_TIMEOUT` seconds (default 60; `0` or a non-number turns the bound
-# off), so a hung remote costs the launch a minute and never the session. No
-# `timeout` on PATH is not a reason to skip the call — it is a reason to make
-# it unbounded, which is what this did before the bound existed.
-HS_TIMED_OUT=0
-hs_git_net() {
-  local rc=0 budget="${LANES_GIT_TIMEOUT:-60}"
-  HS_TIMED_OUT=0
-  case "$budget" in
-    ''|0|*[!0-9]*) "${LANES_GIT:-git}" "$@" || rc=$? ;;
-    *)
-      if command -v timeout >/dev/null 2>&1; then
-        timeout -k 5 "$budget" "${LANES_GIT:-git}" "$@" || rc=$?
-        case "$rc" in 124|137) HS_TIMED_OUT=1 ;; esac
-      else
-        "${LANES_GIT:-git}" "$@" || rc=$?
-      fi ;;
-  esac
-  return "$rc"
-}
-
-# F-B7 — WHICH CASE THE READER IS IN, said rather than assumed. A stamp that is
-# committed here and not pushed is carried out by the next `lanes-edit.sh` write
-# ONLY where the handoff lives in the register's own checkout: that write pushes
-# the BRANCH, so it takes the orphaned commit with it. `hs_resolve` also accepts
-# an absolute path and a workspace root, either of which can land outside
-# `$LANES_REPO` — and nothing ever pushes a commit made there, because no
-# `lanes-edit.sh` write goes out of it. Promising a carry that will not happen
-# is worse than printing the command, so the note says which it is.
-hs_carry_note() {
-  # UNDER `LANES_ROUTE_WRITES=1` NO WRITE GOES OUT OF W (Amendment 23 S2; the
-  # review of #282, SHOULD 6): with the default resolution each one goes through
-  # its lane's own checkout, so none will ever push a commit made here.
-  if [ "${LANES_ROUTE_WRITES:-}" = 1 ] && [ "$LANES_REG_DEFAULT" = 1 ] &&
-     [ -n "${LANES_REPO:-}" ] && [ "$hs_repo" = "$LANES_REPO" ]; then
-    note "  (this handoff is in W ($hs_repo), and under LANES_ROUTE_WRITES=1 every lanes-edit.sh write goes through its lane's own checkout instead, so none will push this commit: the command above is the whole of the recovery.)"
-  elif [ -n "${LANES_REPO:-}" ] && [ "$hs_repo" = "$LANES_REPO" ]; then
-    note "  (this handoff is in the register's own checkout, so the next lanes-edit.sh write out of it pushes the branch and carries this commit with it.)"
-  else
-    note "  (this handoff is NOT in the register's checkout ($hs_repo), so no lanes-edit.sh write will ever push it: the command above is the whole of the recovery.)"
-  fi
-  return 0
-}
-
-# The workspace repository, which is where handoffs live (Amendment 4(a)) and,
-# since Amendment 9(a), where the register lives too. THIS USED TO BE A SECOND
-# READER of the same file with a looser rule — it took any `path:` at any
-# indentation and checked nothing — and Amendment 9(a) is explicit that a
-# second way to find one thing is a second answer. It now defers to the one
-# resolver above, which is the same in all four helpers.
+# AND IT IS NEVER A REASON TO REFUSE THE LAUNCH. A handoff that is not there, a
+# checkout S3 refuses, a push that is refused or never confirmed — each one
+# prints what was left and the command that finishes the act, and the lane
+# still starts. Rule 3's stamp is the RECORD of a resume, not the licence for
+# one, and refusing the session would lose the conversation the stamp is about.
+# (Rule 3 also says a lane that finds an existing stamp stops and reports. That
+# is addressed to the session reading the resume prompt, not to the act that
+# records the resume: the file already carries one line per resume and gains
+# one more.) THE ONE EXCEPTION IS A SUPERVISED RESTART'S OWN FENCES. The file
+# its intent bound is this launch's first prompt, so a write that lost the
+# restart's ownership (7), or a bound file that no longer digests as the
+# restart bound it, stops the launch here, as it always did.
 
 # The handoff path is field 7 of the PUBLISHED row: the register's header is
 # `| lane | session id | workstation / env / user | started (UTC) | objects
@@ -4344,181 +4399,52 @@ hs_carry_note() {
 # rule R-A8-2 gives — and 1 for an agent whose id is its own kind of id, because
 # refusing that stamp would leave Rule 3 unstamped for every launch this
 # amendment exists to make.
+hs_bound_unchanged() {   # the restart's bound file still digests as the restart bound it
+  [ "${ri_expected_digest:-none}" != none ] || return 0
+  [ -n "$ri_hf" ] && [ "$ri_hf" != none ] && [ "$(handoff_digest_of "$ri_hf")" = "$ri_expected_digest" ]
+}
 if [ "$lane_verb" = RESUMED ] && [ "$row_count" = 1 ] && (( stamp_ok )); then
   hs_cell="$(cell 7 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' || :)"
   hs_stamp="RESUMED by $stamp_who (lane $LANE) at $utc — lane-start on $ws"
   hs_subject="handoff($LANE@$ws): RESUMED by $stamp_who"
-  hs_trailer="Lane: $LANE ($ws)"
-  hs_file=""
+  hs_args=(write-handoff "$LANE" --stamp "$hs_stamp" --subject "$hs_subject")
+  hs_fix="LANES_LANE=$LANE $(quoted "$LANES_EDIT" "${hs_args[@]}")"
+  # UNDER A SUPERVISED RESTART the write is fenced on the intent as 5a left it
+  # — `starting`, with this launch's transcript reserved — and on the digest
+  # the restart bound: the pre-image must be it, and the stamped file's digest
+  # is reserved as the intent's prepared digest before its bytes land, in the
+  # helper and under its lock (slice 2a, decision 7).
+  if [ "$ri_active" = 1 ]; then
+    hs_args+=(--restart "$ri_op" "$ri_gen" "$ri_attempt" starting "$lane_sid" --expected-digest "${ri_expected_digest:-none}")
+  fi
   if [ -z "$hs_cell" ]; then
     step "the row names no handoff path, so there is no Rule 3 stamp to write"
-  elif ! hs_file="$(hs_resolve "$hs_cell")"; then
-    hs_ws_root="$(hs_workspace_root 2>/dev/null || :)"
-    note "the handoff the row points at was NOT found, so Rule 3's stamp is not written: '$hs_cell'"
-    note "  looked under ${LANES_REPO:-<this checkout has no git root>} and ${hs_ws_root:-<no readable path: in ${AGENT_PROTOCOL_ROOT:-$HOME/.agents}/workspace.yaml>}"
-    note "  STAMP IT AS THIS SESSION'S FIRST ACT — this line under the handoff's header block:"
-    note "    $hs_stamp"
-    note "  then: git -C <the workspace repo> commit -m \"$hs_subject\" -m \"$hs_trailer\" -- <the file>"
+  elif (( dry_run )); then
+    plan "LANES_LANE=$LANE $(quoted "$LANES_EDIT" "${hs_args[@]}")"
   else
-    # A handoff may be reached through the estate's `handoffs` symlink, so the
-    # path git is given is the REAL one: a pathspec that leaves the repository
-    # lexically is a pathspec git refuses, however plainly it is inside it.
-    # `cd -P` AND NOT `readlink -f`, for the reason `real_of` gives above and
-    # `lane-handoff` gives one file over (Copilot round 3 on openRepoTools#47):
-    # an unresolved path here is a `hs_rel` git refuses as a pathspec, and the
-    # stamp is then written and never committed.
-    hs_dirreal="$( CDPATH=''; cd -P -- "$(dirname -- "$hs_file")" 2>/dev/null && pwd -P )" ||
-      hs_dirreal="$(dirname -- "$hs_file")"
-    hs_real="$hs_dirreal/$(basename -- "$hs_file")"
-    # Resolve a final-component symlink too; atomic publication replaces its
-    # real target and leaves the estate link intact.
-    hs_links=0
-    while [ -L "$hs_real" ]; do
-      hs_links=$((hs_links + 1))
-      [ "$hs_links" -lt 40 ] || die "the handoff symlink chain cannot be resolved. Nothing was launched." 2
-      hs_link="$(readlink "$hs_real")" || die "the handoff symlink could not be read." 2
-      case "$hs_link" in /*) hs_real="$hs_link" ;; *) hs_real="$(dirname -- "$hs_real")/$hs_link" ;; esac
-      hs_dirreal="$( CDPATH=''; cd -P -- "$(dirname -- "$hs_real")" && pwd -P )" || die "the handoff target directory is missing." 2
-      hs_real="$hs_dirreal/$(basename -- "$hs_real")"
-    done
-    hs_repo="$(git -C "$(dirname -- "$hs_real")" rev-parse --show-toplevel 2>/dev/null || :)"
-    hs_rel="$hs_real"
-    [ -n "$hs_repo" ] && hs_rel="${hs_real#"$hs_repo"/}"
-    hs_fix="git -C ${hs_repo:-<the workspace repo>} commit -m \"$hs_subject\" -m \"$hs_trailer\" -- $hs_rel"
-    hs_at=""
-    if [ -r "$hs_real" ] && [ -s "$hs_real" ]; then
-      hs_at="$(awk 'NR > 1 && /^[[:space:]]*$/ { print NR; exit }' "$hs_real" || :)"
-      if [ -z "$hs_at" ]; then
-        hs_at=1
-        note "$hs_rel has no blank line after line 1, so it has no header block to stamp under — the stamp goes directly under line 1"
-      fi
-    fi
-    if [ -z "$hs_at" ]; then
-      note "the handoff the row points at is empty or unreadable, so Rule 3's stamp is not written: $hs_file"
+    hs_out=""; hs_rc=0
+    hs_out="$(LANES_LANE="$LANE" "$LANES_EDIT" "${hs_args[@]}")" || hs_rc=$?
+    hs_line="$(printf '%s\n' "$hs_out" | awk -F'\t' 'NF >= 2 && $1 != "" { l = $0 } END { print l }')"
+    if [ -n "$hs_line" ]; then
+      hs_written="${hs_line%%	*}"
+      # THE DIGEST THE RESTART NOW EXPECTS is the stamped file's, which the
+      # helper reserved in the intent before the bytes: 5d reads that file.
+      if [ "$ri_active" = 1 ]; then ri_expected_digest="${hs_line##*	}"; fi
+      case "$hs_rc" in
+        0) step "handoff stamped, committed and pushed: $hs_written: $hs_stamp" ;;
+        3) note "Rule 3's stamp is written in $hs_written and its commit pushed, and origin did not confirm it (\`write-handoff\` exited 3; its words above name the commit): look before writing it again, because a stamp written twice is two resumes in the one document this protocol never rewrites." ;;
+        6) note "Rule 3's stamp is written in $hs_written and committed, and the commit is KEPT on HEAD of that checkout, not pushed (\`write-handoff\` exited 6; its words above name it). No later write publishes it, and each one refuses until it is published (Amendment 23 S3): once those words are answered, LANES_LANE=$LANE $LANES_EDIT commit \"<what it is>\", the publish act." ;;
+        *) note "Rule 3's stamp is written in $hs_written and was NOT published (\`write-handoff\` exited $hs_rc; its words above say what is left). The launch is not refused for it." ;;
+      esac
+    elif [ "$ri_active" = 1 ] && [ "$hs_rc" = 7 ]; then
+      die "this restart attempt lost ownership of its handoff before the resume stamp (\`write-handoff\` exited 7; its words are above). Nothing was launched." 2
+    elif [ "$ri_active" = 1 ] && ! hs_bound_unchanged; then
+      die "the restart handoff changed before its owned resume stamp. Nothing was launched." 2
+    else
+      note "Rule 3's stamp was NOT written (\`write-handoff\` exited $hs_rc; its words are above), and the launch is not refused for it: the stamp is the record of this resume, not its licence."
       note "  STAMP IT AS THIS SESSION'S FIRST ACT — this line under the handoff's header block:"
       note "    $hs_stamp"
-      note "  then: $hs_fix"
-    elif (( dry_run )); then
-      plan "stamp $hs_rel at line $((hs_at + 1)): $hs_stamp"
-      plan "$hs_fix"
-      plan "  then git -C ${hs_repo:-<the workspace repo>} pull --rebase origin ${LANES_BRANCH:-main} && … push origin ${LANES_BRANCH:-main}"
-    else
-      # THE FILE IS SPLICED, NEVER REWRITTEN. A handoff is the one document in
-      # this protocol whose whole purpose is to be read by a later session, and
-      # the act that deleted two lanes' rows on 2026-09-08 was a file written
-      # whole from what somebody remembered of it. So: read it, put ONE line
-      # in, write the rest back unchanged — and prove it before it lands. The
-      # added line must be exactly the stamp, at exactly the ruled position,
-      # and taking that line back out again must give the original file byte
-      # for byte. If it does not, nothing is written at all: that is also what
-      # catches a file whose last line has no newline, where `head` would glue
-      # the stamp on to the end of it.
-      hs_tmpd="$(mktemp -d)"
-      hs_pre="$hs_tmpd/pre"; hs_out="$hs_tmpd/out"
-      if ! cat -- "$hs_real" > "$hs_pre" 2>/dev/null; then
-        note "the handoff the row points at could not be read, so Rule 3's stamp is not written: $hs_file"
-        note "  STAMP IT AS THIS SESSION'S FIRST ACT — this line under the handoff's header block:"
-        note "    $hs_stamp"
-        note "  then: $hs_fix"
-      else
-        if [ "$ri_active" = 1 ] && [ "$ri_expected_digest" != none ] &&
-           [ "$(handoff_digest_of "$hs_pre")" != "$ri_expected_digest" ]; then
-          rm -rf -- "$hs_tmpd"
-          die "the restart handoff changed before its owned resume stamp. Nothing was launched." 2
-        fi
-        { head -n "$hs_at" -- "$hs_pre"
-          printf '%s\n' "$hs_stamp"
-          tail -n "+$((hs_at + 1))" -- "$hs_pre"
-        } > "$hs_out"
-        if [ "$(sed -n -e "$((hs_at + 1))p" "$hs_out")" = "$hs_stamp" ] &&
-           { head -n "$hs_at" -- "$hs_out"; tail -n "+$((hs_at + 2))" -- "$hs_out"; } | cmp -s - "$hs_pre"
-        then
-          if [ "$ri_active" = 1 ]; then
-            ri_post_digest="$(handoff_digest_of "$hs_out")"
-            # Persist both sides of this exact, verified stamp splice before
-            # publishing bytes. Interruption on either side remains retryable.
-            if ! LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$LANE" starting \
-              --expect starting --expect-operation "$ri_op" \
-              --expect-generation "$ri_gen" --expect-attempt "$ri_attempt" \
-              --expect-new-transcript "$lane_sid" --digest "$ri_expected_digest" --prepared-digest "$ri_post_digest" \
-              --reason 'owned handoff stamp prepared' >/dev/null; then
-              rm -rf -- "$hs_tmpd"
-              die "this attempt could not reserve its handoff stamp. Nothing was launched." 2
-            fi
-            ri_expected_digest="$ri_post_digest"
-          fi
-          hs_publish_args=(publish-handoff "$LANE" "$hs_real" "$hs_out" --expect-digest "$(handoff_digest_of "$hs_pre")")
-          if [ "$ri_active" = 1 ]; then
-            hs_publish_args+=(--operation "$ri_op" --generation "$ri_gen" --attempt "$ri_attempt" --state starting --transcript "$lane_sid")
-          fi
-          if ! LANES_NO_FETCH=1 "$LANES_EDIT" "${hs_publish_args[@]}" >/dev/null; then
-            rm -rf -- "$hs_tmpd"
-            die "the handoff stamp could not be published atomically under its writer lock. Nothing was launched." 2
-          fi
-          step "handoff stamped at line $((hs_at + 1)) of $hs_rel: $hs_stamp"
-          if [ "${LANES_NO_GIT:-0}" = 1 ]; then
-            note "LANES_NO_GIT=1 — the stamp is written and NOT committed:"
-            note "  $hs_fix"
-          elif [ -z "$hs_repo" ]; then
-            note "$hs_real is not inside a git checkout, so the stamp cannot be committed from here — it is written, and nothing outside this machine knows it."
-          else
-            # AMENDMENT 4(d) — one commit per write, an EXPLICIT pathspec, and
-            # the `Lane:` trailer. Never `git add -A` and never a bare `git
-            # commit`: this checkout is shared with every other lane on this
-            # workstation, and a write left uncommitted is captured by the next
-            # lane's commit with its attribution lost.
-            hs_rc=0
-            "${LANES_GIT:-git}" -C "$hs_repo" add -- "$hs_rel" 1>&2 || hs_rc=$?
-            if [ "$hs_rc" = 0 ]; then
-              "${LANES_GIT:-git}" -C "$hs_repo" commit -q -m "$hs_subject" -m "$hs_trailer" -- "$hs_rel" 1>&2 || hs_rc=$?
-            fi
-            if [ "$hs_rc" != 0 ]; then
-              note "the stamp is written but NOT committed (git exit $hs_rc) — an uncommitted write is captured by the next lane's commit and its attribution is lost (Amendment 4(d)). Commit it yourself:"
-              note "  $hs_fix"
-            else
-              step "handoff stamp committed: $hs_subject"
-              hs_branch="${LANES_BRANCH:-main}"
-              if ! hs_git_net -C "$hs_repo" pull --rebase -q origin "$hs_branch" 1>&2; then
-                "${LANES_GIT:-git}" -C "$hs_repo" rebase --abort >/dev/null 2>&1 || :
-                if [ "$HS_TIMED_OUT" = 1 ]; then
-                  note "the pull before the push TIMED OUT after ${LANES_GIT_TIMEOUT:-60}s (ruling (h): the launch does not wait on a hung remote) — the stamp is a local commit here and was not pushed."
-                else
-                  note "the pull before the push did not apply (a conflict, or no reachable origin) — the rebase is aborted, the checkout is clean, and the stamp is a local commit here that was not pushed."
-                fi
-                # RV-B3 — LOOK FIRST, because an aborted pull does NOT mean the
-                # commit stayed here. Observed live 2026-09-12T23:04Z: this
-                # lane's handoff commit hit an abort on a peer lane's untracked
-                # log file, and the peer's own helper then rebased and pushed —
-                # carrying this lane's local commit `59a2576` out to origin
-                # underneath its own `f053245`. A reader who ran the re-push
-                # blind at that point lands the same stamp twice, in the one
-                # document this protocol cannot afford to rewrite. The
-                # push-rejected branch below has always said to look; this one
-                # promised a recovery that is sometimes already done.
-                note "  git -C $hs_repo fetch origin $hs_branch && git -C $hs_repo log --oneline origin/$hs_branch -3   # a peer's push may already carry it"
-                note "  git -C $hs_repo pull --rebase origin $hs_branch && git -C $hs_repo push origin $hs_branch      # only if it is not there"
-                hs_carry_note
-              elif ! hs_git_net -C "$hs_repo" push -q origin "$hs_branch" 1>&2; then
-                if [ "$HS_TIMED_OUT" = 1 ]; then
-                  note "the push TIMED OUT after ${LANES_GIT_TIMEOUT:-60}s (ruling (h)) — a hung push often LANDED and the connection did not close, so look before pushing again."
-                else
-                  note "the push was rejected — the stamp is a local commit here and other workstations cannot see it yet."
-                fi
-                note "  git -C $hs_repo fetch origin $hs_branch && git -C $hs_repo log --oneline origin/$hs_branch -3"
-                note "  git -C $hs_repo push origin $hs_branch      # only if it is not there"
-                hs_carry_note
-              else
-                step "handoff stamp pushed to origin/$hs_branch"
-              fi
-            fi
-          fi
-        else
-          note "the splice of Rule 3's stamp into $hs_rel did not prove out (one line added, none changed), so NOTHING was written to it. Add this line under its header block yourself:"
-          note "    $hs_stamp"
-          note "  then: $hs_fix"
-        fi
-      fi
-      rm -rf -- "$hs_tmpd"
+      note "  with: $hs_fix"
     fi
   fi
 fi
@@ -4551,8 +4477,22 @@ if (( first_prompt )); then
   else
     fp_cell="$handoff"
   fi
+  # READS FOLLOW THE WRITE (Amendment 23, slice 2b): the file 5c wrote, in the
+  # checkout this lane's writes go through, and not W's copy, which nothing
+  # here brought up to date. Under a supervised restart it is the only file
+  # there is, because its intent bound it. For any other launch, where that
+  # file is not there, the copy the row's cell names is read, and said.
   fp_file=""
-  [ -n "$fp_cell" ] && fp_file="$(hs_resolve "$fp_cell" 2>/dev/null || :)"
+  if [ -n "$fp_cell" ]; then
+    if [ -n "$HS_PATH" ] && [ -f "$HS_PATH" ]; then
+      fp_file="$HS_PATH"
+    elif [ "$ri_active" != 1 ] || (( ! fresh )); then
+      fp_file="$(hs_resolve "$fp_cell" 2>/dev/null || :)"
+      if [ -n "$fp_file" ] && [ -n "$HS_PATH" ]; then
+        note "this lane's own copy of its handoff is not at $HS_PATH, so the first prompt is read from $fp_file, which may be behind it"
+      fi
+    fi
+  fi
   if [ "$ri_active" = 1 ] && (( fresh )); then
     [ -n "$fp_file" ] && [ "$fp_file" -ef "$ri_hf" ] ||
       die "the delivered restart prompt is not the intent-bound handoff. Nothing was launched." 2
@@ -4681,6 +4621,13 @@ lane_daily_report() {
   return 0
 }
 (( dry_run )) || lane_daily_report || :
+
+# ------------------------- 5f. W, brought up to this launch's writes (S5)
+#
+# The second of the two refreshes (see `ls_refresh`): the next reader of W —
+# the next `lane-start` of any lane, `lanes`, `status` — finds this launch's row,
+# log line and stamp there. A refusal is a note, and the launch goes on.
+ls_refresh "after this launch's writes"
 
 # ---------------------------------------------------------------- 6. launch
 #
