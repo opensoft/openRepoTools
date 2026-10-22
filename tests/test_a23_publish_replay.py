@@ -481,6 +481,64 @@ def test_timed_out_push_is_read_back(box: Box, landed: bool):
     _settled(box, c)
 
 
+def _another_writer(c: Path, state: str) -> str:
+    """What an unlocked writer in `c` does while a push is in flight, as the
+    lines of a hook: a stamp committed on top of this write's commit, or an
+    amend that rewrites it (a rebase's effect, with the tree kept)."""
+    cq = shlex.quote(str(c))
+    if state == "on-top":
+        return (f"printf 'stamp' > {cq}/handoffs/stamp.md" + "\n" +
+                f"git -C {cq} add -- handoffs/stamp.md" + "\n" +
+                f"git -C {cq} commit -q -m 'handoff(repoS4-2@Eagle): a stamp from an unlocked writer' -- handoffs/stamp.md" + "\n")
+    return f"git -C {cq} commit -q --amend -m 'an unlocked writer reworded it'" + "\n"
+
+
+@pytest.mark.parametrize("state", ["on-top", "rewritten"])
+def test_an_unconfirmed_push_reads_head_before_it_says_kept_on_head_exit_3(box: Box, state: str):
+    """rv1b-c3's neighbour of NIT 4, found by w1b-c6 with item 1: the exit-3
+    die said "the commit is kept on HEAD" without reading HEAD. Another
+    writer's stamp committed on top while the push was in flight sat at HEAD,
+    and an amend took this write's commit off the branch altogether. The push
+    landed and the read-back's fetch fails, so the number stays 3 (the one
+    cause the table gives it: pushed, not confirmed), and HEAD is read first:
+    `cp_not_head`'s words for a commit on top, `cp_rewritten`'s for a rewrite,
+    each with this refusal's own clause in place of "origin moved"."""
+    c = box.seam()
+    mark = shlex.quote(str(box.root / "pushed"))
+    box.use_net('if [ "$1" = push ]; then\n'
+                '  shift; git "$@" || exit $?\n' + _another_writer(c, state) +
+                f"  touch {mark}; exit 97\n"
+                "fi\n"
+                f'[ "$1" = fetch ] && [ -e {mark} ] && {{ echo "fatal: the read-back cannot reach origin" >&2; exit 128; }}\n'
+                "exit 0\n")
+    result = box.helper("set-row-state", LANE, "LIVE · sent, then something moved under it")
+    assert result.returncode == 3, result.stderr
+    err = result.stderr
+    named = re.search(r"pushed, not confirmed: ([0-9a-f]{40}) ", err)
+    assert named, err
+    sha = named.group(1)
+    assert box.origin_head() == sha, "it did land: exit 3 never says it did not"
+    assert "the read-back fetch of origin main failed" in err
+    assert "pushed origin/main (attempt" not in err, "never the success line"
+    assert "the commit is kept on HEAD, and this is never reported as success" not in err, \
+        "the old words claim a HEAD nobody read"
+    assert "push refused (attempt" not in err, "no replay"
+    on_head = subprocess.run(["git", "-C", str(c), "merge-base", "--is-ancestor", sha, "HEAD"],
+                             env=box.env, capture_output=True, check=False).returncode
+    if state == "on-top":
+        assert on_head == 0, "this write's commit is under the stamp"
+        assert f"HEAD is {box.head(c)}, not this write's commit {sha}" in err, err
+        assert "in this checkout while its push was in flight." in err
+        assert "it and the commit on top of it are kept on HEAD" in err
+        assert len(box.unpublished(c)) == 1, "the stamp is not on origin; this write's commit is"
+    else:
+        assert on_head == 1, "this write's commit is not on HEAD"
+        assert "rewrote this write's commit" in err
+        assert "kept on HEAD" not in err, "nothing of this write's is on HEAD under its own sha"
+    assert box.pushes() == 1
+    _settled(box, c)
+
+
 # ------------------------------------------------------------ `commit`'s carry
 
 def test_commit_carries_a_hand_edit_across_the_ff(box: Box):
@@ -680,6 +738,46 @@ def test_publish_act_on_moved_origin_refuses(box: Box):
     assert "push" not in box.net_ops()
     assert box.origin_head() == tip
     assert box.head(c) == shas[-1]
+    _settled(box, c)
+
+
+@pytest.mark.parametrize("state", ["head-is-the-tip", "on-top", "rewritten"])
+def test_a_publish_act_push_refused_with_origin_unmoved_reads_head_exit_6(box: Box, state: str):
+    """w1b-c6's second find, with item 1: the publish act's refusal with
+    origin unmoved (a hook, a permission, a protected branch) said "they are
+    kept on HEAD" without reading HEAD, the shape 638b13a took out of
+    `commit_publish`'s. Where HEAD is still the commit the fence read, the
+    words are what they were. Where an unlocked writer's stamp is on top, or
+    an amend took the queue's tip off the branch while the push was in
+    flight, `cp_not_head`'s and `cp_rewritten`'s words answer, with this
+    refusal's own clause (6). Nothing is pushed twice, and nothing replayed."""
+    c = box.seam()
+    shas = _queue(box, c, n=2)
+    tip = _refuse_push_after(box, "" if state == "head-is-the-tip" else _another_writer(c, state))
+    result = box.helper("commit", "publish the queue", LANES_LANE=LANE)
+    assert result.returncode == 6, result.stderr
+    err = result.stderr
+    assert "failed with origin/main unmoved" in err
+    assert "push refused (attempt" not in err, "no replay: there is no edit to repeat"
+    assert box.pushes() == 1
+    assert box.origin_head() == tip
+    if state == "head-is-the-tip":
+        assert "they are kept on HEAD, and nothing of them reached origin by this push" in err
+        assert "is no longer HEAD" not in err and "rewrote" not in err
+        assert box.head(c) == shas[-1]
+        assert len(box.unpublished(c)) == 2
+    elif state == "on-top":
+        assert f"HEAD is {box.head(c)}, not this write's commit {shas[-1]}" in err, err
+        assert "it and the commit on top of it are kept on HEAD" in err
+        assert "they are kept on HEAD, and nothing of them reached origin" not in err
+        assert len(box.unpublished(c)) == 3, "the queue's two and the stamp, all kept for the publish act"
+    else:
+        assert "rewrote this write's commit" in err
+        assert "kept on HEAD" not in err, "the queue's tip is not on HEAD under its own sha"
+        on_head = subprocess.run(["git", "-C", str(c), "merge-base", "--is-ancestor", shas[-1], "HEAD"],
+                                 env=box.env, capture_output=True, check=False).returncode
+        assert on_head == 1, "the commit the words name is not on HEAD"
+        assert shas[-1] in err
     _settled(box, c)
 
 
