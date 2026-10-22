@@ -26,16 +26,23 @@ name: lint
 # archive, compute its sha256 yourself, compare it with the digest GitHub
 # shows for the release asset (and, for actionlint, with upstream's
 # `checksums.txt`), and change the version and the digest in one commit, with
-# the baseline below measured again. shellcheck 0.11.0 is the first release
-# that has SC2329, which `park`, `resume` and `status` already name in their
-# `# shellcheck disable=`.
+# the baseline below measured again. On every actionlint bump, also re-check
+# the message the actionlint step greps for, `Rule "shellcheck" was disabled`:
+# it is actionlint's own wording, the tests give the step a hand-written copy
+# of it, and a release that rewords it would leave the guard dead with every
+# test green. Run the new actionlint in this repository with `-verbose
+# -shellcheck=/nonexistent` and see that it still prints that line and exits
+# 0. shellcheck 0.11.0 is the first release that has SC2329, which `park`,
+# `resume` and `status` already name in their `# shellcheck disable=`.
 #
 # actionlint RUNS WITH THAT shellcheck, because its shellcheck rule is what
 # checks every `run:` script in a workflow. It is given the binary by path,
 # and the step fails if actionlint reports the rule disabled, which it does
 # silently when it cannot start the binary.
 #
-# THE BASELINE, MEASURED ON main `a42946e` WITH THE TWO PINNED TOOLS.
+# THE BASELINE, MEASURED ON main `33ce26d` WITH THE TWO PINNED TOOLS. Every
+# count, size and time below is from that one tree, except where it names
+# another.
 #
 #   THE WORKFLOWS carry none. actionlint reports nothing on `release.yml`,
 #   `tests.yml` and this file, at any severity, so its step has no `-ignore`,
@@ -45,8 +52,8 @@ name: lint
 #   THE SHELL SCRIPTS: 16 tracked files start with a bash shebang, and
 #   `lane-worktrees` and `lanes-index`, which are Python, are not among them.
 #   shellcheck 0.11.0 with no flag finds no error in any of them. `park`,
-#   `resume` and `status` have no finding at all. Twelve scripts hold 319
-#   findings between them, 190 warnings and 129 notes (info and style):
+#   `resume` and `status` have no finding at all. Twelve scripts hold 322
+#   findings between them, 190 warnings and 132 notes (info and style):
 #   `claude-current`, `claude-restart-check`, `lane`, `lane-end`,
 #   `lane-handoff`, `lane-rename`, `lane-start`, `lanes`, `lanes-edit.sh`,
 #   `link-estates`, `openRepoTools` and `tests/run.sh`. So:
@@ -55,17 +62,29 @@ name: lint
 #       and so is every script added from now on;
 #     * those twelve, named in `baselined` below, are held to
 #       `--severity=warning` less the ten codes in `excluded`, each of which
-#       fires on main today. What that leaves out is the 129 notes and the
+#       fires on main today. What that leaves out is the 132 notes and the
 #       190 warnings of those ten codes, and nothing more: an error, or a
 #       warning of any other code, fails the job, in any script;
 #     * `tests/test_lane_helpers.sh` is not run. It is the lane helpers' own
-#       test suite and nothing ships it, and shellcheck needs 16.2 GB for it
-#       (measured, 151 s), which a runner with 16 GB does not have. Run on its
-#       own, it finds 43 warnings and 218 notes. `lanes-edit.sh` is run: it
-#       takes about 10.5 GB and a minute or two, and 142 of the 319 findings
-#       are in it.
+#       test suite and nothing ships it, and shellcheck needs 16.2 GB for it,
+#       which a runner with 16 GB does not have. Run on its own, it finds 43
+#       warnings and 218 notes. Those three figures and its 151 s were
+#       measured on `a42946e`, and the file is the same on `33ce26d`.
+#       `lanes-edit.sh` is run: on `33ce26d` it took 100 to 123 s over three
+#       runs and peaked at 10.8 GB under the job's flags and at 10.9 GB at
+#       every severity, and 145 of the 322 findings are in it.
 #
-#   THE TEN CODES, with their count on main, and why each is left out:
+#   THE RUNNER'S MEMORY. The 16 GB above is GITHUB'S STANDARD LINUX RUNNER FOR
+#   A PUBLIC REPOSITORY, which this repository is. The standard runner of a
+#   private repository has 7 GB, and shellcheck over `lanes-edit.sh`, which
+#   peaks at 10.9 GB, does not fit in that: if this repository, or the leg
+#   that carries this file, goes private, give the job a larger runner first.
+#   The shellcheck step prints `MemTotal` and `MemAvailable` before it runs
+#   anything, so that a kill of `lanes-edit.sh` (exit 137), which the step
+#   reports like a finding, can be read against the memory the runner had.
+#
+#   THE TEN CODES, with their count on main `33ce26d`, and why each is left
+#   out:
 #   SC2034  157  "appears unused". Nearly all are fields of a fixed-layout
 #                `read -r a b c ...` of a tab or unit-separator record, which
 #                names every field so that each keeps its place, and no reader
@@ -193,6 +212,21 @@ jobs:
       # Each is checked on its own, so that one file's findings, time and
       # memory are its own, and every file is checked even after one fails.
       # The baseline is the comment at the top of this file.
+      #
+      # THE SELECTION TAKES FOUR SHEBANGS, `#!/usr/bin/env bash`, which every
+      # shell script here writes, `#!/bin/bash`, `#!/usr/bin/env sh` and
+      # `#!/bin/sh`, AND FAILS CLOSED ON THE REST. A tracked file whose first
+      # line is a shebang that names bash or sh any other way
+      # (`#!/usr/bin/bash`, `#! /bin/bash`, `#!/usr/bin/env -S bash`) would
+      # drop out of lint without a word, so the step names each such file in
+      # an error and fails, before it runs shellcheck on anything. The fix is
+      # the shebang the repository writes.
+      #
+      # THE FIRST LINE IS READ WITH `|| true`, on purpose: `read` returns 1 at
+      # the end of its input, so an empty file, or a one-line file with no
+      # final newline, would end the step under `set -e`. What it did read is
+      # still in `first`, so a one-line script with no final newline is
+      # selected. The test's throwaway repository holds both files.
       - name: shellcheck over every tracked shell script, at the baseline
         run: |
           set -euo pipefail
@@ -201,15 +235,29 @@ jobs:
           excluded='SC1007,SC2034,SC2069,SC2088,SC2128,SC2141,SC2154,SC2178,SC2209,SC2318'
           grep -E '^(MemTotal|MemAvailable)' /proc/meminfo || true
           checked=()
+          refused=()
           while IFS= read -r -d '' path; do
             if [ -f "$path" ] && [ ! -L "$path" ] && [ "$path" != "$not_run" ]; then
               first=
               IFS= read -r first < "$path" || true
               case "$first" in
-                '#!/usr/bin/env bash'*|'#!/bin/bash'*|'#!/usr/bin/env sh'*|'#!/bin/sh'*) checked+=("$path") ;;
+                '#!/usr/bin/env bash'*|'#!/bin/bash'*|'#!/usr/bin/env sh'*|'#!/bin/sh'*)
+                  checked+=("$path")
+                  ;;
+                '#!'*)
+                  case " $first " in
+                    *[[:space:]/]bash[[:space:]]*|*[[:space:]/]sh[[:space:]]*) refused+=("$path") ;;
+                  esac
+                  ;;
               esac
             fi
           done < <(git ls-files -z)
+          if [ "${#refused[@]}" -ne 0 ]; then
+            for odd in "${refused[@]}"; do
+              echo "::error::$odd: its first line is a shebang that names bash or sh in a form this step does not select, so shellcheck would skip the file; write #!/usr/bin/env bash"
+            done
+            exit 1
+          fi
           if [ "${#checked[@]}" -eq 0 ]; then
             echo "::error::no tracked file starts with a bash or sh shebang, so the selection is wrong"
             exit 1

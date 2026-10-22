@@ -15,14 +15,20 @@ reading them, under fakes, so nothing is fetched and neither tool is needed:
   says another version);
 - the actionlint step has no exclusion and no config file, runs with the
   pinned shellcheck by path, and fails when actionlint reports its shellcheck
-  rule disabled (run, under a fake actionlint);
+  rule disabled (run, under a fake actionlint); the header says to re-check
+  that message on every actionlint bump;
 - the shellcheck step finds the shell scripts by shebang and holds the
   baseline the file's header documents: twelve named scripts at
   `--severity=warning` less ten codes, every other script at every severity,
   and `tests/test_lane_helpers.sh` not run (run, in a throwaway git
-  repository, under a fake shellcheck);
-- the header's table of excluded codes is the step's `excluded` list, and the
-  named scripts are tracked bash files.
+  repository, under a fake shellcheck). It does not die on an empty tracked
+  file or on one with no final newline, and it fails closed, naming the file,
+  on a first line that is a shebang naming bash or sh in a form it does not
+  select;
+- the job has a `timeout-minutes` of 20, and the header names the runner its
+  16 GB figure assumes and the memory print that diagnoses it;
+- the header's table of excluded codes is the step's `excluded` list, its
+  totals agree with each other, and the named scripts are tracked bash files.
 
 The workflow is read with the PINNED STANDARD'S OWN `repo_shape.load_yaml`, as
 `tests/test_tests_workflow.py` reads `tests.yml`, so a construct outside that
@@ -79,9 +85,10 @@ INSTALL_ENV = {
     "SHELLCHECK_SHA256": SHELLCHECK["sha256"],
 }
 
-#: THE BASELINE, measured on main `a42946e` with the two pinned tools: the
+#: THE BASELINE, measured on main `33ce26d` with the two pinned tools: the
 #: ten codes the twelve baselined scripts fire at warning level, and the
-#: twelve scripts. `park`, `resume` and `status` have no finding at all, so
+#: twelve scripts (the same ten codes and twelve scripts as on `a42946e`, its
+#: first measure). `park`, `resume` and `status` have no finding at all, so
 #: they and every script added later are held to every severity.
 EXCLUDED_CODES = ("SC1007", "SC2034", "SC2069", "SC2088", "SC2128", "SC2141",
                   "SC2154", "SC2178", "SC2209", "SC2318")
@@ -90,7 +97,8 @@ BASELINED = ("claude-current", "claude-restart-check", "lane", "lane-end",
              "lanes-edit.sh", "link-estates", "openRepoTools", "tests/run.sh")
 CLEAN_SCRIPTS = ("park", "resume", "status")
 #: The lane helpers' own suite: 1.1 MB of bash that nothing ships, and
-#: shellcheck needs 16.2 GB for it, more than a 16 GB runner has.
+#: shellcheck needs 16.2 GB for it (measured on `a42946e`; the file is the
+#: same on `33ce26d`), more than a 16 GB runner has.
 NOT_RUN = "tests/test_lane_helpers.sh"
 
 NEEDS_BASH = pytest.mark.skipif(shutil.which("bash") is None,
@@ -254,6 +262,18 @@ def test_lint_yml_is_a_workflow_of_its_own_with_the_one_job_lint(workflow):
     assert "continue-on-error" not in text, "lint.yml names `continue-on-error`"
     assert [step for step in job["steps"] if "if" in step] == [], \
         "a lint step has an `if:`"
+
+
+@NEEDS_UPSTREAM
+def test_lint_yml_job_ends_a_hung_step_after_twenty_minutes(workflow):
+    """`timeout-minutes: 20` on the job, so that a download that hangs or a
+    shellcheck that does not return ends the run, where GitHub's own default
+    would hold the runner for 360 minutes. The shellcheck step took about
+    three minutes on the review's machine, `lanes-edit.sh` alone about two,
+    so 20 leaves room for a slower runner and a retried download. The number
+    is written here so that moving it is a decision and not a drift."""
+    timeout = lint_job(workflow).get("timeout-minutes")
+    assert timeout == 20, timeout
 
 
 @NEEDS_UPSTREAM
@@ -564,6 +584,28 @@ def test_lint_yml_actionlint_step_refuses_a_shellcheck_that_is_not_the_pinned_on
     assert not (tmp_path / "args.log").exists(), "actionlint ran anyway"
 
 
+#: The line the actionlint step greps for. It is actionlint's own wording: the
+#: real 1.7.12 prints it, with a status of 0, for a shellcheck that is missing
+#: and for one that is not executable.
+DISABLED_MESSAGE = 'Rule "shellcheck" was disabled'
+
+
+def test_lint_yml_header_says_to_re_check_actionlints_disabled_message_on_every_bump():
+    """The actionlint step knows that its shellcheck rule was switched off only
+    by grepping actionlint's own wording, and the tests give it a hand-written
+    copy of that line (`FAKE_ACTIONLINT`). An actionlint that rewords it would
+    leave the guard dead with every test green, so the one thing standing
+    between is the header's instruction to re-check the message on every bump.
+    This holds the instruction, quoting the line the step greps for."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert f"grep -q '{DISABLED_MESSAGE}'" in text, \
+        "the actionlint step greps for another message"
+    words = header_of(text)
+    assert re.search(r"[Oo]n every actionlint bump\b.*\bre-check\b.*"
+                     + re.escape(DISABLED_MESSAGE), words), \
+        f"the header does not say to re-check {DISABLED_MESSAGE!r} on every actionlint bump"
+
+
 # --- the shellcheck step ---------------------------------------------------------
 
 #: A fake shellcheck that writes down each call, and fails for the files named
@@ -575,7 +617,9 @@ case " $FAKE_SC_FAIL " in *" $last "*) exit 1 ;; esac
 exit 0
 """
 
-#: What the throwaway repository tracks: name -> first line.
+#: What the throwaway repository tracks: name -> first line, which is written
+#: as that line, a newline and a `:` line, or, where the value is bytes, the
+#: file's exact content.
 FIXTURE_FILES = {
     "park": "#!/usr/bin/env bash",            # clean: every severity
     "resume": "#!/bin/bash",
@@ -591,8 +635,22 @@ FIXTURE_FILES = {
     "zsh-thing": "#!/usr/bin/env zsh",
     "README.md": "# a document",
     "no-shebang": "echo not a script",
+    # THE READ GUARD'S FILES (`IFS= read -r first < "$path" || true`). `read`
+    # returns 1 when it reaches the end of the input, with nothing read from
+    # an empty file and with its one line read from a file that has no final
+    # newline, and without the guard either would end the step under `set -e`.
+    "empty-file": b"",                                    # no first line: not selected
+    "words-no-newline": b"just words, no final newline",  # not a shebang: not selected
+    "script-no-newline": b"#!/usr/bin/env bash",          # a one-line script: selected
 }
 BASELINED_FLAGS = ["--severity=warning", "--exclude=" + ",".join(EXCLUDED_CODES)]
+#: What the step hands shellcheck in that repository, file -> flags: the
+#: baselined scripts at the baseline, every other selected file at none.
+FIXTURE_SELECTED = {
+    "park": [], "resume": [], "status": [], "plain.sh": [],
+    "new-script": [], "odd name.sh": [], "script-no-newline": [],
+    "lane": BASELINED_FLAGS, "lanes-edit.sh": BASELINED_FLAGS,
+    "tests/run.sh": BASELINED_FLAGS}
 
 
 def fixture_repo(root: Path, files: dict | None = None) -> Path:
@@ -600,10 +658,13 @@ def fixture_repo(root: Path, files: dict | None = None) -> Path:
     repo.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=str(repo), check=True,
                    env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull})
-    for name, first in (FIXTURE_FILES if files is None else files).items():
+    for name, content in (FIXTURE_FILES if files is None else files).items():
         path = repo / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(first + "\n:\n", encoding="utf-8")
+        if isinstance(content, bytes):
+            path.write_bytes(content)
+        else:
+            path.write_text(content + "\n:\n", encoding="utf-8")
     if files is None:
         os.symlink("park", repo / "link-to-park")
     subprocess.run(["git", "add", "-A"], cwd=str(repo), check=True,
@@ -633,18 +694,17 @@ def test_lint_yml_shellcheck_step_finds_the_scripts_by_shebang_and_holds_the_bas
         workflow, tmp_path):
     """The step in a throwaway repository under a fake shellcheck. Selected: a
     tracked regular file whose first line is a bash or sh shebang, one call
-    each. Not selected: Python, zsh, a document, a file with no shebang, a
-    symlink, an untracked file, and the lane helpers' suite. The twelve named
-    scripts are given `--severity=warning` and the ten excluded codes, and
-    every other script, a new one included, is given nothing."""
+    each, a one-line script with no final newline included. Not selected:
+    Python, zsh, a document, a file with no shebang, an EMPTY file, a file of
+    words with no final newline, a symlink, an untracked file, and the lane
+    helpers' suite. The step does not die on the empty file or on the two with
+    no final newline: `read` returns 1 for each, which the guard on it
+    swallows. The twelve named scripts are given `--severity=warning` and the
+    ten excluded codes, and every other script, a new one included, is given
+    nothing."""
     done, calls = run_shellcheck_step(workflow, tmp_path)
     assert done.returncode == 0, shown(done)
-    expected = {
-        "park": [], "resume": [], "status": [], "plain.sh": [],
-        "new-script": [], "odd name.sh": [],
-        "lane": BASELINED_FLAGS, "lanes-edit.sh": BASELINED_FLAGS,
-        "tests/run.sh": BASELINED_FLAGS}
-    want = sorted(" ".join(flags + [name]) for name, flags in expected.items())
+    want = sorted(" ".join(flags + [name]) for name, flags in FIXTURE_SELECTED.items())
     assert sorted(calls) == want, "\n".join(calls)
 
 
@@ -659,7 +719,7 @@ def test_lint_yml_shellcheck_step_checks_every_script_then_fails_naming_each_tha
     that failed."""
     done, calls = run_shellcheck_step(workflow, tmp_path, fail="lane park")
     assert done.returncode == 1, shown(done)
-    assert len(calls) == 9, calls
+    assert len(calls) == len(FIXTURE_SELECTED), calls
     assert "::error::shellcheck reported findings in: " in done.stdout, shown(done)
     named = done.stdout.split("::error::shellcheck reported findings in: ")[1].split()
     assert sorted(named) == ["lane", "park"], named
@@ -678,6 +738,65 @@ def test_lint_yml_shellcheck_step_fails_where_it_finds_no_script_at_all(
     assert done.returncode == 1, shown(done)
     assert calls == [], calls
     assert "::error::no tracked file starts with a bash or sh shebang" in done.stdout, \
+        shown(done)
+
+
+#: First lines that name bash or sh in a form the step does not select (it
+#: takes `#!/usr/bin/env bash`, `#!/bin/bash`, `#!/usr/bin/env sh` and
+#: `#!/bin/sh`). A script written one of these ways would drop out of lint
+#: without a word, so the step refuses it.
+UNSELECTED_SHELL_SHEBANGS = [
+    pytest.param("#!/usr/bin/bash", id="usr-bin-bash"),
+    pytest.param("#! /bin/bash", id="a-space-after-the-bang"),
+    pytest.param("#!/usr/bin/env -S bash", id="env-dash-S-bash"),
+    pytest.param("#!/usr/local/bin/bash -e", id="usr-local-bin-bash-with-a-flag"),
+    pytest.param("#!/usr/bin/sh", id="usr-bin-sh"),
+    pytest.param("#! /bin/sh", id="sh-with-a-space-after-the-bang"),
+    pytest.param("#!/usr/bin/env -S sh -e", id="env-dash-S-sh-with-a-flag"),
+]
+
+
+def error_lines(done) -> list:
+    return [line for line in done.stdout.splitlines() if line.startswith("::error::")]
+
+
+@NEEDS_UPSTREAM
+@WINDOWS_SKIP
+@NEEDS_BASH
+@NEEDS_TOOLS
+@pytest.mark.parametrize("shebang", UNSELECTED_SHELL_SHEBANGS)
+def test_lint_yml_shellcheck_step_fails_closed_on_a_shell_shebang_it_does_not_select(
+        workflow, tmp_path, shebang):
+    """A tracked file whose first line is a shebang naming bash or sh in a form
+    the step does not select would be left out of lint in silence. So the step
+    names it in one error line and exits 1, before shellcheck has been asked
+    for anything. Python, zsh and a document in the same repository are not
+    named: only a shebang that names bash or sh is refused."""
+    files = {"park": "#!/usr/bin/env bash", "odd-script": shebang,
+             "tool.py": "#!/usr/bin/env python3", "zsh-thing": "#!/usr/bin/env zsh",
+             "README.md": "# a document"}
+    done, calls = run_shellcheck_step(workflow, tmp_path, files=files)
+    assert done.returncode == 1, shown(done)
+    assert calls == [], calls
+    errors = error_lines(done)
+    assert len(errors) == 1 and errors[0].startswith("::error::odd-script: "), shown(done)
+
+
+@NEEDS_UPSTREAM
+@WINDOWS_SKIP
+@NEEDS_BASH
+@NEEDS_TOOLS
+def test_lint_yml_shellcheck_step_names_every_file_whose_shell_shebang_it_does_not_select(
+        workflow, tmp_path):
+    """Each such file is named, in a subdirectory and with a space in its name
+    too, and not only the first one the scan meets."""
+    files = {"park": "#!/usr/bin/env bash", "a-bash": "#!/usr/bin/bash",
+             "b sh.sh": "#! /bin/sh", "dir/c-env-s": "#!/usr/bin/env -S bash -e"}
+    done, calls = run_shellcheck_step(workflow, tmp_path, files=files)
+    assert done.returncode == 1, shown(done)
+    assert calls == [], calls
+    named = sorted(line.split(": ", 1)[0] for line in error_lines(done))
+    assert named == ["::error::a-bash", "::error::b sh.sh", "::error::dir/c-env-s"], \
         shown(done)
 
 
@@ -738,3 +857,41 @@ def test_lint_yml_header_documents_each_excluded_code_with_its_count():
         assert f"`{name}`" in words, f"the header does not name {name}"
     for tool in (ACTIONLINT, SHELLCHECK):
         assert tool["version"] in words, f"the header does not say {tool['version']}"
+
+
+def test_lint_yml_header_names_its_tree_and_its_totals_agree():
+    """THE HEADER'S FIGURES ARE FROM ONE NAMED TREE: the baseline says which
+    main it was measured on, and a figure from another tree names that tree
+    where it stands. Its totals agree with each other, so that a re-measure
+    that moves one moves them all: the findings are the warnings and the
+    notes, every `N of the M findings` names that same M, and the notes and
+    warnings the header says it leaves out are the ones it counts."""
+    words = header_of(WORKFLOW.read_text(encoding="utf-8"))
+    tree = re.search(r"MEASURED ON main `([0-9a-f]{7,40})`", words)
+    assert tree, "the header does not name the main its baseline was measured on"
+    held = re.search(r"hold (\d+) findings between them, (\d+) warnings and (\d+) notes",
+                     words)
+    assert held, "the header gives no total of findings"
+    total, warnings, notes = (int(number) for number in held.groups())
+    assert total == warnings + notes, held.groups()
+    for of_the in re.findall(r"(\d+) of the (\d+) findings", words):
+        assert int(of_the[1]) == total, (of_the, total)
+    assert f"the {notes} notes and the {warnings} warnings of those ten codes" in words, \
+        "the header's left-out notes and warnings are not the ones it counts"
+
+
+def test_lint_yml_header_names_the_runner_its_16_gb_assumes_and_the_memory_print():
+    """`lanes-edit.sh` peaks at about 10.9 GB, which fits the 16 GB of GitHub's
+    standard Linux runner for a PUBLIC repository and not the 7 GB of a private
+    one's. The header says so, and names the `MemTotal` and `MemAvailable`
+    print as the aid for diagnosing a kill, which is only an aid while the step
+    still prints them before it runs anything."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    words = header_of(text)
+    assert "STANDARD LINUX RUNNER FOR A PUBLIC REPOSITORY" in words
+    assert "private repository has 7 GB" in words
+    assert "`MemTotal` and `MemAvailable`" in words
+    assert "grep -E '^(MemTotal|MemAvailable)' /proc/meminfo || true" in text, \
+        "the shellcheck step does not print the runner's memory"
+    assert text.index("/proc/meminfo") < text.index("git ls-files -z"), \
+        "the memory is printed after the selection has begun"
