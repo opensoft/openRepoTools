@@ -31,6 +31,11 @@ lines; this file holds both:
   package's layout names no `<prefix>` (research R7);
 - `test_pipx_upgrade_*` and `test_pipx_uninstall_*`: a second wheel in the
   same venv, and the link and the venv gone.
+- `test_pipx_mid_run_*`: pipx's link appearing or going between `--install`'s
+  planning and its placement (#257): asked again at the target's own turn,
+  left to pipx where it is pipx's link now, and refused, naming it, where it
+  is any other change; a link that appears as late as the rename is refused
+  and left as it was, never replaced by a regular file.
 
 FAKE VENVS, NO PIPX, NO WHEEL. `tests/package_layout.py` lays each venv out
 of this checkout's own files. EVERY PACKAGE RUN HERE IS
@@ -1722,3 +1727,189 @@ def test_pipx_uninstall_leaves_what_was_placed_and_a_checkout_then_places_a_regu
     assert len(rows) == ARTIFACTS - HOOK_ENTRIES
     assert ("openRepoTools", str(link), hashlib.sha256(
         link.read_bytes()).hexdigest()) in {row[:3] for row in rows}
+
+
+# --- test_pipx_mid_run_: pipx's link appearing or going mid-run (#257) ------
+
+def mid_run(root: Path, tool: str, when: str, act: str) -> tuple[Path, Path]:
+    """A `tool` first on `PATH` that runs the shell command `act` ONCE, the
+    first time one of its arguments matches the `case` pattern `when`, and is
+    the real `tool` for that call and every other. It is the seam this suite
+    already stands a fake in (a `cp` that fails, a `mktemp` that is slow):
+    `--install` reaches every outside tool through `PATH`, so a fake one acts
+    at one exact step of the run, with no clock and no race. Returns the
+    directory to put first on `PATH`, and the file `act` leaves once it has
+    run, which shows that it ran during the install and not before it."""
+    real = shutil.which(tool)
+    if real is None:
+        pytest.skip(f"no real `{tool}` on PATH for the fake to defer to")
+    fake = root / f"mid-run-{tool}"
+    fake.mkdir()
+    acted = shlex.quote(str(root / f"mid-run-{tool}.acted"))
+    (fake / tool).write_text(
+        "#!/bin/sh\n"
+        f"if [ ! -e {acted} ]; then\n"
+        '\tfor arg in "$@"; do\n'
+        '\t\tcase "$arg" in\n'
+        f"\t\t{when})\n"
+        f"\t\t\t{act} || exit 1\n"
+        f"\t\t\t: > {acted}\n"
+        "\t\t\tbreak ;;\n"
+        "\t\tesac\n"
+        "\tdone\n"
+        "fi\n"
+        f'exec {shlex.quote(real)} "$@"\n', encoding="utf-8")
+    (fake / tool).chmod(0o755)
+    return fake, root / f"mid-run-{tool}.acted"
+
+
+def real_tool(name: str) -> str:
+    """`name` as a fake's `act` runs it: by its real path, quoted."""
+    found = shutil.which(name)
+    if found is None:
+        pytest.skip(f"no `{name}` on PATH for the fake to run")
+    return shlex.quote(found)
+
+
+def first_on_path(fake: Path) -> dict:
+    """The `extra` that puts `fake` first on `PATH`."""
+    return {"PATH": f"{fake}{os.pathsep}{os.environ['PATH']}"}
+
+
+@NEEDS_JQ
+def test_pipx_mid_run_a_link_that_appears_after_planning_is_left_to_pipx(
+        tmp_path):
+    """#257, THE RACE ITSELF. A checkout's `--install`, beside pipx's venv and
+    no link yet. `pipx install` finishes after `plan_install_targets` has
+    found `<dir>/openRepoTools` empty and before the placement loop reaches
+    it: the fake `mkdir` makes pipx's link as the run creates `<dir>` for
+    that loop. The loop asks again at the target's own turn, so the run says
+    what a run beside a link that was there from the start says (US3
+    scenario 2): the exact skip line, the other-source count line naming
+    pipx's release, and 28 receipt rows. The link is still pipx's, the venv
+    is as it was, and no temporary is left. Before #257 the loop skipped only
+    the target planning had named, and the rename replaced pipx's link with a
+    regular file."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    venv = layout.pipx_venv(home / ".local" / "share" / "pipx", "1.17.8")
+    clause = give_pipx_a_stamp(venv, "unstamped")
+    link = bin_dir(home) / "openRepoTools"
+    value = str(venv / "bin" / "openRepoTools")
+    link.parent.mkdir(parents=True)
+    fake, acted = mid_run(
+        root, "mkdir", shlex.quote(str(link.parent)),
+        f"{real_tool('ln')} -s {shlex.quote(value)} {shlex.quote(str(link))}")
+    before = tree_state(venv)
+
+    result = install_as("checkout", root, home,
+                        pipx_env(home, extra=first_on_path(fake)))
+    assert acted.exists(), f"no link was made mid-run:\n{transcript(result)}"
+    assert_beside_the_link(result, link, " @ ".join(DEFAULT_SOURCE), clause)
+    assert link.is_symlink() and os.readlink(link) == value, (
+        f"pipx's link was replaced:\n{transcript(result)}")
+    assert tree_state(venv) == before, "the install wrote into pipx's venv"
+    assert_rows_beside_the_link(home, link)
+    assert placement_temporaries(home) == []
+
+
+#: A LINK THAT APPEARS AS LATE AS A TEST CAN MAKE IT (#257): at the mode stamp
+#: on the target's temporary, the last outside tool `place_by_rename` runs
+#: before its owner check and the rename. pipx's at `<dir>/openRepoTools`,
+#: which the loop's own question has just found empty, and a person's own at
+#: `<dir>/park`, the next target, so one file is placed before it.
+LATE_LINKS = ("pipx-s-link", "a-link-of-your-own")
+
+
+@pytest.mark.parametrize("which", LATE_LINKS)
+@NEEDS_JQ
+def test_pipx_mid_run_a_link_that_appears_at_the_rename_is_refused_and_left(
+        tmp_path, which):
+    """#257, THE LAST QUESTION BEFORE THE RENAME. The link appears after the
+    loop has asked about its target, while `place_by_rename` writes the
+    temporary: the fake `chmod` makes it as the temporary's mode is stamped.
+    The rename is refused, naming the link and where it points: exit 2, one
+    `REFUSED:`, the link exactly as it was made, no temporary, no `rm`
+    advised for it, and the loop no further. The run the refusal asks for
+    then asks about the link afresh: pipx's is left to pipx, with the skip
+    and count lines, and a person's own gets today's planning refusal, with
+    the `rm -f` line for it alone. Before #257 the rename replaced either
+    link with a regular file, and the run went on to exit 0."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    where = bin_dir(home)
+    where.mkdir(parents=True)
+    clause = None
+    if which == "pipx-s-link":
+        venv = layout.pipx_venv(home / ".local" / "share" / "pipx", "1.18.3")
+        clause = give_pipx_a_stamp(venv, "unstamped")
+        target, value = where / "openRepoTools", str(venv / "bin" / "openRepoTools")
+    else:
+        mine = home / "my-own" / "park"
+        mine.parent.mkdir()
+        mine.write_text("#!/usr/bin/env bash\necho my own park\n",
+                        encoding="utf-8")
+        target, value = where / "park", str(mine)
+    fake, acted = mid_run(
+        root, "chmod", shlex.quote(f"{where}/.{target.name}.openrepotools.") + "*",
+        f"{real_tool('ln')} -s {shlex.quote(value)} {shlex.quote(str(target))}")
+
+    result = install_as("checkout", root, home,
+                        pipx_env(home, extra=first_on_path(fake)))
+    assert acted.exists(), f"no link was made mid-run:\n{transcript(result)}"
+    assert result.returncode == 2, transcript(result)
+    assert result.stderr.count("REFUSED:") == 1, transcript(result)
+    assert (f"REFUSED: {target} is a symlink to {value} now, and was not one "
+            "when this run planned, so nothing was placed there and the link "
+            "is left as it was") in result.stderr, transcript(result)
+    assert target.is_symlink() and os.readlink(target) == value, (
+        f"the link was replaced:\n{transcript(result)}")
+    assert placement_temporaries(home) == []
+    assert rm_lines_naming(result.stdout + result.stderr, target) == [], (
+        transcript(result))
+    after = INSTALLED[INSTALLED.index(target.name) + 1]
+    assert f"{after}: " not in result.stdout, (
+        f"the loop carried on past a placement it refused:\n{transcript(result)}")
+
+    again = install_as("checkout", root, home, pipx_env(home))
+    if clause is not None:
+        assert_beside_the_link(again, target, " @ ".join(DEFAULT_SOURCE), clause)
+    else:
+        assert_refused_before_placing(again, home, {"openRepoTools", "park"})
+        assert_ordinary_link_refusal(again, target)
+    assert target.is_symlink() and os.readlink(target) == value
+
+
+@NEEDS_JQ
+def test_pipx_mid_run_a_link_planning_left_to_pipx_that_has_gone_is_refused(
+        tmp_path):
+    """#257, THE OTHER WAY ROUND. Planning found pipx's link and left
+    `<dir>/openRepoTools` to pipx; then `pipx uninstall openrepotools` took
+    the link away before the placement loop reached it: the fake `mkdir`
+    moves it aside, whole, as the run creates `<dir>`. The loop asks again,
+    finds no link of pipx's, and refuses naming the target before anything
+    is placed, with no `rm` advised: a skip line now would say a link is left
+    to pipx that is not there. Before #257 the loop skipped the target by the
+    name planning had recorded, printed the skip line over an empty path, and
+    exited 0."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    _venv, link = pipx_install(home, "1.11.1")
+    value = os.readlink(link)
+    gone = root / "uninstalled-link"
+    fake, acted = mid_run(
+        root, "mkdir", shlex.quote(str(link.parent)),
+        f"{real_tool('mv')} {shlex.quote(str(link))} {shlex.quote(str(gone))}")
+
+    result = install_as("checkout", root, home,
+                        pipx_env(home, extra=first_on_path(fake)))
+    assert acted.exists(), f"the link was not taken mid-run:\n{transcript(result)}"
+    assert_refused_before_placing(result, home, set())
+    assert (f"REFUSED: {link} was pipx's link when this run planned, and is "
+            "not now, so nothing was placed there and what is there now is "
+            "left as it was") in result.stderr, transcript(result)
+    assert "left to pipx" not in result.stdout, transcript(result)
+    assert rm_lines_naming(result.stdout + result.stderr, link) == [], (
+        transcript(result))
+    assert not os.path.lexists(link)
+    assert gone.is_symlink() and os.readlink(gone) == value
