@@ -22,20 +22,29 @@ commits and 200 files, and its `upstream/openRepoShape` gitlink and
 e4; include P7, P8, P10" (2026-10-21T10:31:16Z); "yes to the link-only 70 fallback"
 (2026-10-21T13:43:26Z). The start, which lane 1's freeze notice quotes: "continue;
 start D when the freeze is ready" (2026-10-21T13:55:01Z). All four turns carry
-`promptSource: suggestion_accepted` with `turnOrigin: human` in that transcript, and they
-meet the house test (lane 2, #186 6327441086) except in its first condition, that each
-answers a question lane 1 asked just before it (lane 3, #186 6332521834, and lane 1's
-transcript): the e2 and D7 turn answers lane 1's message just before it
-(2026-10-20T22:38:30Z), whose closing paragraph names those answers as still needed; the
-e4 turn and the link-only turn each answer an explicit question lane 1 asked just before
-it; the start turn follows a status message (13:44:21Z) that asked nothing. The other
-conditions hold for all four: each text occurs once in the transcript, no other human turn
-falls within 200 s of any of them, and no py-bench lane can type into lane 1's pane. The
-e2 and D7 turn came 9 s after lane 5's submitted-suggestion incident, in which a turn that
-repeated Brett's earlier word was lane 5's own input suggestion, submitted when lane 3
-typed into its pane (2026-10-20T22:56:02Z; corrected in lane 5's log at 23:04:15Z; lane 5,
-#186 6332551316). At Gate C Brett can confirm the e2 and D7 turn in a word, and is asked
-to confirm the start turn beside it.
+`promptSource: suggestion_accepted` with `turnOrigin: human` in that transcript. The house
+test (lane 2, #186 6327441086) has four conditions: each turn answers a question lane 1
+asked just before it, none repeats an earlier text, no other user turn follows within 3
+minutes, and no py-bench lane can type into lane 1's pane. A message typed while the
+session is busy is recorded as a `queued_command` attachment of human origin, not as a
+`user` entry, so the third condition counts both, and the transcript was read 3 minutes
+either side of each turn. By turn, on the first condition (lane 3, #186 6332521834 and
+6333819643, and lane 1's transcript) and the third (lane 2, #186 6333755295): the e2 and
+D7 turn fails the first, because lane 1's message just before it (2026-10-20T22:38:30Z)
+names those answers as still needed but asks no question; the e4 turn meets the first,
+because lane 1's last message before it (2026-10-20T23:39:23Z) asked three explicit
+questions, and fails the third, because Brett's own message "usage reset, resume all. …"
+follows it by 31.6 s, recorded as a queued message at 10:31:47Z, and the same text reached
+lane 2's pane at 10:31:43Z; the link-only turn meets all four, after one explicit question
+(13:34:15Z); and the start turn fails the first, because the status message before it
+(13:44:21Z) asked nothing. The other three turns meet the third condition, and all four
+meet the second and the fourth: each is the only user turn with its text, so none repeats
+an earlier one, and no py-bench lane can type into lane 1's pane. The e2 and D7 turn came
+9 s after lane 5's submitted-suggestion incident, in which a turn that repeated Brett's
+earlier word was lane 5's own input suggestion, submitted when lane 3 typed into its pane
+(2026-10-20T22:56:02Z; corrected in lane 5's log at 23:04:15Z; lane 5, #186 6332551316).
+At Gate C Brett is asked to confirm three turns in a word: the e2 and D7 turn, the e4 turn
+and the start turn.
 **Private receipt:** `rehearsal-d`, with its observation directory
 `rehearsal-d.observe`, under `work-20261021`.
 
@@ -386,7 +395,7 @@ empty). Every step exited 0 in `runD/exits.txt`, and `inputs.txt` records
 | Assembly, `candidate-v0` | `c67b0e6838c2c1ae25733df2c0b8316bb7e72452` | 5 past the split: assembly-0001, T010's exact-pin job, T007's front door, and two `bump-leg.py` bumps (spec to `f41ac906b8f7`, `2833b34`; then code to `56142ed741f9`, `c67b0e6`), each bump with the trailer `Rehearsal: D v0` (the three patch commits have none) |
 | Nested `upstream/openRepoShape` | `190133d5e704e380c430f87ca9c4e31746de0012` | none |
 
-The candidate's pins are spec tree `bc2d1813…`, code tree `45b3f125…` and the shape
+The candidate's pin tree digests are spec `bc2d1813…`, code `45b3f125…` and the shape
 and code's openRepoShape pin `7a66972c…`; its `AGENTS.md` has 354 lines and `README.md`
 529, the caps T009 sets (`runD/cand-v0/identities.txt`). A fresh recursive clone of
 `candidate-v0` checked out all four, `scripts/bootstrap.py` printed `bootstrap ok` (both
@@ -745,8 +754,12 @@ ended, and exits 70 when the two differ (71 and 72 are defined under the post-ru
   which Claude Code's skill sync writes many times a day, are left out.
 - **Every lane and profile in this container shares those places,** so a 70 would say that
   a place changed during the run, not who changed it; `~/.claude` and `~/.claude-profiles`
-  are shared across the bench's containers (on py-bench both are host bind mounts; lane 3,
-  #186 6332521834) and `~/.local` is each container's own (lane 2's `installed.tsv` is
+  are shared across Eagle's containers, cloud-bench's (where D ran) and py-bench's (on
+  py-bench both are host bind mounts; lane 3, #186 6332521834. D's own
+  `provenance/a1/surfaces-before.txt` matches py-bench's copies by size and nanosecond
+  mtime in all 104 entries it lists under `~/.claude` and `~/.claude-profiles/shared` and
+  in `settings.json`, but in none of its 95 `~/.local/bin` entries; lane 3, #186
+  6333819643) and `~/.local` is each container's own (lane 2's `installed.tsv` is
   `3fe26405…`, D's `5d0ccba5…`), so only the `~/.local` half of an install in another
   container is outside the watch (#186 6327441086): of an install's 29 files, 17 go under
   `.local/bin` and 12 under `.claude/commands`, `.claude/skills` and
@@ -965,13 +978,15 @@ The published plan is the file on the evidence branch under
 **Gate C is not given by this record.** It needs Brett Heap's explicit approval, which must
 name the revisions, the leg repositories, their visibility and the final plan. Lanes 2 and 3
 re-checked the fixes of the reviews of `3845c53`, with the post-D round, at `2f07c53` (#186
-6329313690 and 6329982180); this version applies the items they left for the record. Both
+6329313690 and 6329982180); `d2bc30a` applied the items they left for the record. Both
 then OK'd the record at `d2bc30a`: lane 2 OK, with no MUST and no SHOULD (6332076797);
-lane 3 READY AFTER ONE TEXT FIX, 231 (6332521834). This version also applies 231 and the
-NITs they left for the record in those OKs. Both also OK'd the post-D round's second pass
-in the same two comments (r2 there, not Gate B's r2), and lane 1 installed it at
-2026-10-22T04:24:09Z (6332671966; lane 3 checked the install, 6332684327). Still to come
-after this record:
+lane 3 READY AFTER ONE TEXT FIX, 231 (6332521834). `167564c` applied 231 and the NITs they
+left for the record in those OKs. Both also OK'd the post-D round's second pass in the
+same two comments (r2 there, not Gate B's r2), and lane 1 installed it at
+2026-10-22T04:24:09Z (6332671966; lane 3 checked the install, 6332684327). Lanes 2 and 3
+then re-checked `167564c`: lane 2 READY AFTER ONE FIX, R1 (6333755295); lane 3 READY AFTER
+ONE TEXT FIX, 261 (6333819643). This version applies R1 and 261 and the NITs they left for
+the record: lane 2's 1–8 and lane 3's 262–269. Still to come after this record:
 
 - P3's `composed` and `standalone` jobs stand RED in D, and the SMOKE attempts do not turn
   them green. Row 34 stays PARTLY:
@@ -1021,11 +1036,21 @@ after this record:
   `suites_d.sh` and `wheel_d.sh` (the line was also in `install_d.sh` and
   `rollback_d.sh`): D's `pid.txt` files still show it, P3's reading 19:57:57Z and P5's
   18:20:03Z, where `attempt.txt` has 16:27:48Z and 16:28:08Z, which this record uses.
-  Still to come from it, for the next touch or the cutover runbook (#186 6332671966): lane
-  3's NITs 241–243 and 251–254 and lane 2's 3 and 7, on the scripts and the test harness;
-  the PLAN NITs, lane 3's 234 (its PLAN `:650` half), 236, 237's PLAN half and 239, and
-  lane 2's 1, 2, 6 and 8; and an observation, tracked as #306 for the code leg after the
-  split: the lane-helper suite sets HOME (`tests/test_lane_helpers.sh:269`) but never
+  The PLAN NITs, lane 3's 234 (its PLAN `:650` half), 236, 237's PLAN half and 239, and
+  lane 2's 1, 2, 6 and 8, went into PLAN's touch 4 (`ad34b9bb…`, the bytes the two
+  re-checks read): lane 2 OK'd it (#186 6333755295) and lane 3 found it READY
+  (6333819643). Touch 4b, made after the re-checks, added lane 3's 271–277 and lane 2's
+  N13 and `:1329` NITs, as lane 3 asked for 271 and 272. Lane 1 installed PLAN's touch 4
+  and 4b at 2026-10-22T06:19:34Z as `e5fd3268…`, and the bytes before, `304eace8…`, are
+  kept as `PLAN.md.v9-20261022`. No script and no manifest changed: `REVIEWED.sha256` is
+  still `410890f7…`, and `sha256sum -c --strict` reads 13 OK. `REVIEWED.md` gained an
+  entry for the install and is now `ea367edf…`, and its bytes before, `576f55a2…`, are
+  kept as `REVIEWED.md.v9-20261022` (install log:
+  `<W>/postd-touch4/install-t4b/install-t4b.log`). Still to come from the round, for the
+  next touch or the cutover runbook (#186 6332671966): lane 3's NITs 241–243 and 251–254
+  (242 and 252 with their PLAN lines) and lane 2's 3 and 7, on the scripts and the test
+  harness; and an observation, tracked as #306 for the code leg after the split: the
+  lane-helper suite sets HOME (`tests/test_lane_helpers.sh:269`) but never
   `XDG_STATE_HOME`, which `lanes-index` prefers (`lanes-index:174`), so P3 and `s1` wrote
   their index files into their state roots and, under a real `XDG_STATE_HOME`, it would
   write into the live index's directory (lane 2);
@@ -1055,8 +1080,10 @@ table of every T006–T010 patch, giving the target leg, the rehearsed base comm
 resulting commit and the review reference." This is that table for run D. The rehearsed
 bases and the resulting commits are D's own: stage 4's `candidate-v0` (`runD/cand-v0`,
 16:27:07Z to 16:27:17Z). Lane 1 assembled the table from D's receipt and checked it
-against the receipt's git repositories and GitHub. Lanes 2 and 3 have not yet reviewed it:
-it is reviewed in the re-check of this version of the record.
+against the receipt's git repositories and GitHub. Lane 2 then verified all nine rows at
+`167564c` (#186 6333755295). Lane 3 held the table row by row and replayed all seven
+patches with `git am --3way` on copies of D's bases, and all seven trees equal stage 4's
+(6333819643).
 
 Nine rows in apply order: seven patch files and two commits that openRepoShape's
 `bump-leg.py` wrote. They are three commits on the code leg, one on the spec leg and five
@@ -1069,13 +1096,13 @@ comment ID" a comment on #186.
 | --- | --- | --- | --- | --- | --- |
 | **1.** `code-0001` (`74b98ff9…`) | code (`openRepoTools-code`) | `d9e7d568011b`, the code leg `execute` made | `4656dc81e620` | PR #192 review 5464893559 (lane 3: LAND on `71b05cb`; finding 7 rebuilt the patch's commit exactly) | Six files added (`.gitattributes`, `.gitignore`, `AGENTS.md`, `CLAUDE.md`, `LICENSE`, `README.md`), +331. The file at `71b05cb` has the same sha256 as D's pin. That review ran on run C's code leg; stages 3 and 4 are its first applications to D's. The leg's first commit after `execute`, before its first package or release run (Remaining gates). |
 | **2.** `t010-code-leg-tests-workflow` (`1406ead3…`) | code | `4656dc81e620` (row 1) | `8b06964f2fd8` | PR #266 comment 6275785285, item 4 (lane 3: LAND on `5162d62`); also PR #299 comment 6317075196, "The job lines" (on `tests.yml` `46feb68` it gives `a24d126`, hunk 3 at offset 3) | `.github/workflows/tests.yml` only, +41 −1: blob `46feb68` to `a24d126`, the blob lane 3 named. The patch expects `2cfa173`, and hunk 3 applies at offset 3 (stage 3's check log). Authored by the fixture identity `openRepoTools CI`; a real author is a T014 item (#186 6089801221, finding 13 (iv)). The earlier file (`7ee3c6d0…`, reviewed in 6089801221 (c)) is superseded. |
-| **3.** `t009-assembly-caps` (`2dd4aac2…`) | code. Its header says "Code-leg patch"; the caps it sets are the assembly root's | `8b06964f2fd8` (row 2) | `56142ed741f9`, the candidate's code tip | PR #266 comment 6275785285, item 5 (lane 3: LAND on `5162d62`; "Applies in stage 4's order: `code-0001`, then T010, then T009") | `tests/test_repo_hygiene.py` and `tests/test_test_roots.py`, +38 −17. The two caps go 347 to 354 and 510 to 529, the line counts of the root's `AGENTS.md` and `README.md` after row 5 (330 to 354 and 505 to 529, counted at both commits). Stage 4 only: stage 3 did not try it. |
+| **3.** `t009-assembly-caps` (`2dd4aac2…`) | code. Its header says "Code-leg patch"; the caps it sets are the assembly root's | `8b06964f2fd8` (row 2) | `56142ed741f9`, the candidate's code tip | PR #266 comment 6275785285, item 5 (lane 3: LAND on `5162d62`; "Applies in stage 4's order: `code-0001`, then T010, then T009") | `tests/test_repo_hygiene.py` and `tests/test_test_roots.py`, +38 −17. The two caps go 347 to 354 and 510 to 529, the line counts of the root's `AGENTS.md` and `README.md` after row 5 (330 to 354 and 505 to 529, counted at both commits). Stage 4 only: stage 3 did not try it. The patch's `index` line names `tests/test_repo_hygiene.py` `a97f5a8`; D's file is `1addfd5` (main's at `33ce26d`), the blob #266's review applied the patch to, so the result is `2a8aaf4`, not the `index` line's `832998f`. |
 | **4.** `spec-0001` (`c11070f0…`) | spec (`openRepoTools-spec`) | `de756faf8797`, the spec leg `execute` made | `f41ac906b8f7`, the candidate's spec tip | PR #192 review 5464893559 (as row 1) | Five files added (`.gitattributes`, `AGENTS.md`, `CLAUDE.md`, `LICENSE`, `README.md`) and `docs/README-claude-current.md` changed, +301 −2. The same sha256 as at `71b05cb`. Hunk 1 of `docs/README-claude-current.md` applies at offset 8 (stage 3's check log). |
-| **5.** `assembly-0001`, re-cut (`2ec48bbf…`) | assembly root (`openRepoTools`) | `92e4e4172779`, the split (`main` of the assembly remote) | `6a36cc17ba0a` | PR #266 comment 6275785285, item 2 (lane 3: LAND on `5162d62`). #192's review 5464893559 covers the earlier file (`cd69c2a9…`), not this one | Four files changed (`.gitattributes`, `.gitignore`, `AGENTS.md`, `README.md`), +97 −53: `AGENTS.md` goes 330 to 354 lines and `README.md` 505 to 529. No offset (stage 3's check log). |
+| **5.** `assembly-0001`, re-cut (`2ec48bbf…`) | assembly root (`openRepoTools`) | `92e4e4172779`, the split (`main` of the assembly remote) | `6a36cc17ba0a` | PR #266 comment 6275785285, item 2 (lane 3: LAND on `5162d62`). #192's review 5464893559 covers the earlier file (`cd69c2a9…`), not this one | Four files changed (`.gitattributes`, `.gitignore`, `AGENTS.md`, `README.md`), +97 −53: `AGENTS.md` goes 330 to 354 lines and `README.md` 505 to 529. No offset (stage 3's check log). The patch's `index` line, like #266's review, names `AGENTS.md` `47165cb`, main's file before #294's `acc89ea`; D's split carries main's `0b25c49`, from `acc89ea` (four lines changed, 330 either way), and the patch applies to it all the same, giving `fcbc637` where the `index` line gives `e8a0388`. |
 | **6.** `t010-assembly-exact-pin-job` (`60245cb9…`) | assembly root | `6a36cc17ba0a` (row 5) | `d6e5764985b7` | PR #299 comment 6317075196 (lane 3: LAND on `076fa70`; names this sha256 and the created blob). The earlier file (`6ee09f00…`): #186 comment 6089801221 (c) | Creates `.github/workflows/composed.yml`, +106, blob `113f094` as lane 3 measured; `runs-on: ubuntu-24.04` since #299. Authored by the fixture identity `openRepoTools CI` (real author: T014). #304 bears on this job's first run on real legs (P3 (b), above). |
 | **7.** `t007-assembly-entry-point`, v3 (`67d8e7ce…`) | assembly root | `d6e5764985b7` (row 6) | `6297ee9f2ab2` | PR #196 review 5481368376 (lane 3, on `7c08f7e`: finding 1, v3 meets T3's required change; its verdict, DO NOT LAND the two files as written, rests on corrections to the installer record, and the patch "can stay as it is" once finding 2's residual is a named T015 item) and PR #196 delta review 5560058266 (lane 3, `7c08f7e..b50c83c`: LAND; the patch is unchanged, sha256 `67d8e7ce…`) | Creates the root `openRepoTools` (mode 100755), +398: blob `ff432c6`, the blob lane 3 measured. T3 is the change lane 3's review of v2 required (PR #191 review 5471121210): confirm the gitlink before running the pinned implementation. T3's second case, a lockstep-consistent pin at code from before #191, stays open as a T015 item (5560058266, finding 2). |
-| **8.** spec-leg bump by `bump-leg.py` (no patch file) | assembly root: the `spec` gitlink and `contracts/spec-pin.yaml` | `6297ee9f2ab2` (row 7) | `2833b34a3448` | No patch review. Covered through the reviews of D's record: lane 3 reproduced stage 4's commits (#186 6327470307), and lane 2 checked the trailer (6327441086, NIT 7) | `de756faf8797` to `f41ac906b8f7`, tree `bc2d1813…`. Written by openRepoShape `190133d`'s `scripts/bump-leg.py` after a dry run; the project's validators printed `pins ok` and `manifest ok`. Carries the trailer `Rehearsal: D v0`. Takes the place of run C's `assembly-0002` (`574c0df1…`), which D did not apply. |
-| **9.** code-leg bump by `bump-leg.py` (no patch file) | assembly root: the `code` gitlink and `contracts/code-pin.yaml` | `2833b34a3448` (row 8) | `c67b0e6838c2`, the tip of `candidate-v0` | As row 8 | `d9e7d568011b` to `56142ed741f9`, tree `45b3f125…`. The same tool, validators and trailer as row 8. Takes the place of run C's `assembly-0003` (`a7f8521b…`), which D did not apply. |
+| **8.** spec-leg bump by `bump-leg.py` (no patch file) | assembly root: the `spec` gitlink and `contracts/spec-pin.yaml` | `6297ee9f2ab2` (row 7) | `2833b34a3448` | No patch review. Covered through the reviews of D's record: lane 3 reproduced stage 4's commits (#186 6327470307), and lane 2 checked the trailer (6327441086, NIT 7) | `de756faf8797` to `f41ac906b8f7`, pin tree digest `bc2d1813…`. Written by openRepoShape `190133d`'s `scripts/bump-leg.py` after a dry run; the project's validators printed `pins ok` and `manifest ok`. Carries the trailer `Rehearsal: D v0`. Takes the place of run C's `assembly-0002` (`574c0df1…`), which D did not apply. |
+| **9.** code-leg bump by `bump-leg.py` (no patch file) | assembly root: the `code` gitlink and `contracts/code-pin.yaml` | `2833b34a3448` (row 8) | `c67b0e6838c2`, the tip of `candidate-v0` | As row 8 | `d9e7d568011b` to `56142ed741f9`, pin tree digest `45b3f125…`. The same tool, validators and trailer as row 8. Takes the place of run C's `assembly-0003` (`a7f8521b…`), which D did not apply. |
 
 **Order.** Rows 1 to 3 went on in the code clone `w-code`, row 4 in the spec clone
 `w-spec` and rows 5 to 9 in the assembly clone `w-assembly` (all under `runD/cand-v0`), in
@@ -1084,7 +1111,11 @@ that sequence (`runD/exits.txt`, `c4-v0` lines). The candidate's remotes end at
 (`candidate-v0`, with the assembly's `main` still at the split). **Not applied in D, so
 not in the table:** run C's `assembly-0002` and `assembly-0003`, which rows 8 and 9
 replace, and the deletion of the three unpinned `shape/AGENTS.md`, `shape/CLAUDE.md` and
-`shape/README.md`, which stays with T014 (all three are still in `candidate-v0`).
+`shape/README.md`, which stays with T014 (all three are still in `candidate-v0`). Main
+holds nine patch files at `33ce26d`, D's seven and run C's `assembly-0002` and
+`assembly-0003`; the Gate B status note's row 40 (`gate-b-status-2026-10-09.md:195`)
+counts "7 patches" (run C's: T006's five and T010's two) and "eight files now" (adding
+T009's), without T007's `t007-assembly-entry-point.patch`, which makes nine.
 
 **Stage 3's trial commits.** Stage 3 (`runD/t006-1`, 16:26:44Z to 16:26:45Z) applied five
 of the seven patches, `assembly-0001`, `code-0001`, `spec-0001`,
@@ -1137,10 +1168,12 @@ the heads of the candidate's remotes under `rehearsal-d/runD/cand-v0/remotes/`) 
 prints, by the parent chain and by `git patch-id --stable`, which gives the patch's own
 patch-id for all seven stage-4 commits and all five stage-3 commits. The review ids are
 from the Gate C status draft (`gatec-status/GATE-C-STATUS-v2.md`, row 46 and Appendix A),
-except 5471121210 (the installer record and the Gate B status note on main) and 6332076797
-and 6332521834 (#186 comments newer than the draft); each was read again with `gh api` on
-2026-10-22 and says what it is cited for. The reviewed heads carry D's bytes, by sha256 or
-by blob: `71b05cb` for `code-0001` and `spec-0001`, `5162d62` for the other three #266
+except 5471121210 (the installer record and the Gate B status note on main); 6329313690,
+6329982180, 6332076797, 6332521834, 6333755295 and 6333819643 (#186 comments newer than
+the draft: the re-checks and OKs of lanes 2 and 3); and 6278378293 (lane 1's landing
+comment on #266, cited for its word on the three NITs). Each was read again with `gh api`
+on 2026-10-22 and says what it is cited for. The reviewed heads carry D's bytes, by sha256
+or by blob: `71b05cb` for `code-0001` and `spec-0001`, `5162d62` for the other three #266
 files, `076fa70` for the exact-pin job and `b50c83c` for T007 v3.
 
 **Gaps.**
@@ -1154,8 +1187,12 @@ files, `076fa70` for the exact-pin job and `b50c83c` for T007 v3.
   (section 5) says "code leg". Only the caps it sets are the assembly root's.
 - **The two bumps have no review of their own.** They are tool output, not patch files.
   Lane 3's "Stage 4's commits and the six end-of-D ref digests reproduce" (#186
-  6327470307) covers them only as stage 4's commits, and it read `3845c53`; the run half's
-  READY at `d2bc30a` (6332521834) is the latest word.
+  6327470307) covers them only as stage 4's commits, and it read `3845c53`; no later
+  review re-read stage 4's commits: the re-checks at `2f07c53` and the OKs at `d2bc30a`
+  (6329313690, 6329982180, 6332076797, 6332521834) read the record's text and the post-D
+  round's scripts. The re-checks of this record's fourth touch then read the appendix row
+  by row, lane 3 also re-reading the bumps' logs, parents, diffs and trailers (lane 2,
+  6333755295; lane 3, 6333819643).
 - **Every patch review ran on a base other than D's.** #192's on run C's legs and split
   (`73b04d6`, `593250d`, `69b8924`); #266's on lane 3's tree q4d, which is main `00d52ae`
   with #262 and #228's PRs 2 to 4; #299's on an empty-tree scratch repository and main's
@@ -1164,10 +1201,32 @@ files, `076fa70` for the exact-pin job and `b50c83c` for T007 v3.
   EXIT 0, and each commit's patch-id equals its patch's.
 - **No green run of the whole `tests` job under row 2's `env`.** Lane 3's item 4 left it
   ("Not yet run: the whole `tests` job with the env. Rehearsal D's P3 job 4 covers it."),
-  and P3's `standalone` job is RED in D for one case, #304 (P3, above). The legs' own CI
-  comes after Gate C.
+  and P3's `standalone` job is RED in D for one case, #304 (P3, above). That job ran
+  through `tests/run.sh` at a TMPDIR of 70, while the patched `tests` job runs plain
+  `python3 -m pytest tests -q` (`tests.yml:157` at `56142ed741f9`), which #304's case does
+  not reach. The legs' own CI comes after Gate C.
 - **The cutover's ids are not predicted.** The split commit carries D's `execute` time
-  (16:25:30Z), so it and the five assembly commits on it are D's ids. This table does not
-  say that a real `execute` reproduces any id, and that was not tested.
-- **This table is not yet reviewed** (above): the review references are those of the
-  patches, not of this table.
+  (16:25:30Z), so it and the five assembly commits on it are D's ids; rows 1 to 4 carry
+  stage 4's committer times (16:27:09Z to 16:27:10Z) and the rehearsal's committer, so all
+  nine ids are D's. This table does not say that a real `execute` reproduces any id, and
+  that was not tested.
+- **Row 40's follow-up half is not refreshed.** Main's evidence for row 40 is run C's
+  `gate-ab-evidence-2026-10-09.md` section 5 (`:448-537` at `33ce26d`): a patch table and
+  a follow-up mapping of run C's 29 `follow_ups` (`adoption-plan.yaml:392–421`) to a
+  patch, a PR, an owner or "deferred". The Gate B status note's row 40
+  (`gate-b-status-2026-10-09.md:195`) cites it and says it "is refreshed once more at the
+  final heads". This appendix refreshes the patch table only: D's plan has 42 follow-ups
+  (Mapping), and run C's 29 are not mapped against them.
+- **#266's review left three NITs that would change patch bytes, and none was applied.**
+  Lane 3 calls them "worth fixing only if a patch is re-rolled for another reason" (PR
+  #266 comment 6275785285), and lane 1 left the patches as they were, "as the review
+  advised" (PR #266 comment 6278378293). D's pins are the unchanged bytes: for example,
+  the re-cut's commit message still keeps the 2026-10-09 body above the dated paragraph,
+  and `t009-assembly-caps.patch:66` still credits the 2026-10-08 entry with all
+  twenty-four lines.
+- **T008 has no patch, so it has no row.** Row 40 asks for every T006–T010 patch; T008 is
+  the installer's coverage task, and its evidence is lane 2's matrix (row 27, under P5).
+- **The review references are those of the patches, not of this table.** The table itself
+  was reviewed at `167564c`: lane 2 verified all nine rows (#186 6333755295), and lane 3
+  held it row by row and replayed all seven patches with `git am --3way` on copies of D's
+  bases, with all seven trees equal to stage 4's (6333819643).
