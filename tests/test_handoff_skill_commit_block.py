@@ -1,96 +1,88 @@
 # SPDX-License-Identifier: Apache-2.0
-"""`skills/handoff/SKILL.md`'s step-2 handoff commit, held to
-opensoft/openRepoTools#197, in seconds rather than the shell suite's hour.
+"""`skills/handoff/SKILL.md`'s step-2 write: ONE call to `write-handoff`, held to
+Amendment 23 (opensoft/openRepoTools#198, slice 3) in seconds rather than the
+shell suite's hour.
 
-The block a session runs after publishing its handoff was
+The skill used to publish its handoff and then COMMIT it itself:
 
-    cd ~/projects/brett-wip
+    cd <the checkout that holds the handoff>
     git add "$handoff"
-    git commit -m "handoff(<lane>@<ws>): PAUSED, <one-line state>" -m "Lane: <lane>"
-    git pull --rebase && git push
+    git commit -m "handoff(<lane>@<ws>): PAUSED, <one-line state>" -m "Lane: <lane>" -- "$handoff"
+    git pull --rebase origin main && git push origin main
 
-and its own paragraph said "Commit with an explicit pathspec" and "On a
-rebase conflict: abort". A bare `git commit` takes the WHOLE index, so in a
-checkout holding another lane's staged entry it published that entry; the
-spelled path is not the checkout a lane window writes (`LANES_REPO` names the
-lane's own clone); and a same-file conflict left the checkout mid-rebase.
-Amendment 4(d) requires *"explicit pathspecs — never `git add -A`, never a bare
-`git commit` … on a rebase conflict the writer ABORTS, leaves the checkout
-clean and reports"*, and Amendment 5(c) bans a bare `git commit` too.
+opensoft/openRepoTools#197 made that block resolve its checkout (`$LANES_REPO`,
+then the helper's `workspace-root`), refuse a staged entry it did not make and
+an operation in progress, and abort a conflicted rebase. It was still one of
+the three writers that commit to a checkout with NO LOCK and then pull and push
+(finding 282 of the review of #307, with `lane-start`'s stamp and
+`lane-handoff`'s PAUSED commit), and its fallback could land in W, the readers'
+copy (Amendment 23 S5). Slice 2a gave the one act that replaces all of it:
 
-THE BLOCK IS RUN, NOT READ. It is extracted from the skill by the commit
-message it writes, which the shipped block and the fixed one BOTH carry, so
-every behavioural case below runs whichever block the file holds: each RED
-case fails against the shipped block for the reason #197 measured, and passes
-with the fix. Each runs under `bash`, and under `zsh` where one is installed,
-because the Bash tool runs a skill's block under the user's own shell.
+    handoff-path <lane> --create                                  where the file is
+    write-handoff <lane> --whole <prepared> --expect-digest <sha> --subject <s>
 
-NOTHING HERE READS THE CALLER'S ENVIRONMENT. The block READS `LANES_REPO`,
-and a lane window exports it to that lane's REAL clone, so the environment is
-an explicit dict, never `os.environ` plus changes: no `LANES_*`, no `TMUX*`,
-`HOME` under `tmp_path`, no system git config. Every repository is under
-`tmp_path`: a bare origin, the "shared" checkout at
-`$HOME/projects/brett-wip` (which the stub `lanes-edit.sh` names as the
-workspace root), the lane's own clone, and a peer clone that lands other
-lanes' work. `maintenance.auto=false` and `gc.auto=0` keep git from starting
-background work in the fixtures (#599's cleanup flake).
+which takes the lane checkout's lock, brings the checkout to origin, checks the
+digest, replaces the file atomically, commits it by its own pathspec with the
+`Lane:` trailer, pushes, reads origin back and replays a refused push. So this
+file holds the skill's two blocks to what is left of them: derive the path and
+the digest, send the call with exactly those arguments, say what each exit
+means and never stop the swap (`R-A11-11`), and spell no checkout of its own.
+
+THE BLOCKS ARE RUN, NOT READ, under `bash` and under `zsh` where one is
+installed, because the Bash tool runs a skill's block under the user's own
+shell. Two layers:
+
+  * against a STUB `lanes-edit.sh` that answers `handoff-path` and
+    `write-handoff`, logs every argv and the `LANES_LANE` it was called under,
+    and exits as each case says: the arguments, the words and the exits;
+  * against the REAL `lanes-edit.sh` in slice 2a's sandbox
+    (`tests/test_a23_write_handoff.py`'s `Box`: a bare origin, W, the lane's
+    row and handoff, `LANES_ROUTE_WRITES=1`): the handoff is pushed from the
+    lane's own checkout C, and W is untouched.
+
+NOTHING HERE READS THE CALLER'S ENVIRONMENT OR TOUCHES A REAL REGISTER, W OR
+GITHUB. Every environment is an explicit dict (no `LANES_*`, no `TMUX*`, `HOME`
+under `tmp_path`), the stub helper and `tmux` live under `tmp_path`, and the
+real helper runs only in the sandbox, whose `gh` and `tmux` refuse.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import shlex
 import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import pytest
 
 from conftest import REPO, WINDOWS_SKIP
+from test_a23_write_handoff import BLOCK, HANDOFF, HANDOFF_REL, Box as RealBox, prepended
 
 pytestmark = [WINDOWS_SKIP, pytest.mark.skipif(
     shutil.which("bash") is None or shutil.which("git") is None,
-    reason="the skill's blocks are shell, and they run git")]
+    reason="the skill's blocks are shell, and the sandbox runs git")]
 
 SKILL = REPO / "skills/handoff/SKILL.md"
+HELPER = REPO / "lanes-edit.sh"
 
-#: THE COMMIT MESSAGE, which the shipped block and the fixed one both write and
-#: no other fenced block of the skill carries: it is how the block is found.
-MARKER = "PAUSED, <one-line state>"
+#: Each carried by exactly one shell block of the skill: how the blocks are found.
+B1 = 'handoff_file="$("$L" handoff-path "$lane" --create)"'
+B2 = '--whole "$prepared_file"'
+STEP4 = "# (c) the row: ONE WRITE"
 
-HANDOFF = "handoffs/h1.md"      # this lane's handoff: the row's own cell
-PEER = "handoffs/h2.md"         # another lane's handoff
-REGISTER = "lanes/LANES.md"
-
-H1_V1, H1_V2 = "h1 v1\n", "h1 v2 (this lane PAUSED)\n"
-H2_V1, H2_V2 = "h2 v1\n", "h2 v2 (peer P1)\n"
-ROWS = "| row1 | a |\n| row2 | a |\n| row3 | a |\n| row4 | {} |\n"
-
-GITCONFIG = """[user]
-\tname = sandbox
-\temail = sandbox@example.invalid
-[init]
-\tdefaultBranch = main
-[maintenance]
-\tauto = false
-[gc]
-\tauto = 0
-[advice]
-\tdetachedHead = false
-[commit]
-\tgpgsign = false
-"""
-
-#: The stub helper: `workspace-root` is the only verb the block calls.
-STUB = """#!/bin/sh
-case "$1" in
-  workspace-root) printf '%s\\n' "$HOME/projects/brett-wip" ;;
-  *) exit 2 ;;
-esac
-"""
+LANE = "repoHS-1"
+UUID = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+OLD = ("Lane: repoHS-1 (p, session s) — single-use resume prompt\n\n"
+       "## RESUME PROMPT — PAUSED, the old block\n\nthe old state\n")
+NEW = ("Lane: repoHS-1 (p, session s) — single-use resume prompt\n\n"
+       "## RESUME PROMPT — PAUSED, the new block\n\n---\n\n" + OLD)
+OLD_DIGEST = hashlib.sha256(OLD.encode("utf-8")).hexdigest()
 
 SHELLS = [
     pytest.param("bash", id="bash"),
@@ -99,385 +91,500 @@ SHELLS = [
 ]
 
 
+# --- the skill's text, as the file holds it ----------------------------------
+
 def _text() -> str:
     return SKILL.read_text(encoding="utf-8")
 
 
-def _blocks(text: str) -> List[str]:
+def _blocks(text: str) -> list[str]:
     return re.findall(r"^```(?:sh|bash)\n(.*?)\n```$", text,
                       re.DOTALL | re.MULTILINE)
 
 
-def _block() -> str:
-    found = [b for b in _blocks(_text()) if MARKER in b]
+def _block(marker: str) -> str:
+    found = [b for b in _blocks(_text()) if marker in b]
     assert len(found) == 1, (
         f"expected exactly one fenced block of {SKILL.name} carrying "
-        f"{MARKER!r}, found {len(found)}: this test is stale")
+        f"{marker!r}, found {len(found)}: this test is stale")
     return found[0]
 
 
 def _section(heading: str) -> str:
-    """The prose-and-code of one numbered `## <n>. …` step of the skill."""
+    """The prose-and-code of one numbered `## <n>. …` step of the skill; it
+    ends at the next NUMBERED step, because the handoff's own template opens
+    with a `## RESUME PROMPT` of its own."""
     text = _text()
     start = text.index(heading)
     end = re.compile(r"\n## \d+\. ").search(text, start + 1)
     return text[start:end.start() if end else len(text)]
 
 
-class Sandbox:
-    """A bare origin, the clones a lane meets, and a hermetic environment."""
+def _prose(heading: str) -> list[str]:
+    """A step's paragraphs with their fences cut out and their lines joined."""
+    prose = re.sub(r"```.*?```", "", _section(heading), flags=re.DOTALL)
+    return [" ".join(p.split()) for p in prose.split("\n\n") if p.strip()]
+
+
+def _code_lines(blocks: list[str]) -> list[str]:
+    return [line for block in blocks for line in block.splitlines()
+            if not line.lstrip().startswith("#")]
+
+
+# --- a stub helper that logs what it is asked, and answers what a case says ---
+
+#: The interpreter that is running pytest, so the stub needs nothing on PATH.
+STUB = f"""#!{sys.executable}
+import json, os, sys
+argv = sys.argv[1:]
+rec = {{"argv": argv, "lane": os.environ.get("LANES_LANE")}}
+if argv[:1] == ["write-handoff"] and "--whole" in argv:
+    try:
+        with open(argv[argv.index("--whole") + 1], "rb") as f:
+            rec["prepared"] = f.read().decode("utf-8")
+    except (OSError, IndexError):
+        rec["prepared"] = None
+with open(os.environ["STUB_LOG"], "a", encoding="utf-8") as log:
+    log.write(json.dumps(rec) + "\\n")
+verb = argv[0] if argv else ""
+if verb == "handoff-path":
+    if os.environ.get("STUB_HP_OUT"):
+        print(os.environ["STUB_HP_OUT"])
+    sys.exit(int(os.environ.get("STUB_HP_RC", "0")))
+if verb == "write-handoff":
+    if os.environ.get("STUB_WH_OUT"):
+        print(os.environ["STUB_WH_OUT"])
+    sys.exit(int(os.environ.get("STUB_WH_RC", "0")))
+if verb in ("log", "append-line", "set-row-state"):
+    sys.exit(0)
+sys.exit(8 if verb == "lane-dir" else 2)
+"""
+
+
+class Estate:
+    """A stub helper, a handoff file, and a hermetic environment."""
 
     def __init__(self, root: Path) -> None:
+        root.mkdir(parents=True, exist_ok=True)
         self.root = root
-        self.home = root / "home"
-        (self.home / "projects").mkdir(parents=True)
-        (self.root / "tmp").mkdir()
-        (self.home / ".gitconfig").write_text(GITCONFIG, encoding="utf-8")
         self.bin = root / "bin"
         self.bin.mkdir()
+        self.home = root / "home"
+        self.home.mkdir()
+        self.tmp = root / "tmp"
+        self.tmp.mkdir()
+        self.log = root / "calls.jsonl"
+        self.log.write_text("", encoding="utf-8")
         self.helper = self.bin / "lanes-edit.sh"
         self.helper.write_text(STUB, encoding="utf-8")
-        self.helper.chmod(self.helper.stat().st_mode | stat.S_IXUSR)
-        self.origin = root / "origin.git"
-        self.shared = self.home / "projects" / "brett-wip"
-        self.own = self.home / "projects" / "brett-wip-own"
-        self.peer = root / "peer"
-        dirs: List[str] = [str(self.bin)]
-        for tool in ("git", "bash", "zsh"):
-            found = shutil.which(tool)
-            if found and os.path.dirname(found) not in dirs:
-                dirs.append(os.path.dirname(found))
-        for fallback in ("/usr/bin", "/bin"):
-            if fallback not in dirs:
-                dirs.append(fallback)
-        self.env: Dict[str, str] = {
-            "HOME": str(self.home), "PATH": os.pathsep.join(dirs),
-            "TMPDIR": str(self.root / "tmp"), "LC_ALL": "C", "TZ": "UTC",
-            "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0",
-            "GIT_EDITOR": "true",
-        }
-        self._seed()
+        # A `tmux` that answers nothing, so the host's own server is never read.
+        (self.bin / "tmux").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        for tool in (self.helper, self.bin / "tmux"):
+            tool.chmod(tool.stat().st_mode | stat.S_IXUSR)
+        self.handoff = root / "checkout" / "handoffs" / "estate" / f"{LANE}.md"
+        self.handoff.parent.mkdir(parents=True)
+        self.handoff.write_text(OLD, encoding="utf-8")
 
-    # --- git, always in the sandbox's own environment ---------------------
+    def run(self, shell: str, script: str, **extra: str) -> subprocess.CompletedProcess:
+        env = {"HOME": str(self.home), "TMPDIR": str(self.tmp), "STUB_LOG": str(self.log),
+               "PATH": os.pathsep.join([str(self.bin), "/usr/bin", "/bin"]),
+               "STUB_HP_OUT": str(self.handoff), **extra}
+        argv = ["bash", "-c", script] if shell == "bash" else \
+            [shutil.which("zsh") or "zsh", "-f", "-c", script]
+        return subprocess.run(argv, env=env, cwd=str(self.home), capture_output=True,
+                              text=True, check=False, timeout=120)
 
-    def git(self, *args: str, cwd: Optional[Path] = None,
-            check: bool = True) -> subprocess.CompletedProcess:
-        proc = subprocess.run(["git", *args], cwd=str(cwd or self.root),
-                              env=self.env, capture_output=True, text=True,
-                              stdin=subprocess.DEVNULL, check=False,
-                              timeout=120)
-        if check and proc.returncode != 0:
-            raise AssertionError(f"git {' '.join(args)} in {cwd} failed:\n"
-                                 f"{proc.stderr}{proc.stdout}")
-        return proc
+    def calls(self) -> list[dict]:
+        return [json.loads(line) for line in
+                self.log.read_text(encoding="utf-8").splitlines()]
 
-    def out(self, *args: str, cwd: Optional[Path] = None) -> str:
-        return self.git(*args, cwd=cwd).stdout.strip()
+    def verbs(self) -> list[str]:
+        return [c["argv"][0] for c in self.calls()]
 
-    def _seed(self) -> None:
-        self.git("init", "-q", "--bare", str(self.origin))
-        seed = self.root / "seed"
-        self.git("init", "-q", str(seed))
-        (seed / "handoffs").mkdir()
-        (seed / "lanes").mkdir()
-        (seed / HANDOFF).write_text(H1_V1, encoding="utf-8")
-        (seed / PEER).write_text(H2_V1, encoding="utf-8")
-        (seed / REGISTER).write_text(ROWS.format("a"), encoding="utf-8")
-        self.git("add", "--", HANDOFF, PEER, REGISTER, cwd=seed)
-        self.git("commit", "-q", "-m", "seed", "--", HANDOFF, PEER, REGISTER,
-                 cwd=seed)
-        self.git("remote", "add", "origin", str(self.origin), cwd=seed)
-        self.git("push", "-q", "origin", "main", cwd=seed)
+    def step2(self, *, ws: str = "Eagle", why: str = "'a usage reset'",
+              prepare: bool = True) -> str:
+        """Step 2 as a session runs it: the first block, the session's own act
+        of writing the complete new file, then the one call. `ws` and `why` are
+        shell words, so a case can hand the block an ANSI-C string."""
+        write = (f'[ -z "$prepared_file" ] || printf %s {shlex.quote(NEW)} > "$prepared_file"'
+                 if prepare else ":")
+        return "\n".join([f"L={shlex.quote(str(self.helper))}", f"lane={LANE}", f"ws={ws}",
+                          f"why={why}", _block(B1), write, _block(B2),
+                          'printf "AFTER\\n"'])
 
-    def clone(self, dest: Path) -> Path:
-        self.git("clone", "-q", str(self.origin), str(dest))
-        return dest
-
-    def land(self, path: str, content: str, message: str) -> None:
-        """Another lane lands `path` on origin, from its own clone."""
-        if not self.peer.exists():
-            self.clone(self.peer)
-        self.git("pull", "-q", "--rebase", "origin", "main", cwd=self.peer)
-        (self.peer / path).write_text(content, encoding="utf-8")
-        self.git("commit", "-q", "-m", message, "--", path, cwd=self.peer)
-        self.git("push", "-q", "origin", "main", cwd=self.peer)
-
-    def regime2(self, checkout: Path) -> None:
-        """The shared checkout's state from 2026-10-11T20:07Z (#197): a peer's
-        v2 of `h2` lands, then `main` moves to it WITHOUT the index (a linked
-        worktree's `checkout -B`), so the index still holds `h2` v1 — a
-        STAGED reversal of the peer's work."""
-        self.land(PEER, H2_V2, "P1: peer handoff v2")
-        self.git("fetch", "-q", "origin", cwd=checkout)
-        self.git("update-ref", "refs/heads/main", "origin/main", cwd=checkout)
-
-    # --- reads -------------------------------------------------------------
-
-    def head(self, checkout: Path) -> str:
-        return self.out("rev-parse", "HEAD", cwd=checkout)
-
-    def origin_head(self) -> str:
-        return self.out("--git-dir", str(self.origin), "rev-parse", "main")
-
-    def origin_file(self, path: str) -> str:
-        return self.git("--git-dir", str(self.origin), "show",
-                        f"main:{path}").stdout
-
-    def staged(self, checkout: Path) -> List[str]:
-        return self.out("diff", "--cached", "--name-only",
-                        cwd=checkout).splitlines()
-
-    def counts(self, checkout: Path) -> tuple:
-        """(ahead, behind) against origin's main, after a fetch."""
-        self.git("fetch", "-q", "origin", cwd=checkout)
-        row = self.out("rev-list", "--left-right", "--count",
-                       "HEAD...origin/main", cwd=checkout).split()
-        return int(row[0]), int(row[1])
-
-    def in_progress(self, checkout: Path) -> List[str]:
-        gitdir = Path(self.out("rev-parse", "--absolute-git-dir", cwd=checkout))
-        return [op for op in ("rebase-merge", "rebase-apply", "MERGE_HEAD",
-                              "CHERRY_PICK_HEAD", "REVERT_HEAD")
-                if (gitdir / op).exists()]
-
-    # --- the block ----------------------------------------------------------
-
-    def run(self, shell: str, lanes_repo: Optional[Path] = None,
-            block: Optional[str] = None) -> subprocess.CompletedProcess:
-        script = "\n".join([f"L={shlex.quote(str(self.helper))}",
-                            f"handoff={shlex.quote(HANDOFF)}",
-                            block if block is not None else _block()])
-        env = dict(self.env)
-        if lanes_repo is not None:
-            env["LANES_REPO"] = str(lanes_repo)
-        argv = [shutil.which(shell) or shell]
-        if shell == "zsh":
-            argv.append("-f")
-        return subprocess.run([*argv, "-c", script], cwd=str(self.home),
-                              env=env, capture_output=True, text=True,
-                              stdin=subprocess.DEVNULL, check=False,
-                              timeout=120)
+    def step4(self, *, ws_missing: str = "", uuid_missing: str = "") -> str:
+        return "\n".join([f"L={shlex.quote(str(self.helper))}", f"lane={LANE}", "ws=Eagle",
+                          'why="a usage reset"', f'uuid="{UUID}"', f'ws_missing="{ws_missing}"',
+                          f'uuid_missing="{uuid_missing}"', _block(STEP4),
+                          'printf "row_write_refused=[%s]\\n" "$row_write_refused"'])
 
 
 @pytest.fixture
-def sb(tmp_path: Path) -> Sandbox:
-    return Sandbox(tmp_path)
+def estate(tmp_path: Path) -> Estate:
+    return Estate(tmp_path)
+
+
+def _write_call(estate: Estate) -> dict:
+    found = [c for c in estate.calls() if c["argv"][0] == "write-handoff"]
+    assert len(found) == 1, estate.calls()
+    return found[0]
+
+
+# --- the call: the arguments, and nothing else -------------------------------
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_block_calls_write_handoff_with_whole_and_expect_digest(estate, shell):
+    """The handoff's place is asked of `handoff-path --create`, its digest is
+    read from the bytes there, and `write-handoff` is called ONCE with the
+    prepared file the session wrote, that digest, and the subject: the lane, the
+    workstation and the why. `LANES_LANE` is the lane."""
+    proc = estate.run(shell, estate.step2(), STUB_WH_OUT=f"{estate.handoff}\tdeadbeef")
+    assert proc.returncode == 0, proc.stderr
+    assert estate.verbs() == ["handoff-path", "write-handoff"], estate.calls()
+    assert estate.calls()[0]["argv"] == ["handoff-path", LANE, "--create"]
+    call = _write_call(estate)
+    argv = call["argv"]
+    assert argv[:3] == ["write-handoff", LANE, "--whole"], argv
+    assert argv[4:] == ["--expect-digest", OLD_DIGEST, "--subject",
+                        f"handoff({LANE}@Eagle): PAUSED, a usage reset"], argv
+    assert call["prepared"] == NEW, "the file sent is the one the session wrote, whole"
+    assert Path(argv[3]).parent == estate.tmp, "the prepared file is a temporary one"
+    assert call["lane"] == LANE
+    assert f"handoff written: {estate.handoff}" in proc.stdout, proc.stdout
+    assert proc.stdout.endswith("AFTER\n")
+    assert estate.handoff.read_text(encoding="utf-8") == OLD, (
+        "the skill never writes the handoff itself: the verb does")
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_digest_is_of_the_bytes_that_are_there(estate, shell):
+    """Not of a copy and not of the row's spelling: the file `handoff-path`
+    named, read as it stands."""
+    other = "a different handoff\nwith other bytes\n"
+    estate.handoff.write_text(other, encoding="utf-8")
+    estate.run(shell, estate.step2())
+    argv = _write_call(estate)["argv"]
+    assert argv[argv.index("--expect-digest") + 1] == hashlib.sha256(other.encode()).hexdigest()
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("ws, why, subject", [
+    ("Eagle", "'a usage reset'", f"handoff({LANE}@Eagle): PAUSED, a usage reset"),
+    ("''", "''", f"handoff({LANE}@none): PAUSED, handoff"),
+    ("Eagle", "$'a\\tb\\x1bc'", f"handoff({LANE}@Eagle): PAUSED, abc"),
+    ("Eagle", "'reset — switch'", f"handoff({LANE}@Eagle): PAUSED, reset — switch"),
+], ids=["a-why", "no-workstation-no-why", "control-characters-removed", "a-dash-is-kept"])
+def test_the_subject_is_one_line_with_no_control_character(estate, shell, ws, why, subject):
+    """The verb exits 64 on a control character in the subject and writes
+    nothing, so a why with a stray tab would cost the swap its handoff: it is
+    removed, not refused over. A why the operator did not give is `handoff`,
+    and a missing workstation is `none`."""
+    estate.run(shell, estate.step2(ws=ws, why=why))
+    assert _write_call(estate)["argv"][-1] == subject
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_no_spelled_checkout_and_no_workspace_root_fallback(estate, shell):
+    """No checkout path is written anywhere in the skill, none is taken from
+    the environment, and the helper's `workspace-root` is never asked: a caller's
+    `LANES_REPO` changes nothing about what is called."""
+    text = _text()
+    for spelled in ("~/projects/brett-wip", "workspace-root", "LANES_REPO", "LANES_BRANCH"):
+        assert spelled not in text, f"{SKILL.name} still says {spelled!r}"
+    blocks = _blocks(text)
+    git_writes = [line.strip() for line in _code_lines(blocks)
+                  if re.search(r"\bgit\b[^\n]*\b(add|commit|pull|push|rebase|merge|reset|"
+                               r"checkout|stash|cherry-pick|clean|restore)\b", line)]
+    assert not git_writes, f"a shell block of the skill runs a git write: {git_writes}"
+    step2 = [b for b in blocks if b in (_block(B1), _block(B2))]
+    assert not [line for line in _code_lines(step2) if re.match(r"\s*cd\b", line)], (
+        "step 2 changes directory: it has no checkout of its own")
+    def shape() -> list[dict]:
+        """The calls, the temporary file's random name aside."""
+        out = []
+        for call in estate.calls():
+            argv = list(call["argv"])
+            if argv[0] == "write-handoff":
+                argv[3] = "<prepared>"
+            out.append(dict(call, argv=argv))
+        return out
+
+    estate.run(shell, estate.step2(), STUB_WH_OUT=f"{estate.handoff}\tx")
+    plain = shape()
+    estate.log.write_text("", encoding="utf-8")
+    estate.run(shell, estate.step2(), STUB_WH_OUT=f"{estate.handoff}\tx",
+               LANES_REPO=str(estate.root / "elsewhere"), LANES_BRANCH="not-main")
+    assert "workspace-root" not in estate.verbs(), estate.calls()
+    assert shape() == plain, "an ambient LANES_REPO changed the call"
+
+
+def test_the_three_variables_the_old_call_named_are_defined_in_a_block():
+    """`publish-handoff "$lane" "$handoff_file" "$prepared_file" --expect-digest
+    "$prior_sha256"` used its three variables without defining any of them."""
+    code = "\n".join(_code_lines([_block(B1)]))
+    for name in ("handoff_file", "prior_sha256", "prepared_file"):
+        assert re.search(rf"(?m)^\s*{name}=", code), f"no block defines ${name}"
+    assert "publish-handoff" not in "\n".join(_blocks(_text())), (
+        "the old call is gone: write-handoff is the one act")
+
+
+def test_the_skill_never_pulls_with_rebase_outside_a_comment():
+    """Amendment 23 S3-S4 (`tests/test_repo_hygiene.py`'s no-pull rule, whose
+    file list takes this file at the merge): no line of the skill that is not a
+    comment runs, or tells a person to run, a rebasing pull."""
+    pull = re.compile(r"\bpull\b[^\n]*?(?:--rebase\b|\s-r\b)")
+    found = [n for n, line in enumerate(_text().splitlines(), 1)
+             if not line.lstrip().startswith("#") and pull.search(line)]
+    assert not found, f"{SKILL.name} line(s) {found} run or print a rebasing pull"
+
+
+def test_the_blocks_parse_under_bash(tmp_path):
+    for name, marker in (("first", B1), ("second", B2)):
+        script = tmp_path / f"{name}.sh"
+        script.write_text(_block(marker) + "\n", encoding="utf-8")
+        proc = subprocess.run(["bash", "-n", str(script)], capture_output=True,
+                              text=True, check=False)
+        assert proc.returncode == 0, proc.stderr
+
+
+# --- step 4's three register writes carry `LANES_LANE` -----------------------
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("ambient", [None, "some-other-lane"], ids=["unset", "another-lane"])
+def test_step4_writes_carry_LANES_LANE(estate, shell, ambient):
+    """`log`, `append-line` and `set-row-state` each run under the lane being
+    swapped, whatever the caller's environment says: a register write goes
+    through that lane's checkout and attributes its commit to it (Amendment 23
+    S2), and `append-line` finds its lane from the variable first."""
+    extra = {} if ambient is None else {"LANES_LANE": ambient}
+    proc = estate.run(shell, estate.step4(), **extra)
+    assert proc.returncode == 0, proc.stderr
+    writes = {c["argv"][0]: c["lane"] for c in estate.calls()
+              if c["argv"][0] in ("log", "append-line", "set-row-state")}
+    assert writes == {"log": LANE, "append-line": LANE, "set-row-state": LANE}, estate.calls()
+
+
+def test_every_register_write_and_the_handoff_write_names_its_lane_in_the_text():
+    """The text holds the same line for the next verb that joins the list."""
+    calls = [line.strip() for line in _code_lines(_blocks(_text()))
+             if re.search(r'"\$L" (log|append-line|set-row-state|write-handoff)\b', line)]
+    assert len(calls) == 4, calls
+    for call in calls:
+        assert 'LANES_LANE="$lane"' in call, f"this call does not name its lane: {call}"
+
+
+# --- the words: what each exit says, and that the swap goes on ---------------
+
+def _says(estate: Estate) -> dict:
+    path = str(estate.handoff)
+    return {
+        "pushed": (0, True, [f"handoff written: {path}"], ["HANDOFF NOT"]),
+        "refused-after-writing": (2, True, [
+            "HANDOFF NOT COMMITTED", f"written at {path}, uncommitted", "Nothing was pushed",
+            "refused (7)"], ["HANDOFF NOT WRITTEN"]),
+        "refused-before-writing": (2, False, [
+            "HANDOFF NOT WRITTEN", "wrote nothing"], ["HANDOFF NOT COMMITTED"]),
+        "pushed-not-confirmed": (3, True, ["HANDOFF PUSHED, NOT CONFIRMED", "(exit 3"], []),
+        "kept-on-head": (6, True, ["HANDOFF NOT PUSHED", "kept on HEAD", "(exit 6)",
+                                   "Never force"], []),
+        "moved-or-owned": (7, False, [
+            "HANDOFF NOT WRITTEN", f"digest {OLD_DIGEST}", "(exit 7;", "once more",
+            "if a restart owns it, do not retry"], []),
+        "no-handoff": (8, False, ["HANDOFF NOT PUBLISHED", "exited 8", "nothing was written"], []),
+        "environment": (1, False, ["HANDOFF NOT PUBLISHED", "exited 1", "nothing was written"], []),
+        "lock": (4, False, ["HANDOFF NOT PUBLISHED", "exited 4", "nothing was written"], []),
+    }
+
+
+CASES = ["pushed", "refused-after-writing", "refused-before-writing", "pushed-not-confirmed",
+         "kept-on-head", "moved-or-owned", "no-handoff", "environment", "lock"]
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("case", CASES)
+def test_each_exit_of_the_verb_is_said_and_the_swap_goes_on(estate, shell, case):
+    rc, written, must, never = _says(estate)[case]
+    out = f"{estate.handoff}\tdeadbeef" if written else ""
+    proc = estate.run(shell, estate.step2(), STUB_WH_RC=str(rc), STUB_WH_OUT=out)
+    assert proc.returncode == 0, "the block never stops the swap (R-A11-11)"
+    assert proc.stdout.endswith("AFTER\n"), proc.stdout
+    for words in must:
+        assert words in proc.stdout, f"{case}: {words!r} missing from\n{proc.stdout}"
+    for words in never:
+        assert words not in proc.stdout, f"{case}: {words!r} must not be said\n{proc.stdout}"
+    assert estate.verbs().count("write-handoff") == 1, "one call, and it is never repeated"
+
+
+def test_refusal_text_keeps_R_A11_11():
+    """`R-A11-11`, *a swap is never left unwritten*, is still the text's rule
+    about a refusal, a conflict or a rejected push, and says what the verb does
+    in each: the file is written and not committed on S3's refusal (2), a refused
+    push is replayed or kept and named (6), nothing is forced and no staged
+    entry that is not the handoff's is ever committed."""
+    held = [p for p in _prose("## 2. Refresh the handoff")
+            if "does not stop the swap" in p]
+    assert len(held) == 1, held
+    paragraph = held[0]
+    for words in ("R-A11-11", "a swap is never left unwritten", "(2)", "has still written the handoff",
+                  "commits nothing", "git's own words", "replays the write", "(6)",
+                  "report carries that line", "Never force", "never commit staged entries you did not make"):
+        assert words in paragraph, f"the paragraph no longer says {words!r}:\n{paragraph}"
+
+
+# --- where the handoff is not found, and the file the session never wrote ----
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("how, extra", [
+    ("exit 8: no row, or a row that names no handoff", {"STUB_HP_RC": "8", "STUB_HP_OUT": ""}),
+    ("exit 1: a register that could not be read", {"STUB_HP_RC": "1", "STUB_HP_OUT": ""}),
+    ("exit 0 and a path that is not a file", {"STUB_HP_OUT": "/nowhere/at/all.md"}),
+    ("exit 0 and no path", {"STUB_HP_OUT": ""}),
+], ids=["no-handoff", "unreadable", "not-a-file", "no-path"])
+def test_a_handoff_that_is_not_found_is_said_and_write_handoff_is_never_called(
+        estate, shell, how, extra):
+    proc = estate.run(shell, estate.step2(), **extra)
+    assert proc.returncode == 0, "the swap goes on"
+    assert "HANDOFF NOT FOUND" in proc.stdout, proc.stdout
+    assert "HANDOFF NOT WRITTEN" in proc.stdout and "was NOT called" in proc.stdout, proc.stdout
+    assert estate.verbs() == ["handoff-path"], estate.calls()
+    assert proc.stdout.endswith("AFTER\n")
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_a_prepared_file_the_session_never_wrote_is_never_sent(estate, shell):
+    """`mktemp` makes an empty file; the verb refuses an empty `--whole` file,
+    and the block does not even ask."""
+    proc = estate.run(shell, estate.step2(prepare=False))
+    assert proc.returncode == 0
+    assert "HANDOFF NOT WRITTEN" in proc.stdout and "was NOT called" in proc.stdout, proc.stdout
+    assert estate.verbs() == ["handoff-path"], estate.calls()
+
+
+# --- the real helper: the handoff is pushed from C, and W is untouched --------
+
+REAL_NEW = prepended(HANDOFF, BLOCK)
+REAL_LANE = "repoS4-1"
+REAL_WHY = "a usage reset"
+
+
+def _real_script(shell_between: str = "", *, lane: str = REAL_LANE, new: str = REAL_NEW) -> str:
+    return "\n".join([
+        f"L={shlex.quote(str(HELPER))}", f"lane={lane}", "ws=Eagle", f"why={shlex.quote(REAL_WHY)}",
+        _block(B1), shell_between,
+        f'[ -z "$prepared_file" ] || printf %s {shlex.quote(new)} > "$prepared_file"',
+        _block(B2)])
+
+
+def _real_run(box: RealBox, shell: str, script: str) -> subprocess.CompletedProcess:
+    argv = ["bash", "-c", script] if shell == "bash" else \
+        [shutil.which("zsh") or "zsh", "-f", "-c", script]
+    return subprocess.run(argv, env=dict(box.env), cwd=str(box.root), capture_output=True,
+                          text=True, check=False, timeout=240)
 
 
 def _said(proc: subprocess.CompletedProcess) -> str:
     return f"--- stdout\n{proc.stdout}--- stderr\n{proc.stderr}"
 
 
-# --- RED 1: a foreign staged entry is never committed -----------------------
-
-@pytest.mark.parametrize("shell", SHELLS)
-def test_a_foreign_staged_entry_is_refused_and_nothing_is_published(sb, shell):
-    shared = sb.clone(sb.shared)
-    sb.regime2(shared)
-    sb.land(REGISTER, ROWS.format("P2"), "P2: peer row4")   # another FILE moves
-    (shared / HANDOFF).write_text(H1_V2, encoding="utf-8")
-    assert sb.staged(shared) == [PEER], "the precondition: a staged reversal"
-    head, origin = sb.head(shared), sb.origin_head()
-
-    proc = sb.run(shell)
-
-    assert sb.origin_file(PEER) == H2_V2, (
-        "origin's copy of the PEER's handoff was reverted: the commit took a "
-        f"staged entry this handoff did not make, and pushed it\n{_said(proc)}")
-    assert sb.origin_head() == origin, f"origin moved\n{_said(proc)}"
-    assert sb.head(shared) == head, f"a commit was made\n{_said(proc)}"
-    assert "HANDOFF NOT COMMITTED" in proc.stdout, _said(proc)
-    assert f"staged: {PEER}" in proc.stdout, (
-        f"the refusal must name the staged path\n{_said(proc)}")
-    assert sb.staged(shared) == [PEER], "the peer's entry is left as found"
-    assert (shared / HANDOFF).read_text(encoding="utf-8") == H1_V2, (
-        "the handoff file stays written")
+def _tree(box: RealBox) -> list[str]:
+    return box.git("--git-dir", str(box.origin), "ls-tree", "-r", "--name-only", "main").split()
 
 
-# --- RED 2 and 3: the checkout is RESOLVED, `LANES_REPO` first --------------
-
-@pytest.mark.parametrize("shell", SHELLS)
-def test_lanes_repo_is_where_the_handoff_is_committed_and_the_shared_one_is_untouched(
-        sb, shell):
-    shared, own = sb.clone(sb.shared), sb.clone(sb.own)
-    sb.regime2(shared)
-    sb.git("pull", "-q", "--rebase", "origin", "main", cwd=own)
-    (own / HANDOFF).write_text(H1_V2, encoding="utf-8")
-    shared_head = sb.head(shared)
-
-    proc = sb.run(shell, lanes_repo=own)
-
-    assert sb.origin_file(PEER) == H2_V2, (
-        "origin's copy of the peer's handoff was reverted from the SHARED "
-        f"checkout, which this lane did not write\n{_said(proc)}")
-    assert sb.origin_file(HANDOFF) == H1_V2, (
-        f"the lane's handoff never reached origin\n{_said(proc)}")
-    assert f"handoff pushed from {own}" in proc.stdout, _said(proc)
-    assert sb.git("status", "--porcelain", cwd=own).stdout == "", (
-        "the lane's own clone is left with its handoff uncommitted")
-    assert sb.counts(own) == (0, 0)
-    assert sb.head(shared) == shared_head, "the shared checkout was committed in"
-    assert sb.staged(shared) == [PEER], "the shared checkout's index was touched"
+@pytest.fixture
+def real(tmp_path: Path) -> RealBox:
+    return RealBox(tmp_path)
 
 
 @pytest.mark.parametrize("shell", SHELLS)
-def test_lanes_repo_is_used_when_the_shared_checkout_is_clean(sb, shell):
-    shared, own = sb.clone(sb.shared), sb.clone(sb.own)
-    sb.land(PEER, H2_V2, "P1: peer handoff v2")
-    for checkout in (shared, own):
-        sb.git("pull", "-q", "--rebase", "origin", "main", cwd=checkout)
-    (own / HANDOFF).write_text(H1_V2, encoding="utf-8")
-    shared_head = sb.head(shared)
-
-    proc = sb.run(shell, lanes_repo=own)
-
-    assert sb.origin_file(HANDOFF) == H1_V2, (
-        "the block exited without committing the handoff the lane wrote in "
-        f"its own clone\n{_said(proc)}")
-    assert sb.counts(own) == (0, 0), _said(proc)
-    assert sb.head(shared) == shared_head
-
-
-# --- RED 4: a same-file conflict is aborted, never left mid-rebase ----------
-
-@pytest.mark.parametrize("shell", SHELLS)
-def test_a_conflict_is_aborted_and_the_commit_stays_local(sb, shell):
-    shared = sb.clone(sb.shared)
-    sb.land(HANDOFF, "h1 v2 (someone else)\n", "P3: conflicting h1")
-    (shared / HANDOFF).write_text(H1_V2, encoding="utf-8")
-    origin = sb.origin_head()
-
-    proc = sb.run(shell)
-
-    assert sb.in_progress(shared) == [], (
-        f"the checkout was left mid-operation\n{_said(proc)}")
-    assert "HANDOFF NOT PUSHED" in proc.stdout, _said(proc)
-    assert sb.origin_head() == origin
-    assert sb.counts(shared) == (1, 1), _said(proc)
-    assert sb.out("show", "--name-only", "--format=", "HEAD",
-                  cwd=shared).splitlines() == [HANDOFF]
-    assert sb.git("status", "--porcelain", cwd=shared).stdout == ""
-
-
-# --- RED 5: an operation in progress is a refusal ---------------------------
-
-@pytest.mark.parametrize("shell", SHELLS)
-@pytest.mark.parametrize("operation", ["rebase", "merge"])
-def test_an_operation_in_progress_is_refused_before_any_commit(sb, shell, operation):
-    shared = sb.clone(sb.shared)
-    (shared / HANDOFF).write_text("h1 local\n", encoding="utf-8")
-    sb.git("commit", "-q", "-m", "local h1", "--", HANDOFF, cwd=shared)
-    sb.land(HANDOFF, "h1 peer\n", "P3: conflicting h1")
-    if operation == "rebase":
-        sb.git("pull", "-q", "--rebase", "origin", "main", cwd=shared, check=False)
+@pytest.mark.parametrize("how", ["routed", "seam"])
+def test_the_handoff_is_pushed_from_the_lane_checkout_and_W_is_untouched(real, shell, how):
+    """Step 2, whole, against the real helper. The lane's checkout is made by
+    the first block where it is not there yet, the handoff is written, committed
+    by its own pathspec with the `Lane:` trailer and pushed from it, and W, the
+    readers' copy, does not move: not its HEAD, its working tree, its reflog, and
+    not the entry another lane left STAGED there, which the old block committed
+    and published."""
+    if how == "seam":
+        c = real.seam()
     else:
-        sb.git("fetch", "-q", "origin", cwd=shared)
-        sb.git("merge", "-q", "--no-edit", "origin/main", cwd=shared, check=False)
-    before = sb.in_progress(shared)
-    assert before, f"the precondition: a {operation} stopped on its conflict"
-    (shared / HANDOFF).write_text(H1_V2, encoding="utf-8")
-    head, origin = sb.head(shared), sb.origin_head()
+        c = real.checkout(REAL_LANE)
+        assert not c.exists(), "the precondition: the lane has no checkout yet"
+    real.write(real.w, "handoffs/staged-in-w.md", "another lane's entry, staged in W\n")
+    real.git("-C", str(real.w), "add", "--", "handoffs/staged-in-w.md")
+    w_before, reflog, tip = real.w_state(), real.w_reflog(), real.origin_head()
 
-    proc = sb.run(shell)
+    proc = _real_run(real, shell, _real_script())
 
-    assert sb.head(shared) == head, (
-        f"a commit was made in the middle of a {operation}\n{_said(proc)}")
-    assert sb.origin_head() == origin, _said(proc)
-    found = re.search(r"has an operation in progress \(([A-Za-z_-]+)\)",
-                      proc.stdout)
-    assert found and found.group(1) in before, (
-        f"the refusal must name the operation ({before})\n{_said(proc)}")
-    assert "HANDOFF NOT COMMITTED" in proc.stdout
-    assert sb.in_progress(shared) == before, "the block finished what it did not start"
+    assert proc.returncode == 0, _said(proc)
+    assert f"handoff written: {c / HANDOFF_REL}" in proc.stdout, _said(proc)
+    assert real.origin_file(HANDOFF_REL) == REAL_NEW, _said(proc)
+    assert real.origin_head() != tip
+    assert real.subjects()[0] == f"handoff({REAL_LANE}@Eagle): PAUSED, {REAL_WHY}"
+    assert real.git("--git-dir", str(real.origin), "log", "-1", "--format=%B",
+                    "main").strip().splitlines()[-1] == f"Lane: {REAL_LANE}"
+    assert (c / HANDOFF_REL).read_text(encoding="utf-8") == REAL_NEW
+    assert real.head(c) == real.origin_head() and real.unpublished(c) == []
+    assert real.git("-C", str(c), "status", "--porcelain") == ""
+    assert real.w_state() == w_before, "W moved"
+    assert real.w_reflog() == reflog, "W's reflog moved: something committed or fast-forwarded it"
+    assert (real.w / HANDOFF_REL).read_text(encoding="utf-8") == HANDOFF
+    assert "handoffs/staged-in-w.md" not in _tree(real), "a staged entry of W's reached origin"
+    assert real.git("-C", str(real.w), "diff", "--cached", "--name-only").split() == [
+        "handoffs/staged-in-w.md"]
+    assert not real.lock_of(c).exists(), "the checkout's lock is released"
 
-
-# --- RED 6: the text --------------------------------------------------------
-
-def test_the_skill_never_spells_the_shared_checkout():
-    spelled = [n + 1 for n, line in enumerate(_text().splitlines())
-               if "~/projects/brett-wip" in line]
-    assert not spelled, (
-        "the handoff's checkout is resolved (`$LANES_REPO`, then the helper's "
-        f"`workspace-root`), never spelled; these lines spell it: {spelled}")
-
-
-#: A git INVOCATION of `add` or `commit`, with or without `-C <dir>` — and not
-#: a message that only says the words ("git refused the add or the commit").
-_GIT_VERB = r'\bgit(?:\s+-C\s+"[^"]*")?\s+{}\b'
-
-
-def test_the_add_and_the_commit_name_the_handoff_by_its_own_path():
-    lines = _block().splitlines()
-    commits = [line for line in lines if re.search(_GIT_VERB.format("commit"), line)]
-    adds = [line for line in lines if re.search(_GIT_VERB.format("add"), line)]
-    assert commits and adds, "the block no longer adds and commits"
-    for line in commits + adds:
-        assert '-- "$handoff"' in line, (
-            "every `git add` and `git commit` in the block carries the handoff's "
-            f"own pathspec (Amendment 4(d): never a bare `git commit`): {line.strip()}")
-
-
-def test_the_publication_target_is_named_as_the_committed_file():
-    """`publish-handoff` writes `$handoff_file`, which no block defines; the
-    prose must say it is the file the commit block resolves."""
-    prose = re.sub(r"```.*?```", "", _section("## 2. Refresh the handoff"),
-                   flags=re.DOTALL)
-    assert "$handoff_file" in prose, (
-        "step 2's prose never says which checkout `$handoff_file` is in, so the "
-        "file published and the file committed can differ")
-    assert "$LANES_REPO/$handoff" in prose
-
-
-def test_the_block_parses_under_bash(tmp_path):
-    """A keeper: the shipped block parsed too."""
-    script = tmp_path / "block.sh"
-    script.write_text(_block() + "\n", encoding="utf-8")
-    proc = subprocess.run([shutil.which("bash") or "bash", "-n", str(script)],
-                          capture_output=True, text=True, check=False)
-    assert proc.returncode == 0, proc.stderr
-
-
-# --- where the handoff is nowhere the block looks ---------------------------
 
 @pytest.mark.parametrize("shell", SHELLS)
-def test_a_handoff_under_neither_root_is_refused(sb, shell):
-    """`$LANES_REPO` names no checkout and the workspace root has none: the
-    block says so rather than running git wherever the shell stands."""
-    origin = sb.origin_head()
-    proc = sb.run(shell, lanes_repo=sb.root / "nowhere")
+def test_a_handoff_that_moved_after_its_digest_was_read_is_refused_and_nothing_is_published(
+        real, shell):
+    """The digest is of the bytes the new file was made from. A peer's edit that
+    lands between the read and the call is exit 7: the verb fetches the lane's
+    checkout, finds other bytes, and publishes nothing; the block says so and
+    tells the session to read it again."""
+    peer = shlex.quote(str(real.seed))
+    rel = shlex.quote(HANDOFF_REL)
+    between = (f"git -C {peer} pull -q --ff-only origin main && "
+               f"printf '%s\\n' 'a peer line' >> {peer}/{rel} && "
+               f"git -C {peer} add -- {rel} && "
+               f"git -C {peer} commit -q -m 'a peer edits the handoff' && "
+               f"git -C {peer} push -q origin main")
+    proc = _real_run(real, shell, _real_script(between))
+    assert proc.returncode == 0, _said(proc)
+    assert "HANDOFF NOT WRITTEN" in proc.stdout and "once more" in proc.stdout, _said(proc)
+    assert "nothing was published" in proc.stderr, _said(proc)
+    assert real.subjects()[0] == "a peer edits the handoff"
+    assert "a peer line" in real.origin_file(HANDOFF_REL)
+    assert real.origin_file(HANDOFF_REL) != REAL_NEW
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_a_staged_entry_in_the_lane_checkout_leaves_the_handoff_written_and_uncommitted(
+        real, shell):
+    """S3's refusal (2) with `--whole`: the file is written (`R-A11-11`), nothing
+    is committed or pushed, the entry that is not the handoff's stays staged and
+    unpublished, and the block says exactly that."""
+    c = real.seam()
+    real.write(c, "handoffs/foreign.md", "someone else's entry\n")
+    real.git("-C", str(c), "add", "--", "handoffs/foreign.md")
+    tip, head = real.origin_head(), real.head(c)
+
+    proc = _real_run(real, shell, _real_script())
+
+    assert proc.returncode == 0, _said(proc)
     assert "HANDOFF NOT COMMITTED" in proc.stdout, _said(proc)
-    assert "under neither" in proc.stdout, _said(proc)
-    assert sb.origin_head() == origin
-
-
-# --- keepers: what the shipped block already did, still done ----------------
-
-@pytest.mark.parametrize("shell", SHELLS)
-def test_a_clean_current_checkout_is_committed_and_pushed(sb, shell):
-    shared = sb.clone(sb.shared)
-    (shared / HANDOFF).write_text(H1_V2, encoding="utf-8")
-    proc = sb.run(shell)
-    assert sb.origin_file(HANDOFF) == H1_V2, _said(proc)
-    assert sb.counts(shared) == (0, 0)
-    assert sb.out("log", "-1", "--format=%B", "origin/main",
-                  cwd=shared).splitlines()[-1] == "Lane: <lane>"
+    assert f"written at {c / HANDOFF_REL}, uncommitted" in proc.stdout, _said(proc)
+    assert (c / HANDOFF_REL).read_text(encoding="utf-8") == REAL_NEW
+    assert real.origin_head() == tip and real.head(c) == head
+    assert real.git("-C", str(c), "diff", "--cached", "--name-only").split() == [
+        "handoffs/foreign.md"]
+    assert "handoffs/foreign.md" not in _tree(real)
 
 
 @pytest.mark.parametrize("shell", SHELLS)
-def test_the_handoff_already_staged_by_an_earlier_attempt_is_its_own(sb, shell):
-    shared = sb.clone(sb.shared)
-    (shared / HANDOFF).write_text(H1_V2, encoding="utf-8")
-    sb.git("add", "--", HANDOFF, cwd=shared)
-    proc = sb.run(shell)
-    assert sb.origin_file(HANDOFF) == H1_V2, _said(proc)
-    assert sb.counts(shared) == (0, 0)
-
-
-@pytest.mark.parametrize("shell", SHELLS)
-def test_a_lanes_repo_without_the_handoff_falls_back_to_the_workspace_root(sb, shell):
-    shared = sb.clone(sb.shared)
-    (sb.root / "elsewhere").mkdir()
-    (shared / HANDOFF).write_text(H1_V2, encoding="utf-8")
-    proc = sb.run(shell, lanes_repo=sb.root / "elsewhere")
-    assert sb.origin_file(HANDOFF) == H1_V2, _said(proc)
-    assert sb.counts(shared) == (0, 0)
+def test_a_lane_with_no_row_has_nothing_to_write_and_nothing_is_cloned(real, shell):
+    tip = real.origin_head()
+    proc = _real_run(real, shell, _real_script(lane="repoS4-9"))
+    assert proc.returncode == 0, _said(proc)
+    assert "HANDOFF NOT FOUND" in proc.stdout and "was NOT called" in proc.stdout, _said(proc)
+    assert not real.checkout("repoS4-9").exists()
+    assert real.origin_head() == tip
