@@ -56,9 +56,10 @@
   the second is settled before the tag.
 - **Coverage.** Every one of the delta specs' 25 requirements maps to a
   functional requirement: 17 in `pypi-package` and 8 in
-  `release-tags-and-branches`. Their 49 scenarios are acceptance scenarios,
-  edge cases or the exact text of a requirement. The spec adds no scope the
-  proposal, design.md and clarifications.md do not hold.
+  `release-tags-and-branches`. Their 51 scenarios, 38 in `pypi-package` and
+  13 in `release-tags-and-branches`, are acceptance scenarios, edge cases or
+  the exact text of a requirement. The spec adds no scope the proposal,
+  design.md and clarifications.md do not hold.
 - **Revised 2026-10-18** for the lead's rulings on the report at `335d226`.
   These were applied to the change's documents first, then to the spec:
   - FR-048, the repository guard;
@@ -73,4 +74,12 @@
 
   The delta specs gained two scenarios, a branch dispatch as a rehearsal and
   a final version in the wrong repository. Every item still passes.
+- **Recounted 2026-10-22, for #256.** The coverage line's scenario count was
+  49 when it was written, 36 in `pypi-package` and 13 in
+  `release-tags-and-branches`. It is 51 now, 38 and 13. The empty-index
+  ruling (design.md's item 15, landed in #268) added "The index already holds
+  the verified wheel", and #256 added "A bash that cannot be run", both to
+  `pypi-package`. The 25 requirements are the same. The count is of the delta
+  specs' `#### Scenario:` blocks, not of spec.md's own acceptance scenarios,
+  which are a different number.
 - Items marked incomplete require spec updates before `/speckit.clarify` or `/speckit.plan`

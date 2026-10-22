@@ -39,9 +39,9 @@ The console script SHALL replace its own process with the first `bash` on
 `PATH`, running the packaged `openRepoTools` with the person's arguments
 unchanged. Signals, the exit status, and the payload's own clean-up on exit
 SHALL pass through as if the person had run the payload with bash directly.
-With no `bash` on `PATH`, it SHALL refuse with a message naming `bash`, and
-SHALL run nothing. The package's Python modules SHALL import only the
-standard library.
+With no `bash` on `PATH`, or none there that can be run, it SHALL refuse with
+a message naming `bash`, and SHALL run nothing. The package's Python modules
+SHALL import only the standard library.
 
 #### Scenario: The exit status passes through
 
@@ -61,6 +61,13 @@ standard library.
 
 - **WHEN** the console script runs with no `bash` on `PATH`
 - **THEN** it refuses, naming `bash`, and nothing else runs
+
+#### Scenario: A bash that cannot be run
+
+- **WHEN** the console script runs with a `bash` on `PATH` that cannot be run,
+  such as a file with no execute bit, and no `bash` there that can be run
+- **THEN** it refuses with exit 2, naming `bash` and the reason the system
+  gave, and nothing else runs
 
 #### Scenario: A third-party import
 
