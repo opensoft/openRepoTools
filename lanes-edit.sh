@@ -446,7 +446,9 @@
 #   1  environment (no register, no writer) — and, AMENDMENT 23 S1, a lane
 #      checkout's path that holds something other than a clone of the register
 #      (every routed write, and `lane-checkout`), which is refused and never
-#      deleted, moved or repaired; `refresh-workspace` with no W
+#      deleted, moved or repaired; `refresh-workspace` with no W; a checkout,
+#      or the directory its lock lives in, removed while the write waited for
+#      that lock (360: lane-end's sweep of a CLOSED lane), said at once
 #   2  refusal: bad arguments, the object is held, an unknown alias, —
 #      Amendment 15 — a register holding
 #      two rows whose lane names differ only by case, which every writer and
@@ -1411,12 +1413,25 @@ mutex_steal() {   # <dir>
   rmdir -- "$ms_claim" 2>/dev/null || :
   return 0
 }
-mutex_try() {   # <dir> [<seconds>] — 0 taken, 1 not; never exits
+# A LOCK WHOSE DIRECTORY IS GONE IS NO LOCK ANYBODY HOLDS (360, lane
+# openRepoTools-3's review of #308). lane-end's sweep removes a CLOSED lane's
+# checkout, and a person may move one aside, while a writer waits on its lock.
+# No `mkdir` can succeed there again, and the waiter used to read the missing
+# lock as one naming no holder and over ten minutes old, which `mutex_steal`
+# could not take: it waited out its minute and said "another lanes-edit run is
+# active (holder pid unrecorded)". It is 2 at once, with MX_WHY, and the caller
+# names what went (`lock_gone_die`).
+mutex_try() {   # <dir> [<seconds>] — 0 taken, 1 not, 2 its directory is gone; never exits
   mt_d="$1"; mt_max="${2:-60}"; mt_i=0
+  case "$mt_d" in */*) mt_up="${mt_d%/*}"; mt_up="${mt_up:-/}" ;; *) mt_up=. ;; esac
   while :; do
     if mkdir -- "$mt_d" 2>/dev/null; then
       printf '%s %s\n' "$$" "$(lock_ident)" > "$mt_d/pid" 2>/dev/null || :
       return 0
+    fi
+    if [ ! -d "$mt_up" ]; then
+      MX_WHY="$mt_up, where the lock $mt_d lives, is gone"
+      return 2
     fi
     if mutex_stale "$mt_d" && mutex_steal "$mt_d"; then continue; fi
     [ "$mt_i" -lt "$mt_max" ] || return 1
@@ -1657,8 +1672,8 @@ trap 'cleanup; trap - TERM; kill -TERM $$' TERM
 # reaches a live holder in this container; it is the whole test for one in
 # another; and without the opt-in it reaches a live holder here as well.
 #
-# THE MUTEX, TAKEN WITHOUT DYING FOR IT — 0 taken, 1 not taken, and no exit
-# either way. `acquire_lock` below is this with the refusal on the end, so the
+# THE MUTEX, TAKEN WITHOUT DYING FOR IT — 0 taken, 1 not taken, 2 the
+# directory it lives in is gone (360), and no exit either way. `acquire_lock` below is this with the refusal on the end, so the
 # `mkdir` mutex, the pid test and the age-out are written ONCE and every taker
 # of the lock obeys the same three.
 #
@@ -1682,15 +1697,29 @@ lock_adopt() {
   LOCK_HELD=1
   return 0
 }
-lock_try() {   # [<seconds to wait, default 60>]
+lock_try() {   # [<seconds to wait, default 60>] — 0 taken, 1 not, 2 its directory is gone
   lock_adopt && return 0
-  mutex_try "$LOCK" "${1:-60}" || return 1
+  lt_rc=0; mutex_try "$LOCK" "${1:-60}" || lt_rc=$?
+  [ "$lt_rc" = 0 ] || return "$lt_rc"
   LOCK_HELD=1
   return 0
 }
 
+# THE CHECKOUT WENT WHILE THIS WRITE WAITED FOR ITS LOCK (360): `mutex_try`'s 2.
+# The checkout is named as removed, or, where it is still there, the directory
+# the lock lives in. 1, as for a register that is not there, and never 4: no
+# other run holds anything.
+lock_gone_die() {
+  if [ -d "$LANES_REPO" ]; then
+    die "$LANES_DIR, where this write's lock lives, is gone from the checkout $LANES_REPO: it was removed while the write waited for the lock. Nothing was written. If nobody meant to remove it, restore it (git -C $LANES_REPO checkout HEAD -- $LANES_DIR) and run the write again." 1
+  fi
+  die "the checkout $LANES_REPO, which this write goes through, was removed while the write waited for its lock ($MX_WHY): lane-end's sweep removes a CLOSED lane's checkout (Amendment 23 S6), and a person may have moved it aside. Nothing was written. If the lane is not CLOSED, run the write again: a routed write makes the lane's checkout again (S1), and a LANES_REPO that names the removed path must first name a checkout that is there." 1
+}
+
 acquire_lock() {
-  lock_try 60 && return 0
+  al_rc=0; lock_try 60 || al_rc=$?
+  [ "$al_rc" = 0 ] && return 0
+  [ "$al_rc" != 2 ] || lock_gone_die
   die "could not acquire $LOCK after 60s — another lanes-edit run is active (holder pid $(cat -- "$LOCK/pid" 2>/dev/null || printf 'unrecorded'))" 4
 }
 # A REPLAY HOLDS THE CHECKOUT'S LOCK FROM ITS FIRST LINE (Amendment 23 S4). The
@@ -15827,7 +15856,11 @@ lane_checkout_ensure() {   # <canonical lane>
     *) lce_budget=600; [ "$GIT_TIMEOUT" -le 600 ] || lce_budget="$GIT_TIMEOUT"; lce_wait=$((lce_budget + 60)) ;;
   esac
   lce_lock="$lce_base/.$lce_lane.lock"
-  mutex_try "$lce_lock" "$lce_wait" ||
+  lce_rc=0; mutex_try "$lce_lock" "$lce_wait" || lce_rc=$?
+  # `<W>-lanes/` ITSELF WENT WHILE THIS WRITE WAITED (360's other lock).
+  [ "$lce_rc" != 2 ] ||
+    die "$lce_base, where this workstation's lane checkouts live, is gone: it was removed while this write waited to create lane $lce_lane's checkout. Nothing was written; run the write again, which makes it anew (Amendment 23 S1)." 1
+  [ "$lce_rc" = 0 ] ||
     die "could not take $lce_lock within ${lce_wait}s: another writer is creating lane $lce_lane's checkout (holder pid $(cat -- "$lce_lock/pid" 2>/dev/null || printf 'unrecorded')). Nothing was written; run the write again." 4
   CREATE_LOCK="$lce_lock"
   # ANOTHER CREATOR MAY HAVE FINISHED while this one waited.

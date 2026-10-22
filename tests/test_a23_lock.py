@@ -539,3 +539,90 @@ def test_without_the_opt_in_a_live_holder_is_aged_out_at_ten_minutes(box: Box, l
     assert " · past a quiet holder |" in box.origin_register()
     assert not w_lock.exists(), "the writer released the lock it took over"
     assert not box.lanes_root.exists(), "and no lane checkout or <W>-lanes/ was made"
+
+
+# ----------------------------------------------------- #307's round 2 (360)
+
+def _ended_within(proc: subprocess.Popen, seconds: float) -> tuple:
+    """`(rc, out, err, took)` for a process that ends within `seconds`; one
+    still running then is stopped, and the case fails saying so."""
+    started = time.monotonic()
+    try:
+        out, err = proc.communicate(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        stop(proc)
+        pytest.fail(f"still waiting {seconds:.0f}s after its lock's directory went: "
+                    "a missing directory was waited on as a held lock")
+    return proc.returncode, out, err, time.monotonic() - started
+
+
+@pytest.mark.parametrize("how", ["removed", "moved-aside", "its-lanes-directory-removed"])
+def test_a_writer_waiting_on_a_checkout_that_is_removed_refuses_at_once(box: Box, how: str):
+    """360 (lane openRepoTools-3's review of #308, for #307): lane-end's sweep
+    removes a CLOSED lane's checkout, and a writer for that lane may be waiting
+    on the checkout's lock. Its `mkdir` of the lock then fails on a missing
+    parent, which `mutex_stale` read as a lock naming no holder and over ten
+    minutes old, and `mutex_steal` could not take: the writer waited out its
+    minute and exited 4, "another lanes-edit run is active (holder pid
+    unrecorded)". It now refuses at once, naming the checkout as removed (or,
+    where only its `lanes/` went, that directory), and writes nothing."""
+    lock = box.lock()
+    c = box.checkout(LANE)
+    before = box.origin_head()
+    holder = subprocess.Popen(["sleep", "300"])
+    try:
+        hold(lock, f"{holder.pid} {ME}")
+        writer = box.popen("set-row-state", LANE, "LIVE · never written")
+        assert still_waiting(writer), "the writer waits on the held lock"
+        if how == "removed":
+            shutil.rmtree(c)
+        elif how == "moved-aside":
+            c.rename(c.parent / f".{LANE}.moved-aside")
+        else:
+            shutil.rmtree(c / "lanes")
+        rc, out, err, took = _ended_within(writer, 90)
+    finally:
+        holder.kill()
+        holder.wait()
+    assert took < 15, f"it refused at once, not after its minute's wait: {took:.0f}s, exit {rc}: {err}"
+    assert rc == 1, (out, err)
+    assert "another lanes-edit run is active" not in err, err
+    assert "unrecorded" not in err, err
+    if how == "its-lanes-directory-removed":
+        assert f"{c / 'lanes'}, where this write's lock lives, is gone from the checkout {c}" in err, err
+        assert not (c / "lanes").exists(), "nothing made it again"
+    else:
+        assert f"the checkout {c}, which this write goes through, was removed" in err, err
+        assert not c.exists(), "nothing made the checkout again"
+    assert "Nothing was written" in err, err
+    assert box.origin_head() == before, "nothing was published"
+
+
+def test_a_writer_waiting_to_create_a_checkout_whose_directory_is_removed_refuses_at_once(box: Box):
+    """360's other lock of the same shape: the creation lock
+    `<W>-lanes/.<lane>.lock`, which a writer for a lane with no checkout waits
+    on while another writer clones it. Where `<W>-lanes/` itself goes, it is
+    said at once, never as "another writer is creating" the checkout after
+    the clone's eleven-minute budget."""
+    box.lanes_root.mkdir(parents=True)
+    create = box.lanes_root / f".{LANE}.lock"
+    before = box.origin_head()
+    holder = subprocess.Popen(["sleep", "300"])
+    try:
+        hold(create, f"{holder.pid} {ME}")
+        writer = box.popen("set-row-state", LANE, "LIVE · never written")
+        assert still_waiting(writer), "the writer waits on the held creation lock"
+        aside = box.lanes_root.parent / "brett-wip-lanes.moved-aside"
+        box.lanes_root.rename(aside)
+        rc, out, err, took = _ended_within(writer, 20)
+    finally:
+        holder.kill()
+        holder.wait()
+    assert rc == 1, (out, err)
+    assert took < 15, f"{took:.0f}s"
+    assert "another writer is creating" not in err, err
+    assert f"{box.lanes_root}, where this workstation's lane checkouts live, is gone" in err, err
+    assert "Nothing was written" in err, err
+    assert not box.lanes_root.exists(), "nothing made it again"
+    assert not (aside / LANE).exists(), "and nothing was cloned"
+    assert box.origin_head() == before, "nothing was published"
