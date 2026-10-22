@@ -30,9 +30,17 @@ what it says, for every reader that lives in `lanes-edit.sh`:
 
 `lane-end`'s gate reads `lane-objects`, and 8 there is "this lane has no
 object log (pre-cutover)": a lane whose log could not be read, and which may
-hold an open claim, was ended on it. `lane-start`, `lane-handoff`, `lane-end`,
-`lane-worktrees` and the two skills each carry a `case` for the 1 and are not
-run here; what each does with it is read from its own `case`.
+hold an open claim, was ended on it. That gate is run here, and it is
+RELEASE-BLOCKING. `lane-start`, `lane-handoff`, `lane-worktrees` and the two
+skills each carry a `case` for the 1 and are not run here; what each does with
+it is read from its own `case`.
+
+And the guards the review of #303 asked for beside them: `lane-objects` answers
+from the read it proved and not a later one (544); a write that needs no home -
+a swap's `PAUSED`, a `NOTED` - still lands over a log nobody could read, and
+`--home` and a `#n` are refused (542, 546); the `SessionStart` hook's `open:`
+line says the log could not be read (546); and a lifecycle follow-up over a log
+it could not read for its root moves nothing and says why (R4).
 
 Every case runs on `test_lanes_index`'s own estate and its helpers, and builds
 on `test_named_read_unreadable_290`'s way of making a log unreadable.
@@ -45,8 +53,9 @@ import shutil
 
 import pytest
 
-from conftest import WINDOWS_SKIP
-from test_lanes_index import HEADS, UUID_B1, US, _sidecar, _unreadable, inv
+from conftest import REPO, WINDOWS_SKIP
+from test_lanes_index import (HEADS, SHOW_LOG_B1, UUID_A1B, UUID_B1, US, _git_shim, _shim_calls,
+                              _sidecar, _unreadable, inv)
 
 __all__ = ["inv"]  # the fixture, imported so that pytest finds it here
 
@@ -107,11 +116,13 @@ def _exactly(*lines):
 
 
 #: EVERY READ OF A LANE'S LOG THAT LIVES IN `lanes-edit.sh`:
-#: (name, argv for a lane, what it prints of a whole log, the arm's own words for
-#: a log that could not be read - None where the sentence is not written yet and
-#: a read must say that the lane's log could not be read, and the exit code).
-#: The lifecycle reads answer 10 beside `lane-state`, which #290 made 10 for
-#: this: "the record may be there and nobody could look" (R22).
+#: (name, argv for a lane, what it prints of a whole log, the arm's OWN words for
+#: a log that could not be read, and the exit code). The words are each arm's
+#: own sentence and never a phrase any read says: `log_events`' note for a file
+#: that will not open ("the file could not be read") names the lane's log too,
+#: and a check met by it passed an arm that said nothing (the review of #303,
+#: 547). The lifecycle reads answer 10 beside `lane-state`, which #290 made 10
+#: for this: "the record may be there and nobody could look" (R22).
 READS = [
     ("lane-dir", lambda lane: ("lane-dir", lane),
      lambda res, ck: res.stdout.strip() == str(ck),
@@ -134,23 +145,26 @@ READS = [
     ("last-session", lambda lane: ("last-session", lane), _exactly(UUID_B1),
      "last-session could not read the register or the log for repoB-1", 1),
     ("resolve-home", lambda lane: ("resolve-home", lane), _exactly("opensoft/repoB"),
-     None, 1),
+     "lane repoB-1's object log could not be read, so its home is NOT established", 1),
     ("lane-objects", lambda lane: ("lane-objects", lane),
      lambda res, _ck: "OPENED" in res.stdout and "opensoft/repoB#3" in res.stdout,
-     None, 1),
+     "lane-objects could not read lane repoB-1's object log", 1),
     ("who --lane", lambda lane: ("who", "--lane", lane),
      lambda res, _ck: "opensoft/repoB#3" in res.stdout,
-     None, 1),
+     "UNKNOWN  lane repoB-1's object log could not be read, so what it holds open is NOT "
+     "established", 1),
     ("request-handoff", lambda lane: ("request-handoff", lane, "--no-wait", "--dry-run",
                                       "--session", REQUESTER),
      lambda res, _ck: "PLAN:" in res.stderr,
      "request-handoff could not read lane repoB-1's object log", 1),
     ("lane-trees", lambda lane: ("lane-trees", lane),
      lambda res, _ck: res.stdout.startswith(f"c0-{LANE}{US}/nowhere/{LANE}/w{US}"),
-     None, 10),
+     "lane repoB-1's object log could not be read, so the directory its worktree inventory "
+     "is kept beside is NOT established", 10),
     ("lane-state", lambda lane: ("lane-state", lane),
      lambda res, _ck: res.stdout.startswith("state\tSWAPPING\n"),
-     "lane repoB-1's object log could not be read", 10),
+     "lane repoB-1's object log could not be read, so the directory its lifecycle snapshot "
+     "is kept beside is NOT established", 10),
 ]
 
 #: WHAT A LANE WITH NO PUBLISHED LOG STILL ANSWERS: 8, "none". `last-session`
@@ -173,17 +187,13 @@ def _said(res) -> str:
 
 def _failures(inv, env) -> list[str]:
     """Every read of repoB-1's log, asked for it where its log could not be
-    read: one line for each that does not answer with its code and a sentence
-    that names the lane's log, or that says what a lane with a log could not be
-    said to have."""
+    read: one line for each that does not answer with its code and its own
+    sentence, or that says what a lane with a log could not be said to have."""
     problems = []
     for name, argv, _whole, words, code in READS:
         res = inv.e.edit(*argv(LANE), env=env)
         text = res.stdout + res.stderr
-        if words is not None:
-            said = words in text
-        else:
-            said = LANE in text and ("could not be read" in text or "could not read" in text)
+        said = words in text
         false = [claim for claim in FALSE_CLAIMS if claim in text]
         if res.returncode != code or not said or false:
             problems.append(f"{name}: exit {res.returncode} (wanted {code}); "
@@ -407,3 +417,148 @@ def test_a_listing_with_no_origin_says_a_log_directory_it_cannot_search(inv, mod
     if "no row is classed DORMANT here" not in res.stderr:
         problems.append("it does not withhold the DORMANT class")
     assert not problems, "\n" + "\n".join(problems) + f"\nstderr: {res.stderr.strip()!r}"
+
+
+# ------------------------------------------------ the review of #303: its guards
+
+
+LOG_A1 = "origin/main:lanes/log/repoA-1.md"
+LANE_END = REPO / "lane-end"
+
+
+def test_lane_objects_answers_from_the_read_it_proved_and_not_a_later_one(inv):
+    """THE ANSWER IS THE READ'S OWN (the review of #303, 544). `lane-objects`
+    proves the lane's log readable and then answers out of `state_events`,
+    which reads every log again: a log that failed between the two left no
+    line of the lane's in the stream, and the answer was 0 with no rows -
+    "this lane holds nothing", which `lane-end`'s gate ends a lane on. The shim
+    lets the proof's read of repoB-1's log through and fails the second, the
+    stream's own: the answer is 1, said, and no row."""
+    env = {"LANES_NO_FETCH": "1"}
+    whole = inv.e.edit("lane-objects", LANE, env=env)
+    assert whole.returncode == 0 and "opensoft/repoB#3" in whole.stdout, whole.stderr
+    shim, log = _git_shim(inv, SHOW_LOG_B1, first=2, last=2)
+    res = inv.e.edit("lane-objects", LANE, env={**env, **shim})
+    calls = _shim_calls(log)
+    assert len(calls) >= 2 and calls[1].startswith("2 "), calls  # a LATER read failed: not vacuous
+    assert res.returncode == 1, (res.returncode, res.stdout, res.stderr, calls)
+    assert "lane-objects could not read lane repoB-1's object log" in res.stderr, res.stderr
+    assert res.stdout == "", res.stdout
+
+
+def test_lane_end_will_not_end_a_lane_whose_log_it_could_not_read(inv):
+    """RELEASE-BLOCKING (the review of #303: "make its test release-blocking";
+    the suite has no marker for it, so this sentence is the marking).
+    `lane-end`'s claim gate reads `lane-objects`, and it read a log git could
+    not show as 8, "this lane has no object log (pre-cutover)": the row's state
+    cell decided instead, and repoA-1's says only that it is parked, so the
+    lane was ended over the claim and the PR its log holds open - Rule 1 and
+    Rule 6 both stopped for it, in silence. The gate refuses now, before it
+    writes anything, naming the read; with the log whole it refuses on the two
+    objects, which is the control."""
+    env = {"LANES_NO_FETCH": "1"}
+    register = inv.e.wip / "lanes" / "LANES.md"
+    log_file = inv.e.wip / "lanes" / "log" / "repoA-1.md"
+    held = inv.e.run("bash", LANE_END, "repoA-1", env=env)
+    assert held.returncode == 2, (held.stdout, held.stderr)
+    assert "lane repoA-1 still holds 2 object(s)" in held.stderr, held.stderr  # the gate reads the log
+    before = (inv.e.tip(), register.read_bytes(), log_file.read_bytes())
+    with _unreadable(inv.e, LOG_A1):
+        res = inv.e.run("bash", LANE_END, "repoA-1", env=env)
+    assert res.returncode == 1, (res.returncode, res.stdout, res.stderr)
+    assert "lane-objects repoA-1 failed (exit 1)" in res.stderr, res.stderr
+    assert "lane-objects could not read lane repoA-1's object log" in res.stderr, res.stderr
+    assert (inv.e.tip(), register.read_bytes(), log_file.read_bytes()) == before, \
+        "lane-end wrote something over a log it could not read"
+
+
+def test_a_write_that_needs_no_home_lands_over_a_log_git_could_not_read(inv):
+    """A SWAP IS NEVER LEFT UNWRITTEN (`R-A11-11` in `skills/handoff/SKILL.md`,
+    which openspec/changes/add-supervised-context-restart/design.md calls
+    `R-A11-5`), and the fix holds to it (the review of #303, 542 and 546). The
+    `log`, `claim`, `release` and `who` arms resolve the lane's home from its
+    log for every verb, and a home is needed only by `--home`, whose one
+    refusal is a log that records one, and by a `#n` - the line's object or a
+    RULED's payload. Those are refused over a log nobody could read, writing
+    nothing: `--home` used to be TAKEN there, over a log that records a home.
+    Everything else lands: a `NOTED`, and a swap's `PAUSED`."""
+    env = {"LANES_NO_FETCH": "1", "LANES_LANE": LANE, "LANES_SESSION": UUID_B1}
+    log_rel = "lanes/log/repoB-1.md"
+    with _unreadable(inv.e, LOG_B1):
+        tip = inv.e.tip()
+        refused = {
+            "--home": inv.e.edit("log", "NOTED", f"lane:{LANE}", "a note", "--home",
+                                 "opensoft/repoB", env=env),
+            "claim #5": inv.e.edit("claim", "#5", env=env),
+            "RULED → #5": inv.e.edit("log", "RULED", f"lane:{LANE}", "→", "#5",
+                                     "Brett Heap, verbatim: take it", env=env),
+        }
+        problems = [f"{name}: exit {res.returncode}, {res.stderr.strip()[-160:]!r}"
+                    for name, res in refused.items()
+                    if res.returncode != 1 or f"lane {LANE}'s object log could not be read"
+                    not in res.stderr]
+        assert not problems, "\n".join(problems)
+        assert "whether it already records a home" in refused["--home"].stderr
+        assert "the home '#5' is shorthand for is NOT established" in refused["claim #5"].stderr
+        assert inv.e.tip() == tip, "a refused write moved origin/main"
+        noted = inv.e.edit("log", "NOTED", f"lane:{LANE}", "noted over a log nobody read", env=env)
+        assert noted.returncode == 0, (noted.stdout, noted.stderr)
+    assert inv.e._git("show", f"origin/main:{log_rel}").rstrip("\n").endswith(
+        "noted over a log nobody read"), "the NOTED line is not the log's last"
+    with _unreadable(inv.e, LOG_B1):  # the log as the NOTED left it, unreadable again
+        paused = inv.e.edit("log", "PAUSED", f"lane:{LANE}", "swapped over a log nobody read",
+                            env=env)
+        assert paused.returncode == 0, (paused.stdout, paused.stderr)
+    last = inv.e._git("show", f"origin/main:{log_rel}").rstrip("\n").splitlines()[-1]
+    assert last.startswith(f"PAUSED — lane {LANE}, session {UUID_B1}@") and \
+        last.endswith("swapped over a log nobody read"), last
+
+
+def test_the_session_start_open_line_says_a_log_git_could_not_read(inv):
+    """THE FIRST LINE A SESSION READS ABOUT ITS LANE'S HOLDS (the review of
+    #303, 543 and 546). The `SessionStart` hook's `open:` line read the lane's
+    objects inside a here-document, whose status nothing tests, after a
+    `lane_log_exists` that took a log git could not show for no log: it said
+    `no log for repoA-1 (pre-cutover lane)` over a lane holding a claim and a
+    PR. It says the log could not be read now - and, a hook, still exits 0."""
+    hook = '{"session_id":"%s","source":"startup"}' % UUID_A1B  # compact, as the harness writes it
+
+    def opened(res) -> list[str]:
+        assert res.returncode == 0, (res.returncode, res.stdout, res.stderr)
+        return [line for line in res.stdout.splitlines() if line.startswith("open: ")]
+
+    whole = opened(inv.e.edit("session-start", input_text=hook))
+    assert len(whole) == 1 and "opensoft/repoA#12" in whole[0] and \
+        "opensoft/repoA#13" in whole[0], whole  # the lane is found and its holds read
+    with _unreadable(inv.e, LOG_A1):
+        said = opened(inv.e.edit("session-start", input_text=hook))
+    assert said == ["open: UNKNOWN — lane repoA-1's object log could not be read, so what it "
+                    "holds open is NOT established, which is not the same as none (Amendment "
+                    "7(d)); see: lanes-edit.sh who --lane repoA-1"], said
+
+
+def test_a_lifecycle_follow_up_over_a_log_it_could_not_read_moves_nothing_and_says_why(inv):
+    """R4 OF THE REVIEW OF #303: NOTE AND SKIP. A `STARTED`, `RESUMED`, `ENDED`
+    or `RETIRED` line moves the lane's snapshot after it lands, under the root
+    its log's `dir` places, and that read threw a failure away: the root fell
+    to the third rung, beside the real one. Here the reads before the line -
+    the home's and the pre-image's - are let through and every later read of
+    repoB-1's log fails, so the follow-up meets a log it could not read. The
+    `ENDED` lands; the real root's SWAPPING snapshot is not touched, nothing is
+    filed at the third rung, and the note says the log is why - not that "the
+    lane lifecycle moved under this ENDED", which is what a root found at the
+    third rung made it say."""
+    env, _checkout, snap = _a_lane_with_a_whole_record(inv)
+    third = inv.e.home / "projects" / ".lane-state" / LANE
+    before = snap.read_bytes()
+    shim, log = _git_shim(inv, SHOW_LOG_B1, first=3)
+    res = inv.e.edit("log", "ENDED", f"lane:{LANE}", "ended with its log unreadable",
+                     env={**env, **shim, "LANES_LANE": LANE, "LANES_SESSION": UUID_B1})
+    calls = _shim_calls(log)
+    assert len(calls) >= 3, calls  # the follow-up's read is one the shim failed: not vacuous
+    assert res.returncode == 0, (res.returncode, res.stdout, res.stderr, calls)
+    assert f"the lane lifecycle snapshot for {LANE} was NOT moved to CLOSED: its object log " \
+        "could not be read" in res.stderr, (res.stderr, calls)
+    assert "moved under this ENDED" not in res.stderr, res.stderr
+    assert snap.read_bytes() == before, "the real root's snapshot was replaced"
+    assert not third.exists(), sorted(str(p) for p in third.rglob("*"))
