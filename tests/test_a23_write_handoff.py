@@ -1459,3 +1459,87 @@ def test_whole_over_a_handoff_a_peer_deletes_mid_push_is_S4_4s_exit_6(box: Box):
     assert [line.split()[1] for line in box.unpublished(c)] == [kept]
     assert result.stdout == _line(f)
     _released(box, c)
+
+
+#: Where a peer moves the lane's handoff to (rv2a-c2's probe N2).
+MOVED_REL = "handoffs/repoS4/moved-handoff.md"
+
+
+def _peer_moves_the_handoff(box: Box, row: str) -> None:
+    """The peer clone `git mv`s the lane's handoff to MOVED_REL in a commit
+    it does NOT push: the race hook lands it at this write's push. In the
+    same commit the register's row for the lane either follows the file
+    ("follows": the cell names MOVED_REL) or is renamed with it ("renamed":
+    the lane is `repoS4-9` now, as `rename-lane` renames a row and moves its
+    handoff), so origin has no row for this write's lane."""
+    p = box.peer
+    box.git("-C", str(p), "fetch", "-q", "origin")
+    box.git("-C", str(p), "merge", "-q", "--ff-only", "refs/remotes/origin/main")
+    box.git("-C", str(p), "mv", "--", HANDOFF_REL, MOVED_REL)
+    reg = p / REGISTER
+    text = reg.read_text(encoding="utf-8")
+    assert text.count(f"| {HANDOFF_REL} |") == 1
+    new = text.replace(f"| {HANDOFF_REL} |", f"| {MOVED_REL} |")
+    if row == "renamed":
+        assert new.count(f"| `{LANE}` |") == 1
+        new = new.replace(f"| `{LANE}` |", "| `repoS4-9` |")
+    reg.write_text(new, encoding="utf-8")
+    box.git("-C", str(p), "add", "--", REGISTER)
+    box.git("-C", str(p), "commit", "-q", "-m", f"a peer moves {HANDOFF_REL} and its row ({row})")
+
+
+@pytest.mark.parametrize("mode", ["stamp", "prepend"])
+def test_a_handoff_a_peer_moves_with_its_row_cell_mid_push_is_replayed_into_the_moved_file(box: Box, mode: str):
+    """rv2a-c2's NIT 2 (its probe N2): a peer moves the lane's handoff and
+    points the row's cell at its new name, in one commit that lands while
+    this write's push is in flight. A37 kept the commit on HEAD (6) for any
+    handoff origin no longer has, though the replay's re-run reads the row
+    again and writes the moved file. It is kept now only where origin's row
+    still names the cell this write followed (A46): here the replay goes
+    ahead, the write lands in the moved file on origin (0), and nothing is
+    left unpublished."""
+    c = box.seam()
+    if mode == "stamp":
+        args, written = ("--stamp", STAMP), stamped
+    else:
+        args, written = ("--prepend", str(_block(box))), prepended
+    _peer_moves_the_handoff(box, "follows")
+    box.race(prepared=True)
+    result = box.write_handoff(*args, "--subject", SUBJECT)
+    err = result.stderr
+    assert result.returncode == 0, err
+    assert "push refused (attempt 1 of 6)" in err
+    assert "was deleted while this write's push was in flight" not in err
+    assert box.origin_file(MOVED_REL) == written(HANDOFF)
+    assert not _origin_has(box, HANDOFF_REL)
+    assert (c / MOVED_REL).read_text(encoding="utf-8") == written(HANDOFF)
+    assert box.unpublished(c) == []
+    assert result.stdout == _line(c / MOVED_REL)
+    _released(box, c)
+
+
+@pytest.mark.parametrize("how", ["target", "renamed"])
+def test_a_moved_handoff_the_replay_cannot_follow_is_kept_on_HEAD_exit_6(box: Box, how: str):
+    """A46's bounds, where A37's keep still holds (6): the replay's re-run
+    could not follow the move. A `--target` names the old path again, so
+    the re-run would find nothing there; and where the row was renamed with
+    the file, origin has no row for this lane to re-read, so the re-run
+    would be 8 ("no row"). The write is in this checkout and kept on HEAD,
+    one commit unpublished, nothing replayed."""
+    c = box.seam()
+    f = c / HANDOFF_REL
+    _peer_moves_the_handoff(box, "follows" if how == "target" else "renamed")
+    box.race(prepared=True)
+    extra = ("--target", str(f)) if how == "target" else ()
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT, *extra)
+    err = result.stderr
+    assert result.returncode == 6, err
+    kept = box.head(c)
+    assert f"origin's copy of {HANDOFF_REL} was deleted while this write's push was in flight" in err, err
+    assert f"kept on HEAD: {kept}" in err
+    assert "push refused (attempt" not in err, "nothing is dropped or replayed"
+    assert f.read_text(encoding="utf-8") == stamped(HANDOFF)
+    assert _origin_has(box, MOVED_REL) and not _origin_has(box, HANDOFF_REL)
+    assert [line.split()[1] for line in box.unpublished(c)] == [kept]
+    assert result.stdout == _line(f)
+    _released(box, c)

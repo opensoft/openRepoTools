@@ -554,7 +554,8 @@
 #      whole-file `write-handoff` whose copy origin changed meanwhile, which
 #      no replay may overwrite (S4.4), or a `--stamp` or `--prepend` one
 #      whose handoff origin deleted meanwhile, which a replay would find
-#      nothing to write into. Or another
+#      nothing to write into (one moved with its row's cell is replayed into
+#      the moved file). Or another
 #      writer in the checkout REWROTE this write's commit (a `pull --rebase`
 #      with no lock): it is not on HEAD at all, and what reached origin is
 #      read by content. Or, where the drop's tree step was refused and
@@ -3086,9 +3087,12 @@ cp_replay() {   # <sha> <subject>
   # the HEAD check, so "kept on HEAD" is said only of a commit HEAD is. Origin
   # was just fetched (`cp_confirm`), and a file its base had and origin lacks
   # means origin moved, so the origin-unmoved refusal can never be this one.
+  # Kept only where a replay could not follow the file (slice 2a's A46,
+  # `whf_keep_if_gone`): a handoff moved with its row's cell is replayed.
   if [ -n "$CP_KEEP_IF_GONE" ] &&
      git -C "$LANES_REPO" cat-file -e "$1^:$CP_KEEP_IF_GONE" 2>/dev/null &&
-     ! git -C "$LANES_REPO" cat-file -e "refs/remotes/origin/$LANES_BRANCH:$CP_KEEP_IF_GONE" 2>/dev/null; then
+     ! git -C "$LANES_REPO" cat-file -e "refs/remotes/origin/$LANES_BRANCH:$CP_KEEP_IF_GONE" 2>/dev/null &&
+     whf_keep_if_gone; then
     note "origin/$LANES_BRANCH no longer has $CP_KEEP_IF_GONE, which this write edits in place and its base had: another writer deleted or moved it while this write's push was in flight."
     note "look at it: git -C $LANES_REPO show $1; and at origin's: git -C $LANES_REPO log -1 --stat refs/remotes/origin/$LANES_BRANCH -- $CP_KEEP_IF_GONE"
     note "every later write from this checkout refuses (S3's unpushed row) until it is published — LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act — or archived (S6.3) and \`git -C $LANES_REPO reset --keep origin/$LANES_BRANCH\` run."
@@ -16219,6 +16223,24 @@ whf_in_scope() {   # <path relative to the clone's top level> — 0 in scope; 1 
   if [ -n "$LANES_PREFIX" ]; then case "$1" in "$LANES_PREFIX"*) return 1 ;; esac; fi
   return 0
 }
+# A37'S KEEP, ONLY WHERE A REPLAY COULD NOT FOLLOW THE FILE (rv2a-c2's
+# re-review of slice 2a, NIT 2; A46). Slice 1b's `cp_replay` asks it before it
+# keeps a write whose in-place file origin no longer has, of origin as
+# `cp_confirm` just fetched it. 1, replay, only where origin's row for the lane
+# names ANOTHER cell than the one this write followed: a peer moved the handoff
+# and pointed the cell at its new name, and the re-run reads that row and
+# writes the moved file. 0, keep: the row still names that cell; `--target`
+# named the file (the re-run names it again); origin has no row for the lane
+# (none to re-read: `rename-lane` renames a row with its file); or origin's
+# register cannot be read (R22). Read from the fetched ref itself, because
+# `register_text_checked` keeps the register it read before the push.
+whf_keep_if_gone() {
+  [ -n "${whf_keep_cell:-}" ] || return 0
+  wkg_reg="$(git -C "$LANES_REPO" show "refs/remotes/origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null)" || return 0
+  wkg_row="$(printf '%s\n' "$wkg_reg" | awk -v lane="${lane:-}" "$ROW_AWK")" || return 0
+  [ -n "$wkg_row" ] || return 0
+  [ "$(row_cell "$wkg_row" 7 | sed 's/^ *//; s/ *$//')" = "$whf_keep_cell" ]
+}
 
 # S5 — W IS ONLY EVER FAST-FORWARDED, and `refresh-workspace` is the one act
 # that does it: `git fetch origin main` and `git merge --ff-only origin/main`,
@@ -19443,8 +19465,9 @@ EOF
   #      push, the read-back, and a refused push replays the whole verb on
   #      origin's new tip — a `--whole` only where origin's copy is still the
   #      one it read (S4.4), and a `--stamp` or `--prepend` only where origin
-  #      still has the handoff it edits in place (A37, `CP_KEEP_IF_GONE`);
-  #      otherwise the commit is kept on HEAD and named (6).
+  #      still has the handoff it edits in place (A37, `CP_KEEP_IF_GONE`), or
+  #      where origin's row now names another cell, which the re-run writes
+  #      (A46); otherwise the commit is kept on HEAD and named (6).
   # STDOUT: `<file><TAB><sha256>` once the file is written (`HANDOFF_OUT`).
   #   0 pushed, or nothing to commit (another repository's file, S3's refusal
   #     of this checkout or not; LANES_NO_GIT)
@@ -19719,10 +19742,14 @@ EOF
     # flight, the replay's re-run would find no file (8, "Nothing was
     # written") and the write would be only in the commit it dropped; the
     # commit is kept on HEAD and named instead (6). `--whole` is S4.4's: a
-    # copy origin deleted is a copy that moved.
+    # copy origin deleted is a copy that moved. A HANDOFF MOVED WITH ITS
+    # ROW'S CELL IS REPLAYED (A46): `whf_keep_cell` is the cell this write
+    # followed (none under `--target`), and where origin's row names another
+    # one, the re-run reads it and writes the moved file.
     case "$whf_mode" in
       whole) CP_WHOLE_REL="$whf_rel"; CP_WHOLE_BLOB="$whf_blob" ;;
-      *)     CP_KEEP_IF_GONE="$whf_rel" ;;
+      *)     CP_KEEP_IF_GONE="$whf_rel"
+             whf_keep_cell=""; [ -n "$whf_target" ] || whf_keep_cell="$whf_cell" ;;
     esac
     commit_publish "$whf_subject" "$whf_rel"
     ;;
