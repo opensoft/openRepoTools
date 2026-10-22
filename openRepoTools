@@ -259,12 +259,22 @@ USAGE
 # the `rm` of `"$PLACING"*` never ran. The run died of the signal and left the
 # temporary. The workdir still goes first, on purpose: a joined `rm` waits for
 # the `cp` as well, so nothing can write the temporary after it is removed.
+# Only a joined `rm` waits for the `cp`. A SIGTERM that reaches the shell
+# alone, once the `cp`'s pipeline is closed, ends the shell at once while the
+# `cp` runs on, and a `cp` that has not yet reached its destination could make
+# the temporary again. That window is tiny, and older than #250.
 #
-# AND SIGINT IS TRAPPED, SO A SIGINT ALWAYS ENDS THE RUN (#250). Untrapped,
-# bash forgets a SIGINT that arrives while it waits for a command that then
-# exits 0 — it takes it the command handled it — and the install went on; a
-# SIGINT trap is run all the same. This one cleans up, puts SIGINT back to its
-# default and sends it again, so the run still dies of it, as from a Ctrl-C.
+# AND SIGINT IS TRAPPED, SO A SIGINT ENDS THE RUN WHEREVER BASH WAITS FOR A
+# PLAIN COMMAND (#250). Untrapped, bash forgets a SIGINT that arrives while it
+# waits for a command that then exits 0 — it takes it the command handled it —
+# and the install went on; a SIGINT trap is run all the same. This one, which
+# `workdir` sets on its first call, cleans up, puts SIGINT back to its default
+# and sends it again, so the run still dies of it, as from a Ctrl-C. A `$(…)`
+# IS NOT A PLAIN COMMAND: bash waits for its child outside its job table, where
+# a SIGINT that arrives is lost, trapped or not, and the install goes on.
+# `place_by_rename` takes its answers through a file for that reason; every
+# other `$(…)` can still lose one, `mode_is`'s `find` and the `dirname` of each
+# `mkdir -p` in `place_skill_and_hook` among them.
 # TERM is not trapped: bash runs a trap only once the command it is waiting
 # for has finished, so a TERM trap would let a hung fetch hold off a `kill`.
 # shellcheck disable=SC2317  # run by the two traps below, which it cannot see
