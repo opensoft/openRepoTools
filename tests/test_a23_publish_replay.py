@@ -1462,7 +1462,7 @@ def _helper_naming(box: Box, rel: str) -> list:
     return ["bash", str(copy)]
 
 
-@pytest.mark.parametrize("peer", ["deletes-it", "keeps-it", "never-had-it"])
+@pytest.mark.parametrize("peer", ["deletes-it", "keeps-it", "never-had-it", "creates-it"])
 def test_a_file_the_write_edits_in_place_deleted_on_origin_keeps_the_commit_exit_6(box: Box, peer: str):
     """A37 of slice 2a, whose global is 1b's: a peer that deletes the file a
     write edits in place, while that write's push is in flight, left the
@@ -1473,9 +1473,21 @@ def test_a_file_the_write_edits_in_place_deleted_on_origin_keeps_the_commit_exit
     lane's own log stands in for the handoff here; the check is the same for
     any path. A peer's commit that leaves the file where it was is an
     ordinary lost race, replayed and landed (0), and so is a named file the
-    write's base never had: it is never "gone"."""
-    c = box.seam()
+    write's base never had: it is never "gone". That holds for a file nobody
+    has, and, rv1b-c3's NIT F, for one THE WRITE ITSELF CREATES (a lane's
+    first log line: origin lacks the log both before and after, and the
+    write's commit has it), which the `^` in `$1^:<file>` is for: asked of
+    the commit and not its base, that file would read as deleted."""
     log = f"lanes/log/{LANE}.md"
+    if peer == "creates-it":
+        # Origin has no log for the lane when this write starts: the write
+        # creates it, and the peer that beats it to the push touches nothing.
+        box.git("-C", str(box.peer), "rm", "-q", "--", log)
+        box.git("-C", str(box.peer), "commit", "-q", "-m", f"the lane has no log yet: {log}")
+        box.git("-C", str(box.peer), "push", "-q", "origin", "main")
+    c = box.seam()
+    if peer == "creates-it":
+        assert not (c / log).exists(), "the write's base has no log"
     rel = "handoffs/repoS4/never-had-it.md" if peer == "never-had-it" else log
     if peer == "deletes-it":
         box.git("-C", str(box.peer), "rm", "-q", "--", log)
