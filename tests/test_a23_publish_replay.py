@@ -638,9 +638,12 @@ def test_commit_refuses_an_insertion_whose_context_moved(box: Box):
 
 
 TWICE = "LANDING — lane repoS4-7, session x@Eagle, 2026-10-20T00:00:00Z, PR #7 into main"
+LANDED_TWICE = "LANDED — lane repoS4-7, session x@Eagle, 2026-10-20T00:10:00Z, PR #7 → 9bf26db"
+EDITED = "LANDED — the second copy, edited by hand"
 
 
-@pytest.mark.parametrize("dup", ["a-repeated-line", "a-blank-line"])
+@pytest.mark.parametrize("dup", ["a-repeated-line", "a-blank-line",
+                                 "a-copy-a-peer-changed", "the-registers-own-shape"])
 def test_commit_refuses_a_hand_edit_whose_line_occurs_twice_on_origin(box: Box, dup: str):
     """292 of lane openRepoTools-3's review of #307, its answer to Q3: B22
     retried a failed carry with `git apply -C0` wherever every hunk removes
@@ -650,31 +653,54 @@ def test_commit_refuses_a_hand_edit_whose_line_occurs_twice_on_origin(box: Box, 
     by those lines alone"; a replaced blank line, of which the register has
     dozens, the same. Now `-C0` is tried only where every line the edit
     replaces occurs once in origin's version; otherwise the edit is refused
-    (2), kept in its file and named, and the register is left at origin's."""
-    line = TWICE if dup == "a-repeated-line" else ""
+    (2), kept in its file and named, and the register is left at origin's.
+
+    341 of lane 3's re-check of #307: the count was asked of origin's version
+    alone. A line twice in the version the edit was made on is once on origin
+    where a peer changed or removed the copy the person edited, and `-C0` then
+    edited the copy nobody touched: a correction made after a peer changed
+    that copy left both values on origin (0), where decision 9 refuses; and
+    the register's own shape, a LANDING then two identical LANDED lines, each
+    side removing one LANDED, kept the LANDING with no LANDED (0), which
+    reopens Rule 6's hold. The line must now occur once in both versions."""
+    line = "" if dup == "a-blank-line" else TWICE
     after = "| `repoS4-8` | the line after the second copy |"
+    if dup == "the-registers-own-shape":
+        block = TWICE + "\n" + LANDED_TWICE + "\n" + LANDED_TWICE + "\n" + after
+    else:
+        block = line + "\n" + "| `repoS4-6` | a line between the copies |" + "\n" + line + "\n" + after
     box.peer_edits(REGISTER, _row(NEIGHBOUR, uuid=UUID2),
-                   _row(NEIGHBOUR, uuid=UUID2) + "\n" + line + "\n" +
-                   "| `repoS4-6` | a line between the copies |" + "\n" + line + "\n" + after,
-                   "the same line twice")
+                   _row(NEIGHBOUR, uuid=UUID2) + "\n" + block, "the same line twice")
     c = box.seam()
     path = c / REGISTER
     text = path.read_text(encoding="utf-8")
-    second = text.rindex("\n" + line + "\n" + after) + 1
-    path.write_text(text[:second] + "LANDED — the second copy, edited by hand" + text[second + len(line):],
-                    encoding="utf-8")
-    box.peer_edits(REGISTER, after, "| `repoS4-8` | the line after it, changed on origin |",
-                   "origin changes the line after the second copy")
+    if dup == "the-registers-own-shape":
+        second = text.rindex("\n" + LANDED_TWICE + "\n" + after) + 1
+        path.write_text(text[:second] + text[second + len(LANDED_TWICE) + 1:], encoding="utf-8")
+        box.peer_edits(REGISTER, LANDED_TWICE + "\n" + LANDED_TWICE + "\n" + after,
+                       LANDED_TWICE + "\n" + after, "a peer removes one LANDED line too")
+        kept = "\n-" + LANDED_TWICE + "\n"
+    else:
+        second = text.rindex("\n" + line + "\n" + after) + 1
+        path.write_text(text[:second] + EDITED + text[second + len(line):], encoding="utf-8")
+        if dup == "a-copy-a-peer-changed":
+            box.peer_edits(REGISTER, "\n" + line + "\n" + after,
+                           "\nLANDED — the second copy, as a peer changed it\n" + after,
+                           "origin changes the second copy itself")
+        else:
+            box.peer_edits(REGISTER, after, "| `repoS4-8` | the line after it, changed on origin |",
+                           "origin changes the line after the second copy")
+        kept = EDITED
     tip = box.origin_head()
     result = box.helper("commit", "the second copy, by hand", LANES_LANE=LANE)
-    assert result.returncode == 2, result.stderr
+    assert result.returncode == 2, (result.stderr, box.origin_register())
     err = result.stderr
     assert "no longer applies" in err
     assert "occurs more than once" in err, err
     assert "anchored by those lines alone" not in err
     saved = list((c / ".git" / "lanes-edit").glob("hand-edit-*.diff"))
     assert len(saved) == 1 and str(saved[0]) in err, "the edit is kept and named"
-    assert "the second copy, edited by hand" in saved[0].read_text(encoding="utf-8")
+    assert kept in saved[0].read_text(encoding="utf-8")
     assert (c / REGISTER).read_text(encoding="utf-8") == box.origin_register()
     assert box.origin_head() == tip, "nothing was pushed"
     assert box.git("-C", str(c), "status", "--porcelain").strip() == ""

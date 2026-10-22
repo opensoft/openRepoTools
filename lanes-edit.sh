@@ -2211,6 +2211,7 @@ remote_has_branch() {
 CS_NO_ORIGIN_BRANCH=0
 CS_CARRY_DIFF=""
 CS_CARRY_ANCHORED=0
+CS_CARRY_BASE=""
 cs_refuse() {   # <what> <why> [<recovery line>…]
   csr_what="$1"; csr_why="$2"; shift 2
   if [ "$#" -gt 0 ]; then
@@ -2297,19 +2298,23 @@ cs_recheck() {   # <what> <the tip the checks read> <origin's tip after S3's fet
 }
 # 0 where every line the saved hand edit replaces (its `-` lines) occurs
 # exactly once in the register as it now stands, origin's version after the
-# fast-forward; 1 otherwise, or where that cannot be read (292, below at the
-# carry). The lines are read from a file, never through `$(…)`, so a blank
-# line at the end of the list is asked about too.
+# fast-forward, AND exactly once in the version the edit was made on (292 and
+# 341, below at the carry); 1 otherwise, or where either cannot be read. The
+# lines are read from a file, never through `$(…)`, so a blank line at the end
+# of the list is asked about too. The version the edit was made on is read
+# from git by its blob id (`CS_CARRY_BASE`, step 7), never saved as a file:
+# `.git/lanes-edit/` holds only a kept hand edit and four scratch files.
 cs_removed_unique() {   # <the saved diff>
   awk 'p && /^-/ { print substr($0, 2) } /^@@ / { p = 1 }' "$1" > "$cs_tmp/removed" 2>/dev/null || return 1
   while IFS= read -r cru_l || [ -n "$cru_l" ]; do
     [ "$(LC_ALL=C grep -cxF -- "$cru_l" "$LANES_FILE" 2>/dev/null || :)" = 1 ] || return 1
+    [ "$(git -C "$LANES_REPO" cat-file blob "${CS_CARRY_BASE:-none}" 2>/dev/null | LC_ALL=C grep -cxF -- "$cru_l" || :)" = 1 ] || return 1
   done < "$cs_tmp/removed"
   return 0
 }
 checkout_sync() {   # <what> <lane> <write|carry|publish> [<pathspec it commits>…]
   cs_what="$1"; cs_lane="${2:-}"; cs_mode="$3"; shift 3
-  CS_NO_ORIGIN_BRANCH=0; CS_CARRY_DIFF=""
+  CS_NO_ORIGIN_BRANCH=0; CS_CARRY_DIFF=""; CS_CARRY_BASE=""
   [ "$NO_GIT" = 1 ] && return 0
   cs_c="$LANES_REPO"
   cs_trk="refs/remotes/origin/$LANES_BRANCH"; cs_br="refs/heads/$LANES_BRANCH"
@@ -2460,6 +2465,10 @@ CS_EOF
     CS_CARRY_ANCHORED=0
     git -C "$cs_c" -c "$CP_EXACT" --no-pager diff -U0 HEAD -- "$LANES_PATH" 2>/dev/null |
       awk '/^@@ / { h++; if ($2 ~ /,0$/) z++ } END { exit !(h > 0 && z == 0) }' && CS_CARRY_ANCHORED=1
+    # The version the edit was made on, HEAD's, by its blob id (341, at the
+    # carry below); none where HEAD has no such file, and then no line is an
+    # anchor.
+    CS_CARRY_BASE="$(git -C "$cs_c" -c "$CP_EXACT" rev-parse -q --verify "HEAD:$LANES_PATH" 2>/dev/null || :)"
     git -C "$cs_c" -c "$CP_EXACT" checkout -q HEAD -- "$LANES_PATH" 2>/dev/null ||
       cs_refuse "$cs_what" "$LANES_PATH could not be put back to HEAD's version before the fast-forward; the hand edit is untouched, and a copy of it is $CS_CARRY_DIFF"
     cs_reg_pending=""
@@ -2497,13 +2506,18 @@ CS_EOF
     # another copy and was pushed there. So `-C0` is tried only where every
     # line the edit replaces occurs exactly once in origin's version — a real
     # row does — and otherwise the edit is refused and kept, at the cost of
-    # one re-edit.
+    # one re-edit. AND ONCE IN THE VERSION THE EDIT WAS MADE ON (lane
+    # openRepoTools-3's re-check of #307, 341): a line twice there and once on
+    # origin, because a peer changed or removed the copy the person edited,
+    # sent `-C0` to the copy nobody touched — a correction landed beside the
+    # peer's value, and the register's own LANDING, LANDED, LANDED shape, each
+    # side removing one LANDED, kept the LANDING with none.
     if [ "$cs_applied" = 0 ] && [ "$CS_CARRY_ANCHORED" = 1 ] && ! cs_removed_unique "$CS_CARRY_DIFF"; then
-      cs_dup=", and a line it replaces occurs more than once there, or not at all, so that line is no anchor for it and it is not placed by that line alone"
+      cs_dup=", and a line it replaces occurs more than once, or not at all, in origin's version or in the version the edit was made on, so that line is no anchor for it and it is not placed by that line alone"
     elif [ "$cs_applied" = 0 ] && [ "$CS_CARRY_ANCHORED" = 1 ] &&
        git -C "$cs_c" apply -C0 --whitespace=nowarn -- "$CS_CARRY_DIFF" 2>>"$cs_tmp/apply.err"; then
       cs_applied=1
-      note "origin changed a line beside the hand edit and none of the lines it replaces, each of which occurs once there, so the edit was applied anchored by those lines alone"
+      note "origin changed a line beside the hand edit and none of the lines it replaces, each of which occurs once there and once in the version the edit was made on, so the edit was applied anchored by those lines alone"
     fi
     if [ "$cs_applied" = 0 ]; then
       cs_refuse "$cs_what" "the hand edit of $LANES_PATH no longer applies to origin's version of it$cs_dup, so it is KEPT in $CS_CARRY_DIFF and the register is left at origin's version (Amendment 23 S3 step 4). git said: $(head -n 3 -- "$cs_tmp/apply.err" 2>/dev/null | tr '\n' ' ')" \
