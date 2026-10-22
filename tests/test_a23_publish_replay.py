@@ -1274,6 +1274,95 @@ def test_an_add_row_whose_retirement_a_reader_fetched_in_after_S3s_compare_refus
     _settled(box, c)
 
 
+# 284 of lane openRepoTools-3's review of #307 (its P3): a claim that runs
+# again from the top runs with the checkout's lock held, and its top held
+# Rule 1's network reads, none bounded by `git_net`.
+
+CLAIM_URL = "https://github.com/opensoft/repoS4/issues/1#issuecomment-284"
+
+
+def _network_reads_logged(box: Box, c: Path) -> tuple:
+    """`gh`, and `git ls-remote` of a GitHub URL, each logged with whether
+    `c`'s lock is held at that moment; `gh issue view ... --json comments`
+    answers a claim comment's URL. Nothing reaches the network. Returns the
+    log and the env that puts both first and lets the claim ask GitHub."""
+    lock = shlex.quote(str(box.lock_of(c)))
+    log = shlex.quote(str(box.root / "net-reads.log"))
+    held = f'if [ -d {lock} ]; then s="LOCK HELD"; else s="no lock"; fi'
+    gh = box.fakebin / "gh"
+    gh.write_text("#!/usr/bin/env bash" + "\n" + held + "\n" +
+                  f'printf "gh %s :: %s\\n" "$*" "$s" >> {log}' + "\n" +
+                  f'case "$*" in *"--json comments"*) echo "{CLAIM_URL}" ;; esac' + "\n" +
+                  "exit 0" + "\n", encoding="utf-8")
+    gh.chmod(0o755)
+    real = shutil.which("git")
+    assert real, "git is on PATH"
+    shim = box.root / "gitshim"
+    shim.mkdir()
+    (shim / "git").write_text(
+        "#!/usr/bin/env bash" + "\n" +
+        'case " $* " in *" ls-remote --heads git@github.com:"*)' + "\n" +
+        "  " + held + "\n" +
+        f'  printf "git %s :: %s\\n" "$*" "$s" >> {log}' + "\n" +
+        "  exit 0 ;;" + "\n" + "esac" + "\n" +
+        f'exec {shlex.quote(real)} "$@"' + "\n", encoding="utf-8")
+    (shim / "git").chmod(0o755)
+    return box.root / "net-reads.log", {"PATH": f"{shim}{os.pathsep}{box.env['PATH']}", "LANES_NO_GITHUB": "0"}
+
+
+def _origin_moves_once_at_s3s_fetch(box: Box) -> None:
+    peer = shlex.quote(str(box.peer))
+    _at_s3_fetch(box, f"git -C {peer} fetch -q origin && git -C {peer} merge -q --ff-only refs/remotes/origin/main" + "\n" +
+                 f"git -C {peer} commit -q --allow-empty -m 'a peer moves origin'" + "\n" +
+                 f"git -C {peer} push -q origin main")
+
+
+def test_a_claims_re_run_makes_no_network_read_while_it_holds_the_lock(box: Box):
+    """284 (its P3): origin moves at S3's fetch, so the claim runs again from
+    the top with the lock held (decision 19/22), and all four of Rule 1's
+    reads (`gh issue view`, two `gh pr list`, `git ls-remote` of GitHub) ran
+    again under it, with no time limit and no lock refresh: a stalled one
+    held W's lock for every lane. Now the re-run makes none: the reads made
+    at attempt 1, before the lock, cross the `exec` and are printed, and
+    cited, as they were. The rescan decides the race."""
+    c = box.seam()
+    log, env = _network_reads_logged(box, c)
+    _origin_moves_once_at_s3s_fetch(box)
+    result = box.helper("claim", OBJ, *HOME_FLAG, LANES_LANE=LANE, LANES_SESSION=UUID, **env)
+    reads = log.read_text(encoding="utf-8").splitlines()
+    assert result.returncode == 0, result.stderr
+    assert "moved while this write's checks ran" in result.stderr, "the claim ran again with the lock held"
+    assert any(r.startswith("gh issue view") for r in reads), "attempt 1 made Rule 1's reads"
+    assert any(r.startswith("git ls-remote --heads git@github.com:") for r in reads), reads
+    assert [r for r in reads if "LOCK HELD" in r] == [], reads
+    assert "made at attempt 1, before the lock" in result.stderr
+    assert result.stdout.count("1. existing `CLAIMED —` comments on") == 2, "printed at both attempts"
+    assert f"CLAIMED — lane {LANE}" in box.origin_file(f"lanes/log/{LANE}.md")
+    _settled(box, c)
+
+
+def test_a_takeovers_re_run_cites_the_claim_url_attempt_1_read_and_reads_nothing_with_the_lock(box: Box):
+    """284's takeover half: `gh_stale_claim_url`, the read of the stale
+    claim's comment a TAKEOVER cites, ran again on the re-run with the lock
+    held. Now the URL attempt 1 read crosses the `exec`, as the takeover's
+    source does, and the TAKEOVER line cites it, with no read under the
+    lock."""
+    stale = f"CLAIMED — lane {NEIGHBOUR}, session {UUID2}@Eagle, 2026-10-01T00:00:00Z, {OBJ} — no-github" + "\n"
+    box.peer_pushes(f"lanes/log/{NEIGHBOUR}.md", _log_head(NEIGHBOUR) + stale)
+    c = box.seam()
+    log, env = _network_reads_logged(box, c)
+    _origin_moves_once_at_s3s_fetch(box)
+    result = box.helper("claim", OBJ, "--force", *HOME_FLAG, LANES_LANE=LANE, LANES_SESSION=UUID, **env)
+    reads = log.read_text(encoding="utf-8").splitlines()
+    assert result.returncode == 0, result.stderr
+    assert "moved while this write's checks ran" in result.stderr, "the takeover ran again with the lock held"
+    assert any("--json comments" in r for r in reads), "attempt 1 read the stale claim's URL"
+    assert [r for r in reads if "LOCK HELD" in r] == [], reads
+    mine = box.origin_file(f"lanes/log/{LANE}.md")
+    assert f"TAKEOVER — lane {LANE}" in mine and CLAIM_URL in mine, mine
+    _settled(box, c)
+
+
 def test_a_claim_that_meets_a_move_at_every_S3_fetch_stops_at_six_exit_2(box: Box):
     """SHOULD B of rv1b-c's re-check: `cs_recheck`'s six-attempt bound. A
     peer moves origin at every one of S3's fetches, so every attempt finds

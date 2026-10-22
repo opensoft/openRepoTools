@@ -1152,16 +1152,19 @@ LANES_ROUTED="${LANES__CHECKOUT_LANE:-}"   # the lane, in the re-run process onl
 # `LANES__ATTEMPT` its attempt (2 to 6). With any other pid they were
 # inherited and mean nothing. They are read here and UNSET AT ONCE, so no
 # process this one starts ever sees them; `claim`'s takeover decision crosses
-# the `exec` the same way. Not `LANES__PID`: an unrouted write has no routing
+# the `exec` the same way, and so do Rule 1's reads and the stale claim's
+# URL that attempt 1 made before the lock (lane openRepoTools-3's review of
+# #307, 284), so a re-run makes no network read with the lock held. Not `LANES__PID`: an unrouted write has no routing
 # markers, and exporting one would make a child helper drop its caller's
 # `LANES_REPO`, `LANES_DIR` and `LANES_FILE` (the rule above).
-CP_ATTEMPT=1; CP_REPLAYING=0; CP_CLAIM_FROM=""; CP_CLAIM_DEAD=""
+CP_ATTEMPT=1; CP_REPLAYING=0; CP_CLAIM_FROM=""; CP_CLAIM_DEAD=""; CP_CLAIM_READS=""; CP_CLAIM_URL=""
 if [ -n "${LANES__REPLAY_PID:-}" ] && [ "${LANES__REPLAY_PID:-}" = "$$" ]; then
   CP_REPLAYING=1
   case "${LANES__ATTEMPT:-}" in [2-6]) CP_ATTEMPT="$LANES__ATTEMPT" ;; esac
   CP_CLAIM_FROM="${LANES__CLAIM_FROM:-}"; CP_CLAIM_DEAD="${LANES__CLAIM_DEAD:-}"
+  CP_CLAIM_READS="${LANES__CLAIM_READS:-}"; CP_CLAIM_URL="${LANES__CLAIM_URL:-}"
 fi
-unset LANES__REPLAY_PID LANES__ATTEMPT LANES__CLAIM_FROM LANES__CLAIM_DEAD
+unset LANES__REPLAY_PID LANES__ATTEMPT LANES__CLAIM_FROM LANES__CLAIM_DEAD LANES__CLAIM_READS LANES__CLAIM_URL
 # THE ROUTING IS OPT-IN UNTIL SLICE 1B (the review of opensoft/openRepoTools#282,
 # MUST 2). Before slice 1b a lane checkout was only as fresh as its own last
 # write, and the old push loop rebased only after a rejected push, so a
@@ -17688,7 +17691,8 @@ EOF
     if [ "$CP_REPLAYING" = 1 ]; then
       CLAIM_OBJ="$obj"; CLAIM_LANE="$lane"; CLAIM_SKIP="$CP_CLAIM_FROM"; CLAIM_SKIP_DEAD="$CP_CLAIM_DEAD"
       CLAIM_ABANDON_REVIVED=""
-      CP_REPLAY_ENV=("LANES__CLAIM_FROM=$CP_CLAIM_FROM" "LANES__CLAIM_DEAD=$CP_CLAIM_DEAD")
+      CP_REPLAY_ENV=("LANES__CLAIM_FROM=$CP_CLAIM_FROM" "LANES__CLAIM_DEAD=$CP_CLAIM_DEAD"
+                     "LANES__CLAIM_READS=$CP_CLAIM_READS" "LANES__CLAIM_URL=$CP_CLAIM_URL")
       crh_rc=0; claim_rescan_hook || crh_rc=$?
       case "$crh_rc" in 7|9) claim_lost_write "$crh_rc" "$lane" "$obj" "$(session_for "$lane")" ;; esac
     fi
@@ -17804,14 +17808,33 @@ EOF
       # fallback, exactly as `--no-github` already does.
       if [ "$NO_GITHUB" = 1 ] || [ "$h_verb" != CLAIMED ]; then
         takeover_payload="lane:$h_lane"
+      elif [ "$CP_REPLAYING" = 1 ]; then
+        # A RE-RUN READS NOTHING FROM GITHUB WITH THE LOCK HELD (284): the
+        # URL attempt 1 read crossed the `exec` with the takeover's source,
+        # and it is cited while the source is the same lane.
+        takeover_payload="lane:$h_lane"
+        [ "$h_lane" != "$CP_CLAIM_FROM" ] || [ -z "$CP_CLAIM_URL" ] || takeover_payload="$CP_CLAIM_URL"
       else
         takeover_payload="$(gh_stale_claim_url "$obj" "$h_lane")"
         [ -n "$takeover_payload" ] || takeover_payload="lane:$h_lane"
       fi
     fi
 
-    # 2. Rule 1's three reads, printed.
-    reads="$(gh_reads "$obj")" || exit 1
+    # 2. Rule 1's three reads, printed. ON A RE-RUN, THE ONES ATTEMPT 1 MADE
+    #    (lane openRepoTools-3's review of #307, 284). A re-run — the replay,
+    #    or `cs_recheck`'s — holds the checkout's lock from the top, and these
+    #    are `gh` and an ssh `ls-remote`, none bounded by `git_net`: a stalled
+    #    one made every lane's writer behind W's lock exit 4, and past ten
+    #    minutes `mutex_stale` calls the live holder stale. They inform, and
+    #    the rescan above decides the race, so attempt 1's cross the `exec`
+    #    and are printed, and cited in the comment, as they were made.
+    if [ "$CP_REPLAYING" = 1 ] && [ "$NO_GITHUB" != 1 ]; then
+      note "Rule 1's three reads were made at attempt 1, before the lock, and are printed as they were: this re-run holds the lock and makes no network read with it held (Amendment 23 S4; the rescan above decides the race)."
+      reads="$CP_CLAIM_READS"
+      [ -n "$reads" ] || reads="the three reads of Rule 1: made and printed at attempt 1, before the lock"
+    else
+      reads="$(gh_reads "$obj")" || exit 1
+    fi
     printf '%s\n' "$reads"
 
     # 3. decision 2 — a crossing warns and proceeds.
@@ -17824,7 +17847,8 @@ EOF
     utc="$(utc_now)"
     CLAIM_OBJ="$obj"; CLAIM_LANE="$lane"; CLAIM_SKIP="$takeover_from"; CLAIM_SKIP_DEAD="$takeover_dead"
     CLAIM_ABANDON_REVIVED=""
-    CP_REPLAY_ENV=("LANES__CLAIM_FROM=$takeover_from" "LANES__CLAIM_DEAD=$takeover_dead")
+    CP_REPLAY_ENV=("LANES__CLAIM_FROM=$takeover_from" "LANES__CLAIM_DEAD=$takeover_dead"
+                   "LANES__CLAIM_READS=$reads" "LANES__CLAIM_URL=$takeover_payload")
     # A RIVAL THAT LANDS BEFORE S3's FETCH, not only one that lands before the
     # push: the checks above read what `log_sync` fetched, so a tip that moved
     # since runs this claim again from the top, rescan first (`cs_recheck`).
