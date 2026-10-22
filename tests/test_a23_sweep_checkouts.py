@@ -23,6 +23,7 @@ UNDER THE TEST'S OWN BASETEMP, and the fixture asserts that before any run.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -701,6 +702,103 @@ def test_lanes_edit_scratch_alone_holds_nothing(sweep):
     assert rows[str(c)][0] == "removed", rows[str(c)]
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert not os.path.lexists(c)
+
+
+def _lanes_edit_dir(box: Sweep) -> tuple:
+    """The CLOSED lane's checkout and its `.git/lanes-edit/`, not yet made."""
+    c = box.checkout(CLOSED)
+    return c, c / ".git" / "lanes-edit"
+
+
+LOOK_ALIKES = ["apply.err.bak", "fetch.errx", "xff.err", "reset.err~", "Reset.err",
+               "removed.bak", "removed2", "xremoved", "hand-edit-1.reset.err",
+               ".hidden-diff", "hand edit.diff", "-hand-edit.diff"]
+
+
+@pytest.mark.parametrize("name", LOOK_ALIKES)
+def test_a_name_that_only_looks_like_scratch_holds(sweep, name):
+    """THE SCRATCH EXEMPTION IS BY EXACT NAME (lane openRepoTools-3's SHOULD
+    391): a file whose name only begins or ends like one of the five, a
+    backup, a suffix, another case, a hidden file, a name with a space or a
+    leading dash, is a person's, and holds the checkout in the dry run and
+    under `--yes`. The file stays."""
+    box = sweep.box
+    c, d = _lanes_edit_dir(box)
+    d.mkdir()
+    (d / name).write_text("a person's note\n", encoding="utf-8")
+    for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+        _, rows = sweep(*args, **env)
+        assert rows[str(c)][0] == "hold", (name, rows[str(c)])
+        assert "in .git/lanes-edit/: a hand edit" in rows[str(c)][1], (name, rows[str(c)])
+    assert (d / name).is_file()
+
+
+def test_a_subdirectory_of_lanes_edit_holds(sweep):
+    """A directory in `.git/lanes-edit/` is not one of the five names, and
+    what is in it may be a person's: it holds (SHOULD 391)."""
+    box = sweep.box
+    c, d = _lanes_edit_dir(box)
+    (d / "sub").mkdir(parents=True)
+    (d / "sub" / "kept.diff").write_text("a person's note\n", encoding="utf-8")
+    _, rows = sweep()
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+
+
+def test_a_dangling_link_for_lanes_edit_holds(sweep):
+    """A `.git/lanes-edit` that is a link to nowhere holds (SHOULD 391: the
+    `-L` half of the guard). `-e` alone is false for a dangling link, so only
+    `-L` brings it in, and what it once named is unknown."""
+    box = sweep.box
+    c, d = _lanes_edit_dir(box)
+    d.symlink_to(box.root / "nowhere-at-all")
+    _, rows = sweep()
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+    assert ".git/lanes-edit/" in rows[str(c)][1], rows[str(c)]
+
+
+def test_an_empty_lanes_edit_holds_nothing(sweep):
+    """An empty `.git/lanes-edit/`, which every write makes, holds nothing:
+    the checkout is removed."""
+    box = sweep.box
+    c, d = _lanes_edit_dir(box)
+    d.mkdir()
+    _, rows = sweep()
+    assert rows[str(c)][0] == "remove", rows[str(c)]
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert rows[str(c)][0] == "removed", rows[str(c)]
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert not os.path.lexists(c)
+
+
+def _names_lanes_edit_writes_there() -> list:
+    """Every name `lanes-edit.sh` writes into `.git/lanes-edit/` but the hand
+    edit's own (`hand-edit-<UTC>-<pid>.diff`), read from the script of the
+    tree under test: `$cs_tmp/<name>` and `.../lanes-edit/<name>`."""
+    text = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
+    found = set(re.findall(r"(?:\$cs_tmp|/lanes-edit)/([A-Za-z0-9_.][A-Za-z0-9_.-]*)", text))
+    return sorted(n for n in found if not n.startswith("hand-edit-"))
+
+
+def test_the_names_lanes_edit_writes_there_are_found():
+    """The drift guard below reads its cases from `lanes-edit.sh`'s text, so
+    it must find them: `fetch.err`, which every write leaves, is among them.
+    Without this, a renamed variable would leave the guard with no case."""
+    assert "fetch.err" in _names_lanes_edit_writes_there()
+
+
+@pytest.mark.parametrize("name", _names_lanes_edit_writes_there())
+def test_every_other_name_lanes_edit_writes_there_holds_nothing(sweep, name):
+    """THE TWO LISTS MUST NOT DRIFT (SHOULD 391). The sweep exempts five
+    names by hand; a slice that makes `lanes-edit.sh` write a sixth
+    (`pull.err`, say) would hold every checkout that ever wrote, for good.
+    The cases are made from the script's own text, so a sixth name fails
+    here until `lane-end` knows it."""
+    box = sweep.box
+    c, d = _lanes_edit_dir(box)
+    d.mkdir()
+    (d / name).write_text("git's own words\n", encoding="utf-8")
+    _, rows = sweep()
+    assert rows[str(c)][0] == "remove", (name, rows[str(c)])
 
 
 def test_a_live_cwd_holds(sweep):
