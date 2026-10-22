@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import subprocess
 from pathlib import Path
 
@@ -521,6 +522,32 @@ def test_a_live_cwd_holds(sweep):
         sleeper.wait()
 
 
+def test_a_cwd_that_appears_after_the_listing_holds(sweep):
+    """S6.2 (c) IS READ AGAIN UNDER THE LOCK, AFTER THE FETCH (rv4's SHOULD 1,
+    R1, P4): a process that starts working in the checkout after the listing,
+    here at the checkout's own fetch, holds it. The process is a `sleep`,
+    killed by its PID afterwards."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    pidfile = box.root / "late.pid"
+    _hook_on_fetch_of(box, c, (
+        f'( cd {c}/handoffs && exec sleep 600 ) </dev/null >/dev/null 2>&1 & '
+        f'printf "%s" "$!" > {pidfile}'))
+    try:
+        result, rows = sweep("--yes", LANES_LANE=RUNNER)
+        late = pidfile.read_text(encoding="utf-8")
+        assert rows[str(c)][0] == "hold", rows[str(c)]
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert f"a live process works in it (pid {late})" in rows[str(c)][1], rows[str(c)]
+        assert c.is_dir()
+    finally:
+        if pidfile.exists():
+            try:
+                os.kill(int(pidfile.read_text(encoding="utf-8")), signal.SIGKILL)
+            except (ProcessLookupError, ValueError):
+                pass
+
+
 def _hook_on_fetch_of(box: Sweep, target: Path, body: str) -> None:
     """A `LANES_GIT` hook that runs `body` when the sweep fetches `target`."""
     box.use_net(hook=(
@@ -574,6 +601,24 @@ def test_a_lane_resumed_after_the_listing_is_kept(sweep):
     assert rows[str(c)][0] == "hold", rows[str(c)]
     assert f"lane {CLOSED} is IDLE now, not CLOSED" in rows[str(c)][1], rows[str(c)]
     assert c.is_dir()
+
+
+def test_a_former_name_whose_new_checkout_goes_after_the_listing_is_kept(sweep):
+    """A FORMER NAME IS ASKED AGAIN UNDER THE LOCK (rv4's SHOULD 1, R3). The
+    listing finds repoS4-8's checkout beside its new name's; at its own fetch
+    the new name's checkout goes, so the former name's checkout IS that
+    lane's own again until its next write renames it (S1), and is kept."""
+    box = sweep.box
+    old, new = box.checkout(OLD), box.checkout(NEW)
+    _, rows = sweep()
+    assert rows[str(old)][0] == "remove", rows[str(old)]
+    _hook_on_fetch_of(box, old, f"mv -- {new} {box.root / 'aside-new'}")
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert rows[str(old)][0] == "hold", rows[str(old)]
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert (f"it is no longer a former name of lane {NEW} beside that lane's own checkout"
+            in rows[str(old)][1]), rows[str(old)]
+    assert old.is_dir()
 
 
 def test_a_fetch_that_fails_holds(sweep):
@@ -833,6 +878,35 @@ def test_held_parent_keeps_its_dependents_chain(sweep, held, expect):
                 assert said.format(*chain) in rows[c][1], (c, rows[c])
     for i, said in expect.items():
         assert os.path.lexists(chain[i]) == (said != "removed"), chain[i]
+
+
+@pytest.mark.skipif(getattr(os, "geteuid", lambda: 1)() == 0,
+                    reason="root removes what a read-only directory holds")
+def test_a_removal_that_does_not_finish_exits_1(sweep):
+    """A REMOVAL THAT DOES NOT FINISH IS SAID, BY PATH, AND EXITS 1 (rv4's
+    SHOULD 1, R4). The CLOSED lane's checkout holds an IGNORED directory
+    (ignored files hold nothing) that is read-only, so the checkout is moved
+    aside and the removal of the aside stops partway: it is named PARTLY,
+    the run exits 1, and the aside stays, hidden, under `<W>-lanes/`."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    (c / ".git" / "info" / "exclude").write_text("scratch/\n", encoding="utf-8")
+    box.write(c, "scratch/kept.txt", "an ignored file in a read-only directory\n")
+    (c / "scratch").chmod(0o555)
+    try:
+        result, rows = sweep("--yes", LANES_LANE=RUNNER)
+        asides = list(box.lanes_root.glob(f".{CLOSED}.removing-*"))
+        assert rows[str(c)][0] == "PARTLY", rows[str(c)]
+        assert result.returncode == 1, (result.stdout, result.stderr)
+        assert len(asides) == 1, asides
+        assert f"the removal of {asides[0]} did not finish" in result.stderr, result.stderr
+        assert not os.path.lexists(c)
+        assert (asides[0] / "scratch" / "kept.txt").is_file()
+    finally:
+        for aside in box.lanes_root.glob(f".{CLOSED}.removing-*"):
+            (aside / "scratch").chmod(0o755)
+        if (c / "scratch").is_dir():
+            (c / "scratch").chmod(0o755)
 
 
 # ----------------------------------------------------------- the NOTED line
