@@ -5519,7 +5519,24 @@ class Report:
 
     def _foreign(self, clones: list, canonical: list) -> None:
         rows = []
+        # AMENDMENT 23 S1 - A LANE'S REGISTER CHECKOUT IS NOT A STRAY CLONE (the
+        # review of opensoft/openRepoTools#282, SHOULD 5). `<W>-lanes/<lane>/` is
+        # a clone of the register's origin beside W, made on purpose and holding
+        # that lane's writes; listing it here told a person to dispose of it.
+        wroot = self.helper.workspace_root() if self.helper.path else ""
+        lanes_home = real(wroot) + "-lanes" if wroot else ""
+        # AND A W THAT IS ITSELF A LANE CHECKOUT (the re-review of #282, SHOULD
+        # 5): Eagle's lane windows resolve W to their own `<X>-lanes/<lane>/`,
+        # and lane-start runs this report from there. Its lanes home is then its
+        # parent, as lanes-edit.sh's `lanes_home_check` reads a `*-lanes` one.
+        home = os.path.dirname(real(wroot)) if wroot else ""
+        if len(os.path.basename(home)) > len("-lanes") and home.endswith("-lanes"):
+            lanes_home = home
+        registers = []
         for c in clones:
+            if lanes_home and os.path.dirname(real(c)) == lanes_home:
+                registers.append(c)
+                continue
             container = _under_container(c, self.root)
             why = ""
             if container:
@@ -5541,6 +5558,24 @@ class Report:
                          ("LOAD-BEARING: " + _lean_text(lean)) if lean else ""])
         self.add("FOREIGN repositories", rows, "none: every clone is the estate's own checkout",
                  "A lane creates worktrees, never clones. Each is a person's to dispose of.")
+        if registers:
+            self._register_checkouts(registers)
+
+    def _register_checkouts(self, registers: list) -> None:
+        """Amendment 23 S1: each lane's own checkout of the register, reported
+        with what it holds that origin lacks, and never offered for disposal."""
+        rows = []
+        for c in registers:
+            last = git_out(c, "log", "-1", "--date=short", "--format=%cd") or "?"
+            ahead = git_out(c, "rev-list", "--count", "origin/main..HEAD")
+            held = ("its HEAD could not be compared with origin/main" if ahead is None else
+                    f"{ahead} commit(s) origin/main lacks" if ahead != "0" else "")
+            rows.append([c, f"lane {os.path.basename(c)}", human_size(dir_size(c)), last, held])
+        self.add("Register checkouts (Amendment 23 S1)", rows, "none",
+                 "Each is one lane's own checkout of the register, where its writes go, and "
+                 "not a stray clone: lane-end's sweep retires one (Amendment 23 S6), and a "
+                 "person moves one aside only once `git -C <path> cherry -v origin/main` "
+                 "shows nothing.")
 
     def _closed_lanes(self) -> dict:
         """{lane: why} for every lane whose snapshot is CLOSED or whose log's

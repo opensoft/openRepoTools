@@ -1,0 +1,454 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Amendment 23 S1: one register checkout per lane, made on first use.
+
+Every write resolves by default here — no `LANES_REPO` — so what runs is the
+path a lane takes on a workstation: `workspace.yaml` names W, and the write goes
+through `<W>-lanes/<lane>/`, a clone of W's origin that borrows W's objects,
+made under a creation lock the first time the lane writes. Anything at that path
+that is not a clone of the register is refused with exit 1, and nothing at it is
+deleted, moved or repaired (S1).
+
+Each case is the real `lanes-edit.sh` in a sandbox: a bare origin (with a second
+branch, so `--single-branch` shows), W cloned from it, and `workspace.yaml`
+joining the two. Nothing reaches a real remote, `gh` or `tmux`.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import time
+from pathlib import Path
+
+import pytest
+
+from a23_box import REGISTER, RegisterBox, register_text
+from conftest import WINDOWS_SKIP
+
+pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
+                                 reason="lanes-edit.sh is a bash script"),
+              pytest.mark.skipif(shutil.which("git") is None,
+                                 reason="the register is a git repository"),
+              WINDOWS_SKIP]
+
+LANE = "repoCK-1"
+UUID = "a23c0001-0c0c-4000-8000-a23c00010c0c"
+
+
+def _row(lane: str, state: str = "LIVE · seeded") -> str:
+    return (f"| `{lane}` | harness `{UUID}` | Eagle / test / tester | 2026-10-17T00:00Z "
+            f"| — | handoffs/repoCK/{lane}.md | {state} |")
+
+
+class Box(RegisterBox):
+    """The rows named, an alias table where one is given, and a second branch
+    on origin."""
+
+    def __init__(self, root: Path, *, rows=("repoCK-1", "repoCK-2", "repoCK-3", "repoCK-5"),
+                 aliases: str = "", w_reference: Path | None = None) -> None:
+        files = {REGISTER: register_text(_row(lane) for lane in rows),
+                 "handoffs/README.md": "# handoffs\n"}
+        if aliases:
+            files["lanes/aliases.tsv"] = aliases
+        super().__init__(root, files, second_branch=True, w_reference=w_reference)
+
+    def stamp(self, lane: str, words: str, **extra: str) -> subprocess.CompletedProcess:
+        return self.helper("set-row-state", lane, f"LIVE · {words}", **extra)
+
+    def w_state(self) -> tuple:
+        return (self.git("-C", str(self.w), "rev-parse", "HEAD").strip(),
+                self.git("-C", str(self.w), "rev-parse", "HEAD^{tree}").strip(),
+                self.git("-C", str(self.w), "status", "--porcelain"))
+
+
+@pytest.fixture
+def box(tmp_path: Path) -> Box:
+    return Box(tmp_path)
+
+
+def real(path: Path) -> str:
+    return os.path.realpath(str(path))
+
+
+def assert_refused_exit_1(box: Box, result: subprocess.CompletedProcess, path: Path) -> None:
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert str(path) in result.stderr, result.stderr
+    assert "Nothing was written" in result.stderr, result.stderr
+    assert "mv " in result.stderr and ".aside-" in result.stderr, result.stderr
+
+
+# --------------------------------------------------------------- creation
+
+def test_first_write_creates_the_lane_checkout_by_reference(box: Box):
+    before = box.w_state()
+    result = box.stamp(LANE, "first write")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    c = box.checkout(LANE)
+    assert (c / ".git").is_dir(), "the lane's checkout is a clone of its own"
+    alternates = (c / ".git" / "objects" / "info" / "alternates").read_text(encoding="utf-8").split()
+    assert [real(Path(a)) for a in alternates] == [real(box.w / ".git" / "objects")], alternates
+    remote_branches = [b for b in box.git("-C", str(c), "for-each-ref", "--format=%(refname)",
+                                          "refs/remotes").split() if not b.endswith("/HEAD")]
+    assert remote_branches == ["refs/remotes/origin/main"], \
+        f"--single-branch: origin's other branch is not borrowed: {remote_branches}"
+    assert box.git("-C", str(c), "config", "--get-all", "remote.origin.fetch").split() == \
+        ["+refs/heads/main:refs/remotes/origin/main"]
+    assert " · first write |" in box.origin_register()
+    assert box.git("-C", str(c), "rev-parse", "HEAD").strip() == box.origin_head()
+    # W IS THE READERS' COPY: its HEAD, its tree and its working tree are as
+    # they were, though the write landed on origin.
+    assert box.w_state() == before
+
+
+def test_two_first_writers_race_on_creation(box: Box):
+    one = box.popen("set-row-state", LANE, "LIVE · writer one")
+    two = box.popen("set-row-state", LANE, "LIVE · writer two")
+    out_one = one.communicate(timeout=240)
+    out_two = two.communicate(timeout=240)
+    assert one.returncode == 0, out_one
+    assert two.returncode == 0, out_two
+    subjects = box.git("--git-dir", str(box.origin), "log", "--format=%s", "main")
+    assert "writer one" in subjects and "writer two" in subjects, subjects
+    entries = sorted(p.name for p in box.lanes_root.iterdir())
+    assert entries == [LANE], f"one checkout, no partial and no lock left: {entries}"
+    c = box.checkout(LANE)
+    assert sorted(p.name for p in c.iterdir() if p.name.startswith(".")) == [".git"], \
+        "no clone nested inside the checkout"
+    assert sum("creating lane" in o[1] for o in (out_one, out_two)) == 1, \
+        "exactly one of the two writers cloned"
+
+
+def test_leftover_partial_is_moved_aside(box: Box):
+    partial = box.lanes_root / f".{LANE}.partial"
+    partial.mkdir(parents=True)
+    (partial / "half-cloned.txt").write_text("an earlier attempt\n", encoding="utf-8")
+    result = box.stamp(LANE, "after a leftover")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    asides = [p for p in box.lanes_root.iterdir() if p.name.startswith(f".{LANE}.partial.aside-")]
+    assert len(asides) == 1, list(box.lanes_root.iterdir())
+    assert (asides[0] / "half-cloned.txt").read_text(encoding="utf-8") == "an earlier attempt\n", \
+        "the leftover is moved aside whole, never deleted or cloned into"
+    assert not partial.exists()
+    assert (box.checkout(LANE) / ".git").is_dir()
+    assert "moved" in result.stderr and "aside" in result.stderr
+
+
+def test_target_appearing_before_mv_is_not_nested(box: Box):
+    target = box.checkout(LANE)
+    shim = box.fakebin / "appearing-git"
+    shim.write_text(f"""#!/usr/bin/env bash
+if [ "${{1-}}" = clone ]; then
+  git "$@" || exit $?
+  mkdir -p '{target}' && printf 'made by someone else\\n' > '{target}/theirs.txt'
+  exit 0
+fi
+exec git "$@"
+""", encoding="utf-8")
+    shim.chmod(0o755)
+    head = box.origin_head()
+    result = box.stamp(LANE, "never written", LANES_GIT=str(shim))
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert sorted(p.name for p in target.iterdir()) == ["theirs.txt"], \
+        "the clone was not moved INTO the directory that appeared"
+    assert (box.lanes_root / f".{LANE}.partial" / ".git").is_dir(), "the clone is left at .partial"
+    assert box.origin_head() == head, "nothing was written"
+
+
+def _not_a_clone(box: Box, kind: str, path: Path) -> None:
+    if kind == "file":
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("not a checkout\n", encoding="utf-8")
+    elif kind == "plain directory":
+        path.mkdir(parents=True)
+        (path / "notes.txt").write_text("a directory, not a checkout\n", encoding="utf-8")
+    elif kind == "another repository":
+        path.mkdir(parents=True)
+        box.git("init", "-q", "-b", "main", str(path))
+        box.git("-C", str(path), "remote", "add", "origin", "https://github.com/opensoft/not-the-register.git")
+    elif kind == "linked worktree":
+        # A checkout whose `.git` is a FILE pointing at its git directory —
+        # the shape a linked worktree has — with the register's own origin, so
+        # the `.git`-is-a-directory test is the one that refuses it.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        box.git("init", "-q", "-b", "main", f"--separate-git-dir={box.root / 'separate.git'}", str(path))
+        box.git("-C", str(path), "remote", "add", "origin", str(box.origin))
+    elif kind == "clone of another origin":
+        other = box.root / "other.git"
+        box.git("init", "-q", "--bare", "-b", "main", str(other))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        box.git("clone", "-q", str(other), str(path))
+    else:  # pragma: no cover
+        raise AssertionError(kind)
+
+
+def _listing(path: Path) -> list[str]:
+    if path.is_file():
+        return ["<file>", path.read_text(encoding="utf-8")]
+    return sorted(str(p.relative_to(path)) for p in path.rglob("*"))
+
+
+#: What each refusal says is there — the one test, of S1's several, that refused it.
+WHAT_IS_THERE = {
+    "file": "it is a file, not a directory",
+    "plain directory": "it is a directory that is not a git checkout",
+    "another repository": "it is a checkout of https://github.com/opensoft/not-the-register.git, where",
+    "linked worktree": "it is a checkout whose .git is a file",
+    "clone of another origin": "it is a checkout of {other}, where",
+}
+
+
+@pytest.mark.parametrize("kind", ["file", "plain directory", "another repository",
+                                  "linked worktree", "clone of another origin"])
+def test_non_clone_at_the_path_is_refused_exit_1(box: Box, kind: str):
+    path = box.checkout(LANE)
+    _not_a_clone(box, kind, path)
+    before = _listing(path)
+    head = box.origin_head()
+    result = box.stamp(LANE, "never written")
+    assert_refused_exit_1(box, result, path)
+    assert "not a clone of the register" in result.stderr, result.stderr
+    assert WHAT_IS_THERE[kind].format(other=box.root / "other.git") in result.stderr, result.stderr
+    assert _listing(path) == before, "nothing at the path was deleted, moved or repaired"
+    assert box.origin_head() == head
+    assert not (box.lanes_root / f".{LANE}.partial").exists(), "nothing was cloned beside it"
+
+
+def test_empty_directory_counts_as_absent(box: Box):
+    box.checkout(LANE).mkdir(parents=True)
+    result = box.stamp(LANE, "into an empty directory")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert (box.checkout(LANE) / ".git").is_dir()
+    assert " · into an empty directory |" in box.origin_register()
+
+
+def test_alternates_not_naming_W_is_refused(box: Box):
+    other = box.root / "other-store"
+    box.clone(other)
+    c = box.checkout(LANE)
+    box.clone(c, reference=other)
+    head = box.origin_head()
+    result = box.stamp(LANE, "never written")
+    assert_refused_exit_1(box, result, c)
+    assert "borrows objects from" in result.stderr, result.stderr
+    assert "cherry -v" in result.stderr, "the fix names the look-first read"
+    assert box.origin_head() == head
+
+
+def test_alternates_naming_a_missing_store_is_refused(box: Box):
+    c = box.checkout(LANE)
+    box.clone(c, reference=box.w)
+    gone = box.root / "gone" / "objects"
+    (c / ".git" / "objects" / "info" / "alternates").write_text(f"{gone}\n", encoding="utf-8")
+    head = box.origin_head()
+    result = box.stamp(LANE, "never written")
+    assert_refused_exit_1(box, result, c)
+    assert "borrowed objects are gone" in result.stderr, result.stderr
+    assert "cherry -v" in result.stderr
+    assert box.origin_head() == head
+
+
+def test_W_with_alternates_clones_without_reference(tmp_path: Path):
+    store = tmp_path / "store.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(store)], check=True)
+    box = Box(tmp_path / "b", w_reference=store)
+    assert (box.w / ".git" / "objects" / "info" / "alternates").is_file()
+    result = box.stamp(LANE, "one level only")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    c = box.checkout(LANE)
+    assert not (c / ".git" / "objects" / "info" / "alternates").exists(), \
+        "W borrows already, so the lane checkout borrows from nobody: one level"
+    assert " · one level only |" in box.origin_register()
+
+
+def test_the_clone_outlasts_a_short_network_bound(box: Box):
+    """A COLD CLONE IS NOT A PUSH. Every other network call is bounded by
+    `LANES_GIT_TIMEOUT`; the clone gets ten minutes, or that bound where it is
+    longer, so a one-second bound does not kill a clone that takes three."""
+    shim = box.fakebin / "slow-clone-git"
+    shim.write_text("""#!/usr/bin/env bash
+if [ "${1-}" = clone ]; then sleep 3; fi
+exec git "$@"
+""", encoding="utf-8")
+    shim.chmod(0o755)
+    made = box.helper("lane-checkout", LANE, "--create", LANES_GIT=str(shim), LANES_GIT_TIMEOUT="1")
+    assert made.returncode == 0, (made.stdout, made.stderr)
+    assert made.stdout.strip() == str(box.checkout(LANE))
+    assert (box.checkout(LANE) / ".git").is_dir()
+
+
+# --------------------------------------------------------------- names
+
+ALIAS = "repoCK-7\trepoCK-8\t2026-10-17T00:00:00Z\n"
+
+
+def test_renamed_lane_directory_is_moved_once(tmp_path: Path):
+    box = Box(tmp_path, rows=("repoCK-8",), aliases=ALIAS)
+    old = box.checkout("repoCK-7")
+    box.clone(old, reference=box.w)
+    (old / ".git" / "made-under-the-old-name").write_text("x\n", encoding="utf-8")
+    first = box.stamp("repoCK-8", "after the rename")
+    assert first.returncode == 0, (first.stdout, first.stderr)
+    new = box.checkout("repoCK-8")
+    assert (new / ".git" / "made-under-the-old-name").is_file(), "the directory itself was moved"
+    assert not old.exists()
+    assert "is now" in first.stderr
+    second = box.stamp("repoCK-8", "and again")
+    assert second.returncode == 0, (second.stdout, second.stderr)
+    assert "is now" not in second.stderr, "moved once, and never again"
+    assert " · and again |" in box.origin_register()
+
+
+def test_both_names_present_writes_new_reports_old(tmp_path: Path):
+    box = Box(tmp_path, rows=("repoCK-8",), aliases=ALIAS)
+    assert box.stamp("repoCK-8", "made the new one").returncode == 0
+    old = box.checkout("repoCK-7")
+    box.clone(old, reference=box.w)
+    old_head = box.git("-C", str(old), "rev-parse", "HEAD").strip()
+    result = box.stamp("repoCK-8", "through the new one")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert str(old) in result.stderr and "former name" in result.stderr, result.stderr
+    assert box.git("-C", str(old), "rev-parse", "HEAD").strip() == old_head, "the old one is left as it is"
+    assert "through the new one" in box.git("-C", str(box.checkout("repoCK-8")), "log", "-1", "--format=%s")
+
+
+def test_case_variant_writes_the_row_spelling_checkout(box: Box):
+    result = box.stamp("REPOck-3", "typed in another case")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert [p.name for p in box.lanes_root.iterdir()] == ["repoCK-3"], \
+        "the checkout is named for the row's own spelling (Amendment 15)"
+    assert " · typed in another case |" in box.origin_register()
+
+
+@pytest.mark.parametrize("name", ["repoCK/1", ".repoCK-1", "repoCK 1"])
+def test_name_the_log_cannot_carry_is_refused(box: Box, name: str):
+    head = box.origin_head()
+    result = box.stamp(name, "never written")
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "is not a lane name" in result.stderr, result.stderr
+    assert not box.lanes_root.exists(), "nothing was created for a name no log file can carry"
+    assert box.origin_head() == head
+
+
+def test_W_local_identity_is_copied(box: Box):
+    box.git("-C", str(box.w), "config", "user.name", "The Workspace Person")
+    result = box.stamp(LANE, "under W's own name")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    c = box.checkout(LANE)
+    assert box.git("-C", str(c), "config", "--local", "--get", "user.name").strip() == "The Workspace Person"
+    unset = subprocess.run(["git", "-C", str(c), "config", "--local", "--get", "user.email"],
+                           env=box.env, capture_output=True, text=True, check=False)
+    assert unset.returncode == 1, "a key W does not set locally is not copied"
+
+
+# --------------------------------------------------------------- the read verb
+
+def test_lane_checkout_verb_reads_and_creates(box: Box):
+    absent = box.helper("lane-checkout", LANE)
+    assert absent.returncode == 8 and absent.stdout == "", (absent.stdout, absent.stderr)
+    made = box.helper("lane-checkout", LANE, "--create")
+    assert made.returncode == 0, (made.stdout, made.stderr)
+    assert made.stdout.strip() == str(box.checkout(LANE))
+    again = box.helper("lane-checkout", "REPOCK-1")
+    assert again.returncode == 0 and again.stdout.strip() == str(box.checkout(LANE))
+    usage = box.helper("lane-checkout")
+    assert usage.returncode == 64
+
+
+def test_without_the_opt_in_both_variables_naming_W_are_no_refusal(box: Box):
+    """R4-2: both variables at the `path:` workspace.yaml names is W itself,
+    not a lane checkout, and without the opt-in no write goes anywhere else
+    than W. `lane-checkout` took it for a refusal (2) all the same, naming an
+    opt-in that is off. It answers as it does with `LANES_REPO` unset: no
+    checkout there yet (8), and nothing made."""
+    absent = box.helper("lane-checkout", LANE, LANES_ROUTE_WRITES="",
+                        LANES_WORKSPACE_ROOT=str(box.w), LANES_REPO=str(box.w))
+    assert absent.returncode == 8 and absent.stdout == "", (absent.stdout, absent.stderr)
+    assert "W itself" not in absent.stderr and "Amendment 23 S5" not in absent.stderr, absent.stderr
+    assert not box.lanes_root.exists(), "the read made no checkout"
+
+
+def _fake(path: Path, text: str) -> Path:
+    path.write_text(text, encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def _creation_bench(box: Box, clone_body: str) -> dict:
+    """The heartbeat's minute as a second (a `sleep` first on PATH that turns
+    `sleep 60` into `sleep 1`), and a `LANES_GIT` whose clone runs
+    `clone_body` first: so a heartbeat beats while the clone runs."""
+    real_sleep, real_git = shutil.which("sleep"), shutil.which("git")
+    _fake(box.fakebin / "sleep", f"""#!/usr/bin/env bash
+if [ "$*" = 60 ]; then exec '{real_sleep}' 1; fi
+exec '{real_sleep}' "$@"
+""")
+    slow = _fake(box.root / "slow-clone-git", f"""#!/usr/bin/env bash
+case " $* " in *" clone "*)
+{clone_body}
+;; esac
+exec '{real_git}' "$@"
+""")
+    return {"LANES_GIT": str(slow)}
+
+
+def test_a_creation_lock_that_vanished_is_not_made_again(box: Box):
+    """MUST 4, at the creation lock: its first touch and its heartbeat refresh
+    it and never make one. The lock directory is moved away by the first touch
+    that names it, as the clone begins; nothing is made in its place then, nor
+    by any heartbeat while the clone runs, and the write still lands."""
+    lock = box.lanes_root / f".{LANE}.lock"
+    mark = box.root / "taken"
+    real_touch = shutil.which("touch")
+    _fake(box.fakebin / "touch", f"""#!/usr/bin/env bash
+case " $* " in *'{lock}'*)
+  if [ ! -e '{mark}' ]; then : > '{mark}'; mv '{lock}' '{lock}.gone'; fi ;;
+esac
+exec '{real_touch}' "$@"
+""")
+    extra = _creation_bench(box, f"  '{shutil.which('sleep')}' 3")
+    result = box.stamp(LANE, "past a vanished creation lock", **extra)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert mark.exists(), "the creation lock was taken away under its holder"
+    assert not lock.exists() and not lock.is_symlink(), \
+        "nothing was made in its place, by the first touch or by a heartbeat"
+    assert " · past a vanished creation lock |" in box.origin_register()
+
+
+def test_the_creation_lock_is_refreshed_while_the_clone_runs(box: Box):
+    """NIT 5: a clone may take its whole budget, ten minutes or more, and a
+    waiter in another container takes a creation lock that has not moved for
+    ten. So the holder refreshes it while the clone runs: aged to twenty
+    minutes as the clone begins, it is fresh again before the clone ends.
+    The clone waits for that, up to 30 s, rather than a fixed 4 s inside which
+    a beat must land (the re-check of #282's cases, R3-2): the head ends at
+    the first beat, and a holder with no heartbeat still reads stale."""
+    lock = box.lanes_root / f".{LANE}.lock"
+    seen = box.root / "seen"
+    old = int(time.time()) - 20 * 60
+    real_touch, real_sleep = shutil.which("touch"), shutil.which("sleep")
+    extra = _creation_bench(box, f"""  '{real_touch}' -c -d '@{old}' '{lock}'
+  state=stale
+  for _ in $(seq 150); do
+    if [ -n "$(find '{lock}' -maxdepth 0 -mmin -1 2>/dev/null)" ]; then state=fresh; break; fi
+    '{real_sleep}' 0.2
+  done
+  echo "$state" > '{seen}'""")
+    result = box.stamp(LANE, "a slow first clone", **extra)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert seen.read_text(encoding="utf-8").strip() == "fresh", \
+        "the creation lock was refreshed while the clone ran"
+
+
+@pytest.mark.parametrize("name", ["repoCK/1", "repoCK 1"])
+def test_a_name_the_log_cannot_carry_is_refused_though_an_alias_maps_it(tmp_path: Path, name: str):
+    """The typed name is checked BEFORE `canon_lane` reads with it, not only
+    the canonical one after: a hand-made `aliases.tsv` row that maps a name no
+    log file can carry onto a real lane lets no write through under it."""
+    box = Box(tmp_path, rows=("repoCK-1",), aliases=f"{name}\trepoCK-1\t2026-10-17T00:00:00Z\n")
+    head = box.origin_head()
+    result = box.stamp(name, "never written")
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "is not a lane name" in result.stderr, result.stderr
+    assert not box.lanes_root.exists(), "nothing was created for that name"
+    assert box.origin_head() == head

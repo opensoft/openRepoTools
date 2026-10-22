@@ -205,8 +205,22 @@ class Estate:
         self._git("add", "-A")
         self._git("commit", "-q", "-m", "seed the test register")
         self._git("push", "-q", "origin", "main")
+        # AMENDMENT 23 S5: W, the readers' copy that workspace.yaml names, takes
+        # no write, and a write that resolves by default goes through the lane's
+        # own checkout beside it. These cases are about the indexer, so their
+        # writes name `self.wip` by the explicit seam (`LANES_REPO`, ort186 Q9).
+        # W is a VIEW of `self.wip` outside the projects root: its `.git` names
+        # `self.wip`'s, and its `lanes` is a link into it. That is because
+        # `lanes-index sync` reads W's own `origin/<branch>`, which a separate
+        # clone would leave behind every write these cases make.
+        self.ws = self.root / "ro" / "wip"
+        self.ws.mkdir(parents=True)
+        (self.ws / ".git").write_text(f"gitdir: {os.path.realpath(self.wip / '.git')}\n",
+                                      encoding="utf-8")
+        (self.ws / "lanes").symlink_to(self.wip / "lanes")
         (self.agents / "workspace.yaml").write_text(
-            f"repository: {self.origin}\npath: {self.wip}\n", encoding="utf-8")
+            f"repository: {self.origin}\npath: {self.ws}\n", encoding="utf-8")
+        self.env["LANES_REPO"] = str(self.wip)
 
     # ------------------------------------------------------------ running
     def run(self, *argv, env: dict | None = None, timeout: float = 120,

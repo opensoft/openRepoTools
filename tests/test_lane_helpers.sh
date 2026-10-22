@@ -272,12 +272,24 @@ mkdir -p "$HOME/projects" "$TMPDIR" "$SANDBOX/fakebin"
 export PATH="$SANDBOX/fakebin:$PATH"
 export CLAUDE_CONFIG_DIR="$HOME/.claude"
 # `LANES_WORKSPACE_ROOT` joins the list Amendment 9(a) made it part of: with
-# every seam unset, the DEFAULT resolution — `$AGENT_PROTOCOL_ROOT/workspace.yaml`
-# — is what every case below exercises, which is the whole point of unsetting
-# them. `AGENT_PROTOCOL_ROOT` is then re-exported into the sandbox, two lines
+# every seam unset, the resolution through `$AGENT_PROTOCOL_ROOT/workspace.yaml`
+# is what finds W for every case below — and, since Amendment 23, the cases
+# write through the ONE seam set back further down, `LANES_REPO=$WIP`.
+# `AGENT_PROTOCOL_ROOT` is then re-exported into the sandbox, two lines
 # down, so the default finds the sandbox's file and never the operator's.
 unset LANES_FILE LANES_EDIT LANES_REPO LANES_PATH LANES_LANE LANES_WORKSPACE_ROOT \
-      LANES_REPOS_TSV LANES_REPOS_TSV_SHIPPED PROJECTS_ROOT CLAUDE_PROJECTS_DIR CLAUDE_BIN CLAUDE_NO_LANE 2>/dev/null
+      LANES_REPOS_TSV LANES_REPOS_TSV_SHIPPED PROJECTS_ROOT CLAUDE_PROJECTS_DIR CLAUDE_BIN CLAUDE_NO_LANE \
+      LANES_DIR LANES_NO_FETCH LANES_NO_GIT LANES_GIT LANES_SESSION 2>/dev/null
+# AND EVERY OTHER `LANES_*` AND `TMUX*` THE CALLER'S SHELL CARRIES (opensoft/
+# openRepoTools#193 item 25; lane openRepoTools-3's condition on act 2's seam,
+# ort186 Q9). A launched lane exports `LANES_REPO` and `LANES_WORKSPACE_ROOT`
+# into every shell it starts, and Amendment 23 adds two internal markers, so a
+# run from inside a lane window would otherwise read — and write — the real
+# register. The names above stay spelled out; this catches the ones nobody has
+# named yet. The suite sets its own `TMUX`, `LANES_WORKSTATION` and seam below.
+for a23_var in $(compgen -v); do
+  case "$a23_var" in LANES_*|TMUX*) unset "$a23_var" 2>/dev/null ;; esac
+done
 export AGENT_PROTOCOL_ROOT="$HOME/.agents"
 mkdir -p "$AGENT_PROTOCOL_ROOT"
 # THE ONE `LANES_*` SEAM THIS SUITE SETS RATHER THAN UNSETS, for the reason the
@@ -685,11 +697,39 @@ export PATH="$SANDBOX/fakebin:$OPENREPOTOOLS_BIN_DIR:$PATH"
 ORIGIN="$SANDBOX/origin.git"
 WIP="$HOME/projects/brett-wip"
 git init -q --bare -b main "$ORIGIN"
+git -C "$ORIGIN" config gc.auto 0; git -C "$ORIGIN" config maintenance.auto false
 git clone -q "$ORIGIN" "$WIP" 2>/dev/null
 git -C "$WIP" config user.email "test@example.invalid"
 git -C "$WIP" config user.name  "lane helper tests"
+git -C "$WIP" config gc.auto 0; git -C "$WIP" config maintenance.auto false
 mkdir -p "$WIP/lanes" "$WIP/handoffs"
 printf '# handoffs — one directory per estate\n' > "$WIP/handoffs/README.md"
+
+# AMENDMENT 23 — THE SUITE WRITES THROUGH THE EXPLICIT `LANES_REPO` SEAM, and
+# `$WIP` is that checkout (S2.1: "the test seam … with S3–S5 applying in it").
+# Every assertion below on `$WIP` stands because every write still lands
+# there: an explicit `LANES_REPO` is honoured in place. The workspace checkout
+# W that `workspace.yaml` names is now a SEPARATE checkout path, because S5
+# refuses a write whose `LANES_REPO` is W itself — and it sits outside
+# `$HOME/projects`, so the projects root every listing case reads is the one it
+# always was. `LANES_FILE` goes beside `LANES_REPO` for `lane-start` and
+# `lane-end`, which take the register from W whenever `LANES_FILE` is empty.
+# Amendment 23's own behaviour, with the DEFAULT resolution, is proven in
+# `tests/test_a23_*.py` (lane openRepoTools-3's ruling on ort186 Q9).
+#
+# W IS A SECOND VIEW OF `$WIP`'S OWN REPOSITORY, not a clone of its own: its
+# `.git` is a gitfile naming `$WIP/.git`, and its `lanes`, `handoffs` and
+# `.gitignore` are links into `$WIP`. So every tool that reads W ITSELF rather
+# than `LANES_REPO` — `lane-worktrees` greps W's `origin/main`, `workspace-root`
+# answers W — reads exactly what it read when W was `$WIP`, while S5's test,
+# which compares the two CHECKOUT paths, sees two. Nothing in this suite writes
+# W, and nothing may: it shares `$WIP`'s index.
+WIP_RO="$SANDBOX/ro/brett-wip"
+mkdir -p "$WIP_RO"
+printf 'gitdir: %s\n' "$(cd -P -- "$WIP" && pwd -P)/.git" > "$WIP_RO/.git"
+ln -s "$WIP/lanes" "$WIP_RO/lanes"
+ln -s "$WIP/handoffs" "$WIP_RO/handoffs"
+ln -s "$WIP/.gitignore" "$WIP_RO/.gitignore"
 
 # THE POINTER FILE, which is the whole of the new resolution (Amendment 9(a)).
 # `repository:` is the sandbox's own bare origin rather than a GitHub slug, and
@@ -697,8 +737,12 @@ printf '# handoffs — one directory per estate\n' > "$WIP/handoffs/README.md"
 # a non-GitHub origin is checked exactly as a GitHub one is.
 {
   printf 'repository: %s\n' "$ORIGIN"
-  printf 'path: %s\n' "$WIP"
+  printf 'path: %s\n' "$WIP_RO"
 } > "$AGENT_PROTOCOL_ROOT/workspace.yaml"
+# The REAL spelling, as the resolver's `pwd -P` gave every helper W before.
+LANES_REPO="$(cd -P -- "$WIP" && pwd -P)"
+export LANES_REPO
+export LANES_FILE="$LANES_REPO/lanes/LANES.md"
 
 LANES="$WIP/lanes/LANES.md"
 {
@@ -1978,7 +2022,7 @@ esac
 exec "${REAL_GIT:?}" "$@"
 FAKE
 chmod +x "$SANDBOX/r67-gitfail/git"
-r67()  { env LANES_WORKSPACE_ROOT="$R67_WIP" LANES_LANE=repo67-2 LANES_SESSION="$DEAD_ID" "$@"; }
+r67()  { env LANES_REPO="$R67_WIP" LANES_FILE="$R67_WIP/lanes/LANES.md" LANES_LANE=repo67-2 LANES_SESSION="$DEAD_ID" "$@"; }
 r67x() { r67 env PATH="$SANDBOX/r67-gitfail:$PATH" REAL_GIT="$(command -v git)" "$@"; }
 R67_PS="$(printf '%s\t%s\t%s' 900671 1 "claude --session-id $R67_ID --fork-session --resume /nonexistent/projects/$R67_ID.jsonl")"
 
@@ -2788,7 +2832,7 @@ has   "…carrying the merge sha as a payload" "$(cat "$LOGD/repoZA-1.md")" ", o
 ZL_ID="aaaa0006-2222-4000-8000-aaaa00062222"
 write_record_ns "$sessions_dir/live-zl.json" "$ZL_ID" "$LIVE_PID" "$live_start" "othersess:@9.%9" "repozl-99" "derived" "busy"
 git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
-( LANES_WORKSPACE_ROOT="$CLONE2" LANES_LANE=repoZL-1 "$E" add-row \
+( LANES_REPO="$CLONE2" LANES_FILE="$CLONE2/lanes/LANES.md" LANES_LANE=repoZL-1 "$E" add-row \
     "| \`repoZL-1\` | harness \`$ZL_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoZL/x.md | ACTIVE |" ) >/dev/null 2>&1
 is    "the peer's row is on origin/main and not in this checkout" "$(grep -c '^| `repoZL-1`' "$LANES" || :)" 0
 run env LANES_NO_FETCH=1 "$E" live-holder repoZL-1
@@ -2804,7 +2848,7 @@ ZS_ID="aaaa0007-3333-4000-8000-aaaa00073333"
 write_record_ns "$sessions_dir/live-zs.json" "$ZS_ID" "$LIVE_PID" "$live_start" "othersess:@9.%9" "repozs-99" "derived" "busy"
 "$E" add-row "| \`repoZS-1\` | pending — set by the session's first act | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoZS/x.md | ACTIVE |" >/dev/null 2>&1
 git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
-( LANES_WORKSPACE_ROOT="$CLONE2" LANES_LANE=repoZS-1 "$E" replace-in-row repoZS-1 \
+( LANES_REPO="$CLONE2" LANES_FILE="$CLONE2/lanes/LANES.md" LANES_LANE=repoZS-1 "$E" replace-in-row repoZS-1 \
     "pending — set by the session's first act" "harness \`$ZS_ID\`" "the session stamps its own row" ) >/dev/null 2>&1
 is    "this checkout's row still records no session id" "$(grep '^| `repoZS-1`' "$LANES" | grep -c 'pending' || :)" 1
 zs_before="$(grep -c 'rename-window repoZS-1' "$FAKE_TMUX_LOG" || :)"
@@ -2817,7 +2861,7 @@ git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
 # lane-start: "this lane is new" is decided against what has LANDED, so a
 # second row is refused rather than written.
 git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
-( LANES_WORKSPACE_ROOT="$CLONE2" LANES_LANE=repoZD-1 "$E" add-row \
+( LANES_REPO="$CLONE2" LANES_FILE="$CLONE2/lanes/LANES.md" LANES_LANE=repoZD-1 "$E" add-row \
     "| \`repoZD-1\` | harness \`$DEAD_ID\` | Raven / test / brett | 2026-09-11T00:00Z | none | handoffs/repoZD/x.md | ACTIVE |" ) >/dev/null 2>&1
 is    "the peer's row for repoZD-1 is on origin/main and not here" "$(grep -c '^| `repoZD-1`' "$LANES" || :)" 0
 zd_before="$(grep -c 'rename-window repoZD-1' "$FAKE_TMUX_LOG" || :)"
@@ -2873,7 +2917,7 @@ hasnt "…so no ENDED line is missing from a closed lane" "$(cat "$LOGD/repoZH-1
 # working tree that a fetch does not move.
 "$E" add-row "| \`repoZZ-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoZZ/x.md | IDLE, NOTHING CLAIMED |" >/dev/null 2>&1
 git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
-( LANES_WORKSPACE_ROOT="$CLONE2" LANES_LANE=repoZZ-1 "$E" set-row-state repoZZ-1 \
+( LANES_REPO="$CLONE2" LANES_FILE="$CLONE2/lanes/LANES.md" LANES_LANE=repoZZ-1 "$E" set-row-state repoZZ-1 \
     "LANDING #8 · into repoZZ main, posted by the peer" ) >/dev/null 2>&1
 is    "the peer's LANDING is on origin/main and not in this checkout's row" "$(grep '^| `repoZZ-1`' "$LANES" | grep -c 'LANDING #8' || :)" 0
 run   "$END" repoZZ-1
@@ -3101,7 +3145,7 @@ printf '{"type":"user"}\n' > "$tdir/$ZC1.jsonl"
 printf '{"type":"user"}\n' > "$tdir/$ZC2.jsonl"
 "$E" add-row "| \`repoZC-1\` | harness \`$ZC1\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoZC/x.md | ACTIVE |" >/dev/null 2>&1
 git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
-( LANES_WORKSPACE_ROOT="$CLONE2" LANES_LANE=repoZC-1 "$E" replace-in-row repoZC-1 \
+( LANES_REPO="$CLONE2" LANES_FILE="$CLONE2/lanes/LANES.md" LANES_LANE=repoZC-1 "$E" replace-in-row repoZC-1 \
     "harness \`$ZC1\`" "harness \`$ZC1\` → harness \`$ZC2\`" "the session stamps its own row" ) >/dev/null 2>&1
 
 # First, the reviewer's own sequence: this checkout is BEHIND and has not pulled.
@@ -4542,6 +4586,9 @@ PEEK_LOCK="$H_LOCK" PEEK_OUT="$SANDBOX/peek.pid" \
   env PEEK_LOCK="$H_LOCK" PEEK_OUT="$SANDBOX/peek.pid" LANES_GIT="$SANDBOX/peekgit" \
   "$E" set-row-state repoGH-1 "LIVE · PEEK" >/dev/null 2>&1 || :
 h_peek="$(cat "$SANDBOX/peek.pid" 2>/dev/null || printf '')"
+# THE PID IS THE FIRST FIELD: the file is `<pid> <container> <host>` since
+# Amendment 23 S2, because a pid does not cross a pid namespace.
+h_peek="${h_peek%% *}"
 # THE `case` IS HOISTED OUT OF THE `$( )`, and it has to be (A9 Addendum 4,
 # R-A9-11). Bash 3.2's parser reads the `)` that closes a case PATTERN as the
 # one that closes the command substitution, so this exact expression is a
@@ -4754,6 +4801,9 @@ FOREIGN="$SANDBOX/foreign"
 git init -q -b main "$FOREIGN"
 git -C "$FOREIGN" remote add origin "https://github.com/opensoft/not-your-wip.git"
 
+# EACH HELPER RUNS WITH THE SEAM UNSET (Amendment 23): what these cases refuse
+# is the DEFAULT resolution through workspace.yaml, and `lane-start` and
+# `lane-end` never ask for W at all while `LANES_REPO` and `LANES_FILE` are set.
 for helper in lanes-edit.sh lane-start lane-end link-estates; do
   case "$helper" in
   lanes-edit.sh) args=(who --lane repoA-1) ;;
@@ -4766,33 +4816,33 @@ for helper in lanes-edit.sh lane-start lane-end link-estates; do
   esac
 
   rm -f -- "$WS_YAML"
-  ws_run "$helper" "${args[@]}"
+  ws_run env -u LANES_REPO -u LANES_FILE "$helper" "${args[@]}"
   is   "$helper refuses with exit 1 when there is no workspace.yaml" "$WS_RC" 1
   has  "…and names the file that is missing" "$WS_MSG" "there is no $WS_YAML"
   has  "…and names the one command that writes it" "$WS_MSG" "openRepoTools wip init"
 
   printf 'path: %s\n' "$WIP" > "$WS_YAML"
-  ws_run "$helper" "${args[@]}"
+  ws_run env -u LANES_REPO -u LANES_FILE "$helper" "${args[@]}"
   is   "$helper refuses a workspace.yaml with no repository:" "$WS_RC" 1
   has  "…saying which key is missing" "$WS_MSG" "names no \`repository:\`"
 
   printf 'repository: %s\n' "$ORIGIN" > "$WS_YAML"
-  ws_run "$helper" "${args[@]}"
+  ws_run env -u LANES_REPO -u LANES_FILE "$helper" "${args[@]}"
   is   "$helper refuses a workspace.yaml with no path:" "$WS_RC" 1
   has  "…saying which key is missing" "$WS_MSG" "names no \`path:\`"
 
   { printf 'repository: %s\n' "$ORIGIN"; printf 'path: %s/nowhere\n' "$SANDBOX"; } > "$WS_YAML"
-  ws_run "$helper" "${args[@]}"
+  ws_run env -u LANES_REPO -u LANES_FILE "$helper" "${args[@]}"
   is   "$helper refuses a path: that is not a git checkout" "$WS_RC" 1
   has  "…saying so in those words" "$WS_MSG" "which is not a git checkout"
 
   { printf 'repository: %s\n' "$ORIGIN"; printf 'path: %s\n' "$FOREIGN"; } > "$WS_YAML"
-  ws_run "$helper" "${args[@]}"
+  ws_run env -u LANES_REPO -u LANES_FILE "$helper" "${args[@]}"
   is   "$helper refuses a path: that is a checkout of something ELSE" "$WS_RC" 1
   has  "…naming both repositories" "$WS_MSG" "is a checkout of"
 
   { printf 'repository: %s\n' "$ORIGIN"; printf 'path: %s/lanes\n' "$WIP"; } > "$WS_YAML"
-  ws_run "$helper" "${args[@]}"
+  ws_run env -u LANES_REPO -u LANES_FILE "$helper" "${args[@]}"
   is   "$helper refuses a path: that is a SUBDIRECTORY, not the root" "$WS_RC" 1
   has  "…naming the root it should have been" "$WS_MSG" "not the ROOT of that checkout"
 
@@ -4803,13 +4853,13 @@ done
 # path derived from its own location — which is what Amendment 9(a) retired,
 # and what an installed command in ~/.local/bin could not do anyway.
 rm -f -- "$WS_YAML"
-ws_run lanes-edit.sh who --lane repoA-1
+ws_run env -u LANES_REPO -u LANES_FILE lanes-edit.sh who --lane repoA-1
 hasnt "the refusal names no path derived from the command's own location" \
       "$WS_MSG" "$OPENREPOTOOLS_BIN_DIR/lanes"
 
 cp -- "$WS_YAML_SAVED" "$WS_YAML"
 is   "the sandbox's own pointer file is restored for the guards below" \
-     "$(sed -n 's/^path:[[:space:]]*//p' "$WS_YAML" | head -n1)" "$WIP"
+     "$(sed -n 's/^path:[[:space:]]*//p' "$WS_YAML" | head -n1)" "$WIP_RO"
 
 section "== Amendment 11: the record's fields, and clause (h)'s reads =="
 
@@ -13109,8 +13159,9 @@ is    "…and so is history with no lane" "$rc" 64
 # the register it is pointed at and appends to every lane's log. Run against the
 # suite's own sandbox register it would rewrite the fixtures of every case above
 # and below it, and what it is being tested for — that it takes a whole register
-# at once — is exactly what makes that unsafe. `LANES_WORKSPACE_ROOT` is the
-# seam Amendment 9(a) left for pointing a helper at another sandbox.
+# at once — is exactly what makes that unsafe. An explicit `LANES_REPO` (with
+# its `LANES_FILE`) is the seam for pointing a helper at another sandbox; it
+# was `LANES_WORKSPACE_ROOT` until Amendment 23 made that W, which no write uses.
 MIG_ORIGIN="$SANDBOX/a13-origin.git"; MIG_WIP="$SANDBOX/a13wip"
 git init -q --bare -b main "$MIG_ORIGIN"
 git clone -q "$MIG_ORIGIN" "$MIG_WIP" 2>/dev/null
@@ -13148,7 +13199,7 @@ git -C "$MIG_WIP" push -q -u origin main
 MIG_HEAD0="$(git -C "$MIG_WIP" rev-parse HEAD)"
 
 a13_tmp_before="$(ls -d "$TMPDIR"/tmp.* 2>/dev/null | grep -c . || :)"
-run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells
+run env LANES_REPO="$MIG_WIP" LANES_FILE="$MIG_WIP/lanes/LANES.md" "$E" migrate-state-cells
 is    "the migration is a DRY RUN by default" "$rc" 0
 has   "…saying so" "$out" "DRY RUN, nothing is written"
 has   "…naming the archive it would write" "$out" "lanes/archive/LANES-pre-amendment-13-"
@@ -13167,7 +13218,7 @@ is    "…not even a commit" "$(git -C "$MIG_WIP" rev-parse HEAD)" "$MIG_HEAD0"
 # untracked file is in neither list and this act would commit its first lines
 # inside the migration's own commit, under the migration's message.
 printf '# lane repoMig-4 — object log (seeded by a peer, uncommitted)\n' > "$MIG_WIP/lanes/log/repoMig-4.md"
-run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells
+run env LANES_REPO="$MIG_WIP" LANES_FILE="$MIG_WIP/lanes/LANES.md" "$E" migrate-state-cells
 is    "…a row whose object log is untracked is SKIPPED, not committed for its author" "$rc" 0
 has   "…naming the file and whose it is" "$out" "exists here but is NOT TRACKED"
 has   "…and counting it among the skipped" "$out" "1 skipped"
@@ -13178,7 +13229,7 @@ git -C "$MIG_WIP" push -q origin main 2>/dev/null || :
 # this act makes is counted from where the act starts, not from the seed.
 MIG_HEAD1="$(git -C "$MIG_WIP" rev-parse HEAD)"
 
-run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells --yes
+run env LANES_REPO="$MIG_WIP" LANES_FILE="$MIG_WIP/lanes/LANES.md" "$E" migrate-state-cells --yes
 is    "the act exits 0" "$rc" 0
 is    "…and it is ONE commit (Rule 9), not one per row" \
       "$(git -C "$MIG_WIP" rev-list --count "$MIG_HEAD1"..HEAD)" 1
@@ -13224,7 +13275,7 @@ printf '| `%s` | harness `%s` | Eagle / test / brett | 2026-09-12 | none | h | A
 git -C "$MIG_WIP" add -A >/dev/null 2>&1
 git -C "$MIG_WIP" commit -q -m "seed a lane whose name alone is longer than the cap"
 git -C "$MIG_WIP" push -q origin main 2>/dev/null || :
-run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells --yes
+run env LANES_REPO="$MIG_WIP" LANES_FILE="$MIG_WIP/lanes/LANES.md" "$E" migrate-state-cells --yes
 is    "a lane whose name alone overruns the cap still migrates" "$rc" 0
 # TWO LINES, AND THE SPLIT IS NOT A STYLE CHOICE: `grep` and the awk program's
 # `\|` on ONE line is what `test_no_shipped_bash_reaches_for_gnu_only_utilities_unaccompanied`
@@ -13238,17 +13289,17 @@ is    "…with its line inside ratified decision O1's 240 characters" "$mig_long
 has   "…and the line says it was cut" "$(grep "^| \`$MIG_LONG\`" "$MIG_WIP/lanes/LANES.md")" " ..."
 MIG_HEAD2="$(git -C "$MIG_WIP" rev-parse HEAD)"
 
-run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" history repoMig-1 --since 2026-09-12T11:00:00Z
+run env LANES_REPO="$MIG_WIP" LANES_FILE="$MIG_WIP/lanes/LANES.md" "$E" history repoMig-1 --since 2026-09-12T11:00:00Z
 is    "history reads the migrated narrative" "$rc" 0
 hasnt "…--since drops every entry older than the instant" "$out" "opened the PR"
 has   "…and keeps the instant itself" "$out" "land it as drafted"
 has   "…and what came after it" "$out" "PAUSED for the night"
 
-run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells --yes
+run env LANES_REPO="$MIG_WIP" LANES_FILE="$MIG_WIP/lanes/LANES.md" "$E" migrate-state-cells --yes
 is    "a SECOND run refuses: the migration is ONE act" "$rc" 2
 has   "…saying the register is already in the shape" "$err" "already in Amendment 13(a)'s shape"
 is    "…and changed nothing" "$(git -C "$MIG_WIP" rev-list --count "$MIG_HEAD2"..HEAD)" 0
-run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells --no-such-flag
+run env LANES_REPO="$MIG_WIP" LANES_FILE="$MIG_WIP/lanes/LANES.md" "$E" migrate-state-cells --no-such-flag
 is    "an unknown flag is a refusal, not a silent dry run" "$rc" 2
 
 section "== Amendment 19: a closed or dormant lane leaves the listing =="
@@ -13256,8 +13307,8 @@ section "== Amendment 19: a closed or dormant lane leaves the listing =="
 # ITS OWN WORKSPACE, for `migrate-state-cells`'s reason one section up: this
 # section RETIRES a whole repository's dormant rows and creates their logs, and
 # pointed at the suite's own register it would close fixtures the cases above
-# and below it are built on. `LANES_WORKSPACE_ROOT` is the seam Amendment 9(a)
-# left for pointing a helper at another sandbox.
+# and below it are built on. An explicit `LANES_REPO` with its `LANES_FILE` is
+# the seam for pointing a helper at another sandbox (Amendment 23 S2.1).
 #
 # THE SEED IS THE AMENDMENT'S OWN: a live lane, a parked one, an ended one and
 # THREE ROWS WITH NO LOG — the population measured on openxFactory on
@@ -13313,7 +13364,7 @@ git -C "$A19_WIP" commit -q -m "seed the Amendment 19 sandbox"
 git -C "$A19_WIP" push -q -u origin main
 A19_HEAD0="$(git -C "$A19_WIP" rev-parse HEAD)"
 
-a19() { env LANES_WORKSPACE_ROOT="$A19_WIP" "$@"; }
+a19() { env LANES_REPO="$A19_WIP" LANES_FILE="$A19_WIP/lanes/LANES.md" "$@"; }
 a19_field() {   # <rows> <lane> <field number>
   printf '%s\n' "$1" | awk -F'\t' -v l="$2" -v f="$3" '$1 == l { print $f; exit }'
 }
@@ -15883,9 +15934,9 @@ git -C "$MGM_WIP" push -q -u origin main
 
 # (a) THE VALID SHORTHAND: 2, naming the owner, in both modes.
 mg_b="$(mgm_fp)"
-run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" migrate-state-cells
+run env LANES_REPO="$MGM_WIP" LANES_FILE="$MGM_WIP/lanes/LANES.md" "$E" migrate-state-cells
 mgm_refused "the migration's dry run over the valid shorthand" 2 ledger-2 "$mg_b"
-run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" migrate-state-cells --yes
+run env LANES_REPO="$MGM_WIP" LANES_FILE="$MGM_WIP/lanes/LANES.md" "$E" migrate-state-cells --yes
 mgm_refused "migrate-state-cells --yes over the valid shorthand" 2 ledger-2 "$mg_b"
 hasnt "…and never rewrites the marker to the migration's own word" "$(cat "$MGM_WIP/lanes/LANES.md")" "MIGRATED"
 
@@ -15894,9 +15945,9 @@ mgm_register "MANAGED OWNER · ledger 2"
 git -C "$MGM_WIP" commit -q -am "the ledger lands a shorthand whose token does not parse"
 git -C "$MGM_WIP" push -q origin main
 mg_b="$(mgm_fp)"
-run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" managed-projection repoMG-2
+run env LANES_REPO="$MGM_WIP" LANES_FILE="$MGM_WIP/lanes/LANES.md" "$E" managed-projection repoMG-2
 is    "the malformed shorthand reads as unknown (1) before the migration asks" "$rc" 1
-run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" migrate-state-cells --yes
+run env LANES_REPO="$MGM_WIP" LANES_FILE="$MGM_WIP/lanes/LANES.md" "$E" migrate-state-cells --yes
 mgm_refused "migrate-state-cells --yes over a malformed shorthand" 1 - "$mg_b"
 
 # (c) THE ROW REWRITTEN IS THIS CHECKOUT'S. Published as a legacy one-word row,
@@ -15909,19 +15960,19 @@ git -C "$MGM_WIP" push -q origin main
 mgm_register "MANAGED OWNER · ledger-3"
 git -C "$MGM_WIP" commit -q -am "an unpushed marker, in this checkout only"
 mg_b="$(mgm_fp)"
-run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" managed-projection repoMG-2
+run env LANES_REPO="$MGM_WIP" LANES_FILE="$MGM_WIP/lanes/LANES.md" "$E" managed-projection repoMG-2
 is    "the two copies' disagreement reads as unknown (1), never the published row's legacy 8" "$rc" 1
 has   "…naming the register file it read" "$err" "register file, $MGM_WIP/lanes/LANES.md, carries"
 has   "…and both ways the copies can disagree" "$err" "AHEAD of origin"
 has   "…a fast-forward being the other remedy" "$err" "fast-forward it"
-run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" migrate-state-cells --yes
+run env LANES_REPO="$MGM_WIP" LANES_FILE="$MGM_WIP/lanes/LANES.md" "$E" migrate-state-cells --yes
 mgm_refused "migrate-state-cells --yes over a marker only this checkout carries" 1 - "$mg_b"
 has   "…saying the two copies disagree" "$err" "the two copies disagree on"
 
 # (d) AND THE SAME REGISTER WITH NO MARKER IN EITHER COPY MIGRATES, so each
 # refusal above was the seam's and not the fixture's.
 git -C "$MGM_WIP" reset -q --hard origin/main
-run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" migrate-state-cells --yes
+run env LANES_REPO="$MGM_WIP" LANES_FILE="$MGM_WIP/lanes/LANES.md" "$E" migrate-state-cells --yes
 is    "the legacy register itself migrates" "$rc" 0
 has   "…taking the diary row" "$out" "1 to migrate"
 has   "…into its log" "$(cat "$MGM_WIP/lanes/log/repoMG-3.md")" "NOTED — lane repoMG-3"
@@ -15960,9 +16011,9 @@ git -C "$MGM_WIP" push -q origin main
 
 # (a) THE VALID MARKER: 2, naming the owner, in both modes.
 mg_b="$(mga_fp)"
-run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" archive-rows repoMG
+run env LANES_REPO="$MGM_WIP" LANES_FILE="$MGM_WIP/lanes/LANES.md" "$E" archive-rows repoMG
 mga_refused "archive-rows' dry run over a retired managed row" 2 ledger-1 "$mg_b"
-run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" archive-rows repoMG --yes
+run env LANES_REPO="$MGM_WIP" LANES_FILE="$MGM_WIP/lanes/LANES.md" "$E" archive-rows repoMG --yes
 mga_refused "archive-rows --yes over a retired managed row" 2 ledger-1 "$mg_b"
 
 # (b) A MALFORMED ONE — generation=0 — is UNKNOWN: 1.
@@ -15972,7 +16023,7 @@ cat "$SANDBOX/mga-register" > "$MGM_WIP/lanes/LANES.md"
 git -C "$MGM_WIP" commit -q -am "the ledger lands a retired marker whose generation does not parse"
 git -C "$MGM_WIP" push -q origin main
 mg_b="$(mga_fp)"
-run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" archive-rows repoMG --yes
+run env LANES_REPO="$MGM_WIP" LANES_FILE="$MGM_WIP/lanes/LANES.md" "$E" archive-rows repoMG --yes
 mga_refused "archive-rows --yes over a malformed retired marker" 1 - "$mg_b"
 
 # (c) AND WITH THAT ROW GONE THE SAME MOVE LANDS, so each refusal above was the
@@ -15981,7 +16032,7 @@ grep -v '^| `repoMG-11` ' "$MGM_WIP/lanes/LANES.md" > "$SANDBOX/mga-register"
 cat "$SANDBOX/mga-register" > "$MGM_WIP/lanes/LANES.md"
 git -C "$MGM_WIP" commit -q -am "the managed ledger takes its row back"
 git -C "$MGM_WIP" push -q origin main
-run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" archive-rows repoMG --yes
+run env LANES_REPO="$MGM_WIP" LANES_FILE="$MGM_WIP/lanes/LANES.md" "$E" archive-rows repoMG --yes
 is    "the legacy retired row alone is archived" "$rc" 0
 is    "…out of the register" "$(grep -c '^| `repoMG-12` ' "$MGM_WIP/lanes/LANES.md" || :)" 0
 is    "…and into the archive" "$(grep -c '^| `repoMG-12` ' "$MGM_WIP/lanes/archive/LANES-retired.md" || :)" 1
@@ -17404,6 +17455,15 @@ is   "the suite never created a log outside the sandbox" \
      "$(ls "$REAL_WS/lanes/log" 2>/dev/null | grep -c '^repo[A-Z]' || :)" 0
 is   "the suite never wrote the real register" \
      "$(cat "$REAL_WS/lanes/LANES.md" 2>/dev/null | grep -c '^| `repo[A-Z]' || :)" 0
+# AMENDMENT 23 — NOR MADE A LANE CHECKOUT BESIDE IT. A write that missed the
+# seam would resolve through workspace.yaml and clone `<W>-lanes/<lane>/`, so the
+# operator's `<REAL_WS>-lanes` must carry no fixture lane, partial or lock…
+is   "the suite never made a lane checkout beside the real workspace" \
+     "$(ls -A -- "${REAL_WS:+$REAL_WS-lanes}" 2>/dev/null | grep -c '^\.\{0,1\}repo[A-Z]' || :)" 0
+# …and nor did it beside the sandbox's own W: every write in this file went
+# through the explicit `LANES_REPO` seam, which makes no lane checkout at all.
+is   "…and every write went through the seam: no lane checkout beside the sandbox's W" \
+     "$(ls -A -- "$WIP_RO-lanes" 2>/dev/null | grep -c '^\.\{0,1\}repo[A-Z]' || :)" 0
 # BOTH OF THEM READ A PIPE, and the second one did not until A9 Addendum 4
 # (R-A9-13, F3). `grep -c PATTERN FILE` on a file that is not there prints
 # NOTHING and exits 2, so with no `~/.agents/workspace.yaml` on the host

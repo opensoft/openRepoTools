@@ -692,3 +692,55 @@ def test_an_untracked_listing_that_failed_is_a_finding_never_evidence(tmp_path):
     assert "its untracked files could not be listed" in unread, unread
     assert "junit-partial.xml" not in section(proc.stdout, "Evidence-shaped paths")
 
+
+
+def test_a_lanes_register_checkout_is_reported_and_never_foreign(tmp_path):
+    """Amendment 23 S1 (the review of opensoft/openRepoTools#282, SHOULD 5):
+    `<W>-lanes/<lane>/` is one lane's own checkout of the register, made on
+    purpose beside W, so the report lists it as that, with what it holds that
+    origin lacks, and never among the FOREIGN clones "a person's to dispose
+    of". A per-profile clone beside W is still foreign."""
+    e = LW.Estate(tmp_path)
+    ws_origin = e.root / "workspace.git"
+    w = e.projects / "brett-wip"
+    e.git("clone", "-q", ws_origin, w, cwd=e.root)
+    e.workspace = str(w)
+    lane_checkout = e.projects / "brett-wip-lanes" / "repoA-1"
+    e.git("clone", "-q", ws_origin, lane_checkout, cwd=e.root)
+    e.commit(lane_checkout, "a write origin does not have yet",
+             {"lanes/log/repoA-1.md": "NOTED — unpublished\n"})
+    profile = e.projects / "brett-wip-team02e"
+    e.git("clone", "-q", ws_origin, profile, cwd=e.root)
+    proc = report(e)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    foreign = section(proc.stdout, "FOREIGN repositories")
+    assert str(lane_checkout) not in foreign, foreign
+    assert f"{profile} · a second clone of" in foreign, foreign
+    registers = section(proc.stdout, "Register checkouts (Amendment 23 S1)")
+    assert f"{lane_checkout} · lane repoA-1 ·" in registers, registers
+    assert "1 commit(s) origin/main lacks" in registers
+    assert "cherry -v origin/main" in registers
+
+
+def test_a_W_that_is_a_lane_checkout_lists_its_siblings_as_register_checkouts(tmp_path):
+    """The re-review of #282, SHOULD 5: Eagle's lane windows resolve W to
+    their own checkout, `brett-wip-lanes/<lane>/`, and lane-start runs this
+    report from there. Its lanes home is then its parent, as lanes-edit.sh's
+    `lanes_home_check` reads a `*-lanes` one, so both lanes' checkouts are
+    register checkouts and neither is FOREIGN."""
+    e = LW.Estate(tmp_path)
+    ws_origin = e.root / "workspace.git"
+    w = e.projects / "brett-wip"
+    e.git("clone", "-q", ws_origin, w, cwd=e.root)
+    mine = e.projects / "brett-wip-lanes" / "repoA-1"
+    other = e.projects / "brett-wip-lanes" / "repoB-1"
+    for c in (mine, other):
+        e.git("clone", "-q", ws_origin, c, cwd=e.root)
+    e.workspace = str(mine)
+    proc = report(e)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    foreign = section(proc.stdout, "FOREIGN repositories")
+    assert str(mine) not in foreign and str(other) not in foreign, foreign
+    registers = section(proc.stdout, "Register checkouts (Amendment 23 S1)")
+    assert f"{mine} · lane repoA-1 ·" in registers, registers
+    assert f"{other} · lane repoB-1 ·" in registers, registers

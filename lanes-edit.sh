@@ -369,6 +369,18 @@
 #   lanes-edit.sh lane-reconcile  <lane>
 #   lanes-edit.sh worktrees       [<lane> | --all] [--index] [--fetch]
 #   lanes-edit.sh pathspec-check  <path>...          # opensoft/openRepoTools#162
+#   lanes-edit.sh lane-checkout   <lane> [--create]  # Amendment 23 S1
+#   lanes-edit.sh refresh-workspace                  # Amendment 23 S5
+#
+#   `lane-checkout` prints the lane's own register checkout, `<W>-lanes/<lane>/`
+#   (0), says it has none yet (8), or refuses what is at that path and is not a
+#   clone of the register (1); `--create` makes it as a first write under
+#   `LANES_ROUTE_WRITES=1` would, which is the only way writes go there until
+#   Amendment 23's slice 1b: without that opt-in every write goes through
+#   `LANES_REPO`, W by default, as before.
+#   `refresh-workspace` fetches W's origin and fast-forwards W, which is the
+#   only change any tool makes in W; whatever would stop that is reported and
+#   skipped (2), and nothing in W is ever reset, stashed, committed or aborted.
 #
 #   A lane is RUNNING, SWAPPING, SWAPPED or CLOSED, and WHICH OF THOSE IT IS
 #   WITH NO LIVE HOLDER is what says where its session stopped: `RUNNING` with
@@ -433,7 +445,10 @@
 #
 # EXIT CODES — every subcommand, one table, no two meanings on one number
 #   0  done (and #194's publish whose queue `pull --rebase` emptied)
-#   1  environment (no register, no writer)
+#   1  environment (no register, no writer) — and, AMENDMENT 23 S1, a lane
+#      checkout's path that holds something other than a clone of the register
+#      (every routed write, and `lane-checkout`), which is refused and never
+#      deleted, moved or repaired; `refresh-workspace` with no W
 #   2  refusal: bad arguments, the object is held, an unknown alias, a
 #      checkout that cannot be rebased, — Amendment 15 — a register holding
 #      two rows whose lane names differ only by case, which every writer and
@@ -443,7 +458,14 @@
 #      (`commit_push`, `pathspec-check`), or — #194 — `commit` refusing to
 #      publish local commits that are not register or handoff writes, from a
 #      checkout whose HEAD is off the branch, or that it cannot read
-#      (`cp_publish_fence`), and pushes none of them. EIGHT MEANINGS ON ONE NUMBER, and they
+#      (`cp_publish_fence`), and pushes none of them; or — AMENDMENT 23 — a
+#      write that names no lane, a `LANES_REPO` that IS W (S5), a `LANES_DIR`
+#      or `LANES_FILE` outside the checkout the write goes through (S2), a
+#      lane checkout's clone that failed (S1), a W that is itself a lane
+#      checkout (S1, under the opt-in and for `lane-checkout` and
+#      `refresh-workspace`), a routed write while W's register holds an
+#      uncommitted edit (S5), and `refresh-workspace`'s skip, which changed
+#      nothing. EIGHT MEANINGS ON ONE NUMBER, and they
 #      stay readable only because of where each can occur: bad arguments to a
 #      subcommand that predates Amendment 11; `register-row`'s "not lane-shaped";
 #      AN UNKNOWN SUBCOMMAND (the `*)` arm below), which is how a caller detects
@@ -464,6 +486,7 @@
 #      `canon-lane`, which takes the same
 #      contract because its four callers sit in front of a launch as those do. IT WAS IN NO TABLE AT ALL until this round (F-X16), while
 #      being the code the contract gives every one of those reads.
+#      Amendment 23's `lane-checkout` and `refresh-workspace` spend it too.
 #
 #  66  EX_NOINPUT — AMENDMENT 16(e)'s ALIAS TABLE COULD NOT BE READ, and
 #      `canon-lane` is the one verb that spends it. `lanes/aliases.tsv` is what
@@ -494,7 +517,8 @@
 #      push OR a pull, where a hung one often already landed; or six
 #      attempts exhausted because a peer's own uncommitted file blocks
 #      every rebase.
-#   4  the mutex could not be taken within 60s
+#   4  the mutex could not be taken within 60s — or, Amendment 23 S1, a lane
+#      checkout's creation lock within the clone's budget and a minute
 #   5  an edit moved more than one line and was refused — or, Amendment 15, a
 #      lane's object log could not be renamed to the row's own spelling — or,
 #      #120 item 1, a register rewrite (`replace_line`, `delete_lines`) whose
@@ -516,7 +540,8 @@
 #      lane; `live-holder` READ this workstation's session records and none of
 #      them holds it; `swapped` found no lane swapped on the workstation;
 #      `history` READ the lane's log and it carries no `NOTED` or `RULED` line;
-#      `window-session` found no live session in the window. A read that could
+#      `window-session` found no live session in the window; `lane-checkout`
+#      found no checkout for the lane (Amendment 23). A read that could
 #      not be performed is never 8 (R22). `session-start` never exits 8, or
 #      anything but 0: it is a hook. `guard` never exits 8 either — it is a hook
 #      too, and a BLOCKING one, so its two codes are 0 and 2 (see 2 above).
@@ -570,13 +595,38 @@
 # ENVIRONMENT
 #   LANES_FILE         registry path        (default: <LANES_DIR>/LANES.md)
 #   LANES_DIR          dir holding it       (default: <LANES_REPO>/lanes)
-#   LANES_REPO         checkout root        (default: the `path:` in
-#                                            $AGENT_PROTOCOL_ROOT/workspace.yaml,
-#                                            checked to be a checkout of the
-#                                            `repository:` beside it — Amendment
-#                                            9(a); never a literal path)
-#   LANES_WORKSPACE_ROOT  that `path:`, overridden  (the test seam; nothing else
-#                                            sets it)
+#   LANES_REPO         the checkout a WRITE goes through. Unset, it is W: the
+#                      `path:` in $AGENT_PROTOCOL_ROOT/workspace.yaml, checked to
+#                      be a checkout of the `repository:` beside it (Amendment
+#                      9(a); never a literal path). SET, it is the test seam and
+#                      an operator's override, honoured for reads and writes
+#                      alike, and LANES_DIR and LANES_FILE default from it
+#   LANES_ROUTE_WRITES=1  Amendment 23's routing, OPT-IN until its slice 1b
+#                      (the fetch before the edit) lands: with it, an unset
+#                      LANES_REPO sends a write through its lane's own checkout,
+#                      <W>-lanes/<lane>/, made on first use (S1, S2), while a
+#                      READ still reads W; a LANES_REPO naming W — or W's own
+#                      directory inside it — refuses every write (S5); one
+#                      naming a per-profile clone beside W is honoured with a
+#                      warning naming S1's path (S6.2); LANES_DIR and LANES_FILE
+#                      locate files INSIDE the checkout and never choose it (S2);
+#                      and the sidecar acts take the workstation's lock (THE
+#                      LOCKS, below). Any other value, or none: every write goes
+#                      through LANES_REPO (W by default) and every lock is that
+#                      checkout's, exactly as before Amendment 23
+#   LANES_WORKSPACE_ROOT  W, overridden. The test seam, and lane windows set it
+#                      too, at their own checkout. A W that is a lane checkout
+#                      — inside a `*-lanes/` directory, or the same checkout
+#                      LANES_REPO names — refuses (2) `lane-checkout` and
+#                      `refresh-workspace`, and under LANES_ROUTE_WRITES=1 every
+#                      write and sidecar act too, naming this variable to unset:
+#                      `<W>-lanes` is never derived from a lane checkout
+#   LANES__CHECKOUT_LANE, LANES__PID  INTERNAL — exported only by this file to
+#                      itself when it re-runs a write in the lane's checkout
+#                      (`exec` keeps the pid, so LANES__PID equal to `$$` marks
+#                      them as this process's own). Never set either: with any
+#                      other pid they are read as inherited from a parent and
+#                      dropped, with the LANES_REPO/DIR/FILE they came beside
 #   AGENT_PROTOCOL_ROOT  dir holding workspace.yaml  (default: ~/.agents)
 #   LANES_PATH         pathspec of the register RELATIVE to LANES_REPO
 #                                           (default: `lanes/LANES.md`, derived
@@ -604,6 +654,21 @@
 #                      log at (default 15). The test seam, and only that
 #   LANES_IN_CONTAINER 1|0                  force the container probe (test seam)
 #   LANES_NO_GIT=1     edit only, no commit/push (used by the test harness)
+#   THE LOCKS (Amendment 23 S2, design decision 14). <LANES_DIR>/.lanes-edit.lock
+#                      is the CHECKOUT's — that checkout's writers. Under
+#                      LANES_ROUTE_WRITES=1, <W>-lanes/.lane-state.lock is the
+#                      WORKSTATION's, taken by the lifecycle, restart and tree
+#                      sidecars, by `publish-handoff` and by `lane_state_follow`,
+#                      each ALONE: the follow-up runs after its write released
+#                      the checkout lock, and no act holds both. No lock is taken
+#                      in W then. Without the opt-in those acts take the
+#                      checkout's lock, as before. Each lock holds a `pid` file,
+#                      `<pid> <container> <host>`: under LANES_ROUTE_WRITES=1 a
+#                      live holder in this container is never aged out, and
+#                      without it a lock over ten minutes old is stale whoever
+#                      holds it, as before; one in another container is judged
+#                      by the directory's age, which the holder refreshes
+#                      before every network call and never re-creates
 #   LANES_LOG_DIR      the object logs     (default: <LANES_DIR>/log)
 #   LANES_REPOS_TSV    the per-wip alias OVERRIDE (default: <LANES_DIR>/repos.tsv)
 #   LANES_REPOS_TSV_SHIPPED  the organisation's alias table shipped by
@@ -632,6 +697,12 @@
 # in the text are literal.
 
 set -u
+
+# AMENDMENT 23 S2 — THE ARGV AS IT ARRIVED, before the first `shift` below. A
+# write routed to its lane's checkout runs this file again with exactly these
+# words (`lane_checkout_enter`). `${1+"$@"}`, because bash 3.2 under `set -u`
+# reads a bare `"$@"` with no arguments as an unbound variable.
+ORIG_ARGV=(${1+"$@"})
 
 # Parse the global flags before probing paths, git or workstation identity.
 # A profile-only prompt must not depend on any of that lane infrastructure.
@@ -1049,16 +1120,50 @@ lanes_binding_value_ok() {   # <value>
 # machine with no register at all — still run. The refusal is the
 # `registry not found` guard below, which is exit 1: the code this script has
 # always used for it and the code Amendment 9(a) quotes.
-LANES_WS_ROOT=""
-if [ -z "${LANES_REPO:-}" ] || { [ -z "${LANES_DIR:-}" ] && [ -z "${LANES_FILE:-}" ]; }; then
-  LANES_WS_ROOT="$(lanes_workspace_root || :)"
+#
+# AMENDMENT 23 S2 — WHO CHOSE THESE THREE, AND THEN WHERE THEY POINT.
+#
+# A write that resolves by default runs this file AGAIN in its lane's checkout
+# (`lane_checkout_enter`), with `LANES_REPO`, `LANES_DIR` and `LANES_FILE`
+# exported at that checkout and two markers beside them. `exec` keeps the pid,
+# so `LANES__PID` equal to `$$` is the re-run process itself. Any other value
+# was INHERITED — a process a routed write started, which ran a lane command
+# of its own — and then all five are the tool's exports and not its caller's
+# choice: they are dropped, and that process resolves for itself.
+if [ -n "${LANES__CHECKOUT_LANE:-}${LANES__PID:-}" ] && [ "${LANES__PID:-}" != "$$" ]; then
+  unset LANES__CHECKOUT_LANE LANES__PID LANES_REPO LANES_DIR LANES_FILE
 fi
+LANES_ROUTED="${LANES__CHECKOUT_LANE:-}"   # the lane, in the re-run process only
+# THE ROUTING IS OPT-IN UNTIL SLICE 1B (the review of opensoft/openRepoTools#282,
+# MUST 2). A lane checkout is only as fresh as its own last write until S3's
+# fetch before the edit lands, and `commit_push` rebases only after a rejected
+# push, so a checkout one commit behind wedges on its first conflicting write:
+# the stranding Amendment 23 exists to end. So without `LANES_ROUTE_WRITES=1`
+# every write goes through `LANES_REPO` (W by default) and every lock is that
+# checkout's, exactly as before; the re-run process is routed by definition.
+LANES_ROUTE_ON=0
+if [ "${LANES_ROUTE_WRITES:-}" = 1 ] || [ -n "$LANES_ROUTED" ]; then LANES_ROUTE_ON=1; fi
+LANES_REPO_GIVEN=0                         # a caller's LANES_REPO: the seam (S2.1)
+[ -n "$LANES_ROUTED" ] || [ -z "${LANES_REPO:-}" ] || LANES_REPO_GIVEN=1
+LANES_DIR_GIVEN="${LANES_DIR:-}"
+LANES_FILE_GIVEN="${LANES_FILE:-}"
+# W IS RESOLVED EVERY TIME NOW, an explicit `LANES_REPO` included: under the
+# opt-in S5 refuses a write whose checkout IS W and the workstation's sidecar
+# lock lives beside it, and `lane-checkout` and `refresh-workspace` need it
+# either way. It is two `sed`s and three `git` reads, and only the opt-in makes
+# an unresolvable W a refusal where `LANES_REPO` and `LANES_DIR` are given.
+# AND `LANES_DIR`/`LANES_FILE` DEFAULT FROM `LANES_REPO`, which they did not: an
+# explicit `LANES_REPO` alone sent both to W, so git ran in one checkout while
+# the edit landed in another (#198's defect at the old `:1030-1041`).
+LANES_WS_ROOT="$(lanes_workspace_root || :)"
+LANES_WS_REAL=""
+[ -z "$LANES_WS_ROOT" ] || LANES_WS_REAL="$(cd -P -- "$LANES_WS_ROOT" 2>/dev/null && pwd -P)" || LANES_WS_REAL=""
 : "${LANES_REPO:=$LANES_WS_ROOT}"
 if [ -z "${LANES_DIR:-}" ]; then
   if [ -n "${LANES_FILE:-}" ]; then
     LANES_DIR="$(dirname -- "$LANES_FILE")"
   else
-    LANES_DIR="${LANES_WS_ROOT:+$LANES_WS_ROOT/lanes}"
+    LANES_DIR="${LANES_REPO:+$LANES_REPO/lanes}"
   fi
 fi
 LANES_FILE="${LANES_FILE:-$LANES_DIR/LANES.md}"
@@ -1112,6 +1217,11 @@ LANES_INDEX_NUDGE=0
 LANES_WT_IDX_DIR=""
 LANES_INDEX_NUDGE_INV=0
 LOCK_HELD=0
+# AMENDMENT 23 — THE TWO OTHER MUTEXES, held only by this process and so set
+# here, before the trap that releases them: the workstation's sidecar lock
+# (`<W>-lanes/.lane-state.lock`) where `lane_state_follow` took it, and the
+# creation lock (`<W>-lanes/.<lane>.lock`) while a lane checkout is cloned.
+SIDECAR_HELD=0; SIDECAR_LOCK=""; CREATE_LOCK=""; CREATE_HB=""
 LANES_PATH="${LANES_PATH:-$(git -C "${LANES_DIR:-.}" rev-parse --show-prefix 2>/dev/null || :)${LANES_FILE##*/}}"
 
 # The pathspecs the current invocation is writing. Every subcommand that
@@ -1146,10 +1256,170 @@ note() { printf 'lanes-edit: %s\n' "$*" >&2; }
 # AMENDMENT 8, ruling (h): THE LOCK NAMES ITS HOLDER, so a lock nobody holds can
 # be told from a lock somebody does. The directory alone could only be aged out,
 # and ten minutes of every lane on the workstation blocked is not a recovery.
+#
+# AMENDMENT 23 S2 — AND IT NAMES WHERE THE HOLDER RUNS. A pid does not cross a
+# pid namespace (Amendment 18), and every bench container on a host sees the
+# projects-root mount these locks live on, so the `pid` file is ONE line,
+# `<pid> <container> <host>`, written by one `printf`:
+#   * this container and host, under `LANES_ROUTE_WRITES=1`: the pid test
+#     alone. A LIVE HOLDER IS NEVER AGED OUT — six push attempts at a minute
+#     each is longer than ten minutes, and a write that is still running is not
+#     stale however long it takes (S2). WITHOUT THE OPT-IN the ten-minute age
+#     test applies to a live holder too, as on main (the re-review of #282,
+#     N1): the lock is then W's, shared by every lane;
+#   * another container or host: `kill -0` here says nothing about it, so the
+#     ten-minute age of the directory decides, and the holder refreshes that age
+#     before every network call (`git_net`);
+#   * a pid alone (an older helper's lock) reads as this container's; no pid at
+#     all keeps the age test, which is all that can be said about it.
+# The same functions serve the checkout's lock, the creation lock and the
+# workstation's sidecar lock, so the three obey one rule.
+MX_PID=""; MX_CONT=""; MX_HOST=""; MX_WHY=""
+lock_ident() {   # this process's `<container> <host>`, each one token
+  li_c="${LANES_CONTAINER_NAME:-none}"; li_h="${LANES_HOST_NAME:-unknown}"
+  lanes_binding_value_ok "$li_c" || li_c=unknown
+  lanes_binding_value_ok "$li_h" || li_h=unknown
+  printf '%s %s\n' "$li_c" "$li_h"
+}
+mutex_read() {   # <dir> — MX_PID/MX_CONT/MX_HOST from its pid file; 1 for none
+  MX_PID=""; MX_CONT=""; MX_HOST=""
+  [ -f "$1/pid" ] || return 1
+  IFS=' ' read -r MX_PID MX_CONT MX_HOST _ < "$1/pid" 2>/dev/null || :
+  case "$MX_PID" in ''|*[!0-9]*) MX_PID=""; MX_CONT=""; MX_HOST=""; return 1 ;; esac
+  return 0
+}
+mutex_local() {   # after mutex_read: is that holder in this pid namespace?
+  [ -z "$MX_CONT" ] && return 0
+  [ "$MX_CONT $MX_HOST" = "$(lock_ident)" ]
+}
+# 0 and MX_WHY when <dir> is stale, 1 while it is held. Never touches it.
+mutex_stale() {   # <dir>
+  MX_WHY=""
+  if ! mutex_read "$1"; then
+    if [ -z "$(find "$1" -maxdepth 0 -mmin -10 2>/dev/null)" ]; then
+      MX_WHY="it names no holder and is over ten minutes old"; return 0
+    fi
+    return 1
+  fi
+  if mutex_local; then
+    [ "$MX_PID" = "$$" ] && return 1
+    if kill -0 "$MX_PID" 2>/dev/null; then
+      # MAIN'S TEN MINUTES, WITHOUT THE OPT-IN (the re-review of #282, N1).
+      # There this lock is W's mutex, which every lane on the workstation
+      # shares, and main ages out any lock over ten minutes old: a holder
+      # stopped by Ctrl-Z, or stuck in a D-state git, blocks every lane for
+      # ten minutes and no longer. A working holder is never caught by it,
+      # because it refreshes the lock before every network call (`git_net`).
+      [ "$LANES_ROUTE_ON" != 1 ] || return 1
+      [ -z "$(find "$1" -maxdepth 0 -mmin -10 2>/dev/null)" ] || return 1
+      MX_WHY="its holder (pid $MX_PID) is alive but has not refreshed it for over ten minutes, and without LANES_ROUTE_WRITES=1 a lock that old is stale, as it was before Amendment 23"
+      return 0
+    fi
+    MX_WHY="its holder (pid $MX_PID) is gone"; return 0
+  fi
+  if [ -z "$(find "$1" -maxdepth 0 -mmin -10 2>/dev/null)" ]; then
+    MX_WHY="its holder (pid $MX_PID in container $MX_CONT on $MX_HOST, beyond this one's pid test) has not refreshed it for over ten minutes"
+    return 0
+  fi
+  return 1
+}
+# A TAKEOVER IS A CLAIM, NOT A DELETE (the rule `tests/run.sh` states for its
+# own lock). Two waiters that both read a dead holder both used to `rm` the pid
+# and `rmdir` the name, and the second could remove the lock the first had just
+# made: two holders. One rename has one winner, and the claimed copy is read
+# AGAIN before it is removed, so a holder that appeared between the read and
+# the rename is put back.
+mutex_steal() {   # <dir>
+  [ -d "$1" ] && [ ! -L "$1" ] || return 1
+  ms_claim="$1.taken.$$"
+  if [ -e "$ms_claim" ]; then
+    rm -f -- "$ms_claim/pid" 2>/dev/null || :
+    rmdir -- "$ms_claim" 2>/dev/null || return 1
+  fi
+  mv -- "$1" "$ms_claim" 2>/dev/null || return 1
+  if ! mutex_stale "$ms_claim"; then
+    [ -e "$1" ] || mv -- "$ms_claim" "$1" 2>/dev/null || :
+    return 1
+  fi
+  note "taking over $1: $MX_WHY"
+  rm -f -- "$ms_claim/pid" 2>/dev/null || :
+  rmdir -- "$ms_claim" 2>/dev/null || :
+  return 0
+}
+mutex_try() {   # <dir> [<seconds>] — 0 taken, 1 not; never exits
+  mt_d="$1"; mt_max="${2:-60}"; mt_i=0
+  while :; do
+    if mkdir -- "$mt_d" 2>/dev/null; then
+      printf '%s %s\n' "$$" "$(lock_ident)" > "$mt_d/pid" 2>/dev/null || :
+      return 0
+    fi
+    if mutex_stale "$mt_d" && mutex_steal "$mt_d"; then continue; fi
+    [ "$mt_i" -lt "$mt_max" ] || return 1
+    mt_i=$((mt_i + 1))
+    sleep 1
+  done
+}
+# A LOCK IS RELEASED ONLY WHILE IT IS STILL THIS PROCESS'S. One another holder
+# took over (another container's waiter, past a heartbeat this one missed) is
+# that holder's now, and removing it would leave its write under no lock. THE
+# PID ALONE IS NOT "THIS PROCESS" (the review of #282, NIT 3): a holder in
+# another container may carry the same number, so its container and host must
+# be this process's too. A pid alone (an older helper's line) reads as local.
+mutex_release() {   # <dir>
+  if mutex_read "$1" && { [ "$MX_PID" != "$$" ] || ! mutex_local; }; then
+    note "$1 is held by pid $MX_PID${MX_CONT:+ in container $MX_CONT on $MX_HOST} now, not by this process, so it is left as it is"
+    return 0
+  fi
+  rm -f -- "$1/pid" 2>/dev/null || :
+  rmdir -- "$1" 2>/dev/null || :
+  return 0
+}
 release_lock() {
-  rm -f -- "$LOCK/pid" 2>/dev/null || :
-  rmdir -- "$LOCK" 2>/dev/null || :
+  [ "$LOCK_HELD" = 1 ] || return 0
+  mutex_release "$LOCK"
   LOCK_HELD=0
+  return 0
+}
+
+# THE WORKSTATION'S SIDECAR LOCK (Amendment 23 S2; design decision 14's "the
+# whole workstation's", ort186 Q3), UNDER `LANES_ROUTE_WRITES=1`. The lifecycle
+# snapshot, the restart intent, the tree records and `publish-handoff`'s fence
+# were serialised by W's mutex; a routed write takes no lock in W, and a lane's
+# checkout lock serialises one lane only, so they share this one beside the
+# lane checkouts, on the mount every container sees. EACH TAKER TAKES IT ALONE
+# (the review of #282, NIT 2): a sidecar verb, and `lane_state_follow`, which
+# runs after its write released the checkout lock. No act holds both, so no
+# order between them can deadlock.
+#
+# WITHOUT THE OPT-IN it is the checkout's own lock, `$LOCK`, as it was before
+# Amendment 23: the sidecar verbs keep their `acquire_lock`, and the follow-up
+# takes `$LOCK` where its caller does not hold it already.
+sidecar_lock_dir() {
+  if [ "$LANES_ROUTE_ON" != 1 ]; then printf '%s\n' "$LOCK"; return 0; fi
+  [ -n "$LANES_WS_REAL" ] || return 1
+  printf '%s\n' "$LANES_WS_REAL-lanes/.lane-state.lock"
+}
+# For the verbs that take this lock and no other: `LOCK` is pointed at it, so
+# their `acquire_lock`/`release_lock` pairs, and `cleanup`, act on it unchanged.
+sidecar_lock_use() {
+  [ "$LANES_ROUTE_ON" = 1 ] || return 0
+  lanes_home_check
+  slu_d="$(sidecar_lock_dir)" || die "$(lanes_workspace_why)" 1
+  mkdir -p -- "${slu_d%/*}" 2>/dev/null || die "cannot create ${slu_d%/*}, where the workstation's sidecar lock lives (Amendment 23 S2). Nothing was written." 1
+  LOCK="$slu_d"
+}
+sidecar_try() {   # [<seconds>] — 0 taken (or already the caller's), 1 not; never exits
+  st_d="$(sidecar_lock_dir)" || return 1
+  if [ "$LOCK_HELD" = 1 ] && [ "$st_d" = "$LOCK" ]; then return 0; fi
+  mkdir -p -- "${st_d%/*}" 2>/dev/null || return 1
+  mutex_try "$st_d" "${1:-60}" || return 1
+  SIDECAR_LOCK="$st_d"; SIDECAR_HELD=1
+  return 0
+}
+sidecar_release() {
+  [ "$SIDECAR_HELD" = 1 ] || return 0
+  mutex_release "$SIDECAR_LOCK"
+  SIDECAR_HELD=0
   return 0
 }
 
@@ -1244,10 +1514,21 @@ rename_undo() {
 # remove is set above, before the trap: `RL_*`, `LANES_IDX_DIR`,
 # `LANES_WT_IDX_DIR`, `LOCK` and `LOCK_HELD`.
 TMPD=""; pbh_tmp=""; rl_htmp=""; SE_CACHE_FILE=""
+# The creation lock's heartbeat (`lane_checkout_ensure`), stopped by pid.
+create_heartbeat_stop() {
+  [ -n "${CREATE_HB:-}" ] || return 0
+  kill "$CREATE_HB" 2>/dev/null || :
+  wait "$CREATE_HB" 2>/dev/null || :
+  CREATE_HB=""
+  return 0
+}
 cleanup() {
   [ -z "${pbh_tmp:-}" ] || rm -f -- "$pbh_tmp"
   [ -z "${rl_htmp:-}" ] || rm -f -- "$rl_htmp"   # rename-lane's stamp before its replace (#158)
   rename_undo
+  sidecar_release                                  # Amendment 23: never held with the
+  create_heartbeat_stop                            # checkout lock, so the order is free
+  [ -z "$CREATE_LOCK" ] || mutex_release "$CREATE_LOCK"
   if [ "$LOCK_HELD" = 1 ]; then release_lock; fi
   [ -n "${RL_SNAP:-}" ] && [ -d "${RL_SNAP:-}" ] && rm -rf -- "$RL_SNAP"
   [ -n "${TMPD:-}" ] && [ -d "${TMPD:-}" ] && rm -rf -- "$TMPD"
@@ -1260,7 +1541,33 @@ cleanup() {
   # recorded a snapshot or a tree record it had just replaced. Tested here rather
   # than inside the function, because `cleanup` also runs for a process that died
   # before `index_nudge` was ever defined.
+  # AMENDMENT 23, UNDER THE OPT-IN — W LEARNS WHAT A LANE'S CHECKOUT PUSHED,
+  # first (`ws_follow`), so the nudged index and the prompt guard read it.
+  if [ "${LANES_INDEX_NUDGE:-0}" = 1 ] && declare -F ws_follow >/dev/null; then ws_follow; fi
   if [ "${LANES_INDEX_NUDGE:-0}" = 1 ] || [ "${LANES_INDEX_NUDGE_INV:-0}" = 1 ]; then index_nudge; fi
+  return 0
+}
+# AMENDMENT 23 — WHAT `exec` LEAVES BEHIND, cleared before this process becomes
+# a new run of this file. `exec` runs no EXIT trap, so every temporary made so
+# far would outlive the run that made it; the sidecar and creation locks are
+# released, because nothing holds them across the line; and a half-made
+# rename's undo is disarmed, because the new run starts from the top. THE
+# CHECKOUT LOCK IS KEPT: the process after the `exec` is this one, with this
+# pid, and `lock_try` reads a lock naming it as its own (`lock_adopt`).
+cleanup_for_exec() {
+  [ -z "${pbh_tmp:-}" ] || rm -f -- "$pbh_tmp"
+  [ -z "${rl_htmp:-}" ] || rm -f -- "$rl_htmp"
+  pbh_tmp=""; rl_htmp=""; RL_ACTIVE=0
+  sidecar_release
+  create_heartbeat_stop
+  [ -z "$CREATE_LOCK" ] || mutex_release "$CREATE_LOCK"
+  CREATE_LOCK=""
+  [ -n "${RL_SNAP:-}" ] && [ -d "${RL_SNAP:-}" ] && rm -rf -- "$RL_SNAP"
+  [ -n "${TMPD:-}" ] && [ -d "${TMPD:-}" ] && rm -rf -- "$TMPD"
+  [ -n "${SE_CACHE_FILE:-}" ] && rm -f -- "$SE_CACHE_FILE" "$SE_CACHE_FILE".* 2>/dev/null
+  [ -n "${LANES_IDX_DIR:-}" ] && [ -d "${LANES_IDX_DIR:-}" ] && rm -rf -- "$LANES_IDX_DIR"
+  [ -n "${LANES_WT_IDX_DIR:-}" ] && [ -d "${LANES_WT_IDX_DIR:-}" ] && rm -rf -- "$LANES_WT_IDX_DIR"
+  RL_SNAP=""; TMPD=""; SE_CACHE_FILE=""; LANES_IDX_DIR=""; LANES_WT_IDX_DIR=""
   return 0
 }
 # AND A SIGNAL ACTUALLY STOPS IT (Amendment 8, ruling (h)). `trap cleanup EXIT
@@ -1280,21 +1587,11 @@ trap 'cleanup; trap - TERM; kill -TERM $$' TERM
 # minutes later. A helper killed at a usage reset, or an ssh that took the
 # process down with it, leaves a directory no living process will ever remove,
 # and until Amendment 8(h) every writer on the workstation waited out the full
-# age-out behind it. A lock with NO pid file is from an older version of this
-# script and keeps the age test, which is the only thing that could be said
-# about it.
-lock_steal_if_dead() {
-  [ -d "$LOCK" ] || return 0
-  lsd_pid="$(cat -- "$LOCK/pid" 2>/dev/null || :)"
-  case "$lsd_pid" in ''|*[!0-9]*) return 0 ;; esac
-  [ "$lsd_pid" = "$$" ] && return 0
-  kill -0 "$lsd_pid" 2>/dev/null && return 0
-  note "taking over $LOCK: its holder (pid $lsd_pid) is gone"
-  rm -f -- "$LOCK/pid" 2>/dev/null || :
-  rmdir -- "$LOCK" 2>/dev/null || :
-  return 0
-}
-
+# age-out behind it. `mutex_stale` above is that test, with Amendment 23's
+# rule on top: under `LANES_ROUTE_WRITES=1` the ten-minute age-out never
+# reaches a live holder in this container; it is the whole test for one in
+# another; and without the opt-in it reaches a live holder here as well.
+#
 # THE MUTEX, TAKEN WITHOUT DYING FOR IT — 0 taken, 1 not taken, and no exit
 # either way. `acquire_lock` below is this with the refusal on the end, so the
 # `mkdir` mutex, the pid test and the age-out are written ONCE and every taker
@@ -1305,30 +1602,25 @@ lock_steal_if_dead() {
 # committed, and a `die` there would abort a caller whose write is already on
 # disk — so the snapshot that could not be taken under the mutex is left alone
 # and SAID, exactly as a snapshot that could not be written is.
+#
+# AND A LOCK THIS PROCESS TOOK BEFORE AN `exec` IS STILL ITS OWN (Amendment 23
+# S4's replay re-runs the verb with the lock held). `exec` keeps the pid, and
+# the run before the `exec` exported `LANES__PID=$$`: a lock whose pid file
+# names this pid in this container, read by a process whose `LANES__PID` is its
+# own `$$`, is taken as held. Any other process that finds its own pid there —
+# a reused pid — waits like everyone else.
+lock_adopt() {
+  [ -n "${LANES__PID:-}" ] && [ "$LANES__PID" = "$$" ] || return 1
+  mutex_read "$LOCK" || return 1
+  [ "$MX_PID" = "$$" ] && mutex_local || return 1
+  LOCK_HELD=1
+  return 0
+}
 lock_try() {   # [<seconds to wait, default 60>]
-  lt_max="${1:-60}"
-  lock_steal_if_dead
-  # Stale lock (>10 min) is removed: a helper run never takes that long. The
-  # age test is now the FALLBACK — the pid test above is the real one.
-  if [ -d "$LOCK" ]; then
-    if [ -z "$(find "$LOCK" -maxdepth 0 -mmin -10 2>/dev/null)" ]; then
-      note "removing stale lock $LOCK"
-      rm -f -- "$LOCK/pid" 2>/dev/null || :
-      rmdir -- "$LOCK" 2>/dev/null || :
-    fi
-  fi
-  lt_i=0
-  while [ "$lt_i" -lt "$lt_max" ]; do
-    if mkdir -- "$LOCK" 2>/dev/null; then
-      LOCK_HELD=1
-      printf '%s\n' "$$" > "$LOCK/pid" 2>/dev/null || :
-      return 0
-    fi
-    lock_steal_if_dead          # it may have died while we were waiting
-    lt_i=$((lt_i + 1))
-    sleep 1
-  done
-  return 1
+  lock_adopt && return 0
+  mutex_try "$LOCK" "${1:-60}" || return 1
+  LOCK_HELD=1
+  return 0
 }
 
 acquire_lock() {
@@ -2015,6 +2307,15 @@ GIT_TIMED_OUT=0
 git_net() {
   GIT_TIMED_OUT=0
   gn_rc=0
+  # AMENDMENT 23 S2 — THE HEARTBEAT. A holder in another container is judged
+  # by its lock's age alone, so the holder refreshes that age before every
+  # network call: a write that is still pushing is never aged out from there.
+  # `-c`, NEVER A BARE `touch` (the review of #282, MUST 4): a lock directory
+  # that vanished under its holder — another container's takeover, a person's
+  # `rmdir` of a lock that looked stuck — came back as a REGULAR FILE, which no
+  # release removes and no takeover claims, and every later write waited out
+  # its minute and exited 4. A heartbeat refreshes a lock; it never makes one.
+  if [ "$LOCK_HELD" = 1 ]; then touch -c -- "$LOCK" 2>/dev/null || :; fi
   case "$GIT_TIMEOUT" in
     ''|0|*[!0-9]*) "$GIT_BIN" "$@" || gn_rc=$? ;;
     *)
@@ -2026,6 +2327,26 @@ git_net() {
       fi ;;
   esac
   return "$gn_rc"
+}
+
+# AMENDMENT 23, UNDER THE OPT-IN — W'S `origin/main` FOLLOWS A PUSH THAT LANDED
+# FROM ANOTHER CHECKOUT (the review of #282, MUST 1). A routed write pushes from
+# `<W>-lanes/<lane>/`, so W's own `origin/main` no longer moves with it; and the
+# prompt guard reads that ref OFFLINE, as do the nudged index and every read
+# under `LANES_NO_FETCH=1`. Measured with the real guard: a fresh session's
+# first prompt was refused ("the harness minted a new transcript") although
+# its id was on origin, because lane-start's last reads run unfetched. So once
+# the push has landed and every lock is released, W is fetched — the one act
+# S5 allows in W besides `refresh-workspace`'s fast-forward — bounded by
+# `git_net`, and a fetch that fails is said and never fails the write.
+ws_follow() {
+  [ "$LANES_ROUTE_ON" = 1 ] && [ -n "$LANES_WS_REAL" ] || return 0
+  wf_r="$(cd -P -- "$LANES_REPO" 2>/dev/null && pwd -P)" || return 0
+  [ "$wf_r" != "$LANES_WS_REAL" ] || return 0
+  git_net -c gc.auto=0 -c maintenance.auto=false -C "$LANES_WS_REAL" fetch -q origin "$LANES_BRANCH" 2>/dev/null && return 0
+  wf_how="it failed"; [ "$GIT_TIMED_OUT" = 1 ] && wf_how="it timed out after ${GIT_TIMEOUT}s"
+  note "the write landed, but W ($LANES_WS_REAL) did not learn it: its fetch of origin $LANES_BRANCH ($wf_how). Until W is fetched, what reads W's origin/$LANES_BRANCH unfetched — the prompt guard, the index — reads the register before this write. \`$SELF refresh-workspace\` fetches it."
+  return 0
 }
 
 # What a timed-out network call does. NEVER a retry: the point is to stop
@@ -13829,24 +14150,26 @@ lane_state_follow() {   # <lane> <verb> <payload> <uuid> <pre-image> <seam verdi
   lsf_root="$(lane_control_root "$lsf_lane" "$lsf_pay")" || lsf_rc=$?
   [ "$lsf_rc" = 0 ] || return 0
   lsf_f="$lsf_root/lane-state.yaml"
-  lsf_own=0
-  if [ "$LOCK_HELD" != 1 ]; then
-    if lock_try 20; then
-      lsf_own=1
-    else
-      note "the lane lifecycle snapshot for $lsf_lane was NOT moved to $lsf_new: $LOCK is held by another lanes-edit run and this follow-up will not wait behind an event that has already landed. The $lsf_verb line itself is written; the snapshot is one act behind until the next transition, and \`lanes-edit.sh lane-reconcile $lsf_lane\` says what it holds."
-      return 0
-    fi
+  # AMENDMENT 23 — UNDER THE OPT-IN, THE WORKSTATION'S SIDECAR LOCK, NOT THE
+  # CHECKOUT'S. The snapshot is shared with `set-lane-state` and the restart
+  # intent, which no lane checkout's lock serialises; and `retire-rows` follows
+  # OTHER lanes' snapshots, whose checkouts it never has. Both callers run this
+  # after their write released the checkout lock, so it is taken ALONE (the
+  # review of #282, NIT 2). Without the opt-in it is the checkout's `$LOCK`,
+  # taken here as before Amendment 23.
+  if ! sidecar_try 20; then
+    note "the lane lifecycle snapshot for $lsf_lane was NOT moved to $lsf_new: $(sidecar_lock_dir 2>/dev/null || printf 'the sidecar lock') is held by another lanes-edit run and this follow-up will not wait behind an event that has already landed. The $lsf_verb line itself is written; the snapshot is one act behind until the next transition, and \`lanes-edit.sh lane-reconcile $lsf_lane\` says what it holds."
+    return 0
   fi
   # A SNAPSHOT THIS HELPER CANNOT READ IS ONE IT MUST NOT REPLACE.
   if ! lane_sidecar_schema_ok "$lsf_f"; then
-    if [ "$lsf_own" = 1 ]; then release_lock; fi
+    sidecar_release
     note "the lane lifecycle snapshot at $lsf_f is not a record this helper can read ($LSS_WHY), so the $lsf_verb line landed and NOTHING was written over that file: a record this helper cannot read is one it cannot safely replace. Upgrade this workstation's lanes-edit.sh if a newer tooling wrote it, or read the file by hand."
     return 0
   fi
   lsf_seen="$(lane_state_fingerprint "$lsf_f")"
   if [ "$lsf_seen" != "$lsf_pre" ]; then
-    if [ "$lsf_own" = 1 ]; then release_lock; fi
+    sidecar_release
     note "the lane lifecycle moved under this $lsf_verb: lane $lsf_lane read '$lsf_pre' (state/generation/operation) when this write began and reads '$lsf_seen' now, so the snapshot is LEFT AS IT IS and no $lsf_new was written over it. Another act got there first — a recovery, or a second handoff — and a delayed write is precisely what the generation exists to refuse. The $lsf_verb line itself landed: read the lane with \`lanes-edit.sh lane-reconcile $lsf_lane\` before relaunching anything."
     return 0
   fi
@@ -13857,11 +14180,11 @@ lane_state_follow() {   # <lane> <verb> <payload> <uuid> <pre-image> <seam verdi
   lsf_prof="$(payload_subfield "$lsf_pay" profile)"
   if lane_state_put "$lsf_root" "$lsf_lane" "$lsf_new" "$lsf_gen" "$(lane_op_id)" \
        "$lsf_uuid" "${lsf_agent:-}" "${lsf_prof:-}" "$WS" ""; then
-    if [ "$lsf_own" = 1 ]; then release_lock; fi
+    sidecar_release
     LANES_INDEX_NUDGE_INV=1     # opensoft/openRepoTools#161: the table follows it
     return 0
   fi
-  if [ "$lsf_own" = 1 ]; then release_lock; fi
+  sidecar_release
   note "the lane lifecycle snapshot at $lsf_f could NOT be written (the $lsf_verb line itself landed). Crash recovery for lane $lsf_lane is incomplete until it can be: see \`lanes-edit.sh lane-reconcile $lsf_lane\`"
   return 0
 }
@@ -15063,6 +15386,683 @@ WR_LANES
   return 0
 }
 
+# ============= AMENDMENT 23 — ONE REGISTER CHECKOUT PER LANE (S1, S2, S5) ====
+#
+# In force 2026-10-17T20:53:32Z (Brett Heap, "ratify 61" and "apply the edits,
+# 7-9 as recommended"); its act 2 is opensoft/openRepoTools#198. Under
+# `LANES_ROUTE_WRITES=1` — OPT-IN until slice 1b's S3, the review of #282's
+# MUST 2 — every write goes through its lane's own checkout,
+# `<W>-lanes/<lane>/`, a clone of the register's origin made on first use; W —
+# the `path:` in workspace.yaml — is the readers' copy, and no routed write
+# goes there. This block is S1 (the path, its
+# creation, and the refusal of anything else at it), S2 (which checkout a write
+# goes through) and S5's two halves (a write that resolves to W refuses; W is
+# only ever fast-forwarded, by `refresh-workspace`). S3-S4 — the fetch before
+# the edit and the read-back after it — are the next slice; until then a write
+# in a lane's checkout commits and pushes exactly as it always has.
+#
+# HOW A WRITE GETS THERE: THE DISPATCHER RE-RUNS THIS FILE. The checkout is
+# known only once the verb's lane is, which is after every path this file
+# derives at load time — the lock, `LANES_PATH`, the log directory, the alias
+# table, the archive, the caches. So rather than re-point each of them, the
+# write runs this file again (`exec`, same pid) with `LANES_REPO`, `LANES_DIR`
+# and `LANES_FILE` exported at the checkout, and every one of them follows.
+
+# W IS NEVER A LANE CHECKOUT (the review of #282, MUST 3). Eagle's lane windows
+# export `LANES_REPO` AND `LANES_WORKSPACE_ROOT` at the lane's own checkout,
+# `<projects>/brett-wip-lanes/<lane>`, so main's helper, run by path, never
+# writes the shared one. Taken as W, that checkout made every write an S5
+# refusal whose advice — unset `LANES_REPO` — cloned a FULL second register
+# inside it (`<lane>-lanes/<lane>`, no alternates), and put the workstation's
+# sidecar lock in a per-window `<lane>-lanes/`. So before anything derives
+# `<W>-lanes`, a W whose parent directory is a `*-lanes` one, or one
+# `LANES_WORKSPACE_ROOT` names as the very checkout `LANES_REPO` names, refuses
+# (2), naming the variable to unset. Called where `<W>-lanes` is derived:
+# `lane-checkout`, `refresh-workspace`, and under the opt-in every write and
+# every sidecar act.
+lanes_home_check() {
+  [ -n "$LANES_WS_REAL" ] || return 0
+  lhc_why=""
+  lhc_par="${LANES_WS_REAL%/*}"
+  case "${lhc_par##*/}" in
+    ?*-lanes) lhc_why="it stands in $lhc_par/, where a workstation keeps its lane checkouts" ;;
+  esac
+  if [ -z "$lhc_why" ] && [ -n "${LANES_WORKSPACE_ROOT:-}" ] && [ "$LANES_REPO_GIVEN" = 1 ]; then
+    lhc_r="$(cd -P -- "$LANES_REPO" 2>/dev/null && pwd -P)" || lhc_r=""
+    [ "$lhc_r" != "$LANES_WS_REAL" ] || lhc_why="LANES_REPO names that same checkout, which makes it the checkout this window writes through"
+    # UNLESS IT IS W ITSELF (the re-review of #282, N4): both variables naming
+    # the `path:` workspace.yaml names is no lane checkout. It is still a
+    # refusal, S5's — no write goes through W — and it says that instead. ONLY
+    # UNDER THE OPT-IN (the re-check of #282, R4-2): without it nothing is routed,
+    # a write goes through W as on main, and `lane-checkout` and
+    # `refresh-workspace`, which call this unconditionally, write no register.
+    if [ -n "$lhc_why" ] &&
+       [ "$(LANES_WORKSPACE_ROOT='' lanes_workspace_root 2>/dev/null || :)" = "$LANES_WS_REAL" ]; then
+      [ "$LANES_ROUTE_ON" = 1 ] || return 0
+      die "LANES_WORKSPACE_ROOT and LANES_REPO both name $LANES_WS_REAL, which is W itself — the \`path:\` in $(lanes_ws_yaml) — and W is the readers' copy: under LANES_ROUTE_WRITES=1 nothing is written through it (Amendment 23 S5). Nothing was written, and nothing was cloned or locked. Unset LANES_REPO, and LANES_WORKSPACE_ROOT with it (it only repeats that \`path:\`): each write then goes through its lane's own checkout, $LANES_WS_REAL-lanes/<lane>/." 2
+    fi
+  fi
+  [ -n "$lhc_why" ] || return 0
+  if [ -n "${LANES_WORKSPACE_ROOT:-}" ]; then
+    die "LANES_WORKSPACE_ROOT is $LANES_WORKSPACE_ROOT, so W — the readers' copy, beside which this workstation's lane checkouts and its sidecar lock live — resolves to $LANES_WS_REAL. But $lhc_why: it is a lane checkout, not W (Amendment 23 S1, S5). Nothing was written, and nothing was cloned or locked beside it. Unset LANES_WORKSPACE_ROOT in this window — W is then the \`path:\` in $(lanes_ws_yaml) — and keep LANES_REPO if this window should go on writing through $LANES_WS_REAL." 2
+  fi
+  die "$(lanes_ws_yaml) names path: $LANES_WS_REAL as W, the readers' copy. But $lhc_why: it is a lane checkout, not W (Amendment 23 S1, S5). Nothing was written, and nothing was cloned or locked beside it. Point that \`path:\` at the workspace checkout itself (\`openRepoTools wip init\` writes it)." 2
+}
+
+# S1 — THE PATH, FROM THE LANE NAME ALONE: canonical, never a profile, session,
+# window, container or directory. Derived every time and recorded nowhere.
+lane_checkout_path() {   # <canonical lane>
+  [ -n "$LANES_WS_REAL" ] || return 1
+  printf '%s-lanes/%s\n' "$LANES_WS_REAL" "$1"
+}
+
+# W's object store, absolute and real: the one directory a lane checkout's
+# alternates file may name. `--git-common-dir` is relative to `-C` on older
+# git, so a relative answer is joined to W.
+lane_ws_objects() {
+  lwo_d="$(git -C "$LANES_WS_REAL" rev-parse --git-common-dir 2>/dev/null)" || return 1
+  case "$lwo_d" in ''|/*) : ;; *) lwo_d="$LANES_WS_REAL/$lwo_d" ;; esac
+  [ -n "$lwo_d" ] || return 1
+  (cd -P -- "$lwo_d/objects" 2>/dev/null && pwd -P)
+}
+
+# S1 — A PATH THAT EXISTS AND IS NOT A CLONE OF THE REGISTER IS REFUSED, exit 1
+# (Amendment 9(a)'s "registry not found"), and nothing at it is ever deleted,
+# moved, repaired or cloned over. 0 for a clone; 1 with LCV_WHY saying what is
+# there, and LCV_ALT=1 where it is the borrowed objects that are wrong.
+LCV_WHY=""; LCV_ALT=0
+lane_checkout_verify() {   # <path>
+  lcv_p="$1"; LCV_WHY=""; LCV_ALT=0
+  if [ -L "$lcv_p" ]; then
+    LCV_WHY="a symbolic link (to $(readlink "$lcv_p" 2>/dev/null || printf 'somewhere unreadable')), and a lane checkout is a directory of its own"
+    return 1
+  fi
+  if [ ! -d "$lcv_p" ]; then LCV_WHY="a file, not a directory"; return 1; fi
+  lcv_real="$(cd -P -- "$lcv_p" 2>/dev/null && pwd -P)" || {
+    LCV_WHY="a directory this process cannot enter"; return 1; }
+  lcv_top="$(git -C "$lcv_p" rev-parse --show-toplevel 2>/dev/null || :)"
+  if [ -z "$lcv_top" ]; then LCV_WHY="a directory that is not a git checkout"; return 1; fi
+  if [ "$lcv_top" != "$lcv_real" ]; then
+    LCV_WHY="a directory inside the checkout $lcv_top, not the root of one"; return 1
+  fi
+  if [ ! -d "$lcv_p/.git" ]; then
+    LCV_WHY="a checkout whose .git is a file — a linked worktree or a separate git directory — where S1 needs a clone: a linked worktree shares W's refs and index lock"
+    return 1
+  fi
+  lcv_o="$(git -C "$lcv_p" remote get-url origin 2>/dev/null || :)"
+  lcv_wo="$(git -C "$LANES_WS_REAL" remote get-url origin 2>/dev/null || :)"
+  if ! lanes_ws_same_repo "$lcv_o" "$lcv_wo"; then
+    LCV_WHY="a checkout of ${lcv_o:-no origin at all}, where the register's origin is ${lcv_wo:-unknown}"
+    return 1
+  fi
+  lcv_alt="$lcv_p/.git/objects/info/alternates"
+  [ -f "$lcv_alt" ] || return 0
+  lcv_wobj="$(lane_ws_objects)" || {
+    LCV_ALT=1; LCV_WHY="a clone with an alternates file, and W's own object directory cannot be read to check it against"; return 1; }
+  while IFS= read -r lcv_l || [ -n "$lcv_l" ]; do
+    case "$lcv_l" in ''|'#'*) continue ;; esac
+    case "$lcv_l" in /*) lcv_t="$lcv_l" ;; *) lcv_t="$lcv_p/.git/objects/$lcv_l" ;; esac
+    lcv_tr="$(cd -P -- "$lcv_t" 2>/dev/null && pwd -P)" || lcv_tr=""
+    if [ -z "$lcv_tr" ]; then
+      LCV_ALT=1; LCV_WHY="a clone whose borrowed objects are gone: its alternates file names $lcv_l, which is not there"; return 1
+    fi
+    if [ "$lcv_tr" != "$lcv_wobj" ]; then
+      LCV_ALT=1; LCV_WHY="a clone that borrows objects from $lcv_tr, where a lane checkout borrows from W's $lcv_wobj and nothing else"; return 1
+    fi
+  done < "$lcv_alt"
+  return 0
+}
+lane_checkout_refuse() {   # <path> — after lane_checkout_verify said no
+  lcr_aside="$1.aside-$(date -u +%Y%m%dT%H%M%SZ)"
+  if [ "$LCV_ALT" = 1 ]; then
+    die "$1 is not a usable lane checkout: it is $LCV_WHY (Amendment 23 S1). Nothing was written, and nothing there was deleted, moved or repaired. Once \`git -C $1 cherry -v origin/$LANES_BRANCH HEAD\` there shows nothing unpublished, a person moves it aside — mv $1 $lcr_aside — and the next write clones afresh." 1
+  fi
+  die "$1 is not a clone of the register: it is $LCV_WHY (Amendment 23 S1). Nothing was written, and nothing there was deleted, moved or repaired. A person moves it aside — mv $1 $lcr_aside — and runs the write again." 1
+}
+
+# S1 — AFTER A RENAME, THE OLD NAME'S CHECKOUT: the first `<W>-lanes/<o>/`
+# whose name `o` is a key of the alias table resolving to this lane.
+lane_checkout_old() {   # <canonical lane>
+  lco_base="$LANES_WS_REAL-lanes"
+  lco_keys="$(lane_alias_keys 2>/dev/null)" || return 0
+  while IFS= read -r lco_k; do
+    [ -n "$lco_k" ] || continue
+    [ "$(lc "$lco_k")" != "$(lc "$1")" ] || continue
+    lco_t="$(lane_alias_target "$lco_k" 2>/dev/null)" || continue
+    [ "$(lc "$lco_t")" = "$(lc "$1")" ] || continue
+    if [ -d "$lco_base/$lco_k" ] && [ ! -L "$lco_base/$lco_k" ]; then
+      printf '%s\n' "$lco_base/$lco_k"; return 0
+    fi
+  done <<LCO_KEYS
+$lco_keys
+LCO_KEYS
+  return 0
+}
+
+# S1 — CREATION ON FIRST USE, under a creation lock beside the checkout (its own
+# lock does not exist yet). Sets LCE_PATH. Dies 1 for what is not a clone, 2
+# where the clone failed (only its `.partial` is left), 4 for the lock.
+#
+# THE CLONE'S BUDGET is ten minutes, or `LANES_GIT_TIMEOUT` where that is
+# longer, because `git_net`'s minute is a push's bound and a cold clone of a
+# 23,027-file register is not a push; 0 or an empty value still disables it.
+LCE_PATH=""
+lane_checkout_ensure() {   # <canonical lane>
+  lce_lane="$1"
+  lce_p="$(lane_checkout_path "$lce_lane")" || die "$(lanes_workspace_why)" 1
+  lce_base="${lce_p%/*}"
+  LCE_PATH="$lce_p"
+  # AN EMPTY DIRECTORY COUNTS AS ABSENT. `rmdir` refuses anything that is not
+  # empty, so this deletes nothing.
+  if [ -d "$lce_p" ] && [ ! -L "$lce_p" ]; then rmdir -- "$lce_p" 2>/dev/null || :; fi
+  if [ -e "$lce_p" ] || [ -L "$lce_p" ]; then
+    lane_checkout_verify "$lce_p" || lane_checkout_refuse "$lce_p"
+    lce_old="$(lane_checkout_old "$lce_lane")"
+    [ -z "$lce_old" ] || note "$lce_old is lane $lce_lane's checkout under a former name (lanes/aliases.tsv). This write goes through $lce_p, and the old one is left as it is, for lane-end's sweep (Amendment 23 S1, S6)."
+    return 0
+  fi
+  # `LANES_NO_GIT=1` IS "NO COMMIT, NO PUSH", and a clone is a git act over the
+  # network (the review of #282, NIT 8): with no checkout to write through, the
+  # write refuses rather than clone one. A renamed lane's old checkout is still
+  # moved below — that is one `mv`, and no git act.
+  if [ "${NO_GIT:-0}" = 1 ] && [ -z "$(lane_checkout_old "$lce_lane")" ]; then
+    die "LANES_NO_GIT=1 is set, and lane $lce_lane has no checkout at $lce_p to write through: making one is a clone, which LANES_NO_GIT=1 does not do (Amendment 23 S1). Nothing was written. Unset it, or make the checkout first: $SELF lane-checkout $lce_lane --create" 2
+  fi
+  mkdir -p -- "$lce_base" 2>/dev/null ||
+    die "cannot create $lce_base, where this workstation's lane checkouts live (Amendment 23 S1). Nothing was written." 2
+  case "$GIT_TIMEOUT" in
+    ''|0|*[!0-9]*) lce_budget="$GIT_TIMEOUT"; lce_wait=660 ;;
+    *) lce_budget=600; [ "$GIT_TIMEOUT" -le 600 ] || lce_budget="$GIT_TIMEOUT"; lce_wait=$((lce_budget + 60)) ;;
+  esac
+  lce_lock="$lce_base/.$lce_lane.lock"
+  mutex_try "$lce_lock" "$lce_wait" ||
+    die "could not take $lce_lock within ${lce_wait}s: another writer is creating lane $lce_lane's checkout (holder pid $(cat -- "$lce_lock/pid" 2>/dev/null || printf 'unrecorded')). Nothing was written; run the write again." 4
+  CREATE_LOCK="$lce_lock"
+  # ANOTHER CREATOR MAY HAVE FINISHED while this one waited.
+  if [ -d "$lce_p" ] && [ ! -L "$lce_p" ]; then rmdir -- "$lce_p" 2>/dev/null || :; fi
+  if [ ! -e "$lce_p" ] && [ ! -L "$lce_p" ]; then
+    lce_old="$(lane_checkout_old "$lce_lane")"
+    if [ -n "$lce_old" ]; then
+      # THE RENAME CASE: one `mv`, no git act, so nothing is left under a name
+      # no reader resolves.
+      mv -- "$lce_old" "$lce_p" ||
+        die "lane $lce_lane was renamed, and its checkout $lce_old could not be moved to $lce_p. Nothing was written." 2
+      note "lane $lce_lane was renamed (lanes/aliases.tsv), so its checkout $lce_old is now $lce_p: one move, and no git act (Amendment 23 S1)."
+    else
+      lce_part="$lce_base/.$lce_lane.partial"
+      # A `.partial` LEFT BY AN EARLIER ATTEMPT IS MOVED ASIDE, never cloned
+      # into and never deleted.
+      if [ -e "$lce_part" ] || [ -L "$lce_part" ]; then
+        lce_aside="$lce_part.aside-$(date -u +%Y%m%dT%H%M%SZ)"
+        if [ -e "$lce_aside" ] || [ -L "$lce_aside" ]; then lce_aside="$lce_aside.$$"; fi
+        mv -- "$lce_part" "$lce_aside" ||
+          die "a leftover $lce_part could not be moved aside, so lane $lce_lane's checkout cannot be cloned. Nothing was written." 2
+        note "moved $lce_part aside to $lce_aside: an earlier creation of lane $lce_lane's checkout did not finish. Nothing in it was deleted."
+      fi
+      lce_url="$(git -C "$LANES_WS_REAL" remote get-url origin 2>/dev/null || :)"
+      [ -n "$lce_url" ] ||
+        die "W ($LANES_WS_REAL) names no origin, so there is nothing to clone lane $lce_lane's checkout from (Amendment 23 S1). Nothing was written." 1
+      # `--reference` NAMES W AND NOTHING ELSE, and only where W itself borrows
+      # from nowhere: alternates stay one level deep by construction.
+      lce_ref="$LANES_WS_REAL"
+      lce_wobj="$(lane_ws_objects 2>/dev/null || :)"
+      if [ -n "$lce_wobj" ] && [ -f "$lce_wobj/info/alternates" ]; then lce_ref=""; fi
+      note "creating lane $lce_lane's checkout $lce_p: a clone of $lce_url${lce_ref:+ that borrows the objects of W} (Amendment 23 S1)"
+      # THE CREATION LOCK'S HEARTBEAT, for as long as the clone runs (the review
+      # of #282, NIT 5): its budget is ten minutes or more, and a waiter in
+      # another container takes a lock that has not moved for ten. So it is
+      # refreshed now and every minute until the clone ends, and only ever with
+      # `touch -c` (MUST 4): a lock that vanished is never made again as a file.
+      # Its output is nobody's, and it ends by itself when this process does.
+      touch -c -- "$lce_lock" 2>/dev/null || :
+      ( while sleep 60; do kill -0 "$$" 2>/dev/null || exit 0; touch -c -- "$lce_lock" 2>/dev/null || :; done ) \
+        </dev/null >/dev/null 2>&1 &
+      CREATE_HB=$!
+      lce_t="$GIT_TIMEOUT"; GIT_TIMEOUT="$lce_budget"; lce_rc=0
+      git_net clone -q ${lce_ref:+--reference "$lce_ref"} --single-branch --branch "$LANES_BRANCH" \
+        -- "$lce_url" "$lce_part" || lce_rc=$?
+      GIT_TIMEOUT="$lce_t"
+      create_heartbeat_stop
+      if [ "$lce_rc" != 0 ]; then
+        lce_how="exit $lce_rc"; [ "$GIT_TIMED_OUT" = 1 ] && lce_how="timed out after ${lce_budget}s"
+        die "the clone of $lce_url for lane $lce_lane failed ($lce_how), so this write has no checkout to go through and was refused: nothing was written. A failed clone leaves only $lce_part, which the next attempt moves aside (Amendment 23 S1)." 2
+      fi
+      # W'S REPO-LOCAL IDENTITY, key by key and only where W sets one: a lane
+      # checkout commits as W's own commits would have.
+      for lce_k in user.name user.email; do
+        lce_v="$(git -C "$LANES_WS_REAL" config --local --get "$lce_k" 2>/dev/null)" || continue
+        git -C "$lce_part" config "$lce_k" "$lce_v" 2>/dev/null || :
+      done
+      # THE TARGET IS RE-CHECKED ABSENT FIRST: `mv` into a directory nests.
+      if [ -e "$lce_p" ] || [ -L "$lce_p" ]; then
+        note "$lce_p appeared while lane $lce_lane's checkout was being cloned, so the clone was not moved into it (that would nest one inside the other): it is left at $lce_part, and the next attempt moves it aside."
+      else
+        mv -- "$lce_part" "$lce_p" ||
+          die "the clone for lane $lce_lane is at $lce_part and could not be moved to $lce_p. Nothing was written." 2
+      fi
+    fi
+  fi
+  mutex_release "$lce_lock"
+  CREATE_LOCK=""
+  lane_checkout_verify "$lce_p" || lane_checkout_refuse "$lce_p"
+  return 0
+}
+
+# S2 — THE LANE A WRITE IS ATTRIBUTED TO, which is the lane its commit subject
+# carries. Prints it and returns 0; returns 1 for an invocation that is NOT a
+# routed write; 2 for a write that names no lane.
+#
+# NOT A WRITE, AND SO NOT ROUTED: every read; `publish-handoff` (it writes the
+# file its caller names, which is still W's until slices 2a-3 move its callers,
+# and it takes the workstation's sidecar lock alone); the dry runs of
+# `archive-rows`, `migrate-state-cells` and `request-handoff`, which lock and
+# write nothing; and a writer missing its lane argument, whose arm refuses as
+# its first act — with its own usage words and code — before reading anything.
+write_lane_of() {   # <verb> <its arguments…>
+  wlo_v="${1-}"; shift || :
+  case "$wlo_v" in
+    set-row-state|replace-in-row|append-session-id)
+      [ -n "${1-}" ] || return 1
+      printf '%s\n' "$1" ;;
+    request-handoff)
+      # THE ARM'S OWN PARSE (the review of #282, NIT 1): `--` ends the options,
+      # and every word after it is the `--force` why — so a why that reads
+      # `--dry-run` is not a dry run, and the write it is goes through the
+      # target lane's checkout like any other.
+      [ -n "${1-}" ] || return 1
+      wlo_l="$1"; shift
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --) break ;;
+          --dry-run) return 1 ;;
+          --wait|--session) shift; [ $# -gt 0 ] || break; shift ;;
+          *) shift ;;
+        esac
+      done
+      printf '%s\n' "$wlo_l" ;;
+    rename-lane)
+      wlo_o=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --why) shift 2 || return 1 ;;
+          --verbatim|--no-github|--why=*|--) shift ;;
+          -*) return 1 ;;
+          *) wlo_o="$1"; break ;;
+        esac
+      done
+      [ -n "$wlo_o" ] || return 1
+      printf '%s\n' "$wlo_o" ;;
+    add-row)
+      [ -n "${1-}" ] || return 1
+      wlo_l=""
+      case "$1" in *'`'*'`'*) wlo_l="${1#*\`}"; wlo_l="${wlo_l%%\`*}" ;; esac
+      [ -n "$wlo_l" ] || return 2
+      printf '%s\n' "$wlo_l" ;;
+    append-line)
+      [ -n "${1-}" ] || return 1
+      if [ -n "${LANES_LANE:-}" ]; then printf '%s\n' "$LANES_LANE"; return 0; fi
+      # The arm's own attribution (`lane_from_text`, then the row's spelling): a
+      # line that names no lane with a row is a write with no lane.
+      # FROM THE PUBLISHED REGISTER FIRST (the review of #282, SHOULD 1): W's
+      # working tree moves only by `refresh-workspace`, so a lane whose row was
+      # added through its own checkout is on origin and not in W's file, and a
+      # `LANDING — lane <it>, …` with no `LANES_LANE` was "no lane, no write".
+      # The working tree is still asked where the published read finds none.
+      wlo_c="$(lane_from_text "$1")"
+      [ -n "$wlo_c" ] || return 2
+      wlo_cc="$(canon_lane "$wlo_c" 2>/dev/null)" || { printf '%s\n' "$wlo_c"; return 0; }
+      wlo_l="$(rows_named_ci "${wlo_cc:-$wlo_c}" 2>/dev/null | awk 'NF { n++; t = $0 } END { if (n == 1) print t }')"
+      [ -n "$wlo_l" ] || wlo_l="$(row_lane_ci "${wlo_cc:-$wlo_c}")"
+      [ -n "$wlo_l" ] || return 2
+      printf '%s\n' "$wlo_l" ;;
+    commit|log|claim|release)
+      [ -n "${LANES_LANE:-}" ] || return 2
+      printf '%s\n' "$LANES_LANE" ;;
+    retire-rows)
+      # S2: a sweep goes through the checkout of the lane that RUNS it.
+      wlo_w="${LANES_LANE:-}"
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --writer) wlo_w="${2-}"; shift 2 || break ;;
+          --writer=*) wlo_w="${1#--writer=}"; shift ;;
+          *) shift ;;
+        esac
+      done
+      [ -n "$wlo_w" ] || return 2
+      printf '%s\n' "$wlo_w" ;;
+    archive-rows|migrate-state-cells)
+      wlo_y=0
+      for wlo_a in ${1+"$@"}; do
+        case "$wlo_a" in --yes) wlo_y=1 ;; --dry-run) wlo_y=0 ;; esac
+      done
+      [ "$wlo_y" = 1 ] || return 1
+      [ -n "${LANES_LANE:-}" ] || return 2
+      printf '%s\n' "$LANES_LANE" ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
+
+# A path's real spelling — its parent's, where the leaf does not exist yet.
+path_real() {   # <path>
+  if [ -d "$1" ]; then (cd -P -- "$1" 2>/dev/null && pwd -P) && return 0; fi
+  pr_par="$(cd -P -- "$(dirname -- "$1")" 2>/dev/null && pwd -P)" || { printf '%s\n' "$1"; return 0; }
+  printf '%s/%s\n' "$pr_par" "$(basename -- "$1")"
+}
+path_under() {   # <path> <root>
+  case "$1" in "$2"|"$2"/*) return 0 ;; esac
+  return 1
+}
+# S2 — `LANES_DIR` AND `LANES_FILE` LOCATE FILES INSIDE THE CHECKOUT AND NEVER
+# CHOOSE IT. A caller's value outside the checkout this order resolved is a
+# refusal (lane windows exported both, at a per-profile clone, on 2026-10-13).
+lane_checkout_inside() {   # <the resolved checkout's real path>
+  if [ -n "$LANES_DIR_GIVEN" ] && ! path_under "$(path_real "$LANES_DIR_GIVEN")" "$1"; then
+    die "LANES_DIR is $LANES_DIR_GIVEN, outside the checkout this write goes through ($1). LANES_DIR and LANES_FILE locate files inside the checkout and never choose it (Amendment 23 S2). Nothing was written. Unset it, or point it inside $1." 2
+  fi
+  if [ -n "$LANES_FILE_GIVEN" ] && ! path_under "$(path_real "$LANES_FILE_GIVEN")" "$1"; then
+    die "LANES_FILE is $LANES_FILE_GIVEN, outside the checkout this write goes through ($1). LANES_DIR and LANES_FILE locate files inside the checkout and never choose it (Amendment 23 S2). Nothing was written. Unset it, or point it inside $1." 2
+  fi
+  return 0
+}
+
+# A directory's git common directory, real; nothing where it is not in one.
+git_common_real() {   # <dir>
+  gcr_d="$(git -C "$1" rev-parse --git-common-dir 2>/dev/null)" || return 0
+  case "$gcr_d" in '') return 0 ;; /*) : ;; *) gcr_d="$1/$gcr_d" ;; esac
+  (cd -P -- "$gcr_d" 2>/dev/null && pwd -P) || :
+}
+
+# S5'S OTHER HALF FOR PEOPLE (the review of #282, SHOULD 4): A HAND EDIT IN W IS
+# NEVER LEFT BEHIND IN SILENCE. Before Amendment 23 the next write captured an
+# uncommitted register edit as its own `LANES(pre-existing@…)` commit. A routed
+# write goes through the lane's checkout and commits nothing in W, so that edit
+# would stay there, unpublished, while `commit` said "nothing staged". So
+# `commit` — the verb whose whole job is to publish a hand edit — refuses while
+# W's register has one, naming it and the checkout it belongs in.
+#
+# AND ONLY `commit` (the re-review of #282, N2). Every other routed write
+# carries its own edit and none of W's, so one stray edit in W — a person's, or
+# an older helper's write in progress there during the rollout — would stop
+# every lane's writes, a launch's session-id stamp among them. Those say the
+# same thing as a WARNING and go on: the edit stays in W, untouched, and no
+# write captures it.
+#
+# THE STATUS TAKES NO LOCK IN W (N3): a plain `git status` refreshes a
+# stat-dirty index and writes it under W's `index.lock` — a write in W, which S5
+# forbids, and one that can race an older helper's `git add` there.
+ws_pending_refuse() {   # <canonical lane> <its checkout>
+  wpr_st="$(GIT_OPTIONAL_LOCKS=0 git -C "$LANES_WS_REAL" status --porcelain --untracked-files=no -- lanes/LANES.md 2>/dev/null || :)"
+  [ -n "$wpr_st" ] || return 0
+  wpr_carry="Carry it to the lane's own checkout — \`git -C $LANES_WS_REAL diff -- lanes/LANES.md\` shows it; make it in $2/lanes/LANES.md and publish it with LANES_LANE=$1 $SELF commit \"<what it is>\" — then take it out of W by hand"
+  if [ "$cmd" != commit ]; then
+    note "WARNING: W ($LANES_WS_REAL) holds an uncommitted edit to its register (${wpr_st# }), and under LANES_ROUTE_WRITES=1 nothing commits in W: this write goes through $2/ and carries its own edit only, so that one stays in W, unpublished and untouched (Amendment 23 S5). $wpr_carry."
+    return 0
+  fi
+  die "W ($LANES_WS_REAL) holds an uncommitted edit to its register (${wpr_st# }), and under LANES_ROUTE_WRITES=1 nothing commits in W: this write goes through $2/ and would leave that edit in W, unpublished, where the write that used to capture it no longer runs (Amendment 23 S5). Nothing was written. $wpr_carry, and run this write again." 2
+}
+
+# A WRITE THAT NEEDS ITS LANE'S ROW CLONES NOTHING FOR A LANE WITH NONE (the
+# re-review of #282, N5). Measured: `set-row-state repoX-99`, for a lane with no
+# row, cloned `<W>-lanes/repoX-99` — half a gigabyte on Eagle — and then
+# refused, "expected exactly 1 row", leaving the clone. So where the lane has
+# no checkout yet and the verb's arm needs exactly one row of that lane (the
+# four routed `row_line` callers; `rename-lane` goes through its OLD name,
+# whose row it needs), a lane with no row in the published register refuses
+# first, and nothing is cloned.
+#   * NOT THE OTHER WRITES: `log`, `claim`, `release`, `commit`, `append-line`,
+#     `request-handoff` and the sweeps take a lane with no row — an archived
+#     lane keeps its log (Amendment 16(e)) — and `add-row` makes the row.
+#   * A MISS IS ASKED AGAIN after one fetch of W (`log_sync`: W is still
+#     `LANES_REPO` here), so a row, or a rename's new name, that another
+#     checkout published and W has not fetched yet is never refused.
+#   * A READ THAT COULD NOT BE MADE, OR A FETCH THAT DID NOT RUN (failed,
+#     `LANES_NO_FETCH=1`, `LANES_NO_GIT=1`), IS NO ANSWER (R22): the write goes
+#     on, and its arm decides, as it always has.
+lane_row_gate() {   # <canonical lane> <its checkout>
+  case "$cmd" in set-row-state|replace-in-row|append-session-id|rename-lane) : ;; *) return 0 ;; esac
+  [ ! -e "$2/.git" ] || return 0
+  lrg_rows="$(rows_named_ci "$1" 2>/dev/null)" || return 0
+  [ -z "$lrg_rows" ] || return 0
+  log_sync
+  [ "$LOG_SYNC_FETCH" = yes ] || return 0
+  lrg_rows="$(rows_named_ci "$1" 2>/dev/null)" || return 0
+  [ -z "$lrg_rows" ] || return 0
+  die "lane $1 has no row in the register on origin/$LANES_BRANCH (fetched just now into W), and \`$cmd\` edits that lane's row: there is nothing for it to edit, so its checkout $2/ was not cloned (Amendment 23 S1, S2). Nothing was written. Check the name — \`$SELF lanes\` lists every lane — or add the row first (\`add-row\`)." 2
+}
+
+# S2, IN ITS ORDER, for a write: (1) an explicit `LANES_REPO` keeps its meaning
+# — S5 refuses one that IS W — and is honoured in place; (2) otherwise the lane's
+# own checkout, made on first use, and this file runs again there; (3) no lane,
+# no write: there is no fallback to W, and an explicit `LANES_REPO` names a
+# checkout, never a lane (the review of #282, NIT 9). Under the opt-in only.
+lane_checkout_enter() {   # <write_lane_of's status> <its lane, or empty>
+  lcn_st="$1"; lcn_lane="${2-}"
+  lanes_home_check
+  if [ "$lcn_st" = 2 ]; then
+    if [ "$LANES_REPO_GIVEN" = 1 ]; then
+      die "no lane, no write (Amendment 23 S2): \`$cmd\` names no lane here, and LANES_REPO chooses the checkout a write goes through, never the lane its commit is for. Name that lane — LANES_LANE=<lane> $SELF $cmd … — and it carries that lane in its subject. Nothing was written." 2
+    fi
+    die "no lane, no write (Amendment 23 S2): \`$cmd\` names no lane here, so there is no lane checkout for it to go through, and a write never falls back to the workspace checkout. Name the lane it is for — LANES_LANE=<lane> $SELF $cmd … — and it goes through that lane's checkout, carrying that lane in its subject. Nothing was written." 2
+  fi
+  if [ "$LANES_REPO_GIVEN" = 1 ]; then
+    lcn_real="$(cd -P -- "$LANES_REPO" 2>/dev/null && pwd -P)" || lcn_real=""
+    lcn_root="$lcn_real"
+    if [ -n "$lcn_real" ]; then
+      lcn_top="$(git -C "$lcn_real" rev-parse --show-toplevel 2>/dev/null || :)"
+      lcn_top="$( [ -n "$lcn_top" ] && cd -P -- "$lcn_top" 2>/dev/null && pwd -P || :)"
+      [ -z "$lcn_top" ] || lcn_root="$lcn_top"
+    fi
+    lcn_s1="$LANES_WS_REAL-lanes/${lcn_lane:-<lane>}"
+    # S5 BY REPOSITORY, NOT BY SPELLING (the review of #282, SHOULD 3): W's own
+    # `lanes/` directory, or a linked worktree of W, is W — its edit lands in
+    # W's tree and its commit in W's refs — so the checkout's root and its git
+    # common directory are compared, not the path as typed.
+    lcn_gcd=""; lcn_wgcd=""
+    if [ -n "$lcn_real" ]; then
+      lcn_gcd="$(git_common_real "$lcn_real")"; lcn_wgcd="$(git_common_real "$LANES_WS_REAL")"
+    fi
+    if [ -n "$lcn_real" ] && { [ "$lcn_root" = "$LANES_WS_REAL" ] ||
+         { [ -n "$lcn_gcd" ] && [ "$lcn_gcd" = "$lcn_wgcd" ]; }; }; then
+      lcn_via=""; [ "$LANES_REPO" = "$LANES_WS_REAL" ] || lcn_via=" (through $LANES_REPO)"
+      die "LANES_REPO names the workspace checkout $LANES_WS_REAL$lcn_via, and that checkout is the readers' copy: no tool writes there (Amendment 23 S5). Nothing was written. Write through the lane's own checkout instead — unset LANES_REPO and name the lane, LANES_LANE=${lcn_lane:-<lane>} $SELF $cmd … — and the write goes through $lcn_s1/." 2
+    fi
+    # S6.2 — A PER-PROFILE CLONE BESIDE W is honoured, and warned about.
+    case "$lcn_root" in
+      "${LANES_WS_REAL%/*}/${LANES_WS_REAL##*/}-"*)
+        if [ "${lcn_root%/*}" = "${LANES_WS_REAL%/*}" ] && [ "$lcn_root" != "$LANES_WS_REAL-lanes" ] &&
+           lanes_ws_same_repo "$(git -C "$lcn_root" remote get-url origin 2>/dev/null || :)" \
+                              "$(git -C "$LANES_WS_REAL" remote get-url origin 2>/dev/null || :)"; then
+          note "WARNING: LANES_REPO names $lcn_root, a per-profile clone of the register beside W. It is honoured, and nothing new should write through it (Amendment 23 S6.2): this lane's own checkout is $lcn_s1/. Unset LANES_REPO, LANES_DIR and LANES_FILE in this window, or relaunch it."
+        fi ;;
+    esac
+    [ -z "$lcn_root" ] || lane_checkout_inside "$lcn_root"
+    return 0
+  fi
+  check_lane_name "$lcn_lane"
+  lcn_c="$(canon_lane "$lcn_lane")" || exit $?
+  check_lane_name "$lcn_c"
+  lcn_p="$(lane_checkout_path "$lcn_c")" || die "$(lanes_workspace_why)" 1
+  lane_checkout_inside "$lcn_p"
+  ws_pending_refuse "$lcn_c" "$lcn_p"
+  lane_row_gate "$lcn_c" "$lcn_p"
+  lane_checkout_ensure "$lcn_c"
+  if [ -n "$LANES_DIR_GIVEN" ]; then LANES_DIR="$LANES_DIR_GIVEN"
+  elif [ -n "$LANES_FILE_GIVEN" ]; then LANES_DIR="$(dirname -- "$LANES_FILE_GIVEN")"
+  else LANES_DIR="$lcn_p/lanes"; fi
+  LANES_FILE="${LANES_FILE_GIVEN:-$LANES_DIR/LANES.md}"
+  LANES_REPO="$lcn_p"
+  LANES__CHECKOUT_LANE="$lcn_c"; LANES__PID="$$"
+  export LANES_REPO LANES_DIR LANES_FILE LANES__CHECKOUT_LANE LANES__PID
+  cleanup_for_exec
+  # THE `exec` IS DELIBERATE: it hands this one write to the routed checkout's copy and does not
+  # return, and the `die` after it runs only if the `exec` itself fails.
+  # shellcheck disable=SC2093
+  exec "${BASH:-bash}" "$RESOLVED" ${ORIG_ARGV[@]+"${ORIG_ARGV[@]}"}
+  die "could not run $RESOLVED again in lane $lcn_c's checkout $lcn_p. Nothing was written." 1
+}
+
+# S2 — HANDOFF PATHS ARE TRANSLATED, NEVER FOLLOWED. A repository-relative cell
+# (`handoffs/<estate>/<f>`) is joined to the lane's checkout; a `~/…` or
+# absolute path whose physical parent is under W becomes the same path under
+# the lane's checkout; anything else is another repository's (Amendment 8(d)),
+# published and never committed by these tools. The row's cell keeps its
+# spelling: this answers where the file is WRITTEN.
+ws_relative() {   # <cell or path> — 0 and its path relative to W; 1 and the real path
+  wsr_in="$1"
+  case "$wsr_in" in
+    '~') wsr_in="$HOME" ;;
+    '~/'*) wsr_in="$HOME/${wsr_in#'~/'}" ;;
+    /*) : ;;
+    *) printf '%s\n' "$wsr_in"; return 0 ;;
+  esac
+  wsr_n=0
+  while [ -L "$wsr_in" ] && [ "$wsr_n" -lt 40 ]; do
+    wsr_l="$(readlink "$wsr_in")" || break
+    case "$wsr_l" in /*) wsr_in="$wsr_l" ;; *) wsr_in="$(dirname -- "$wsr_in")/$wsr_l" ;; esac
+    wsr_n=$((wsr_n + 1))
+  done
+  wsr_par="$(cd -P -- "$(dirname -- "$wsr_in")" 2>/dev/null && pwd -P)" || { printf '%s\n' "$wsr_in"; return 1; }
+  wsr_real="$wsr_par/$(basename -- "$wsr_in")"
+  case "$wsr_real" in
+    "$LANES_WS_REAL"/*) printf '%s\n' "${wsr_real#"$LANES_WS_REAL"/}"; return 0 ;;
+  esac
+  printf '%s\n' "$wsr_real"
+  return 1
+}
+handoff_in_checkout() {   # <canonical lane> <cell or path> — 0 its path in the lane's checkout; 3 another repository's
+  hic_p="$(lane_checkout_path "$1")" || return 1
+  hic_rel=""; hic_rc=0
+  hic_rel="$(ws_relative "$2")" || hic_rc=$?
+  if [ "$hic_rc" = 0 ]; then printf '%s/%s\n' "$hic_p" "$hic_rel"; return 0; fi
+  if path_under "$hic_rel" "$hic_p"; then printf '%s\n' "$hic_rel"; return 0; fi
+  printf '%s\n' "$hic_rel"
+  return 3
+}
+
+# S5 — W IS ONLY EVER FAST-FORWARDED, and `refresh-workspace` is the one act
+# that does it: `git fetch origin main` and `git merge --ff-only origin/main`,
+# the only two git acts any tool runs in W. Whatever would stop a fast-forward
+# is REPORTED AND SKIPPED, and nothing repairs W: no reset, stash, commit or
+# abort — that is a person's act, as the 2026-10-17T15:27Z repair was.
+#   0 fast-forwarded, or already current · 2 skipped, nothing changed · 1 no W
+refresh_workspace() {
+  rw_w="$LANES_WS_REAL"
+  [ -n "$rw_w" ] || die "$(lanes_workspace_why)" 1
+  rw_why=""
+  # A LIVE LEGACY LOCK IN W is an older helper writing there right now.
+  rw_lk="$rw_w/lanes/.lanes-edit.lock"
+  if [ -e "$rw_lk" ] || [ -L "$rw_lk" ]; then
+    if [ -d "$rw_lk" ] && [ ! -L "$rw_lk" ] && mutex_stale "$rw_lk"; then
+      note "W carries a stale lock, $rw_lk: $MX_WHY. A stale lock does not stop a fast-forward, and this act leaves it as it is."
+    else
+      rw_why="${rw_why}
+  a lock held: $rw_lk (holder: $(cat -- "$rw_lk/pid" 2>/dev/null || printf 'unrecorded'))"
+    fi
+  fi
+  rw_head="$(git -C "$rw_w" symbolic-ref -q --short HEAD 2>/dev/null || :)"
+  if [ "$rw_head" != "$LANES_BRANCH" ]; then
+    if [ -z "$rw_head" ]; then
+      rw_head="$(git -C "$rw_w" rev-parse --short HEAD 2>/dev/null || :)"
+      rw_head="detached at ${rw_head:-an unreadable commit}"
+    fi
+    rw_why="${rw_why}
+  not on $LANES_BRANCH: HEAD is $rw_head"
+  fi
+  rw_gd="$(git -C "$rw_w" rev-parse --absolute-git-dir 2>/dev/null || :)"
+  for rw_op in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD; do
+    if [ -n "$rw_gd" ] && [ -e "$rw_gd/$rw_op" ]; then
+      rw_why="${rw_why}
+  an operation in progress: $rw_gd/$rw_op"
+    fi
+  done
+  if [ -n "$(git -C "$rw_w" ls-files -u 2>/dev/null)" ]; then
+    rw_why="${rw_why}
+  unmerged entries (git -C $rw_w status)"
+  fi
+  rw_staged="$(git -C "$rw_w" diff --cached --name-only 2>/dev/null | tr '\n' ' ')"
+  if [ -n "$rw_staged" ]; then
+    rw_why="${rw_why}
+  staged entries: $rw_staged"
+  fi
+  if [ "${LANES_NO_FETCH:-0}" = 1 ]; then
+    note "LANES_NO_FETCH=1 — not fetching; W is brought to origin/$LANES_BRANCH as the ref already stands here"
+  elif ! git_net -C "$rw_w" fetch -q origin "$LANES_BRANCH"; then
+    rw_why="${rw_why}
+  the fetch of origin $LANES_BRANCH failed$([ "$GIT_TIMED_OUT" = 1 ] && printf ' (timed out after %ss)' "$GIT_TIMEOUT")"
+  fi
+  rw_ahead=""; rw_behind=""
+  rw_lr="$(git -C "$rw_w" rev-list --left-right --count "HEAD...origin/$LANES_BRANCH" 2>/dev/null || :)"
+  rw_ahead="${rw_lr%%[!0-9]*}"; rw_behind="${rw_lr##*[!0-9]}"
+  if [ -z "$rw_lr" ]; then
+    rw_why="${rw_why}
+  origin/$LANES_BRANCH cannot be compared with HEAD here"
+  elif [ "${rw_ahead:-0}" -gt 0 ] && [ "${rw_behind:-0}" -gt 0 ]; then
+    rw_why="${rw_why}
+  diverged from origin/$LANES_BRANCH: $rw_ahead commit(s) here origin lacks, and $rw_behind there"
+  elif [ "${rw_ahead:-0}" -gt 0 ]; then
+    rw_why="${rw_why}
+  ahead of origin/$LANES_BRANCH by $rw_ahead commit(s) — git -C $rw_w cherry -v origin/$LANES_BRANCH HEAD"
+  fi
+  if [ -n "$rw_why" ]; then
+    note "refresh-workspace SKIPPED: W ($rw_w) was not fast-forwarded, and nothing in it was changed. What blocks it:$rw_why"
+    note "Repairing W is a person's act (Amendment 23 S5, S6.5); until then readers read what W has."
+    refresh_workspace_strays "$rw_w"
+    exit 2
+  fi
+  if [ "${rw_behind:-0}" = 0 ]; then
+    note "W ($rw_w) is current with origin/$LANES_BRANCH."
+    refresh_workspace_strays "$rw_w"
+    exit 0
+  fi
+  rw_from="$(git -C "$rw_w" rev-parse --short HEAD 2>/dev/null || :)"
+  if ! git -C "$rw_w" merge --ff-only -q "origin/$LANES_BRANCH"; then
+    note "refresh-workspace SKIPPED: git refused to fast-forward W ($rw_w) — its own words are above — and nothing in it was changed. A file in the way is a person's, or a lane's, to carry to its own checkout."
+    refresh_workspace_strays "$rw_w"
+    exit 2
+  fi
+  note "fast-forwarded W ($rw_w) from $rw_from to $(git -C "$rw_w" rev-parse --short HEAD 2>/dev/null || :), $rw_behind commit(s)."
+  refresh_workspace_strays "$rw_w"
+  exit 0
+}
+# S5, "PEOPLE TOO" — a file written into W through an estate link lands there
+# uncommitted, where nothing will commit it. Each one under `handoffs/` or
+# `lanes/` is named by path, and where a row's handoff cell names it, by the
+# lane whose handoff it is and the place in that lane's checkout it belongs.
+refresh_workspace_strays() {   # <W>
+  rws_list="$(git -C "$1" status --porcelain --untracked-files=all -- handoffs lanes 2>/dev/null || :)"
+  [ -n "$rws_list" ] || return 0
+  rws_map="$(awk -F'|' 'substr($0,1,1) == "|" {
+      p1 = index($0, "`"); if (p1 == 0) next
+      rest = substr($0, p1 + 1); p2 = index(rest, "`"); if (p2 == 0) next
+      cell = $7; gsub(/^[ \t]+|[ \t]+$/, "", cell)
+      if (cell != "") print substr(rest, 1, p2 - 1) "\t" cell
+    }' "$1/lanes/LANES.md" 2>/dev/null || :)"
+  rws_rel_map=""
+  while IFS='	' read -r rws_lane rws_cell; do
+    [ -n "${rws_lane:-}" ] || continue
+    rws_rel="$(ws_relative "$rws_cell")" || continue
+    rws_rel_map="$rws_rel_map$rws_rel	$rws_lane
+"
+  done <<RWS_ROWS
+$rws_map
+RWS_ROWS
+  while IFS= read -r rws_line; do
+    [ -n "$rws_line" ] || continue
+    rws_st="${rws_line:0:2}"; rws_path="${rws_line:3}"
+    case "$rws_path" in lanes/.lanes-edit.lock|lanes/.lanes-edit.lock/*) continue ;; esac
+    rws_who="$(printf '%s' "$rws_rel_map" | awk -F'\t' -v p="$rws_path" '$1 == p { print $2; exit }')"
+    if [ -n "$rws_who" ]; then
+      note "a stray in W: $rws_path ($rws_st) — lane $rws_who's handoff, which belongs in its own checkout: $(handoff_in_checkout "$rws_who" "$rws_path")"
+    else
+      note "a stray in W: $rws_path ($rws_st)"
+    fi
+  done <<RWS_LIST
+$rws_list
+RWS_LIST
+  return 0
+}
+
 # ---------------------------------------------------------------- subcommands
 
 cmd="${1-}"
@@ -15130,7 +16130,11 @@ case "$cmd" in
   # workstation where no register is configured.
   session-start|guard|lane-groups|next-free|append-row-status|project-legs) : ;;
   *)
-    if [ -z "$LANES_REPO" ] || [ -z "$LANES_DIR" ]; then
+    # AND W ITSELF UNDER THE OPT-IN, an explicit `LANES_REPO` or not
+    # (Amendment 23): S5 refuses a write whose checkout is W, and the sidecar
+    # lock lives beside it.
+    if [ -z "$LANES_REPO" ] || [ -z "$LANES_DIR" ] ||
+       { [ "$LANES_ROUTE_ON" = 1 ] && [ -z "$LANES_WS_REAL" ]; }; then
       die "$(lanes_workspace_why)" 1
     fi
     [ -f "$LANES_FILE" ] || die "registry not found: $LANES_FILE
@@ -15139,6 +16143,19 @@ case "$cmd" in
     has one; re-run it (it is idempotent) or pull that checkout." 1
     ;;
 esac
+
+# AMENDMENT 23 S2 — UNDER `LANES_ROUTE_WRITES=1`, EVERY WRITE GOES THROUGH ITS
+# LANE'S CHECKOUT. Asked after the two guards above, so a container with no
+# workstation name and a W with no register refuse before any checkout is
+# cloned; and asked once — the process this re-runs as (`LANES_ROUTED`) is
+# already in the checkout. A read goes on in W, which is what every read verb
+# has always read. Without the opt-in nothing here runs (MUST 2 of #282's
+# review): the write goes through `LANES_REPO`, W by default.
+if [ "$LANES_ROUTE_ON" = 1 ] && [ -z "$LANES_ROUTED" ]; then
+  wlo_rc=0
+  wlo_lane="$(write_lane_of "$cmd" ${1+"$@"})" || wlo_rc=$?
+  [ "$wlo_rc" = 1 ] || lane_checkout_enter "$wlo_rc" "$wlo_lane"
+fi
 
 case "$cmd" in
   verify-row)
@@ -15374,6 +16391,10 @@ Nothing was written." 2
         lane_tag="$(row_lane_ci "${cand_c:-$cand}")"
       fi
     fi
+    # A ROUTED LINE'S LANE IS THE ONE IT WAS ROUTED BY (Amendment 23; the review
+    # of #282, SHOULD 1): the router read it from the published register, and
+    # this checkout's copy may predate the row.
+    [ -n "$lane_tag" ] || lane_tag="${LANES_ROUTED:-}"
     acquire_lock; handle_preexisting
     append_text_line "$text"
     msg="LANES(${lane_tag:-unknown}@$WS): append line — ${text:0:72}"
@@ -18102,7 +19123,7 @@ EOF
     [ "${#pbh_digest}" = 64 ] || die "publication requires the complete prior SHA-256" 64
     case "$pbh_digest" in *[!0-9a-fA-F]*) die "publication requires SHA-256" 64 ;; esac
     [ -f "$pbh_source" ] && [ -r "$pbh_source" ] && [ -s "$pbh_source" ] || die "the prepared handoff is unreadable or empty" 1
-    acquire_lock
+    sidecar_lock_use; acquire_lock   # the workstation's sidecar lock, and no other (Amendment 23 S2)
     managed_seam_refuse "$lane" "publish-handoff"
     pbh_links=0
     while [ -L "$pbh_target" ]; do
@@ -18279,7 +19300,7 @@ EOF
     lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
     # Select the physical intent under the CAS mutex: a waiting writer must
     # see a reservation another writer established before releasing the lock.
-    acquire_lock
+    sidecar_lock_use; acquire_lock   # the workstation's sidecar lock, and no other (Amendment 23 S2)
     managed_seam_refuse "$lane" "set-restart-intent"
     sri_root=""; sri_rrc=0
     sri_root="$(lane_restart_control_root "$lane")" || sri_rrc=$?
@@ -18582,7 +19603,7 @@ EOF
       die "lane $lane has no lifecycle control root, so there is nowhere to record that it is $sls_state: its record names no directory (Amendment 11(c)) and \$PROJECTS_ROOT is not a directory here. Set \$LANES_LANE_STATE_ROOT, or start the lane through lane-start so that its record carries a dir." 1
     # THE FENCE, read under the same mutex the write takes, so that two
     # transitions cannot both read the state before either writes it.
-    acquire_lock
+    sidecar_lock_use; acquire_lock   # the workstation's sidecar lock, and no other (Amendment 23 S2)
     # AND THE SCHEMA IS ASKED ABOUT BEFORE ANY TRANSITION FIELD IS READ OR
     # WRITTEN (Copilot round 5 on #97). `lane_state_read` fails closed for a
     # version it does not know; this writer used to walk past that check into
@@ -18780,7 +19801,7 @@ EOF
     # is the whole workstation's (design decision 14, and the same argument that
     # keeps `lane-reconcile` out of it): what must be serialized is the compare
     # and the write, not the reading of a repository.
-    acquire_lock
+    sidecar_lock_use; acquire_lock   # the workstation's sidecar lock, and no other (Amendment 23 S2)
     if [ -n "$slt_g" ] || [ -n "$slt_op" ]; then
       if ! lane_sidecar_schema_ok "$slt_root/lane-state.yaml"; then
         release_lock
@@ -18971,7 +19992,54 @@ EOF
     fi
     ;;
 
+  # AMENDMENT 23 S1 — THE LANE'S OWN CHECKOUT, read, or made on first use. It
+  # prints `<W>-lanes/<lane>`, from the lane name alone (canonical, through the
+  # alias table). Read-side: it writes nothing to the register, and `--create`
+  # is the clone every write makes on first use, made ahead of one.
+  #   0 the path · 8 none there yet (no --create) · 1 something there that is
+  #   not a clone of the register · 2 a name refused, or the clone failed ·
+  #   4 the creation lock · 64 usage
+  lane-checkout)
+    lck_lane=""; lck_create=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --create) lck_create=1; shift ;;
+        --)       shift ;;
+        -*)       die "unknown option '$1' for lane-checkout (usage: lane-checkout <lane> [--create])" 64 ;;
+        *)        [ -z "$lck_lane" ] || die "lane-checkout takes ONE lane (usage: lane-checkout <lane> [--create])" 64
+                  lck_lane="$1"; shift ;;
+      esac
+    done
+    [ -n "$lck_lane" ] || die "usage: lane-checkout <lane> [--create]" 64
+    lanes_home_check
+    check_lane_name "$lck_lane"
+    lck_lane="$(canon_lane "$lck_lane")" || exit $?
+    check_lane_name "$lck_lane"
+    if [ "$lck_create" = 1 ]; then
+      lane_checkout_ensure "$lck_lane"
+      printf '%s\n' "$LCE_PATH"
+      exit 0
+    fi
+    lck_p="$(lane_checkout_path "$lck_lane")" || die "$(lanes_workspace_why)" 1
+    [ -e "$lck_p" ] || [ -L "$lck_p" ] || exit 8
+    if [ -d "$lck_p" ] && [ ! -L "$lck_p" ] && [ -z "$(ls -A -- "$lck_p" 2>/dev/null)" ]; then exit 8; fi
+    lane_checkout_verify "$lck_p" || lane_checkout_refuse "$lck_p"
+    printf '%s\n' "$lck_p"
+    ;;
+
+  # AMENDMENT 23 S5 (2) — THE READ-SIDE FAST-FORWARD OF W, on demand: for a
+  # person, for a reader of a `handoffs` link, for a listing that wants W
+  # current — and, from the next slice, for `lane-start`. It never resets,
+  # stashes, commits or aborts; see `refresh_workspace`.
+  #   0 fast-forwarded or already current · 2 skipped, nothing changed ·
+  #   1 W not found · 64 usage
+  refresh-workspace)
+    [ "$#" = 0 ] || die "refresh-workspace takes no arguments" 64
+    lanes_home_check
+    refresh_workspace
+    ;;
+
   *)
-    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|retire-rows|archive-rows|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|binding|request-handoff|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|duplicate-holder|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|register-row-local|retired-identity|canon-lane|resolve-home|managed-projection|lane-state|set-lane-state|lane-trees|set-lane-tree|lane-tree-now|project-legs|lane-reconcile|lane-holders|legacy-restart-check|publish-handoff|restart-intent|set-restart-intent|worktrees|pathspec-check)" 2
+    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|retire-rows|archive-rows|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|binding|request-handoff|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|duplicate-holder|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|register-row-local|retired-identity|canon-lane|resolve-home|managed-projection|lane-state|set-lane-state|lane-trees|set-lane-tree|lane-tree-now|project-legs|lane-reconcile|lane-holders|legacy-restart-check|publish-handoff|restart-intent|set-restart-intent|worktrees|pathspec-check|lane-checkout|refresh-workspace)" 2
     ;;
 esac
