@@ -26,6 +26,7 @@ import os
 import shutil
 import signal
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -868,6 +869,31 @@ def test_a_checkout_whose_origin_changes_after_the_listing_is_held(sweep):
     assert c.is_dir()
 
 
+def test_the_lock_is_refreshed_before_the_reask(sweep):
+    """THE SWEEP KEEPS ITS LOCK FRESH (rv4's NIT 4; rv4-c3's NIT c3-4, P5). A
+    writer in another container ages a lock by its directory's mtime alone
+    (`mutex_stale`'s ten minutes, `find -mmin -10`), so the sweep refreshes
+    it (`sc_lock_beat`, `touch -c`) before each slow step. Here the lock is
+    aged twenty minutes during the candidate's own fetch; when the lane's
+    state is asked again under that lock, it reads under ten minutes old."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    lock = box.lock_of(c)
+    aged, fresh = box.root / "aged.txt", box.root / "fresh.txt"
+    stamp = time.strftime("%Y%m%d%H%M.%S", time.gmtime(time.time() - 20 * 60))
+    _hook_on_fetch_of(box, c, (
+        f"TZ=UTC0 touch -t {stamp} {lock} && "
+        f'printf "[%s]\\n" "$(find {lock} -maxdepth 0 -mmin +10)" >> {aged}'))
+    wrapper = _wrapped(box, "lanes-edit-age", "lanes", (
+        f'  case " $* " in *" --lane {CLOSED} "*) '
+        f'printf "[%s]\\n" "$(find {lock} -maxdepth 0 -mmin -10)" >> {fresh} ;; esac\n'))
+    result, rows = sweep("--yes", LANES_LANE=RUNNER, LANES_EDIT=wrapper)
+    assert aged.read_text(encoding="utf-8") == f"[{lock}]\n", "the hook aged the lock"
+    assert fresh.read_text(encoding="utf-8") == f"[{lock}]\n", "fresh again at the re-ask"
+    assert rows[str(c)][0] == "removed", rows[str(c)]
+    assert result.returncode == 0, (result.stdout, result.stderr)
+
+
 @pytest.mark.parametrize("then,why", [
     ("", "its writers' lock lanes/.lanes-edit.lock is no longer this sweep's (1 other-container otherhost)"),
     ("; exit 1", "its fetch of origin main failed"),
@@ -1417,6 +1443,8 @@ def test_a_store_kept_inside_a_clone_is_leaned_on(sweep):
 GIT_FILES = [
     pytest.param(lambda c, sharer: f"gitdir: {c}/.git\n", id="absolute"),
     pytest.param(lambda c, sharer: f"gitdir: {c}/.git\r\n", id="CRLF, whose CR git strips"),
+    pytest.param(lambda c, sharer: f"gitdir: {os.path.relpath(c / '.git', sharer)}\n",
+                 id="relative to the directory it is in"),
 ]
 
 
@@ -1427,7 +1455,8 @@ def test_a_git_file_naming_a_clones_git_directory_holds_it(sweep, spelled):
     in that clone's git directory, and removing the clone takes it away. The
     clone is held, by the dry run and by `--yes`, naming the directory. The
     file is read as git reads it, so a CRLF line works in that directory too
-    (rv4-c3's NIT c3-3, P3)."""
+    (rv4-c3's NIT c3-3, P3), and so does a path relative to the directory
+    the file is in (NIT c3-4, P4)."""
     box = sweep.box
     c = box.checkout(CLOSED)
     sharer = box.w.parent / "sharer"
