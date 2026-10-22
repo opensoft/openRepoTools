@@ -1682,9 +1682,10 @@ def _noted_on_origin(box: Sweep) -> list:
 
 
 def _remedies(stderr: str) -> list:
-    """The commands a failed NOTED write hands out on lines of their own."""
+    """The commands a failed NOTED write hands out, each on a line of its own,
+    in the order they are to be run."""
     return [line.split(":", 1)[1].strip() for line in stderr.splitlines()
-            if line.startswith("lane-end:   LANES_LANE=")]
+            if line.startswith("lane-end:   ")]
 
 
 def _by_hand(box: Sweep, command: str) -> subprocess.CompletedProcess:
@@ -1747,9 +1748,9 @@ def test_noted_line_kept_unpublished_is_published_not_written_again(sweep):
     """A NOTED write that exits 6 with its commit KEPT in the checkout it was
     made in (rv4's SHOULD 2): every push is refused here with origin unmoved.
     The sweep exits 1 without saying "NOT written", and hands out the publish
-    act first, and the by-hand line only for a publish act that finds nothing
-    to send. With pushes allowed again, the publish act sends the kept commit,
-    and origin holds the line once."""
+    act alone (lane openRepoTools-3's SHOULD 373: the line is committed, so
+    a line by hand would record the sweep twice). With pushes allowed again,
+    the publish act sends the kept commit, and origin holds the line once."""
     box = sweep.box
     gate = box.root / "push.refused"
     gate.write_text("", encoding="utf-8")
@@ -1761,13 +1762,87 @@ def test_noted_line_kept_unpublished_is_published_not_written_again(sweep):
     assert "was NOT written" not in result.stderr, result.stderr
     assert "kept on HEAD" in result.stderr, result.stderr
     remedies = _remedies(result.stderr)
-    assert len(remedies) == 2, remedies
-    publish, by_hand = remedies
-    assert publish.startswith(f"LANES_LANE={RUNNER} lanes-edit.sh commit "), remedies
-    assert by_hand.startswith(f"LANES_LANE={RUNNER} LANES_SESSION={UUID[RUNNER]} lanes-edit.sh log NOTED "), remedies
+    assert len(remedies) == 1, remedies
+    assert remedies[0].startswith(f"LANES_LANE={RUNNER} lanes-edit.sh commit "), remedies
     gate.rename(box.root / "push.allowed")
-    done = _by_hand(box, publish)
+    done = _by_hand(box, remedies[0])
     assert done.returncode == 0, (done.stdout, done.stderr)
+    assert len(_noted_on_origin(box)) == 1, _noted_on_origin(box)
+
+
+def _run_in_order(box: Sweep, remedies: list) -> None:
+    """Runs the commands a failed NOTED write handed out, in order, as a
+    person would; each must succeed."""
+    for command in remedies:
+        done = _by_hand(box, command)
+        assert done.returncode == 0, (command, done.stdout, done.stderr)
+
+
+def test_noted_line_whose_commit_fails_is_put_back_then_written_by_hand(sweep):
+    """A NOTED WRITE WHOSE `git commit` FAILS (lane openRepoTools-3's SHOULD
+    373): a `pre-commit` hook in the runner's checkout refuses it, so `log`
+    exits 6 with the line staged there and nothing committed. The publish act
+    refuses a staged entry it did not make, and so does the line by hand, so
+    neither is handed out first: the sweep says to put the log back, then to
+    write the line by hand. With the hook gone, the two, run in order, land
+    the line once."""
+    box = sweep.box
+    runner = box.checkout(RUNNER)
+    hook = runner / ".git" / "hooks" / "pre-commit"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text("#!/bin/sh\necho 'FAKE: a pre-commit hook refuses this commit' >&2\nexit 1\n",
+                    encoding="utf-8")
+    hook.chmod(0o755)
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert _tagged(rows, "removed") == {str(box.checkout(CLOSED))}, rows
+    assert "git commit failed" in result.stderr, result.stderr
+    assert "was NOT committed" in result.stderr, result.stderr
+    assert not _noted_on_origin(box)
+    remedies = _remedies(result.stderr)
+    assert len(remedies) == 2, remedies
+    assert remedies[0] == f"git -C {runner} restore --staged --worktree -- lanes/log/{RUNNER}.md", remedies
+    assert remedies[1].startswith(
+        f"LANES_LANE={RUNNER} LANES_SESSION={UUID[RUNNER]} lanes-edit.sh log NOTED "), remedies
+    hook.rename(hook.with_name("pre-commit.off"))
+    _run_in_order(box, remedies)
+    assert len(_noted_on_origin(box)) == 1, _noted_on_origin(box)
+
+
+def test_noted_line_that_loses_six_push_races_is_archived_then_written_by_hand(sweep):
+    """A NOTED WRITE THAT LOSES THE RACE SIX TIMES (lane openRepoTools-3's
+    SHOULD 373): a peer's commit lands on origin before every push from the
+    runner's checkout, so `log` exits 6 at its bound with the line committed
+    there and origin moved past it. The publish act makes only a
+    fast-forward, and the line by hand meets S3's refusal of a checkout
+    holding a commit origin lacks, so neither is handed out first: the sweep
+    says to archive the commit on origin (S6.3), take it off the checkout,
+    then write the line by hand. Run in order, the archive holds the stranded
+    commit and origin's log holds the line once."""
+    box = sweep.box
+    runner = box.checkout(RUNNER)
+    gate = box.root / "push.races"
+    gate.write_text("", encoding="utf-8")
+    peer = _push_from_peer(box, "handoffs/README.md", "a peer lands first\n", "a-peer-lands-first")
+    box.use_net(hook=(f'case "$1" in push) case " $* " in *" -C {runner} "*)\n'
+                      f"  if [ -e {gate} ]; then {peer} || exit 1; fi ;;\n"
+                      "esac ;; esac\nexit 0\n"))
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert _tagged(rows, "removed") == {str(box.checkout(CLOSED))}, rows
+    assert "after six attempts" in result.stderr, result.stderr
+    assert not _noted_on_origin(box)
+    remedies = _remedies(result.stderr)
+    assert len(remedies) == 3, remedies
+    archive, reset, by_hand = remedies
+    assert archive.startswith(f"git -C {runner} push origin HEAD:refs/heads/archive/{RUNNER}-stranded-"), remedies
+    assert reset == f"git -C {runner} reset --keep refs/remotes/origin/main", remedies
+    assert by_hand.startswith(f"LANES_LANE={RUNNER} LANES_SESSION={UUID[RUNNER]} lanes-edit.sh log NOTED "), remedies
+    stranded = box.git("-C", str(runner), "rev-parse", "HEAD").strip()
+    gate.rename(box.root / "push.free")
+    _run_in_order(box, remedies)
+    ref = archive.split("HEAD:", 1)[1]
+    assert box.git("--git-dir", str(box.origin), "rev-parse", ref).strip() == stranded, "the archive holds it"
     assert len(_noted_on_origin(box)) == 1, _noted_on_origin(box)
 
 

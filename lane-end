@@ -1885,6 +1885,20 @@ SLU
       "$sc_runner" "$sc_uuid" "lane:$sc_runner" "$1"
   }
   sc_publish="LANES_LANE=$(printf '%q' "$sc_runner") lanes-edit.sh commit $(printf '%q' "the NOTED line of lane-end --sweep-checkouts")"
+  # THE CHECKOUT THE LINE GOES THROUGH, as `lanes-edit.sh` picks it (S2): the
+  # caller's `LANES_REPO`; under `LANES_ROUTE_WRITES=1`, the runner's own
+  # checkout; and W without either. A refused write is finished there.
+  if [ -n "$LE_REPO_GIVEN" ]; then sc_wco="${sc_xrepo:-$LE_REPO_GIVEN}"
+  elif [ "${LANES_ROUTE_WRITES:-}" = 1 ]; then sc_wco="$sc_home/$sc_runner"
+  else sc_wco="$sc_w"; fi
+  # The write, its words on stderr, or in a file: sent there inside its own
+  # subshell, so a signal's trap, run in this shell once the write is done,
+  # still speaks on this shell's own stderr.
+  sc_log_noted() {   # [<the file its words go to>]
+    ( unset LANES_NO_FETCH
+      if [ -n "${1-}" ]; then exec 2>"$1" || exit 1; fi
+      LANES_LANE="$sc_runner" LANES_SESSION="$sc_uuid" "$LANES_EDIT" log NOTED "lane:$sc_runner" "$sc_text" >&2 )
+  }
   sc_partial_said=0
   sc_say_partial() {
     if [ -n "$sc_partial" ] && [ "$sc_partial_said" = 0 ]; then
@@ -1906,6 +1920,7 @@ SLU
   sc_on_signal() {   # <the exit code, 128 plus the signal>
     trap '' INT TERM
     if [ "$sc_noting" = 1 ]; then
+      if [ -n "${LE_TMP:-}" ]; then cat -- "$LE_TMP" >&2 2>/dev/null || :; fi
       note "a signal stopped this sweep while its NOTED line was being written, so the line may be on origin already, or committed in the checkout it went through and not yet published. Nothing was lost: each checkout removed held nothing unpublished. Look at lane $sc_runner's log on origin first. Where origin lacks the line, the publish act sends a commit that is kept:"
       note "  $sc_publish"
       note "Only where origin lacks the line and the publish act finds nothing to send is it written by hand:"
@@ -2052,21 +2067,32 @@ SLU
   if [ $((sc_n_removed + sc_n_partial)) -gt 0 ]; then
     sc_text="$(sc_noted_text)"
     sc_noted_rc=0
+    # WHAT THE WRITE SAYS IS KEPT, AS WELL AS SHOWN (lane openRepoTools-3's
+    # SHOULD 373): its exit 6 has three causes, and each is finished by other
+    # commands, so its own words choose them. A capture that cannot be made
+    # leaves its words on stderr only, and the remedies for an unknown cause.
+    sc_log_err=""
+    LE_TMP="$(mktemp "${TMPDIR:-/tmp}/lane-end-sweep.XXXXXX" 2>/dev/null || printf '')"
     sc_noting=1
-    ( unset LANES_NO_FETCH
-      LANES_LANE="$sc_runner" LANES_SESSION="$sc_uuid" "$LANES_EDIT" log NOTED "lane:$sc_runner" "$sc_text" ) >&2 ||
-      sc_noted_rc=$?
+    if [ -n "$LE_TMP" ]; then
+      sc_log_noted "$LE_TMP" || sc_noted_rc=$?
+      sc_log_err="$(cat -- "$LE_TMP" 2>/dev/null)" || sc_log_err=""
+      rm -f -- "$LE_TMP"; LE_TMP=""
+      if [ -n "$sc_log_err" ]; then printf '%s\n' "$sc_log_err" >&2; fi
+    else
+      sc_log_noted || sc_noted_rc=$?
+    fi
     # A WRITE THAT DID NOT CONFIRM IS NOT A WRITE THAT DID NOT HAPPEN (rv4's
     # SHOULD 2). `log`'s 3 is `pushed, not confirmed`: the line may be on
     # origin already. Its 6 is, in most of its causes, the commit KEPT in the
     # checkout the write went through and not on origin, and in the rest a
     # `git add` or `commit` that failed, with nothing committed. Writing the
     # line again after either would record the sweep twice, or meet S3's
-    # refusal of a checkout holding a commit origin lacks. So both are handed
-    # THE PUBLISH ACT first (Amendment 23 S4, #194): `commit` with nothing
+    # refusal of a checkout holding a commit origin lacks. So a 3 is handed
+    # THE PUBLISH ACT alone (Amendment 23 S4, #194): `commit` with nothing
     # staged sends what origin lacks by content and says so where it lacks
-    # nothing, so it is safe to run whichever happened. Only a 6 whose publish
-    # act finds nothing to send, and every other refusal, gets the line by hand.
+    # nothing, so it is safe to run whichever happened. A 6 is handed what
+    # its own cause needs (below), and every other refusal the line by hand.
     if [ "$sc_noted_rc" != 0 ]; then
       sc_by_hand="$(sc_by_hand_of "$sc_text")"
       case "$sc_noted_rc" in
@@ -2075,10 +2101,38 @@ SLU
           note "  $sc_publish"
           exit 1 ;;
         6)
-          note "the NOTED line recording this sweep was not published (\`lanes-edit.sh log\` exited 6, above). Nothing was lost: each checkout removed held nothing unpublished. Where that says its commit is kept, the line is committed and only origin lacks it, so it is not to be written again: the publish act sends what origin lacks by content:"
-          note "  $sc_publish"
-          note "Only where the publish act finds nothing to send (git could not add or commit the line, above) is it written by hand:"
-          note "  $sc_by_hand"
+          # EXIT 6 HAS THREE CAUSES, AND EACH IS FINISHED ITS OWN WAY (lane
+          # openRepoTools-3's SHOULD 373), chosen by the write's own words:
+          # a push refused with origin unmoved leaves the line committed, and
+          # the publish act sends it once what refused it is put right; a
+          # `git add` or `git commit` that failed leaves the line staged or
+          # in the tree, which the publish act and the line by hand would
+          # both refuse, so the log is put back first; and a push that lost
+          # the race to its bound leaves the line committed on a base origin
+          # has moved past, which the publish act (a fast-forward only) and
+          # the line by hand (S3: a commit origin lacks) would both refuse,
+          # so it is archived on origin (S6.3) and taken off the checkout
+          # first. Words this sweep does not know get both remedies, in the
+          # order that is safe whichever happened.
+          case "$sc_log_err" in
+            *"with origin/$sc_branch unmoved"*)
+              note "the NOTED line recording this sweep is committed in $sc_wco and was not published: its push was refused with origin/$sc_branch unmoved (\`lanes-edit.sh log\` exited 6, above), so only origin lacks it, and it is not to be written again. Nothing was lost: each checkout removed held nothing unpublished. Once what refused the push is put right, the publish act sends it:"
+              note "  $sc_publish" ;;
+            *"git add failed"* | *"git commit failed"*)
+              note "the NOTED line recording this sweep was NOT committed: git could not add or commit it in $sc_wco (\`lanes-edit.sh log\` exited 6, above), so it is left there, staged or in the working tree, and none of it is on origin. Nothing was lost: each checkout removed held nothing unpublished. Once what refused the commit is put right, put the log back and write the line by hand:"
+              note "  git -C $(printf '%q' "$sc_wco") restore --staged --worktree -- $(printf '%q' "lanes/log/$sc_runner.md")"
+              note "  $sc_by_hand" ;;
+            *"the commit is local and kept on HEAD"* | *"git could not name the commit to drop this write's to"*)
+              note "the NOTED line recording this sweep is committed in $sc_wco and could not be published: origin/$sc_branch moved under its push until the write gave up (\`lanes-edit.sh log\` exited 6, above), and the publish act makes only a fast-forward. Nothing was lost: each checkout removed held nothing unpublished. Archive the commit on origin (Amendment 23 S6.3), take it off the checkout, and write the line by hand:"
+              note "  git -C $(printf '%q' "$sc_wco") push origin HEAD:refs/heads/archive/$sc_runner-stranded-$sc_utc"
+              note "  git -C $(printf '%q' "$sc_wco") reset --keep refs/remotes/origin/$sc_branch"
+              note "  $sc_by_hand" ;;
+            *)
+              note "the NOTED line recording this sweep was not published (\`lanes-edit.sh log\` exited 6, above). Nothing was lost: each checkout removed held nothing unpublished. Where that says its commit is kept, the line is committed and only origin lacks it, so it is not to be written again: the publish act sends what origin lacks by content:"
+              note "  $sc_publish"
+              note "Only where the publish act finds nothing to send (git could not add or commit the line, above) is it written by hand:"
+              note "  $sc_by_hand" ;;
+          esac
           exit 1 ;;
       esac
       die "the NOTED line recording this sweep was NOT written (\`lanes-edit.sh log\` exited $sc_noted_rc, above), so lane $sc_runner's log does not say what was removed. Nothing was lost: each checkout removed held nothing unpublished. Write the line by hand: $sc_by_hand" 1
