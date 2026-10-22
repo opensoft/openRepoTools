@@ -349,8 +349,8 @@ where `raw.githubusercontent.com` is blocked.
 
 | Variable | Default | What it is |
 |---|---|---|
-| `$OPENREPOTOOLS_REPO` | `opensoft/openRepoTools` | the `owner/name` to fetch from — a fork or a mirror, named once. A value holding a control character or a character a terminal draws as another (a bidirectional override, U+200B, U+2028 or U+FEFF) is refused before `--version` prints it or `--install` names or sends it, naming the kind and never the value (#241); a package's `--version` prints neither this nor the ref |
-| `$OPENREPOTOOLS_REF` | `main` | the ref to fetch it at; refused on the same two grounds (#241) |
+| `$OPENREPOTOOLS_REPO` | `opensoft/openRepoTools` | the `owner/name` to fetch from — a fork or a mirror, named once. A value holding a control character or a character a terminal draws as another (a bidirectional override, U+200B, U+2028 or U+FEFF) is refused before `--version` prints it, `--install` names or sends it or `wip init` does anything, naming the kind and never the value (#241); a package's `--version` prints neither this nor the ref |
+| `$OPENREPOTOOLS_REF` | `main` | the ref to fetch it at; refused on the same two grounds, by the same three runs (#241) |
 | `$OPENREPOTOOLS_BIN_DIR` | `~/.local/bin` | where `--install` puts the seventeen, and where `lane-start` looks for `claude-current`. Refused before anything is placed, fetched or named, naming the kind of character and never the directory, where it holds a `:` (which splits a `PATH` whatever the quoting), a control character (U+0000 to U+001F, DEL or U+0080 to U+009F) or a character a terminal draws as another (#241). Two limits are known and held in a test, as in openRepoShape's `--install` (its #858): a name a multibyte locale such as GB18030 reads as text is placed, and so is a lone `0x9B` byte |
 | `$OPENREPOTOOLS_DATA_DIR` | `${XDG_DATA_HOME:-~/.local/share}/openRepoTools` | where `--install` writes the receipt of what it placed |
 | `$AGENT_PROTOCOL_ROOT` | `~/.agents` | where `workspace.yaml` lives — the one pointer to your data |

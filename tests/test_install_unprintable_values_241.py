@@ -30,6 +30,14 @@ this checkout's `openRepoTools` byte for byte, so the cases at the end run the
 payload of a fake installed package (`package_layout.package_tree`) through the
 same refusals, and show that a package's `--version`, which prints neither the
 repository nor the ref, asks neither of them anything.
+
+`wip init` IS ASKED THE REPOSITORY AND THE REF TOO, from every route. Its step 7
+sends both as typed when it runs from an INSTALLED COPY, which has no pin beside
+it to read (the review of #241, MUST-1), so it refuses them before it makes or
+asks anything, `--dry-run` included. It is not asked the directory: its own
+lines never name it. The cases are under "a bad value stops the run before it
+asks anyone anything", and the colon, which only the directory refuses, has a
+case of its own beside the rows the rule takes.
 """
 
 from __future__ import annotations
@@ -49,6 +57,7 @@ from conftest import WINDOWS_SKIP
 from test_install_by_rename import installer_function
 from test_openrepotools_command import (COMMAND, INSTALLED, NEEDS_JQ,
                                         command_env)
+from test_wip_init_command import fake_gh
 
 pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
                                  reason="openRepoTools is a bash script"),
@@ -215,18 +224,23 @@ def sandbox(tmp_path: Path) -> Path:
     return home
 
 
-def recording_net(tmp_path: Path) -> Path:
+def recording_net(tmp_path: Path, answering: Path | None = None) -> Path:
     """A `gh` and a `curl` first on `$PATH` that write down every call they
-    are asked for, in `<net>/calls.log`, and refuse. Returns the directory to
-    put first on `$PATH`; `calls_to` reads the log."""
+    are asked for, in `<net>/calls.log`, and refuse. With `answering`, a
+    directory holding a `gh` and a `curl`, each runs that one after it has
+    written the call down, so a run goes on as it would and the log still
+    shows everything it asked. Returns the directory to put first on `$PATH`;
+    `calls_to` reads the log."""
     net = tmp_path / "net"
     net.mkdir(exist_ok=True)
     for tool in ("gh", "curl"):
+        then = ("exit 1\n" if answering is None
+                else f"exec {shlex.quote(str(answering / tool))} \"$@\"\n")
         (net / tool).write_text(
             "#!/bin/sh\n"
             f"printf '%s %s\\n' {tool} \"$*\" >> "
-            f"{shlex.quote(str(net / 'calls.log'))}\n"
-            "exit 1\n", encoding="utf-8")
+            f"{shlex.quote(str(net / 'calls.log'))}\n" + then,
+            encoding="utf-8")
         (net / tool).chmod(0o755)
     return net
 
@@ -284,6 +298,16 @@ def assert_refused_saying(result: subprocess.CompletedProcess, said: str,
 def nothing_placed(home: Path) -> bool:
     """The sandbox HOME is as empty as it began: nothing was placed or made."""
     return sorted(home.rglob("*")) == []
+
+
+def installed_copy(tmp_path: Path) -> Path:
+    """`openRepoTools` as `--install` leaves it in a bin directory: the one
+    file, with no `contracts/` or `upstream/` beside it. A run from it has no
+    pin to read, so what it needs of the source it asks the source for."""
+    where = tmp_path / "installed"
+    where.mkdir(exist_ok=True)
+    shutil.copy2(COMMAND, where / "openRepoTools")
+    return where / "openRepoTools"
 
 
 def refusal_words(opening: str, said: str) -> str:
@@ -415,6 +439,34 @@ def test_version_prints_every_value_the_rule_takes_as_typed(
     assert result.stderr == ""
 
 
+#: A `:` in the repository and in the ref. The rule refuses one in the DIRECTORY
+#: alone, because only that is a `$PATH` for a `:` to split
+#: (`UNNAMEABLE_BIN_DIRS`): neither of these two is, so each is a sound value.
+COLON_VALUES = [
+    pytest.param(REPOSITORY, "acme/r:x", id="the-repository"),
+    pytest.param(REF, "refs/tags/a:b", id="the-ref"),
+]
+
+
+@pytest.mark.parametrize("locale", LOCALES)
+@pytest.mark.parametrize("variable, value", COLON_VALUES)
+def test_a_colon_is_the_directorys_alone_a_repository_or_ref_may_hold_one(
+        tmp_path, variable, value, locale):
+    """The review's SHOULD-1: nothing pinned that a `:` is refused ONLY for the
+    directory, so a rule that refused it for the repository and the ref as well
+    (`refuse_bad_values` is the one function all three runs that ask the two
+    values share) would have passed every other test. `--version` prints a
+    repository or a ref holding one as typed, exit 0, under `C` and `C.UTF-8`;
+    `test_wip_init_from_an_installed_copy_goes_on_and_sends_a_sound_value_as_typed`
+    holds the same for the request `wip init` sends."""
+    result = go(tmp_path, "--version", env={variable: value, "LC_ALL": locale})
+    repository, ref = ((value, "main") if variable == REPOSITORY
+                       else ("opensoft/openRepoTools", value))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout == f"openRepoTools ({repository} @ {ref})\n"
+    assert result.stderr == ""
+
+
 @NEEDS_JQ
 @pytest.mark.parametrize("locale", LOCALES)
 @pytest.mark.parametrize("end, said", TAKEN_BIN_DIRS)
@@ -438,8 +490,10 @@ def test_a_bin_dir_the_rule_takes_is_placed(tmp_path, end, said, locale):
 #: whether the command arrives on stdin: `--install` from its file, which
 #: copies what is beside it; `--install` from stdin, the documented install
 #: line, which fetches every file; and `--version`, which prints both. `wip
-#: init` is not one of them: it neither prints nor sends any of the three
-#: (`test_wip_init_reads_none_of_the_three_values`).
+#: init` is another, and not in this table: from an installed copy its step 7
+#: sends the repository and the ref as typed, and it is asked both before it
+#: does anything, by every route and with `--dry-run`, which is what its own
+#: cases vary (`test_wip_init_refuses_*`, below).
 RUNS = {
     "install": (("--install",), False),
     "install-from-stdin": (("--install",), True),
@@ -494,28 +548,167 @@ def test_the_run_a_bad_value_stops_does_ask_the_network_when_every_value_is_soun
     assert calls_to(net), "`--install` from stdin asked the network nothing"
 
 
-def test_wip_init_reads_none_of_the_three_values(tmp_path):
-    """`wip init` neither prints nor sends `$OPENREPOTOOLS_REPO`,
-    `$OPENREPOTOOLS_REF` or `$OPENREPOTOOLS_BIN_DIR` (its template is
-    openRepoShape's, and it looks for `link-estates` in the directory without
-    naming it), so it asks none of them: the same three values that refuse
-    `--install` change nothing it says, and no request it makes carries them.
-    Held here so that nobody adds a refusal to a run that has no line to
-    protect."""
-    home = sandbox(tmp_path)
+#: THE ROUTES A `wip init` IS RUN BY, each as the script it runs. From an
+#: INSTALLED COPY, with no `contracts/openreposhape-pin.yaml` beside it, step 7
+#: asks the source for the standard's pin and SENDS `$OPENREPOTOOLS_REPO` and
+#: `$OPENREPOTOOLS_REF` as typed: the run that reached the fetch (the review of
+#: #241, MUST-1). The checkout's file has the pin beside it and reads it, and a
+#: package's payload carries it too, so neither sends them, and both are held
+#: to the same refusal, because it is asked before the route matters.
+WIP_ROUTES = {
+    "an-installed-copy": installed_copy,
+    "the-checkout": lambda tmp_path: COMMAND,
+    "a-package": lambda tmp_path: installed_package(tmp_path),
+}
+
+#: A bad repository and a bad ref, the kinds of character the rule refuses in
+#: both (a control character, a misdrawn one), as the variable, the value and
+#: what the refusal says of it. The third is the forged ref the review sent.
+WIP_BAD_VALUES = [
+    pytest.param(REPOSITORY, "acme/r" + ESCAPE + "[31mforged",
+                 HOLDS_A_CONTROL_CHARACTER, id="a-repository-with-an-escape"),
+    pytest.param(REPOSITORY, "acme/r" + RLO + "forged",
+                 drawn_as_another("U+202E"), id="a-repository-with-u+202e"),
+    pytest.param(REF, "v1\nforged" + ESCAPE + "[31m",
+                 HOLDS_A_CONTROL_CHARACTER,
+                 id="a-ref-with-a-newline-and-an-escape"),
+    pytest.param(REF, "v1" + ZWSP + "forged", drawn_as_another("U+200B"),
+                 id="a-ref-with-u+200b"),
+]
+
+
+def run_wip_init(tmp_path: Path, command: Path, *flags: str,
+                 env: dict) -> tuple[subprocess.CompletedProcess, Path]:
+    """`wip init` with `flags`, run from `command` in a sandbox HOME against the
+    repo's own fake `gh` (`test_wip_init_command.fake_gh`: it answers `repo
+    view`, `repo create`, `repo clone` and the template files, with real bare
+    repositories under `<tmp_path>/github`), behind a `gh` and a `curl` that
+    write down every call first. Returns the result and the directory
+    `calls_to` reads."""
+    answering = fake_gh(tmp_path)
+    net = recording_net(tmp_path, answering=tmp_path / "fake-path")
+    return go(tmp_path, "wip", "init", *flags, command=command, net=net,
+              env={**answering, **env}), net
+
+
+@pytest.mark.parametrize("flags", [(), ("--dry-run",)],
+                         ids=["a-run", "a-dry-run"])
+@pytest.mark.parametrize("route", WIP_ROUTES)
+@pytest.mark.parametrize("variable, value, said", WIP_BAD_VALUES)
+def test_wip_init_refuses_a_bad_repository_or_ref_before_it_asks_or_makes_anything(
+        tmp_path, variable, value, said, route, flags):
+    """`wip init` refuses an unsafe `$OPENREPOTOOLS_REPO` and, separately, an
+    unsafe `$OPENREPOTOOLS_REF`: exit 2, in the words every refusal of the two
+    uses (the variable named, never the value), before it has asked the
+    network anything or made anything.
+
+    FROM AN INSTALLED COPY THIS IS THE RUN THAT REACHED THE FETCH: with no pin
+    beside the script, step 7 sent both values as typed in a `gh api` call and
+    a raw URL, after steps 5 and 6 had made the repository and cloned it (the
+    review of #241, MUST-1). So the log of calls is empty, the sandbox HOME is
+    as empty as it began, and the fake server holds no repository. The
+    checkout and the package are held to it too, and so is `--dry-run`: it
+    reads neither value, but it is the rehearsal of a run that refuses.
+
+    (The test this replaced ran `--dry-run` from the checkout, where
+    `wip_shape_ref` reads the pin beside the script and the run stops before
+    step 7, so it could not see the send, and it asserted the opposite.)"""
+    command = WIP_ROUTES[route](tmp_path)
+    result, net = run_wip_init(tmp_path, command, *flags, env={variable: value})
+    assert calls_to(net) == [], "`wip init` asked the network before it refused"
+    said_in_full = assert_refused_saying(result, f"${variable} {said}", value)
+    assert "Nothing was fetched, installed or replaced" in said_in_full, \
+        said_in_full
+    assert nothing_placed(sandbox(tmp_path))
+    assert sorted((tmp_path / "github").rglob("*")) == [], \
+        "`wip init` made a repository"
+
+
+#: What `wip init` says before it asks the two values, each as its arguments
+#: and a phrase of the refusal: the verb, an option it lacks, an option with no
+#: value, and a login no `<user>-wip` name can be made of.
+WIP_OWN_REFUSALS = [
+    pytest.param(("wip",), "`wip` takes one verb and it is `init`",
+                 id="no-verb"),
+    pytest.param(("wip", "bogus"),
+                 "`wip bogus` is not a thing this command does",
+                 id="another-verb"),
+    pytest.param(("wip", "init", "--bogus"),
+                 "`wip init` takes --org, --login, --team and --dry-run",
+                 id="an-option-it-lacks"),
+    pytest.param(("wip", "init", "--org"), "--org needs a value",
+                 id="an-option-with-no-value"),
+    pytest.param(("wip", "init", "--login", "No_Good"),
+                 "cannot form a compliant `<user>-wip` name",
+                 id="a-login-that-cannot-form-a-name"),
+]
+
+
+@pytest.mark.parametrize("args, said", WIP_OWN_REFUSALS)
+def test_wip_init_gives_its_own_refusals_before_it_asks_the_two_values(
+        tmp_path, args, said):
+    """The values are asked after the arguments and `--login`, so each of those
+    refusals is the one it always was, though the repository and the ref are
+    bad too: the person fixes what they typed first, and a bad value cannot
+    change what a mistyped option says."""
     net = recording_net(tmp_path)
-    bad = {BIN_DIR: str(home / "a:b") + "\nforged",
-           REPOSITORY: "acme/r" + RLO + "forged",
-           REF: "v1" + ESCAPE + "[31mforged"}
-    result = go(tmp_path, "wip", "init", "--dry-run", env=bad, net=net)
-    said = " ".join(result.stderr.split())
-    for refusal in ("$OPENREPOTOOLS_REPO holds", "$OPENREPOTOOLS_REF holds",
-                    "directory whose name holds"):
-        assert refusal not in said, said
-    for stream in (result.stdout, result.stderr, *calls_to(net)):
+    result = go(tmp_path, *args, net=net, env={
+        REPOSITORY: "acme/r" + RLO + "forged",
+        REF: "v1" + ESCAPE + "[31mforged"})
+    said_in_full = assert_refused_saying(result, said)
+    assert "$OPENREPOTOOLS_REPO holds" not in said_in_full, said_in_full
+    assert "$OPENREPOTOOLS_REF holds" not in said_in_full, said_in_full
+    assert calls_to(net) == []
+    assert nothing_placed(sandbox(tmp_path))
+
+
+#: Sound values, and the two that hold a colon, which neither is a `$PATH` to
+#: split: the rule refuses a `:` in the directory alone.
+WIP_SOUND_VALUES = [
+    pytest.param(REPOSITORY, "acme/r", id="a-repository"),
+    pytest.param(REF, "v1.2.3", id="a-ref"),
+    pytest.param(REPOSITORY, "acme/r:x", id="a-repository-with-a-colon"),
+    pytest.param(REF, "refs/tags/a:b", id="a-ref-with-a-colon"),
+]
+
+
+@pytest.mark.parametrize("variable, value", WIP_SOUND_VALUES)
+def test_wip_init_from_an_installed_copy_goes_on_and_sends_a_sound_value_as_typed(
+        tmp_path, variable, value):
+    """THE CONTROL FOR THE TEST ABOVE: the same run from the same installed
+    copy, with a sound value in place of the bad one, is not refused and does
+    send it, in the `gh api` call that asks the source for the standard's pin,
+    so the empty log up there means the refusal came first and not that this
+    run never asks. A colon is a sound value in a repository or a ref."""
+    result, net = run_wip_init(tmp_path, installed_copy(tmp_path),
+                               env={variable: value})
+    assert f"${variable} holds" not in " ".join(result.stderr.split())
+    repository, ref = ((value, "main") if variable == REPOSITORY
+                       else ("opensoft/openRepoTools", value))
+    asked = f"repos/{repository}/contents/contracts/code-pin.yaml?ref={ref}"
+    assert any(asked in call for call in calls_to(net)), calls_to(net)
+
+
+def test_wip_init_leaves_the_directory_out(tmp_path):
+    """`wip init` is not asked `$OPENREPOTOOLS_BIN_DIR`: its own lines never
+    name the directory (`wip_run_link_estates` only runs `<dir>/link-estates`),
+    so a directory `--install` refuses changes nothing it says, and it asks the
+    network nothing. Held here so that nobody adds a refusal to a run that has
+    no line of its own to protect. (The `link-estates` that step 10 runs names
+    the directory in its own lines, as it does when run by hand: that command's
+    lines are outside #241's.)"""
+    net = recording_net(tmp_path)
+    bad = str(sandbox(tmp_path) / "a:b") + "\nforged" + ESCAPE + "[31m"
+    result = go(tmp_path, "wip", "init", "--dry-run", "--login", "brettheap",
+                "--team", "platform", "--org", "opensoft", net=net,
+                env={BIN_DIR: bad})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "--dry-run, so nothing below was done:" in result.stdout
+    assert "REFUSED" not in result.stderr
+    for stream in (result.stdout, result.stderr):
         assert "forged" not in stream, stream
-        assert ESCAPE not in stream and RLO not in stream, stream
-    assert calls_to(net), "`wip init` asked the network nothing"
+        assert ESCAPE not in stream, stream
+    assert calls_to(net) == []
 
 
 def test_the_repository_is_refused_before_the_ref_and_both_before_the_directory(

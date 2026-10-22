@@ -5161,6 +5161,20 @@ wip_dispatch() {
 		die "--login '$WIP_LOGIN' cannot form a compliant \`<user>-wip\` name: openRepoShape's
     naming contract requires \`^[a-z0-9]+(-[a-z0-9]+)*-wip\$\`. Nothing was created."
 	fi
+	# THE REPOSITORY AND THE REF ARE ASKED HERE, BEFORE `wip_init` DOES ANYTHING
+	# (#241). Step 7 asks `wip_shape_ref` for the standard's pin, and where no
+	# `contracts/openreposhape-pin.yaml` sits beside this file (an installed
+	# copy) that goes to the source, with `$OPENREPOTOOLS_REPO` at
+	# `$OPENREPOTOOLS_REF` as typed in a `gh api` call, a raw URL and the
+	# refusals that name them. ONCE, AND NOT IN `wip_shape_ref`: step 5 has made
+	# the repository and step 6 has cloned it by then, and "Nothing was fetched,
+	# installed or replaced" would not be true. `wip` has one verb, so this is
+	# every `wip init`: from a checkout, an installed copy or a package, and
+	# `--dry-run` too, which reads neither value but is the rehearsal of a run
+	# that refuses. The arguments and `--login` are refused above, as they
+	# always were. The directory is not asked here: the comment headed `the
+	# values no line can print as they read`, below, says why.
+	refuse_bad_values
 	wip_init
 }
 
@@ -5193,11 +5207,21 @@ wip_dispatch() {
 # refusal cannot forge a line either. The directory is asked by
 # `refuse_bad_bin_dir`, straight before `install_commands`; the repository and
 # the ref by `refuse_bad_values`, before `--version` prints them (where it does
-# print them: a package's `--version` names its stamp and neither value) and
-# before `--install` names or fetches with them, in a package as in a checkout.
-# `wip init` neither prints nor sends any of the three, so it asks none of
-# them. `--help` and the bare usage name the variables and never their values,
-# so they answer past all three.
+# print them: a package's `--version` names its stamp and neither value), before
+# `--install` names or fetches with them, in a package as in a checkout, and in
+# `wip_dispatch`, before `wip init` does anything. `--help` and the bare usage
+# name the variables and never their values, so they answer past all three.
+#
+# `wip init` ASKS THE REPOSITORY AND THE REF, AND NOT THE DIRECTORY. Its step 7
+# asks `wip_shape_ref` for the standard's pin, and where no
+# `contracts/openreposhape-pin.yaml` sits beside this file (an installed copy)
+# that goes to the source: `payload_probe` and `fetch_from_repo` SEND
+# `$OPENREPOTOOLS_REPO` and `$OPENREPOTOOLS_REF` as typed, in a `gh api` call and
+# a raw URL, and `resolve_refuse` names them. The directory is left out: `wip
+# init`'s own lines never name it, because `wip_run_link_estates` only EXECUTES
+# `$OPENREPOTOOLS_BIN_DIR/link-estates`. (The `link-estates` it runs does name
+# the directory, as typed, in its own `Error`, `STALE` and `NOTE` lines, as it
+# does when run by hand: those are that command's lines, outside #241's.)
 #
 # THE RULE IS openRepoShape's, as its `install.sh` and `openRepoShape
 # --install` hold it, and it is read in bytes, under `LC_ALL=C` in a subshell,
