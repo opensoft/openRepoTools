@@ -2303,7 +2303,8 @@ cs_recheck() {   # <what> <the tip the checks read> <origin's tip after S3's fet
 # lines are read from a file, never through `$(…)`, so a blank line at the end
 # of the list is asked about too. The version the edit was made on is read
 # from git by its blob id (`CS_CARRY_BASE`, step 7), never saved as a file:
-# `.git/lanes-edit/` holds only a kept hand edit and four scratch files.
+# `.git/lanes-edit/` holds only a kept hand edit and five scratch files
+# (`apply.err`, `fetch.err`, `ff.err` and `removed` here, `reset.err` in the replay).
 cs_removed_unique() {   # <the saved diff>
   awk 'p && /^-/ { print substr($0, 2) } /^@@ / { p = 1 }' "$1" > "$cs_tmp/removed" 2>/dev/null || return 1
   while IFS= read -r cru_l || [ -n "$cru_l" ]; do
