@@ -12348,7 +12348,31 @@ EOF
         msc_loc="$(log_files_named_ci "$msc_lane")"
         msc_ln="$(printf '%s' "$msc_loc" | grep -c . || :)"
         if [ "$msc_ln" -gt 1 ]; then
-          msc_why="this checkout holds $msc_ln object logs for it whose names differ only by case — 15(d)'s hand merge"
+          # THE PUBLISHED LOG TRACKED AND AN UNTRACKED COPY BESIDE IT IS THE
+          # STRAY COPY, NOT TWO LOGS TO MERGE (NIT 4's neighbour on slice 1b;
+          # `ensure_log`'s B36 refusal names the same state): what a case-only
+          # rename whose commit never landed leaves once the published log is
+          # back. A hand merge would commit the copy as a second published
+          # file for one lane. Said only where the tracked one is the log
+          # origin publishes; any other pair keeps 15(d)'s words.
+          msc_lt=""; msc_lu=""; msc_ltn=0
+          if [ "$msc_ln" = 2 ] && [ "$NO_GIT" != 1 ]; then
+            while IFS= read -r msc_lg; do
+              [ -n "$msc_lg" ] || continue
+              if git -C "$LANES_REPO" -c "$CP_EXACT" ls-files --error-unmatch -- "${LANES_LOG_PREFIX}${msc_lg##*/}" >/dev/null 2>&1; then
+                msc_lt="$msc_lg"; msc_ltn=$((msc_ltn + 1))
+              else
+                msc_lu="$msc_lg"
+              fi
+            done <<EOF
+$msc_loc
+EOF
+          fi
+          if [ "$msc_ltn" = 1 ] && [ -n "$msc_lu" ] && [ "${msc_lt##*/}" = "${msc_pub##*/}" ]; then
+            msc_why="its object log is published as $msc_pub, and this checkout also has ${msc_lu##*/} beside it, NOT TRACKED: the copy left by a case-only rename whose commit never landed, which is not merged by hand, since a commit of it would publish a second file for one lane (Amendment 15). Compare them (diff -- \"$msc_lt\" \"$msc_lu\"): a line only the copy holds belongs to a write that never landed, and is re-run as that write. Then remove the copy (rm -- \"$msc_lu\") and re-run; the lane's next write renames the published log once, inside its own commit"
+          else
+            msc_why="this checkout holds $msc_ln object logs for it whose names differ only by case — 15(d)'s hand merge"
+          fi
         elif [ "$msc_ln" = 1 ]; then
           msc_lf="$msc_loc"; msc_rel="${LANES_LOG_PREFIX}${msc_loc##*/}"
           if [ "${msc_rel##*/}" != "${msc_pub##*/}" ]; then

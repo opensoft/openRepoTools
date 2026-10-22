@@ -459,3 +459,53 @@ def test_a_migration_dry_run_names_a_rename_that_never_landed_and_never_says_pul
     again = box.helper("migrate-state-cells")
     assert again.returncode == 0, (again.stdout, again.stderr)
     assert "SKIPPED" not in again.stdout, "the recovery the line gives settles it"
+
+
+@pytest.mark.parametrize("pair", ["stray-copy", "committed-rename"])
+def test_a_migration_dry_run_names_a_stray_copy_beside_the_published_log_as_one(box: Box, pair: str):
+    """NIT 4's neighbour: the same scan's line for a checkout holding two logs
+    whose names differ only by case said "15(d)'s hand merge" of the
+    stray-copy state, `ensure_log`'s B36 state: the published log tracked
+    and, beside it, the untracked copy a case-only rename whose commit never
+    landed leaves. A hand merge would commit the copy as a second published
+    file for one lane. The line now gives B36's recovery (compare, remove
+    the copy, re-run), the dry run writes nothing, and the recovery settles
+    it. Where the tracked one is NOT the published log (a rename committed
+    here, the published spelling back beside it untracked), removing the
+    untracked one would remove the published spelling, so that recovery is
+    never given there."""
+    c = box.seam()
+    old_cased = f"lanes/log/{NEIGHBOUR.lower()}.md"
+    canonical = f"lanes/log/{NEIGHBOUR}.md"
+    header = f"# lane {NEIGHBOUR} — object log (lane-collision-protocol Amendment 7)\n"
+    box.peer_pushes(old_cased, header)
+    box.git("-C", str(c), "fetch", "-q", "origin")
+    box.git("-C", str(c), "merge", "-q", "--ff-only", "refs/remotes/origin/main")
+    if pair == "stray-copy":
+        untracked = box.write(c, canonical, header)
+    else:
+        (c / old_cased).rename(c / canonical)
+        box.git("-C", str(c), "add", "-A", "--", "lanes/log")
+        box.git("-C", str(c), "commit", "-q", "-m", f"LANES({NEIGHBOUR}@Eagle): a rename that never landed")
+        untracked = box.write(c, old_cased, header)
+    before = box.snapshot(c)
+    result = box.helper("migrate-state-cells")
+    out = result.stdout
+    assert result.returncode == 0, (out, result.stderr)
+    assert "DRY RUN — nothing was written" in out, out
+    line = next((l for l in out.splitlines() if l.strip().startswith(f"{NEIGHBOUR} ")), "")
+    assert line, out
+    assert box.snapshot(c) == before, "a dry run writes nothing"
+    if pair == "committed-rename":
+        assert "NOT TRACKED" not in line, line
+        assert "rm --" not in line, "the untracked file is the published spelling, never to be removed"
+        return
+    assert "hand merge" not in line, "15(d)'s hand merge is not this state's recovery"
+    assert "a case-only rename whose commit never landed" in line, line
+    assert f"published as {old_cased}, and this checkout also has {NEIGHBOUR}.md beside it, NOT TRACKED" in line, line
+    assert f'diff -- "{c / old_cased}" "{untracked}"' in line, line
+    assert f'rm -- "{untracked}"' in line, line
+    untracked.unlink()
+    again = box.helper("migrate-state-cells")
+    assert again.returncode == 0, (again.stdout, again.stderr)
+    assert "SKIPPED" not in again.stdout, "the recovery the line gives settles it"
