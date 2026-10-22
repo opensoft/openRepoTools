@@ -3267,9 +3267,10 @@ def test_the_exit_3_rule_is_green_on_a_rewording_that_keeps_the_meaning(
 #: AMENDMENT 23 S3-S4: NO LANE WRITER PULLS (#198). A `pull --rebase` in front
 #: of a push is what stranded a write on a stale base eight times in two days;
 #: every writer now fetches and fast-forwards before the edit, and a refused
-#: push replays the one edit. Asserted for `lanes-edit.sh` in slice 1b; the
-#: handoff's writers, which still pull until their slices, join the list then.
-_NO_PULL_FILES = ("lanes-edit.sh",)
+#: push replays the one edit. Asserted for `lanes-edit.sh` in slice 1b and for
+#: `lane-start` in slice 2b, whose Rule 3 stamp is `write-handoff`'s now; the
+#: handoff's other writers, which still pull until their slices, join it then.
+_NO_PULL_FILES = ("lanes-edit.sh", "lane-start")
 #: A `pull` that rebases: `--rebase`, `-r` or `--rebase=…`, on a line that is
 #: not a comment.
 _PULL_REBASE = re.compile(r"\bpull\b[^\n]*?(?:--rebase\b|\s-r\b)")
