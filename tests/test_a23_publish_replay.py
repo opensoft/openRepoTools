@@ -811,10 +811,34 @@ def test_publish_act_on_moved_origin_refuses(box: Box):
     assert "origin/main has moved past the local commits" in err
     assert "only a fast-forward push" in err
     assert "refs/heads/archive/" in err
-    assert f"git -C {c} reset --keep origin/main" in err
+    assert f"git -C {c} reset --keep refs/remotes/origin/main" in err
     assert "push" not in box.net_ops()
     assert box.origin_head() == tip
     assert box.head(c) == shas[-1]
+    _settled(box, c)
+
+
+def test_the_publish_acts_moved_origin_recovery_names_the_lane_and_stops_first(box: Box):
+    """NIT 294 of lane openRepoTools-3's review of #307 (its E13), and its
+    answer to Q2: the publish act's refusal over a stack origin has moved
+    past printed a literal `archive/<lane>-stranded-…` where S3's own refusal
+    fills the lane in, and it lacked the line S3, S6.3 and the manual give
+    before the archive: if any `+` line is not your own write, STOP. Now the
+    lane is filled in, the list and the stop line come first, and the reset
+    names `refs/remotes/origin/main` in full."""
+    c = box.seam()
+    box.use_net()
+    _queue(box, c)
+    box.peer_pushes("handoffs/repoS4/elsewhere.md", "a peer's file" + "\n")
+    result = box.helper("commit", "publish the queue", LANES_LANE=LANE)
+    assert result.returncode == 2, result.stderr
+    err = result.stderr
+    assert "archive/<lane>-stranded-" not in err, "the lane is filled in"
+    stop = err.find("if any '+' line is not your own write, STOP and take it to the lane its subject names")
+    archive = err.find(f"git -C {c} push origin HEAD:refs/heads/archive/{LANE}-stranded-")
+    reset = err.find(f"git -C {c} reset --keep refs/remotes/origin/main")
+    assert 0 <= stop < archive < reset, err
+    assert "push" not in box.net_ops()
     _settled(box, c)
 
 

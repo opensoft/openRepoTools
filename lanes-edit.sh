@@ -3275,9 +3275,14 @@ cp_publish_act() {
 # wanted on the new tip, by hand (S6.3).
 cp_publish_moved() {
   note "origin/$LANES_BRANCH has moved past this stack, so a push would be refused, and a rebase of a stack is the stale-base hazard (#198 §3.1). They stay on HEAD."
+  # THE LANE IS FILLED IN, AND THE STOP LINE COMES FIRST (lane
+  # openRepoTools-3's review of #307, NIT 294, and its answer to Q2): as S3's
+  # own refusal and the manual give them. And the reset names the tracking ref
+  # in full, since a local branch named `origin/<b>` wins the short name.
   note "RECOVERY (S6.3), in this order:"
-  note "  git -C $LANES_REPO push origin HEAD:refs/heads/archive/<lane>-stranded-$(date -u +%Y%m%dT%H%MZ)   # the archive, on origin"
-  note "  git -C $LANES_REPO reset --keep origin/$LANES_BRANCH                       # then drop them here"
+  note "  list them: git -C $LANES_REPO cherry -v origin/$LANES_BRANCH HEAD; if any '+' line is not your own write, STOP and take it to the lane its subject names — never reset, stash or overwrite a peer's work"
+  note "  git -C $LANES_REPO push origin HEAD:refs/heads/archive/${LANES_LANE:-<lane>}-stranded-$(date -u +%Y%m%dT%H%MZ)   # the archive, on origin"
+  note "  git -C $LANES_REPO reset --keep refs/remotes/origin/$LANES_BRANCH          # then drop them here"
   note "  then make again, with lanes-edit.sh, each edit that is still wanted on the register as it now is."
   die "refusing to publish: origin/$LANES_BRANCH has moved past the local commits, and the publish act makes only a fast-forward push (Amendment 23 S4, Open question 2). Nothing was pushed." 2
 }
