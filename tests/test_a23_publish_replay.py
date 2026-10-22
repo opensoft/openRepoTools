@@ -1363,18 +1363,23 @@ def test_an_add_row_whose_retirement_a_reader_fetched_in_after_S3s_compare_refus
 CLAIM_URL = "https://github.com/opensoft/repoS4/issues/1#issuecomment-284"
 
 
-def _network_reads_logged(box: Box, c: Path) -> tuple:
+def _network_reads_logged(box: Box, c: Path, bulk: int = 0) -> tuple:
     """`gh`, and `git ls-remote` of a GitHub URL, each logged with whether
     `c`'s lock is held at that moment; `gh issue view ... --json comments`
-    answers a claim comment's URL. Nothing reaches the network. Returns the
-    log and the env that puts both first and lets the claim ask GitHub."""
+    answers a claim comment's URL, and with `bulk`, `gh issue view
+    --comments` answers that many `CLAIMED —` lines of about 100 bytes each.
+    Nothing reaches the network. Returns the log and the env that puts both
+    first and lets the claim ask GitHub."""
     lock = shlex.quote(str(box.lock_of(c)))
     log = shlex.quote(str(box.root / "net-reads.log"))
     held = f'if [ -d {lock} ]; then s="LOCK HELD"; else s="no lock"; fi'
+    many = (f'*"issue view"*"--comments"*) i=0; while [ "$i" -lt {bulk} ]; do i=$((i + 1)); '
+            f'printf "CLAIMED — lane bulk-%05d, session {UUID2}@Eagle, 2026-10-01T00:00:00Z, {OBJ}\\n" "$i"; '
+            f'done ;; ') if bulk else ""
     gh = box.fakebin / "gh"
     gh.write_text("#!/usr/bin/env bash" + "\n" + held + "\n" +
                   f'printf "gh %s :: %s\\n" "$*" "$s" >> {log}' + "\n" +
-                  f'case "$*" in *"--json comments"*) echo "{CLAIM_URL}" ;; esac' + "\n" +
+                  f'case "$*" in *"--json comments"*) echo "{CLAIM_URL}" ;; {many}esac' + "\n" +
                   "exit 0" + "\n", encoding="utf-8")
     gh.chmod(0o755)
     real = shutil.which("git")
@@ -1447,6 +1452,28 @@ def test_a_takeovers_re_run_cites_the_claim_url_attempt_1_read_and_reads_nothing
     assert [r for r in reads if "LOCK HELD" in r] == [], reads
     mine = box.origin_file(f"lanes/log/{LANE}.md")
     assert f"TAKEOVER — lane {LANE}" in mine and CLAIM_URL in mine, mine
+    _settled(box, c)
+
+
+def test_a_claims_re_run_carries_reads_too_long_for_one_environment_string(box: Box):
+    """334 of lane openRepoTools-3's re-check of #307: 284 carries attempt 1's
+    whole `gh_reads` output across the `exec` as one environment string, and
+    Linux caps one at 128 KiB: past that the `exec` failed and the write
+    exited 126, outside the exit table, with no "Nothing was written". Here
+    the object has 1,800 `CLAIMED —` comments (about 190 KB of reads). The
+    carried copy is now capped at 32,768 bytes and says so; attempt 1 still
+    prints the reads in full, and the re-run lands the claim."""
+    c = box.seam()
+    log, env = _network_reads_logged(box, c, bulk=1800)
+    _origin_moves_once_at_s3s_fetch(box)
+    result = box.helper("claim", OBJ, *HOME_FLAG, LANES_LANE=LANE, LANES_SESSION=UUID, **env)
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert "moved while this write's checks ran" in result.stderr, "the claim ran again from the top"
+    assert "(truncated at 32768 bytes" in result.stdout, "the re-run printed the capped copy and says so"
+    assert result.stdout.count("lane bulk-01800,") == 1, "attempt 1 printed every read; the re-run's copy is cut"
+    assert result.stdout.count("lane bulk-00001,") == 2, "both attempts printed the head of the reads"
+    assert [r for r in log.read_text(encoding="utf-8").splitlines() if "LOCK HELD" in r] == []
+    assert f"CLAIMED — lane {LANE}" in box.origin_file(f"lanes/log/{LANE}.md")
     _settled(box, c)
 
 

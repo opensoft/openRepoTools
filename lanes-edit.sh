@@ -17906,8 +17906,19 @@ EOF
       note "Rule 1's three reads were made at attempt 1, before the lock, and are printed as they were: this re-run holds the lock and makes no GitHub read with it held (Amendment 23 S4; the rescan above decides the race)."
       reads="$CP_CLAIM_READS"
       [ -n "$reads" ] || reads="the three reads of Rule 1: made and printed at attempt 1, before the lock"
+      reads_carry="$reads"
     else
       reads="$(gh_reads "$obj")" || exit 1
+      # THE COPY THAT CROSSES THE `exec` IS CAPPED (lane openRepoTools-3's
+      # re-check of #307, 334). It travels as ONE environment string, and
+      # Linux caps one at 128 KiB: past that the `exec` fails and the write
+      # exits 126, outside the exit table. Real reads are a few hundred bytes;
+      # an object with thousands of comments is not. Attempt 1 prints them in
+      # full below; a re-run prints this copy, cut at a line and marked.
+      reads_carry="$reads"
+      if [ "$(printf '%s' "$reads" | LC_ALL=C wc -c | tr -d ' ')" -gt 32768 ]; then
+        reads_carry="$(printf '%s' "$reads" | LC_ALL=C head -c 32768 | LC_ALL=C sed '$d')"$'\n'"   (truncated at 32768 bytes to cross the re-run's exec: attempt 1 printed all of Rule 1's reads)"
+      fi
     fi
     printf '%s\n' "$reads"
 
@@ -17922,7 +17933,7 @@ EOF
     CLAIM_OBJ="$obj"; CLAIM_LANE="$lane"; CLAIM_SKIP="$takeover_from"; CLAIM_SKIP_DEAD="$takeover_dead"
     CLAIM_ABANDON_REVIVED=""
     CP_REPLAY_ENV=("LANES__CLAIM_FROM=$takeover_from" "LANES__CLAIM_DEAD=$takeover_dead"
-                   "LANES__CLAIM_READS=$reads" "LANES__CLAIM_URL=$takeover_payload")
+                   "LANES__CLAIM_READS=$reads_carry" "LANES__CLAIM_URL=$takeover_payload")
     # A RIVAL THAT LANDS BEFORE S3's FETCH, not only one that lands before the
     # push: the checks above read what `log_sync` fetched, so a tip that moved
     # since runs this claim again from the top, rescan first (`cs_recheck`).
