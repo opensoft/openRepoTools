@@ -215,28 +215,46 @@ def test_dry_run_with_nothing_to_remove_exits_0(sweep):
     assert "there is nothing to remove" in result.stdout, result.stdout
 
 
-def test_yes_without_LANES_LANE_is_refused(sweep):
-    """`--yes` writes a NOTED line into the log of the lane that runs it, so a
-    run that names no lane is refused before anything is read or removed."""
-    box = sweep.box
-    before, head = box.everything(), box.origin_head()
-    result, _ = sweep("--yes")
-    assert result.returncode == 2, (result.stdout, result.stderr)
-    assert "LANES_LANE=<your lane> lane-end --sweep-checkouts --yes" in result.stderr
-    assert "Nothing was removed" in result.stderr, result.stderr
-    assert box.everything() == before
-    assert box.origin_head() == head
+def _no_last_session(box: Sweep) -> dict:
+    """`LANES_LANE` set and `LANES_SESSION` unset, with a `last-session` that
+    names no session for any lane (8, no record)."""
+    return {"LANES_LANE": RUNNER,
+            "LANES_EDIT": _wrapped(box, "lanes-edit-no-last-session", "last-session", "  exit 8\n")}
 
 
-def test_yes_under_LANES_NO_FETCH_is_refused(sweep):
-    """A writer whose fetch did not run is a writer S3 refuses (ratified choice
-    2), and `--yes` fetches each checkout before it decides: refused before
-    the first removal, not met by the NOTED line after it (rv1b's MUST 3)."""
+REFUSALS = [
+    pytest.param(lambda box: {}, ("LANES_LANE=<your lane> lane-end --sweep-checkouts --yes",),
+                 id="no LANES_LANE"),
+    pytest.param(lambda box: {"LANES_LANE": RUNNER, "LANES_NO_FETCH": "1"},
+                 ("LANES_NO_FETCH=1 is set",), id="LANES_NO_FETCH=1"),
+    pytest.param(lambda box: {"LANES_LANE": RUNNER, "LANES_SESSION": "unknown"},
+                 ("has no transcript uuid for the session field",
+                  "LANES_SESSION is 'unknown', which is not a transcript uuid"),
+                 id="a LANES_SESSION that is no uuid"),
+    pytest.param(_no_last_session,
+                 ("has no transcript uuid for the session field",
+                  f"LANES_SESSION is unset, and `lanes-edit.sh last-session {RUNNER}` names none"),
+                 id="no LANES_SESSION and no last session"),
+]
+
+
+@pytest.mark.parametrize("env,said", REFUSALS)
+def test_yes_is_refused_before_anything_is_removed(sweep, env, said):
+    """`--yes` IS REFUSED (2) BEFORE ANYTHING IS READ OR REMOVED where the
+    NOTED line it ends with could not be written: with no `LANES_LANE`, since
+    the line goes into the log of the lane that runs it; under
+    `LANES_NO_FETCH=1`, a writer S3 refuses (ratified choice 2), since
+    `--yes` fetches each checkout before it decides (rv1b's MUST 3); and with
+    no transcript uuid for the line's session field (Amendment 7(b), D19),
+    whether `LANES_SESSION` names something else or is unset and
+    `last-session` names none (rv4's NIT 5). Each is met here, and not by the
+    line after the removals."""
     box = sweep.box
     before, head = box.everything(), box.origin_head()
-    result, _ = sweep("--yes", LANES_LANE=RUNNER, LANES_NO_FETCH="1")
+    result, _ = sweep("--yes", **env(box))
     assert result.returncode == 2, (result.stdout, result.stderr)
-    assert "LANES_NO_FETCH=1 is set" in result.stderr, result.stderr
+    for text in (*said, "Nothing was removed"):
+        assert text in result.stderr, result.stderr
     assert box.everything() == before
     assert box.origin_head() == head
 
@@ -1072,12 +1090,12 @@ def test_nothing_removed_writes_nothing(sweep):
     assert "NOTED in lane" not in result.stdout
 
 
-def _wrapped_log(box: Sweep, name: str, log_body: str) -> str:
-    """A `LANES_EDIT` that runs `log_body` for `log` and the real
+def _wrapped(box: Sweep, name: str, verb: str, body: str) -> str:
+    """A `LANES_EDIT` that runs `body` for `verb` and the real
     `lanes-edit.sh`, which `$REAL` names, for every other verb."""
     wrapper = box.fakebin / name
     wrapper.write_text(f'#!/usr/bin/env bash\nREAL={REPO / "lanes-edit.sh"}\n'
-                       f'if [ "${{1-}}" = log ]; then\n{log_body}fi\nexec bash "$REAL" "$@"\n',
+                       f'if [ "${{1-}}" = {verb} ]; then\n{body}fi\nexec bash "$REAL" "$@"\n',
                        encoding="utf-8")
     wrapper.chmod(0o755)
     return str(wrapper)
@@ -1107,7 +1125,7 @@ def test_noted_line_not_written_exits_1_with_the_command(sweep):
     success: exit 1, and the exact command that writes it by hand, which
     then writes it."""
     box = sweep.box
-    refusing = _wrapped_log(box, "lanes-edit-refusing-log", (
+    refusing = _wrapped(box, "lanes-edit-refusing-log", "log", (
         "  printf 'FAKE: the register refused this line\\n' >&2\n"
         "  exit 2\n"))
     result, rows = sweep("--yes", LANES_LANE=RUNNER, LANES_EDIT=refusing)
@@ -1131,7 +1149,7 @@ def test_noted_line_unconfirmed_is_never_written_again(sweep):
     lacks it by content: run, it finds nothing to send, and origin still
     holds the line once."""
     box = sweep.box
-    exit3 = _wrapped_log(box, "lanes-edit-unconfirmed-log", (
+    exit3 = _wrapped(box, "lanes-edit-unconfirmed-log", "log", (
         '  bash "$REAL" "$@"; rc=$?\n'
         "  if [ \"$rc\" = 0 ]; then printf 'FAKE: pushed, not confirmed\\n' >&2; exit 3; fi\n"
         '  exit "$rc"\n'))
@@ -1176,20 +1194,6 @@ def test_noted_line_kept_unpublished_is_published_not_written_again(sweep):
     done = _by_hand(box, publish)
     assert done.returncode == 0, (done.stdout, done.stderr)
     assert len(_noted_on_origin(box)) == 1, _noted_on_origin(box)
-
-
-def test_yes_without_a_session_uuid_is_refused(sweep):
-    """The NOTED line's session field is a transcript uuid and only that
-    (Amendment 7(b)): a `LANES_SESSION` that is none is refused before
-    anything is removed, not met by the line after the removals."""
-    box = sweep.box
-    before, head = box.everything(), box.origin_head()
-    result, _ = sweep("--yes", LANES_LANE=RUNNER, LANES_SESSION="unknown")
-    assert result.returncode == 2, (result.stdout, result.stderr)
-    assert "has no transcript uuid for the session field" in result.stderr, result.stderr
-    assert "Nothing was removed" in result.stderr
-    assert box.everything() == before
-    assert box.origin_head() == head
 
 
 def test_a_store_kept_inside_a_clone_is_leaned_on(sweep):
