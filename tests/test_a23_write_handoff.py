@@ -38,7 +38,7 @@ import pytest
 
 from a23_box import ME, REGISTER
 from conftest import WINDOWS_SKIP
-from test_a23_publish_replay import LANE, Box as ReplayBox
+from test_a23_publish_replay import LANE, NEIGHBOUR, Box as ReplayBox
 
 pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
                                  reason="lanes-edit.sh is a bash script"),
@@ -1014,6 +1014,61 @@ def test_a_target_outside_handoffs_is_refused_and_nothing_written(box: Box, how:
     assert box.origin_file(rel) == published
     assert box.origin_head() == tip
     assert result.stdout == ""
+    _released(box, c)
+
+
+@pytest.mark.parametrize("how", ["whole-register", "prepend-log", "cell-register"])
+def test_a_target_in_another_clone_of_the_register_keeps_the_handoffs_rule(box: Box, how: str):
+    """rv2a-c2's SHOULD 1 (its probe N3): the `handoffs/` rule held only in
+    this checkout, so a `--target`, or a row cell, naming a file of ANOTHER
+    clone of the register — a sibling lane's checkout, `<W>-lanes/<lane>/` —
+    was taken for another repository's handoff (8(d)): `--whole` replaced
+    that clone's register in place and `--prepend` put a block on its
+    append-only object log, uncommitted, exit 0, and that lane's next write
+    then refused at S3 step 4 over a change it never made. The rule holds
+    relative to that clone's own top level (A44): 2, nothing written there or
+    here, nothing on stdout."""
+    d = box.lanes_root / NEIGHBOUR
+    rel = f"lanes/log/{NEIGHBOUR}.md" if how == "prepend-log" else REGISTER
+    if how == "cell-register":
+        box.cell_is(str(d / REGISTER))
+    c = box.seam()
+    box.clone(d)
+    if how == "whole-register":
+        args = ("--whole", str(_prepared(box, "# not a register any more\n")),
+                "--expect-digest", sha(d / REGISTER), "--target", str(d / REGISTER))
+    elif how == "prepend-log":
+        args = ("--prepend", str(_block(box)), "--target", str(d / rel))
+    else:
+        args = ("--stamp", STAMP)
+    text, theirs, mine = (d / rel).read_bytes(), box.snapshot(d), box.snapshot(c)
+    result = box.write_handoff(*args, "--subject", "handoff: PAUSED")
+    assert result.returncode == 2, result.stderr
+    assert f"is {rel} in {d}, another checkout of the register" in result.stderr
+    assert "Nothing was written." in result.stderr
+    assert "another repository's handoff" not in result.stderr
+    assert (d / rel).read_bytes() == text
+    assert box.snapshot(d) == theirs
+    assert box.snapshot(c) == mine
+    assert result.stdout == ""
+    _released(box, c)
+
+
+def test_a_handoff_in_another_clone_of_the_register_is_still_another_repositorys(box: Box):
+    """A44's bound: in another clone of the register, a file under
+    `handoffs/` passes the rule and is written as another repository's
+    handoff (8(d)), committed nowhere, exit 0, as before. Whether such a file
+    is refused too is question 3's, for lane openRepoTools-3."""
+    c = box.seam()
+    d = box.clone(box.lanes_root / NEIGHBOUR)
+    f = d / HANDOFF_REL
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT, "--target", str(f))
+    assert result.returncode == 0, result.stderr
+    assert f"{f} is another repository's handoff (Amendment 8(d))" in result.stderr
+    assert f.read_text(encoding="utf-8") == stamped(HANDOFF)
+    assert box.git("-C", str(d), "status", "--porcelain").split() == ["M", HANDOFF_REL]
+    assert box.head(c) == box.origin_head()
+    assert result.stdout == _line(f)
     _released(box, c)
 
 

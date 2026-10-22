@@ -483,8 +483,9 @@
 #      past (S4, Open question 2); `claim` or `add-row` meeting origin
 #      moved under its own checks on each of six attempts (S3, S4), before any
 #      edit; and — slice 2a — `write-handoff`'s handoff
-#      that resolves into W through a link (S5), a target in the checkout that
-#      is not a file under `handoffs/` (S2), a restart's bound file or
+#      that resolves into W through a link (S5), a target in the checkout, or
+#      in another clone of the register, that is not a file under `handoffs/`
+#      (S2), a restart's bound file or
 #      pre-image that is not this one, or a splice that does not prove out,
 #      each with nothing written; while S3's refusal of a `--prepend` or a
 #      `--whole` has WRITTEN the handoff, uncommitted (R-A11-11), and printed
@@ -16209,6 +16210,15 @@ whf_stamp_said() {
   [ "${whf_mode:-}" != stamp ] || note "the stamp line it would have written under the handoff's header block: ${whf_arg:-}"
   return 0
 }
+# A FILE `write-handoff` MAY REPLACE, relative to a clone of the register's top
+# level (rv2a's pre-review of slice 2a, SHOULD 1): one under `handoffs/`, and
+# never the register, an object log or anything else under `lanes/`.
+whf_in_scope() {   # <path relative to the clone's top level> — 0 in scope; 1 not
+  case "$1" in handoffs/?*) : ;; *) return 1 ;; esac
+  case "$1" in "$LANES_PATH"|lanes/*|*/.|*/..) return 1 ;; esac
+  if [ -n "$LANES_PREFIX" ]; then case "$1" in "$LANES_PREFIX"*) return 1 ;; esac; fi
+  return 0
+}
 
 # S5 — W IS ONLY EVER FAST-FORWARDED, and `refresh-workspace` is the one act
 # that does it: `git fetch origin main` and `git merge --ff-only origin/main`,
@@ -19409,10 +19419,11 @@ EOF
   #      after S3's fetch — or `--target`, the old callers' spelling — and
   #      TRANSLATED into the checkout this write goes through, never followed
   #      (`handoff_in_repo`, S2). One that still resolves into W, through a
-  #      link, refuses (S5, 2), and so does one in the checkout that is not a
-  #      file under `handoffs/` (S2: never the register or `lanes/`). One in
-  #      ANOTHER REPOSITORY (Amendment 8(d)) is written there and never
-  #      committed, and S3's refusal of this checkout does not stop it.
+  #      link, refuses (S5, 2), and so does one in the checkout, or in another
+  #      clone of the register, that is not a file under `handoffs/` (S2:
+  #      never the register or `lanes/`). One in ANOTHER REPOSITORY (Amendment
+  #      8(d)) is written there and never committed, and S3's refusal of this
+  #      checkout does not stop it.
   #   3. S3 step 4 for the handoff's own path (`cs_own_pending`), and for a
   #      handoff git does not track yet, which a commit would add and a lost
   #      race's replay would drop.
@@ -19562,14 +19573,26 @@ EOF
     # (Amendment 23 S2 scopes it to `handoffs/<estate>/<file>`). `whf_rel` is
     # the PHYSICAL path's, so a `--target`, a cell that climbs out through
     # `..`, and a link out of `handoffs/` are all caught here, before a byte.
-    if [ "$whf_other" = 0 ]; then
-      whf_scope=1
-      case "$whf_rel" in handoffs/?*) whf_scope=0 ;; esac
-      case "$whf_rel" in "$LANES_PATH"|lanes/*|*/.|*/..) whf_scope=1 ;; esac
-      if [ -n "$LANES_PREFIX" ]; then case "$whf_rel" in "$LANES_PREFIX"*) whf_scope=1 ;; esac; fi
-      if [ "$whf_scope" = 1 ]; then
+    if [ "$whf_other" = 0 ] && ! whf_in_scope "$whf_rel"; then
+      whf_stamp_said
+      die "lane $lane's handoff target $whf_path is $whf_rel in the checkout $whf_c, which is not a file under handoffs/: write-handoff writes a lane's handoff and nothing else, never the register ($LANES_PATH) or anything under lanes/ (Amendment 23 S2). Nothing was written." 2
+    fi
+    # AND IN ANOTHER CLONE OF THE REGISTER (rv2a-c2's re-review of slice 2a,
+    # SHOULD 1). A path outside this checkout, in a git work tree whose top
+    # level carries the register too — a sibling lane's `<W>-lanes/<lane>/`,
+    # an older clone — is that clone's file, not another repository's: the
+    # same rule holds there, relative to that top level. Otherwise `--whole`
+    # replaced that clone's register in place, uncommitted, and its lane's
+    # next write refused at S3 step 4 over a change it never made. A
+    # repository that carries no register is Amendment 8(d)'s, and a path in
+    # no work tree is as it was (A44).
+    if [ "$whf_other" = 1 ]; then
+      whf_otop="$(git -C "$(dirname -- "$whf_phys")" rev-parse --show-toplevel 2>/dev/null || :)"
+      whf_otop="$( [ -n "$whf_otop" ] && cd -P -- "$whf_otop" 2>/dev/null && pwd -P || :)"
+      if [ -n "$whf_otop" ] && { [ -e "$whf_otop/$LANES_PATH" ] || [ -L "$whf_otop/$LANES_PATH" ]; } &&
+         path_under "$whf_phys" "$whf_otop" && ! whf_in_scope "${whf_phys#"$whf_otop"/}"; then
         whf_stamp_said
-        die "lane $lane's handoff target $whf_path is $whf_rel in the checkout $whf_c, which is not a file under handoffs/: write-handoff writes a lane's handoff and nothing else, never the register ($LANES_PATH) or anything under lanes/ (Amendment 23 S2). Nothing was written." 2
+        die "lane $lane's handoff target $whf_path is ${whf_phys#"$whf_otop"/} in $whf_otop, another checkout of the register (its top level carries $LANES_PATH too), which is not a file under handoffs/: write-handoff writes a lane's handoff and nothing else, never a register or anything under lanes/, in this checkout or in another clone of it (Amendment 23 S2). Nothing was written." 2
       fi
     fi
     # ANOTHER REPOSITORY'S HANDOFF IS NOT THIS CHECKOUT'S WRITE (rv2a's
