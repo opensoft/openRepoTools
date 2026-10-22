@@ -518,7 +518,10 @@
 #      committed and pushed — or its push timed out, and a hung push often
 #      lands — and the read-back could not confirm the commit on origin: the
 #      fetch failed or timed out, or origin does not hold it. Never reported
-#      as success. The commit stays on HEAD, and the next write's S3 finds it
+#      as success. The commit stays on HEAD — unless another writer in the
+#      checkout rewrote it while its push was in flight (an unlocked
+#      writer's rebase), which the words then say: it is not on HEAD at all, and
+#      what reached origin is read by content — and the next write's S3 finds it
 #      by content either way: published, there is nothing to do; not, every
 #      write refuses until the publish act sends it or an archive (S6.3)
 #      takes it.
