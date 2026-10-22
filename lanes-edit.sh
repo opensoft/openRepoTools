@@ -2955,7 +2955,11 @@ cp_rewritten() {   # <sha> <subject> <HEAD> [<the refusal>, as `cp_not_head` tak
 # publish act's, and a push that could not be confirmed), is their own clause
 # in place of "origin moved", and no drop is named, since none would be made;
 # every other caller (slice 2a's S4.4 among them) gives three. A fifth, given
-# only by `cp_not_confirmed`, is the exit status, which stays 3 there.
+# only by `cp_not_confirmed`, is the exit status, which stays 3 there. WHERE
+# HEAD IS STILL THIS WRITE'S COMMIT (rv1b-c3's NIT E: the drop's compare-and-
+# swap refused for a reason that is not a moved branch, a `refs/heads/<b>.lock`
+# held), no commit was made on top, and none is named: git could not move the
+# branch, and nothing was moved.
 cp_not_head() {   # <sha> <subject> <when another commit was made> [<the refusal, where origin did not move>] [<the exit status, 6 unless given>]
   cnh_why="${4:-the push was refused because origin/$LANES_BRANCH moved}"
   cnh_drop=", and dropping this write's commit to replay it would drop that one too"
@@ -2964,6 +2968,11 @@ cp_not_head() {   # <sha> <subject> <when another commit was made> [<the refusal
   if [ -z "$cnh_head" ]; then
     note "HEAD cannot be read, so whether this write's commit $1 is still on it is unknown: read git -C $LANES_REPO status and git -C $LANES_REPO reflog -5 once nothing else writes here."
     die "$cnh_why, and HEAD cannot be read, so it is not replayed: $1 $2 (Amendment 23 S4)" "${5:-6}"
+  fi
+  if [ "$cnh_head" = "$1" ]; then
+    note "HEAD is still this write's commit $1, so no commit was made on top of it: git could not move refs/heads/$LANES_BRANCH off it $3, and nothing was moved."
+    note "look at it: git -C $LANES_REPO show $1; every later write from this checkout refuses (S3's unpushed row) until it is published — LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act — or archived (S6.3)."
+    die "$cnh_why, and git could not move the branch off this write's commit to drop it, so nothing was moved and it is kept on HEAD: $1 $2" "${5:-6}"
   fi
   # A COMMIT ON TOP IS ONE CASE; A REWRITE IS ANOTHER (rv1b-c's SHOULD A).
   git -C "$LANES_REPO" merge-base --is-ancestor "$1" HEAD 2>/dev/null ||
@@ -3046,6 +3055,12 @@ cp_replay() {   # <sha> <subject>
   cr_ref="refs/heads/$LANES_BRANCH"
   if ! git -C "$LANES_REPO" update-ref -m "lanes-edit: the replay drops $1 (attempt $CP_ATTEMPT)" \
        "$cr_ref" "$cr_to" "$1" 2>"$cr_err"; then
+    # A REFUSED COMPARE-AND-SWAP IS NOT ALWAYS A COMMIT ON TOP (rv1b-c3's
+    # NIT E): git also refuses where another process holds
+    # `refs/heads/<b>.lock` (a peer's commit or a `pack-refs` in flight), and
+    # HEAD is then still this write's commit. Git's own words are shown, as
+    # at the tree step below, and `cp_not_head` reads HEAD to say which.
+    [ ! -s "$cr_err" ] || note "git said: $(head -n 4 -- "$cr_err" 2>/dev/null | tr '\n' ' ')"
     cp_not_head "$1" "$2" "between the replay's HEAD check and its drop"
   fi
   cr_how=-u; [ "$CP_REPLAY_KEEPS_EDIT" = 1 ] && cr_how=-i

@@ -1248,6 +1248,39 @@ def test_a_commit_landing_before_the_replays_drop_is_never_dropped_exit_6(box: B
     _settled(box, c)
 
 
+def test_a_drop_refused_for_another_reason_names_git_and_no_commit_on_top_exit_6(box: Box):
+    """rv1b-c3's NIT E (its probe P2): the drop's compare-and-swap is refused
+    for a reason other than a moved branch: another git process holds
+    `refs/heads/main.lock` (a peer's commit, or a `pack-refs`, in flight), and
+    HEAD is still this write's commit. The refusal went to `cp_not_head`,
+    which said "HEAD is X, not this write's commit X: another commit was made
+    on top of it" and "it and the commit on top of it are kept", and git's own
+    words, in the file the helper read them into, were never shown. Now git's
+    words are printed, and where HEAD is still this write's commit the words
+    say that git could not move the branch and that nothing was moved (6),
+    with no commit on top named."""
+    c = box.seam()
+    box.race()
+    gd = box.git("-C", str(c), "rev-parse", "--absolute-git-dir").strip()
+    lock = shlex.quote(f"{gd}/refs/heads/main.lock")
+    env = _git_shim(box, DROP_STARTS, before=f"    : > {lock}\n")
+    result = box.helper("set-row-state", LANE, STATE, **env)
+    assert (box.root / "fired").exists(), "the lock was held at the drop"
+    assert result.returncode == 6, result.stderr
+    err = result.stderr
+    sha = box.head(c)
+    assert box.subject(c).startswith(f"LANES({LANE}@"), "HEAD is still this write's commit"
+    assert re.search(r"git said: .*(cannot lock ref|main\.lock)", err), "git's own words are shown"
+    assert "another commit was made on top" not in err, "no commit is on top"
+    assert "it and the commit on top of it" not in err
+    assert f"not this write's commit {sha}" not in err
+    assert f"HEAD is still this write's commit {sha}" in err
+    assert f"git could not move the branch off this write's commit to drop it, so nothing was moved and it is kept on HEAD: {sha}" in err
+    assert "push refused (attempt 1 of 6)" not in err, "nothing is replayed"
+    assert len(box.unpublished(c)) == 1, "the one commit is kept, for the publish act"
+    _settled(box, c)
+
+
 def test_an_up_to_date_pull_after_the_replays_drop_is_no_commit_on_top(box: Box):
     """SHOULD C of rv1b-c2's re-check, its case A: no commit lands anywhere,
     and an unlocked `pull --rebase` that is up to date runs just after the
