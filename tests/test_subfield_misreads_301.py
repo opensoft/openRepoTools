@@ -806,17 +806,22 @@ def test_a_lane_that_is_free_is_told_so_before_a_bad_host_is_refused(tmp_path):
     front of it would send a person to put right a name the request never
     needed. Every other case here asks a lane that is bound."""
     e = _bound_elsewhere(tmp_path)
+    tip = e.tip()
     for variable, value in (("LANES_HOST", "my host"), ("LANES_CONTAINER", "a b")):
         res = e.edit("request-handoff", "repoC-1", "--session", UUID_R, "--no-wait",
                      env={variable: value})
         assert res.returncode == 8, (variable, res.returncode, res.stderr)
         assert "lane repoC-1 is FREE" in res.stderr, (variable, res.stderr)
         assert "not one ref" not in res.stderr, (variable, res.stderr)
-        assert _requests(e) == [], variable
+        # THE REQUEST GOES TO repoC-1 AND `_requests` READS repoH-1's LOG, so it
+        # could not have shown a line written to the lane that was asked. What
+        # "nothing was written" means is that the published register has not
+        # moved at all, whichever log, and the tip is the one thing that says it.
+        assert e.tip() == tip, (variable, tip, e.tip())
 
 
 @pytest.mark.parametrize("host,container", [("plainhost", "none"), ("plainhost", "plainc"),
-                                            ("a.b-c_d:9", "a.b-c_d:9")],
+                                            ("A.b-C_d:9", "A.b-C_d:9")],
                          ids=["no-container", "plain", "whole-alphabet"])
 def test_a_host_the_binding_fence_takes_is_written_whole_on_both_paths(tmp_path, host, container):
     """THE CONTROL FOR R: a host and a container of the fence's own alphabet are
@@ -824,7 +829,10 @@ def test_a_host_the_binding_fence_takes_is_written_whole_on_both_paths(tmp_path,
     read back whole) and by the forced release that follows it (`forced by
     <uuid>@<h>/<c>`). EVERY ROW OF THE MATRIX ABOVE IS A REFUSAL (lane 3's
     re-check of #301, 841), so this is the one place a fence that took nothing
-    but `none` for a container is told from the one that takes the alphabet."""
+    but `none` for a container is told from the one that takes the alphabet.
+    The whole-alphabet row holds a capital as well (lane 3, 1021): `A-Z` is in
+    the alphabet and no other row carries one, so a fence that dropped it
+    passed every id."""
     e = _bound_elsewhere(tmp_path)
     env = {"LANES_HOST": host, "LANES_CONTAINER": container}
     res = e.edit("request-handoff", "repoH-1", "--session", UUID_R, "--no-wait", env=env)
