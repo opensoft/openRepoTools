@@ -457,7 +457,8 @@
 #      or the directory its lock lives in, removed while the write waited for
 #      that lock (360: lane-end's sweep of a CLOSED lane), said at once;
 #      `handoff-path` and `write-handoff`, a register that could not be read
-#      (R22: never 8)
+#      (R22: never 8), and `write-handoff`'s target under a repository that
+#      git could not read (R22: never "no repository")
 #   2  refusal: bad arguments, the object is held, an unknown alias, —
 #      Amendment 15 — a register holding
 #      two rows whose lane names differ only by case, which every writer and
@@ -489,7 +490,11 @@
 #      edit; and — slice 2a — `write-handoff`'s handoff
 #      that resolves into W through a link (S5), a target in the checkout, or
 #      in another clone of the register, that is not a file under `handoffs/`
-#      (S2), a target inside a git directory, a restart's bound file or
+#      (S2), a target inside a git directory, a target in W or in another
+#      checkout of the register beside it (`<W>-lanes/<lane>/`, `<W>-<name>/`;
+#      a lane's handoff is written in its own checkout only, and
+#      `handoff-path` and `set-restart-intent --handoff` refuse the same
+#      handoff by the same check, 601), a restart's bound file or
 #      pre-image that is not this one, or a splice that does not prove out,
 #      each with nothing written; while S3's refusal of a `--prepend` or a
 #      `--whole` has WRITTEN the handoff, uncommitted (R-A11-11), and printed
@@ -16560,6 +16565,41 @@ handoff_in_checkout() {   # <canonical lane> <cell or path> — 0 its path in th
   hic_p="$(lane_checkout_path "$1")" || return 1
   handoff_in_repo "$hic_p" "$2"
 }
+# A LANE'S HANDOFF IS A FILE OF ITS OWN CHECKOUT, NEVER OF W OR OF ANOTHER
+# CHECKOUT BESIDE IT (lane openRepoTools-3's review of #312, 601; its
+# correction, #312 6368669583; finding 723 of its review of #316). The three
+# verbs that translate a handoff — `write-handoff`, `handoff-path` and
+# `set-restart-intent --handoff` — ask this ONE question of the path
+# `handoff_in_repo` gave them, so whatever one refuses the others refuse: a
+# path that is physically in W where W is not the checkout (S5, the readers'
+# copy), or in a checkout beside W that is not this one — a sibling lane's
+# `<W>-lanes/<lane>/` (S1), a per-profile `<W>-<name>/` clone. The PHYSICAL
+# path is asked about, so any spelling — absolute, or climbing with `..` —
+# lands where it lands; and it is asked BY PATH, asking git nothing, so a
+# clone git cannot read is refused the same. In `write-handoff` alone, a
+# sibling's `handoffs/` file was written there as another repository's,
+# uncommitted, and that lane's next `--stamp` refused at S3 step 4 over a
+# change it never made; while `lane-start` still delivered the sibling's top
+# block as this lane's first prompt, because `handoff-path` printed its path.
+# Sets HBW_WHY: the words that follow "is" in each verb's refusal.
+HBW_WHY=""
+handoff_beside_w() {   # <the checkout> <a path, as handoff_in_repo gave it> — 0 refused, HBW_WHY set; 1 not
+  HBW_WHY=""
+  [ -n "$LANES_WS_REAL" ] || return 1
+  hbw_c="$(cd -P -- "$1" 2>/dev/null && pwd -P)" || hbw_c="$1"
+  hbw_p="$(path_physical "$2")" || hbw_p="$2"
+  if [ "$hbw_c" != "$LANES_WS_REAL" ] && path_under "$hbw_p" "$LANES_WS_REAL"; then
+    HBW_WHY="$hbw_p, inside the workspace checkout $LANES_WS_REAL, the readers' copy, where no tool writes (Amendment 23 S5), not in the checkout $hbw_c this lane's writes go through"
+    return 0
+  fi
+  path_under "$hbw_p" "$hbw_c" && return 1
+  case "$hbw_p" in
+    "$LANES_WS_REAL"-*/*)
+      HBW_WHY="$hbw_p, in another checkout of the register beside W ($LANES_WS_REAL), not in the checkout $hbw_c this lane's writes go through: a lane's handoff is written in its own checkout only (Amendment 23 S1, S2)"
+      return 0 ;;
+  esac
+  return 1
+}
 # THE CHECKOUT A LANE'S HANDOFF IS WRITTEN THROUGH, for the two acts that answer
 # it without writing (`handoff-path`, `set-restart-intent`): S1's path under the
 # opt-in with no explicit `LANES_REPO` — made first with `create` 1, or checked
@@ -19872,9 +19912,12 @@ EOF
   #      link, refuses (S5, 2), and so does one in the checkout, or in another
   #      clone of the register, that is not a file under `handoffs/` (S2:
   #      never the register or `lanes/`), and one inside a git directory —
-  #      another clone's `.git/`, a bare clone. One in ANOTHER REPOSITORY
-  #      (Amendment 8(d)) is written there and never committed, and S3's
-  #      refusal of this checkout does not stop it.
+  #      another clone's `.git/`, a bare clone — and any path in W or in a
+  #      checkout beside it (`<W>-lanes/<lane>/`, `<W>-<name>/`): a lane's
+  #      handoff is written in its own checkout only (601). Where git cannot
+  #      read a repository on the way up from the target, it refuses (1, R22).
+  #      One in ANOTHER REPOSITORY (Amendment 8(d)) is written there and never
+  #      committed, and S3's refusal of this checkout does not stop it.
   #   3. S3 step 4 for the handoff's own path (`cs_own_pending`), and for a
   #      handoff git does not track yet, which a commit would add and a lost
   #      race's replay would drop.
@@ -19902,9 +19945,11 @@ EOF
   #   0 pushed, or nothing to commit (another repository's file, S3's refusal
   #     of this checkout or not; LANES_NO_GIT)
   #   1 environment: a checkout that cannot be entered, an unreadable file,
-  #     a register that could not be read (R22: never 8)
+  #     a register that could not be read (R22: never 8), a repository on the
+  #     way up from the target that git could not read (R22)
   #   2 refused: S3 (step 6), S5, a target that is not under handoffs/ (S2) or
-  #     is inside a git directory, a restart's bound file or pre-image, a proof
+  #     is inside a git directory, one in a checkout beside W that is not this
+  #     one, a restart's bound file or pre-image, a proof
   #   3 pushed, not confirmed · 4 a lock · 6 kept on HEAD, named
   #   7 a restart fence, or the handoff changed under the write
   #   8 no handoff to write: no row for the lane (with `--target` too), the
@@ -20047,17 +20092,47 @@ EOF
     # there then failed (128), its own lane's S3 with them. No handoff of
     # Amendment 8(d)'s lives in a git directory, so it is refused first.
     if [ "$whf_other" = 1 ]; then
+      # git is asked in the NEAREST DIRECTORY THERE IS on the way up, so a
+      # target whose own directory is missing is still read where it would be.
       whf_gd="$(dirname -- "$whf_phys")"
+      while [ ! -d "$whf_gd" ] && [ "$whf_gd" != / ] && [ "$whf_gd" != . ]; do whf_gd="$(dirname -- "$whf_gd")"; done
       if [ "$(git -C "$whf_gd" rev-parse --is-inside-git-dir 2>/dev/null || :)" = true ]; then
         whf_stamp_said
         die "lane $lane's handoff target $whf_path is $whf_phys, inside a git directory ($whf_gd), where git keeps a repository's own files (another clone's .git/, or a bare clone): write-handoff writes a lane's handoff and nothing else, and no handoff lives in a git directory (Amendment 23 S2; Amendment 8(d)'s is a file of a work tree). Nothing was written." 2
       fi
-      whf_otop="$(git -C "$(dirname -- "$whf_phys")" rev-parse --show-toplevel 2>/dev/null || :)"
+      whf_otop="$(git -C "$whf_gd" rev-parse --show-toplevel 2>/dev/null || :)"
       whf_otop="$( [ -n "$whf_otop" ] && cd -P -- "$whf_otop" 2>/dev/null && pwd -P || :)"
       if [ -n "$whf_otop" ] && { [ -e "$whf_otop/$LANES_PATH" ] || [ -L "$whf_otop/$LANES_PATH" ]; } &&
          path_under "$whf_phys" "$whf_otop" && ! whf_in_scope "${whf_phys#"$whf_otop"/}"; then
         whf_stamp_said
         die "lane $lane's handoff target $whf_path is ${whf_phys#"$whf_otop"/} in $whf_otop, another checkout of the register (its top level carries $LANES_PATH too), which is not a file under handoffs/: write-handoff writes a lane's handoff and nothing else, never a register or anything under lanes/, in this checkout or in another clone of it (Amendment 23 S2). Nothing was written." 2
+      fi
+      # A LANE'S HANDOFF IS WRITTEN IN ITS OWN CHECKOUT ONLY (601; the check
+      # `handoff-path` and `set-restart-intent` share, `handoff_beside_w`): any
+      # path in a checkout beside W — a sibling lane's `<W>-lanes/<lane>/`, a
+      # per-profile `<W>-<name>/` clone — is refused by path, so a clone git
+      # cannot read is never A44's and A47's "no repository" there. W itself
+      # is S5's, above, wherever this checkout is not W.
+      if handoff_beside_w "$whf_c" "$whf_path"; then
+        whf_stamp_said
+        die "lane $lane's handoff target $whf_path is $HBW_WHY. Nothing was written." 2
+      fi
+      # A READ THAT FAILED IS NEVER "NO REPOSITORY" (601's second half, R22).
+      # Where git gave no top level, the target is in no work tree only if no
+      # `.git` is on the way up from it; one that is there is a repository git
+      # could not read here (a broken config, another owner), whose register
+      # or git directory A44 and A47 could not see. Refused, nothing written.
+      if [ -z "$whf_otop" ]; then
+        whf_up="$whf_gd"
+        while :; do
+          if [ -e "$whf_up/.git" ] || [ -L "$whf_up/.git" ]; then
+            whf_gerr="$(git -C "$whf_gd" rev-parse --show-toplevel 2>&1 >/dev/null | head -n 1)"
+            whf_stamp_said
+            die "lane $lane's handoff target $whf_path is $whf_phys, under $whf_up, which holds a git repository that git could not read here (${whf_gerr:-no top level}), so whether it is another clone of the register, or its git directory, cannot be said: a read that failed is never 'no repository' (R22). Nothing was written." 1
+          fi
+          [ "$whf_up" != / ] && [ "$whf_up" != . ] || break
+          whf_up="$(dirname -- "$whf_up")"
+        done
       fi
     fi
     # ANOTHER REPOSITORY'S HANDOFF IS NOT THIS CHECKOUT'S WRITE (rv2a's
@@ -20209,7 +20284,8 @@ EOF
   #   0 the path (another repository's too, said on stderr) · 8 no row, or a
   #   row that names no handoff, and nothing cloned · 1 a checkout there that
   #   is not a clone, or a register that could not be read (R22: never 8) ·
-  #   2 a name refused,
+  #   2 a name refused, a handoff in W or in another checkout beside it
+  #   (601, as `write-handoff` refuses it; nothing on stdout),
   #   or the clone failed · 4 the creation lock · 64 usage
   handoff-path)
     hp_lane=""; hp_create=0
@@ -20242,6 +20318,13 @@ EOF
     fi
     handoff_checkout_of "$hp_lane" "$hp_create"
     hp_rc=0; hp_path="$(handoff_in_repo "$HCO_PATH" "$hp_cell")" || hp_rc=$?
+    # WHAT `write-handoff` REFUSES, NO PATH IS PRINTED FOR (finding 723 of
+    # lane openRepoTools-3's review of #316): a caller binds a restart to this
+    # path and reads its top block as the lane's first prompt, so a handoff in
+    # W or in another checkout beside it is refused here by the same check.
+    if handoff_beside_w "$HCO_PATH" "$hp_path"; then
+      die "lane $hp_lane's handoff $hp_cell is $HBW_WHY: \`write-handoff\` refuses it, so no path is printed for a restart to bind or a launch to read (601). Nothing was written." 2
+    fi
     [ "$hp_rc" = 0 ] || note "$hp_path is another repository's handoff (Amendment 8(d)): \`write-handoff\` writes it there and commits it nowhere"
     printf '%s\n' "$hp_path"
     ;;
@@ -20412,6 +20495,22 @@ EOF
       case "$sri_hf" in
         /*) note "--handoff $sri_hf_cell is bound as $sri_hf: the row's spelling, translated into the checkout lane $lane's writes go through, or another repository's file as it is (Amendment 23 S2)" ;;
         *)  die "--handoff $sri_hf_cell could not be made an absolute path in the checkout lane $lane's writes go through (got '$sri_hf'). Nothing was written." 1 ;;
+      esac
+      if handoff_beside_w "$HCO_PATH" "$sri_hf"; then
+        die "--handoff $sri_hf_cell is $HBW_WHY: \`write-handoff\` refuses it, so no restart is bound to it (601). Nothing was written." 2
+      fi
+    elif [ -n "$sri_hf" ] && [ -n "$LANES_WS_REAL" ]; then
+      # AN ABSOLUTE PATH IS KEPT AS GIVEN (W's spelling is every older
+      # caller's, and `write-handoff` translates it on its side), but one that
+      # lands in a checkout beside W is asked the same question as a cell
+      # (601): only the lane's own checkout there is its handoff's.
+      sri_hf_phys="$(path_physical "$sri_hf")" || sri_hf_phys="$sri_hf"
+      case "$sri_hf_phys" in
+        "$LANES_WS_REAL"-*/*)
+          handoff_checkout_of "$lane" 0
+          if handoff_beside_w "$HCO_PATH" "$sri_hf"; then
+            die "--handoff $sri_hf is $HBW_WHY: \`write-handoff\` refuses it, so no restart is bound to it (601). Nothing was written." 2
+          fi ;;
       esac
     fi
     # Select the physical intent under the CAS mutex: a waiting writer must

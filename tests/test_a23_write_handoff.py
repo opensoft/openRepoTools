@@ -1125,22 +1125,183 @@ def test_a_target_in_another_clone_of_the_register_keeps_the_handoffs_rule(box: 
     _released(box, c)
 
 
-def test_a_handoff_in_another_clone_of_the_register_is_still_another_repositorys(box: Box):
-    """A44's bound: in another clone of the register, a file under
-    `handoffs/` passes the rule and is written as another repository's
-    handoff (8(d)), committed nowhere, exit 0, as before. Whether such a file
-    is refused too is question 3's, for lane openRepoTools-3."""
+def _beside_w_dir(box: Box, where: str) -> Path:
+    """Where another checkout of the register BESIDE W is: a sibling lane's
+    `<W>-lanes/<lane>/` (S1), or a per-profile `<W>-<name>/` clone."""
+    if where == "lanes-sibling":
+        return box.lanes_root / NEIGHBOUR
+    return box.w.parent / f"{box.w.name}-p2"
+
+
+def _beside_w(box: Box, where: str) -> Path:
+    """Another checkout of the register beside W, cloned."""
+    return box.clone(_beside_w_dir(box, where))
+
+
+def _climb(box: Box, f: Path) -> str:
+    """`f` spelled as a repository-relative cell of the seam `<root>/c` that
+    climbs out of it with `..` (lane 3's 723 scenario's second spelling)."""
+    return "handoffs/../" + os.path.relpath(f, box.root / "c")
+
+
+@pytest.mark.parametrize("how", ["target", "abs-cell", "climb-cell"])
+@pytest.mark.parametrize("where", ["lanes-sibling", "profile-clone"])
+def test_a_handoff_in_another_checkout_of_the_register_beside_W_is_refused(box: Box, where: str, how: str):
+    """601 (MUST) and Q3 of lane openRepoTools-3's review of #312. A file
+    under `handoffs/` in another checkout of the register beside W was taken
+    for another repository's handoff (8(d)): written there, uncommitted,
+    exit 0, and that lane's own next `--stamp` refused at S3 step 4 over a
+    change it never made, its next `--prepend` printed a recovery that would
+    commit this lane's line under its own trailer. This test pinned that as
+    `test_a_handoff_in_another_clone_of_the_register_is_still_another_repositorys`
+    until lane 3's ruling. A lane's handoff is written in its own checkout
+    only, so the path refuses it (2), by `--target` or by an absolute cell:
+    nothing written there or here, the stamp line said, nothing on stdout."""
+    if how == "abs-cell":
+        box.cell_is(str(_beside_w_dir(box, where) / HANDOFF_REL))
+    if how == "climb-cell":
+        box.cell_is(_climb(box, _beside_w_dir(box, where) / HANDOFF_REL))
     c = box.seam()
-    d = box.clone(box.lanes_root / NEIGHBOUR)
+    d = _beside_w(box, where)
     f = d / HANDOFF_REL
-    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT, "--target", str(f))
-    assert result.returncode == 0, result.stderr
-    assert f"{f} is another repository's handoff (Amendment 8(d))" in result.stderr
-    assert f.read_text(encoding="utf-8") == stamped(HANDOFF)
-    assert box.git("-C", str(d), "status", "--porcelain").split() == ["M", HANDOFF_REL]
-    assert box.head(c) == box.origin_head()
-    assert result.stdout == _line(f)
+    args = ("--target", str(f)) if how == "target" else ()
+    text, theirs, mine = f.read_bytes(), box.snapshot(d), box.snapshot(c)
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT, *args)
+    assert result.returncode == 2, result.stderr
+    assert f"is {f}, in another checkout of the register beside W ({box.w})" in result.stderr
+    assert "Nothing was written." in result.stderr
+    assert "another repository's handoff" not in result.stderr
+    assert f"the stamp line it would have written under the handoff's header block: {STAMP}" in result.stderr
+    assert f.read_bytes() == text
+    assert box.snapshot(d) == theirs, "that lane's checkout is as it was: nothing pending for its S3"
+    assert box.snapshot(c) == mine
+    assert result.stdout == ""
     _released(box, c)
+
+
+def _unreadable(box: Box, d: Path, how: str, c: Path) -> dict:
+    """Make the clone at `d` one git cannot read: a broken line in its
+    config, or another owner (git's `dubious ownership`, with this box's own
+    repositories named safe). Returns the environment the write runs with."""
+    extra = {}
+    if how == "bad-config":
+        with open(d / ".git" / "config", "a", encoding="utf-8") as fh:
+            fh.write("[broken\n")
+    else:
+        safe = (c, box.w, box.origin, box.seed, box.peer)
+        (box.home / ".gitconfig").write_text(
+            "[safe]\n" + "".join(f"\tdirectory = {x}\n" for x in safe), encoding="utf-8")
+        extra = {"GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"}
+    probe = subprocess.run(["git", "-C", str(d), "rev-parse", "--show-toplevel"],
+                           env=dict(box.env, **extra), capture_output=True, text=True, check=False)
+    assert probe.returncode != 0, ("git can still read the clone", probe.stdout)
+    mine = subprocess.run(["git", "-C", str(c), "rev-parse", "--show-toplevel"],
+                          env=dict(box.env, **extra), capture_output=True, text=True, check=False)
+    assert mine.returncode == 0, ("git cannot read this checkout either", mine.stderr)
+    return extra
+
+
+@pytest.mark.parametrize("how", ["bad-config", "other-owner"])
+@pytest.mark.parametrize("where", ["beside-W", "elsewhere"])
+def test_a_clone_git_cannot_read_is_never_taken_for_no_repository(box: Box, where: str, how: str):
+    """601's second half: A44 and A47 asked git about the other clone and
+    read a failed answer as "no repository" (against R22), so where git
+    could not read that clone — a broken config line, or another owner —
+    `--whole` replaced its register in place, exit 0, which A44 exists to
+    refuse. Beside W the path refuses it (2); anywhere else, a `.git` on the
+    way up from the target that git gave no answer for refuses (1, R22).
+    Nothing written there or here, nothing on stdout."""
+    c = box.seam()
+    d = box.clone(box.lanes_root / NEIGHBOUR if where == "beside-W" else box.root / "elsewhere-clone")
+    reg = d / REGISTER
+    before, mine = reg.read_bytes(), box.snapshot(c)
+    extra = _unreadable(box, d, how, c)
+    result = box.write_handoff("--whole", str(_prepared(box, "# not a register any more\n")),
+                               "--expect-digest", sha(reg), "--subject", "handoff: PAUSED",
+                               "--target", str(reg), **extra)
+    if where == "beside-W":
+        assert result.returncode == 2, result.stderr
+        assert f"is {reg}, in another checkout of the register beside W ({box.w})" in result.stderr
+    else:
+        assert result.returncode == 1, result.stderr
+        assert f"is {reg}, under {d}, which holds a git repository that git could not read here" in result.stderr
+        assert "a read that failed is never 'no repository' (R22)" in result.stderr
+    assert "Nothing was written." in result.stderr
+    assert "another repository's handoff" not in result.stderr
+    assert reg.read_bytes() == before
+    assert box.snapshot(c) == mine
+    assert result.stdout == ""
+    _released(box, c)
+
+
+HANDOFF_PATH_REFUSED = [("W", "climb-cell"), ("lanes-sibling", "abs-cell"), ("lanes-sibling", "climb-cell"),
+                        ("profile-clone", "abs-cell"), ("profile-clone", "climb-cell")]
+
+
+@pytest.mark.parametrize("where,how", HANDOFF_PATH_REFUSED)
+def test_handoff_path_refuses_what_write_handoff_refuses(box: Box, where: str, how: str):
+    """Finding 723 of lane openRepoTools-3's review of #316, and its
+    correction for 601 (#312 6368669583): with the refusal in `write-handoff`
+    alone, `handoff-path` still printed a sibling checkout's handoff, and
+    `lane-start` delivered that sibling's top block as this lane's first
+    prompt. The three verbs now share one check, so `handoff-path` refuses
+    what `write-handoff` refuses (2): a cell that lands in W (S5), or in
+    another checkout of the register beside W, absolute or climbing with
+    `..`. No path on stdout, the refusal named, nothing written there or
+    here. W's own absolute spelling is still translated into the checkout
+    (S2), so W is reached here only by climbing."""
+    if where == "W":
+        box.w_current()
+        d = box.w
+    else:
+        d = _beside_w(box, where)
+    f = d / HANDOFF_REL
+    assert f.is_file()
+    box.cell_is(str(f) if how == "abs-cell" else _climb(box, f))
+    c = box.seam()
+    theirs, mine = box.snapshot(d), box.snapshot(c)
+    result = box.helper("handoff-path", LANE)
+    assert result.returncode == 2, result.stderr
+    if where == "W":
+        assert f"is {f}, inside the workspace checkout {box.w}, the readers' copy" in result.stderr
+    else:
+        assert f"is {f}, in another checkout of the register beside W ({box.w}), not in the checkout {c}" in result.stderr
+    assert "`write-handoff` refuses it, so no path is printed" in result.stderr
+    assert "another repository's handoff" not in result.stderr
+    assert result.stdout == ""
+    assert box.snapshot(d) == theirs
+    assert box.snapshot(c) == mine
+
+
+@pytest.mark.parametrize("how", ["abs", "abs-climb", "estate-cell"])
+@pytest.mark.parametrize("where", ["lanes-sibling", "profile-clone"])
+def test_set_restart_intent_refuses_a_handoff_beside_W_that_is_not_the_lanes(box: Box, where: str, how: str):
+    """601 in the third verb that translates a handoff: `set-restart-intent
+    --handoff` binds a restart to a file `write-handoff` would then refuse,
+    so it refuses the same file by the same check (2), whether the path is
+    absolute, absolute and climbing with `..`, or the estate's `~/` cell:
+    no intent written, the refusal named, nothing on stdout. W's absolute
+    path is still kept as given (every older caller's binding)."""
+    c = box.seam()
+    d = _beside_w(box, where)
+    f = d / HANDOFF_REL
+    assert f.is_file()
+    if how == "abs":
+        spelled = str(f)
+    elif how == "abs-climb":
+        spelled = str(c / "handoffs" / ".." / os.path.relpath(f, c))
+    else:
+        spelled = "~/" + os.path.relpath(f, box.home)
+    theirs, mine = box.snapshot(d), box.snapshot(c)
+    made = _bound(box, spelled)
+    assert made.returncode == 2, made.stderr
+    assert (f"--handoff {spelled} is {f}, in another checkout of the register beside W ({box.w}), "
+            f"not in the checkout {c}") in made.stderr
+    assert "Nothing was written." in made.stderr
+    assert made.stdout == ""
+    assert not (box.state / LANE / "restart-intent.yaml").exists()
+    assert box.snapshot(d) == theirs
+    assert box.snapshot(c) == mine
 
 
 @pytest.mark.parametrize("mode", ["stamp", "whole"])
