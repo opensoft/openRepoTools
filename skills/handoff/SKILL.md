@@ -166,8 +166,9 @@ ws="${ws_pair%%	*}"
 # printed restart command — so a container with no workstation lost the one
 # thing a swap exists to leave behind. Clause (k) rule (d)'s cost is *"until the
 # value is exported, every lane write from a container stops"*, and that is the
-# register and the logs; step 2's handoff commit is a commit in the LANE'S OWN
-# repository and is not one of them. Clause (e)'s shape for a fact a writer
+# register and the logs; step 2's handoff is written by `write-handoff`, in the
+# lane's own checkout (Amendment 23 S2), and that verb is not one of the writes
+# the helper refuses for want of a workstation. Clause (e)'s shape for a fact a writer
 # cannot carry is *"the gap named in the handoff"*, and that is what happens
 # here: `$ws_missing` is carried to step 2, which names it, and to step 4, which
 # skips (a), (b) and (c) alike — every register and log write.
@@ -484,8 +485,8 @@ Write `session unknown` where the top block's first line carries `<uuid>`, as `l
 (e)'s shape for a fact a writer cannot carry). Say in the state line, in as many words, that this session ran
 in a container with no `LANES_WORKSTATION`, that step 4's register and object-log writes were therefore NOT
 made, and that the row still reads as it did — so the next session knows the register is behind its own
-handoff rather than believing the lane never paused. This commit is in the LANE'S OWN repository and is not
-one of the writes that stop.
+handoff rather than believing the lane never paused. The handoff is written by `write-handoff`, in the lane's
+own checkout, and that verb is not one of the writes the helper refuses for want of a workstation.
 
 **THE WRITE IS ONE CALL, AND IT COMMITS THE HANDOFF'S OWN PATH AND NOTHING ELSE** (Amendment 4(d):
 *"with explicit pathspecs — never `git add -A`, never a bare `git commit`"*; Amendment 5(c) and (d); Amendment 23
@@ -513,14 +514,16 @@ for byte, as `--prepend` proves it: the last bytes of `$prepared_file`, as many 
 compared with the old file. Where they differ, or the build failed, the call is not made and nothing is
 written. (`--whole` takes any file that is not empty, so a file written whole from what a session remembered
 of the old one, the act that lost two lanes' rows on 2026-09-08, would be published as written.)
-`$hf_subject` is the commit's one-line subject: the lane, the workstation (`none` where step 1 found none) and
-the why in the operator's words, `handoff` where there is none.
+`$hf_subject` is the commit's one-line subject: the lane, the workstation (`unknown` where step 1 found none)
+and the why in the operator's words, `handoff` where there is none, each control character made a space. It is
+`lane-handoff`'s subject for the same act, spelled the same way.
 
 ```sh
-# A CONTROL CHARACTER IS REMOVED, NOT REFUSED OVER: the verb exits 64 on one in the subject and writes nothing,
-# and a why with a stray tab must not cost the swap its handoff.
-hf_subject="handoff($lane@${ws:-none}): PAUSED, ${why:-handoff}"
-hf_subject="$(printf '%s' "$hf_subject" | LC_ALL=C tr -d '[:cntrl:]')"
+# A CONTROL CHARACTER IS MADE A SPACE, NOT REFUSED OVER: the verb exits 64 on one in the subject and writes
+# nothing, and a why with a stray tab must not cost the swap its handoff. `lane-handoff` writes the same act's
+# subject the same way (its `subject_text`, and `unknown` for a missing workstation; rv3's NIT 1 on #311).
+hf_subject="handoff($lane@${ws:-unknown}): PAUSED, ${why:-handoff}"
+hf_subject="$(printf '%s' "$hf_subject" | LC_ALL=C tr '[:cntrl:]' ' ')"
 hf_rc=0; hf_out=""; hf_tried=""; hf_built=""; hf_old_size=""
 # THE COMPLETE NEW FILE, AND THE PROOF THAT THE OLD ONE SURVIVES AT ITS END (`--prepend`'s layout and its proof).
 if [[ -n "$handoff_file" && -n "$prior_sha256" && -n "${prepared_file:-}" && -s "${block_file:-}" ]]; then
@@ -538,7 +541,7 @@ if [[ -n "$hf_built" ]]; then
   hf_wrote="nothing was written"; [[ -z "$hf_out" ]] || hf_wrote="the file is written at $hf_path"
   hf_kept="The new file is kept at $prepared_file, and its new top block alone at $block_file: name both paths in the report, so that the top block can be put at the head of the handoff by hand once this is answered."
   case "$hf_rc" in
-    0) printf 'handoff written: %s (pushed from the lane checkout; a handoff in another repository is written and never committed, and its note above says so)\n' "$hf_path" ;;
+    0) printf 'handoff written: %s (the note above, from write-handoff, says what was committed and where it was pushed)\n' "$hf_path" ;;
     2) if [[ -n "$hf_out" ]]; then
          printf 'HANDOFF NOT COMMITTED: write-handoff refused the commit (exit 2; its words are above) and the file is written at %s, uncommitted. Nothing was pushed. Do not call it again: the file no longer has the bytes the digest names, so a second call is refused (7). Answer the refusal, then commit and publish the file as the note above says.\n' "$hf_path"
        else
@@ -903,8 +906,9 @@ fi
 row_write_refused=""
 # AND (c) IS A REGISTER WRITE TOO, so a missing workstation stops it as well and
 # says so ONCE rather than being refused twice by the helper. Ruling 11's
-# *"still refreshes the handoff naming the gap"* is step 2's commit, which is in
-# the LANE'S OWN repository and is not a register write; this is. `#71`'s copy
+# *"still refreshes the handoff naming the gap"* is step 2's `write-handoff`, a
+# write in the lane's own checkout that is no register write and is not one of
+# the writes the helper refuses for want of a workstation; (c) is one. `#71`'s copy
 # promised *"(c) below still runs"*, and against this repository's own
 # dispatcher guard that promise is a write the helper refuses — so the promise
 # is corrected here rather than repeated.

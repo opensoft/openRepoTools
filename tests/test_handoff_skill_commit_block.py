@@ -284,15 +284,17 @@ def test_the_digest_is_of_the_bytes_that_are_there(estate, shell):
 @pytest.mark.parametrize("shell", SHELLS)
 @pytest.mark.parametrize("ws, why, subject", [
     ("Eagle", "'a usage reset'", f"handoff({LANE}@Eagle): PAUSED, a usage reset"),
-    ("''", "''", f"handoff({LANE}@none): PAUSED, handoff"),
-    ("Eagle", "$'a\\tb\\x1bc'", f"handoff({LANE}@Eagle): PAUSED, abc"),
+    ("''", "''", f"handoff({LANE}@unknown): PAUSED, handoff"),
+    ("Eagle", "$'a\\tb\\x1bc'", f"handoff({LANE}@Eagle): PAUSED, a b c"),
     ("Eagle", "'reset — switch'", f"handoff({LANE}@Eagle): PAUSED, reset — switch"),
-], ids=["a-why", "no-workstation-no-why", "control-characters-removed", "a-dash-is-kept"])
+], ids=["a-why", "no-workstation-no-why", "control-characters-as-spaces", "a-dash-is-kept"])
 def test_the_subject_is_one_line_with_no_control_character(estate, shell, ws, why, subject):
     """The verb exits 64 on a control character in the subject and writes
     nothing, so a why with a stray tab would cost the swap its handoff: it is
-    removed, not refused over. A why the operator did not give is `handoff`,
-    and a missing workstation is `none`."""
+    made a space, not refused over. A why the operator did not give is
+    `handoff`, and a missing workstation is `unknown`: 2b's `lane-handoff`
+    writes the same act's subject so (`subject_text`, `${ws:-unknown}`), and
+    the two writers of one act spell it one way (rv3's NIT 1 on #311)."""
     estate.run(shell, estate.step2(ws=ws, why=why))
     assert _write_call(estate)["argv"][-1] == subject
 
@@ -392,7 +394,10 @@ def test_every_register_write_and_the_handoff_write_names_its_lane_in_the_text()
 def _says(estate: Estate) -> dict:
     path = str(estate.handoff)
     return {
-        "pushed": (0, True, [f"handoff written: {path}"], ["HANDOFF NOT"]),
+        # rv3's NIT 2: the 0 arm claims no push of its own; the verb's note says what it
+        # committed and where (an Amendment 8(d) handoff in its own top level, S2).
+        "pushed": (0, True, [f"handoff written: {path} (", "says what was committed and where it was pushed"],
+                   ["HANDOFF NOT", "pushed from the lane checkout", "never committed"]),
         "refused-after-writing": (2, True, [
             "HANDOFF NOT COMMITTED", f"written at {path}, uncommitted", "Nothing was pushed",
             "Do not call it again", "refused (7)"], ["HANDOFF NOT WRITTEN"]),
@@ -486,6 +491,18 @@ def test_refusal_text_keeps_R_A11_11():
                   "commits nothing", "git's own words", "replays the write", "(6)",
                   "report carries that line", "Never force", "never commit staged entries you did not make"):
         assert words in paragraph, f"the paragraph no longer says {words!r}:\n{paragraph}"
+
+
+def test_the_handoff_write_is_said_as_the_verbs_and_not_as_a_commit_of_the_skill():
+    """rv3's NIT 3 on #311: step 1's comment, `$ws_missing`'s paragraph and
+    step 4's (c) comment called step 2's write a commit "in the LANE'S OWN
+    repository", the wording from before Amendment 23. The write is
+    `write-handoff`'s, in the lane's own checkout, and it is not among the verbs
+    the helper's dispatcher refuses for want of a workstation."""
+    flat = " ".join(re.sub(r"(?m)^\s*#\s?", "", _text()).split())
+    assert "LANE'S OWN repository" not in flat, "the old wording is back"
+    assert flat.count("not one of the writes the helper refuses for want of a workstation") == 3, (
+        "step 1, the `$ws_missing` paragraph and step 4 say why the handoff still goes")
 
 
 # --- where the handoff is not found, and the file the session never wrote ----
@@ -771,7 +788,8 @@ def test_the_handoff_is_pushed_from_the_lane_checkout_and_W_is_untouched(real, s
     assert real.git("--git-dir", str(real.origin), "log", "-1", "--format=%B",
                     "main").strip().splitlines()[-1] == f"Lane: {REAL_LANE}"
     assert (c / HANDOFF_REL).read_text(encoding="utf-8") == REAL_NEW
-    assert real.head(c) == real.origin_head() and real.unpublished(c) == []
+    assert real.head(c) == real.origin_head()
+    assert real.unpublished(c) == []
     assert real.git("-C", str(c), "status", "--porcelain") == ""
     assert real.w_state() == w_before, "W moved"
     assert real.w_reflog() == reflog, "W's reflog moved: something committed or fast-forwarded it"
@@ -798,7 +816,8 @@ def test_a_handoff_that_moved_after_its_digest_was_read_is_refused_and_nothing_i
                f"git -C {peer} push -q origin main")
     proc = _real_run(real, shell, _real_script(between))
     assert proc.returncode == 0, _said(proc)
-    assert "HANDOFF NOT WRITTEN" in proc.stdout and "once more" in proc.stdout, _said(proc)
+    assert "HANDOFF NOT WRITTEN" in proc.stdout, _said(proc)
+    assert "once more" in proc.stdout, _said(proc)
     assert "nothing was published" in proc.stderr, _said(proc)
     assert real.subjects()[0] == "a peer edits the handoff"
     assert "a peer line" in real.origin_file(HANDOFF_REL)
@@ -852,7 +871,8 @@ def test_a_staged_entry_in_the_lane_checkout_leaves_the_handoff_written_and_unco
     assert "HANDOFF NOT COMMITTED" in proc.stdout, _said(proc)
     assert f"written at {c / HANDOFF_REL}, uncommitted" in proc.stdout, _said(proc)
     assert (c / HANDOFF_REL).read_text(encoding="utf-8") == REAL_NEW
-    assert real.origin_head() == tip and real.head(c) == head
+    assert real.origin_head() == tip
+    assert real.head(c) == head
     assert real.git("-C", str(c), "diff", "--cached", "--name-only").split() == [
         "handoffs/foreign.md"]
     assert "handoffs/foreign.md" not in _tree(real)
@@ -863,6 +883,7 @@ def test_a_lane_with_no_row_has_nothing_to_write_and_nothing_is_cloned(real, she
     tip = real.origin_head()
     proc = _real_run(real, shell, _real_script(lane="repoS4-9"))
     assert proc.returncode == 0, _said(proc)
-    assert "HANDOFF NOT FOUND" in proc.stdout and "was NOT called" in proc.stdout, _said(proc)
+    assert "HANDOFF NOT FOUND" in proc.stdout, _said(proc)
+    assert "was NOT called" in proc.stdout, _said(proc)
     assert not real.checkout("repoS4-9").exists()
     assert real.origin_head() == tip
