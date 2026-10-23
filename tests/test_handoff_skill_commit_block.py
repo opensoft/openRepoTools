@@ -80,8 +80,11 @@ LANE = "repoHS-1"
 UUID = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
 OLD = ("Lane: repoHS-1 (p, session s) — single-use resume prompt\n\n"
        "## RESUME PROMPT — PAUSED, the old block\n\nthe old state\n")
-NEW = ("Lane: repoHS-1 (p, session s) — single-use resume prompt\n\n"
-       "## RESUME PROMPT — PAUSED, the new block\n\n---\n\n" + OLD)
+#: The session's new top block, which it writes to `$block_file`, and the
+#: complete new file the skill builds from it: `write-handoff --prepend`'s layout.
+TOP = ("Lane: repoHS-1 (p, session s) — single-use resume prompt\n\n"
+       "## RESUME PROMPT — PAUSED, the new block\n\n")
+NEW = TOP + "---\n\n" + OLD
 OLD_DIGEST = hashlib.sha256(OLD.encode("utf-8")).hexdigest()
 
 SHELLS = [
@@ -205,12 +208,19 @@ class Estate:
         return [c["argv"][0] for c in self.calls()]
 
     def step2(self, *, ws: str = "Eagle", why: str = "'a usage reset'",
-              prepare: bool = True) -> str:
+              prepare: str = "block") -> str:
         """Step 2 as a session runs it: the first block, the session's own act
-        of writing the complete new file, then the one call. `ws` and `why` are
-        shell words, so a case can hand the block an ANSI-C string."""
-        write = (f'[ -z "$prepared_file" ] || printf %s {shlex.quote(NEW)} > "$prepared_file"'
-                 if prepare else ":")
+        of writing its new top block, and only it, to `$block_file`, then the
+        block that builds the complete new file and makes the one call. `ws` and
+        `why` are shell words, so a case can hand the block an ANSI-C string.
+        `prepare` is "block" (as the skill says), "none" (nothing written), or
+        "by-hand" (the old habit: the whole new file written into
+        `$prepared_file`, and `$block_file` left empty)."""
+        write = {
+            "block": f'[ -z "$block_file" ] || printf %s {shlex.quote(TOP)} > "$block_file"',
+            "none": ":",
+            "by-hand": f'[ -z "$prepared_file" ] || printf %s {shlex.quote(NEW)} > "$prepared_file"',
+        }[prepare]
         return "\n".join([f"L={shlex.quote(str(self.helper))}", f"lane={LANE}", f"ws={ws}",
                           f"why={why}", _block(B1), write, _block(B2),
                           'printf "AFTER\\n"'])
@@ -250,7 +260,8 @@ def test_block_calls_write_handoff_with_whole_and_expect_digest(estate, shell):
     assert argv[:3] == ["write-handoff", LANE, "--whole"], argv
     assert argv[4:] == ["--expect-digest", OLD_DIGEST, "--subject",
                         f"handoff({LANE}@Eagle): PAUSED, a usage reset"], argv
-    assert call["prepared"] == NEW, "the file sent is the one the session wrote, whole"
+    assert call["prepared"] == NEW, (
+        "the file sent is the session's top block, `---` and a blank line, then the old file whole")
     assert Path(argv[3]).parent == estate.tmp, "the prepared file is a temporary one"
     assert call["lane"] == LANE
     assert f"handoff written: {estate.handoff}" in proc.stdout, proc.stdout
@@ -444,11 +455,21 @@ def test_the_new_file_is_kept_and_named_wherever_nothing_was_written(estate, she
     proc = estate.run(shell, estate.step2(), STUB_WH_RC=str(rc), STUB_WH_OUT=out)
     sent = _write_call(estate)["argv"][3]
     kept = f"kept at {sent}"
+    top = f"its new top block alone at {_block_file(proc)}"
     if written:
         assert kept not in proc.stdout, proc.stdout
+        assert top not in proc.stdout, proc.stdout
     else:
         assert kept in proc.stdout, f"{case}: the new file is not named\n{proc.stdout}"
-        assert "name that path in the report" in proc.stdout, proc.stdout
+        assert top in proc.stdout, f"{case}: the top block's file is not named\n{proc.stdout}"
+        assert "name both paths in the report" in proc.stdout, proc.stdout
+
+
+def _block_file(proc: subprocess.CompletedProcess) -> str:
+    """The `$block_file` block 1 printed for the session to write its top block in."""
+    found = re.findall(r"(?m)^block_file=(.+)$", proc.stdout)
+    assert len(found) == 1, proc.stdout
+    return found[0]
 
 
 def test_refusal_text_keeps_R_A11_11():
@@ -571,13 +592,49 @@ def test_only_a_2_is_asked_again_and_never_with_create(estate, shell, rc):
 
 
 @pytest.mark.parametrize("shell", SHELLS)
-def test_a_prepared_file_the_session_never_wrote_is_never_sent(estate, shell):
-    """`mktemp` makes an empty file; the verb refuses an empty `--whole` file,
-    and the block does not even ask."""
-    proc = estate.run(shell, estate.step2(prepare=False))
+@pytest.mark.parametrize("prepare", ["none", "by-hand"])
+def test_a_top_block_the_session_never_wrote_is_never_sent(estate, shell, prepare):
+    """`mktemp` makes an empty file, and an empty `$block_file` is no new top
+    block: the block does not build a file or ask. A whole file written by hand
+    into `$prepared_file` (the old habit, where a session that forgot the
+    history sent only its block, rv3's SHOULD 1) is not what is sent either."""
+    proc = estate.run(shell, estate.step2(prepare=prepare))
     assert proc.returncode == 0
-    assert "HANDOFF NOT WRITTEN" in proc.stdout and "was NOT called" in proc.stdout, proc.stdout
+    assert "HANDOFF NOT WRITTEN" in proc.stdout, proc.stdout
+    assert "was NOT called" in proc.stdout, proc.stdout
     assert estate.verbs() == ["handoff-path"], estate.calls()
+
+
+#: The register line's last phrase where the new file did not keep the old one.
+LOST = "; handoff NOT refreshed (the new file did not keep the old handoff whole)"
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("how", ["short", "failed"])
+def test_a_new_file_that_lost_the_old_one_is_never_sent(estate, shell, how):
+    """rv3's SHOULD 1 on #311, option (b): the block builds the complete new
+    file itself, the top block from `$block_file`, `---` and a blank line, then
+    `cat -- "$handoff_file"`, and proves the old file survives at its end, byte
+    for byte (`tail -c <old size> | cmp`), before the call. A build that lost the
+    old file's bytes, here a `cat` that wrote only the first ten of them or
+    failed, is never sent: the call is not made, the block says why and names
+    the top block's file for the report, and step 4's line says the handoff was
+    NOT refreshed."""
+    cut = 'head -c 10 -- "$last"; exit 0' if how == "short" else "exit 1"
+    shim = estate.bin / "cat"
+    shim.write_text(f'#!/bin/sh\nfor last in "$@"; do :; done\n'
+                    f'[ "$last" = "$STUB_CAT_CUT" ] || exec {shutil.which("cat")} "$@"\n{cut}\n',
+                    encoding="utf-8")
+    shim.chmod(shim.stat().st_mode | stat.S_IXUSR)
+    proc = estate.run(shell, estate.step2() + "\n" + estate.step4(),
+                      STUB_CAT_CUT=str(estate.handoff))
+    assert proc.returncode == 0, proc.stderr
+    assert "write-handoff" not in estate.verbs(), estate.calls()
+    assert "HANDOFF NOT WRITTEN" in proc.stdout, proc.stdout
+    assert "does not end with the old handoff whole" in proc.stdout, proc.stdout
+    assert "write-handoff was NOT called" in proc.stdout, proc.stdout
+    assert f"kept at {_block_file(proc)}" in proc.stdout, proc.stdout
+    assert _register_line(estate).endswith(LOST), _register_line(estate)
 
 
 # --- step 4's register line says what step 2 did (rv3's SHOULD 3) ------------
@@ -627,7 +684,8 @@ def test_step4_register_line_says_what_step_2_did(estate, shell, extra, written,
     env = dict(extra)
     if written:
         env["STUB_WH_OUT"] = f"{estate.handoff}\tdeadbeef"
-    proc = estate.run(shell, estate.step2(prepare=prepare) + "\n" + estate.step4(), **env)
+    proc = estate.run(shell, estate.step2(prepare="block" if prepare else "none") + "\n"
+                      + estate.step4(), **env)
     assert proc.returncode == 0, proc.stderr
     line = _register_line(estate)
     assert line.endswith(ends), line
@@ -653,11 +711,13 @@ REAL_LANE = "repoS4-1"
 REAL_WHY = "a usage reset"
 
 
-def _real_script(shell_between: str = "", *, lane: str = REAL_LANE, new: str = REAL_NEW) -> str:
+def _real_script(shell_between: str = "", *, lane: str = REAL_LANE, block: str = BLOCK) -> str:
+    """Step 2 whole: the session writes its new top block alone, and the skill
+    builds `REAL_NEW` from it and the old file."""
     return "\n".join([
         f"L={shlex.quote(str(HELPER))}", f"lane={lane}", "ws=Eagle", f"why={shlex.quote(REAL_WHY)}",
         _block(B1), shell_between,
-        f'[ -z "$prepared_file" ] || printf %s {shlex.quote(new)} > "$prepared_file"',
+        f'[ -z "$block_file" ] || printf %s {shlex.quote(block)} > "$block_file"',
         _block(B2)])
 
 
@@ -689,7 +749,9 @@ def test_the_handoff_is_pushed_from_the_lane_checkout_and_W_is_untouched(real, s
     by its own pathspec with the `Lane:` trailer and pushed from it, and W, the
     readers' copy, does not move: not its HEAD, its working tree, its reflog, and
     not the entry another lane left STAGED there, which the old block committed
-    and published."""
+    and published. The session wrote its new top block alone, as rv3's probe of
+    SHOULD 1 did, and origin's handoff is that block over the old file whole:
+    the history survives, because the skill builds the file."""
     if how == "seam":
         c = real.seam()
     else:
@@ -761,10 +823,7 @@ def test_a_lane_checkout_behind_origin_is_7_once_and_written_when_step_2_is_run_
         assert made.returncode == 0, made.stderr
     peer_text = HANDOFF + "a peer line, pushed from elsewhere\n"
     real.peer_pushes(HANDOFF_REL, peer_text)
-    careful = (f'[ -z "$prepared_file" ] || {{ printf %s {shlex.quote(BLOCK)} '
-               "&& printf -- '---\\n\\n' && cat -- \"$handoff_file\"; } > \"$prepared_file\"")
-    script = "\n".join([f"L={shlex.quote(str(HELPER))}", f"lane={REAL_LANE}", "ws=Eagle",
-                        f"why={shlex.quote(REAL_WHY)}", _block(B1), careful, _block(B2)])
+    script = _real_script()
     first = _real_run(real, shell, script)
     assert first.returncode == 0, _said(first)
     assert "(exit 7;" in first.stdout, _said(first)
