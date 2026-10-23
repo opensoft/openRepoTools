@@ -496,7 +496,8 @@
 #      `handoff-path` and `set-restart-intent --handoff` refuse the same
 #      handoff by the same check, 601), a relative cell or `--target` whose
 #      `.` or `..` components climb out of the checkout (S2, 602; `handoff-path`
-#      refuses that cell too), or a splice that does not prove out, each with
+#      refuses that cell too), a handoff whose path holds a glob character
+#      (607), or a splice that does not prove out, each with
 #      nothing written — a restart's bound file or pre-image that is not this
 #      one is `publish-handoff`'s 2 and `write-handoff`'s 7 (603: its 2 is
 #      never a restart fence's); while S3's refusal of a `--prepend` or a
@@ -3105,14 +3106,23 @@ EOF
       note "origin/$LANES_BRANCH's $CP_WHOLE_REL is ${cpw_now:-gone} now, and this whole-file write started from ${CP_WHOLE_BLOB:-no such file}."
       cpw_head="$(git -C "$LANES_REPO" rev-parse -q --verify HEAD 2>/dev/null || :)"
       if [ "$cpw_head" = "$cp_sha" ]; then
+        # THE COMMITS UNDER IT ARE NAMED TOO (lane openRepoTools-3's review of
+        # #312, 609, as 1b's 344 names them below): an unlocked writer's
+        # commit landing after S3 and before this write's `git commit` sits
+        # under it, and the `reset --keep` the next note offers would take it.
+        if git -C "$LANES_REPO" rev-parse -q --verify "$cp_sha^" >/dev/null 2>&1 &&
+           ! git -C "$LANES_REPO" merge-base --is-ancestor "$cp_sha^" "refs/remotes/origin/$LANES_BRANCH" 2>/dev/null; then
+          cpw_un="$(git -C "$LANES_REPO" rev-list --count "refs/remotes/origin/$LANES_BRANCH..$cp_sha^" 2>/dev/null || printf 'some')"
+          note "under it are $cpw_un commit(s) that origin/$LANES_BRANCH lacks and this write did not make; list them: git -C $LANES_REPO log --oneline refs/remotes/origin/$LANES_BRANCH..HEAD; if any is not your own write, STOP and take it to the lane its subject names — never reset, stash or overwrite a peer's work"
+        fi
         note "look at it: git -C $LANES_REPO show $cp_sha; and at origin's: git -C $LANES_REPO log -1 -p refs/remotes/origin/$LANES_BRANCH -- $CP_WHOLE_REL"
         note "every later write from this checkout refuses (S3's unpushed row) until it is published — LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act — or archived (S6.3) and \`git -C $LANES_REPO reset --keep origin/$LANES_BRANCH\` run."
         die "the push was refused because origin/$LANES_BRANCH moved, and origin's copy of $CP_WHOLE_REL is no longer the one this whole-file write started from, so it does not replay over that change (Amendment 23 S4.4); the commit is local and kept on HEAD: $cp_sha $msg" 6
       fi
       if [ -z "$cpw_head" ] || ! git -C "$LANES_REPO" merge-base --is-ancestor "$cp_sha" "$cpw_head" 2>/dev/null; then
-        cp_not_head "$cp_sha" "$msg" "while its push was in flight"
+        cp_not_head "$cp_sha" "$msg" "before or while its push was in flight"
       fi
-      note "HEAD is $cpw_head, not this write's commit $cp_sha: another commit was made on top of it in this checkout while its push was in flight. Nothing is reset, so both are kept."
+      note "HEAD is $cpw_head, not this write's commit $cp_sha: another commit was made on top of it in this checkout before or while its push was in flight (609, 1b's 343). Nothing is reset, so both are kept."
       note "look at both: git -C $LANES_REPO log --oneline $cp_sha^..HEAD; and at origin's: git -C $LANES_REPO log -1 -p refs/remotes/origin/$LANES_BRANCH -- $CP_WHOLE_REL"
       note "every later write from this checkout refuses (S3's unpushed row) until they are published — LANES_LANE=<lane> $SELF commit \"<what they are>\", the publish act — or archived (S6.3)."
       die "the push was refused because origin/$LANES_BRANCH moved, and origin's copy of $CP_WHOLE_REL is no longer the one this whole-file write started from, so it does not replay over that change (Amendment 23 S4.4); this write's commit and the one on top of it are local and kept, with HEAD at $cpw_head: $cp_sha $msg" 6
@@ -16886,6 +16896,12 @@ fi
 # of them would come to disagree. The READS are untouched — a read in
 # front of every launch may not refuse, and one that answers nothing for a
 # workstation nobody configured is telling the truth.
+# `write-handoff` (Amendment 23, slice 2a) IS NOT IN THE LIST, ON PURPOSE
+# (lane openRepoTools-3's review of #312, 611; R-A11-11): a swap is never left
+# unwritten, so a container with no workstation still gets its handoff written
+# and published, and the commit's subject is the caller's, `lane-start`'s and
+# `lane-handoff`'s, which spell the workstation themselves. So not EVERY writer
+# refuses here: every writer in this list does.
 case "$cmd" in
   # `request-handoff` JOINS THE LIST BECAUSE IT WRITES (Amendment 18(c)/(e)). It
   # reaches `write_event` directly rather than through `log`, so the dispatcher
@@ -20012,7 +20028,8 @@ EOF
   #   2 refused: S3 (step 6), S5, a target that is not under handoffs/ (S2) or
   #     is inside a git directory, one in a checkout beside W that is not this
   #     one, a relative spelling that climbs out of the checkout (S2), a
-  #     proof, a restart intent that is malformed — never a restart fence (603)
+  #     glob character in the handoff's path (607), a proof, a restart intent
+  #     that is malformed — never a restart fence (603)
   #   3 pushed, not confirmed · 4 a lock · 6 kept on HEAD, named — and an
   #     8(d) handoff, written, whose commit or push in its own repository
   #     failed (the command that finishes it said)
@@ -20074,6 +20091,17 @@ EOF
     if [ -n "$whf_rexp" ] && [ "$whf_rexp" != none ]; then
       [ "${#whf_rexp}" = 64 ] || die "--expected-digest takes a SHA-256, or none" 64
       case "$whf_rexp" in *[!0-9a-fA-F]*) die "--expected-digest takes a SHA-256, or none" 64 ;; esac
+    fi
+    # A FENCED `--prepend` TAKES `--expected-digest none` ONLY (lane
+    # openRepoTools-3's review of #312, 605; A58). Fenced on a digest, a push
+    # that lost its race to a peer's change of the handoff was replayed onto a
+    # pre-image that was no longer the bound one, the re-run refused, and the
+    # block was left in the dropped commit, in the reflog only. `lane-handoff`
+    # binds its prepend at `preparing` with `none` and takes the digest again
+    # at `pending`, so no caller passes a sha here: one that does is usage,
+    # refused before the lock, and a swap's block is never lost to a replay.
+    if [ "$whf_mode" = prepend ] && [ -n "$whf_rexp" ] && [ "$whf_rexp" != none ]; then
+      die "--prepend takes --expected-digest none only: fenced on a digest, a replay after a lost push race would find the handoff changed, refuse, and leave the block in the reflog only (605; lane-handoff binds its prepend at preparing with none). Nothing was written." 64
     fi
     if [ "$whf_mode" != stamp ]; then
       [ -f "$whf_arg" ] && [ -r "$whf_arg" ] && [ -s "$whf_arg" ] ||
@@ -20145,6 +20173,19 @@ EOF
     if [ "$whf_other" = 0 ] && ! whf_in_scope "$whf_rel"; then
       whf_stamp_said
       die "lane $lane's handoff target $whf_path is $whf_rel in the checkout $whf_c, which is not a file under handoffs/: write-handoff writes a lane's handoff and nothing else, never the register ($LANES_PATH) or anything under lanes/ (Amendment 23 S2). Nothing was written." 2
+    fi
+    # NO GLOB CHARACTER IN THE HANDOFF'S PATH (lane openRepoTools-3's review
+    # of #312, 607; A58). `commit_publish` stages and commits its pathspec as
+    # git reads one, a pattern, so `handoffs/<e>/x[1].md` names
+    # `handoffs/<e>/x1.md` too, a file this write never wrote, which its
+    # commit could carry under its subject. No lane's handoff is named so
+    # (a lane name has none of `*?[`), so it is refused, nothing written.
+    if [ "$whf_other" = 0 ]; then
+      case "$whf_rel" in
+        *'*'*|*'?'*|*'['*)
+          whf_stamp_said
+          die "lane $lane's handoff $whf_rel in the checkout $whf_c has a glob character ('*', '?' or '[') in its path, and git reads a pathspec as a pattern, so this write's commit could stage a file it never wrote (607). Nothing was written. Name the handoff without one." 2 ;;
+      esac
     fi
     # AND IN ANOTHER CLONE OF THE REGISTER (rv2a-c2's re-review of slice 2a,
     # SHOULD 1). A path outside this checkout, in a git work tree whose top

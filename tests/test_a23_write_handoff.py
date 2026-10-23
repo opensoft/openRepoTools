@@ -1742,6 +1742,8 @@ def test_whole_refusal_names_HEAD_when_a_commit_landed_on_top(box: Box):
     assert box.subject(c) == "a stamp from an unlocked writer"
     assert box.subject(c, "HEAD~1") == "handoff: PAUSED"
     assert f"HEAD is {top}, not this write's commit {mine}" in result.stderr
+    assert ("another commit was made on top of it in this checkout before or while its push was "
+            "in flight") in result.stderr, "609: 1b's 343 words"
     assert f"kept, with HEAD at {top}: {mine} handoff: PAUSED" in result.stderr
     assert f"kept on HEAD: {mine}" not in result.stderr
     assert "push refused (attempt" not in result.stderr, "no reset, no replay"
@@ -2297,6 +2299,140 @@ def test_refresh_workspaces_stray_scan_never_rewrites_Ws_index(box: Box):
                            capture_output=True, text=True, check=False)
     assert plain.returncode == 0, plain.stderr
     assert index.stat().st_mtime_ns != before[0], "the index was not stat-dirty: the case proves nothing"
+
+
+# ------------------------------------------------- the NITs of lane 3's review of #312
+
+def test_a_fenced_prepend_with_a_bound_digest_is_usage_64(box: Box):
+    """605: a `--prepend` fenced on a real `--expected-digest` that lost its
+    push race to a peer's change of the handoff was replayed onto a file
+    that no longer had that digest, refused, and its block was left in the
+    reflog only. `lane-handoff` binds its prepend at `preparing` with `none`
+    and takes the digest again at `pending`, so a sha there has no caller:
+    usage (64), before the lock, nothing written and no fetch made. `none`
+    is still taken (`test_a_prepend_fenced_at_preparing_takes_expected_digest_none`)."""
+    c = box.seam()
+    f = c / HANDOFF_REL
+    block = _block(box)
+    box.use_net()
+    before = box.snapshot(c)
+    result = box.write_handoff("--prepend", str(block), "--subject", "handoff: PAUSED",
+                               "--restart", FENCE[0], FENCE[1], "0", "preparing", "none",
+                               "--expected-digest", sha(f))
+    assert result.returncode == 64, result.stderr
+    assert "--prepend takes --expected-digest none only" in result.stderr
+    assert "Nothing was written." in result.stderr
+    assert f.read_text(encoding="utf-8") == HANDOFF
+    assert box.snapshot(c) == before
+    assert box.net_ops() == []
+    assert result.stdout == ""
+
+
+def test_a_handoff_whose_path_holds_a_glob_character_is_refused(box: Box):
+    """607: `commit_publish` stages and commits its pathspec as git reads
+    one, a pattern, so a handoff named `x[1].md` names `x1.md` too, here a
+    file nobody committed. At 7ffbcb0 S3 step 4 did not refuse it (it is
+    not the handoff), and the write's commit carried `x1.md` under its
+    subject and pushed it (0). A lane's handoff is never named so: refused
+    (2), nothing written, staged or pushed, the stamp line said."""
+    glob_rel = "handoffs/repoS4/x[1].md"
+    box.peer_pushes(glob_rel, HANDOFF)
+    box.cell_is(glob_rel)
+    c = box.seam()
+    box.write(c, "handoffs/repoS4/x1.md", "# a file nobody committed\n")
+    mine, tip = box.snapshot(c), box.origin_head()
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT)
+    assert result.returncode == 2, result.stderr
+    assert (f"lane {LANE}'s handoff {glob_rel} in the checkout {c} has a glob character ('*', '?' "
+            "or '[') in its path") in result.stderr
+    assert "Nothing was written." in result.stderr
+    assert f"the stamp line it would have written under the handoff's header block: {STAMP}" in result.stderr
+    assert (c / glob_rel).read_text(encoding="utf-8") == HANDOFF
+    assert box.snapshot(c) == mine
+    assert box.origin_head() == tip
+    assert result.stdout == ""
+    _released(box, c)
+
+
+def test_whole_kept_by_S4_4_names_the_commits_under_it(box: Box):
+    """609: S4.4's refusal did not list the commits under this write's, as
+    1b's 344 does. An unlocked writer's stamp landing just before this
+    whole-file write's commit sits under it, and the `reset --keep` S4.4's
+    note offers would take it, so they are counted and the STOP line said.
+    Origin's copy moved, so nothing is replayed: kept on HEAD (6), both
+    commits there for the publish act."""
+    c = box.seam()
+    f = c / HANDOFF_REL
+    box.peer_prepares(HANDOFF_REL, "Preserved task.\n", "Preserved task, and a peer's line.\n",
+                      "a peer edits the handoff")
+    box.race(prepared=True)
+    env = _git_shim(box, '*" commit -q -m handoff("*', before=_stamp(c))
+    result = box.write_handoff("--whole", str(_prepared(box)), "--expect-digest", sha(f),
+                               "--subject", SUBJECT, **env)
+    assert (box.root / "fired").exists(), "the stamp landed just before this write's commit"
+    assert result.returncode == 6, result.stderr
+    kept = box.head(c)
+    assert box.subject(c) == SUBJECT
+    assert box.subject(c, "HEAD~1") == "handoff(repoS4-2@Eagle): a stamp from an unlocked writer"
+    assert "is no longer the one this whole-file write started from" in result.stderr
+    assert f"kept on HEAD: {kept}" in result.stderr
+    assert ("under it are 1 commit(s) that origin/main lacks and this write did not make"
+            in result.stderr), result.stderr
+    assert "STOP and take it to the lane its subject names" in result.stderr
+    assert "push refused (attempt" not in result.stderr, "no replay"
+    assert len(box.unpublished(c)) == 2, "both kept on HEAD"
+    assert result.stdout == _line(f)
+    _released(box, c)
+
+
+def test_a_prepend_S3_refused_writes_under_the_checkouts_lock(box: Box):
+    """610: no case showed that a `--prepend` S3 refused, which still writes
+    the handoff (R-A11-11), writes it under the checkout's lock. While another
+    act holds the workstation's sidecar lock, the write waits HOLDING the
+    checkout's lock, the handoff unwritten; then it writes it, uncommitted
+    (2), and releases both."""
+    c = box.seam()
+    f = c / HANDOFF_REL
+    block = _block(box)
+    _staged_foreign(box, c)
+    sidecar = box.lanes_root / ".lane-state.lock"
+    holder = subprocess.Popen(["sleep", "300"])
+    try:
+        sidecar.mkdir(parents=True)
+        (sidecar / "pid").write_text(f"{holder.pid} {ME}\n", encoding="utf-8")
+        waiter = box.popen("write-handoff", LANE, "--prepend", str(block), "--subject", "handoff: PAUSED")
+        time.sleep(WATCH)
+        assert waiter.poll() is None, "it waits on the workstation's sidecar lock"
+        assert box.lock_of(c).is_dir(), "...holding its checkout lock, though S3 refused"
+        assert f.read_text(encoding="utf-8") == HANDOFF
+    finally:
+        holder.kill()
+        holder.wait()
+    out, err = waiter.communicate(timeout=120)
+    assert waiter.returncode == 2, err
+    assert "the handoff is WRITTEN and NOT committed" in err
+    assert f.read_text(encoding="utf-8") == prepended(HANDOFF)
+    assert out == _line(f)
+    _released(box, c)
+
+
+def test_write_handoff_is_exempt_from_the_workstation_guard(box: Box):
+    """610 and 611: in a container with no `LANES_WORKSTATION`, every writer
+    in the dispatcher's guard refuses (2, R-A11-14), and `write-handoff` is
+    not in that guard, on purpose (R-A11-11: a swap is never left unwritten,
+    and the commit's subject is its caller's). It writes, commits and
+    pushes the handoff; `set-row-state` beside it is refused."""
+    c = box.seam()
+    unset = {"LANES_WORKSTATION": "", "LANES_IN_CONTAINER": "1"}
+    guarded = box.helper("set-row-state", LANE, "LIVE · in a container", **unset)
+    assert guarded.returncode == 2, guarded.stderr
+    assert "this is a container and $LANES_WORKSTATION is not set" in guarded.stderr
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT, **unset)
+    assert result.returncode == 0, result.stderr
+    assert "$LANES_WORKSTATION is not set" not in result.stderr
+    assert box.origin_file(HANDOFF_REL) == stamped(HANDOFF)
+    assert result.stdout == _line(c / HANDOFF_REL)
+    _released(box, c)
 
 
 # ------------------------------------------------- m2a's battery, its second half
