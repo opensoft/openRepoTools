@@ -357,6 +357,51 @@ def test_set_lane_state_says_what_it_could_not_do_with_a_fence_and_without_one(e
     assert "could not be checked" not in bare.stderr, bare.stderr
 
 
+@pytest.mark.parametrize("flags", [("--expect", "RUNNING"), ("--expect", "none"),
+                                   ("--expect-generation", "1"), ("--expect-operation", OP)],
+                         ids=["expect", "expect-none", "expect-generation", "expect-operation"])
+def test_set_lane_state_says_a_fence_it_could_not_check_for_every_flag_that_names_one(
+        estate, tmp_path, flags):
+    """567 FOR EVERY FLAG (the review of the code): `--expect`, `--expect none`, `--expect-generation` and
+    `--expect-operation` each name a fence, alone, and each is told that the fence could not be checked. A
+    selection that looked at `--expect` only would tell the other two that they named none."""
+    lay = Layout(tmp_path / "ls", "dangling-link")
+    env = _write_the_lane(estate, lay)
+    with lay.block():
+        res = estate.edit("set-lane-state", LANE, "SWAPPING", *flags, env=env)
+    assert res.returncode == 10, (res.returncode, res.stderr)
+    assert "So the fence this call names could not be checked against it" in res.stderr, res.stderr
+    assert "advance from" not in res.stderr, res.stderr
+
+
+def test_set_lane_tree_says_it_compared_nothing_and_touched_no_tree(estate, tmp_path):
+    """WHAT THE TREE WRITER'S REFUSAL SAYS IT DID NOT DO (the review of the code): the generation and the operation
+    the observation names could not be compared with anything, the tree itself was not touched, and the refusal is
+    not the lane moving (7). Each call that reads the snapshot says so: a generation, an operation, both."""
+    lay = Layout(tmp_path / "ls", "dangling-link")
+    env = _write_the_lane(estate, lay)
+    with lay.block():
+        for flags in (("--generation", "1", "--operation", OP), ("--generation", "1"), ("--operation", OP)):
+            res = estate.edit("set-lane-tree", LANE, TREE, *OBSERVED, *flags, env=env)
+            assert res.returncode == 10, (flags, res.returncode, res.stderr)
+            for words in ("could not be compared with anything", "the tree itself was not touched",
+                          "NOT the lane moving while this observation was being made (7)"):
+                assert words in res.stderr, (flags, words, res.stderr)
+
+
+def test_an_unfenced_set_lane_tree_is_not_asked_about_the_snapshot(estate, tmp_path):
+    """R4, IN THIS FILE (#291's test pins it too): a call that names neither `--generation` nor `--operation` never
+    reads the snapshot, so a snapshot nobody could look for is not what it fails on. It fails at the write, 1, as
+    it did, and says nothing about a lookup."""
+    lay = Layout(tmp_path / "ls", "dangling-link")
+    env = _write_the_lane(estate, lay)
+    with lay.block():
+        res = estate.edit("set-lane-tree", LANE, TREE, *OBSERVED, env=env)
+    assert res.returncode == 1, (res.returncode, res.stderr)
+    assert "could not be written under" in res.stderr, res.stderr
+    assert "could not be looked for" not in res.stderr, res.stderr
+
+
 @pytest.mark.parametrize("shape", ["no-root", "root-without-snapshot"])
 def test_a_snapshot_that_is_truly_absent_is_still_none_to_both_fences(estate, tmp_path, shape):
     """THE CONTROL FOR A SNAPSHOT THAT IS NOT THERE: looked for under a folder
@@ -512,6 +557,8 @@ def test_lane_state_rename_over_an_old_root_nobody_could_look_for_moves_nothing_
     for words in _could_not_move(old, lay):
         assert words in err, (words, err)
     assert "moved with the rename" not in err, err
+    assert err.count("could NOT be moved") == 1, err   # said once: no attempt to move follows the note
+    assert len(err.splitlines()) == 1, err             # and nothing else is said
     assert nudge == "0", nudge               # nothing moved, so there is nothing to sync
     assert not os.path.lexists(lay.state / NEW)
     assert _contents(old) == before          # every record where it was, byte for byte
@@ -590,6 +637,8 @@ def test_rename_lane_that_cannot_look_for_the_old_root_when_it_moves_it_says_so(
     for words in _could_not_move(old, lay):
         assert words in res.stderr, (words, res.stderr)
     assert "moved with the rename" not in res.stderr, res.stderr
+    assert res.stderr.count("could NOT be moved") == 1, res.stderr   # once: the move is not tried after the note
+    assert "Move it by hand" not in res.stderr, res.stderr          # the generic failure's note is not this one
 
 
 def test_rename_lane_still_moves_the_lifecycle_records_it_can_look_for(tmp_path):
@@ -638,6 +687,67 @@ def test_rename_lane_is_still_refused_with_nothing_written_when_the_folder_is_al
     assert estate.tip() == tip
     assert estate.edit("canon-lane", LANE, env=env).stdout.strip() == LANE
     assert _contents(old) == before
+
+
+def test_lane_state_rename_moves_a_control_root_that_is_itself_a_link_whose_target_is_gone(tmp_path):
+    """THE ENTRY IS MOVED, NOT ITS CONTENT (the review of the code, m13). `-L` finds a link whose target is gone, so
+    there IS an entry to rename, and a rename does not follow it: the link goes to the new name, the indexer is
+    nudged, and the note says it moved. Refusing it as unsearchable would leave the records under the old name and
+    the new name reading 8 - the answer #309 exists to remove - even after the target is back."""
+    base = tmp_path / "ls"
+    state, real, aside = base / "state", base / "real", base / "real-aside"
+    state.mkdir(parents=True)
+    real.mkdir()
+    _fill(real / LANE)
+    before = _contents(real / LANE)
+    (state / LANE).symlink_to(real / LANE)
+    real.rename(aside)                                  # the link dangles; no mode is set
+    assert (state / LANE).is_symlink() and not (state / LANE).exists()
+    rc, nudge, _, err = _rename_function(state / LANE, NEW, tmp_path)
+    assert (rc, nudge) == ("0", "1"), (rc, nudge, err)
+    assert f"moved with the rename: {state / LANE} → {state / NEW}" in err, err
+    assert "could NOT be moved" not in err, err
+    assert os.path.islink(state / NEW) and not os.path.lexists(state / LANE)
+    aside.rename(real)
+    assert _contents(state / NEW) == before             # the records follow the rename through the link
+
+
+def test_rename_lane_moves_a_control_root_that_turns_into_a_dangling_link_during_the_push(tmp_path):
+    """The same through `rename-lane`: the target of the root's link goes away in the `pre-push` hook. The link is
+    moved; `lane-state` on the new name says 10 (could not be looked for) while the target is gone, never 8, and
+    reads the snapshot once the target is back."""
+    estate = Estate(tmp_path / "e")
+    base = tmp_path / "ls"
+    state, real, aside = base / "state", base / "real", base / "real-aside"
+    state.mkdir(parents=True)
+    real.mkdir()
+    env = {"LANES_LANE_STATE_ROOT": str(state)}
+    put = estate.edit("set-lane-state", LANE, "RUNNING", "--expect", "none", "--operation", OP, env=env)
+    assert put.returncode == 0, (put.stdout, put.stderr)
+    rec = estate.edit("set-lane-tree", LANE, TREE, *OBSERVED, env=env)
+    assert rec.returncode == 0, (rec.stdout, rec.stderr)
+    shutil.move(str(state / LANE), str(real / LANE))
+    (state / LANE).symlink_to(real / LANE)
+    before = _contents(real / LANE)
+    env["LANES_SESSION"] = UUID_A1B
+    hook = estate.wip / ".git" / "hooks" / "pre-push"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text(f"#!/bin/sh\nmv -- '{real}' '{aside}'\nexit 0\n", encoding="utf-8")
+    hook.chmod(0o755)
+    try:
+        res = estate.edit("rename-lane", LANE, NEW, "--no-github", env=env)
+    finally:
+        hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    assert res.returncode == 0, (res.returncode, res.stderr)
+    assert f"moved with the rename: {state / LANE} → {state / NEW}" in res.stderr, res.stderr
+    assert "could NOT be moved" not in res.stderr, res.stderr
+    assert os.path.islink(state / NEW) and not os.path.lexists(state / LANE)
+    blind = estate.edit("lane-state", NEW, env=env)     # the target is gone: could not be looked for
+    assert blind.returncode == 10, (blind.returncode, blind.stderr)
+    aside.rename(real)
+    seen = estate.edit("lane-state", NEW, env=env)      # the target is back: the lane has its snapshot under NEW
+    assert seen.returncode == 0 and "state\tRUNNING" in seen.stdout, (seen.returncode, seen.stdout, seen.stderr)
+    assert _contents(state / NEW) == before
 
 
 # ====================================== lane-handoff's two lifecycle arms
