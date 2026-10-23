@@ -2863,3 +2863,100 @@ def test_a_candidate_gone_at_its_turn_is_said_as_gone(sweep):
     assert len(noted) == 1, noted
     assert CHAIN[0] not in noted[0], noted
     assert (box.root / "moved-away" / ".git").is_dir()
+
+
+def _git_after_the_last_read(box: Sweep, c: Path, body: str) -> None:
+    """A `git` first on PATH that runs `body` once, right after the last read
+    of `c`'s holds under its lock (its ignored files), before the move."""
+    git = shutil.which("git")
+    assert git, "no git on the test's own PATH"
+    marker = box.root / "after-the-last-read.marker"
+    shim = box.fakebin / "git"
+    shim.write_text("#!/usr/bin/env bash\n"
+                    f'case " $* " in *" -C {c} ls-files --others --ignored --exclude-standard --directory "*)\n'
+                    f'  {git} "$@"; rc=$?\n'
+                    f"  if [ ! -e {marker} ]; then : > {marker}; {body}; fi\n"
+                    '  exit "$rc" ;;\n'
+                    "esac\n"
+                    f'exec {git} "$@"\n', encoding="utf-8")
+    shim.chmod(0o755)
+
+
+def test_a_process_that_comes_in_after_the_last_read_moves_it_back(sweep):
+    """THE MOVE IS THE COMMIT POINT (lane openRepoTools-3's NIT 353), as
+    `mutex_steal`'s rename is. The working directories were read before
+    the git reads under the lock, so a process that came in during them
+    was missed and the checkout removed under it. After the move they are
+    read again against the aside, where such a process now works; it holds
+    the checkout, which is moved back, its lock let go."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    pidfile = box.root / "late.pid"
+    _git_after_the_last_read(box, c, (
+        f"(cd {c}/lanes && exec sleep 600) </dev/null >/dev/null 2>&1 & echo $! > {pidfile}"))
+    try:
+        result, rows = sweep("--yes", LANES_LANE=RUNNER)
+        late = pidfile.read_text(encoding="utf-8").strip()
+        assert rows[str(c)][0] == "hold", rows[str(c)]
+        assert f"a live process came to work in it as it was moved aside (pid {late})" \
+            in rows[str(c)][1], rows[str(c)]
+        assert "it was moved back" in rows[str(c)][1], rows[str(c)]
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert (c / ".git").is_dir()
+        assert not os.path.lexists(box.lock_of(c)), "its lock is let go"
+        _no_aside(box)
+    finally:
+        if pidfile.exists():
+            try:
+                os.kill(int(pidfile.read_text(encoding="utf-8")), signal.SIGKILL)
+            except (ProcessLookupError, ValueError):
+                pass
+
+
+def test_a_clone_made_after_the_last_read_moves_it_back(sweep):
+    """THE MOVE IS THE COMMIT POINT (NIT 353): a `--reference` clone of the
+    checkout made after the last read of what leans on it, in `$TMPDIR`,
+    names the old path, which the move took away, so it is matched as
+    written. It holds the checkout, which is moved back, and the clone stays
+    whole."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    dep = Path(box.env["TMPDIR"]) / "late-borrower"
+    git = shutil.which("git")
+    _git_after_the_last_read(box, c, (
+        f"{git} clone -q --no-local --reference {c} {box.origin} {dep}"))
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert (dep / ".git").is_dir(), "the shim made the clone"
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+    assert f"leaned on by {dep}" in rows[str(c)][1], rows[str(c)]
+    assert "it was moved back" in rows[str(c)][1], rows[str(c)]
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    box.git("-C", str(dep), "fsck", "--connectivity-only")
+    _no_aside(box)
+
+
+def test_a_lock_taken_over_at_the_move_moves_it_back(sweep):
+    """THE MOVE IS THE COMMIT POINT (NIT 353): the pid line was read before
+    the move, and a takeover between that read and the move went unseen.
+    An `mv` first on PATH writes another holder's line into the lock just
+    before the move. Read again from the aside, it holds the checkout,
+    which is moved back, and that writer's lock is left as it is."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    pid = box.lock_of(c) / "pid"
+    real = shutil.which("mv")
+    assert real, "no mv on the test's own PATH"
+    shim = box.fakebin / "mv"
+    shim.write_text("#!/usr/bin/env bash\n"
+                    f'case "$*" in "-- {c} "*"/.{CLOSED}.removing-"*) printf "1 other-container otherhost\\n" > {pid} ;; esac\n'
+                    f'exec {real} "$@"\n', encoding="utf-8")
+    shim.chmod(0o755)
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+    assert ("its writers' lock was taken over as it was moved aside "
+            "(1 other-container otherhost)") in rows[str(c)][1], rows[str(c)]
+    assert "it was moved back" in rows[str(c)][1], rows[str(c)]
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert (c / ".git").is_dir()
+    assert pid.read_text(encoding="utf-8") == "1 other-container otherhost\n"
+    _no_aside(box)

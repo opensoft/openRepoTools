@@ -1716,11 +1716,11 @@ SDS_ERR
             fi
             sds_g="$(printf '%s\n' "$sds_g" | sed -n -e '1s/^gitdir: //p')"
             case "$sds_g" in '') continue ;; /*) : ;; *) sds_g="$sds_e/$sds_g" ;; esac
+            # A target that is gone is kept as written (NIT 353): after the
+            # move, a clone that named the old path is still matched.
             sds_r="$(sc_real "$sds_g")"
-            if [ -n "$sds_r" ]; then
-              sds_gl="$sds_gl$sds_r$sc_tab$sds_e
-"
-            fi ;;
+            sds_gl="$sds_gl${sds_r:-$sds_g}$sc_tab$sds_e
+" ;;
           */objects)
             sds_a="$sds_f/info/alternates"
             if [ ! -e "$sds_a" ] && [ ! -L "$sds_a" ]; then continue; fi
@@ -1732,10 +1732,8 @@ SDS_ERR
               case "$sds_l" in '' | '#'*) continue ;; esac
               case "$sds_l" in /*) sds_t="$sds_l" ;; *) sds_t="$sds_f/$sds_l" ;; esac
               sds_r="$(sc_real "$sds_t")"
-              if [ -n "$sds_r" ]; then
-                sds_dl="$sds_dl$sds_r$sc_tab$sds_e
+              sds_dl="$sds_dl${sds_r:-$sds_t}$sc_tab$sds_e
 "
-              fi
             done <<SDS_ALT
 $sds_x
 SDS_ALT
@@ -2337,6 +2335,7 @@ SLU
       sc_act_hold="$SC_HOLD"; sc_act_ign="$SC_IGN"
     fi
     if [ -z "$sc_act_hold" ]; then
+      sc_lock_beat
       sc_holder="$(sc_lock_holder)"
       if [ "$sc_holder" != "$$ $sc_ident" ]; then
         sc_act_hold="its writers' lock lanes/.lanes-edit.lock is no longer this sweep's (${sc_holder:-its pid line cannot be read}): a writer took it over, and it is left to that writer"
@@ -2362,6 +2361,37 @@ SLU
       sc_sig_arm; continue
     fi
     SC_LOCK=""   # it went with the checkout
+    # THE MOVE IS THE COMMIT POINT (lane openRepoTools-3's NIT 353), as
+    # `mutex_steal`'s rename is. What the reads under the lock could not
+    # see, between them and the move, is asked of what was moved: the pid
+    # line of the lock that went with it (a writer that took the lock over
+    # after it was read), the working directories (a process that came in
+    # during the git reads now works in the aside), and what leans on it (a
+    # clone made meanwhile names the old path, which is gone, so it is
+    # matched as written). Any of them moves it back, and holds it.
+    sc_post=""; sc_moved_line=""
+    IFS= read -r sc_moved_line < "$sc_aside/lanes/.lanes-edit.lock/pid" 2>/dev/null || :
+    if [ "$sc_moved_line" != "$$ $sc_ident" ]; then
+      sc_post="its writers' lock was taken over as it was moved aside (${sc_moved_line:-its pid line cannot be read}), and it is left to that writer"
+    fi
+    sc_cwd_scan
+    sc_x="$(sc_cwd_inside "$sc_aside")"
+    if [ -n "$sc_x" ]; then sc_post="${sc_post:+$sc_post; }a live process came to work in it as it was moved aside (pid $sc_x)"; fi
+    sc_dep_scan
+    if [ -n "$sc_dep_fail" ]; then sc_post="${sc_post:+$sc_post; }what leans on it cannot be told: $sc_dep_fail"; fi
+    # What is inside the aside went with it, and leans on nothing here.
+    sc_x="$(sc_dependents "$sc_c" "$sc_gone$sc_aside
+")"
+    if [ -n "$sc_x" ]; then sc_post="${sc_post:+$sc_post; }leaned on by $sc_x, which came as it was moved aside"; fi
+    if [ -n "$sc_post" ]; then
+      if [ ! -e "$sc_c" ] && [ ! -L "$sc_c" ] && ( trap '' INT TERM; exec mv -- "$sc_aside" "$sc_c" ) 2>/dev/null; then
+        if [ "$sc_moved_line" = "$$ $sc_ident" ]; then SC_LOCK="$sc_c/lanes/.lanes-edit.lock"; sc_lock_drop; fi
+        sc_say_held "$sc_c" "$sc_why" "$sc_post; it was moved back"
+      else
+        sc_say_held "$sc_c" "$sc_why" "$sc_post; it could not be moved back, and is at $sc_aside, which every later run names"
+      fi
+      sc_sig_arm; continue
+    fi
     if sc_under_home "$sc_aside"; then
       ( trap '' INT TERM; exec rm -rf ${sc_rm_x:+"$sc_rm_x"} -- "$sc_aside" ) 2>/dev/null || :
     fi
