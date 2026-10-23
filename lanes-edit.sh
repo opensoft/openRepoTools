@@ -17281,6 +17281,23 @@ EOF
       die "request-handoff writes this host's name into lane $lane's append-only log — \`by host <h>\` in a request, \`forced by <uuid>@<h>/<container>\` in a forced release — and '$LANES_HOST_NAME' is not one ref of Amendment 7(b)'s grammar (letters, digits, '.', '_', '-', ':'): $rh_hsrc. A space there is a second ref and a ';' a second sub-field, and the request's host is typed into the bound session's pane. Nothing was written. Set LANES_HOST to this host's name in that alphabet and ask again." 2
     fi
 
+    # ---- AND THE CONTAINER IS HELD TO THE SAME FENCE (#301, lane 3's review,
+    # 781). The forced release writes it beside the host, `forced by
+    # <uuid>@<h>/<container>`, and nothing fenced it there: `LANES_CONTAINER='a
+    # b'` was written whole and `--force` exited 0. The request's `container
+    # <c>` is a sub-field NAMED `container`, so `binding_subfields_check` refused
+    # it, but only at the write: a `--dry-run` planned it, and the refusal named
+    # no setting. One rule holds for every value this tool writes (ruling 2's
+    # answer 1), so the container is refused here too, before either path plans
+    # or writes anything, and the refusal names where the value came from.
+    if ! lanes_binding_value_ok "$LANES_CONTAINER_NAME"; then
+      case "$LANES_CONTAINER_SOURCE" in
+        seam) rh_csrc="it is the value of LANES_CONTAINER" ;;
+        *)    rh_csrc="it is this container's own \`hostname\`, which a container with no LANES_CONTAINER writes; LANES_CONTAINER overrides it" ;;
+      esac
+      die "request-handoff writes this container's name into lane $lane's append-only log — \`container <c>\` in a request, \`forced by <uuid>@<h>/<container>\` in a forced release — and '$LANES_CONTAINER_NAME' is not one ref of Amendment 7(b)'s grammar (letters, digits, '.', '_', '-', ':'): $rh_csrc. A space there is a second ref and a ';' a second sub-field. Nothing was written. Set LANES_CONTAINER to this container's name in that alphabet and ask again." 2
+    fi
+
     # ---- CLAUSE (e): `--force`, THE SECOND INVOCATION.
     if [ "$rh_force" = 1 ]; then
       [ -n "$rh_why" ] || die "--force takes a WHY, and it is not decoration: it is written into the lane's append-only log and it is the sentence the bound session reads at its next prompt, when it refuses every prompt from then on and names who forced it (Amendment 18(e)). Say what happened:

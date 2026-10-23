@@ -599,26 +599,39 @@ def _requests(e: Estate) -> list[str]:
 #: TAB-separated from its source, so a `LANES_HOST` holding one is read as the
 #: text before it, which is a host the fence takes.
 FENCED_HOSTS = {"space": "my host", "semicolon": "a;b", "quote": 'a"b', "backslash": "back\\slash"}
+#: AND TWO ROWS FOR THE CONTAINER (lane 3's review of #301, 781). The forced
+#: release writes it beside the host, `forced by <uuid>@<host>/<container>`, and
+#: nothing fenced it there: `LANES_CONTAINER='a b'` was written whole and
+#: `--force` exited 0, where the request path's `container <c>` is a sub-field
+#: NAMED `container` and `write_event` refused it. One rule holds for every
+#: value the tools write (ruling 2's answer 1), so the container is held to the
+#: fence the host is, and a refusal names `LANES_CONTAINER` as its source.
+FENCED_CONTAINERS = {"container-space": "a b", "container-semicolon": "a;b"}
+FENCED = ([("LANES_HOST", host) for host in FENCED_HOSTS.values()]
+          + [("LANES_CONTAINER", name) for name in FENCED_CONTAINERS.values()])
 
 
-@pytest.mark.parametrize("host", list(FENCED_HOSTS.values()), ids=list(FENCED_HOSTS))
-def test_a_host_the_binding_fence_refuses_is_never_written(tmp_path, host):
+@pytest.mark.parametrize("variable,value", FENCED, ids=list(FENCED_HOSTS) + list(FENCED_CONTAINERS))
+def test_a_host_the_binding_fence_refuses_is_never_written(tmp_path, variable, value):
     """RULING 2, R, ON BOTH PATHS (lane 3's rulings and answers on #301). A
     host that `lanes_binding_value_ok` rejects is never written: not by the
     request, whose `by host` the bound session's guard reads one ref deep and
     types into its pane, and not by `--force`, whose `forced by <uuid>@<host>/…`
     a person reads in the log. Each path, and each one's `--dry-run`, refuses
     with 2 and "Nothing was written" and names `LANES_HOST` as the value's
-    source, and the published log is what it was."""
+    source, and the published log is what it was. The container rows are the
+    same matrix for the other half of that line (`LANES_CONTAINER`, with the
+    estate's own host, which the fence takes): the same four invocations, the
+    same refusal, and `LANES_CONTAINER` named as the source."""
     e = _bound_elsewhere(tmp_path)
     before = e._git("show", "origin/main:lanes/log/repoH-1.md")
     for args in (("--no-wait",), ("--no-wait", "--dry-run"),
                  ("--force", "taking it"), ("--force", "taking it", "--dry-run")):
         res = e.edit("request-handoff", "repoH-1", "--session", UUID_R, *args,
-                     env={"LANES_HOST": host})
+                     env={variable: value})
         assert res.returncode == 2, (args, res.returncode, res.stderr)
         assert "nothing was written" in res.stderr.lower(), (args, res.stderr)
-        assert "not one ref" in res.stderr and "LANES_HOST" in res.stderr, (args, res.stderr)
+        assert "not one ref" in res.stderr and variable in res.stderr, (args, res.stderr)
         assert e._git("show", "origin/main:lanes/log/repoH-1.md") == before, args
 
 
