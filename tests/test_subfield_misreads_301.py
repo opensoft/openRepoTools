@@ -53,6 +53,15 @@ THE FIX, ONE ITEM AT A TIME.
    `split_row` and the `lanes` renderer. The row keeps its seventeen columns
    whatever the dir holds, and `lane` reaches the dir the log records.
 
+2. THE PAYLOAD IS READ THROUGH THE ENVIRONMENT (item 2). `payload_subfield`
+   hands the payload to `awk` as `ENVIRON["PSF_PAY"]` and keeps `want` and
+   `mode` on `-v`, so every stored sub-field reads back as it was written.
+   Brett Heap's ruling 3, "Accept, no migration": a lane whose recorded dir
+   held an escape `awk -v` expanded now finds its control root beside its
+   checkout, and what the old read filed elsewhere stays where it was. Lane
+   3's ruling 5 pins what that moves in `lane-start`, in `lane-handoff` and in
+   the lifecycle, at the end of this module.
+
 3. THE ASKING HOST IS FENCED (lane 3's ruling 2, R). `request-handoff` refuses,
    with 2 and "Nothing was written", a host `lanes_binding_value_ok` rejects -
    the fence `binding_subfields_add` holds the binding's own host to - before
@@ -82,13 +91,17 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 import test_lanes_index
 from conftest import REPO
+from test_lane_start_row_stamp import Sandbox
 from test_lanes_index import LANES, Estate, _row
+from test_triad_lane_tooling import UUID as BENCH_UUID
+from test_triad_lane_tooling import Bench
 
 pytestmark = test_lanes_index.pytestmark
 US = "\x1f"
@@ -667,3 +680,199 @@ def test_a_request_for_a_handoff_gives_its_host_back_as_it_was_written(tmp_path,
             f"the request line says {payload!r}: its host {host!r} reads back as {read!r}"
         if read == "":
             assert "host" in res.stderr, "a host that was dropped was not said"
+
+
+# --------------------------------- ruling 5: what item 2 moves, pinned (502, 505)
+
+
+def test_lane_start_reaches_the_recorded_dir_and_not_the_one_awk_made_of_it(tmp_path):
+    """RULING 5, PIN 1 (lane 3's review of #301, 502). With no `--dir`,
+    `lane-start` takes a lane's checkout from `lane-dir` (`lane-start:1267`).
+    The lane is started once with `--dir <...>/work5/oct\\101x/repoO`, beside
+    an existing `<...>/work5/octAx/repoO` of the same repository, and again
+    with no `--dir`: the second start records the dir the first one did, and
+    its launch would run there. Before the fix `awk -v` read `\\101` as `A`,
+    and the second start recorded `octAx/repoO` and would have launched in a
+    checkout that is not the lane's. No source of `lane-start` changes."""
+    box = Sandbox(tmp_path)
+    work = Path(os.path.realpath(tmp_path)) / "w" / "work5"
+    real, sibling = work / "oct\\101x" / "repoO", work / "octAx" / "repoO"
+    for path in (real, sibling):
+        path.parent.mkdir(parents=True)
+        box.git("init", "-q", "-b", "main", str(path))
+        box.git("-C", str(path), "remote", "add", "origin", "https://github.com/opensoft/repoO.git")
+
+    def start(*args: str, window_name: str) -> subprocess.CompletedProcess:
+        return subprocess.run([str(box.bin / "lane-start"), "repoO", "1", "--no-launch", *args],
+                              env=dict(box.env, FAKE_TMUX_WINDOW_NAME=window_name),
+                              capture_output=True, text=True, timeout=120, check=False)
+
+    first = start("--dir", str(real), window_name="claude")
+    assert first.returncode == 0, first.stderr
+    second = start(window_name="repoO-1")
+    assert second.returncode == 0, second.stderr
+    log = (box.wip / "lanes" / "log" / "repoO-1.md").read_text(encoding="utf-8").split("\n")
+    bindings = [line for line in log if line.split(" — ", 1)[0] in ("STARTED", "RESUMED")]
+    assert len(bindings) == 2, log
+    assert all(f"; dir {real}; " in line for line in bindings), bindings
+    assert "octAx" not in "\n".join(log), log
+    assert f"(its cwd would be {real})" in second.stderr, second.stderr
+
+
+def _bench_lane(b: Bench, lane: str, checkout: Path, *, lifecycle: bool = True) -> None:
+    """`checkout` a clone of its own origin, and `lane` registered with a STARTED
+    line recording it, as `Bench.lanes` registers one - with the RUNNING
+    snapshot `Bench.lanes` files, or, with `lifecycle=False`, none."""
+    name = lane.rsplit("-", 1)[0]
+    b.origin(name)
+    checkout.parent.mkdir(parents=True, exist_ok=True)
+    b.git("clone", "-q", b.remotes / f"{name}.git", checkout)
+    b.commit(checkout, "seed", {"README.md": f"{name}\n"})
+    b.git("push", "-q", "origin", "main", cwd=checkout)
+    if lifecycle:
+        b.lanes(f"opensoft/{name}", checkout, lane)
+        return
+    reg = b.wip / "lanes" / "LANES.md"
+    reg.write_text(reg.read_text() + (
+        f"| `{lane}` | harness `{BENCH_UUID}` | Eagle / test / brett | 2026-10-08T00:00Z "
+        f"| none | handoffs/{lane}.md | LIVE · 2026-10-08T00:00:00Z · working |\n"))
+    (b.wip / "handoffs" / f"{lane}.md").write_text(f"# handoff {lane}\n\nwork.\n")
+    (b.wip / "lanes" / "log" / f"{lane}.md").write_text(
+        f"STARTED — lane {lane}, session {BENCH_UUID}@Eagle, 2026-10-08T00:00:00Z, lane:{lane} "
+        f"→ home opensoft/{name}; dir {checkout}; host eagle; container none; os linux\n")
+    b.git("add", "-A", cwd=b.wip)
+    b.git("commit", "-q", "-m", lane, cwd=b.wip)
+    b.git("push", "-q", "origin", "main", cwd=b.wip)
+
+
+def _handoff(b: Bench, lane: str, checkout: Path) -> subprocess.CompletedProcess:
+    return b.tool("lane-handoff", "--lane", lane, "--transcript", "none", "--agent", "claude",
+                  "a #301 handoff", cwd=checkout)
+
+
+def _lane_state(b: Bench, lane: str, env: dict | None = None) -> tuple[int, dict]:
+    proc = b.tool("lanes-edit.sh", "lane-state", lane, env=env)
+    return proc.returncode, dict(line.split("\t", 1) for line in proc.stdout.split("\n") if "\t" in line)
+
+
+def test_lane_handoff_writes_a_recorded_backslash_t_back_as_it_was_recorded(tmp_path):
+    """RULING 5, PIN 2 (502). `lane-handoff` takes the lane's dir from
+    `lane-dir` (`lane-handoff:1862`) and writes it back into the PAUSED line it
+    records (`:2774-2777`), the line a launcher restarts the lane from. A dir
+    holding a backslash and a `t` goes back byte for byte, and the lifecycle
+    the handoff moves is the one beside the checkout. Before the fix `awk -v`
+    made the `\\t` a TAB: the PAUSED line named a directory that does not
+    exist, and the snapshot was filed under `<home>/projects/.lane-state`. No
+    source of `lane-handoff` changes."""
+    b = Bench(tmp_path / "bench", REPO)
+    checkout = b.projects / "back\\tslash" / "repoB"
+    _bench_lane(b, "repoB-1", checkout)
+    res = _handoff(b, "repoB-1", checkout)
+    assert res.returncode == 0, res.stderr
+    paused = b.last_log("repoB-1")
+    assert paused.startswith("PAUSED — lane repoB-1, "), paused
+    assert f"; dir {checkout}; " in paused and TAB not in paused, repr(paused)
+    rc, state = _lane_state(b, "repoB-1")
+    assert rc == 0 and state.get("state") == "SWAPPED", (rc, state)
+    assert state.get("file") == str(checkout.parent / ".lane-state" / "repoB-1" / "lane-state.yaml"), state
+
+
+def test_a_lanes_lifecycle_starts_again_at_its_new_root_and_its_old_records_stay_where_they_were(tmp_path):
+    """RULING 5, PIN 3 (505): THE ROOT MOVE, AND WHAT BRETT HEAP'S "Accept, no
+    migration" LEAVES. A lane recorded at `<...>/work5/oct\\101x/repoO`, beside
+    an existing `<...>/work5/octAx`, had its records filed by the old read in
+    `octAx/.lane-state/repoO-1`: `awk -v` read the dir as `octAx/repoO`. They
+    are filed there here through `LANES_LANE_STATE_ROOT`, the seam that places a
+    control root - the snapshot, one tree and a restart intent - and
+    `lanes-index sync` copies the tree into the index. Then, with the read
+    exact:
+
+    * `lane-dir` answers the recorded dir, and `lane-state` answers 8: the new
+      root, `oct\\101x/.lane-state/repoO-1`, holds no snapshot yet;
+    * `lanes-index sync` HOLDS the lane's rows (`lanes-index:2079-2097`, `sync`
+      only and only over a stored generation of at least 1): the read's
+      generation 0 is below the 1 they were written at, so it writes nothing
+      for the lane and says so;
+    * NAMED AND NOT FIXED: `lane_restart_control_root` looks for an intent
+      beside the recorded dir and under `$PROJECTS_ROOT` and nowhere else, so
+      `restart-intent` answers 8 while the intent the old read filed under
+      `octAx` is still there;
+    * the next handoff takes SWAPPING with `--expect none` at generation 1,
+      at the new root (`lane-handoff:1500-1524`), and writes the dir back as
+      recorded;
+    * nothing at the old root is moved, rewritten or removed;
+    * and once the new root's generation reaches the one the rows were written
+      at, `sync` takes the lane as it now stands: its rows leave the index,
+      while the records under `octAx` stay where they are, unread."""
+    b = Bench(tmp_path / "bench", REPO)
+    lane = "repoO-1"
+    work = b.projects / "work5"
+    checkout = work / "oct\\101x" / "repoO"
+    (work / "octAx").mkdir(parents=True)
+    _bench_lane(b, lane, checkout, lifecycle=False)
+    old_root = work / "octAx" / ".lane-state" / lane
+    old_read = {"LANES_LANE_STATE_ROOT": str(old_root.parent)}
+    index_env = {"LANES_INDEX": "", "LANES_EDIT": str(b.bin / "lanes-edit.sh")}
+    db = b.home / ".local" / "state" / "openRepoTools" / "lanes-index.sqlite"
+
+    def ok(*args: str, env: dict | None = None) -> subprocess.CompletedProcess:
+        proc = b.tool("lanes-edit.sh", *args, env=env)
+        assert proc.returncode == 0, (args, proc.stdout, proc.stderr)
+        return proc
+
+    def sync(env: dict | None = None) -> subprocess.CompletedProcess:
+        proc = b.run(sys.executable, REPO / "lanes-index", "sync", "--source", "inventory",
+                     env=dict(index_env, **(env or {})))
+        assert proc.returncode == 0, (proc.stdout, proc.stderr)
+        return proc
+
+    def indexed() -> list:
+        conn = sqlite3.connect(str(db))
+        rows = [tuple(r) for r in conn.execute(
+            "SELECT record_id, generation FROM worktrees WHERE lane = ?", (lane,))]
+        conn.close()
+        return rows
+
+    def old_records() -> dict:
+        return {str(f.relative_to(old_root)): f.read_bytes() for f in sorted(old_root.rglob("*"))
+                if f.is_file()}
+
+    ok("set-lane-state", lane, "RUNNING", "--expect", "none", "--operation", "op-legacy",
+       "--owner", BENCH_UUID, env=old_read)
+    ok("set-lane-tree", lane, f"/nowhere/{lane}/w", "--checkout", "/nowhere", "--branch",
+       f"feat/{lane}", "--head", "7" * 40, "--upstream", "none", "--dirty", "0",
+       "--unpushed", "0", env=old_read)
+    ok("set-restart-intent", lane, "preparing", "--expect", "none", "--operation",
+       "op-restart-legacy", "--mode", "restart", "--agent", "claude", "--dir", str(checkout),
+       env=old_read)
+    before = old_records()
+    assert sorted(before) == ["lane-state.yaml", "restart-intent.yaml",
+                              f"trees/{ok('lane-trees', lane, env=old_read).stdout.split(US)[0]}.yaml"], before
+    sync(old_read)
+    assert indexed() == [(f"{lane}:/nowhere/{lane}/w", 1)]
+
+    # THE READ EXACT
+    assert ok("lane-dir", lane).stdout == f"{checkout}\n"
+    assert _lane_state(b, lane)[0] == 8
+    held = sync()
+    assert (f"lane {lane}: its rows are kept as they are - its lifecycle generation reads 0 "
+            f"and its rows were written at 1") in held.stdout, held.stdout
+    assert indexed() == [(f"{lane}:/nowhere/{lane}/w", 1)]
+    intent = b.tool("lanes-edit.sh", "restart-intent", lane)
+    assert intent.returncode == 8, (intent.returncode, intent.stdout, intent.stderr)
+    assert old_records() == before
+
+    # THE NEXT HANDOFF, AT THE NEW ROOT
+    res = _handoff(b, lane, checkout)
+    assert res.returncode == 0, res.stderr
+    assert "lifecycle: none -> SWAPPING (generation 1," in res.stderr, res.stderr
+    assert f"; dir {checkout}; " in b.last_log(lane), b.last_log(lane)
+    rc, state = _lane_state(b, lane)
+    assert rc == 0 and (state.get("state"), state.get("generation")) == ("SWAPPED", "1"), state
+    assert state.get("file") == str(checkout.parent / ".lane-state" / lane / "lane-state.yaml"), state
+    assert old_records() == before
+
+    taken = sync()
+    assert "1 removed" in taken.stdout, taken.stdout
+    assert indexed() == []
+    assert old_records() == before
