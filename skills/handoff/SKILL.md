@@ -352,7 +352,7 @@ unwritten*).
 ```sh
 # WHERE THE HANDOFF IS: derived, never spelled. `handoff-path` only reads, and `--create` makes the lane's own
 # checkout first where this is its first use.
-hf_rc=0; handoff_file=""; prior_sha256=""; prepared_file=""; hf_said=""
+hf_rc=0; handoff_file=""; prior_sha256=""; prepared_file=""; hf_said=""; hf_record=""
 handoff_file="$("$L" handoff-path "$lane" --create)" || hf_rc=$?
 # ONLY 8 IS "NO HANDOFF" (Amendment 7(d): a read that failed is no answer). 1 is a register it could not read
 # (its own "R22: never 8"), 2 a name refused or a clone that failed, 4 the lock that makes the checkout, and a
@@ -392,6 +392,9 @@ else
       printf 'HANDOFF READ FAILED: `%s handoff-path %s --create` exited %s (its words are above). The read failed, and that is not "no handoff" (Amendment 7(d)), so the call under "THE WRITE IS ONE CALL" is NOT made. %s\n' \
         "$L" "$lane" "$hf_rc" "$hf_keep" ;;
   esac
+  # STEP 4'S REGISTER LINE SAYS THIS, and never "handoff refreshed" (rv3's SHOULD 3 on #311).
+  hf_record="handoff NOT refreshed (the handoff read failed, exit $hf_rc)"
+  [[ "$hf_rc" != 0 && "$hf_rc" != 8 ]] || hf_record="handoff NOT refreshed (no handoff found)"
   handoff_file=""
 fi
 ```
@@ -514,10 +517,17 @@ if [[ -n "$handoff_file" && -n "$prior_sha256" && -s "${prepared_file:-}" ]]; th
     7) printf 'HANDOFF NOT WRITTEN: the handoff is no longer the bytes digest %s names, or a restart owns it (exit 7; its words above say which), and nothing was published. If it moved, run the block under WHERE THE HANDOFF IS again, which reads a new digest and makes a new prepared file, make the new file in it from what is there now, and run this block once more. If a restart owns it, do not retry: that restart writes this handoff.\n' "$prior_sha256" ;;
     *) printf 'HANDOFF NOT PUBLISHED: write-handoff exited %s (its words are above); %s.\n' "$hf_rc" "$hf_wrote" ;;
   esac
+  # WHAT THIS CALL DID, CARRIED TO STEP 4'S REGISTER LINE (rv3's SHOULD 3 on #311): refreshed only on a 0, written
+  # but not confirmed published where the verb wrote the file (its stdout) and exited otherwise, else NOT refreshed.
+  hf_record="handoff NOT refreshed (write-handoff exited $hf_rc and wrote nothing)"
+  [[ -z "$hf_out" ]] || hf_record="handoff written, its publication NOT confirmed (write-handoff exited $hf_rc)"
+  [[ "$hf_rc" != 0 ]] || hf_record="handoff refreshed"
   # WHERE NOTHING WAS WRITTEN, THE NEW FILE IS NOT LOST WITH THE SWAP: its temporary file is named for the report.
   [[ -n "$hf_out" ]] || printf '%s\n' "$hf_kept"
 else
   printf 'HANDOFF NOT WRITTEN: there is no handoff located, no digest read or no prepared file written, so write-handoff was NOT called. Write the new top block if it is not written yet, and put it whole in the report, so that it can be put at the head of the handoff by hand. The swap goes on (R-A11-11); the report carries this line.\n'
+  # Block 1's reason where it gave one: a handoff not found, or a read that failed.
+  hf_record="${hf_record:-handoff NOT refreshed (write-handoff was not called)}"
 fi
 ```
 
@@ -527,6 +537,13 @@ nothing and prints git's own words; where its push is refused it replays the wri
 origin's copy of the handoff is still the one this write was made from, and otherwise keeps its commit on HEAD
 and names it (6). The block prints what it did NOT do, and the report carries that line. Never force, never
 `git add -A`, and never commit staged entries you did not make.
+
+**WHAT THIS STEP DID IS CARRIED TO STEP 4 in `$hf_record`,** so that the register's PAUSED line says it and
+never claims it: `handoff refreshed` only where the call exited 0; `handoff written, its publication NOT
+confirmed (write-handoff exited <n>)` where the verb wrote the file and exited otherwise; and `handoff NOT
+refreshed (<why>)` wherever nothing was written: the handoff was not found, its read failed, the call was not
+made, or the verb wrote nothing. Keep it in the shell that runs step 4, as `$uuid_missing` is kept. A step 4
+that it never reached says `handoff NOT refreshed (step 2 left no outcome)`.
 
 ## 3. Subagents and worktrees — the one question, and the sweep that fills WRITERS
 
@@ -766,8 +783,13 @@ if [[ "$kind" == unknown ]]; then why_text="$why_text kind unknown"; else why_te
 # template's angle-bracket placeholders instead, for the operator's words and
 # for what is open, so a block run as printed wrote the placeholders into two
 # files nothing rewrites. `lane-handoff` hands both writes its computed text,
-# and (b) is its line word for word. What is open is for the handoff's state
-# line to say, as it is in `lane-handoff`'s record.
+# and (b) is its line word for word where step 2's call exited 0. What is open
+# is for the handoff's state line to say, as it is in `lane-handoff`'s record.
+# (b)'S LAST PHRASE IS WHAT STEP 2 DID, NEVER A CLAIM (rv3's SHOULD 3 on #311):
+# `$hf_record`, which step 2's two blocks set. A step 4 that step 2's outcome
+# never reached (another shell, or a step 2 stopped before its call) says the
+# handoff was NOT refreshed.
+hf_record="${hf_record:-handoff NOT refreshed (step 2 left no outcome)}"
 
 # (a) the Amendment 7 object-log PAUSED line — the record `swapped` reads.
 # AMENDMENT 11 CLAUSE (e) — THE SKILL SUPPLIES THE UUID, AND `LANES_SESSION` IS
@@ -811,7 +833,7 @@ LANES_LANE="$lane" LANES_SESSION="$uuid" "$L" log PAUSED "lane:$lane" \
 # 23 S2): a register write goes through the lane's own checkout, and `append-line` finds
 # that lane from this variable first, so a line that names no lane with a row is not a
 # write with no lane.
-LANES_LANE="$lane" "$L" append-line "PAUSED — lane $lane, session $uuid@$ws, $(date -u +%Y-%m-%dT%H:%M:%SZ), $why_text; handoff refreshed"
+LANES_LANE="$lane" "$L" append-line "PAUSED — lane $lane, session $uuid@$ws, $(date -u +%Y-%m-%dT%H:%M:%SZ), $why_text; $hf_record"
 fi
 fi
 # (c) the row: ONE WRITE, which sets the whole state cell (Amendment 13(a)).

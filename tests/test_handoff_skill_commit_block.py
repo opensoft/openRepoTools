@@ -551,6 +551,70 @@ def test_a_prepared_file_the_session_never_wrote_is_never_sent(estate, shell):
     assert estate.verbs() == ["handoff-path"], estate.calls()
 
 
+# --- step 4's register line says what step 2 did (rv3's SHOULD 3) ------------
+
+#: The register line's last phrase where step 2's one call exited 0.
+REFRESHED = "; handoff refreshed"
+
+
+def _register_line(estate: Estate) -> str:
+    found = [c["argv"] for c in estate.calls() if c["argv"][0] == "append-line"]
+    assert len(found) == 1, estate.calls()
+    return found[0][1]
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("extra, written, prepare, ends", [
+    ({}, True, True, REFRESHED),
+    ({"STUB_WH_RC": "7"}, False, True,
+     "; handoff NOT refreshed (write-handoff exited 7 and wrote nothing)"),
+    ({"STUB_WH_RC": "2"}, False, True,
+     "; handoff NOT refreshed (write-handoff exited 2 and wrote nothing)"),
+    ({"STUB_WH_RC": "2"}, True, True,
+     "; handoff written, its publication NOT confirmed (write-handoff exited 2)"),
+    ({"STUB_WH_RC": "3"}, True, True,
+     "; handoff written, its publication NOT confirmed (write-handoff exited 3)"),
+    ({"STUB_WH_RC": "6"}, True, True,
+     "; handoff written, its publication NOT confirmed (write-handoff exited 6)"),
+    ({"STUB_HP_RC": "8", "STUB_HP_OUT": ""}, False, True,
+     "; handoff NOT refreshed (no handoff found)"),
+    ({"STUB_HP_RC": "4", "STUB_HP_OUT": ""}, False, True,
+     "; handoff NOT refreshed (the handoff read failed, exit 4)"),
+    ({"STUB_HP_RC": "2", "STUB_HP_OUT": "", "STUB_HP_ERR": OLDER_HELPER}, False, True,
+     "; handoff NOT refreshed (the handoff read failed, exit 2)"),
+    ({}, False, False, "; handoff NOT refreshed (write-handoff was not called)"),
+], ids=["pushed", "moved-or-owned", "refused-before-writing", "refused-after-writing",
+        "pushed-not-confirmed", "kept-on-head", "not-found", "read-failed", "older-helper",
+        "never-prepared"])
+def test_step4_register_line_says_what_step_2_did(estate, shell, extra, written, prepare, ends):
+    """rv3's SHOULD 3 on #311 at `b599ed9`: the register's PAUSED line ended
+    `; handoff refreshed` whatever step 2 printed. Step 2 now carries its
+    outcome to step 4 in `$hf_record`, run here in the same shell as a session
+    runs them: refreshed only where the call exited 0, written but not
+    confirmed published where the verb wrote the file and exited otherwise,
+    and NOT refreshed, with the reason, wherever nothing was written."""
+    env = dict(extra)
+    if written:
+        env["STUB_WH_OUT"] = f"{estate.handoff}\tdeadbeef"
+    proc = estate.run(shell, estate.step2(prepare=prepare) + "\n" + estate.step4(), **env)
+    assert proc.returncode == 0, proc.stderr
+    line = _register_line(estate)
+    assert line.endswith(ends), line
+    assert line.endswith(REFRESHED) == (ends == REFRESHED), line
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("strict", [False, True], ids=["plain", "set-u"])
+def test_a_step_4_that_step_2_never_reached_never_claims_a_refresh(estate, shell, strict):
+    """A step 4 run where step 2's outcome is not bound (another shell, or
+    step 2 stopped before its call) says the handoff was NOT refreshed rather
+    than claiming it, and an unset `$hf_record` passes `set -u`."""
+    proc = estate.run(shell, ("set -u\n" if strict else "") + estate.step4())
+    assert proc.returncode == 0, proc.stderr
+    line = _register_line(estate)
+    assert line.endswith("; handoff NOT refreshed (step 2 left no outcome)"), line
+
+
 # --- the real helper: the handoff is pushed from C, and W is untouched --------
 
 REAL_NEW = prepended(HANDOFF, BLOCK)
