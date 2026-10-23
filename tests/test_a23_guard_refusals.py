@@ -450,7 +450,7 @@ def test_a_migration_dry_run_names_a_rename_that_never_landed_and_never_says_pul
         assert "committed here and not on origin" in line, line
         assert "The publish act refuses it" in line, "#214's fence takes no rename, so it is not the recovery"
         assert f"git -C {c} push origin HEAD:refs/heads/archive/{NEIGHBOUR}-stranded-" in line, line
-        assert f"git -C {c} reset --keep origin/main" in line, line
+        assert f"git -C {c} reset --keep refs/remotes/origin/main" in line, line   # 703
     assert box.snapshot(c) == before, "a dry run writes nothing"
     if state == "untracked":
         (c / canonical).unlink()

@@ -305,6 +305,7 @@ def test_bound_keeps_the_commit_on_head_exit_6_and_next_write_refuses(box: Box):
     sha = box.head(c)
     assert f"could not push origin/main after six attempts; the commit is local and kept on HEAD: {sha}" in err
     assert f"git -C {c} show {sha}" in err
+    assert f"git -C {c} reset --keep refs/remotes/origin/main" in err, err   # 703
     assert box.pushes() == 6
     assert _set("LIVE · six times beaten") in (c / REGISTER).read_text(encoding="utf-8")
     assert _set("LIVE · six times beaten") not in box.origin_register()
@@ -447,6 +448,7 @@ def test_unconfirmed_push_exits_3(box: Box):
     sha = box.head(c)
     assert f"pushed, not confirmed: {sha}" in result.stderr
     assert "the read-back fetch of origin main failed" in result.stderr
+    assert f"git -C {c} cherry -v refs/remotes/origin/main HEAD" in result.stderr, result.stderr   # 703
     assert "pushed origin/main (attempt" not in result.stderr, "never the success line"
     assert box.origin_head() == sha, "it did land: exit 3 never says it did not"
     del box.env["FAKE_NET_HOOK"]
@@ -989,6 +991,7 @@ def test_a_publish_act_push_refused_with_origin_unmoved_reads_head_exit_6(box: B
     assert box.origin_head() == tip
     if state == "head-is-the-tip":
         assert "they are kept on HEAD, and nothing of them reached origin by this push" in err
+        assert f"Look: git -C {c} cherry -v refs/remotes/origin/main HEAD" in err, err   # 703
         assert "is no longer HEAD" not in err and "rewrote" not in err
         assert box.head(c) == shas[-1]
         assert len(box.unpublished(c)) == 2
@@ -1606,7 +1609,8 @@ def test_a_commit_another_writer_rewrote_is_named_as_rewritten_exit_6(box: Box):
     assert result.returncode == 6, result.stderr
     assert "rewrote this write's commit" in result.stderr
     assert "kept on HEAD" not in result.stderr, "nothing of this write's is on HEAD under its own sha"
-    assert "cherry -v origin/main HEAD" in result.stderr
+    assert "cherry -v refs/remotes/origin/main HEAD" in result.stderr   # 703
+    assert "log --oneline -5 refs/remotes/origin/main" in result.stderr
     named = re.search(r"so it is not replayed: ([0-9a-f]{40}) ", result.stderr)
     assert named, result.stderr
     on_head = subprocess.run(["git", "-C", str(c), "merge-base", "--is-ancestor", named.group(1), "HEAD"],
@@ -2174,6 +2178,7 @@ def test_a_file_the_write_edits_in_place_deleted_on_origin_keeps_the_commit_exit
         sha = box.head(c)
         assert f"origin's copy of {log} was deleted while this write's push was in flight" in err, err
         assert f"kept on HEAD: {sha}" in err
+        assert f"git -C {c} reset --keep refs/remotes/origin/main" in err, err   # 703
         assert "push refused (attempt" not in err, "nothing is dropped or replayed"
         assert "the in-place write" in (c / log).read_text(encoding="utf-8"), "the write is in this checkout"
         assert log not in box.git("--git-dir", str(box.origin), "ls-tree", "-r", "--name-only", "main").split(), \
@@ -2267,3 +2272,27 @@ def test_a_claims_re_run_posts_the_whole_reads_not_the_capped_copy(box: Box):
     assert [r for r in log.read_text(encoding="utf-8").splitlines() if "LOCK HELD" in r] == []
     assert list((c / ".git" / "lanes-edit").glob("claim-reads-*")) == [], "the whole reads' file goes with the run"
     _settled(box, c)
+
+
+def test_an_unconfirmed_pushs_look_line_reads_origin_past_a_local_branch_named_origin_main(box: Box):
+    """703 of lane openRepoTools-3's re-check of #307's round 2: the class of
+    333 and 342 was open in six more printed commands (`cherry -v
+    origin/<b> HEAD`, `reset --keep origin/<b>`), and a local branch named
+    `origin/main` wins the short name over the tracking ref. They name
+    `refs/remotes/origin/<b>` now. Here the push landed and its read-back
+    failed (3): the LOOK line, run by a shell as printed past such a branch,
+    finds the commit on origin, where the short name listed it as missing."""
+    c = box.seam()
+    mark = shlex.quote(str(box.root / "pushed"))
+    box.use_net(f'[ "$1" = push ] && {{ touch {mark}; exit 0; }}\n'
+                f'[ "$1" = fetch ] && [ -e {mark} ] && {{ echo "fatal: the read-back cannot reach origin" >&2; exit 128; }}\n'
+                "exit 0\n")
+    result = box.helper("set-row-state", LANE, "LIVE · sent and not confirmed")
+    assert result.returncode == 3, result.stderr
+    sha = box.head(c)
+    assert box.origin_head() == sha, "it landed"
+    box.git("-C", str(c), "branch", "origin/main", "HEAD~1")   # the shadow, behind origin
+    look = _run_as_printed(box, result.stderr,
+                           r"LOOK, by content: (git -C \S+ fetch origin main && git -C \S+ cherry -v \S+ HEAD)")
+    assert look.returncode == 0, look.stderr
+    assert f"+ {sha}" not in look.stdout, ("it is on origin, and the printed LOOK says so", look.stdout)
