@@ -64,6 +64,13 @@
 #   lanes-edit.sh                      migrate-state-cells [--yes]            # Amendment 13(e), once
 #   lanes-edit.sh                      retire-rows        <lane>… [--reason "<why>"] [--writer <lane>]
 #   lanes-edit.sh                      archive-rows       <repo> [--yes]      # Amendment 19(d)
+#   lanes-edit.sh                      write-handoff      <lane> (--stamp "<line>" | --prepend <block file>
+#                                        | --whole <prepared file> --expect-digest <sha>) --subject "<subject>"
+#                                        [--target <path>] [--restart <operation> <generation> <attempt>
+#                                        <state> <transcript> [--expected-digest <sha>]]
+#                                        (Amendment 23: the lane's handoff written in its own checkout,
+#                                         under S3-S4; `<file><TAB><sha256>` on stdout)
+#   lanes-edit.sh                      handoff-path       <lane> [--create]   # where write-handoff writes it
 #
 # AMENDMENT 19 — A CLOSED OR DORMANT LANE LEAVES THE LISTING
 #   lanes-edit.sh lanes [--closed]                 # CLOSED and DORMANT rows too
@@ -448,7 +455,10 @@
 #      (every routed write, and `lane-checkout`), which is refused and never
 #      deleted, moved or repaired; `refresh-workspace` with no W; a checkout,
 #      or the directory its lock lives in, removed while the write waited for
-#      that lock (360: lane-end's sweep of a CLOSED lane), said at once
+#      that lock (360: lane-end's sweep of a CLOSED lane), said at once;
+#      `handoff-path` and `write-handoff`, a register that could not be read
+#      (R22: never 8), and `write-handoff`'s target under a repository that
+#      git could not read (R22: never "no repository")
 #   2  refusal: bad arguments, the object is held, an unknown alias, —
 #      Amendment 15 — a register holding
 #      two rows whose lane names differ only by case, which every writer and
@@ -475,9 +485,23 @@
 #      branch, a pending change to a path the write commits (the register's,
 #      for every writer but `commit`), or a fast-forward git refused; the
 #      withdrawn `--sweep`; the publish act over a stack origin has moved
-#      past (S4, Open question 2); and `claim` or `add-row` meeting origin
+#      past (S4, Open question 2); `claim` or `add-row` meeting origin
 #      moved under its own checks on each of six attempts (S3, S4), before any
-#      edit. EIGHT MEANINGS ON ONE NUMBER, and they
+#      edit; and — slice 2a — `write-handoff`'s handoff
+#      that resolves into W through a link (S5), a target in the checkout, or
+#      in another clone of the register, that is not a file under `handoffs/`
+#      (S2), a target inside a git directory, a target in W or in another
+#      checkout of the register beside it (`<W>-lanes/<lane>/`, `<W>-<name>/`;
+#      a lane's handoff is written in its own checkout only, and
+#      `handoff-path` and `set-restart-intent --handoff` refuse the same
+#      handoff by the same check, 601), a relative cell or `--target` whose
+#      `.` or `..` components climb out of the checkout (S2, 602; `handoff-path`
+#      refuses that cell too), or a splice that does not prove out, each with
+#      nothing written — a restart's bound file or pre-image that is not this
+#      one is `publish-handoff`'s 2 and `write-handoff`'s 7 (603: its 2 is
+#      never a restart fence's); while S3's refusal of a `--prepend` or a
+#      `--whole` has WRITTEN the handoff, uncommitted (R-A11-11), and printed
+#      its path. EIGHT MEANINGS ON ONE NUMBER, and they
 #      stay readable only because of where each can occur: bad arguments to a
 #      subcommand that predates Amendment 11; `register-row`'s "not lane-shaped";
 #      AN UNKNOWN SUBCOMMAND (the `*)` arm below), which is how a caller detects
@@ -546,9 +570,14 @@
 #      commit's parent by design, so one under it stays, the hand edit
 #      goes back to the working tree with its copy kept, and the re-run's
 #      S3 refuses on it: 2, not 6), a commit made in the same moment as this
-#      write's that cannot be told from it (nothing is pushed), or a push (a
+#      write's that cannot be told from it (nothing is pushed), a push (a
 #      write's, or the publish act's)
-#      refused with origin unmoved, which no replay can mend. Or another
+#      refused with origin unmoved, which no replay can mend, or a
+#      whole-file `write-handoff` whose copy origin changed meanwhile, which
+#      no replay may overwrite (S4.4), or a `--stamp` or `--prepend` one
+#      whose handoff origin deleted meanwhile, which a replay would find
+#      nothing to write into (one moved with its row's cell, to a file under
+#      `handoffs/` that origin has, is replayed into the moved file). Or another
 #      writer in the checkout REWROTE this write's commit (a `pull --rebase`
 #      with no lock): it is not on HEAD at all, and what reached origin is
 #      read by content. Or, where the drop's tree step was refused and
@@ -563,14 +592,21 @@
 #      `set-lane-tree`: the `--generation`/`--operation` this observation was
 #      taken under is no longer the lane's — or the lane is `SWAPPED` and the
 #      operation it names is finished (#114) — so a superseded poll cannot be
-#      filed over the current inventory. ONE MEANING ON THE NUMBER, in three
-#      places: you lost the race.
+#      filed over the current inventory. `publish-handoff` and `write-handoff`:
+#      the restart fence did not match, an active restart owns the handoff, or
+#      the handoff changed under the write — and in `write-handoff` alone, the
+#      restart's bound file or pre-image is not this one, which
+#      `publish-handoff` answers 2 (603) — and nothing was published. ONE
+#      MEANING ON THE NUMBER, in five places: you lost the race.
 #   8  no record — `who` found nothing; `lane-objects` has no log file for the
 #      lane; `live-holder` READ this workstation's session records and none of
 #      them holds it; `swapped` found no lane swapped on the workstation;
 #      `history` READ the lane's log and it carries no `NOTED` or `RULED` line;
 #      `window-session` found no live session in the window; `lane-checkout`
-#      found no checkout for the lane (Amendment 23). A read that could
+#      found no checkout for the lane (Amendment 23); `handoff-path` and
+#      `write-handoff` found no handoff for the lane — there is no row for it
+#      (`write-handoff` with `--target` too), its row names none, or
+#      (`write-handoff`) the file is not there — and wrote nothing. A read that could
 #      not be performed is never 8 (R22). `session-start` never exits 8, or
 #      anything but 0: it is a hook. `guard` never exits 8 either — it is a hook
 #      too, and a BLOCKING one, so its two codes are 0 and 2 (see 2 above).
@@ -682,8 +718,9 @@
 #                      WORKSTATION's, taken by the lifecycle, restart and tree
 #                      sidecars, by `publish-handoff` and by `lane_state_follow`,
 #                      each ALONE: the follow-up runs after its write released
-#                      the checkout lock, and no act holds both. No lock is taken
-#                      in W then. Without the opt-in those acts take the
+#                      the checkout lock. `write-handoff` alone holds both, the
+#                      checkout's first and this one inside it, for its restart
+#                      fence and replace only. No lock is taken in W then. Without the opt-in those acts take the
 #                      checkout's lock, as before. Each lock holds a `pid` file,
 #                      `<pid> <container> <host>`: under LANES_ROUTE_WRITES=1 a
 #                      live holder in this container is never aged out, and
@@ -1303,6 +1340,14 @@ CP_KEEP_IF_GONE=""
 # tree, which no argv can make again, so a replay gives it back as the hand
 # edit it was instead of dropping it with the commit (`cp_replay`).
 CP_REPLAY_KEEPS_EDIT=0
+# Set by `write-handoff` alone (slice 2a), never from the environment:
+#   CP_TRAILER     the commit's second paragraph, `Lane: <lane>` (Rule 5's
+#                  trailer, as `lane-start` and `lane-handoff` commit a handoff);
+#   CP_WHOLE_REL   a WHOLE-FILE write's path, and CP_WHOLE_BLOB the blob it
+#   CP_WHOLE_BLOB  started from (empty for a file HEAD did not have): a refused
+#                  push replays only where origin's copy is still that one
+#                  (Amendment 23 S4.4), checked before any reset.
+CP_TRAILER=""; CP_WHOLE_REL=""; CP_WHOLE_BLOB=""
 # Set by `claim` and `add-row` alone, whose own checks run BEFORE the lock on
 # what was last fetched: where S3's fetch then finds origin's tip moved, the
 # verb runs again from the top on the new tip before anything is written
@@ -1475,10 +1520,13 @@ release_lock() {
 # snapshot, the restart intent, the tree records and `publish-handoff`'s fence
 # were serialised by W's mutex; a routed write takes no lock in W, and a lane's
 # checkout lock serialises one lane only, so they share this one beside the
-# lane checkouts, on the mount every container sees. EACH TAKER TAKES IT ALONE
-# (the review of #282, NIT 2): a sidecar verb, and `lane_state_follow`, which
-# runs after its write released the checkout lock. No act holds both, so no
-# order between them can deadlock.
+# lane checkouts, on the mount every container sees. EVERY SIDECAR ACT TAKES IT
+# ALONE (the review of #282, NIT 2): a sidecar verb, and `lane_state_follow`,
+# which runs after its write released the checkout lock. ONE ACT NESTS IT:
+# `write-handoff` (slice 2a) takes it INSIDE its checkout lock, for its restart
+# fence and the replace alone, and releases it before it pushes. The order is
+# always checkout lock, then sidecar lock, and no act takes them the other way
+# round, so no order between them can deadlock (ort186 Q3, condition 1).
 #
 # WITHOUT THE OPT-IN it is the checkout's own lock, `$LOCK`, as it was before
 # Amendment 23: the sidecar verbs keep their `acquire_lock`, and the follow-up
@@ -1603,6 +1651,13 @@ rename_undo() {
 # remove is set above, before the trap: `RL_*`, `LANES_IDX_DIR`,
 # `LANES_WT_IDX_DIR`, `LOCK` and `LOCK_HELD`.
 TMPD=""; pbh_tmp=""; rl_htmp=""; SE_CACHE_FILE=""
+# `write-handoff`'s ONE LINE ON STDOUT, `<file><TAB><sha256>`, printed by
+# `cleanup` once this process has written the handoff — committed or not, so a
+# refusal after the bytes (S3's for `--prepend` and `--whole`, a push not
+# confirmed, the bound) still says what the file now is — and never by a run
+# that `exec`s into its replay, which runs no EXIT trap: a replayed write
+# prints one line, its last attempt's.
+HANDOFF_OUT=""
 # The creation lock's heartbeat (`lane_checkout_ensure`), stopped by pid.
 create_heartbeat_stop() {
   [ -n "${CREATE_HB:-}" ] || return 0
@@ -1612,11 +1667,12 @@ create_heartbeat_stop() {
   return 0
 }
 cleanup() {
+  if [ -n "${HANDOFF_OUT:-}" ]; then printf '%s\n' "$HANDOFF_OUT"; HANDOFF_OUT=""; fi
   [ -z "${pbh_tmp:-}" ] || rm -f -- "$pbh_tmp"
   [ -z "${rl_htmp:-}" ] || rm -f -- "$rl_htmp"   # rename-lane's stamp before its replace (#158)
   rename_undo
-  sidecar_release                                  # Amendment 23: never held with the
-  create_heartbeat_stop                            # checkout lock, so the order is free
+  sidecar_release                                  # Amendment 23: released before the
+  create_heartbeat_stop                            # checkout lock, the reverse of its order
   [ -z "$CREATE_LOCK" ] || mutex_release "$CREATE_LOCK"
   if [ "$LOCK_HELD" = 1 ]; then release_lock; fi
   [ -n "${RL_SNAP:-}" ] && [ -d "${RL_SNAP:-}" ] && rm -rf -- "$RL_SNAP"
@@ -1649,7 +1705,7 @@ cleanup() {
 cleanup_for_exec() {
   [ -z "${pbh_tmp:-}" ] || rm -f -- "$pbh_tmp"
   [ -z "${rl_htmp:-}" ] || rm -f -- "$rl_htmp"
-  pbh_tmp=""; rl_htmp=""; RL_ACTIVE=0
+  pbh_tmp=""; rl_htmp=""; RL_ACTIVE=0; HANDOFF_OUT=""
   sidecar_release
   create_heartbeat_stop
   [ -z "$CREATE_LOCK" ] || mutex_release "$CREATE_LOCK"
@@ -2938,6 +2994,20 @@ commit_publish() {
   msg="$1"; shift || :
   if [ "$#" -gt 0 ]; then CP_PATHS=("$@"); else CP_PATHS=("$LANES_PATH"); fi
   [ "$NO_GIT" = 1 ] && { note "LANES_NO_GIT=1 — not committing"; return 0; }
+  # RULE 5'S TRAILER, `write-handoff`'s alone (slice 2a, on w1b's conditions):
+  # a second paragraph of ONE `Key: value` line, or nothing is staged or
+  # committed (2). The arguments are one array that always has the subject, so
+  # it expands under `set -u` in bash 3.2. The publish act commits nothing and
+  # never reads it, and no verb sets it with CP_PUBLISH_AHEAD.
+  cp_m=(-m "$msg")
+  if [ -n "$CP_TRAILER" ]; then
+    cp_tk="${CP_TRAILER%%: *}"
+    case "$cp_tk" in ''|*[!A-Za-z0-9-]*) cp_tk="" ;; esac
+    if [ -z "$cp_tk" ] || [ "$cp_tk" = "$CP_TRAILER" ] || [ -z "${CP_TRAILER#*: }" ] || ! lane_restart_value_ok "$CP_TRAILER"; then
+      die "this write's commit trailer is not one \`Key: value\` line with no control character, so nothing was staged or committed: $(printf '%q' "$CP_TRAILER")" 2
+    fi
+    cp_m+=(-m "$CP_TRAILER")
+  fi
   # THE OLD PATH IS A PATHSPEC FOR THE DIFFS AND NEVER FOR THE `add`: after the
   # index entry is force-removed it matches neither the index nor a directory
   # read that compares exactly, and `git add` FAILS on a pathspec that matches
@@ -2991,15 +3061,21 @@ EOF
     if [ -n "$cp_extra" ]; then
       die "this commit carries a case-only rename of the lane's log, so it is made from the INDEX rather than from its pathspecs — and the index also holds$cp_extra, which is not this write's to commit. Stage-reset it — \`git -C $LANES_REPO restore --staged --\`$cp_extra — and re-run. Nothing was committed and the log is already renamed on disk." 6
     fi
-    git -C "$LANES_REPO" -c "$CP_EXACT" commit -q -m "$msg" || die "git commit failed" 6
+    git -C "$LANES_REPO" -c "$CP_EXACT" commit -q "${cp_m[@]}" || die "git commit failed" 6
     # THE RENAME IS DONE AND IN HEAD: the old path is no longer a pathspec of
     # anything below, and the next `commit_publish` of this run is not a rename.
     CP_PATHS=(${cp_add[@]+"${cp_add[@]}"})
     LOG_RENAMED_FROM=""
   else
-    git -C "$LANES_REPO" -c "$CP_EXACT" commit -q -m "$msg" -- "${CP_PATHS[@]}" || die "git commit failed" 6
+    git -C "$LANES_REPO" -c "$CP_EXACT" commit -q "${cp_m[@]}" -- "${CP_PATHS[@]}" || die "git commit failed" 6
   fi
-  cp_sha="$(cp_own_commit "$cp_parent" "$msg")" || cp_untold "$cp_parent" "$msg"
+  # THE MESSAGE AS GIT STORED IT (lane openRepoTools-3's review of #312,
+  # 606): a trailer is the commit's second paragraph, and `cp_own_commit`
+  # compares the whole message, so it is given the whole message; given the
+  # subject alone, `write-handoff`'s commit never matched, and every race
+  # here was "cannot be told" (6, nothing named).
+  cp_msg="$msg"; [ -z "$CP_TRAILER" ] || cp_msg="$(printf '%s\n\n%s' "$msg" "$CP_TRAILER")"
+  cp_sha="$(cp_own_commit "$cp_parent" "$cp_msg")" || cp_untold "$cp_parent" "$msg"
   note "committed: $msg"
 
   # ---- 2. THE PUSH: the branch as S3 left it plus this one commit, no pull.
@@ -3023,6 +3099,40 @@ EOF
     0) cp_pushed "$cp_sha"; return 0 ;;
     2) cp_not_confirmed "$cp_sha" "$msg" "the push was refused, and $(cp_why_unconfirmed 2)" ;;
   esac
+  # S4.4 — A WHOLE-FILE WRITE REPLAYS ONLY OVER THE COPY IT STARTED FROM, and
+  # that is asked here, with origin just fetched, BEFORE the origin-unmoved
+  # refusal below and BEFORE the reset (w1b's placement): a replay
+  # would write the whole file again over whatever a peer put there. So where
+  # origin's copy has moved, the handoff stays written, its commit is kept and
+  # named, as at the bound, and nobody's change is undone (R-A11-11).
+  # HEAD IS READ, NOT ASSUMED (MUST 4's shape, which `cp_replay` asks after
+  # this): until slices 2b and 3 another writer can commit on top of this one in
+  # the same checkout while its push is in flight. Nothing is reset here either
+  # way, so both are kept; the words then name HEAD, and say both are kept,
+  # never that this write's commit is HEAD. A COMMIT ON TOP IS ONE CASE; A
+  # REWRITE IS ANOTHER (slice 1b's `cp_not_head`, rv1b-c's SHOULD A): where
+  # HEAD cannot be read, or no longer holds this write's commit at all (another
+  # writer rebased or amended it with no lock), nothing of it is kept here, and
+  # `cp_not_head` names that in 1b's words.
+  if [ -n "$CP_WHOLE_REL" ]; then
+    cpw_now="$(git -C "$LANES_REPO" rev-parse -q --verify "refs/remotes/origin/$LANES_BRANCH:$CP_WHOLE_REL" 2>/dev/null || :)"
+    if [ "$cpw_now" != "$CP_WHOLE_BLOB" ]; then
+      note "origin/$LANES_BRANCH's $CP_WHOLE_REL is ${cpw_now:-gone} now, and this whole-file write started from ${CP_WHOLE_BLOB:-no such file}."
+      cpw_head="$(git -C "$LANES_REPO" rev-parse -q --verify HEAD 2>/dev/null || :)"
+      if [ "$cpw_head" = "$cp_sha" ]; then
+        note "look at it: git -C $LANES_REPO show $cp_sha; and at origin's: git -C $LANES_REPO log -1 -p refs/remotes/origin/$LANES_BRANCH -- $CP_WHOLE_REL"
+        note "every later write from this checkout refuses (S3's unpushed row) until it is published — LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act — or archived (S6.3) and \`git -C $LANES_REPO reset --keep origin/$LANES_BRANCH\` run."
+        die "the push was refused because origin/$LANES_BRANCH moved, and origin's copy of $CP_WHOLE_REL is no longer the one this whole-file write started from, so it does not replay over that change (Amendment 23 S4.4); the commit is local and kept on HEAD: $cp_sha $msg" 6
+      fi
+      if [ -z "$cpw_head" ] || ! git -C "$LANES_REPO" merge-base --is-ancestor "$cp_sha" "$cpw_head" 2>/dev/null; then
+        cp_not_head "$cp_sha" "$msg" "while its push was in flight"
+      fi
+      note "HEAD is $cpw_head, not this write's commit $cp_sha: another commit was made on top of it in this checkout while its push was in flight. Nothing is reset, so both are kept."
+      note "look at both: git -C $LANES_REPO log --oneline $cp_sha^..HEAD; and at origin's: git -C $LANES_REPO log -1 -p refs/remotes/origin/$LANES_BRANCH -- $CP_WHOLE_REL"
+      note "every later write from this checkout refuses (S3's unpushed row) until they are published — LANES_LANE=<lane> $SELF commit \"<what they are>\", the publish act — or archived (S6.3)."
+      die "the push was refused because origin/$LANES_BRANCH moved, and origin's copy of $CP_WHOLE_REL is no longer the one this whole-file write started from, so it does not replay over that change (Amendment 23 S4.4); this write's commit and the one on top of it are local and kept, with HEAD at $cpw_head: $cp_sha $msg" 6
+    fi
+  fi
   # A REFUSAL WITH ORIGIN UNMOVED IS NOT A LOST RACE: the replay would send the
   # same commit onto the same tip and meet the same refusal six times (a hook,
   # a permission, a protected branch). git's own words are above; the commit
@@ -3314,9 +3424,12 @@ cp_replay() {   # <sha> <subject>
   # the HEAD check, so "kept on HEAD" is said only of a commit HEAD is. Origin
   # was just fetched (`cp_confirm`), and a file its base had and origin lacks
   # means origin moved, so the origin-unmoved refusal can never be this one.
+  # Kept only where a replay could not follow the file (slice 2a's A46,
+  # `whf_keep_if_gone`): a handoff moved with its row's cell is replayed.
   if [ -n "$CP_KEEP_IF_GONE" ] &&
      git -C "$LANES_REPO" cat-file -e "$1^:$CP_KEEP_IF_GONE" 2>/dev/null &&
-     ! git -C "$LANES_REPO" cat-file -e "refs/remotes/origin/$LANES_BRANCH:$CP_KEEP_IF_GONE" 2>/dev/null; then
+     ! git -C "$LANES_REPO" cat-file -e "refs/remotes/origin/$LANES_BRANCH:$CP_KEEP_IF_GONE" 2>/dev/null &&
+     whf_keep_if_gone; then
     note "origin/$LANES_BRANCH no longer has $CP_KEEP_IF_GONE, which this write edits in place and its base had: another writer deleted or moved it while this write's push was in flight."
     note "look at it: git -C $LANES_REPO show $1; and at origin's: git -C $LANES_REPO log -1 --stat refs/remotes/origin/$LANES_BRANCH -- $CP_KEEP_IF_GONE"
     note "every later write from this checkout refuses (S3's unpushed row) until it is published — LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act — or archived (S6.3) and \`git -C $LANES_REPO reset --keep origin/$LANES_BRANCH\` run."
@@ -6448,6 +6561,19 @@ handoff_of_lane() {
   hl_row="$(row_of_lane "$1")"
   [ -n "$hl_row" ] || return 1
   row_cell "$hl_row" 7 | sed 's/^ *//; s/ *$//'
+}
+
+# THE SAME CELL, AND WHETHER IT WAS READ (rv2a's pre-review of slice 2a, NITs
+# 1 and 3), for `write-handoff` and `handoff-path`: 0 with the row's handoff
+# cell on stdout (empty where the row names none); 8 where the register WAS
+# read and has no row for the lane; 1 where it could not be read. The read
+# above answers a failed read as an empty cell, which its callers take for "no
+# handoff"; a read that failed is never that (R22).
+handoff_cell_of() {   # <canonical lane>
+  hcl_reg="$(register_text_checked 2>/dev/null)" || return 1
+  hcl_row="$(printf '%s\n' "$hcl_reg" | awk -v lane="$1" "$ROW_AWK")" || return 1
+  [ -n "$hcl_row" ] || return 8
+  row_cell "$hcl_row" 7 | sed 's/^ *//; s/ *$//'
 }
 
 short_ws() { printf '%s' "${1%%.*}" | tr 'A-Z' 'a-z'; }
@@ -13323,6 +13449,140 @@ lane_restart_put() {   # <root> <lane> <state> <gen> <op> <mode> <agent> <profil
   } | lane_restart_sidecar_put "$lrw_root/restart-intent.yaml" "$lrw_lane"
 }
 
+# ------------- AMENDMENT 23, SLICE 2A: A HANDOFF PUBLISHED, IN ONE PLACE ------
+#
+# `handoff_publish_atomic <lane> <target> <prepared file> <prior digest>
+#                         [<operation> <generation> <attempt> <state> <transcript>]`
+#
+# `publish-handoff`'s act, FACTORED OUT WHOLE, so the two acts that replace a
+# lane's handoff — `publish-handoff`, which commits nothing, and
+# `write-handoff`, which publishes under S3 and S4 — fence it and write its
+# bytes with one implementation. In order, and every refusal is a `die` that
+# says nothing was published:
+#   1. the target's links are followed to the physical file (40 at most), its
+#      directory resolved with `cd -P`, and the file must be readable (1);
+#   2. the lane's restart intent is read (1 where it cannot be, 2 where it is
+#      malformed). With an operation, the five fences must be the intent's own
+#      — operation, generation, attempt, state, transcript — or this writer
+#      lost ownership (7), and the intent's bound handoff must be this file
+#      (2; `write-handoff`'s 7, HPA_FENCE_RC). With none, an active restart
+#      owns the file (7);
+#   3. the file's digest must still be the prior digest its caller read (7);
+#   4. the bytes. THEY GO #212's WAY, which is this act's own (`rename-lane`'s
+#      stamp says it copied it from here): an exclusive temporary BESIDE the
+#      target, in its physical directory, so the one `mv -f` is a rename and
+#      never a copy across a mount; `cp -p` first, so the handoff keeps its
+#      mode; then the bytes; then the rename. A reader sees the handoff whole
+#      before or whole after, a full disk leaves it as it was, and a crash
+#      leaves `<handoff>.resume.XXXXXX`, which no reader of `*.md` takes for a
+#      handoff. `pbh_tmp` is the name `cleanup` removes on every handled exit,
+#      and, #212's one refinement, it is CLEARED once the rename has landed:
+#      the name is no longer this process's to remove.
+#
+# RUN UNDER A LOCK THE CALLER HOLDS — the workstation's sidecar lock, or the
+# checkout's where the opt-in is off (`sidecar_lock_dir`) — which the exit trap
+# releases on every refusal. It sets HPA_TARGET, the file it published.
+#
+# FOUR MORE SETTINGS ARE `write-handoff`'s ALONE, each off unless it sets it,
+# so `publish-handoff` is the act it always was:
+#   HPA_CHECKOUT  the checkout the write goes through: the bound path also
+#                 matches where its TRANSLATION into that checkout is the target
+#                 (S2), so an intent an older `lane-handoff` bound to W's
+#                 spelling still fences the lane's own copy (2a's "a /ctx in
+#                 flight across the install");
+#   HPA_EXPECTED  the digest a restart bound: the prior digest must be it, or
+#                 the handoff changed under the restart (HPA_FENCE_RC,
+#                 `lane-start`'s refusal), and HPA_EXPECTED_FOR names what was
+#                 owned;
+#   HPA_RESERVE   the stamped file's digest, recorded in the intent as its
+#                 prepared digest BEFORE the bytes (`handoff_restart_reserve`);
+#   HPA_FENCE_RC  the code of the two restart fences that are 2 here — the
+#                 bound file, the pre-image: 7 for `write-handoff` (lane
+#                 openRepoTools-3's review of #312, 603), whose 2 is S3's
+#                 refusal and so is never a fence's, as act2-plan §2.7 needs:
+#                 under an active restart only a fence's code keeps
+#                 `lane-start`'s die, and S3's 2 is a note. Unset, 2,
+#                 `publish-handoff`'s documented code.
+HPA_TARGET=""; HPA_CHECKOUT=""; HPA_EXPECTED=""; HPA_EXPECTED_FOR=""; HPA_RESERVE=""; HPA_FENCE_RC=""
+# The intent's bound handoff is this target — the same file, never a spelling.
+handoff_bound_is() {   # <bound path> <target>
+  [ -n "$1" ] && [ "$1" != none ] || return 1
+  [ "$1" -ef "$2" ] && return 0
+  [ -n "$HPA_CHECKOUT" ] || return 1
+  hbi_t="$(handoff_in_repo "$HPA_CHECKOUT" "$1")" || return 1
+  [ "$hbi_t" -ef "$2" ]
+}
+# THE STAMP'S RESERVATION, `lane-start`'s (`:4436-4449`), MADE IN-PROCESS: the
+# intent records the stamped file's digest as its PREPARED digest before the
+# stamp's bytes are published, so an interruption on either side of the rename
+# stays retryable — a retry finds the file at the bound digest or at the
+# prepared one, and both are this operation's. In-process because it runs
+# under the lock `handoff_publish_atomic` runs under, with the fence already
+# checked there: a child `set-restart-intent` would wait for that lock, which
+# is the checkout's own where the opt-in is off. Every other field is kept, as
+# `set-restart-intent` keeps them for a transition of the same operation.
+handoff_restart_reserve() {   # <lane> <the intent, as lane_restart_read printed it> <prepared digest>
+  hrr_f="$(printf '%s\n' "$2" | awk -F'\t' '$1=="file" {print $2; exit}')"
+  [ -n "$hrr_f" ] && [ -f "$hrr_f" ] ||
+    die "the restart intent this write is fenced on could not be found again to reserve its stamp; nothing was published" 1
+  hrr_dig="$HPA_EXPECTED"; [ -n "$hrr_dig" ] || hrr_dig="$(lane_restart_sidecar_field "$hrr_f" digest)"
+  lane_restart_put "${hrr_f%/*}" "$1" \
+    "$(lane_restart_sidecar_field "$hrr_f" state)" "$(lane_restart_sidecar_field "$hrr_f" generation)" \
+    "$(lane_restart_sidecar_field "$hrr_f" operation)" "$(lane_restart_sidecar_field "$hrr_f" mode)" \
+    "$(lane_restart_sidecar_field "$hrr_f" agent)" "$(lane_restart_sidecar_field "$hrr_f" profile)" \
+    "$(lane_restart_sidecar_field "$hrr_f" dir)" "$(lane_restart_sidecar_field "$hrr_f" pane)" \
+    "$(lane_restart_sidecar_field "$hrr_f" window)" "$(lane_restart_sidecar_field "$hrr_f" handoff)" \
+    "$hrr_dig" "$(lane_restart_sidecar_field "$hrr_f" old_transcript)" \
+    "$(lane_restart_sidecar_field "$hrr_f" new_transcript)" "$(lane_restart_sidecar_field "$hrr_f" attempt)" \
+    "owned handoff stamp prepared" "$(lane_restart_sidecar_field "$hrr_f" created)" "$3" ||
+    die "this write could not reserve its handoff stamp in $hrr_f (the shell's own error, if any, is above); nothing was published" 1
+}
+handoff_publish_atomic() {   # <lane> <target> <prepared> <prior digest> [<op> <gen> <attempt> <state> <transcript>]
+  hpa_lane="$1"; hpa_target="$2"; hpa_source="$3"; hpa_digest="$4"
+  hpa_op="${5-}"; hpa_gen="${6-}"; hpa_attempt="${7-}"; hpa_state="${8-}"; hpa_sid="${9-}"
+  HPA_TARGET=""
+  hpa_links=0
+  while [ -L "$hpa_target" ]; do
+    hpa_links=$((hpa_links+1)); [ "$hpa_links" -lt 40 ] || die "the handoff link chain cannot be resolved" 2
+    hpa_link="$(readlink "$hpa_target")" || die "the handoff link could not be read" 1
+    case "$hpa_link" in /*) hpa_target="$hpa_link" ;; *) hpa_target="$(dirname -- "$hpa_target")/$hpa_link" ;; esac
+  done
+  hpa_parent="$( CDPATH=''; cd -P -- "$(dirname -- "$hpa_target")" && pwd -P )" || die "the handoff parent is missing" 1
+  hpa_target="$hpa_parent/$(basename -- "$hpa_target")"
+  [ -f "$hpa_target" ] && [ -r "$hpa_target" ] || die "the handoff target is unreadable" 1
+  hpa_irc=0; hpa_intent="$(lane_restart_read "$hpa_lane")" || hpa_irc=$?
+  case "$hpa_irc" in 0|8) : ;; *) die "restart ownership could not be read; no handoff was published" 1 ;; esac
+  hpa_current="$(printf '%s\n' "$hpa_intent" | awk -F'\t' '$1=="state" {print $2; exit}')"
+  case "$hpa_current" in UNKNOWN-*|INCOMPLETE) die "restart ownership is malformed; no handoff was published" 2 ;; esac
+  if [ -n "$hpa_op" ]; then
+    [ -n "$hpa_gen" ] && [ -n "$hpa_attempt" ] && [ -n "$hpa_state" ] && [ -n "$hpa_sid" ] ||
+      die "operation publication needs generation, attempt, state and transcript fences" 64
+    hpa_actual="$(printf '%s\n' "$hpa_intent" | awk -F'\t' '
+      $1=="operation" {o=$2} $1=="generation" {g=$2} $1=="attempt" {a=$2} $1=="state" {s=$2} $1=="new_transcript" {t=$2}
+      END {printf "%s|%s|%s|%s|%s",o,g,a,s,t}')"
+    [ "$hpa_actual" = "$hpa_op|$hpa_gen|$hpa_attempt|$hpa_state|$hpa_sid" ] ||
+      die "this handoff publisher lost restart ownership; nothing was published" 7
+    hpa_bound="$(printf '%s\n' "$hpa_intent" | awk -F'\t' '$1=="handoff" {print $2; exit}')"
+    handoff_bound_is "$hpa_bound" "$hpa_target" ||
+      die "the publication target is not the operation-bound handoff; nothing was published" "${HPA_FENCE_RC:-2}"
+  else
+    case "$hpa_current" in preparing|pending|starting) die "an active restart owns this handoff; nothing was published" 7 ;; esac
+  fi
+  [ "$(lane_handoff_digest "$hpa_target")" = "$hpa_digest" ] || die "the handoff changed before publication; nothing was published" 7
+  if [ -n "$HPA_EXPECTED" ] && [ "$HPA_EXPECTED" != none ] && [ "$hpa_digest" != "$HPA_EXPECTED" ]; then
+    die "the restart handoff changed before ${HPA_EXPECTED_FOR:-its owned write}: $hpa_target digests $hpa_digest, and the restart bound $HPA_EXPECTED. Nothing was published." "${HPA_FENCE_RC:-2}"
+  fi
+  [ -z "$HPA_RESERVE" ] || handoff_restart_reserve "$hpa_lane" "$hpa_intent" "$HPA_RESERVE"
+  pbh_tmp="$(mktemp "$hpa_target.resume.XXXXXX")" || { pbh_tmp=""; die "the publication temporary file could not be made" 1; }
+  if ! cp -p -- "$hpa_target" "$pbh_tmp" || ! cat -- "$hpa_source" > "$pbh_tmp" || ! mv -f -- "$pbh_tmp" "$hpa_target"; then
+    rm -f -- "$pbh_tmp"; pbh_tmp=""
+    die "the handoff could not be published atomically" 1
+  fi
+  pbh_tmp=""
+  HPA_TARGET="$hpa_target"
+  return 0
+}
+
 # ------------------- AMENDMENT 19(c): THE SWEEP, ONE COMMIT OR NONE ---------
 #
 # `lane-end --retire-dormant <repo>` is the word a person types, the dry run
@@ -15997,6 +16257,11 @@ write_lane_of() {   # <verb> <its arguments…>
     set-row-state|replace-in-row|append-session-id)
       [ -n "${1-}" ] || return 1
       printf '%s\n' "$1" ;;
+    # A LANE'S HANDOFF, WRITTEN AND COMMITTED (slice 2a): the lane is `$1`, and a
+    # flag where the lane should be is the arm's own usage refusal (64).
+    write-handoff)
+      case "${1-}" in ''|-*) return 1 ;; esac
+      printf '%s\n' "$1" ;;
     request-handoff)
       # THE ARM'S OWN PARSE (the review of #282, NIT 1): `--` ends the options,
       # and every word after it is the `--force` why — so a why that reads
@@ -16141,8 +16406,9 @@ ws_pending_refuse() {   # <canonical lane> <its checkout>
 # refused, "expected exactly 1 row", leaving the clone. So where the lane has
 # no checkout yet and the verb's arm needs exactly one row of that lane (the
 # four routed `row_line` callers; `rename-lane` goes through its OLD name,
-# whose row it needs), a lane with no row in the published register refuses
-# first, and nothing is cloned.
+# whose row it needs; `write-handoff`, slice 2a, writes the handoff the row
+# names, so a lane with no row has none), a lane with no row in the
+# published register refuses first, and nothing is cloned.
 #   * AND THE WRITES THAT NAME A LANE WITH NO ROW (lane openRepoTools-3's
 #     re-check of #282, R4-1, for slice 1b): `log`, `commit`, `request-handoff`
 #     and `append-line` take a lane with no row — an archived lane keeps its
@@ -16178,7 +16444,7 @@ lrg_known() {   # <canonical lane> <1 = its published log answers too> — 0 kno
 }
 lane_row_gate() {   # <canonical lane> <its checkout>
   case "$cmd" in
-    set-row-state|replace-in-row|append-session-id|rename-lane) lrg_log=0 ;;
+    set-row-state|replace-in-row|append-session-id|rename-lane|write-handoff) lrg_log=0 ;;
     log|commit|request-handoff|append-line|claim|release|retire-rows|archive-rows|migrate-state-cells) lrg_log=1 ;;
     *) return 0 ;;
   esac
@@ -16192,7 +16458,9 @@ lane_row_gate() {   # <canonical lane> <its checkout>
   if [ "$lrg_log" = 1 ]; then
     die "lane $1 has no row and no object log on origin/$LANES_BRANCH (fetched just now into W), so no lane of that name was ever started or archived, and \`$cmd\` would write for it: its checkout $2/ was not cloned (Amendment 23 S1, S2). Nothing was written. Check the name — \`$SELF lanes\` lists every lane, and \`$SELF lanes --closed\` the closed ones — or start the lane first (lane-start; its \`add-row\` makes the row)." 2
   fi
-  die "lane $1 has no row in the register on origin/$LANES_BRANCH (fetched just now into W), and \`$cmd\` edits that lane's row: there is nothing for it to edit, so its checkout $2/ was not cloned (Amendment 23 S1, S2). Nothing was written. Check the name — \`$SELF lanes\` lists every lane — or add the row first (\`add-row\`)." 2
+  lrg_needs="edits that lane's row: there is nothing for it to edit"
+  [ "$cmd" != write-handoff ] || lrg_needs="writes the handoff that lane's row names: there is none to write"
+  die "lane $1 has no row in the register on origin/$LANES_BRANCH (fetched just now into W), and \`$cmd\` $lrg_needs, so its checkout $2/ was not cloned (Amendment 23 S1, S2). Nothing was written. Check the name — \`$SELF lanes\` lists every lane — or add the row first (\`add-row\`)." 2
 }
 
 # S2, IN ITS ORDER, for a write: (1) an explicit `LANES_REPO` keeps its meaning
@@ -16283,36 +16551,199 @@ lane_checkout_enter() {   # <write_lane_of's status> <its lane, or empty>
 # the lane's checkout; anything else is another repository's (Amendment 8(d)),
 # published and never committed by these tools. The row's cell keeps its
 # spelling: this answers where the file is WRITTEN.
-ws_relative() {   # <cell or path> — 0 and its path relative to W; 1 and the real path
-  wsr_in="$1"
-  case "$wsr_in" in
-    '~') wsr_in="$HOME" ;;
-    '~/'*) wsr_in="$HOME/${wsr_in#'~/'}" ;;
-    /*) : ;;
-    *) printf '%s\n' "$wsr_in"; return 0 ;;
-  esac
-  wsr_n=0
-  while [ -L "$wsr_in" ] && [ "$wsr_n" -lt 40 ]; do
-    wsr_l="$(readlink "$wsr_in")" || break
-    case "$wsr_l" in /*) wsr_in="$wsr_l" ;; *) wsr_in="$(dirname -- "$wsr_in")/$wsr_l" ;; esac
-    wsr_n=$((wsr_n + 1))
+# A path's physical spelling: `~` expanded, the leaf's links followed (40 at
+# most), its directory resolved with `cd -P`. 1, and the path as far as it was
+# followed, where that directory cannot be entered.
+path_physical() {   # <path>
+  pp_in="$1"
+  case "$pp_in" in '~') pp_in="$HOME" ;; '~/'*) pp_in="$HOME/${pp_in#'~/'}" ;; esac
+  pp_n=0
+  while [ -L "$pp_in" ] && [ "$pp_n" -lt 40 ]; do
+    pp_l="$(readlink "$pp_in")" || break
+    case "$pp_l" in /*) pp_in="$pp_l" ;; *) pp_in="$(dirname -- "$pp_in")/$pp_l" ;; esac
+    pp_n=$((pp_n + 1))
   done
-  wsr_par="$(cd -P -- "$(dirname -- "$wsr_in")" 2>/dev/null && pwd -P)" || { printf '%s\n' "$wsr_in"; return 1; }
-  wsr_real="$wsr_par/$(basename -- "$wsr_in")"
+  pp_par="$(cd -P -- "$(dirname -- "$pp_in")" 2>/dev/null && pwd -P)" || { printf '%s\n' "$pp_in"; return 1; }
+  printf '%s/%s\n' "$pp_par" "$(basename -- "$pp_in")"
+}
+ws_relative() {   # <cell or path> — 0 and its path relative to W; 1 and the real path
+  case "$1" in '~'|'~/'*|/*) : ;; *) printf '%s\n' "$1"; return 0 ;; esac
+  wsr_real="$(path_physical "$1")" || { printf '%s\n' "$wsr_real"; return 1; }
   case "$wsr_real" in
     "$LANES_WS_REAL"/*) printf '%s\n' "${wsr_real#"$LANES_WS_REAL"/}"; return 0 ;;
   esac
   printf '%s\n' "$wsr_real"
   return 1
 }
+# THE SAME TRANSLATION INTO WHICHEVER CHECKOUT THE WRITE GOES THROUGH (slice
+# 2a): the lane's own under the opt-in, an explicit `LANES_REPO` (the seam), or
+# W where the opt-in is off — and `write-handoff`, `handoff-path` and
+# `set-restart-intent` translate into it. W's rule needs W: where none was
+# resolved, an absolute path is only ever the checkout's own or another
+# repository's (an empty W would read every absolute path as inside it).
+handoff_in_repo() {   # <checkout> <cell or path> — 0 its path in that checkout; 3 another repository's
+  hir_c="$1"; hir_rel=""; hir_rc=0
+  case "$2" in
+    '~'|'~/'*|/*)
+      if [ -n "$LANES_WS_REAL" ]; then
+        hir_rel="$(ws_relative "$2")" || hir_rc=$?
+      else
+        hir_rel="$(path_physical "$2")" || :
+        hir_rc=1
+      fi ;;
+    *) hir_rel="$2" ;;
+  esac
+  if [ "$hir_rc" = 0 ]; then printf '%s/%s\n' "$hir_c" "$hir_rel"; return 0; fi
+  if path_under "$hir_rel" "$hir_c"; then printf '%s\n' "$hir_rel"; return 0; fi
+  printf '%s\n' "$hir_rel"
+  return 3
+}
 handoff_in_checkout() {   # <canonical lane> <cell or path> — 0 its path in the lane's checkout; 3 another repository's
   hic_p="$(lane_checkout_path "$1")" || return 1
-  hic_rel=""; hic_rc=0
-  hic_rel="$(ws_relative "$2")" || hic_rc=$?
-  if [ "$hic_rc" = 0 ]; then printf '%s/%s\n' "$hic_p" "$hic_rel"; return 0; fi
-  if path_under "$hic_rel" "$hic_p"; then printf '%s\n' "$hic_rel"; return 0; fi
-  printf '%s\n' "$hic_rel"
-  return 3
+  handoff_in_repo "$hic_p" "$2"
+}
+# A LANE'S HANDOFF IS A FILE OF ITS OWN CHECKOUT, NEVER OF W OR OF ANOTHER
+# CHECKOUT BESIDE IT (lane openRepoTools-3's review of #312, 601; its
+# correction, #312 6368669583; finding 723 of its review of #316). The three
+# verbs that translate a handoff — `write-handoff`, `handoff-path` and
+# `set-restart-intent --handoff` — ask this ONE question of the path
+# `handoff_in_repo` gave them, so whatever one refuses the others refuse: a
+# path that is physically in W where W is not the checkout (S5, the readers'
+# copy), or in a checkout beside W that is not this one — a sibling lane's
+# `<W>-lanes/<lane>/` (S1), a per-profile `<W>-<name>/` clone. The PHYSICAL
+# path is asked about, so any spelling — absolute, or climbing with `..` —
+# lands where it lands; and it is asked BY PATH, asking git nothing, so a
+# clone git cannot read is refused the same. In `write-handoff` alone, a
+# sibling's `handoffs/` file was written there as another repository's,
+# uncommitted, and that lane's next `--stamp` refused at S3 step 4 over a
+# change it never made; while `lane-start` still delivered the sibling's top
+# block as this lane's first prompt, because `handoff-path` printed its path.
+# Sets HBW_WHY: the words that follow "is" in each verb's refusal.
+HBW_WHY=""
+handoff_beside_w() {   # <the checkout> <a path, as handoff_in_repo gave it> — 0 refused, HBW_WHY set; 1 not
+  HBW_WHY=""
+  [ -n "$LANES_WS_REAL" ] || return 1
+  hbw_c="$(cd -P -- "$1" 2>/dev/null && pwd -P)" || hbw_c="$1"
+  hbw_p="$(path_physical "$2")" || hbw_p="$2"
+  if [ "$hbw_c" != "$LANES_WS_REAL" ] && path_under "$hbw_p" "$LANES_WS_REAL"; then
+    HBW_WHY="$hbw_p, inside the workspace checkout $LANES_WS_REAL, the readers' copy, where no tool writes (Amendment 23 S5), not in the checkout $hbw_c this lane's writes go through"
+    return 0
+  fi
+  path_under "$hbw_p" "$hbw_c" && return 1
+  case "$hbw_p" in
+    "$LANES_WS_REAL"-*/*)
+      HBW_WHY="$hbw_p, in another checkout of the register beside W ($LANES_WS_REAL), not in the checkout $hbw_c this lane's writes go through: a lane's handoff is written in its own checkout only (Amendment 23 S1, S2)"
+      return 0 ;;
+  esac
+  return 1
+}
+# THE CHECKOUT A LANE'S HANDOFF IS WRITTEN THROUGH, for the two acts that answer
+# it without writing (`handoff-path`, `set-restart-intent`): S1's path under the
+# opt-in with no explicit `LANES_REPO` — made first with `create` 1, or checked
+# where it already exists — and otherwise `LANES_REPO`'s top level, as every
+# write goes through it there. Sets HCO_PATH; dies as `lane-checkout` does.
+HCO_PATH=""
+handoff_checkout_of() {   # <canonical lane> <create: 0 or 1>
+  HCO_PATH=""
+  if [ "$LANES_ROUTE_ON" = 1 ] && [ "$LANES_REPO_GIVEN" != 1 ] && [ -z "$LANES_ROUTED" ]; then
+    lanes_home_check
+    if [ "${2:-0}" = 1 ]; then
+      lane_checkout_ensure "$1"
+      HCO_PATH="$LCE_PATH"
+      return 0
+    fi
+    HCO_PATH="$(lane_checkout_path "$1")" || die "$(lanes_workspace_why)" 1
+    if { [ -e "$HCO_PATH" ] || [ -L "$HCO_PATH" ]; } &&
+       ! { [ -d "$HCO_PATH" ] && [ ! -L "$HCO_PATH" ] && [ -z "$(ls -A -- "$HCO_PATH" 2>/dev/null)" ]; }; then
+      lane_checkout_verify "$HCO_PATH" || lane_checkout_refuse "$HCO_PATH"
+    fi
+    return 0
+  fi
+  HCO_PATH="$(cd -P -- "$LANES_REPO" 2>/dev/null && pwd -P)" ||
+    die "the checkout $LANES_REPO cannot be entered, so where this lane's handoff is written cannot be said." 1
+  hco_top="$(git -C "$HCO_PATH" rev-parse --show-toplevel 2>/dev/null || :)"
+  hco_top="$( [ -n "$hco_top" ] && cd -P -- "$hco_top" 2>/dev/null && pwd -P || :)"
+  [ -z "$hco_top" ] || HCO_PATH="$hco_top"
+  return 0
+}
+# A `--stamp` THAT WRITES NOTHING STILL SAYS ITS LINE (S3's `lane-start` note):
+# a stamp that is owed is a stamp somebody writes by hand.
+whf_stamp_said() {
+  [ "${whf_mode:-}" != stamp ] || note "the stamp line it would have written under the handoff's header block: ${whf_arg:-}"
+  return 0
+}
+# A FILE `write-handoff` MAY REPLACE, relative to a clone of the register's top
+# level (rv2a's pre-review of slice 2a, SHOULD 1): one under `handoffs/`, and
+# never the register, an object log or anything else under `lanes/`.
+whf_in_scope() {   # <path relative to the clone's top level> — 0 in scope; 1 not
+  case "$1" in handoffs/?*) : ;; *) return 1 ;; esac
+  case "$1" in "$LANES_PATH"|lanes/*|*/.|*/..) return 1 ;; esac
+  if [ -n "$LANES_PREFIX" ]; then case "$1" in "$LANES_PREFIX"*) return 1 ;; esac; fi
+  return 0
+}
+# A REPOSITORY-RELATIVE SPELLING NAMES A FILE OF THE CHECKOUT IT IS JOINED TO
+# (Amendment 23 S2; lane openRepoTools-3's review of #312, 602), so one whose
+# `.` or `..` components climb out of that checkout names no other
+# repository's handoff: `write-handoff` and `handoff-path` refuse it (2), as
+# `set-restart-intent --handoff` refuses the same spelling (64). It climbs out
+# by its TEXT (a `..` above the checkout's top level, whether or not the
+# directories it climbs through exist yet), or, where the checkout is given
+# and the spelling resolves, by the FILE it names (a `..` after a link out).
+# A spelling with no such component is not this rule's: a link that carries
+# it out stays Amendment 8(d)'s (m2a's D08), and one that climbs within the
+# checkout is the checkout's own file. THE SPELLING IS ASKED FIRST (A55), in
+# both verbs, before where the path lands (S5, 601's `handoff_beside_w`): a
+# relative spelling that climbs out is refused for what it is, wherever it
+# lands, as `set-restart-intent`'s 64 already was, and `handoff-path`
+# refuses it before `--create` clones anything.
+handoff_rel_climbs_out() {   # <checkout, or empty for the text alone> <cell> — 0 it climbs out; 1 not
+  case "$2" in '~'|'~/'*|/*) return 1 ;; esac
+  case "/$2/" in */../*|*/./*) : ;; *) return 1 ;; esac
+  hrco_d=0; hrco_rest="$2"
+  while [ -n "$hrco_rest" ]; do
+    case "$hrco_rest" in
+      */*) hrco_part="${hrco_rest%%/*}"; hrco_rest="${hrco_rest#*/}" ;;
+      *)   hrco_part="$hrco_rest"; hrco_rest="" ;;
+    esac
+    case "$hrco_part" in
+      ''|.) : ;;
+      ..)   hrco_d=$((hrco_d - 1)); [ "$hrco_d" -ge 0 ] || return 0 ;;
+      *)    hrco_d=$((hrco_d + 1)) ;;
+    esac
+  done
+  [ -n "$1" ] || return 1
+  hrco_p="$(path_physical "$1/$2")" || return 1
+  path_under "$hrco_p" "$1" && return 1
+  return 0
+}
+# A37'S KEEP, ONLY WHERE A REPLAY COULD NOT FOLLOW THE FILE (rv2a-c2's
+# re-review of slice 2a, NIT 2; A46). Slice 1b's `cp_replay` asks it before it
+# keeps a write whose in-place file origin no longer has, of origin as
+# `cp_confirm` just fetched it. 1, replay, only where origin's row for the lane
+# names ANOTHER cell than the one this write followed, and that cell is a file
+# under `handoffs/` in this checkout that origin has: a peer moved the handoff
+# and pointed the cell at its new name, and the re-run reads that row and
+# writes the moved file. 0, keep: the row still names that cell; `--target`
+# named the file (the re-run names it again); origin has no row for the lane
+# (none to re-read: `rename-lane` renames a row with its file); or origin's
+# register cannot be read (R22). Read from the fetched ref itself, because
+# `register_text_checked` keeps the register it read before the push.
+# ANOTHER CELL IS FOLLOWED ONLY TO A FILE THE RE-RUN CAN WRITE (rv2a-c3's
+# re-check of slice 2a, NIT 1; A48): an emptied cell (the re-run's 8, "names
+# no handoff"), one whose file origin lacks (8, "nothing to write into"), one
+# outside `handoffs/` (2) or in another repository is 0 too, so the write is
+# kept on HEAD (6) and never dropped with nothing written.
+whf_keep_if_gone() {
+  [ -n "${whf_keep_cell:-}" ] || return 0
+  wkg_reg="$(git -C "$LANES_REPO" show "refs/remotes/origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null)" || return 0
+  wkg_row="$(printf '%s\n' "$wkg_reg" | awk -v lane="${lane:-}" "$ROW_AWK")" || return 0
+  [ -n "$wkg_row" ] || return 0
+  wkg_cell="$(row_cell "$wkg_row" 7 | sed 's/^ *//; s/ *$//')"
+  [ "$wkg_cell" != "$whf_keep_cell" ] || return 0
+  wkg_path="$(handoff_in_repo "$whf_c" "$wkg_cell")" || return 0
+  wkg_rel="${wkg_path#"$whf_c"/}"
+  whf_in_scope "$wkg_rel" || return 0
+  ! git -C "$LANES_REPO" cat-file -e "refs/remotes/origin/$LANES_BRANCH:$wkg_rel" 2>/dev/null
 }
 
 # S5 — W IS ONLY EVER FAST-FORWARDED, and `refresh-workspace` is the one act
@@ -19539,38 +19970,472 @@ EOF
     [ -f "$pbh_source" ] && [ -r "$pbh_source" ] && [ -s "$pbh_source" ] || die "the prepared handoff is unreadable or empty" 1
     sidecar_lock_use; acquire_lock   # the workstation's sidecar lock, and no other (Amendment 23 S2)
     managed_seam_refuse "$lane" "publish-handoff"
-    pbh_links=0
-    while [ -L "$pbh_target" ]; do
-      pbh_links=$((pbh_links+1)); [ "$pbh_links" -lt 40 ] || die "the handoff link chain cannot be resolved" 2
-      pbh_link="$(readlink "$pbh_target")" || die "the handoff link could not be read" 1
-      case "$pbh_link" in /*) pbh_target="$pbh_link" ;; *) pbh_target="$(dirname -- "$pbh_target")/$pbh_link" ;; esac
-    done
-    pbh_parent="$( CDPATH=''; cd -P -- "$(dirname -- "$pbh_target")" && pwd -P )" || die "the handoff parent is missing" 1
-    pbh_target="$pbh_parent/$(basename -- "$pbh_target")"
-    [ -f "$pbh_target" ] && [ -r "$pbh_target" ] || die "the handoff target is unreadable" 1
-    pbh_irc=0; pbh_intent="$(lane_restart_read "$lane")" || pbh_irc=$?
-    case "$pbh_irc" in 0|8) : ;; *) release_lock; die "restart ownership could not be read; no handoff was published" 1 ;; esac
-    pbh_current="$(printf '%s\n' "$pbh_intent" | awk -F'\t' '$1=="state" {print $2; exit}')"
-    case "$pbh_current" in UNKNOWN-*|INCOMPLETE) release_lock; die "restart ownership is malformed; no handoff was published" 2 ;; esac
-    if [ -n "$pbh_op" ]; then
-      [ -n "$pbh_gen" ] && [ -n "$pbh_attempt" ] && [ -n "$pbh_state" ] && [ -n "$pbh_sid" ] || { release_lock; die "operation publication needs generation, attempt, state and transcript fences" 64; }
-      pbh_actual="$(printf '%s\n' "$pbh_intent" | awk -F'\t' '
-        $1=="operation" {o=$2} $1=="generation" {g=$2} $1=="attempt" {a=$2} $1=="state" {s=$2} $1=="new_transcript" {t=$2}
-        END {printf "%s|%s|%s|%s|%s",o,g,a,s,t}')"
-      [ "$pbh_actual" = "$pbh_op|$pbh_gen|$pbh_attempt|$pbh_state|$pbh_sid" ] || { release_lock; die "this handoff publisher lost restart ownership; nothing was published" 7; }
-      pbh_bound="$(printf '%s\n' "$pbh_intent" | awk -F'\t' '$1=="handoff" {print $2; exit}')"
-      [ -n "$pbh_bound" ] && [ "$pbh_bound" != none ] && [ "$pbh_bound" -ef "$pbh_target" ] ||
-        { release_lock; die "the publication target is not the operation-bound handoff; nothing was published" 2; }
-    else
-      case "$pbh_current" in preparing|pending|starting) release_lock; die "an active restart owns this handoff; nothing was published" 7 ;; esac
-    fi
-    [ "$(lane_handoff_digest "$pbh_target")" = "$pbh_digest" ] || { release_lock; die "the handoff changed before publication; nothing was published" 7; }
-    pbh_tmp="$(mktemp "$pbh_target.resume.XXXXXX")" || { release_lock; die "the publication temporary file could not be made" 1; }
-    if ! cp -p -- "$pbh_target" "$pbh_tmp" || ! cat -- "$pbh_source" > "$pbh_tmp" || ! mv -f -- "$pbh_tmp" "$pbh_target"; then
-      rm -f -- "$pbh_tmp"; release_lock; die "the handoff could not be published atomically" 1
-    fi
+    # THE ACT ITSELF IS `handoff_publish_atomic`'s (Amendment 23 slice 2a), which
+    # `write-handoff` shares: the same fences, the same words and codes, the same
+    # bytes. Its contract here is the one every old caller has: the physical
+    # file on stdout, nothing committed, and the bound path compared as it is.
+    handoff_publish_atomic "$lane" "$pbh_target" "$pbh_source" "$pbh_digest" \
+      "$pbh_op" "$pbh_gen" "$pbh_attempt" "$pbh_state" "$pbh_sid"
     release_lock
-    printf '%s\n' "$pbh_target"
+    printf '%s\n' "$HPA_TARGET"
+    ;;
+
+  # ---------- AMENDMENT 23, SLICE 2A: A LANE'S HANDOFF, WRITTEN UNDER S3-S4
+  #
+  # `write-handoff <lane> (--stamp "<line>" | --prepend <block file> |
+  #     --whole <prepared file> --expect-digest <sha>) --subject "<subject>"
+  #     [--target <path>]
+  #     [--restart <operation> <generation> <attempt> <state> <transcript>
+  #      [--expected-digest <sha>]]`
+  #
+  # The one act that `lane-start`'s Rule 3 stamp, `lane-handoff`'s top block
+  # and the skill's whole-file handoff call from slices 2b and 3 on, so that no
+  # caller holds a lock or commits a handoff by hand (plan §2.7; Open question
+  # 1's reading: the lock's holder is this process). In order:
+  #   1. THE CHECKOUT'S LOCK, then S3 (`checkout_sync`), run in a subshell so
+  #      that its refusal is this arm's to answer (step 6); then the managed
+  #      seam asked again on what S3 fetched, whatever S3 answered.
+  #   2. THE TARGET: the row's handoff cell in the published register, read
+  #      after S3's fetch — or `--target`, the old callers' spelling — and
+  #      TRANSLATED into the checkout this write goes through, never followed
+  #      (`handoff_in_repo`, S2). One that still resolves into W, through a
+  #      link, refuses (S5, 2), and so does one in the checkout, or in another
+  #      clone of the register, that is not a file under `handoffs/` (S2:
+  #      never the register or `lanes/`), and one inside a git directory —
+  #      another clone's `.git/`, a bare clone — and any path in W or in a
+  #      checkout beside it (`<W>-lanes/<lane>/`, `<W>-<name>/`): a lane's
+  #      handoff is written in its own checkout only (601). A relative cell
+  #      or `--target` whose `.` or `..` components climb out of the checkout
+  #      is refused first, for its spelling, wherever it lands (602, A55).
+  #      Where git cannot read a repository on the way up from the target, it
+  #      refuses (1, R22).
+  #      One in ANOTHER REPOSITORY (Amendment 8(d)) is written there and never
+  #      committed, and S3's refusal of this checkout does not stop it.
+  #   3. S3 step 4 for the handoff's own path (`cs_own_pending`), and for a
+  #      handoff git does not track yet, which a commit would add and a lost
+  #      race's replay would drop.
+  #   4. THE READ FOLLOWS THE WRITE: the file in that checkout, and `--stamp`'s
+  #      splice (`lane-start`'s, unchanged: the line after the first blank line
+  #      after line 1), `--prepend`'s (`lane-handoff`'s: the block, `---` and a
+  #      blank line, then the old file) or `--whole`'s prepared file, each
+  #      proven before it lands.
+  #   5. THE WORKSTATION'S SIDECAR LOCK, inside the checkout's, for this step
+  #      only: `handoff_publish_atomic` — the restart fences (`--restart`, the
+  #      bound path translated), the digests, `--stamp`'s reservation of its
+  #      prepared digest, and the one-rename replace.
+  #   6. WHERE S3 REFUSED: `--stamp` wrote nothing and says its line; `--prepend`
+  #      and `--whole` have written the handoff, commit nothing (R-A11-11: a
+  #      swap is never left unwritten), and S3's own words are above. Exit 2.
+  #   7. `commit_publish`, by pathspec, with `Lane: <lane>` as its trailer: the
+  #      push, the read-back, and a refused push replays the whole verb on
+  #      origin's new tip — a `--whole` only where origin's copy is still the
+  #      one it read (S4.4), and a `--stamp` or `--prepend` only where origin
+  #      still has the handoff it edits in place (A37, `CP_KEEP_IF_GONE`), or
+  #      where origin's row now names another cell, a file under `handoffs/`
+  #      that origin has, which the re-run writes (A46, A48); otherwise the
+  #      commit is kept on HEAD and named (6).
+  # STDOUT: `<file><TAB><sha256>` once the file is written (`HANDOFF_OUT`).
+  #   0 pushed, or nothing to commit (another repository's file, S3's refusal
+  #     of this checkout or not; LANES_NO_GIT)
+  #   1 environment: a checkout that cannot be entered, an unreadable file,
+  #     a register that could not be read (R22: never 8), a repository on the
+  #     way up from the target that git could not read (R22)
+  #   2 refused: S3 (step 6), S5, a target that is not under handoffs/ (S2) or
+  #     is inside a git directory, one in a checkout beside W that is not this
+  #     one, a relative spelling that climbs out of the checkout (S2), a
+  #     proof, a restart intent that is malformed — never a restart fence (603)
+  #   3 pushed, not confirmed · 4 a lock · 6 kept on HEAD, named
+  #   7 a restart fence — the five fences, an active restart, and the
+  #     restart's bound file and pre-image, which `publish-handoff` answers 2
+  #     (603) — or the handoff changed under the write
+  #   8 no handoff to write: no row for the lane (with `--target` too), the
+  #     row names none, or its file is not there
+  #  64 usage
+  write-handoff)
+    whf_use="usage: write-handoff <lane> (--stamp \"<line>\" | --prepend <block file> | --whole <prepared file> --expect-digest <sha>) --subject \"<subject>\" [--target <path>] [--restart <operation> <generation> <attempt> <state> <transcript> [--expected-digest <sha>]]"
+    whf_lane="${1-}"
+    case "$whf_lane" in ''|-*) die "$whf_use" 64 ;; esac
+    shift
+    whf_mode=""; whf_arg=""; whf_expect=""; whf_subject=""; whf_target=""
+    whf_restart=0; whf_rop=""; whf_rgen=""; whf_ratt=""; whf_rstate=""; whf_rsid=""; whf_rexp=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --stamp|--prepend|--whole)
+          [ -z "$whf_mode" ] || die "write-handoff takes ONE of --stamp, --prepend and --whole. $whf_use" 64
+          [ "$#" -ge 2 ] && [ -n "${2-}" ] || die "$1 needs a value. $whf_use" 64
+          whf_mode="${1#--}"; whf_arg="$2"; shift 2 ;;
+        --expect-digest|--subject|--target|--expected-digest)
+          [ "$#" -ge 2 ] && [ -n "${2-}" ] || die "$1 needs a value. $whf_use" 64
+          case "$1" in
+            --expect-digest)   whf_expect="$2" ;;
+            --subject)         whf_subject="$2" ;;
+            --target)          whf_target="$2" ;;
+            --expected-digest) whf_rexp="$2" ;;
+          esac
+          shift 2 ;;
+        --restart)
+          [ "$#" -ge 6 ] || die "--restart takes five values: <operation> <generation> <attempt> <state> <transcript>. $whf_use" 64
+          whf_restart=1; whf_rop="$2"; whf_rgen="$3"; whf_ratt="$4"; whf_rstate="$5"; whf_rsid="$6"; shift 6 ;;
+        *) die "unknown write-handoff flag $1. $whf_use" 64 ;;
+      esac
+    done
+    [ -n "$whf_mode" ] || die "write-handoff needs one of --stamp, --prepend and --whole. $whf_use" 64
+    [ -n "$whf_subject" ] || die "write-handoff needs --subject, the commit's subject line. $whf_use" 64
+    for whf_v in "$whf_subject" "$whf_target" "$whf_rop" "$whf_rgen" "$whf_ratt" "$whf_rstate" "$whf_rsid"; do
+      lane_restart_value_ok "$whf_v" ||
+        die "write-handoff's subject, target and restart fences are each one line with no control character. Nothing was written." 64
+    done
+    if [ "$whf_mode" = stamp ] && ! lane_restart_value_ok "$whf_arg"; then
+      die "--stamp is ONE line with no control character: the line it puts under the handoff's header block. Nothing was written." 64
+    fi
+    if [ "$whf_mode" = whole ]; then
+      [ "${#whf_expect}" = 64 ] || die "--whole requires --expect-digest, the complete SHA-256 of the handoff its prepared file was made from. $whf_use" 64
+      case "$whf_expect" in *[!0-9a-fA-F]*) die "--expect-digest takes a SHA-256" 64 ;; esac
+    elif [ -n "$whf_expect" ]; then
+      die "--expect-digest goes with --whole: --stamp and --prepend read the handoff themselves, under the lock. $whf_use" 64
+    fi
+    if [ "$whf_restart" = 1 ]; then
+      [ -n "$whf_rop" ] && [ -n "$whf_rgen" ] && [ -n "$whf_ratt" ] && [ -n "$whf_rstate" ] && [ -n "$whf_rsid" ] ||
+        die "--restart's five fences each need a value: <operation> <generation> <attempt> <state> <transcript>. $whf_use" 64
+    elif [ -n "$whf_rexp" ]; then
+      die "--expected-digest goes with --restart: it is the digest that restart bound. $whf_use" 64
+    fi
+    if [ -n "$whf_rexp" ] && [ "$whf_rexp" != none ]; then
+      [ "${#whf_rexp}" = 64 ] || die "--expected-digest takes a SHA-256, or none" 64
+      case "$whf_rexp" in *[!0-9a-fA-F]*) die "--expected-digest takes a SHA-256, or none" 64 ;; esac
+    fi
+    if [ "$whf_mode" != stamp ]; then
+      [ -f "$whf_arg" ] && [ -r "$whf_arg" ] && [ -s "$whf_arg" ] ||
+        die "the $whf_mode file $whf_arg is unreadable or empty. Nothing was written." 1
+    fi
+    if [ "$whf_mode" = prepend ] && [ -n "$(tail -c 1 -- "$whf_arg")" ]; then
+      die "the block $whf_arg does not end with a newline, so the \`---\` under it would join its last line, and a caller's bytes are never altered. Nothing was written." 64
+    fi
+    check_lane_name "$whf_lane"
+    lane="$(canon_lane "$whf_lane")" || exit 2          # Amendment 15
+    managed_seam_refuse "$lane" "write-handoff"
+    acquire_lock
+    handoff_checkout_of "$lane" 0; whf_c="$HCO_PATH"
+    # ---- 1. S3, answered here.
+    whf_s3=0; whf_cs=""
+    whf_cs="$(checkout_sync write-handoff "$lane" write && printf 'ok%s' "$CS_NO_ORIGIN_BRANCH")" || whf_s3=$?
+    if [ "$whf_s3" = 0 ]; then CS_NO_ORIGIN_BRANCH="${whf_cs##*ok}"; LOG_SYNC_FETCH=yes; fi
+    # THE SEAM ASKED AGAIN, ON WHAT S3 JUST FETCHED (the pre-review of 1b,
+    # MUST 1's shape): the ask before the lock read this checkout's
+    # origin/$LANES_BRANCH as it last stood, and a managed-owner marker that
+    # landed since would otherwise go unread. WHATEVER S3 ANSWERED (rv2a's
+    # pre-review of slice 2a, SHOULD 3): S3 can refuse AFTER its fetch — a
+    # staged entry, a diverged branch — and `--prepend` and `--whole` still
+    # write there (step 6), so the marker that fetch brought is read before
+    # them too. Where S3 refused before any fetch, this reads what the first
+    # ask read. A refusal here writes nothing.
+    cs_flush
+    managed_seam_refuse "$lane" "write-handoff"
+    # ---- 2. the target, translated. THE ROW FIRST, WHATEVER `--target`
+    # SAYS (rv2a's pre-review of slice 2a, NITs 1 and 3): a lane with no row
+    # has no handoff to write, and no commit may carry `Lane: <it>` — through
+    # the seam and in default mode too, where no `lane_row_gate` asked before
+    # the lock — and a register that could not be read is 1, never "no
+    # handoff" (R22). The seam above refuses an unreadable register first (1),
+    # so that 1 is this read's own only where the register failed between them.
+    whf_hrc=0; whf_cell="$(handoff_cell_of "$lane")" || whf_hrc=$?
+    case "$whf_hrc" in
+      0) : ;;
+      8) whf_stamp_said
+         die "lane $lane has no row in the register, so it has no handoff to write, and no commit may carry \`Lane: $lane\`. Nothing was written." 8 ;;
+      *) whf_stamp_said
+         die "the register could not be read, so whether lane $lane's row names a handoff cannot be said — a read that failed is never 'no handoff' (R22). Nothing was written." 1 ;;
+    esac
+    if [ -n "$whf_target" ]; then whf_cell="$whf_target"; fi
+    if [ -z "$whf_cell" ]; then
+      whf_stamp_said
+      die "lane $lane's row names no handoff, so there is none to write. Nothing was written." 8
+    fi
+    whf_other=0; whf_path="$(handoff_in_repo "$whf_c" "$whf_cell")" || whf_other=1
+    whf_phys="$(path_physical "$whf_path")" || whf_phys="$whf_path"
+    if handoff_rel_climbs_out "$whf_c" "$whf_cell"; then
+      whf_stamp_said
+      die "lane $lane's handoff $whf_cell is a repository-relative spelling, joined to this write's checkout $whf_c, and its '.' or '..' components climb out of it (to $whf_phys): a relative cell or --target names a file of its checkout, never another repository's (Amendment 23 S2), as set-restart-intent --handoff refuses the same spelling. Nothing was written." 2
+    fi
+    if [ -n "$LANES_WS_REAL" ] && [ "$whf_c" != "$LANES_WS_REAL" ] && path_under "$whf_phys" "$LANES_WS_REAL"; then
+      whf_stamp_said
+      die "lane $lane's handoff $whf_path resolves to $whf_phys, inside the workspace checkout $LANES_WS_REAL, the readers' copy, where no tool writes (Amendment 23 S5). Nothing was written. The lane's handoff is a file of its own checkout, $whf_c: make $whf_path one there, then run LANES_LANE=$lane $SELF write-handoff $lane … again." 2
+    fi
+    [ "$whf_other" = 1 ] || path_under "$whf_phys" "$whf_c" || whf_other=1
+    whf_rel=""; [ "$whf_other" = 1 ] || whf_rel="${whf_phys#"$whf_c"/}"
+    # ONLY A HANDOFF (rv2a's pre-review of slice 2a, SHOULD 1). This verb
+    # replaces a file whole and pushes it, so in this checkout it writes a file
+    # under `handoffs/` and nothing else: never the register, an object log or
+    # anything else under `lanes/`, which Rule 9's one-line guard and the logs'
+    # append-only rule (Amendment 7(b)) protect and this write would bypass
+    # (Amendment 23 S2 scopes it to `handoffs/<estate>/<file>`). `whf_rel` is
+    # the PHYSICAL path's, so a `--target`, a cell that climbs out through
+    # `..`, and a link out of `handoffs/` are all caught here, before a byte.
+    if [ "$whf_other" = 0 ] && ! whf_in_scope "$whf_rel"; then
+      whf_stamp_said
+      die "lane $lane's handoff target $whf_path is $whf_rel in the checkout $whf_c, which is not a file under handoffs/: write-handoff writes a lane's handoff and nothing else, never the register ($LANES_PATH) or anything under lanes/ (Amendment 23 S2). Nothing was written." 2
+    fi
+    # AND IN ANOTHER CLONE OF THE REGISTER (rv2a-c2's re-review of slice 2a,
+    # SHOULD 1). A path outside this checkout, in a git work tree whose top
+    # level carries the register too — a sibling lane's `<W>-lanes/<lane>/`,
+    # an older clone — is that clone's file, not another repository's: the
+    # same rule holds there, relative to that top level. Otherwise `--whole`
+    # replaced that clone's register in place, uncommitted, and its lane's
+    # next write refused at S3 step 4 over a change it never made. A
+    # repository that carries no register is Amendment 8(d)'s, and a path in
+    # no repository at all is as it was (A44).
+    # NEVER INSIDE A GIT DIRECTORY (rv2a-c3's re-check of slice 2a, SHOULD 1;
+    # A47). A path in another clone's `.git/`, or in a bare clone, is in no
+    # work tree, so the test below cannot see it, and it was written as
+    # another repository's handoff: `--stamp` put its line under `[core]` in
+    # that clone's `config`, `--whole` replaced it, and every git command
+    # there then failed (128), its own lane's S3 with them. No handoff of
+    # Amendment 8(d)'s lives in a git directory, so it is refused first.
+    if [ "$whf_other" = 1 ]; then
+      # git is asked in the NEAREST DIRECTORY THERE IS on the way up, so a
+      # target whose own directory is missing is still read where it would be.
+      whf_gd="$(dirname -- "$whf_phys")"
+      while [ ! -d "$whf_gd" ] && [ "$whf_gd" != / ] && [ "$whf_gd" != . ]; do whf_gd="$(dirname -- "$whf_gd")"; done
+      if [ "$(git -C "$whf_gd" rev-parse --is-inside-git-dir 2>/dev/null || :)" = true ]; then
+        whf_stamp_said
+        die "lane $lane's handoff target $whf_path is $whf_phys, inside a git directory ($whf_gd), where git keeps a repository's own files (another clone's .git/, or a bare clone): write-handoff writes a lane's handoff and nothing else, and no handoff lives in a git directory (Amendment 23 S2; Amendment 8(d)'s is a file of a work tree). Nothing was written." 2
+      fi
+      whf_otop="$(git -C "$whf_gd" rev-parse --show-toplevel 2>/dev/null || :)"
+      whf_otop="$( [ -n "$whf_otop" ] && cd -P -- "$whf_otop" 2>/dev/null && pwd -P || :)"
+      if [ -n "$whf_otop" ] && { [ -e "$whf_otop/$LANES_PATH" ] || [ -L "$whf_otop/$LANES_PATH" ]; } &&
+         path_under "$whf_phys" "$whf_otop" && ! whf_in_scope "${whf_phys#"$whf_otop"/}"; then
+        whf_stamp_said
+        die "lane $lane's handoff target $whf_path is ${whf_phys#"$whf_otop"/} in $whf_otop, another checkout of the register (its top level carries $LANES_PATH too), which is not a file under handoffs/: write-handoff writes a lane's handoff and nothing else, never a register or anything under lanes/, in this checkout or in another clone of it (Amendment 23 S2). Nothing was written." 2
+      fi
+      # A LANE'S HANDOFF IS WRITTEN IN ITS OWN CHECKOUT ONLY (601; the check
+      # `handoff-path` and `set-restart-intent` share, `handoff_beside_w`): any
+      # path in a checkout beside W — a sibling lane's `<W>-lanes/<lane>/`, a
+      # per-profile `<W>-<name>/` clone — is refused by path, so a clone git
+      # cannot read is never A44's and A47's "no repository" there. W itself
+      # is S5's, above, wherever this checkout is not W.
+      if handoff_beside_w "$whf_c" "$whf_path"; then
+        whf_stamp_said
+        die "lane $lane's handoff target $whf_path is $HBW_WHY. Nothing was written." 2
+      fi
+      # A READ THAT FAILED IS NEVER "NO REPOSITORY" (601's second half, R22).
+      # Where git gave no top level, the target is in no work tree only if no
+      # `.git` is on the way up from it; one that is there is a repository git
+      # could not read here (a broken config, another owner), whose register
+      # or git directory A44 and A47 could not see. Refused, nothing written.
+      if [ -z "$whf_otop" ]; then
+        whf_up="$whf_gd"
+        while :; do
+          if [ -e "$whf_up/.git" ] || [ -L "$whf_up/.git" ]; then
+            whf_gerr="$(git -C "$whf_gd" rev-parse --show-toplevel 2>&1 >/dev/null | head -n 1)"
+            whf_stamp_said
+            die "lane $lane's handoff target $whf_path is $whf_phys, under $whf_up, which holds a git repository that git could not read here (${whf_gerr:-no top level}), so whether it is another clone of the register, or its git directory, cannot be said: a read that failed is never 'no repository' (R22). Nothing was written." 1
+          fi
+          [ "$whf_up" != / ] && [ "$whf_up" != . ] || break
+          whf_up="$(dirname -- "$whf_up")"
+        done
+      fi
+    fi
+    # ANOTHER REPOSITORY'S HANDOFF IS NOT THIS CHECKOUT'S WRITE (rv2a's
+    # pre-review of slice 2a, SHOULD 2). It is written there and committed
+    # nowhere (Amendment 8(d)), so S3's refusal of the register checkout — an
+    # offline lane's fetch, a staged entry — does not stop it, as the old
+    # `publish-handoff` never fetched for it. The managed seam (asked above),
+    # the restart fences and the digests still apply.
+    if [ "$whf_other" = 1 ] && [ "$whf_s3" != 0 ]; then
+      note "the refusal above is this checkout's (Amendment 23 S3) and does not stop this write: $whf_phys is another repository's handoff (Amendment 8(d)), which no tool here commits"
+      whf_s3=0
+    fi
+    # ---- 3. S3 step 4 for the handoff itself: a change to it nobody committed,
+    # and a handoff git does not track yet (rv2a's pre-review of slice 2a,
+    # MUST 1). An untracked file — a new lane's first handoff, or a peer's —
+    # would be ADDED by this write's commit, under its subject; and where the
+    # push then lost a race, the replay's `reset --keep` dropped that commit
+    # and the file with it, and the re-run found nothing to write into (8). So
+    # it is a pending change like any other, and whoever made it adds and
+    # commits it as its own write. WHETHER IT IS TRACKED IS ASKED WHATEVER S3
+    # ANSWERED (rv2a-c2's re-review of slice 2a, NIT 1; A45): where S3 refused
+    # for a reason of its own, `--prepend` and `--whole` still write it (step
+    # 6), and the commit that note prints needs the `git add` first.
+    whf_untracked=0
+    if [ "$whf_other" = 0 ] && [ "$NO_GIT" != 1 ] && { [ -e "$whf_phys" ] || [ -L "$whf_phys" ]; } &&
+       ! git --literal-pathspecs -C "$whf_c" -c "$CP_EXACT" ls-files --error-unmatch -- "$whf_rel" >/dev/null 2>&1; then
+      whf_untracked=1
+    fi
+    if [ "$whf_s3" = 0 ] && [ "$whf_other" = 0 ]; then
+      ( cs_own_pending write-handoff "$lane" "$whf_rel" ) || whf_s3=$?
+      if [ "$whf_s3" = 0 ] && [ "$whf_untracked" = 1 ]; then
+        ( cs_refuse write-handoff "$whf_rel, this write's handoff, is not tracked yet: git has never had it (a new lane's first handoff, or a peer's), so this write's commit would add it under its own subject, and a replay after a lost race would drop that commit and the file with it (Amendment 23 S3 step 4)" \
+            "read it: git -C $LANES_REPO status --short -- $whf_rel" \
+            "whoever made it adds and commits it by pathspec, as its own write: git -C $LANES_REPO add -- $whf_rel && git -C $LANES_REPO commit -m \"<lane>(<what>)\" -- $whf_rel, then LANES_LANE=<lane> $SELF commit \"<what it is>\" (the publish act)" \
+            "never commit a file you did not make; then re-run this write" ) || whf_s3=$?
+      fi
+    fi
+    if [ "$whf_s3" != 0 ] && [ "$whf_mode" = stamp ]; then
+      note "the stamp is NOT written: the checkout refused above (Amendment 23 S3), and a Rule 3 stamp the checkout cannot take is written by nobody, and never blocks a launch."
+      whf_stamp_said
+      exit "$whf_s3"
+    fi
+    # ---- 4. the read, the splice and its proof.
+    if [ ! -e "$whf_phys" ] && [ ! -L "$whf_phys" ]; then
+      whf_stamp_said
+      die "lane $lane's handoff is not at $whf_phys, so there is nothing to write into. Nothing was written." 8
+    fi
+    [ -f "$whf_phys" ] && [ -r "$whf_phys" ] || die "the handoff target is unreadable" 1
+    TMPD="$(mktemp -d)" || die "no temporary directory could be made under ${TMPDIR:-/tmp} for the handoff's write. Nothing was written." 1
+    whf_pre="$TMPD/pre"; whf_out="$TMPD/out"
+    cat -- "$whf_phys" > "$whf_pre" 2>/dev/null || die "the handoff at $whf_phys could not be read. Nothing was written." 1
+    whf_prior="$(lane_handoff_digest "$whf_pre")"
+    case "$whf_mode" in
+      stamp)
+        [ -s "$whf_pre" ] ||
+          die "the handoff at $whf_phys is empty, so it has no header block to stamp under, and Rule 3's stamp is not written. The line it wants: $whf_arg" 1
+        whf_at="$(awk 'NR > 1 && /^[[:space:]]*$/ { print NR; exit }' "$whf_pre" || :)"
+        if [ -z "$whf_at" ]; then
+          whf_at=1
+          note "$whf_phys has no blank line after line 1, so it has no header block to stamp under — the stamp goes directly under line 1"
+        fi
+        { head -n "$whf_at" -- "$whf_pre"
+          printf '%s\n' "$whf_arg"
+          tail -n "+$((whf_at + 1))" -- "$whf_pre"
+        } > "$whf_out" || die "the stamped copy of the handoff could not be made in $TMPD. Nothing was written." 1
+        # THE PROOF, `lane-start`'s: the added line is the stamp, at the ruled
+        # place, and taking it out again gives the file back byte for byte.
+        if [ "$(sed -n -e "$((whf_at + 1))p" "$whf_out")" != "$whf_arg" ] ||
+           ! { head -n "$whf_at" -- "$whf_out"; tail -n "+$((whf_at + 2))" -- "$whf_out"; } | cmp -s - "$whf_pre"; then
+          die "the splice of the stamp into $whf_phys did not prove out (one line added, none changed), so NOTHING was written to it. Add this line under its header block yourself: $whf_arg" 2
+        fi ;;
+      prepend)
+        printf -- '---\n\n' > "$TMPD/sep" &&
+          { cat -- "$whf_arg"; cat -- "$TMPD/sep"; cat -- "$whf_pre"; } > "$whf_out" ||
+          die "the new top block could not be put in front of the handoff in $TMPD. Nothing was written." 1
+        # THE PROOF, by bytes: the block, then `---` and a blank line, then the
+        # old file whole — which is also what a last line with no newline needs.
+        whf_bn="$(wc -c < "$whf_arg" | tr -d ' ')"
+        if ! head -c "$whf_bn" -- "$whf_out" | cmp -s - "$whf_arg" ||
+           ! head -c "$((whf_bn + 5))" -- "$whf_out" | tail -c 5 | cmp -s - "$TMPD/sep" ||
+           ! tail -c "+$((whf_bn + 6))" -- "$whf_out" | cmp -s - "$whf_pre"; then
+          die "the new top block for $whf_phys did not prove out (the old file must survive it byte for byte), so NOTHING was written to it." 2
+        fi ;;
+      whole)
+        cat -- "$whf_arg" > "$whf_out" || die "the prepared handoff could not be read. Nothing was written." 1 ;;
+    esac
+    whf_blob=""
+    [ "$whf_other" = 1 ] || whf_blob="$(git -C "$whf_c" rev-parse -q --verify "HEAD:$whf_rel" 2>/dev/null || :)"
+    # ---- 5. under the workstation's sidecar lock, inside the checkout's.
+    sidecar_try 60 ||
+      die "could not acquire the workstation's sidecar lock $(sidecar_lock_dir 2>/dev/null) after 60s — a restart, lifecycle or tree act holds it (holder pid $(cat -- "$(sidecar_lock_dir 2>/dev/null)/pid" 2>/dev/null || printf 'unrecorded')). Nothing was written." 4
+    HPA_CHECKOUT="$whf_c"
+    HPA_FENCE_RC=7   # 603: this verb's 2 is S3's, so a restart fence's 2 is 7 here
+    whf_fence=()
+    if [ "$whf_restart" = 1 ]; then
+      whf_fence=("$whf_rop" "$whf_rgen" "$whf_ratt" "$whf_rstate" "$whf_rsid")
+      HPA_EXPECTED="$whf_rexp"; HPA_EXPECTED_FOR="this owned write"
+      if [ "$whf_mode" = stamp ]; then
+        HPA_EXPECTED_FOR="its owned resume stamp"
+        HPA_RESERVE="$(lane_handoff_digest "$whf_out")"
+      fi
+    fi
+    whf_prior_is="$whf_prior"; [ "$whf_mode" != whole ] || whf_prior_is="$whf_expect"
+    handoff_publish_atomic "$lane" "$whf_phys" "$whf_out" "$whf_prior_is" ${whf_fence[@]+"${whf_fence[@]}"}
+    sidecar_release
+    HANDOFF_OUT="$HPA_TARGET	$(lane_handoff_digest "$HPA_TARGET")"
+    # ---- 6. a refused checkout: written, and not committed.
+    if [ "$whf_s3" != 0 ]; then
+      note "the handoff is WRITTEN and NOT committed: the checkout refused above (Amendment 23 S3; R-A11-11 — a swap is never left unwritten, so the handoff is written, no commit is made, and git's own words are above). It is $HPA_TARGET."
+      if [ "$whf_other" = 0 ]; then
+        whf_add=""; [ "$whf_untracked" = 0 ] || whf_add="git -C $whf_c add -- $whf_rel && "
+        note "once the refusal is answered, commit it by pathspec and publish it: ${whf_add}git -C $whf_c commit -m \"$whf_subject\" -m \"Lane: $lane\" -- $whf_rel, then LANES_LANE=$lane $SELF commit \"<what it is>\" (the publish act). Never write it again with --prepend: that puts a second block on top."
+      fi
+      exit "$whf_s3"
+    fi
+    if [ "$whf_other" = 1 ]; then
+      note "$HPA_TARGET is another repository's handoff (Amendment 8(d)): it is written there, and these tools never commit it."
+      exit 0
+    fi
+    # ---- 7. the commit, the push, the read-back.
+    CP_TRAILER="Lane: $lane"
+    # A WRITE IN PLACE IS NEVER REPLAYED INTO NOTHING (A37, through slice 1b's
+    # `CP_KEEP_IF_GONE`): `--stamp` and `--prepend` edit the handoff in place,
+    # so where another writer deleted it while this write's push was in
+    # flight, the replay's re-run would find no file (8, "Nothing was
+    # written") and the write would be only in the commit it dropped; the
+    # commit is kept on HEAD and named instead (6). `--whole` is S4.4's: a
+    # copy origin deleted is a copy that moved. A HANDOFF MOVED WITH ITS
+    # ROW'S CELL IS REPLAYED (A46): `whf_keep_cell` is the cell this write
+    # followed (none under `--target`), and where origin's row names another
+    # one, a file under `handoffs/` that origin has, the re-run reads it and
+    # writes the moved file. Any other cell keeps the commit (6, A48).
+    case "$whf_mode" in
+      whole) CP_WHOLE_REL="$whf_rel"; CP_WHOLE_BLOB="$whf_blob" ;;
+      *)     CP_KEEP_IF_GONE="$whf_rel"
+             whf_keep_cell=""; [ -n "$whf_target" ] || whf_keep_cell="$whf_cell" ;;
+    esac
+    commit_publish "$whf_subject" "$whf_rel"
+    ;;
+
+  # ---------- AMENDMENT 23, SLICE 2A: WHERE A LANE'S HANDOFF IS WRITTEN
+  #
+  # `handoff-path <lane> [--create]`, a read: the row's handoff cell, out of the
+  # published register, TRANSLATED into the checkout `write-handoff` writes it
+  # through — S1's `<W>-lanes/<lane>/` under the opt-in with no explicit
+  # `LANES_REPO`, otherwise that checkout — for a caller that binds a restart
+  # intent to it before it writes (plan §2.7). The path is derived whether or
+  # not the checkout is there yet; `--create` makes the lane's checkout first.
+  # Not routed: it writes nothing.
+  #   0 the path (another repository's too, said on stderr) · 8 no row, or a
+  #   row that names no handoff, and nothing cloned · 1 a checkout there that
+  #   is not a clone, or a register that could not be read (R22: never 8) ·
+  #   2 a name refused, a handoff in W or in another checkout beside it
+  #   (601, as `write-handoff` refuses it; nothing on stdout), a relative
+  #   cell whose `.` or `..` components climb out of the checkout (602, S2),
+  #   or the clone failed · 4 the creation lock · 64 usage
+  handoff-path)
+    hp_lane=""; hp_create=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --create) hp_create=1; shift ;;
+        --)       shift ;;
+        -*)       die "unknown option '$1' for handoff-path (usage: handoff-path <lane> [--create])" 64 ;;
+        *)        [ -z "$hp_lane" ] || die "handoff-path takes ONE lane (usage: handoff-path <lane> [--create])" 64
+                  hp_lane="$1"; shift ;;
+      esac
+    done
+    [ -n "$hp_lane" ] || die "usage: handoff-path <lane> [--create]" 64
+    check_lane_name "$hp_lane"
+    log_sync
+    hp_lane="$(canon_lane "$hp_lane")" || exit $?
+    check_lane_name "$hp_lane"
+    # THE CELL FIRST: a lane with no row, or a row with no handoff, has nothing
+    # to write, and `--create` clones nothing for it (R4-1's rule for writes).
+    hp_hrc=0; hp_cell="$(handoff_cell_of "$hp_lane")" || hp_hrc=$?
+    case "$hp_hrc" in
+      0) : ;;
+      8) note "lane $hp_lane has no handoff: there is no row for it in the register"
+         exit 8 ;;
+      *) die "the register could not be read, so whether lane $hp_lane's row names a handoff cannot be said — a read that failed is never 'no handoff' (R22). Nothing was cloned." 1 ;;
+    esac
+    if [ -z "$hp_cell" ]; then
+      note "lane $hp_lane's row names no handoff"
+      exit 8
+    fi
+    # A RELATIVE CELL THAT CLIMBS OUT OF THE CHECKOUT (602): refused as
+    # `write-handoff` refuses it, and first, as there (A55) — by its text
+    # before any checkout is made, then by the file it names in the checkout
+    # there is.
+    hp_climbs="lane $hp_lane's handoff cell $hp_cell is a repository-relative spelling, joined to the checkout its writes go through, and its '.' or '..' components climb out of it: a relative cell names a file of that checkout, never another repository's (Amendment 23 S2), so write-handoff refuses it too. Nothing was printed."
+    ! handoff_rel_climbs_out "" "$hp_cell" || die "$hp_climbs" 2
+    handoff_checkout_of "$hp_lane" "$hp_create"
+    ! handoff_rel_climbs_out "$HCO_PATH" "$hp_cell" || die "$hp_climbs" 2
+    hp_rc=0; hp_path="$(handoff_in_repo "$HCO_PATH" "$hp_cell")" || hp_rc=$?
+    # WHAT `write-handoff` REFUSES, NO PATH IS PRINTED FOR (finding 723 of
+    # lane openRepoTools-3's review of #316): a caller binds a restart to this
+    # path and reads its top block as the lane's first prompt, so a handoff in
+    # W or in another checkout beside it is refused here by the same check.
+    if handoff_beside_w "$HCO_PATH" "$hp_path"; then
+      die "lane $hp_lane's handoff $hp_cell is $HBW_WHY: \`write-handoff\` refuses it, so no path is printed for a restart to bind or a launch to read (601). Nothing was written." 2
+    fi
+    [ "$hp_rc" = 0 ] || note "$hp_path is another repository's handoff (Amendment 8(d)): \`write-handoff\` writes it there and commits it nowhere"
+    printf '%s\n' "$hp_path"
     ;;
 
   legacy-restart-check)
@@ -19703,15 +20568,60 @@ EOF
     # the handoff: the reader of this file is a DIFFERENT PROCESS IN A
     # DIFFERENT DIRECTORY — the supervisor in a respawned pane — and a relative
     # path resolved against its cwd is a path to somewhere else. `~` is the
-    # writing shell's and is never expanded here.
+    # writing shell's and is never expanded in `--dir`.
+    #
+    # …EXCEPT THE ROW'S OWN SPELLINGS OF A HANDOFF (Amendment 23 S2, slice
+    # 2a): a repository-relative `handoffs/…` cell, and the estate's `~/…`,
+    # are TRANSLATED once the lane is known — into the checkout that lane's
+    # writes go through (`handoff_checkout_of`: its own under the opt-in, an
+    # explicit `LANES_REPO`, W with the opt-in off) — and stored as that
+    # absolute path, so the digest below is that file's and `write-handoff`
+    # fences on it directly. An ABSOLUTE path is kept exactly as given: it
+    # is every older caller's, and each binds the file it then publishes and
+    # compares — W's, until slice 2b moves `lane-start` and `lane-handoff`
+    # (`write-handoff` translates a W-bound path on its own side). Any other
+    # relative path, and a `.` or `..` component, is still refused.
     case "$sri_dir" in ''|/*) : ;; *) die "--dir takes an ABSOLUTE path: this record is read by the supervisor in a pane whose working directory is not this one, and a relative path there names a different place. Got '$sri_dir'." 64 ;; esac
-    case "$sri_hf" in ''|/*) : ;; *) die "--handoff takes an ABSOLUTE path, for the same reason --dir does: the launch that reads it back stands somewhere else. Got '$sri_hf'." 64 ;; esac
+    sri_hf_cell=""
+    case "$sri_hf" in
+      ''|/*) : ;;
+      handoffs/*|'~/'*)
+        case "/$sri_hf/" in
+          */../*|*/./*) die "--handoff's repository-relative cell is joined to a checkout, so it names no '.' or '..' component. Got '$sri_hf'." 64 ;;
+        esac
+        sri_hf_cell="$sri_hf" ;;
+      *) die "--handoff takes an ABSOLUTE path, for the same reason --dir does: the launch that reads it back stands somewhere else — or the row's own spelling, a repository-relative handoffs/… cell or ~/…, which is translated into the lane's checkout. Got '$sri_hf'." 64 ;;
+    esac
     for sri_exact in "$sri_dir" "$sri_pane" "$sri_win" "$sri_hf" "$sri_old" "$sri_new" "$sri_dig" "$sri_prepared"; do
       lane_restart_value_ok "$sri_exact" || die "restart launch facts cannot contain control characters. Nothing was written." 64
     done
     check_lane_name "$lane"
     log_sync
     lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
+    if [ -n "$sri_hf_cell" ]; then
+      handoff_checkout_of "$lane" 0
+      sri_hf="$(handoff_in_repo "$HCO_PATH" "$sri_hf_cell")" || :
+      case "$sri_hf" in
+        /*) note "--handoff $sri_hf_cell is bound as $sri_hf: the row's spelling, translated into the checkout lane $lane's writes go through, or another repository's file as it is (Amendment 23 S2)" ;;
+        *)  die "--handoff $sri_hf_cell could not be made an absolute path in the checkout lane $lane's writes go through (got '$sri_hf'). Nothing was written." 1 ;;
+      esac
+      if handoff_beside_w "$HCO_PATH" "$sri_hf"; then
+        die "--handoff $sri_hf_cell is $HBW_WHY: \`write-handoff\` refuses it, so no restart is bound to it (601). Nothing was written." 2
+      fi
+    elif [ -n "$sri_hf" ] && [ -n "$LANES_WS_REAL" ]; then
+      # AN ABSOLUTE PATH IS KEPT AS GIVEN (W's spelling is every older
+      # caller's, and `write-handoff` translates it on its side), but one that
+      # lands in a checkout beside W is asked the same question as a cell
+      # (601): only the lane's own checkout there is its handoff's.
+      sri_hf_phys="$(path_physical "$sri_hf")" || sri_hf_phys="$sri_hf"
+      case "$sri_hf_phys" in
+        "$LANES_WS_REAL"-*/*)
+          handoff_checkout_of "$lane" 0
+          if handoff_beside_w "$HCO_PATH" "$sri_hf"; then
+            die "--handoff $sri_hf is $HBW_WHY: \`write-handoff\` refuses it, so no restart is bound to it (601). Nothing was written." 2
+          fi ;;
+      esac
+    fi
     # Select the physical intent under the CAS mutex: a waiting writer must
     # see a reservation another writer established before releasing the lock.
     sidecar_lock_use; acquire_lock   # the workstation's sidecar lock, and no other (Amendment 23 S2)
@@ -20450,6 +21360,6 @@ EOF
     ;;
 
   *)
-    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|retire-rows|archive-rows|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|binding|request-handoff|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|duplicate-holder|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|register-row-local|retired-identity|canon-lane|resolve-home|managed-projection|lane-state|set-lane-state|lane-trees|set-lane-tree|lane-tree-now|project-legs|lane-reconcile|lane-holders|legacy-restart-check|publish-handoff|restart-intent|set-restart-intent|worktrees|pathspec-check|lane-checkout|refresh-workspace)" 2
+    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|retire-rows|archive-rows|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|binding|request-handoff|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|duplicate-holder|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|register-row-local|retired-identity|canon-lane|resolve-home|managed-projection|lane-state|set-lane-state|lane-trees|set-lane-tree|lane-tree-now|project-legs|lane-reconcile|lane-holders|legacy-restart-check|publish-handoff|restart-intent|set-restart-intent|worktrees|pathspec-check|lane-checkout|refresh-workspace|write-handoff|handoff-path)" 2
     ;;
 esac
