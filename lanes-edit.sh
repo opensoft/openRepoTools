@@ -496,9 +496,10 @@
 #      `handoff-path` and `set-restart-intent --handoff` refuse the same
 #      handoff by the same check, 601), a relative cell or `--target` whose
 #      `.` or `..` components climb out of the checkout (S2, 602; `handoff-path`
-#      refuses that cell too), a restart's bound file or
-#      pre-image that is not this one, or a splice that does not prove out,
-#      each with nothing written; while S3's refusal of a `--prepend` or a
+#      refuses that cell too), or a splice that does not prove out, each with
+#      nothing written — a restart's bound file or pre-image that is not this
+#      one is `publish-handoff`'s 2 and `write-handoff`'s 7 (603: its 2 is
+#      never a restart fence's); while S3's refusal of a `--prepend` or a
 #      `--whole` has WRITTEN the handoff, uncommitted (R-A11-11), and printed
 #      its path. EIGHT MEANINGS ON ONE NUMBER, and they
 #      stay readable only because of where each can occur: bad arguments to a
@@ -593,7 +594,9 @@
 #      operation it names is finished (#114) — so a superseded poll cannot be
 #      filed over the current inventory. `publish-handoff` and `write-handoff`:
 #      the restart fence did not match, an active restart owns the handoff, or
-#      the handoff changed under the write, and nothing was published. ONE
+#      the handoff changed under the write — and in `write-handoff` alone, the
+#      restart's bound file or pre-image is not this one, which
+#      `publish-handoff` answers 2 (603) — and nothing was published. ONE
 #      MEANING ON THE NUMBER, in five places: you lost the race.
 #   8  no record — `who` found nothing; `lane-objects` has no log file for the
 #      lane; `live-holder` READ this workstation's session records and none of
@@ -13439,7 +13442,8 @@ lane_restart_put() {   # <root> <lane> <state> <gen> <op> <mode> <agent> <profil
 #      malformed). With an operation, the five fences must be the intent's own
 #      — operation, generation, attempt, state, transcript — or this writer
 #      lost ownership (7), and the intent's bound handoff must be this file
-#      (2). With none, an active restart owns the file (7);
+#      (2; `write-handoff`'s 7, HPA_FENCE_RC). With none, an active restart
+#      owns the file (7);
 #   3. the file's digest must still be the prior digest its caller read (7);
 #   4. the bytes. THEY GO #212's WAY, which is this act's own (`rename-lane`'s
 #      stamp says it copied it from here): an exclusive temporary BESIDE the
@@ -13456,19 +13460,27 @@ lane_restart_put() {   # <root> <lane> <state> <gen> <op> <mode> <agent> <profil
 # checkout's where the opt-in is off (`sidecar_lock_dir`) — which the exit trap
 # releases on every refusal. It sets HPA_TARGET, the file it published.
 #
-# THREE MORE STEPS ARE `write-handoff`'s ALONE, each off unless it sets it, so
-# `publish-handoff` is the act it always was:
+# FOUR MORE SETTINGS ARE `write-handoff`'s ALONE, each off unless it sets it,
+# so `publish-handoff` is the act it always was:
 #   HPA_CHECKOUT  the checkout the write goes through: the bound path also
 #                 matches where its TRANSLATION into that checkout is the target
 #                 (S2), so an intent an older `lane-handoff` bound to W's
 #                 spelling still fences the lane's own copy (2a's "a /ctx in
 #                 flight across the install");
 #   HPA_EXPECTED  the digest a restart bound: the prior digest must be it, or
-#                 the handoff changed under the restart (2, `lane-start`'s
-#                 refusal), and HPA_EXPECTED_FOR names what was owned;
+#                 the handoff changed under the restart (HPA_FENCE_RC,
+#                 `lane-start`'s refusal), and HPA_EXPECTED_FOR names what was
+#                 owned;
 #   HPA_RESERVE   the stamped file's digest, recorded in the intent as its
-#                 prepared digest BEFORE the bytes (`handoff_restart_reserve`).
-HPA_TARGET=""; HPA_CHECKOUT=""; HPA_EXPECTED=""; HPA_EXPECTED_FOR=""; HPA_RESERVE=""
+#                 prepared digest BEFORE the bytes (`handoff_restart_reserve`);
+#   HPA_FENCE_RC  the code of the two restart fences that are 2 here — the
+#                 bound file, the pre-image: 7 for `write-handoff` (lane
+#                 openRepoTools-3's review of #312, 603), whose 2 is S3's
+#                 refusal and so is never a fence's, as act2-plan §2.7 needs:
+#                 under an active restart only a fence's code keeps
+#                 `lane-start`'s die, and S3's 2 is a note. Unset, 2,
+#                 `publish-handoff`'s documented code.
+HPA_TARGET=""; HPA_CHECKOUT=""; HPA_EXPECTED=""; HPA_EXPECTED_FOR=""; HPA_RESERVE=""; HPA_FENCE_RC=""
 # The intent's bound handoff is this target — the same file, never a spelling.
 handoff_bound_is() {   # <bound path> <target>
   [ -n "$1" ] && [ "$1" != none ] || return 1
@@ -13529,13 +13541,13 @@ handoff_publish_atomic() {   # <lane> <target> <prepared> <prior digest> [<op> <
       die "this handoff publisher lost restart ownership; nothing was published" 7
     hpa_bound="$(printf '%s\n' "$hpa_intent" | awk -F'\t' '$1=="handoff" {print $2; exit}')"
     handoff_bound_is "$hpa_bound" "$hpa_target" ||
-      die "the publication target is not the operation-bound handoff; nothing was published" 2
+      die "the publication target is not the operation-bound handoff; nothing was published" "${HPA_FENCE_RC:-2}"
   else
     case "$hpa_current" in preparing|pending|starting) die "an active restart owns this handoff; nothing was published" 7 ;; esac
   fi
   [ "$(lane_handoff_digest "$hpa_target")" = "$hpa_digest" ] || die "the handoff changed before publication; nothing was published" 7
   if [ -n "$HPA_EXPECTED" ] && [ "$HPA_EXPECTED" != none ] && [ "$hpa_digest" != "$HPA_EXPECTED" ]; then
-    die "the restart handoff changed before ${HPA_EXPECTED_FOR:-its owned write}: $hpa_target digests $hpa_digest, and the restart bound $HPA_EXPECTED. Nothing was published." 2
+    die "the restart handoff changed before ${HPA_EXPECTED_FOR:-its owned write}: $hpa_target digests $hpa_digest, and the restart bound $HPA_EXPECTED. Nothing was published." "${HPA_FENCE_RC:-2}"
   fi
   [ -z "$HPA_RESERVE" ] || handoff_restart_reserve "$hpa_lane" "$hpa_intent" "$HPA_RESERVE"
   pbh_tmp="$(mktemp "$hpa_target.resume.XXXXXX")" || { pbh_tmp=""; die "the publication temporary file could not be made" 1; }
@@ -19990,9 +20002,11 @@ EOF
   #   2 refused: S3 (step 6), S5, a target that is not under handoffs/ (S2) or
   #     is inside a git directory, one in a checkout beside W that is not this
   #     one, a relative spelling that climbs out of the checkout (S2), a
-  #     restart's bound file or pre-image, a proof
+  #     proof, a restart intent that is malformed — never a restart fence (603)
   #   3 pushed, not confirmed · 4 a lock · 6 kept on HEAD, named
-  #   7 a restart fence, or the handoff changed under the write
+  #   7 a restart fence — the five fences, an active restart, and the
+  #     restart's bound file and pre-image, which `publish-handoff` answers 2
+  #     (603) — or the handoff changed under the write
   #   8 no handoff to write: no row for the lane (with `--target` too), the
   #     row names none, or its file is not there
   #  64 usage
@@ -20270,6 +20284,7 @@ EOF
     sidecar_try 60 ||
       die "could not acquire the workstation's sidecar lock $(sidecar_lock_dir 2>/dev/null) after 60s — a restart, lifecycle or tree act holds it (holder pid $(cat -- "$(sidecar_lock_dir 2>/dev/null)/pid" 2>/dev/null || printf 'unrecorded')). Nothing was written." 4
     HPA_CHECKOUT="$whf_c"
+    HPA_FENCE_RC=7   # 603: this verb's 2 is S3's, so a restart fence's 2 is 7 here
     whf_fence=()
     if [ "$whf_restart" = 1 ]; then
       whf_fence=("$whf_rop" "$whf_rgen" "$whf_ratt" "$whf_rstate" "$whf_rsid")

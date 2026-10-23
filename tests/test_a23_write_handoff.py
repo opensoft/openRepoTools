@@ -607,7 +607,7 @@ def test_restart_fences_under_sidecar_lock(box: Box):
 REFUSED_FENCES = {
     "lost": (("--restart", "op-a23", "4", "1", "starting", "sid-a23"), 7,
              "this handoff publisher lost restart ownership"),
-    "unbound": (("--restart", *FENCE), 2, "the publication target is not the operation-bound handoff"),
+    "unbound": (("--restart", *FENCE), 7, "the publication target is not the operation-bound handoff"),
     "active": ((), 7, "an active restart owns this handoff"),
 }
 
@@ -684,17 +684,47 @@ def test_prepared_digest_recorded_before_publication(box: Box):
 
 
 def test_restart_pre_image_must_be_the_bound_digest(box: Box):
-    """The handoff changed under the restart: `lane-start`'s refusal (2), and
-    nothing written or reserved."""
+    """The handoff changed under the restart: `lane-start`'s refusal, and
+    nothing written or reserved. A restart fence, so 7 (603): this verb's 2
+    is S3's refusal."""
     c = box.seam()
     f = c / HANDOFF_REL
     box.restart(f)
     result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT, "--restart", *FENCE,
                                "--expected-digest", "1" * 64)
-    assert result.returncode == 2, result.stderr
+    assert result.returncode == 7, result.stderr
     assert "the restart handoff changed before its owned resume stamp" in result.stderr
     assert f.read_text(encoding="utf-8") == HANDOFF
     assert box.intent_field("prepared_digest") == "none"
+    _released(box, c)
+
+
+def test_under_a_restart_2_is_the_checkouts_refusal_and_a_fence_is_7(box: Box):
+    """603 of lane openRepoTools-3's review of #312: `write-handoff`'s 2 meant
+    both "S3 refused this checkout" and "the restart fence refused" (its bound
+    file, its pre-image), so slice 2b's `lane-start`, which notes the first
+    and dies on the second under an active restart (act2-plan §2.7), could
+    not tell them apart. This verb answers the shared act's two fence 2s with
+    7 (the cases above), and S3's refusal under the same `--restart` is 2
+    still: the stamp not written, its line said, nothing reserved.
+    `publish-handoff` keeps its documented 2 for the bound file
+    (`test_publish_handoff_refuses_a_file_the_restart_did_not_bind`)."""
+    c = box.seam()
+    f = c / HANDOFF_REL
+    box.restart(f)
+    bound = box.intent_field("digest")
+    _staged_foreign(box, c)
+    tip = box.origin_head()
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT, "--restart", *FENCE,
+                               "--expected-digest", bound)
+    assert result.returncode == 2, result.stderr
+    assert "the stamp is NOT written" in result.stderr
+    assert f"the stamp line it would have written under the handoff's header block: {STAMP}" in result.stderr
+    assert "nothing was published" not in result.stderr.lower()
+    assert f.read_text(encoding="utf-8") == HANDOFF
+    assert box.intent_field("prepared_digest") == "none"
+    assert box.origin_head() == tip
+    assert result.stdout == ""
     _released(box, c)
 
 
