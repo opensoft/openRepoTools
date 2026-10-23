@@ -261,7 +261,8 @@
 #      failed (which is NOT the same as the lane having no object log), or the
 #      close-out gate could not be read (no `lane-worktrees`, or an exit that
 #      is none of its three). `--sweep-checkouts`: no W, a read that failed
-#      (the listing of lanes, or a fetch `--yes` decides on), a removal
+#      (the listing of lanes, a `<W>-lanes/` that cannot be entered or
+#      listed, or a fetch `--yes` decides on), a removal
 #      that did not finish, or removals whose NOTED line was not written or
 #      not confirmed on origin (the commands to finish it are printed)
 #   2  refusal — bad arguments, no row (or two), something still in flight, or
@@ -1311,6 +1312,12 @@ SC_IDX
     sc_home_why="there is no $sc_home/: no lane checkout has been made on this workstation"
   elif [ ! -d "$sc_home" ]; then
     sc_home_why="$sc_home is not a directory: nothing in it is looked at"
+  # ONE THAT CANNOT BE ENTERED OR LISTED IS NO EMPTY ONE (lane
+  # openRepoTools-3's NIT 377): at mode 000 its real path read as empty,
+  # and the run said it "resolves through a link to ," and exited 0. It is
+  # a read that failed, and nothing beside W is looked at either.
+  elif [ ! -x "$sc_home" ] || [ ! -r "$sc_home" ] || [ -z "$(sc_real "$sc_home")" ]; then
+    die "$sc_home cannot be entered or listed, or its real path read, so what is in it is unknown — which is not an empty directory, nor one reached through a link. Nothing was removed." 1
   elif [ "$(sc_real "$sc_home")" != "$sc_home" ]; then
     sc_home_why="$sc_home resolves through a link to $(sc_real "$sc_home"), which this sweep never follows: nothing in it is looked at"
   elif ! ls -A -- "$sc_home" >/dev/null 2>&1; then

@@ -2594,3 +2594,29 @@ def test_the_sweeps_comments_are_80_columns_or_less():
     wide = [(n, len(line)) for n, line in section
             if line.lstrip().startswith("#") and len(line) > 80]
     assert not wide, wide
+
+
+@pytest.mark.skipif(getattr(os, "geteuid", lambda: 1)() == 0,
+                    reason="root enters and lists a directory of mode 000")
+def test_a_lanes_folder_that_cannot_be_entered_or_listed_is_refused(sweep):
+    """A `<W>-LANES/` THAT CANNOT BE ENTERED OR LISTED IS NO EMPTY ONE (lane
+    openRepoTools-3's NIT 377). At mode 000 its real path could not be read,
+    and the sweep said it "resolves through a link to , which this sweep
+    never follows" and exited 0, in the dry run and under `--yes`. Both now
+    refuse with 1, a read that failed, before anything is removed, beside W
+    too."""
+    box = sweep.box
+    _free_profile_clones(box)
+    before = box.everything()
+    box.lanes_root.chmod(0)
+    try:
+        for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+            result, rows = sweep(*args, **env)
+            assert result.returncode == 1, (result.stdout, result.stderr)
+            assert (f"{box.lanes_root} cannot be entered or listed, or its real path read"
+                    in result.stderr), result.stderr
+            assert "Nothing was removed." in result.stderr, result.stderr
+            assert not rows, rows
+    finally:
+        box.lanes_root.chmod(0o755)
+    assert box.everything() == before
