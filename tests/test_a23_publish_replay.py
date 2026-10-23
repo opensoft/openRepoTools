@@ -1428,21 +1428,25 @@ def test_an_add_row_whose_retirement_a_reader_fetched_in_after_S3s_compare_refus
 # Rule 1's network reads, none bounded by `git_net`.
 
 CLAIM_URL = "https://github.com/opensoft/repoS4/issues/1#issuecomment-284"
+POSTED_URL = "https://github.com/opensoft/repoS4/issues/1#issuecomment-706"
 
 
-def _network_reads_logged(box: Box, c: Path, bulk: int = 0) -> tuple:
+def _network_reads_logged(box: Box, c: Path, bulk: int = 0, posted: Path | None = None) -> tuple:
     """`gh`, and `git ls-remote` of a GitHub URL, each logged with whether
     `c`'s lock is held at that moment; `gh issue view ... --json comments`
     answers a claim comment's URL, and with `bulk`, `gh issue view
     --comments` answers that many `CLAIMED —` lines of about 100 bytes each.
-    Nothing reaches the network. Returns the log and the env that puts both
-    first and lets the claim ask GitHub."""
+    With `posted`, `gh issue comment` keeps the body it is given there and
+    answers a comment's URL. Nothing reaches the network. Returns the log and
+    the env that puts both first and lets the claim ask GitHub."""
     lock = shlex.quote(str(box.lock_of(c)))
     log = shlex.quote(str(box.root / "net-reads.log"))
     held = f'if [ -d {lock} ]; then s="LOCK HELD"; else s="no lock"; fi'
     many = (f'*"issue view"*"--comments"*) i=0; while [ "$i" -lt {bulk} ]; do i=$((i + 1)); '
             f'printf "CLAIMED — lane bulk-%05d, session {UUID2}@Eagle, 2026-10-01T00:00:00Z, {OBJ}\\n" "$i"; '
             f'done ;; ') if bulk else ""
+    if posted is not None:
+        many += f'*"issue comment"*) cat > {shlex.quote(str(posted))}; echo "{POSTED_URL}" ;; '
     gh = box.fakebin / "gh"
     gh.write_text("#!/usr/bin/env bash" + "\n" + held + "\n" +
                   f'printf "gh %s :: %s\\n" "$*" "$s" >> {log}' + "\n" +
@@ -2236,3 +2240,30 @@ def test_s63s_archive_and_drop_run_as_printed(tmp_path: Path, named: str):
     dropped = _run_as_printed(box, err, DROP_LINE)
     assert dropped.returncode == 0, (dropped.stdout, dropped.stderr)
     assert box.head(c) == box.origin_head(), "the drop reached origin's tip"
+
+
+def test_a_claims_re_run_posts_the_whole_reads_not_the_capped_copy(box: Box):
+    """706 of lane openRepoTools-3's re-check of #307's round 2: 334's cap
+    reached what a re-run POSTS. The claim comment's "three reads" block was
+    the 32,768-byte copy that crossed the `exec`, so with 1,800 comments the
+    posted comment held about 260 lines and the truncation marker. Attempt 1
+    now keeps the reads whole in a file under the checkout's git directory,
+    whose name crosses the `exec`, and the re-run's comment cites them from
+    it; the environment string keeps 334's cap, and the file goes with the
+    claim's last run."""
+    c = box.seam()
+    posted = box.root / "posted.md"
+    log, env = _network_reads_logged(box, c, bulk=1800, posted=posted)
+    _origin_moves_once_at_s3s_fetch(box)
+    result = box.helper("claim", OBJ, *HOME_FLAG, LANES_LANE=LANE, LANES_SESSION=UUID, **env)
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert "moved while this write's checks ran" in result.stderr, "the claim ran again from the top"
+    assert "(truncated at 32768 bytes" in result.stdout, "the re-run still prints the capped copy (334)"
+    assert f"comment posted: {POSTED_URL}" in result.stderr, result.stderr[-2000:]
+    body = posted.read_text(encoding="utf-8")
+    assert "The three reads (lane-collision-protocol Rule 1)" in body, body[:500]
+    assert "lane bulk-00001," in body and "lane bulk-01800," in body, "the comment cites every read"
+    assert "(truncated at 32768 bytes" not in body, "never the capped copy"
+    assert [r for r in log.read_text(encoding="utf-8").splitlines() if "LOCK HELD" in r] == []
+    assert list((c / ".git" / "lanes-edit").glob("claim-reads-*")) == [], "the whole reads' file goes with the run"
+    _settled(box, c)

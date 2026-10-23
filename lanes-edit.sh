@@ -1167,18 +1167,22 @@ LANES_ROUTED="${LANES__CHECKOUT_LANE:-}"   # the lane, in the re-run process onl
 # #307, 284), so a re-run makes no GitHub read with the lock held. So do the
 # names of the hand-edit copies this run has written (`CP_CARRY_COPIES`, lane
 # 3's 393): a lost race replays `commit`'s carry, which writes a second copy,
-# and every one goes once origin has the edit (`cp_pushed`). Not `LANES__PID`: an unrouted write has no routing
+# and every one goes once origin has the edit (`cp_pushed`). So does the name of
+# the file that holds Rule 1's reads whole where the carried copy is capped
+# (`CP_CLAIM_READS_FILE`, lane 3's 706). Not `LANES__PID`: an unrouted write has no routing
 # markers, and exporting one would make a child helper drop its caller's
 # `LANES_REPO`, `LANES_DIR` and `LANES_FILE` (the rule above).
 CP_ATTEMPT=1; CP_REPLAYING=0; CP_CLAIM_FROM=""; CP_CLAIM_DEAD=""; CP_CLAIM_READS=""; CP_CLAIM_URL=""; CP_CARRY_COPIES=""
+CP_CLAIM_READS_FILE=""
 if [ -n "${LANES__REPLAY_PID:-}" ] && [ "${LANES__REPLAY_PID:-}" = "$$" ]; then
   CP_REPLAYING=1
   case "${LANES__ATTEMPT:-}" in [2-6]) CP_ATTEMPT="$LANES__ATTEMPT" ;; esac
   CP_CLAIM_FROM="${LANES__CLAIM_FROM:-}"; CP_CLAIM_DEAD="${LANES__CLAIM_DEAD:-}"
   CP_CLAIM_READS="${LANES__CLAIM_READS:-}"; CP_CLAIM_URL="${LANES__CLAIM_URL:-}"
   CP_CARRY_COPIES="${LANES__CARRY_COPIES:-}"
+  CP_CLAIM_READS_FILE="${LANES__CLAIM_READS_FILE:-}"
 fi
-unset LANES__REPLAY_PID LANES__ATTEMPT LANES__CLAIM_FROM LANES__CLAIM_DEAD LANES__CLAIM_READS LANES__CLAIM_URL LANES__CARRY_COPIES
+unset LANES__REPLAY_PID LANES__ATTEMPT LANES__CLAIM_FROM LANES__CLAIM_DEAD LANES__CLAIM_READS LANES__CLAIM_URL LANES__CARRY_COPIES LANES__CLAIM_READS_FILE
 # THE ROUTING IS OPT-IN UNTIL SLICE 1B (the review of opensoft/openRepoTools#282,
 # MUST 2). Before slice 1b a lane checkout was only as fresh as its own last
 # write, and the old push loop rebased only after a rejected push, so a
@@ -1620,6 +1624,9 @@ cleanup() {
   [ -n "${SE_CACHE_FILE:-}" ] && rm -f -- "$SE_CACHE_FILE" "$SE_CACHE_FILE".* 2>/dev/null
   [ -n "${LANES_IDX_DIR:-}" ] && [ -d "${LANES_IDX_DIR:-}" ] && rm -rf -- "$LANES_IDX_DIR"
   [ -n "${LANES_WT_IDX_DIR:-}" ] && [ -d "${LANES_WT_IDX_DIR:-}" ] && rm -rf -- "$LANES_WT_IDX_DIR"
+  # `claim`'s whole reads (706) cross a re-run's `exec`, which runs no EXIT
+  # trap, and go when the last run of the claim ends, however it ends.
+  [ -z "${CP_CLAIM_READS_FILE:-}" ] || rm -f -- "$CP_CLAIM_READS_FILE"
   # AMENDMENT 14(d) — THE NUDGE IS THE LAST THING THIS PROCESS DOES: after the
   # lock is released at the top of this function, and only where `commit_publish` recorded a push
   # that landed - or, opensoft/openRepoTools#161, where an inventory writer
@@ -17911,7 +17918,8 @@ EOF
       CLAIM_OBJ="$obj"; CLAIM_LANE="$lane"; CLAIM_SKIP="$CP_CLAIM_FROM"; CLAIM_SKIP_DEAD="$CP_CLAIM_DEAD"
       CLAIM_ABANDON_REVIVED=""
       CP_REPLAY_ENV=("LANES__CLAIM_FROM=$CP_CLAIM_FROM" "LANES__CLAIM_DEAD=$CP_CLAIM_DEAD"
-                     "LANES__CLAIM_READS=$CP_CLAIM_READS" "LANES__CLAIM_URL=$CP_CLAIM_URL")
+                     "LANES__CLAIM_READS=$CP_CLAIM_READS" "LANES__CLAIM_URL=$CP_CLAIM_URL"
+                     "LANES__CLAIM_READS_FILE=$CP_CLAIM_READS_FILE")
       crh_rc=0; claim_rescan_hook || crh_rc=$?
       case "$crh_rc" in 7|9) claim_lost_write "$crh_rc" "$lane" "$obj" "$(session_for "$lane")" ;; esac
     fi
@@ -18052,8 +18060,17 @@ EOF
       reads="$CP_CLAIM_READS"
       [ -n "$reads" ] || reads="the three reads of Rule 1: made and printed at attempt 1, before the lock"
       reads_carry="$reads"
+      # THE COMMENT CITES THEM WHOLE (lane openRepoTools-3's re-check of #307's
+      # round 2, 706): where the carried copy is capped (334, below), attempt 1
+      # kept them whole in a file beside the checkout's other carried state, and
+      # the comment's "three reads" block is taken from it.
+      reads_posted="$reads"
+      if [ -n "$CP_CLAIM_READS_FILE" ] && [ -f "$CP_CLAIM_READS_FILE" ]; then
+        reads_posted="$(cat -- "$CP_CLAIM_READS_FILE")"
+      fi
     else
       reads="$(gh_reads "$obj")" || exit 1
+      reads_posted="$reads"
       # THE COPY THAT CROSSES THE `exec` IS CAPPED (lane openRepoTools-3's
       # re-check of #307, 334). It travels as ONE environment string, and
       # Linux caps one at 128 KiB: past that the `exec` fails and the write
@@ -18063,6 +18080,13 @@ EOF
       reads_carry="$reads"
       if [ "$(printf '%s' "$reads" | LC_ALL=C wc -c | tr -d ' ')" -gt 32768 ]; then
         reads_carry="$(printf '%s' "$reads" | LC_ALL=C head -c 32768 | LC_ALL=C sed '$d')"$'\n'"   (truncated at 32768 bytes to cross the re-run's exec: attempt 1 printed all of Rule 1's reads)"
+        # …and whole in a file, which a re-run's comment cites (706). Its name
+        # crosses the `exec`; the file goes when the claim's last run ends.
+        cr_gd="$(git -C "$LANES_REPO" rev-parse --absolute-git-dir 2>/dev/null || :)"
+        if [ -n "$cr_gd" ] && mkdir -p -- "$cr_gd/lanes-edit" 2>/dev/null; then
+          CP_CLAIM_READS_FILE="$cr_gd/lanes-edit/claim-reads-$(date -u +%Y%m%dT%H%M%SZ)-$$.txt"
+          printf '%s\n' "$reads" > "$CP_CLAIM_READS_FILE" 2>/dev/null || CP_CLAIM_READS_FILE=""
+        fi
       fi
     fi
     printf '%s\n' "$reads"
@@ -18078,7 +18102,8 @@ EOF
     CLAIM_OBJ="$obj"; CLAIM_LANE="$lane"; CLAIM_SKIP="$takeover_from"; CLAIM_SKIP_DEAD="$takeover_dead"
     CLAIM_ABANDON_REVIVED=""
     CP_REPLAY_ENV=("LANES__CLAIM_FROM=$takeover_from" "LANES__CLAIM_DEAD=$takeover_dead"
-                   "LANES__CLAIM_READS=$reads_carry" "LANES__CLAIM_URL=$takeover_payload")
+                   "LANES__CLAIM_READS=$reads_carry" "LANES__CLAIM_URL=$takeover_payload"
+                   "LANES__CLAIM_READS_FILE=$CP_CLAIM_READS_FILE")
     # A RIVAL THAT LANDS BEFORE S3's FETCH, not only one that lands before the
     # push: the checks above read what `log_sync` fetched, so a tip that moved
     # since runs this claim again from the top, rescan first (`cs_recheck`).
@@ -18102,7 +18127,7 @@ EOF
     if [ "$NO_GITHUB" != 1 ]; then
       body="$(printf '%s — lane %s, session %s@%s, %s, for %s\n\nLogged in `%s` at `%s`%s.\n\nThe three reads (lane-collision-protocol Rule 1):\n\n```text\n%s\n```\n' \
                "${takeover_from:+TAKEOVER}${takeover_from:-CLAIMED}" "$lane" "$uuid" "$WS" "$utc" "$obj" \
-               "$(log_path_for "$lane")" "${sha:-unknown}" "$takeover_reason_phrase" "$reads")"
+               "$(log_path_for "$lane")" "${sha:-unknown}" "$takeover_reason_phrase" "$reads_posted")"
       url="$(gh_comment "$obj" "$body" 2>/dev/null || :)"
       if [ -n "$url" ]; then
         note "comment posted: $url"
