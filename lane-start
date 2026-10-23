@@ -3238,47 +3238,6 @@ fi
 # superseded.
 fresh=0
 fresh_why=""
-hs_workspace_root() { lanes_workspace_root; }
-
-# The file the row's handoff cell names. Three spellings, first hit wins, and
-# every one of them is a READ:
-#   (a) a path the cell already spells — absolute, or `~`-rooted, which is
-#       Amendment 4(e)'s estate spelling reaching the same file through the
-#       `~/projects/<estate>/handoffs` symlink;
-#   (b) `<the register's own checkout>/<cell>` — the repository-relative
-#       spelling every row this script writes carries, and the one the register
-#       and the handoffs share;
-#   (c) `<the workspace repository>/<cell>`, for a register reached from
-#       somewhere else.
-# A cell that spells a path of its own is answered by (a) alone: joining an
-# absolute path on to a root gives a path nothing has.
-# SINCE AMENDMENT 23's SLICE 2B IT IS A FALLBACK AND NEVER A TARGET: the stamp
-# is written, the restart's binding is checked and the first prompt is read in
-# the file `lanes-edit.sh handoff-path` names, the one this lane's writes go
-# to. Only an ordinary launch whose own copy is not there reads the copy this
-# finds for its first prompt, and says so (5d).
-hs_resolve() {
-  local cell="$1" cand root
-  [ -n "$cell" ] || return 1
-  case "$cell" in
-    '~/'*) cand="$HOME/${cell#'~/'}" ;;
-    /*)    cand="$cell" ;;
-    *)     cand="" ;;
-  esac
-  if [ -n "$cand" ]; then
-    [ -f "$cand" ] || return 1
-    printf '%s\n' "$cand"; return 0
-  fi
-  if [ -n "${LANES_REPO:-}" ] && [ -f "$LANES_REPO/$cell" ]; then
-    printf '%s\n' "$LANES_REPO/$cell"; return 0
-  fi
-  root="$(hs_workspace_root 2>/dev/null || :)"
-  if [ -n "$root" ] && [ -f "$root/$cell" ]; then
-    printf '%s\n' "$root/$cell"; return 0
-  fi
-  return 1
-}
-
 first_prompt=0
 ri_state=""; ri_op=""; ri_gen=""; ri_mode=""; ri_dir=""; ri_hf=""; ri_dig=""; ri_rc=0; ri_expected_digest=""; ri_prompt=""; ri_active=0; ri_attempt=""; ri_prepared=""; ri_agent=""; ri_profile=""
 ri_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" restart-intent "$LANE" --dir "$DIR" 2>/dev/null)" || ri_rc=$?
@@ -4184,7 +4143,7 @@ if [ -n "$ls_cell" ]; then
   else
     HS_PATH=""
     [ "$hsp_rc" = 8 ] || (( dry_run )) ||
-      note "where this lane's handoff is written could not be read (\`$LANES_EDIT handoff-path $LANE\` exited $hsp_rc), so the first prompt below is read from the file the row's cell names"
+      note "where this lane's handoff is written could not be read (\`$LANES_EDIT handoff-path $LANE\` exited $hsp_rc), and a first prompt is read from that file alone, never from W's copy (5d)"
   fi
 fi
 
@@ -4492,21 +4451,18 @@ if (( first_prompt )); then
   else
     fp_cell="$handoff"
   fi
-  # READS FOLLOW THE WRITE (Amendment 23, slice 2b): the file 5c wrote, in the
-  # checkout this lane's writes go through, and not W's copy, which nothing
-  # here brought up to date. Under a supervised restart it is the only file
-  # there is, because its intent bound it. For any other launch, where that
-  # file is not there, the copy the row's cell names is read, and said.
+  # READS FOLLOW THE WRITE, AND NEVER THROUGH W (Amendment 23 S2, slice 2b):
+  # the file 5c wrote, in the checkout this lane's writes go through. Under a
+  # supervised restart it is the only file there is, because its intent bound
+  # it, and so it is for every other launch. Where that file is not there the
+  # launch goes on with NO first prompt, and says which file is missing and
+  # what makes it (below). W's copy is never read in its place: it never
+  # carries this resume's stamp, and the cell it is found by is not fenced as
+  # the writes' is (lane openRepoTools-3's review of #316, 727 and its
+  # question 2).
   fp_file=""
-  if [ -n "$fp_cell" ]; then
-    if [ -n "$HS_PATH" ] && [ -f "$HS_PATH" ]; then
-      fp_file="$HS_PATH"
-    elif [ "$ri_active" != 1 ] || (( ! fresh )); then
-      fp_file="$(hs_resolve "$fp_cell" 2>/dev/null || :)"
-      if [ -n "$fp_file" ] && [ -n "$HS_PATH" ]; then
-        note "this lane's own copy of its handoff is not at $HS_PATH, so the first prompt is read from $fp_file, which may be behind it"
-      fi
-    fi
+  if [ -n "$fp_cell" ] && [ -n "$HS_PATH" ] && [ -f "$HS_PATH" ]; then
+    fp_file="$HS_PATH"
   fi
   if [ "$ri_active" = 1 ] && (( fresh )); then
     [ -n "$fp_file" ] && [ "$fp_file" -ef "$ri_hf" ] ||
@@ -4530,8 +4486,21 @@ if (( first_prompt )); then
   else
     # NEVER A REASON TO REFUSE THE LAUNCH, for the same reason a handoff that
     # cannot be stamped is not: Rule 3's block is the RECORD a session resumes
-    # from, and a session with no prompt can still read the file itself.
-    note "the handoff the row names was not found${fp_cell:+ ('$fp_cell')}, so $AGENT is launched with no first prompt. Its first act is to read that file and stamp it (Rule 3)."
+    # from, and a session with no prompt can still read the file itself. The
+    # note names the file this lane's writes go to and, under the opt-in, the
+    # command that makes the lane's checkout it is in.
+    fp_make=""
+    [ "$LS_ROUTED" != 1 ] ||
+      fp_make=" Where the lane's own checkout is not there, LANES_ROUTE_WRITES=1 $LANES_EDIT lane-checkout $LANE --create makes it."
+    if [ -z "$fp_cell" ]; then
+      note "the row names no handoff, so $AGENT is launched with no first prompt."
+    elif [ -n "$HS_PATH" ]; then
+      fp_state="is not at $HS_PATH"
+      [ -z "$fp_file" ] || fp_state="is empty at $HS_PATH"
+      note "this lane's handoff '$fp_cell' $fp_state, the file its writes go to, so $AGENT is launched with no first prompt, and W's copy is never read in its place (Amendment 23 S2).${fp_make} Its first act is to read that file and stamp it (Rule 3)."
+    else
+      note "where this lane's handoff '$fp_cell' is written could not be read (above), so $AGENT is launched with no first prompt, and W's copy is never read in its place (Amendment 23 S2).${fp_make} \`$LANES_EDIT handoff-path $LANE\` names the file; its first act is to read it and stamp it (Rule 3)."
+    fi
   fi
 fi
 

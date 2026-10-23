@@ -31,7 +31,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from test_a23_lane_start_read import default_resolution, rows
+from test_a23_lane_start_read import _no_clone_git, default_resolution, rows
 from test_lane_start_row_stamp import LANE, Sandbox, _checkout_of_length, pytestmark, short_root  # noqa: F401
 
 HANDOFF = "Lane: repoZ-1 — single-use resume prompt\n\n# state\n\nthe lane's own words\n"
@@ -299,3 +299,44 @@ exec '{box.bin / "lanes-edit.sh"}' "$@"
     assert "Nothing was launched" not in start.stderr
     assert "RESUMED by " not in _published(box, cell)
     assert os.path.exists(box.wip / cell)
+
+
+# ------------------------------------------- fix round 1 (#316's review)
+
+def _first_prompt_note(stderr: str) -> str:
+    """5d's one line where the launch goes on with no first prompt."""
+    found = [line for line in stderr.splitlines() if "launched with no first prompt" in line]
+    assert len(found) == 1, stderr
+    return found[0]
+
+
+def test_no_lane_copy_launches_with_no_first_prompt_never_W_copy(tmp_path, short_root):
+    """727, and question 2 of lane openRepoTools-3's review of #316: where the
+    lane's own copy of its handoff is not there (here its checkout cannot be
+    made), the launch goes on with NO first prompt. It names the missing file
+    and the command that makes the checkout, and it never reads W's copy,
+    which does not carry this resume's stamp (Amendment 23 S2: reads follow
+    the writes, never through W)."""
+    box = Sandbox(tmp_path)
+    checkout = default_resolution(box, route=False)
+    _quiet(box, box.wip)
+    lane_dir = _checkout_of_length(short_root, None)
+    box.checkout(lane_dir)
+    first = box.start("--dir", str(lane_dir), window_name="claude")
+    assert first.returncode == 0, first.stderr
+    cell = _cell(box)
+    _peer_push(box, {cell: HANDOFF}, "the lane's handoff, written elsewhere")
+    box.env["LANES_ROUTE_WRITES"] = "1"
+    assert _edit(box, "refresh-workspace").returncode == 0
+    assert "the lane's own words" in (box.wip / cell).read_text(encoding="utf-8"), "W holds the handoff"
+    box.env["LANES_GIT"] = str(_no_clone_git(box))
+
+    start = box.start("--fresh", window_name=LANE)
+    assert start.returncode == 0, start.stderr
+    assert "own register checkout could not be made" in start.stderr, start.stderr
+    assert not checkout.exists()
+    assert "own words" not in start.stdout, "W's copy is never the first prompt"
+    assert "first prompt: the top block of" not in start.stderr, start.stderr
+    note = _first_prompt_note(start.stderr)
+    assert f"{checkout}/{cell}" in note, note
+    assert f"lane-checkout {LANE} --create" in note, note
