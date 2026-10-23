@@ -1709,11 +1709,17 @@ lock_try() {   # [<seconds to wait, default 60>] — 0 taken, 1 not, 2 its direc
 
 # THE CHECKOUT WENT WHILE THIS WRITE WAITED FOR ITS LOCK (360): `mutex_try`'s 2.
 # The checkout is named as removed, or, where it is still there, the directory
-# the lock lives in. 1, as for a register that is not there, and never 4: no
-# other run holds anything.
+# the lock lives in, in `mutex_try`'s words. 1, as for a register that is not
+# there, and never 4: no other run holds anything. THE RESTORE IS THE ONE THAT
+# FOLDER TAKES (701, lane openRepoTools-3's re-check of #307's round 2): git
+# restores the checkout's own `lanes/`, and nothing restores the workstation's
+# sidecar lock's `<W>-lanes/`, which is no part of any checkout, but a move back.
 lock_gone_die() {
+  if [ -d "$LANES_REPO" ] && [ "$LOCK" = "$LANES_DIR/.lanes-edit.lock" ]; then
+    die "$MX_WHY from the checkout $LANES_REPO: it was removed while the write waited for the lock. Nothing was written. If nobody meant to remove it, restore it (git -C $LANES_REPO checkout HEAD -- $LANES_DIR) and run the write again." 1
+  fi
   if [ -d "$LANES_REPO" ]; then
-    die "$LANES_DIR, where this write's lock lives, is gone from the checkout $LANES_REPO: it was removed while the write waited for the lock. Nothing was written. If nobody meant to remove it, restore it (git -C $LANES_REPO checkout HEAD -- $LANES_DIR) and run the write again." 1
+    die "$MX_WHY: it was removed while the write waited for the lock, and it is no part of the checkout $LANES_REPO, so git cannot restore it. Nothing was written. If it was moved aside, move it back to ${LOCK%/*} and run the write again; run with it still gone, the write makes the folder again, empty." 1
   fi
   die "the checkout $LANES_REPO, which this write goes through, was removed while the write waited for its lock ($MX_WHY): lane-end's sweep removes a CLOSED lane's checkout (Amendment 23 S6), and a person may have moved it aside. Nothing was written. If the lane is not CLOSED, run the write again: a routed write makes the lane's checkout again (S1), and a LANES_REPO that names the removed path must first name a checkout that is there." 1
 }
