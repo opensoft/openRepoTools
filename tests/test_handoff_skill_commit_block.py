@@ -208,22 +208,29 @@ class Estate:
         return [c["argv"][0] for c in self.calls()]
 
     def step2(self, *, ws: str = "Eagle", why: str = "'a usage reset'",
-              prepare: str = "block") -> str:
+              prepare: str = "block", between: str = ":") -> str:
         """Step 2 as a session runs it: the first block, the session's own act
         of writing its new top block, and only it, to `$block_file`, then the
         block that builds the complete new file and makes the one call. `ws` and
         `why` are shell words, so a case can hand the block an ANSI-C string.
         `prepare` is "block" (as the skill says), "none" (nothing written), or
         "by-hand" (the old habit: the whole new file written into
-        `$prepared_file`, and `$block_file` left empty)."""
+        `$prepared_file`, and `$block_file` left empty). `between` is shell run
+        after that write and before the second block."""
         write = {
             "block": f'[ -z "$block_file" ] || printf %s {shlex.quote(TOP)} > "$block_file"',
             "none": ":",
             "by-hand": f'[ -z "$prepared_file" ] || printf %s {shlex.quote(NEW)} > "$prepared_file"',
         }[prepare]
         return "\n".join([f"L={shlex.quote(str(self.helper))}", f"lane={LANE}", f"ws={ws}",
-                          f"why={why}", _block(B1), write, _block(B2),
+                          f"why={why}", _block(B1), write, between, _block(B2),
                           'printf "AFTER\\n"'])
+
+    def tool(self, name: str, script: str) -> None:
+        """A tool of that name first on the blocks' PATH, ahead of the host's."""
+        path = self.bin / name
+        path.write_text(script, encoding="utf-8")
+        path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
     def step4(self, *, ws_missing: str = "", uuid_missing: str = "") -> str:
         return "\n".join([f"L={shlex.quote(str(self.helper))}", f"lane={LANE}", "ws=Eagle",
@@ -279,6 +286,65 @@ def test_the_digest_is_of_the_bytes_that_are_there(estate, shell):
     estate.run(shell, estate.step2())
     argv = _write_call(estate)["argv"]
     assert argv[argv.index("--expect-digest") + 1] == hashlib.sha256(other.encode()).hexdigest()
+
+
+def _digest_sent(estate: Estate) -> str:
+    argv = _write_call(estate)["argv"]
+    return argv[argv.index("--expect-digest") + 1]
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("answer", [
+    "sha256sum:", OLD_DIGEST.upper(), OLD_DIGEST[:63],
+], ids=["a-word", "upper-case", "63-digits"])
+def test_a_digest_that_is_not_a_sha256_is_no_digest_and_nothing_is_sent(estate, shell, answer):
+    """rv3's mutant A on #311: the digest is held to the shape the verb's
+    `--expect-digest` takes, 64 lower-case hex digits, as it is read. A tool
+    that answers with anything else, an error word, upper case or a digest cut
+    short, gives no digest: block 1 prints none, the call is not made, and
+    step 4's line says the handoff was NOT refreshed."""
+    estate.tool("sha256sum", f'#!/bin/sh\nprintf "%s  %s\\n" {shlex.quote(answer)} "$2"\n')
+    proc = estate.run(shell, estate.step2() + "\n" + estate.step4())
+    assert proc.returncode == 0, proc.stderr
+    assert "prior_sha256=<none>" in proc.stdout, proc.stdout
+    assert "write-handoff" not in estate.verbs(), estate.calls()
+    assert "HANDOFF NOT WRITTEN" in proc.stdout, proc.stdout
+    assert "no digest read" in proc.stdout, proc.stdout
+    assert _register_line(estate).endswith(
+        "; handoff NOT refreshed (write-handoff was not called)"), _register_line(estate)
+
+
+@pytest.mark.skipif(shutil.which("sha256sum") is None,
+                    reason="the order of the two tools counts only where both are there")
+@pytest.mark.parametrize("shell", SHELLS)
+def test_sha256sum_gives_the_digest_where_shasum_is_there_too(estate, shell):
+    """rv3's mutant E on #311: the digest is read by the two tools the
+    helper's own `lane_handoff_digest` tries, in its order, `sha256sum` and
+    then `shasum -a 256`. Where both are there, `sha256sum`'s is the one: a
+    `shasum` that answers otherwise is never asked."""
+    estate.tool("shasum", '#!/bin/sh\necho "w3 shim shasum: $*" >&2\n'
+                          f'printf "%s  %s\\n" {"f" * 64} "$4"\n')
+    proc = estate.run(shell, estate.step2())
+    assert proc.returncode == 0, proc.stderr
+    assert _digest_sent(estate) == OLD_DIGEST, proc.stderr
+    assert "w3 shim shasum" not in proc.stderr, proc.stderr
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_digest_sent_is_block_1s_even_where_the_file_moved_before_the_call(estate, shell):
+    """rv3's mutant I on #311: the digest is of the bytes the session read in
+    block 1, which its new top block was written from, and is never read
+    again at the call. Here the file moves between the blocks: the new file is
+    built from what is there now, and the call still carries block 1's digest,
+    so the verb finds other bytes and refuses (7) rather than taking a top
+    block written from a file that is no longer there."""
+    moved = OLD + "a peer line, written between the blocks\n"
+    between = f"printf %s {shlex.quote(moved)} > {shlex.quote(str(estate.handoff))}"
+    proc = estate.run(shell, estate.step2(between=between))
+    assert proc.returncode == 0, proc.stderr
+    assert _digest_sent(estate) == OLD_DIGEST, proc.stdout
+    assert _write_call(estate)["prepared"] == TOP + "---\n\n" + moved, (
+        "the new file is built from the file as it is at the call")
 
 
 @pytest.mark.parametrize("shell", SHELLS)
