@@ -36,6 +36,10 @@
 #                                        # the DORMANT rows of one repository,
 #                                        # dry run by default; --yes is ONE
 #                                        # commit (Amendment 19(c))
+#   lane-end --sweep-checkouts [--yes]   # the register checkouts under
+#                                        # <W>-lanes/ that CLOSED lanes left,
+#                                        # dry run by default; --yes removes
+#                                        # those nothing holds (Amendment 23 S6.2)
 #   lane-end [options] <repo> <n>        # the split form works too
 #   lane-end [options] <n>               # <repo> = basename of the cwd's git root
 #
@@ -166,9 +170,25 @@
 #                       worktrees, branches and handoffs stay exactly where they
 #                       are. An agent's stdin is not a terminal, so `--yes` is a
 #                       word a PERSON types.
+#   --sweep-checkouts   A FOURTH ACT, and it ends no lane: the sweep of register
+#                       checkouts lane-collision-protocol Amendment 23 S6.2
+#                       leaves to this command. Each lane writes the register
+#                       through its own clone, `<W>-lanes/<lane>/` (S1), and a
+#                       lane that has CLOSED (Amendment 19) leaves its clone
+#                       behind, as an old name leaves one beside its new name
+#                       after a rename; the register clones BESIDE W (the
+#                       per-profile clones) are left from before S1. Without
+#                       `--yes` this is a DRY RUN that lists every one of them
+#                       with what holds it; it fetches nothing and changes
+#                       nothing. With `--yes`, run by a PERSON and naming the
+#                       lane that runs it in `LANES_LANE`, it removes each that
+#                       nothing holds, leaves first, and records what it
+#                       removed in one `NOTED` line of that lane's log.
+#                       Nothing else is ever removed
 #   --reason "<why>"    the words the sweep writes into each RETIRED line and
 #                       into each row's state cell. `--retire-dormant` only
-#   --yes               make the sweep the one act. `--retire-dormant` only
+#   --yes               make the sweep the act. `--retire-dormant` and
+#                       `--sweep-checkouts` only
 #   --dry-run           print what would be written; write nothing
 #   -h, --help
 #
@@ -240,15 +260,31 @@
 #   1  environment — no register, no writer, `lanes-edit.sh lane-objects`
 #      failed (which is NOT the same as the lane having no object log), or the
 #      close-out gate could not be read (no `lane-worktrees`, or an exit that
-#      is none of its three)
+#      is none of its three). `--sweep-checkouts`: no W, a read that failed
+#      (the listing of lanes, a `<W>-lanes/` that cannot be entered or
+#      listed, or a fetch `--yes` decides on), a removal
+#      that did not finish, or removals whose NOTED line was not written or
+#      not confirmed on origin (the commands to finish it are printed)
 #   2  refusal — bad arguments, no row (or two), something still in flight, or
 #      the close-out gate: the lane's trees, branches, scratch, caches or
-#      residue still on disk, or the sweep refusing the lane
+#      residue still on disk, or the sweep refusing the lane.
+#      `--sweep-checkouts`: `--yes` with no `LANES_LANE`, or with
+#      `LANES_NO_FETCH=1`, or under `LANES_ROUTE_WRITES=1` with a
+#      `LANES_REPO` that is W, or while another `--yes` holds its lock in
+#      W's git directory, or with a `LANES_WORKSPACE_ROOT` that is not the
+#      directory workspace.yaml's `path:` names; a W that is itself a lane
+#      checkout; a runner lane
+#      the register does not know, or one with no transcript uuid for the
+#      session field of its NOTED line
+#   3  `--sweep-checkouts`, the dry run: something under `<W>-lanes/` is
+#      removable (0 is nothing to remove)
 #   8  nothing there. `--retire-dormant`: no lane of that repository is
 #      recorded, or none of its rows is DORMANT. `--retire <pid|uuid>`: nothing
 #      of any kind is live for the lane
 #   130, 143  stopped by INT or TERM (128 plus the signal): the run ends where
-#      the signal found it and removes its temporary file, never resumes
+#      the signal found it and removes its temporary file, never resumes.
+#      `--sweep-checkouts --yes` lets a checkout's move and removal in hand
+#      finish first, and after any removal prints its NOTED line by hand
 #
 # ENVIRONMENT
 #   LANES_FILE  default <the workspace repository>/lanes/LANES.md
@@ -256,7 +292,17 @@
 #   LANE_WORKTREES  default lane-worktrees beside this command: the close-out
 #               gate's sweep
 #   LANES_WORKSPACE_ROOT  the workspace repository, overriding workspace.yaml's
-#               `path:` — the test seam
+#               `path:` — the test seam, which lane windows export too.
+#               `--sweep-checkouts --yes` refuses while it names another
+#               directory than `path:` does (the dry run says so), and the
+#               directory `path:` names is never one of its candidates
+#   LANE_END_MOUNTINFO  the mount table `--sweep-checkouts` reads, in
+#               `/proc/self/mountinfo`'s form (default that file) — the test
+#               seam; one that names no `/` holds every checkout
+#   LANE_END_PROC   the `/proc` whose `<pid>/environ` files `--sweep-checkouts`
+#               reads for the windows' `LANES_REPO` (default /proc) — the
+#               test seam; one with no `self/environ` holds every clone
+#               beside W as "cannot tell"
 #   AGENT_PROTOCOL_ROOT   dir holding workspace.yaml (default ~/.agents)
 #   OPENREPOTOOLS_BIN_DIR where `--install` put the commands (default
 #               ~/.local/bin) — searched for lanes-edit.sh
@@ -533,6 +579,9 @@ LANES_REG_DEFAULT=0
 if [ -z "${LANES_FILE:-}" ] || [ -z "${LANES_REPO:-}" ]; then
   LANES_WS_ROOT="$(lanes_workspace_root || :)"
 fi
+# The checkout a caller's own `LANES_REPO` names, before the default below
+# fills it in: `--sweep-checkouts` never removes it (Amendment 23 S6.2).
+LE_REPO_GIVEN="${LANES_REPO:-}"
 : "${LANES_REPO:=$LANES_WS_ROOT}"
 LANES_FILE="${LANES_FILE:-${LANES_REPO:+$LANES_REPO/lanes/LANES.md}}"
 
@@ -560,7 +609,31 @@ LANE_WORKTREES="${LANE_WORKTREES:-$(lane_worktrees_default)}"
 
 
 LE_TMP=""
-cleanup() { [ -n "${LE_TMP:-}" ] && rm -f -- "$LE_TMP"; return 0; }
+# `SC_LOCK` is a register checkout's `lanes/.lanes-edit.lock` that
+# `--sweep-checkouts --yes` took and holds, released on every way out.
+SC_LOCK=""
+# `SC_SLOCK` is the sweep-wide lock in W's git directory that
+# `--sweep-checkouts --yes` takes first (NIT 375), released the same way.
+SC_SLOCK=""
+cleanup() {
+  [ -n "${LE_TMP:-}" ] && rm -f -- "$LE_TMP"
+  # A LOCK WHOSE PID LINE NAMES ANOTHER HOLDER IS LEFT AS IT IS, as
+  # `lanes-edit.sh`'s `mutex_release` leaves it (rv4's NIT 4): it was taken
+  # over while this run held it, and it is that writer's now.
+  if [ -n "${SC_LOCK:-}" ]; then
+    cl_l=""; IFS= read -r cl_l < "$SC_LOCK/pid" 2>/dev/null || :
+    if [ -z "$cl_l" ] || [ "$cl_l" = "$$ ${sc_ident:-}" ]; then
+      rm -f -- "$SC_LOCK/pid"; rmdir -- "$SC_LOCK" 2>/dev/null || :
+    fi
+  fi
+  if [ -n "${SC_SLOCK:-}" ]; then
+    cl_l=""; IFS= read -r cl_l < "$SC_SLOCK/pid" 2>/dev/null || :
+    if [ -z "$cl_l" ] || [ "$cl_l" = "$$ ${sc_ident:-}" ]; then
+      rm -f -- "$SC_SLOCK/pid"; rmdir -- "$SC_SLOCK" 2>/dev/null || :
+    fi
+  fi
+  return 0
+}
 # A SIGNAL ENDS THE RUN, AND `cleanup` RUNS ON THE WAY OUT. `cleanup` returns
 # rather than exits, so the one trap `cleanup EXIT INT TERM` ran it and then
 # RESUMED the script at the next command — harmless while nothing was left to
@@ -581,7 +654,7 @@ usage() { sed -n -e '1,2d' -e '/^#/!q' -e 's/^# \{0,1\}//' -e p "$RESOLVED"; }
 # ------------------------------------------------------------------ arguments
 
 retire=0; force=0; dry_run=0; state_was=""; home_override=""; retire_target=""
-retire_dormant=""; sweep_reason=""; sweep_yes=0; inventory_only=0
+retire_dormant=""; sweep_reason=""; sweep_yes=0; inventory_only=0; sweep_checkouts=0
 positional=()
 
 # A TRANSCRIPT UUID AND A PID, TOLD APART FROM A LANE ARGUMENT BY SHAPE.
@@ -651,6 +724,9 @@ while [ $# -gt 0 ]; do
     # which is not built — `lane-worktrees sweep --yes` is that act, on its own
     # — so the word is refused by name rather than read as an unknown option.
     --inventory-only) inventory_only=1; shift ;;
+    # AMENDMENT 23 S6.2 — THE REGISTER CHECKOUTS' SWEEP, its own act. It takes
+    # no value, so `--sweep-checkouts=<x>` is an unknown option below.
+    --sweep-checkouts) sweep_checkouts=1; shift ;;
     --sweep | --sweep=*)
                    die "--sweep is not built: retiring a lane's trees in the same run as its ending is not one act. \`lane-worktrees sweep <lane> --yes\` retires them first, on its own (it removes only what is on origin or in a bundle, never a live writer's tree), and then $prog <lane> ends the lane; or $prog <lane> --inventory-only ends the lane with its trees left where they are, in its inventory. Nothing was written." 2 ;;
     --dry-run)     dry_run=1; shift ;;
@@ -679,6 +755,7 @@ done
 # itself before it writes a byte.
 if [ -n "$retire_dormant" ]; then
   [ "$retire" = 0 ] || die "--retire and --retire-dormant are two different acts: --retire is a lane's own ending (or a live fork's), and --retire-dormant sweeps a repository's rows that have no lane left to end. Run one of them." 2
+  [ "$sweep_checkouts" = 0 ] || die "--retire-dormant and --sweep-checkouts are two different sweeps: one retires a repository's dormant ROWS in the register, the other removes the register CHECKOUTS that closed lanes left on disk. Run one of them. Nothing was written." 2
   [ "$force" = 0 ] || die "--force ends a lane that still holds something; it has no meaning for a sweep of rows whose lanes ended before Amendment 7. Nothing was written." 2
   [ "$inventory_only" = 0 ] || die "--inventory-only is the door past ONE lane's close-out gate; the sweep of dormant rows ends no lane and asks no gate. Nothing was written." 2
   [ -z "$state_was" ] || die "--state-was is for the state cell of a lane being ended; the sweep writes each row's cell itself, from the reason and the row's own last words. Nothing was written." 2
@@ -866,6 +943,1685 @@ EOF
   exit $?
 fi
 
+# ---- AMENDMENT 23 S6.2: `--sweep-checkouts`, THE REGISTER CHECKOUTS' SWEEP ---
+#
+# EVERY LANE WRITES THE REGISTER THROUGH A CLONE OF ITS OWN, `<W>-lanes/<lane>/`
+# (S1), and S6.2 leaves the clones a CLOSED lane no longer writes through to
+# this command: *"The sweep has Amendment 19's shape — a dry run, then a
+# person's `--yes`"*. Like `--retire-dormant` it is not a lane argument and it
+# ends no lane, so it is answered here, before the `<lane>` derivation below.
+#
+# WHAT IT LOOKS AT. Every entry directly under `<W>-lanes/` but the hidden ones
+# (S1's creation locks and `.partial` clones, the workstation's sidecar lock),
+# and every register clone BESIDE W: a directory in W's parent with a `.git`
+# directory of its own whose origin is W's — the per-profile clones S6.2 names.
+#
+# WHAT IT MAY REMOVE, AND NOTHING ELSE: a clone of the register directly under
+# `<W>-lanes/`, at its own real path, that is the checkout of a lane the
+# register calls CLOSED (`lanes --closed`'s class, Amendment 19), or the old
+# name's checkout beside its new one after a rename (S1: *"the writer writes
+# through `<W>-lanes/<new>/` and reports `<W>-lanes/<old>/`, which S6's sweep
+# lists"*) once that lane is CLOSED too. NEVER W, never a LIVE lane's
+# checkout, never a lane's that is not CLOSED, never the checkout of the
+# lane that runs the sweep or of the `LANES_REPO` its caller names, never a
+# symbolic link and never anything a link leads to. AND A REGISTER CLONE
+# BESIDE W, which S6.2 sweeps too, under the same holds and one more: a live
+# process whose `LANES_REPO` names it. The brief this slice was written under
+# said nothing outside `<W>-lanes/` is removed, and Brett Heap ruled between
+# the two texts on #308's question 1 (2026-10-22T12:46:57Z): "yes, have the
+# sweep delete the 139 clones" (D37). Never W, and never `<W>-lanes/` itself.
+if [ "$sweep_checkouts" = 1 ]; then
+  [ "$retire" = 0 ] || die "--retire and --sweep-checkouts are two different acts: --retire ends a lane (or names a live fork's act), and --sweep-checkouts removes the register checkouts closed lanes left on disk, ending no lane. Run one of them. Nothing was written." 2
+  [ "$force" = 0 ] || die "--force ends a lane that still holds something; it has no meaning for the sweep of register checkouts, which removes only what nothing holds. Nothing was removed." 2
+  [ "$inventory_only" = 0 ] || die "--inventory-only is the door past ONE lane's close-out gate; the sweep of register checkouts ends no lane and asks no gate. Nothing was removed." 2
+  [ -z "$state_was" ] || die "--state-was is for the state cell of a lane being ended; the sweep of register checkouts writes no cell. Nothing was removed." 2
+  [ -z "$home_override" ] || die "--home is for a pre-cutover lane's own log line; the sweep of register checkouts writes no home into anything. Nothing was removed." 2
+  [ -z "$sweep_reason" ] || die "--reason belongs to --retire-dormant: the sweep of register checkouts writes its own NOTED line, naming what it removed. Nothing was removed." 2
+  if [ "${#positional[@]}" -gt 0 ]; then
+    die "--sweep-checkouts takes no lane and no repository ('${positional[0]}'): it looks at every register checkout under <W>-lanes/, and the lane that RUNS it is named in LANES_LANE. Nothing was removed." 2
+  fi
+  [ "$dry_run" = 0 ] || sweep_yes=0
+  # `--yes` IS A WRITE, AND ITS WRITER IS A LANE. The NOTED line that records
+  # what was removed carries the sweeping lane's own transcript uuid (Amendment
+  # 7(b)) and goes through that lane's own checkout (S2: *"A write across lanes'
+  # rows ... goes through the checkout of the lane that runs it"*), so the lane
+  # is named by the person running it or nothing happens. And a writer whose
+  # fetch did not run is a writer S3 refuses (ratified choice 2): asked here,
+  # before the first removal, rather than met by the record after it.
+  if [ "$sweep_yes" = 1 ]; then
+    [ -n "${LANES_LANE:-}" ] ||
+      die "--sweep-checkouts --yes removes directories and writes one NOTED line into the log of the lane that runs it, through that lane's own checkout (Amendment 23 S2, S6.2), so this act needs to know which lane is doing it. Re-run it from your lane: LANES_LANE=<your lane> $prog --sweep-checkouts --yes. Nothing was removed." 2
+    [ "${LANES_NO_FETCH:-}" != 1 ] ||
+      die "--sweep-checkouts --yes fetches each checkout before it decides about it, and its NOTED line is a write, which Amendment 23 S3 refuses when its fetch did not run (ratified choice 2) — and LANES_NO_FETCH=1 is set. Unset it and re-run. Nothing was removed." 2
+    case "$LANES_LANE" in
+      *[!A-Za-z0-9._-]* | [!A-Za-z0-9]*) die "LANES_LANE='$LANES_LANE' is not a lane name (letters, digits, . _ -). Nothing was removed." 2 ;;
+    esac
+  fi
+  [ -x "$LANES_EDIT" ] || die "no register writer at $LANES_EDIT — \`lanes-edit.sh\` is installed beside this command by \`openRepoTools --install\`. Run that, or set LANES_EDIT" 1
+
+  sc_tab="$(printf '\t')"
+  sc_branch="${LANES_BRANCH:-main}"
+  case "$sc_branch" in
+    '' | -* | *[!A-Za-z0-9._/-]*) die "LANES_BRANCH='$sc_branch' is not a branch name this sweep compares against. Nothing was removed." 2 ;;
+  esac
+  sc_utc="$(date -u +%Y%m%dT%H%M%SZ)"
+
+  # A DIRECTORY'S REAL PATH, or nothing: `cd -P` resolves every link on the way.
+  sc_real() { (CDPATH='' cd -P -- "$1" 2>/dev/null && pwd -P) || :; }
+  sc_lc() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+  # A repository's git common directory, real, or nothing. `--git-common-dir`
+  # answers relative to `-C`'s directory on the gits that answer relatively.
+  sc_git_common() {   # <dir>
+    scg_d="$(git -C "$1" rev-parse --git-common-dir 2>/dev/null)" || return 0
+    case "$scg_d" in /*) : ;; *) scg_d="$1/$scg_d" ;; esac
+    sc_real "$scg_d"
+  }
+
+  # W, THE READERS' COPY — the checkout whose `<W>-lanes/` this sweeps, found
+  # the way every helper finds it (Amendment 9(a)), by its real path.
+  sc_w="$(lanes_workspace_root 2>/dev/null || :)"
+  [ -n "$sc_w" ] || die "$(lanes_workspace_why)" 1
+  sc_w_real="$(sc_real "$sc_w")"
+  [ -n "$sc_w_real" ] || die "W, $sc_w, cannot be entered, so neither it nor its lane checkouts can be read. Nothing was removed." 1
+  sc_w="$sc_w_real"
+  sc_root="${sc_w%/*}"
+  [ -n "$sc_root" ] || die "W resolves to $sc_w, at the top of the filesystem, so the directory beside it is the whole of it. The sweep reads no such directory. Nothing was removed." 2
+  # A W THAT IS ITSELF A LANE CHECKOUT IS REFUSED, AS `lanes-edit.sh`'S
+  # `lanes_home_check` REFUSES IT (the review of #282, MUST 3). Eagle's lane
+  # windows export `LANES_WORKSPACE_ROOT` at the lane's own checkout, and from
+  # there "the clones beside W" would be every OTHER lane's checkout.
+  case "${sc_root##*/}" in
+    ?*-lanes)
+      if [ -n "${LANES_WORKSPACE_ROOT:-}" ]; then
+        die "LANES_WORKSPACE_ROOT is $LANES_WORKSPACE_ROOT, so W resolves to $sc_w — but it stands in $sc_root/, where a workstation keeps its lane checkouts: it is a lane checkout, not W (Amendment 23 S1, S5), and the clones beside it are other lanes' checkouts. Unset LANES_WORKSPACE_ROOT in this window and re-run. Nothing was removed." 2
+      fi
+      die "$(lanes_ws_yaml) names path: $sc_w as W — but it stands in $sc_root/, where a workstation keeps its lane checkouts: it is a lane checkout, not W (Amendment 23 S1, S5). Point that \`path:\` at the workspace checkout itself. Nothing was removed." 2 ;;
+  esac
+  # W IS THE DIRECTORY WORKSPACE.YAML'S `path:` NAMES (rv4b's MUST A, D45).
+  # `LANES_WORKSPACE_ROOT` overrides it for every helper: the test seam,
+  # and lane windows export it too. Set to a register clone beside the real
+  # W, it made that clone "W", and the real W, with every other clone
+  # beside it, "a clone of the register beside W", which `--yes` removed
+  # wherever nothing borrowed from it. So `path:` is read as every helper
+  # reads it, from the file (no `LANES_WORKSPACE_ROOT` reaches that read),
+  # and `--yes` refuses with 2, before any lock and any listing, while the
+  # two differ by real path. The dry run says so. And the directory
+  # `path:` names is never a candidate, nor is a clone beside W with a
+  # `<name>-lanes/` of its own beside it (`sc_is_a_w`, below).
+  sc_yaml="$(lanes_ws_yaml)"; sc_ypath=""
+  if [ -r "$sc_yaml" ]; then
+    sc_ypath="$(lanes_ws_field path "$sc_yaml" 2>/dev/null)" || sc_ypath=""
+    if [ -n "$sc_ypath" ]; then sc_ypath="$(sc_real "$sc_ypath")"; fi
+  fi
+  sc_wseam=""
+  if [ -n "${LANES_WORKSPACE_ROOT:-}" ] && [ "$sc_w" != "$sc_ypath" ]; then
+    sc_wseam="LANES_WORKSPACE_ROOT is $LANES_WORKSPACE_ROOT, so W resolves to $sc_w, and $sc_yaml's path: names ${sc_ypath:-no directory that can be entered}"
+    if [ "$sweep_yes" = 1 ]; then
+      die "$sc_wseam. --yes removes the register clones beside W, and with W taken from that variable, the real W, the readers' copy, would read as one of them. Unset LANES_WORKSPACE_ROOT, or point it at the directory path: names, and re-run. Nothing was removed." 2
+    fi
+  fi
+  sc_home="$sc_w-lanes"
+  sc_worigin="$(git -C "$sc_w" remote get-url origin 2>/dev/null || :)"
+  [ -n "$sc_worigin" ] || die "W ($sc_w) names no origin, so no clone can be told to be the register's. Nothing was removed." 1
+  sc_wgcd="$(sc_git_common "$sc_w")"
+  [ -n "$sc_wgcd" ] || die "W's git directory could not be read ($sc_w), so W cannot be told from a clone of it. Nothing was removed." 1
+
+  # THE LOCK'S PID LINE, in `lanes-edit.sh`'s own form, `<pid> <container>
+  # <host>`, so a writer of that checkout in this container waits on a live
+  # holder and one in another container ages it by the directory's mtime.
+  # Each value is cleaned as `lock_ident` cleans its own (lane
+  # openRepoTools-3's NIT 359): kept where `lanes_binding_value_ok` takes
+  # it (letters, digits, `.`, `_`, `:`, `-`), the container `none` and the
+  # host `unknown` where empty, and either `unknown` where it holds anything
+  # else. A writer compares the line with its own `lock_ident`; cleaned
+  # another way, it read as another container's, and a killed sweep's lock
+  # was waited out for ten minutes instead of taken back.
+  sc_ident="none unknown"
+  if [ "$sweep_yes" = 1 ]; then
+    sc_wsl="$("$LANES_EDIT" workstation 2>/dev/null || :)"
+    sc_host="$(printf '%s\n' "$sc_wsl" | cut -f3)" || sc_host=""
+    sc_cont="$(printf '%s\n' "$sc_wsl" | cut -f7)" || sc_cont=""
+    sc_host="${sc_host:-unknown}"; sc_cont="${sc_cont:-none}"
+    case "$sc_host" in *[!A-Za-z0-9._:-]*) sc_host=unknown ;; esac
+    case "$sc_cont" in *[!A-Za-z0-9._:-]*) sc_cont=unknown ;; esac
+    sc_ident="$sc_cont $sc_host"
+  fi
+
+  # ONE `--yes` AT A TIME (lane openRepoTools-3's NIT 375). Two at once
+  # removed nothing twice, but each one's NOTED line called the other's
+  # removals "held and left", and one candidate was left by both. A lock in
+  # W's own git directory, there whatever `<W>-lanes/` is (the clones beside
+  # W are swept without one), refuses a second `--yes` with 2 before
+  # anything is read or removed. Its pid line is a writer's lock's, and it
+  # is let go on every way out (`cleanup`); one a killed sweep left is a
+  # person's to remove, and the refusal says how.
+  if [ "$sweep_yes" = 1 ]; then
+    sc_slock="$sc_wgcd/lanes-sweep-checkouts.lock"
+    if ! mkdir -- "$sc_slock" 2>/dev/null; then
+      sc_sl=""; IFS= read -r sc_sl < "$sc_slock/pid" 2>/dev/null || :
+      die "another lane-end --sweep-checkouts --yes holds $sc_slock (${sc_sl:-it names no holder}), and two at once would each record the other's removals as held and left. Wait for it to end, then re-run. Where none is running (a sweep that was killed leaves its lock), remove it by hand: rm -rf -- $(printf '%q' "$sc_slock"). Nothing was removed." 2
+    fi
+    SC_SLOCK="$sc_slock"
+    if ! printf '%s %s\n' "$$" "$sc_ident" 2>/dev/null > "$sc_slock/pid"; then
+      die "the sweep-wide lock $sc_slock was taken, and this sweep's pid line could not be written into it, so it was let go again. Nothing was removed." 1
+    fi
+  fi
+
+  # A CLONE OF THE REGISTER, BY S1'S OWN TEST: a directory (never a symbolic
+  # link) at its own real path, the root of its checkout, with a `.git`
+  # DIRECTORY of its own (not a linked worktree's file, not a link), whose
+  # origin is W's, and which is not W. 0 for one; 1 with SC_WHY saying what is
+  # there instead.
+  SC_WHY=""
+  sc_is_register_clone() {   # <path>
+    scr_p="$1"; SC_WHY=""
+    if [ -L "$scr_p" ]; then
+      SC_WHY="a symbolic link, which this sweep never follows"; return 1
+    fi
+    if [ ! -d "$scr_p" ]; then SC_WHY="not a directory"; return 1; fi
+    scr_r="$(sc_real "$scr_p")"
+    if [ "$scr_r" != "$scr_p" ]; then
+      SC_WHY="a directory whose real path is ${scr_r:-unreadable}, not the path it is listed at"; return 1
+    fi
+    if [ -L "$scr_p/.git" ] || [ ! -d "$scr_p/.git" ]; then
+      SC_WHY="no .git directory of its own (a linked worktree, a link, or no checkout at all)"; return 1
+    fi
+    scr_top="$(git -C "$scr_p" rev-parse --show-toplevel 2>/dev/null || :)"
+    if [ "$scr_top" != "$scr_p" ]; then
+      SC_WHY="not the root of a checkout (git names ${scr_top:-none})"; return 1
+    fi
+    scr_gcd="$(sc_git_common "$scr_p")"
+    if [ "$scr_gcd" = "$sc_wgcd" ] || [ "$scr_p" = "$sc_w" ]; then
+      SC_WHY="W itself, the readers' copy"; return 1
+    fi
+    if [ "$scr_gcd" != "$scr_p/.git" ]; then
+      SC_WHY="a checkout whose git directory is ${scr_gcd:-unreadable}, not its own .git"; return 1
+    fi
+    scr_o="$(git -C "$scr_p" remote get-url origin 2>/dev/null || :)"
+    if ! lanes_ws_same_repo "$scr_o" "$sc_worigin"; then
+      SC_WHY="a checkout of ${scr_o:-no origin at all}, not of the register's origin"; return 1
+    fi
+    return 0
+  }
+  # NEVER A CANDIDATE (D45): the directory workspace.yaml's `path:` names,
+  # wherever it stands, and a clone beside W with a `<name>-lanes/` beside
+  # it, which is a W with lane checkouts of its own. 0 with SC_WHY for one.
+  sc_is_a_w() {   # <path>
+    if [ -n "$sc_ypath" ] && [ "$1" = "$sc_ypath" ]; then
+      SC_WHY="it is the directory $sc_yaml's path: names, which every helper resolves as W where LANES_WORKSPACE_ROOT is unset: the readers' copy"
+      return 0
+    fi
+    if [ "${1%/*}" = "$sc_root" ] && { [ -e "$1-lanes" ] || [ -L "$1-lanes" ]; }; then
+      SC_WHY="${1##*/}-lanes/ stands beside it: it is a W with lane checkouts of its own, not a per-profile clone"
+      return 0
+    fi
+    return 1
+  }
+
+  # THE LANES, AS THE REGISTER AND THE LOGS HAVE THEM: `lanes --closed --all`,
+  # the one read that classes a lane CLOSED (Amendment 19), so this sweep and
+  # every listing can never disagree about which lanes those are. Column 2 is
+  # the state, LIVE where a live session record here names the lane, and
+  # column 14 the class. A dry run reads what W last fetched, as the listing
+  # does by default; `--yes` fetches first. ITS NOTES ARE READ, as
+  # `--retire-dormant` reads them: a listing that could not read this
+  # workstation's session records cannot say which lanes are LIVE, and one
+  # that could not read the register cannot say which are CLOSED, and neither
+  # is an answer (Amendment 7(d)).
+  sc_lanes_args=(lanes --closed --all)
+  if [ "$sweep_yes" = 1 ]; then sc_lanes_args+=(--fetch); fi
+  LE_TMP="$(mktemp "${TMPDIR:-/tmp}/lane-end-sweep.XXXXXX" 2>/dev/null || printf '')"
+  [ -n "$LE_TMP" ] ||
+    die "no temporary file could be made to capture the listing's own notes, so whether this workstation's session records could be read — which is what says a lane is LIVE — was never established. Fix \$TMPDIR and re-run. Nothing was removed." 1
+  sc_rc=0
+  sc_rows="$("$LANES_EDIT" "${sc_lanes_args[@]}" 2>"$LE_TMP")" || sc_rc=$?
+  sc_err="$(cat -- "$LE_TMP")" ||
+    die "the capture of the listing's own notes could not be read back, so whether the lanes' state was read was never established. Nothing was removed." 1
+  rm -f -- "$LE_TMP"; LE_TMP=""
+  if [ -n "$sc_err" ]; then printf '%s\n' "$sc_err" >&2; fi
+  case "$sc_err" in
+    *"session records could not be read"*)
+      die "this workstation's session records could not be read (the listing says so above), so which lanes are LIVE was never established, and a LIVE lane's checkout is never swept. Fix the read and re-run. Nothing was removed." 1 ;;
+    *"could not be read, so its rows are not in this listing"*)
+      die "the register could not be read (the listing says so above), so which lanes are CLOSED was never established. Fix the read and re-run. Nothing was removed." 1 ;;
+  esac
+  if [ "$sweep_yes" = 1 ]; then
+    # `lanes --fetch` says "reading the logs as they stand locally" on EVERY
+    # way a fetch of W did not bring the register in: "NO FETCH WAS MADE"
+    # where none was tried, and `log_sync`'s `fell-back` where `ls-remote`
+    # answered and the fetch then failed or timed out, which reads the stale
+    # ref and exits 0 (rv4's MUST 1). Matching the first alone let a failed
+    # fetch pass as "fetched just now". The phrase is `lanes-edit.sh`'s own,
+    # for callers that match it (`lanes`' comment), and `sc_still` matches it
+    # again under each checkout's lock.
+    case "$sc_err" in
+      *"reading the logs as they stand locally"*)
+        die "--yes decides on a register fetched just now, and W's fetch did not complete: none was made, or it failed or timed out and the logs were read as they stand locally (the listing says why above). Nothing was removed." 1 ;;
+    esac
+  fi
+  case "$sc_rc" in
+    0 | 8) : ;;
+    2) die "the \`lanes-edit.sh\` on this workstation has no \`lanes\` subcommand, so it predates lane-collision-protocol Amendment 11 and cannot say which lanes are CLOSED. This workstation has not taken the install yet:  openRepoTools --install" 2 ;;
+    *) die "$LANES_EDIT ${sc_lanes_args[*]} exited $sc_rc, so which lanes are CLOSED or LIVE was never established. Run it by hand to see what it says. Nothing was removed." 1 ;;
+  esac
+  # `<lane lower-cased> TAB <lane> TAB <state> TAB <class>`, one per lane.
+  sc_index=""
+  while IFS="$sc_tab" read -r i_lane i_state i_ws i_pf i_win i_sid i_dir i_obj i_age i_cmd i_home i_fk i_loc i_class i_rest; do
+    [ -n "${i_lane:-}" ] || continue
+    sc_index="${sc_index}$(sc_lc "$i_lane")${sc_tab}${i_lane}${sc_tab}${i_state:-UNKNOWN}${sc_tab}${i_class:-none}
+"
+  done <<SC_ROWS
+$sc_rows
+SC_ROWS
+  SC_L_LANE=""; SC_L_STATE=""; SC_L_CLASS=""
+  sc_lookup() {   # <name> — 0 with SC_L_LANE/STATE/CLASS, 1 when no lane has it
+    scl_want="$(sc_lc "$1")"; SC_L_LANE=""; SC_L_STATE=""; SC_L_CLASS=""
+    while IFS="$sc_tab" read -r scl_lc scl_lane scl_state scl_class; do
+      [ -n "$scl_lc" ] && [ "$scl_lc" = "$scl_want" ] || continue
+      SC_L_LANE="$scl_lane"; SC_L_STATE="$scl_state"; SC_L_CLASS="$scl_class"
+      return 0
+    done <<SC_IDX
+$sc_index
+SC_IDX
+    return 1
+  }
+
+  # THE RUNNER: the lane `LANES_LANE` names, by its row's own spelling
+  # (Amendment 15), whose checkout the NOTED line goes through and so is never
+  # swept. A dry run without one sweeps nothing of its own and says so.
+  sc_runner=""
+  if [ -n "${LANES_LANE:-}" ]; then
+    sc_cl_rc=0
+    sc_runner="$(LANES_NO_FETCH=1 "$LANES_EDIT" canon-lane "$LANES_LANE" 2>/dev/null)" || sc_cl_rc=$?
+    if [ "$sc_cl_rc" != 0 ] || [ -z "$sc_runner" ]; then
+      die "LANES_LANE=$LANES_LANE could not be resolved to a lane (\`$LANES_EDIT canon-lane $LANES_LANE\` exited $sc_cl_rc), so whose checkout is never swept, and whose log the NOTED line goes into, is not known. Nothing was removed." 2
+    fi
+    if [ "$sweep_yes" = 1 ] && ! sc_lookup "$sc_runner"; then
+      die "lane $sc_runner, which LANES_LANE names, has no row in the register and no log (\`lanes --all\` does not list it), so the NOTED line this act ends with has no lane to be written for. Name your own lane: LANES_LANE=<your lane> $prog --sweep-checkouts --yes. Nothing was removed." 2
+    fi
+  fi
+  # THE NOTED LINE'S SESSION FIELD, found before anything is removed. It is
+  # the runner's transcript uuid and only that (Amendment 7(b)): the caller's
+  # `LANES_SESSION`, or the lane's last recorded session. A line the writer
+  # would refuse for want of one is refused here instead, while nothing is
+  # gone, rather than met after the removals it was to record. The writer
+  # asks again when the line is written, and its answer is the decision.
+  #
+  # ONLY `last-session`'S 8 IS "NAMES NONE" (lane openRepoTools-3's finding
+  # 545): its 1 is a register or a log that could not be read, and that is
+  # a read that failed (1), never a lane with no uuid. Its words are kept to
+  # name the reason; a capture that cannot be made names the exit alone.
+  sc_uuid=""
+  if [ "$sweep_yes" = 1 ]; then
+    sc_uuid="${LANES_SESSION:-}"
+    if [ -z "$sc_uuid" ]; then
+      sc_ls_rc=0; sc_ls_err=""
+      LE_TMP="$(mktemp "${TMPDIR:-/tmp}/lane-end-sweep.XXXXXX" 2>/dev/null || printf '')"
+      sc_uuid="$(LANES_NO_FETCH=1 "$LANES_EDIT" last-session "$sc_runner" 2>"${LE_TMP:-/dev/null}")" || sc_ls_rc=$?
+      if [ -n "$LE_TMP" ]; then
+        sc_ls_err="$(awk 'NF { l = $0 } END { print l }' < "$LE_TMP" 2>/dev/null)" || sc_ls_err=""
+        rm -f -- "$LE_TMP"; LE_TMP=""
+      fi
+      case "$sc_ls_rc" in
+        0) : ;;
+        8) sc_uuid="" ;;
+        *) die "lane $sc_runner's transcript uuid, for the session field of the NOTED line this act ends with (Amendment 7(b)), could not be read: \`lanes-edit.sh last-session $sc_runner\` exited $sc_ls_rc${sc_ls_err:+ ($sc_ls_err)}. That is not a lane that names none: the register or its log could not be read. Fix the read and re-run, or name your session: LANES_SESSION=\"\$CLAUDE_CODE_SESSION_ID\" LANES_LANE=$sc_runner $prog --sweep-checkouts --yes. Nothing was removed." 1 ;;
+      esac
+    fi
+    if ! is_fork_uuid "$sc_uuid"; then
+      if [ -n "${LANES_SESSION:-}" ]; then
+        sc_uwhy="LANES_SESSION is '$LANES_SESSION', which is not a transcript uuid"
+      else
+        sc_uwhy="LANES_SESSION is unset, and \`lanes-edit.sh last-session $sc_runner\` names none"
+      fi
+      die "lane $sc_runner has no transcript uuid for the session field of the NOTED line this act ends with (Amendment 7(b)): $sc_uwhy. Name your session: LANES_SESSION=\"\$CLAUDE_CODE_SESSION_ID\" LANES_LANE=$sc_runner $prog --sweep-checkouts --yes. Nothing was removed." 2
+    fi
+  fi
+  # THE CHECKOUT A CALLER'S `LANES_REPO` NAMES, by its real toplevel. Eagle's
+  # lane windows export one at the lane's own checkout, and a write may go
+  # through it; it is never swept.
+  sc_xrepo=""
+  if [ -n "$LE_REPO_GIVEN" ]; then
+    sc_xrepo="$(sc_real "$LE_REPO_GIVEN")"
+    if [ -n "$sc_xrepo" ]; then
+      sc_xtop="$(git -C "$sc_xrepo" rev-parse --show-toplevel 2>/dev/null || :)"
+      if [ -n "$sc_xtop" ]; then sc_xrepo="$(sc_real "$sc_xtop")"; fi
+    fi
+  fi
+  # A `LANES_REPO` THAT IS W REFUSES `--yes` BEFORE ANYTHING IS REMOVED
+  # (lane openRepoTools-3's NIT 376). Under routing, `lanes-edit.sh` refuses
+  # a write through W, the readers' copy (Amendment 23 S5), by its toplevel
+  # or its git common directory, so the NOTED line this act ends with would
+  # be refused after the removals, and its by-hand line again in this
+  # window. Without routing that `LANES_REPO` is the default write path.
+  if [ "$sweep_yes" = 1 ] && [ -n "$sc_xrepo" ] && [ "${LANES_ROUTE_WRITES:-}" = 1 ]; then
+    if [ "$sc_xrepo" = "$sc_w" ] || [ "$(sc_git_common "$sc_xrepo")" = "$sc_wgcd" ]; then
+      die "LANES_REPO names the workspace checkout $sc_w (as $LE_REPO_GIVEN), and that checkout is the readers' copy: no tool writes there (Amendment 23 S5), so the NOTED line this act ends with would be refused after the removals. Unset LANES_REPO and re-run from your lane — LANES_LANE=$sc_runner $prog --sweep-checkouts --yes — and the line goes through $sc_home/$sc_runner/. Nothing was removed." 2
+    fi
+  fi
+
+  # ------------------------------------------------ the entries, one by one
+  #
+  # Each is a CANDIDATE, kept apart with what it is judged as, or a KEEP line
+  # that says why it is not one. Nothing below reads a clone's history: that
+  # is what holds it, and the holds are asked of candidates alone.
+  sc_cands=(); sc_cand_why=(); sc_cand_lane=(); sc_cand_new=()
+  sc_keep_lines=""
+  # EACH CONTROL CHARACTER OF A PATH OR A REASON THE REPORT PRINTS IS WRITTEN
+  # AS `?` (lane openRepoTools-3's NIT 358), by the shell's own pattern
+  # substitution, so no process is started per name: a newline in a name
+  # wrote a line of its own into the report, one that could read as another
+  # entry's. The commands the report hands out keep `%q`, which a shell
+  # reads back exactly.
+  sc_keep() {   # <path> <why>
+    sc_keep_lines="${sc_keep_lines}    keep       ${1//[[:cntrl:]]/?}  ${2//[[:cntrl:]]/?}
+"
+  }
+  sc_cand() {   # <path> <lane it is judged as> <why> [<new name's checkout>]
+    if sc_is_a_w "$1"; then sc_keep "$1" "$SC_WHY"; return 0; fi
+    sc_cands+=("$1"); sc_cand_lane+=("$2"); sc_cand_why+=("$3"); sc_cand_new+=("${4-}")
+  }
+  # A lane's checkout, judged by the lane's state: CLOSED is a candidate,
+  # LIVE never is, and every other state is a lane somebody may pick up. A
+  # former name's checkout beside the new name's own (its third argument) is
+  # judged by the same rule, and says first what it is.
+  sc_judge_lane() {   # <path> <lane> [<the new name's checkout, beside it>]
+    sjl_new="${3-}"; sjl_keep=""; sjl_cand=""
+    if [ -n "$sjl_new" ]; then
+      sjl_keep="a former name of lane $2, beside that lane's own checkout, kept until that lane is CLOSED: a process started before the rename may still write through this path; "
+      sjl_cand="a former name of lane $2, beside that lane's own checkout $sjl_new; "
+    fi
+    if [ -n "$sc_runner" ] && [ "$(sc_lc "$2")" = "$(sc_lc "$sc_runner")" ]; then
+      # A FORMER NAME OF THE RUNNER'S LANE has its own reason (rv4-c4's NIT
+      # c4-1): the lane may be CLOSED already, and the NOTED line goes through
+      # the lane's own checkout, not this one. What it is kept for is a process
+      # started before the rename, which still names the old path.
+      if [ -n "$sjl_new" ]; then
+        sc_keep "$1" "a former name of lane $2, which runs this sweep: a process it started before the rename may still write through this path"
+      else
+        sc_keep "$1" "lane $2 runs this sweep: its checkout is the one its NOTED line goes through"
+      fi
+      return 0
+    fi
+    if ! sc_lookup "$2"; then
+      sc_keep "$1" "${sjl_keep}no lane $2 is in the register or the logs, so it is no CLOSED lane's"
+      return 0
+    fi
+    if [ "$SC_L_STATE" = LIVE ]; then
+      sc_keep "$1" "${sjl_keep}lane $SC_L_LANE is LIVE: a live session record here names it"
+      return 0
+    fi
+    if [ "$SC_L_CLASS" != closed ]; then
+      sc_keep "$1" "${sjl_keep}lane $SC_L_LANE is $SC_L_STATE, not CLOSED (Amendment 19)"
+      return 0
+    fi
+    sc_cand "$1" "$SC_L_LANE" "${sjl_cand}lane $SC_L_LANE is CLOSED ($SC_L_STATE)" "$sjl_new"
+  }
+  sc_judge() {   # <path> <name>
+    sj_p="$1"; sj_n="$2"
+    if ! sc_is_register_clone "$sj_p"; then
+      sc_keep "$sj_p" "$SC_WHY"; return 0
+    fi
+    if [ -n "$sc_xrepo" ] && [ "$sj_p" = "$sc_xrepo" ]; then
+      sc_keep "$sj_p" "the checkout LANES_REPO names, which a write of this window may go through"
+      return 0
+    fi
+    case "$sj_n" in
+      *[!A-Za-z0-9._-]* | [!A-Za-z0-9]*)
+        sc_keep "$sj_p" "its name is no lane name (letters, digits, . _ -)"; return 0 ;;
+    esac
+    if sc_lookup "$sj_n"; then
+      sc_judge_lane "$sj_p" "$SC_L_LANE"; return 0
+    fi
+    # NOT A LANE BY ITS OWN NAME: perhaps a FORMER name (Amendment 16(e)).
+    sj_rc=0
+    sj_c="$(LANES_NO_FETCH=1 "$LANES_EDIT" canon-lane "$sj_n" 2>/dev/null)" || sj_rc=$?
+    if [ "$sj_rc" != 0 ] || [ -z "$sj_c" ]; then
+      sc_keep "$sj_p" "whether $sj_n is a former lane name could not be read (\`canon-lane $sj_n\` exited $sj_rc)"
+      return 0
+    fi
+    if [ "$(sc_lc "$sj_c")" = "$(sc_lc "$sj_n")" ]; then
+      sc_keep "$sj_p" "no lane $sj_n is in the register or the logs, so it is no CLOSED lane's"
+      return 0
+    fi
+    # A FORMER NAME OF LANE `sj_c`, JUDGED AS THAT LANE'S OWN CHECKOUT IS: a
+    # candidate only once the lane is CLOSED (rv4-c3's SHOULD c3-1, D29, which
+    # supersedes D27's LIVE test). Beside the new name's own checkout, no
+    # write the tooling starts goes through it any more (S1). But since 10-19
+    # the launcher exports `LANES_REPO=<W>-lanes/<lane>`, and whatever was
+    # started before the rename still names the old path: a window, or a
+    # landing pilot that outlives its window's session, so that the lane no
+    # longer reads LIVE; or one in another container that shares `<W>-lanes/`,
+    # where no session record here names it. LIVE sees neither, and removing
+    # the path would refuse that process's next register write (S3: it is no
+    # git checkout), a HOLD's release among them. CLOSED is the rule every
+    # other checkout is swept by: the lane has ended, and its own checkout
+    # goes then too. The cost is the old checkout's tree, kept until the lane
+    # closes. With no checkout under the new name it IS the lane's checkout
+    # until the next write renames it (S1), and is judged as one.
+    sj_new="$sc_home/$sj_c"
+    if [ -d "$sj_new" ] && [ ! -L "$sj_new" ] && [ ! "$sj_new" -ef "$sj_p" ]; then
+      sc_judge_lane "$sj_p" "$sj_c" "$sj_new"; return 0
+    fi
+    sc_judge_lane "$sj_p" "$sj_c"
+  }
+
+  # `<W>-lanes/` ITSELF must be a directory at its own real path: a link there
+  # would lead the sweep out of it, and nothing in it is then looked at.
+  #
+  # A REMOVAL THAT DID NOT FINISH IS NAMED AGAIN BY EVERY RUN (lane
+  # openRepoTools-3's SHOULD 372). Its aside, `.<name>.removing-<UTC>-<pid>`
+  # (the name's first 48 characters, NIT 379), is hidden, so a later run
+  # would count it with the creation locks and say no more: a checkout moved
+  # aside by a sweep that was stopped, or whose `rm` met a file it could not
+  # remove, would be named nowhere again. Each one is listed by name, apart
+  # from the hidden count, with the command that removes it. The sweep never
+  # removes one itself: a person looks at why first, and one may be another
+  # sweep's, still running.
+  sc_home_why=""; sc_hidden=0; sc_leftovers=()
+  if [ -L "$sc_home" ]; then
+    sc_home_why="$sc_home is a symbolic link, which this sweep never follows: nothing in it is looked at"
+  elif [ ! -e "$sc_home" ]; then
+    sc_home_why="there is no $sc_home/: no lane checkout has been made on this workstation"
+  elif [ ! -d "$sc_home" ]; then
+    sc_home_why="$sc_home is not a directory: nothing in it is looked at"
+  # ONE THAT CANNOT BE ENTERED OR LISTED IS NO EMPTY ONE (lane
+  # openRepoTools-3's NIT 377): at mode 000 its real path read as empty,
+  # and the run said it "resolves through a link to ," and exited 0. It is
+  # a read that failed, and nothing beside W is looked at either.
+  elif [ ! -x "$sc_home" ] || [ ! -r "$sc_home" ] || [ -z "$(sc_real "$sc_home")" ]; then
+    die "$sc_home cannot be entered or listed, or its real path read, so what is in it is unknown — which is not an empty directory, nor one reached through a link. Nothing was removed." 1
+  elif [ "$(sc_real "$sc_home")" != "$sc_home" ]; then
+    sc_home_why="$sc_home resolves through a link to $(sc_real "$sc_home"), which this sweep never follows: nothing in it is looked at"
+  elif ! ls -A -- "$sc_home" >/dev/null 2>&1; then
+    die "$sc_home cannot be listed, so what is in it is unknown — which is not an empty directory. Nothing was removed." 1
+  else
+    for sc_e in "$sc_home"/.[!.]* "$sc_home"/..?*; do
+      if [ ! -e "$sc_e" ] && [ ! -L "$sc_e" ]; then continue; fi
+      case "${sc_e##*/}" in
+        .?*.removing-*) sc_leftovers+=("$sc_e") ;;
+        *) sc_hidden=$((sc_hidden + 1)) ;;
+      esac
+    done
+    for sc_e in "$sc_home"/*; do
+      if [ ! -e "$sc_e" ] && [ ! -L "$sc_e" ]; then continue; fi
+      sc_judge "$sc_e" "${sc_e##*/}"
+    done
+  fi
+
+  # THE CLONES BESIDE W, S6.2's per-profile clones, are candidates since
+  # Brett Heap's ruling on #308's question 1 (D37). They are no lane's, so no
+  # lane state is asked of them: what keeps one is every hold a lane's
+  # checkout has, and a window whose `LANES_REPO` names it (below). The one
+  # the caller's `LANES_REPO` names is kept, as under `<W>-lanes/`. The aside
+  # of a removal of one that did not finish stands beside W, and every run
+  # names it, as it names those under `<W>-lanes/`. Anything beside W that is
+  # not a register clone is not looked at.
+  sc_n_beside=0
+  if ls -A -- "$sc_root" >/dev/null 2>&1; then
+    for sc_e in "$sc_root"/.[!.]* "$sc_root"/..?*; do
+      if [ ! -e "$sc_e" ] && [ ! -L "$sc_e" ]; then continue; fi
+      case "${sc_e##*/}" in .?*.removing-*) sc_leftovers+=("$sc_e") ;; esac
+    done
+    for sc_e in "$sc_root"/*; do
+      if [ -L "$sc_e" ] || [ ! -d "$sc_e" ]; then continue; fi
+      if [ "$sc_e" = "$sc_w" ] || [ "$sc_e" = "$sc_home" ]; then continue; fi
+      if [ ! -d "$sc_e/.git" ] || [ -L "$sc_e/.git" ]; then continue; fi
+      if ! sc_is_register_clone "$sc_e"; then continue; fi
+      sc_n_beside=$((sc_n_beside + 1))
+      if [ -n "$sc_xrepo" ] && [ "$sc_e" = "$sc_xrepo" ]; then
+        sc_keep "$sc_e" "the clone beside W that LANES_REPO names, which a write of this window may go through"
+        continue
+      fi
+      sc_cand "$sc_e" "" "a clone of the register beside W (S6.2's per-profile clones)"
+    done
+  else
+    note "$sc_root, the directory W stands in, cannot be listed, so no clone beside W is looked at, and none is removed."
+  fi
+
+  # ------------------------------------------------------------ the holds
+  #
+  # S6.2: *"It removes one only where (a) nothing is unpublished — no `+` line
+  # under `git cherry origin/main` on any local branch, no stash, nothing
+  # staged or modified, no untracked file under `handoffs/` or `lanes/`; (b) no
+  # other clone's alternates file names it, so leaves go first; and (c) no
+  # live process has its working directory there. Any other is reported with
+  # what it holds, and left."* Each is read, and so is whatever git cannot
+  # prove of that list, because a removal is the one act nothing undoes:
+  #   (a) every local branch AND a detached HEAD by content (`git cherry`,
+  #       every ref spelled in full, slice 1b's B3), and a MERGE commit origin
+  #       lacks, which `git cherry` skips and so cannot compare; any other
+  #       local ref (a tag, a note) reaching what origin's branch lacks; a
+  #       stash; staged or modified files, and index entries marked
+  #       assume-unchanged or skip-worktree, which `git status` does not look
+  #       at; untracked files ANYWHERE, not only under `handoffs/` and
+  #       `lanes/`, because no tool can tell a person's work from scratch; an
+  #       operation in progress, unmerged entries, a held `index.lock`, the
+  #       checkout's own writers' lock, and a hand edit of the register that
+  #       `lanes-edit.sh commit` keeps in `.git/lanes-edit/`. No
+  #       `origin/<branch>` to compare with is itself a hold: nothing can be
+  #       proved published. IGNORED files do not hold, and they are
+  #       named, so a person sees them first — but `--exclude-standard`
+  #       reads the checkout's `.gitignore` files, its `.git/info/exclude`
+  #       and the user's `core.excludesFile`, not the register's rules
+  #       alone, so a repository of its own at an ignored path and an
+  #       editor's swap file hold (NIT 355), and so does an ignored
+  #       directory that cannot be looked in;
+  #   (b) another repository whose alternates file names its objects, looked
+  #       for under W's parent, `$TMPDIR` and `$HOME` (SHOULD 352, below), and
+  #       its own linked worktrees; a scan that cannot finish holds them all;
+  #   (c) a process this user can see whose working directory is at or under
+  #       it: `/proc/*/cwd` on Linux, `lsof` on macOS, and with neither it is
+  #       held as "cannot tell". A process whose directory cannot be read
+  #       (another user's, or one that ended meanwhile) is counted and said,
+  #       and does not hold — `lsof` has the same reach, and (a) is what keeps
+  #       the work;
+  #   and a file system mounted at or under it (lane openRepoTools-3's
+  #       SHOULD 371), whose files are not the checkout's, or a mount table
+  #       that cannot be read; and a live process whose `LANES_REPO` names
+  #       it, a window that writes through it (D37, below).
+  SC_HOLD=""; SC_IGN=""
+  sc_hold() { SC_HOLD="${SC_HOLD:+$SC_HOLD; }$1"; }
+  # WHAT GOES WITH A CHECKOUT AND HOLDS NOTHING IS NAMED beside it, on the
+  # dry run's `remove` line and the act's `removed` line, so a person sees
+  # it first: its ignored files, and the commits only its reflog reaches.
+  sc_named() { SC_IGN="${SC_IGN:+$SC_IGN; }$1"; }
+  sc_first() {   # <lines> — the count and the first three, as `N (a b c)`
+    scf_n="$(printf '%s\n' "$1" | awk 'NF { n++ } END { print n + 0 }')" || scf_n="?"
+    scf_h="$(printf '%s\n' "$1" | awk 'NF && k < 3 { print; k++ }' | tr '\n' ' ')" || scf_h=""
+    printf '%s (%s)' "$scf_n" "${scf_h% }"
+  }
+  sc_holds() {   # <path> <1 when this run holds its writers' lock>
+    sh_p="$1"; sh_mine="$2"; SC_HOLD=""; SC_IGN=""
+    sh_gd="$sh_p/.git"
+    sh_o="refs/remotes/origin/$sc_branch"
+    if [ "$sh_mine" != 1 ] && { [ -e "$sh_p/lanes/.lanes-edit.lock" ] || [ -L "$sh_p/lanes/.lanes-edit.lock" ]; }; then
+      sc_hold "its writers' lock lanes/.lanes-edit.lock is there: a writer is in it, or one left it behind"
+    fi
+    for sh_op in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG; do
+      if [ -e "$sh_gd/$sh_op" ]; then sc_hold "an operation in progress ($sh_op)"; fi
+    done
+    if [ -e "$sh_gd/index.lock" ]; then sc_hold "a git process holds its index.lock"; fi
+    # A HAND EDIT `lanes-edit.sh commit` KEPT (lane openRepoTools-3's MUST
+    # 351). S3 step 4's carry saves a hand edit of the register to
+    # `.git/lanes-edit/hand-edit-<UTC>-<pid>.diff`, and where it no longer
+    # applies it is KEPT there with the register left at origin's version, so
+    # git status sees nothing: that file may be a person's only copy. Anything
+    # there holds, but the writer's own scratch: git's words from a write and
+    # the lines a carry removed, which every write leaves.
+    if [ -e "$sh_gd/lanes-edit" ] || [ -L "$sh_gd/lanes-edit" ]; then
+      # WHAT IS SCRATCH is decided by find's own tests, a PLAIN FILE named
+      # exactly as one of the five, and no text is parsed (lane
+      # openRepoTools-3's NIT 392): a name of blanks or with a newline in
+      # it, or a folder or link that only carries a scratch name, is not
+      # scratch. Whatever find cannot open or look at is "cannot be
+      # listed" (find exits 1).
+      if ! sh_x="$(find "$sh_gd/lanes-edit/" -mindepth 1 -maxdepth 1 ! \( -type f \( -name apply.err -o -name fetch.err -o -name ff.err -o -name reset.err -o -name removed \) \) -print 2>/dev/null)"; then
+        sc_hold "its .git/lanes-edit/, where lanes-edit.sh keeps a hand edit of the register its commit could not carry, cannot be listed, so whether it keeps one is unknown"
+      elif [ -n "$sh_x" ]; then
+        sc_hold "lanes-edit.sh keeps $(sc_first "$(printf '%s\n' "$sh_x" | awk -F/ '{ print $NF }')") in .git/lanes-edit/: a hand edit of the register its commit could not carry, or the copy of one it carried (read it; remove it once origin has the edit)"
+      fi
+    fi
+    sh_x="$(git -C "$sh_p" ls-files -u 2>/dev/null)" || sh_x="unreadable"
+    if [ -n "$sh_x" ]; then sc_hold "unmerged entries"; fi
+    if ! git -C "$sh_p" rev-parse -q --verify "$sh_o^{commit}" >/dev/null 2>&1; then
+      sc_hold "it has no $sh_o, so nothing in it can be proved published"
+    else
+      sh_refs="$(git -C "$sh_p" for-each-ref --format='%(refname)' 2>/dev/null)" || {
+        sc_hold "its refs could not be listed"; sh_refs=""; }
+      if ! git -C "$sh_p" symbolic-ref -q HEAD >/dev/null 2>&1; then
+        sh_refs="HEAD
+$sh_refs"
+      fi
+      while IFS= read -r sh_r; do
+        [ -n "$sh_r" ] || continue
+        case "$sh_r" in
+          refs/remotes/* | refs/stash) continue ;;
+          HEAD | refs/heads/*)
+            sh_name="${sh_r#refs/heads/}"
+            if [ "$sh_r" = HEAD ]; then sh_name="its detached HEAD"; else sh_name="branch $sh_name"; fi
+            sh_plus="$(git -C "$sh_p" cherry "$sh_o" "$sh_r" 2>/dev/null | awk '/^\+/ { n++ } END { print n + 0 }')" || sh_plus=x
+            case "$sh_plus" in
+              0) : ;;
+              x) sc_hold "$sh_name could not be compared with origin by content" ;;
+              *) sc_hold "$sh_name has $sh_plus commit(s) origin lacks by content (git -C $sh_p cherry -v $sh_o $sh_r)" ;;
+            esac
+            sh_m="$(git -C "$sh_p" rev-list --merges -n 1 "$sh_r" --not "$sh_o" 2>/dev/null)" || sh_m=x
+            if [ -n "$sh_m" ]; then
+              sc_hold "$sh_name has a merge commit origin lacks, which git cherry cannot compare by content"
+            fi ;;
+          *)
+            sh_m="$(git -C "$sh_p" rev-list -n 1 "$sh_r" --not "$sh_o" 2>/dev/null)" || sh_m=x
+            if [ -n "$sh_m" ]; then sc_hold "$sh_r reaches commits origin's $sc_branch lacks"; fi ;;
+        esac
+      done <<SH_REFS
+$sh_refs
+SH_REFS
+    fi
+    if git -C "$sh_p" rev-parse -q --verify refs/stash >/dev/null 2>&1; then
+      sh_n="$(git -C "$sh_p" stash list 2>/dev/null | awk 'NF { n++ } END { print n + 0 }')" || sh_n="?"
+      sc_hold "a stash of $sh_n entr(ies)"
+    fi
+    sh_x="$(GIT_OPTIONAL_LOCKS=0 git -C "$sh_p" status --porcelain --untracked-files=no 2>/dev/null)" || sh_x="?? unreadable"
+    case "$sh_x" in
+      '') : ;;
+      '?? unreadable') sc_hold "git status could not be read in it" ;;
+      *) sc_hold "staged or modified: $(sc_first "$(printf '%s\n' "$sh_x" | cut -c4-)")" ;;
+    esac
+    sh_x="$(git -C "$sh_p" ls-files -v 2>/dev/null | awk 'substr($0, 1, 1) ~ /[a-zS]/ { n++ } END { print n + 0 }')" || sh_x=x
+    case "$sh_x" in
+      0) : ;;
+      x) sc_hold "its index could not be read" ;;
+      *) sc_hold "$sh_x index entr(ies) marked assume-unchanged or skip-worktree, which git status does not look at" ;;
+    esac
+    sh_x="$(git -C "$sh_p" ls-files --others --exclude-standard 2>/dev/null)" || sh_x="?unreadable"
+    case "$sh_x" in
+      '?unreadable') sc_hold "its untracked files could not be listed" ;;
+      *)
+        sh_x="$(printf '%s\n' "$sh_x" | awk 'NF && index($0, "lanes/.lanes-edit.lock/") != 1')" ||
+          sh_x="(the list could not be read)"
+        if [ -n "$sh_x" ]; then sc_hold "untracked: $(sc_first "$sh_x")"; fi ;;
+    esac
+    if [ -d "$sh_gd/worktrees" ]; then
+      sh_x="$(ls -A -- "$sh_gd/worktrees" 2>/dev/null)" || sh_x="?"
+      if [ -n "$sh_x" ]; then sc_hold "linked worktree(s) of it: $(sc_first "$sh_x") (git -C $sh_p worktree list)"; fi
+    fi
+    # WHAT IGNORED RULES HIDE IS NOT ALL DISPOSABLE (lane openRepoTools-3's
+    # NIT 355). `--exclude-standard` reads the checkout's `.gitignore` files,
+    # its `.git/info/exclude` and the user's `core.excludesFile`, not the
+    # register's rules alone. A repository of its own at an ignored path may
+    # hold commits nothing else has (at any other path it holds, as
+    # untracked), and an editor's swap file says a person has a file of it
+    # open: each holds. Each ignored directory is looked in for them; one
+    # that cannot be is a hold too, since what it keeps is unknown.
+    sh_rep=""; sh_swp=""; sh_unlooked=""
+    while IFS= read -r -d '' sh_e; do
+      case "$sh_e" in
+        */)
+          sh_y="$(find "$sh_p/$sh_e" \( -name .git -print -prune \) -o \( -type f -name '*.swp' -print \) 2>/dev/null)" ||
+            sh_unlooked="${sh_unlooked}$sh_e
+"
+          while IFS= read -r sh_f; do
+            [ -n "$sh_f" ] || continue
+            sh_f="${sh_f#"$sh_p/"}"
+            case "$sh_f" in
+              .git | */.git) sh_rep="${sh_rep}${sh_f%/.git}
+" ;;
+              *) sh_swp="${sh_swp}$sh_f
+" ;;
+            esac
+          done <<SH_Y
+$sh_y
+SH_Y
+          ;;
+        *.swp) sh_swp="${sh_swp}$sh_e
+" ;;
+      esac
+    done < <(git -C "$sh_p" ls-files -z --others --ignored --exclude-standard --directory 2>/dev/null)
+    if [ -n "$sh_rep" ]; then sc_hold "an ignored directory holds a repository of its own: $(sc_first "$sh_rep")"; fi
+    if [ -n "$sh_swp" ]; then sc_hold "an editor's swap file, ignored, says a file in it is open: $(sc_first "$sh_swp")"; fi
+    if [ -n "$sh_unlooked" ]; then sc_hold "an ignored directory could not be looked in: $(sc_first "$sh_unlooked")"; fi
+    sh_x="$(git -C "$sh_p" ls-files --others --ignored --exclude-standard --directory 2>/dev/null)" || sh_x=""
+    if [ -n "$sh_x" ]; then sc_named "ignored, which holds nothing: $(sc_first "$sh_x")"; fi
+    # A COMMIT ONLY THE REFLOG REACHES (lane openRepoTools-3's NIT 354): one
+    # a reset took off its branch is on no ref, and the removal takes the
+    # reflog that could undo the reset. It holds nothing, since a write
+    # replayed after a lost push race leaves one whose patch origin has, so
+    # a hold would keep such a checkout for good; it is named.
+    sh_x="$(git -C "$sh_p" rev-list --abbrev-commit --reflog --not --all 2>/dev/null)" || sh_x=""
+    if [ -n "$sh_x" ]; then sc_named "commit(s) only its reflog reaches, which go with it: $(sc_first "$sh_x")"; fi
+    # AN ANNOTATED TAG (NIT 355) on a published commit reaches nothing
+    # origin lacks, so it holds nothing; its tag object goes with the
+    # checkout, so it is named.
+    sh_x="$(git -C "$sh_p" for-each-ref --format='%(objecttype) %(refname:short)' refs/tags 2>/dev/null |
+      awk '$1 == "tag" { print $2 }')" || sh_x=""
+    if [ -n "$sh_x" ]; then sc_named "annotated tag(s), which go with it: $(sc_first "$sh_x")"; fi
+    return 0
+  }
+
+  # (b) WHAT LEANS ON WHAT, LOOKED FOR WHERE CLONES ARE MADE (lane
+  # openRepoTools-3's SHOULD 352; S6.2 (b): *"no other clone's alternates
+  # file names it"*): every repository under W's parent to depth 6, hidden
+  # directories included, under `$TMPDIR` (or /tmp) to depth 8, and under
+  # `$HOME` to depth 4, by their real paths. `$TMPDIR` goes deeper for
+  # Claude Code's scratchpads (rv4b's SHOULD C): one is
+  # `claude-<uid>/<project>/<session>/scratchpad` under it, so a clone made
+  # in it stands at depth 5, its object directory at 7, and a clone in a
+  # folder of its own there deeper still. `find` lists each object
+  # directory, pruned there,
+  # and each `.git` FILE. An object directory with an alternates file is a
+  # repository's store, and each line of that file names an object directory
+  # the repository borrows from: `sc_dep_lines` holds `<the real object
+  # directory named> TAB <the repository>`, THE TARGET FIRST (NIT 378), so a
+  # TAB in the repository's own path stays in its own field, and the target
+  # is what is matched. Read afresh under each lock, so a dependent kept
+  # earlier in the run still holds what it borrows from.
+  #
+  # AND A `.git` FILE IS READ THE SAME WAY (rv4's NIT 1): a directory whose
+  # `.git` file names a clone's git directory, or one inside it, works in it,
+  # and removing the clone takes that away. `sc_gitfile_lines` holds `<the
+  # real git directory its .git file names> TAB <the directory>`. A linked
+  # worktree is one, and is also held through `.git/worktrees/`.
+  #
+  # A SCAN THAT CANNOT FINISH HOLDS EVERY CANDIDATE (`sc_dep_fail`), since
+  # what leans on each is then unknown: a scope that cannot be entered, a
+  # `find` that fails for anything but a directory it cannot read, an
+  # alternates or `.git` file that cannot be read (NIT 356), and a
+  # directory of THIS USER'S OWN that `find` cannot read (rv4b's SHOULD B):
+  # a clone kept in it is this user's work, and a mode this user set can be
+  # set back, so the words name it and `chmod`. ANOTHER USER'S DIRECTORY
+  # `find` cannot read, or one gone while read, is counted and said, and
+  # holds nothing, by question 2's rule for working directories: one never
+  # readable would hold every checkout for good. It is counted once, though
+  # two scopes meet it. `find`'s words name the directory as `find: 'P':`,
+  # in the C locale's quoting (GNU), or as `find: P:` (BSD).
+  sc_dep_lines=""; sc_gitfile_lines=""; sc_dep_fail=""; sc_dep_unread=0
+  sc_dep_at=(); sc_dep_to=(); sc_dep_named=()
+  sc_dep_root() {   # <depth> <the directory as given>
+    sdr_r=""
+    if [ -n "$2" ]; then sdr_r="$(sc_real "$2")"; fi
+    sc_dep_to+=("$1"); sc_dep_at+=("$sdr_r"); sc_dep_named+=("${sdr_r:-${2:-(unset)}}")
+  }
+  sc_find_err_path() {   # <find's error line, less its ": <error>"> — the path
+    sfe_x="${1#*: }"
+    case "$sfe_x" in
+      \'*\')
+        sfe_x="${sfe_x#\'}"; sfe_x="${sfe_x%\'}"; sfe_x="${sfe_x//\\\'/\'}"
+        case "$sfe_x" in *\\*) sfe_x="$(printf '%b' "$sfe_x")" ;; esac ;;
+    esac
+    printf '%s' "$sfe_x"
+  }
+  sc_dep_root 6 "$sc_root"
+  sc_dep_root 8 "${TMPDIR:-/tmp}"
+  sc_dep_root 4 "${HOME:-}"
+  sc_dep_scan() {
+    sc_dep_lines=""; sc_gitfile_lines=""; sc_dep_fail=""; sc_dep_unread=0
+    sds_dl=""; sds_gl=""; sds_unread=""; sds_i=0
+    while [ "$sds_i" -lt "${#sc_dep_to[@]}" ]; do
+      sds_root="${sc_dep_at[$sds_i]}"; sds_depth="${sc_dep_to[$sds_i]}"
+      sds_named="${sc_dep_named[$sds_i]}"; sds_i=$((sds_i + 1))
+      if [ -z "$sds_root" ] || [ ! -d "$sds_root" ] || [ ! -r "$sds_root" ] || [ ! -x "$sds_root" ]; then
+        sc_dep_fail="${sc_dep_fail:-$sds_named cannot be entered and listed}"; continue
+      fi
+      LE_TMP="$(mktemp "${TMPDIR:-/tmp}/lane-end-sweep.XXXXXX" 2>/dev/null || printf '')"
+      if [ -z "$LE_TMP" ]; then
+        sc_dep_fail="${sc_dep_fail:-no temporary file could be made for the list of what is under $sds_root}"; continue
+      fi
+      sds_rc=0
+      sds_err="$(LC_ALL=C find "$sds_root" -maxdepth $((sds_depth + 2)) \( -type d -name objects -print0 -prune \) -o \( -type f -name .git -print0 \) 2>&1 >"$LE_TMP")" || sds_rc=$?
+      sds_other=""; sds_counted=0
+      while IFS= read -r sds_l; do
+        case "$sds_l" in
+          '') : ;;
+          *": Permission denied")
+            sds_p="$(sc_find_err_path "${sds_l%: Permission denied}")"
+            if [ -n "$sds_p" ] && [ -O "$sds_p" ]; then
+              sds_w="$sds_p, a directory of this user's own, cannot be read by the dependents scan, so what in it leans on a checkout is unknown: make it readable (chmod u+rx -- $(printf '%q' "$sds_p")) and re-run"
+              sc_dep_fail="${sc_dep_fail:-$sds_w}"
+            else
+              sds_unread="$sds_unread$sds_l
+"; sds_counted=1
+            fi ;;
+          *": No such file or directory")
+            sds_unread="$sds_unread$sds_l
+"; sds_counted=1 ;;
+          *) sds_other="${sds_other:-$sds_l}" ;;
+        esac
+      done <<SDS_ERR
+$sds_err
+SDS_ERR
+      if [ -n "$sds_other" ]; then
+        sc_dep_fail="${sc_dep_fail:-find over $sds_root failed: $sds_other}"
+      elif [ "$sds_rc" != 0 ] && [ "$sds_counted" = 0 ]; then
+        sc_dep_fail="${sc_dep_fail:-find over $sds_root exited $sds_rc}"
+      fi
+      while IFS= read -r -d '' sds_f; do
+        case "$sds_f" in
+          */.git)
+            sds_e="${sds_f%/.git}"
+            # git strips a trailing CR from the line (rv4-c3's NIT c3-3), and
+            # so does `tr`, first: BSD `sed` reads no `\r` in its script.
+            if ! sds_g="$(tr -d '\r' 2>/dev/null < "$sds_f")"; then
+              sc_dep_fail="${sc_dep_fail:-the .git file of $sds_e cannot be read}"; continue
+            fi
+            sds_g="$(printf '%s\n' "$sds_g" | sed -n -e '1s/^gitdir: //p')"
+            case "$sds_g" in '') continue ;; /*) : ;; *) sds_g="$sds_e/$sds_g" ;; esac
+            # A target that is gone is kept as written (NIT 353): after the
+            # move, a clone that named the old path is still matched.
+            sds_r="$(sc_real "$sds_g")"
+            sds_gl="$sds_gl${sds_r:-$sds_g}$sc_tab$sds_e
+" ;;
+          */objects)
+            sds_a="$sds_f/info/alternates"
+            if [ ! -e "$sds_a" ] && [ ! -L "$sds_a" ]; then continue; fi
+            sds_e="${sds_f%/objects}"; sds_e="${sds_e%/.git}"
+            if ! sds_x="$(cat -- "$sds_a" 2>/dev/null)"; then
+              sc_dep_fail="${sc_dep_fail:-the alternates file of $sds_e cannot be read}"; continue
+            fi
+            while IFS= read -r sds_l; do
+              case "$sds_l" in '' | '#'*) continue ;; esac
+              case "$sds_l" in /*) sds_t="$sds_l" ;; *) sds_t="$sds_f/$sds_l" ;; esac
+              sds_r="$(sc_real "$sds_t")"
+              sds_dl="$sds_dl${sds_r:-$sds_t}$sc_tab$sds_e
+"
+            done <<SDS_ALT
+$sds_x
+SDS_ALT
+            ;;
+        esac
+      done < "$LE_TMP"
+      rm -f -- "$LE_TMP"; LE_TMP=""
+    done
+    sc_dep_lines="$(printf '%s' "$sds_dl" | awk '!seen[$0]++')" || sc_dep_lines="$sds_dl"
+    sc_gitfile_lines="$(printf '%s' "$sds_gl" | awk '!seen[$0]++')" || sc_gitfile_lines="$sds_gl"
+    sc_dep_unread="$(printf '%s' "$sds_unread" | awk 'NF && !seen[$0]++ { n++ } END { print n + 0 }')" || sc_dep_unread=0
+  }
+  # A REPOSITORY LEANS ON A CLONE when its alternates file names an object
+  # directory AT OR UNDER that clone — its own `.git/objects`, or a store kept
+  # anywhere inside it — because removing the clone removes that store too.
+  # A repository AT OR UNDER the clone goes with it, and so does one at or
+  # under a path this run removed (in a dry run, would remove): neither is
+  # what leans on it. The paths gone are one per line.
+  sc_in_gone() {   # <path> <paths gone> — 0 when it is at or under one of them
+    while IFS= read -r sig_g; do
+      [ -n "$sig_g" ] || continue
+      case "$1" in "$sig_g" | "$sig_g"/*) return 0 ;; esac
+    done <<SIG
+$2
+SIG
+    return 1
+  }
+  sc_dependents() {   # <path> [<paths gone in this run>] [<lines>] — what leans on it
+    scd_out=""; scd_lines="${3-$sc_dep_lines}"
+    while IFS="$sc_tab" read -r scd_t scd_d; do
+      [ -n "$scd_d" ] || continue
+      case "$scd_t" in "$1" | "$1"/*) : ;; *) continue ;; esac
+      case "$scd_d" in "$1" | "$1"/*) continue ;; esac
+      if sc_in_gone "$scd_d" "${2-}"; then continue; fi
+      scd_out="${scd_out:+$scd_out }$scd_d"
+    done <<SCD
+$scd_lines
+SCD
+    printf '%s' "$scd_out"
+  }
+
+  # (c) EVERY WORKING DIRECTORY THIS USER CAN SEE: `<pid> TAB <cwd>`.
+  sc_cwds=""; sc_cwd_mode=""; sc_cwd_unread=0
+  sc_cwd_scan() {
+    sc_cwds=""; sc_cwd_unread=0
+    if [ -d /proc/self ] && readlink /proc/self/cwd >/dev/null 2>&1; then
+      sc_cwd_mode=proc
+      for scw_d in /proc/[0-9]*; do
+        scw_l="$(readlink "$scw_d/cwd" 2>/dev/null)" || {
+          if [ -d "$scw_d" ]; then sc_cwd_unread=$((sc_cwd_unread + 1)); fi
+          continue; }
+        sc_cwds="${sc_cwds}${scw_d#/proc/}${sc_tab}${scw_l% (deleted)}
+"
+      done
+    elif command -v lsof >/dev/null 2>&1; then
+      sc_cwd_mode=lsof
+      scw_pid=""
+      scw_out="$(lsof -a -d cwd -Fpn 2>/dev/null)" || :
+      while IFS= read -r scw_l; do
+        case "$scw_l" in
+          p*) scw_pid="${scw_l#p}" ;;
+          n*) sc_cwds="${sc_cwds}${scw_pid}${sc_tab}${scw_l#n}
+" ;;
+        esac
+      done <<SCW
+$scw_out
+SCW
+    else
+      sc_cwd_mode=none
+    fi
+  }
+  sc_cwd_inside() {   # <path> — the pids whose working directory is at or under it
+    scc_out=""
+    while IFS="$sc_tab" read -r scc_pid scc_cwd; do
+      [ -n "$scc_pid" ] || continue
+      case "$scc_cwd" in "$1" | "$1"/*) scc_out="${scc_out:+$scc_out }$scc_pid" ;; esac
+    done <<SCC
+$sc_cwds
+SCC
+    printf '%s' "$scc_out"
+  }
+
+  # A FILE SYSTEM MOUNTED AT OR UNDER IT (lane openRepoTools-3's SHOULD 371,
+  # and 357). A mount point at an ignored path, or inside `.git/`, holds
+  # nothing else, and the `mv` carries a mount along with its directory, so
+  # `rm -rf` would delete what the mount shows, which is not under
+  # `<W>-lanes/`. The mount table is read: `/proc/self/mountinfo`'s field 5,
+  # its octal escapes kept and each path spelled the same way to match it, or
+  # `mount`'s output where there is no such file. A table that cannot be
+  # read, or that names no `/`, is no mount table, and with none the sweep
+  # cannot tell, and holds. `LANE_END_MOUNTINFO` names another table: the
+  # test seam.
+  sc_mount_pts=""; sc_mount_mode=none
+  sc_mount_scan() {
+    sc_mount_pts=""; sc_mount_mode=none
+    sms_f="${LANE_END_MOUNTINFO:-/proc/self/mountinfo}"
+    if [ -r "$sms_f" ] && sms_t="$(awk '{ print $5 }' < "$sms_f" 2>/dev/null)"; then
+      sms_m=mountinfo
+    elif sms_t="$(mount 2>/dev/null | awk '{ i = index($0, " on "); if (!i) next; s = substr($0, i + 4); j = 0
+           for (k = length(s) - 1; k > 0; k--) if (substr(s, k, 2) == " (") { j = k; break }
+           if (j) s = substr(s, 1, j - 1); sub(/ type [^ ]*$/, "", s); print s }')"; then
+      sms_m=mount
+    else
+      return 0
+    fi
+    case "
+$sms_t
+" in
+      *"
+/
+"*) sc_mount_pts="$sms_t"; sc_mount_mode="$sms_m" ;;
+    esac
+  }
+  sc_mounts_inside() {   # <path> — the mount points at or under it, one per line
+    smi_e="$1"
+    if [ "$sc_mount_mode" = mountinfo ]; then
+      smi_e="${smi_e//\\/\\134}"; smi_e="${smi_e// /\\040}"; smi_e="${smi_e//$sc_tab/\\011}"
+    fi
+    SC_MOUNT_AT="$smi_e" awk '$0 == ENVIRON["SC_MOUNT_AT"] || index($0, ENVIRON["SC_MOUNT_AT"] "/") == 1' <<SMI
+$sc_mount_pts
+SMI
+  }
+
+  # A WINDOW THAT WRITES THROUGH IT (lane openRepoTools-3's condition on the
+  # ruling, D37): a live process whose environment's `LANES_REPO` names the
+  # clone, or a path in it, as spelled or by its real path. S6.2 honours a
+  # caller's `LANES_REPO`, and since 10-19 the launcher exports one into each
+  # lane window, so a window opened on a clone writes the register through it
+  # while it stands. `/proc/<pid>/environ` is read: a process's environment
+  # as it began, which is where the launcher's export is. A process whose
+  # environment cannot be read (another user's, or one that ended meanwhile)
+  # is counted and said, and holds nothing, as a working directory that
+  # cannot be read does not. With no `/proc` a clone beside W, which no
+  # lane's state keeps, is held as "cannot tell"; a lane's checkout is kept
+  # by its lane's state, asked again under the lock. `LANE_END_PROC` names
+  # another `/proc`: the test seam.
+  sc_repos=""; sc_repo_mode=none; sc_repo_unread=0
+  sc_repo_scan() {
+    sc_repos=""; sc_repo_unread=0; sc_repo_mode=none
+    srs_proc="${LANE_END_PROC:-/proc}"
+    if [ ! -d "$srs_proc/self" ] || [ ! -r "$srs_proc/self/environ" ]; then return 0; fi
+    sc_repo_mode=proc
+    for srs_d in "$srs_proc"/[0-9]*; do
+      # Read by the shell itself, NUL by NUL: no process is started per pid.
+      srs_v=""; srs_ok=0
+      { while IFS= read -r -d '' srs_kv; do
+          case "$srs_kv" in LANES_REPO=*) srs_v="${srs_kv#LANES_REPO=}"; break ;; esac
+        done; srs_ok=1; } 2>/dev/null < "$srs_d/environ" || :
+      if [ "$srs_ok" = 0 ]; then
+        if [ -d "$srs_d" ]; then sc_repo_unread=$((sc_repo_unread + 1)); fi
+        continue
+      fi
+      [ -n "$srs_v" ] || continue
+      case "$srs_v" in
+        /*) : ;;
+        *) srs_c="$(readlink "$srs_d/cwd" 2>/dev/null)" || srs_c=""
+           if [ -z "$srs_c" ]; then continue; fi
+           srs_v="$srs_c/$srs_v" ;;
+      esac
+      sc_repos="$sc_repos${srs_d##*/}$sc_tab$srs_v
+"
+      srs_r="$(sc_real "$srs_v")"
+      if [ -n "$srs_r" ] && [ "$srs_r" != "$srs_v" ]; then
+        sc_repos="$sc_repos${srs_d##*/}$sc_tab$srs_r
+"
+      fi
+    done
+  }
+  sc_repo_inside() {   # <path> — the pids whose LANES_REPO is at or under it
+    sri_out=""
+    while IFS="$sc_tab" read -r sri_pid sri_v; do
+      [ -n "$sri_pid" ] || continue
+      case "$sri_v" in "$1" | "$1"/*) : ;; *) continue ;; esac
+      case " $sri_out " in *" $sri_pid "*) continue ;; esac
+      sri_out="${sri_out:+$sri_out }$sri_pid"
+    done <<SRI
+$sc_repos
+SRI
+    printf '%s' "$sri_out"
+  }
+
+  # ALL OF THEM, for one candidate: SC_HOLD empty means nothing holds it.
+  sc_judge_holds() {   # <path> <1 when this run holds its lock> [<paths gone>]
+    sc_holds "$1" "$2"
+    if [ -n "$sc_dep_fail" ]; then sc_hold "what leans on it cannot be told: $sc_dep_fail"; fi
+    sjh_deps="$(sc_dependents "$1" "${3-}")"
+    if [ -n "$sjh_deps" ]; then sc_hold "leaned on by $sjh_deps (its alternates file names this clone's objects)"; fi
+    sjh_deps="$(sc_dependents "$1" "${3-}" "$sc_gitfile_lines")"
+    if [ -n "$sjh_deps" ]; then sc_hold "its git directory is named by the .git file of $sjh_deps, which works in it"; fi
+    case "$sc_cwd_mode" in
+      none) sc_hold "neither /proc nor lsof is here, so whether a process works in it cannot be told" ;;
+      *)
+        sjh_pids="$(sc_cwd_inside "$1")"
+        if [ -n "$sjh_pids" ]; then sc_hold "a live process works in it (pid $sjh_pids)"; fi ;;
+    esac
+    sjh_pids="$(sc_repo_inside "$1")"
+    if [ -n "$sjh_pids" ]; then sc_hold "the LANES_REPO of a live process names it (pid $sjh_pids): a window writes the register through it"; fi
+    if [ "$sc_repo_mode" = none ] && [ "${1%/*}" = "$sc_root" ]; then
+      sc_hold "whether a window's LANES_REPO names it cannot be told: there is no /proc here to read a process's environment from"
+    fi
+    case "$sc_mount_mode" in
+      none) sc_hold "whether a file system is mounted in it cannot be told: no mount table that names / could be read (${LANE_END_MOUNTINFO:-/proc/self/mountinfo}, or mount)" ;;
+      *)
+        sjh_m="$(sc_mounts_inside "$1")" || sjh_m="(the mount table could not be matched)"
+        if [ -n "$sjh_m" ]; then
+          sc_hold "a file system is mounted at or under it: $(sc_first "$sjh_m"), and removing it would remove what that mount shows, which is not this checkout's"
+        fi ;;
+    esac
+    return 0
+  }
+
+  # NEVER A PATH THAT IS NOT DIRECTLY UNDER `<W>-lanes/` OR DIRECTLY IN W'S
+  # PARENT, by its real parent, and never W or `<W>-lanes/` itself, asked
+  # again at the moment of each act on it.
+  sc_under_home() {   # <path>
+    suh_n="${1##*/}"; suh_p="${1%/*}"
+    case "$suh_n" in '' | . | ..) return 1 ;; esac
+    case "$suh_p" in
+      "$sc_home") [ "$(sc_real "$suh_p")" = "$sc_home" ] ;;
+      "$sc_root") [ "$1" != "$sc_w" ] && [ "$1" != "$sc_home" ] && [ "$(sc_real "$suh_p")" = "$sc_root" ] ;;
+      *) return 1 ;;
+    esac
+  }
+
+  sc_lock_take() {   # <path> — 0 holding it (SC_LOCK), 1 with SC_WHY
+    slt_d="$1/lanes/.lanes-edit.lock"
+    if [ -L "$1/lanes" ] || [ ! -d "$1/lanes" ]; then
+      SC_WHY="it has no lanes/ directory of its own, so its writers' lock cannot be taken"; return 1
+    fi
+    if ! mkdir -- "$slt_d" 2>/dev/null; then
+      SC_WHY="its writers' lock lanes/.lanes-edit.lock is held: a writer is in it, or one left it behind"; return 1
+    fi
+    SC_LOCK="$slt_d"
+    # ITS PID LINE IS WRITTEN, OR THE LOCK IS LET GO AT ONCE (rv4-c3's NIT
+    # c3-2). A lock that names no holder is one its writers wait ten minutes
+    # on (`mutex_stale`), and the check before the move would read this
+    # sweep's own pid-less lock as taken over and leave it, so every later
+    # sweep would hold the checkout for it. A line that cannot be written (a
+    # full disk, a directory that cannot be written in) empties and removes
+    # the lock just made, which no writer can have taken from a live holder
+    # in under ten minutes, and holds the checkout. So a lock whose line is
+    # not this sweep's is only ever another writer's.
+    if ! printf '%s %s\n' "$$" "$sc_ident" 2>/dev/null > "$slt_d/pid"; then
+      rm -f -- "$slt_d/pid" 2>/dev/null || :
+      SC_LOCK=""
+      if rmdir -- "$slt_d" 2>/dev/null; then
+        SC_WHY="its writers' lock was taken, and this sweep's pid line could not be written into it, so the lock was let go again: one that names no holder is one its writers wait ten minutes on"
+      else
+        SC_WHY="its writers' lock was taken, and this sweep's pid line could not be written into it, and the lock could not be let go again: lanes/.lanes-edit.lock is left, and its writers wait out its ten minutes"
+      fi
+      return 1
+    fi
+    return 0
+  }
+  # THE LOCK STAYS THE SWEEP'S, OR IT IS LEFT AS IT IS (rv4's NIT 4). A holder
+  # in another container is judged by the lock's age alone, so the sweep
+  # refreshes that age before each slow step, as `git_net`'s heartbeat does
+  # (`touch -c`, which never makes a lock). Its pid line is read again just
+  # before the move, and a lock whose line names another holder was taken
+  # over: the checkout is held, and that lock is left to its holder, as
+  # `mutex_release` leaves one.
+  sc_lock_beat() {
+    if [ -n "$SC_LOCK" ]; then touch -c -- "$SC_LOCK" 2>/dev/null || :; fi
+  }
+  sc_lock_holder() {   # the lock's pid line, or nothing where it cannot be read
+    slh_l=""; IFS= read -r slh_l < "$SC_LOCK/pid" 2>/dev/null || :
+    printf '%s' "$slh_l"
+  }
+  sc_lock_drop() {
+    if [ -n "$SC_LOCK" ]; then
+      sld_l="$(sc_lock_holder)"
+      if [ -z "$sld_l" ] || [ "$sld_l" = "$$ $sc_ident" ]; then
+        rm -f -- "$SC_LOCK/pid"; rmdir -- "$SC_LOCK" 2>/dev/null || :
+      fi
+    fi
+    SC_LOCK=""
+  }
+  # `--yes` FETCHES EACH CHECKOUT FIRST, bounded as `lanes-edit.sh`'s network
+  # calls are (`LANES_GIT`, `LANES_GIT_TIMEOUT`), with an explicit refspec so
+  # the tracking ref moves whatever the clone's `remote.origin.fetch` says.
+  sc_fetch() {   # <path>
+    sf_git="${LANES_GIT:-git}"; sf_to="${LANES_GIT_TIMEOUT:-60}"
+    sf_args=(-c gc.auto=0 -c maintenance.auto=false -C "$1" fetch -q origin
+             "+refs/heads/$sc_branch:refs/remotes/origin/$sc_branch")
+    case "$sf_to" in
+      '' | 0 | *[!0-9]*) "$sf_git" "${sf_args[@]}" >/dev/null 2>&1; return $? ;;
+    esac
+    if command -v timeout >/dev/null 2>&1; then
+      timeout -k 5 "$sf_to" "$sf_git" "${sf_args[@]}" >/dev/null 2>&1; return $?
+    fi
+    "$sf_git" "${sf_args[@]}" >/dev/null 2>&1
+  }
+  # THE LANE'S STATE, ASKED AGAIN UNDER THE CHECKOUT'S LOCK after a fetch of
+  # W (rv1b's MUSTs 1-2: a decision made from register state is made after
+  # the fetch, under the lock). 0 when it is still what made it a candidate.
+  #
+  # THE RE-ASK'S STDERR IS READ, as the listing's is (rv4's MUST 1): `lanes
+  # --fetch` exits 0 on a W fetch that failed after `ls-remote` answered
+  # (`fell-back`) and on records it could not read, and says so only in its
+  # notes. A row read from a stale ref is not a state "after a fetch", so a
+  # re-ask whose notes say any of these holds the checkout. A capture that
+  # cannot be made, or cannot be read back, holds it by itself, with that as
+  # its reason (rv4-r2's SHOULD 1), as the listing refuses on both.
+  sc_still() {   # <path> <lane> <new name's checkout, or empty>
+    ss_rc=0
+    LE_TMP="$(mktemp "${TMPDIR:-/tmp}/lane-end-sweep.XXXXXX" 2>/dev/null || printf '')"
+    if [ -z "$LE_TMP" ]; then
+      SC_WHY="no temporary file could be made to capture what lane $2's state read said, so whether it was read fresh under its checkout's lock was never established"; return 1
+    fi
+    ss_row="$("$LANES_EDIT" lanes --fetch --closed --lane "$2" 2>"$LE_TMP")" || ss_rc=$?
+    ss_cat=0
+    ss_err="$(cat -- "$LE_TMP" 2>/dev/null)" || ss_cat=$?
+    rm -f -- "$LE_TMP"; LE_TMP=""
+    if [ "$ss_cat" != 0 ]; then
+      SC_WHY="what lane $2's state read said was captured, and its capture could not be read back, so whether it was read fresh under its checkout's lock was never established"; return 1
+    fi
+    ss_why=""
+    case "$ss_err" in
+      *"reading the logs as they stand locally"*)
+        ss_why="W's fetch did not complete, so the logs were read as they stand locally" ;;
+      *"session records could not be read"*)
+        ss_why="this workstation's session records could not be read, so whether it is LIVE is not established" ;;
+      *"could not be read, so its rows are not in this listing"*)
+        ss_why="the register could not be read, so whether it is CLOSED is not established" ;;
+    esac
+    if [ -n "$ss_why" ]; then
+      SC_WHY="lane $2's state was not read fresh under its checkout's lock: $ss_why"; return 1
+    fi
+    if [ "$ss_rc" != 0 ] || [ -z "$ss_row" ]; then
+      SC_WHY="lane $2's state could not be read again under its checkout's lock (lanes exited $ss_rc)"; return 1
+    fi
+    IFS="$sc_tab" read -r ss_lane ss_state ss_ws ss_pf ss_win ss_sid ss_dir ss_obj ss_age ss_cmd ss_home ss_fk ss_loc ss_class ss_rest <<SS_ROW
+$ss_row
+SS_ROW
+    # A FORMER NAME'S CHECKOUT is asked both: still a former name of the lane
+    # beside that lane's own checkout, and the lane still CLOSED (D29).
+    if [ -n "$3" ]; then
+      ss_c="$(LANES_NO_FETCH=1 "$LANES_EDIT" canon-lane "${1##*/}" 2>/dev/null)" || ss_c=""
+      if [ "$(sc_lc "$ss_c")" != "$(sc_lc "$2")" ] || [ ! -d "$3" ] || [ -L "$3" ] || [ "$3" -ef "$1" ]; then
+        SC_WHY="it is no longer a former name of lane $2 beside that lane's own checkout"; return 1
+      fi
+    fi
+    if [ "${ss_state:-}" = LIVE ]; then SC_WHY="lane $2 is LIVE now"; return 1; fi
+    if [ "${ss_class:-}" != closed ]; then SC_WHY="lane $2 is ${ss_state:-in no state} now, not CLOSED"; return 1; fi
+    return 0
+  }
+
+  # ------------------------------------------------------------ the report
+  printf '%s --sweep-checkouts — %s (lane-collision-protocol Amendment 23 S6.2)\n' \
+    "$prog" "$( [ "$sweep_yes" = 1 ] && printf 'THE ACT' || printf 'DRY RUN, nothing is removed' )"
+  printf '  W              : %s\n' "$sc_w"
+  printf '  lane checkouts : %s/\n' "$sc_home"
+  printf '  runner         : %s\n' "${sc_runner:-none named (LANES_LANE is unset)}"
+  if [ -n "$sc_wseam" ]; then
+    printf '  (--yes refuses here: %s, and W is the directory path: names)\n' "$sc_wseam"
+  fi
+  if [ "$sweep_yes" = 1 ]; then
+    printf '  origin         : each checkout is fetched under its own lock before it is decided\n'
+  else
+    printf '  origin         : each checkout'"'"'s origin/%s as it last fetched it: a dry run fetches nothing\n' "$sc_branch"
+  fi
+  if [ -n "$sc_home_why" ]; then printf '  (%s)\n' "$sc_home_why"; fi
+  if [ "$sc_hidden" -gt 0 ]; then
+    printf '  (%s hidden entr(ies) under %s/ - creation locks, partial clones, the sidecar lock - are never looked at)\n' "$sc_hidden" "$sc_home"
+  fi
+  printf '  dependents     : every repository under %s/ to depth %s, hidden ones too, under %s/ to depth %s, for the clones in a Claude Code scratchpad, and under %s/ to depth %s; read again under each lock\n' \
+    "${sc_dep_named[0]}" "${sc_dep_to[0]}" "${sc_dep_named[1]}" "${sc_dep_to[1]}" "${sc_dep_named[2]}" "${sc_dep_to[2]}"
+  sc_cwd_scan; sc_mount_scan; sc_repo_scan
+  if [ "$sc_cwd_unread" -gt 0 ]; then
+    printf '  (%s process(es) whose working directory could not be read - another user'"'"'s, or ended while read - do not hold anything)\n' "$sc_cwd_unread"
+  fi
+  if [ "$sc_repo_unread" -gt 0 ]; then
+    printf '  (%s process(es) whose environment could not be read - another user'"'"'s, or ended while read - are not asked which LANES_REPO they name)\n' "$sc_repo_unread"
+  fi
+  sc_dep_scan
+  if [ "$sc_dep_unread" -gt 0 ]; then
+    printf '  (%s director(ies) the dependents scan could not read - another user'"'"'s, or gone while read - are not looked in)\n' "$sc_dep_unread"
+  fi
+
+  # LEAVES FIRST (S6.2 (b): *"so leaves go first"*). The candidates are taken
+  # in dependency order, every clone before the clones it borrows objects
+  # from, so one run can remove a whole chain of closed lanes' checkouts: a
+  # candidate is placed once no candidate not yet placed leans on it. Each
+  # pass places every candidate that is ready, in the order they were listed.
+  # A cycle — two clones naming each other's objects — places nothing more,
+  # and what is left goes last, in its listed order, where each is held by
+  # what leans on it. The order is a plan and never a decision: `--yes` reads
+  # what leans on each candidate again just before it is removed, so a
+  # dependent held earlier in the run keeps the whole chain it borrows from.
+  sc_placed=(); sc_order=()
+  sc_i=0
+  while [ "$sc_i" -lt "${#sc_cands[@]}" ]; do sc_placed[$sc_i]=0; sc_i=$((sc_i + 1)); done
+  # A repository at or under a candidate not yet placed is that candidate
+  # leaning (it goes with it), and one at or under this candidate is not.
+  sc_leaned_on_by_unplaced() {   # <index> — 0 when a candidate not yet placed leans on it
+    slu_c="${sc_cands[$1]}"
+    while IFS="$sc_tab" read -r slu_t slu_d; do
+      [ -n "$slu_d" ] || continue
+      case "$slu_t" in "$slu_c" | "$slu_c"/*) : ;; *) continue ;; esac
+      case "$slu_d" in "$slu_c" | "$slu_c"/*) continue ;; esac
+      slu_j=0
+      while [ "$slu_j" -lt "${#sc_cands[@]}" ]; do
+        if [ "${sc_placed[$slu_j]}" = 0 ]; then
+          case "$slu_d" in "${sc_cands[$slu_j]}" | "${sc_cands[$slu_j]}"/*) return 0 ;; esac
+        fi
+        slu_j=$((slu_j + 1))
+      done
+    done <<SLU
+$sc_dep_lines
+SLU
+    return 1
+  }
+  sc_more=1
+  while [ "$sc_more" = 1 ]; do
+    sc_more=0; sc_pass=()
+    sc_i=0
+    while [ "$sc_i" -lt "${#sc_cands[@]}" ]; do
+      if [ "${sc_placed[$sc_i]}" = 0 ] && ! sc_leaned_on_by_unplaced "$sc_i"; then sc_pass+=("$sc_i"); fi
+      sc_i=$((sc_i + 1))
+    done
+    for sc_i in ${sc_pass[@]+"${sc_pass[@]}"}; do
+      sc_placed[$sc_i]=1; sc_order+=("$sc_i"); sc_more=1
+    done
+  done
+  sc_i=0
+  while [ "$sc_i" -lt "${#sc_cands[@]}" ]; do
+    if [ "${sc_placed[$sc_i]}" = 0 ]; then sc_order+=("$sc_i"); fi
+    sc_i=$((sc_i + 1))
+  done
+
+  # NEVER ACROSS A MOUNT, AS A SECOND LAYER ONLY (SHOULD 371): the mount
+  # table above is what holds a checkout with a mount in it, since a bind
+  # mount of the same file system is one `rm` cannot see. GNU `rm` takes
+  # `--one-file-system`, BSD's `-x`; each is asked once, of a path that is
+  # not there, and an `rm` that takes neither removes as before.
+  sc_rm_x=""
+  if [ "$sweep_yes" = 1 ]; then
+    sc_rm_probe="$sc_home/.sweep-checkouts-rm-probe-$$"
+    if [ ! -e "$sc_rm_probe" ] && [ ! -L "$sc_rm_probe" ]; then
+      if rm -f --one-file-system -- "$sc_rm_probe" 2>/dev/null; then sc_rm_x=--one-file-system
+      elif rm -f -x -- "$sc_rm_probe" 2>/dev/null; then sc_rm_x=-x
+      fi
+    fi
+  fi
+
+  printf '\n  under %s/, and beside W in %s/:\n' "$sc_home" "$sc_root"
+  # `sc_gone`: the paths this run removed (a dry run: would remove), one per
+  # line. `sc_n_removed`, `sc_n_partial` and `sc_n_removable` count both
+  # places, and `sc_nb_*` the clones beside W among them; `sc_n_held` counts
+  # `<W>-lanes/` alone, and `sc_nb_held` the clones beside W.
+  sc_gone=""; sc_n_removed=0; sc_n_partial=0; sc_n_held=0; sc_n_removable=0; sc_partial=""
+  sc_nb_removed=0; sc_nb_partial=0; sc_nb_held=0; sc_nb_removable=0
+  sc_removed_names=""; sc_held_names=""; sc_partial_names=""; sc_bremoved_names=""
+  sc_is_beside() { [ "${1%/*}" = "$sc_root" ]; }
+  # A NAME AS THE NOTED LINE SPELLS IT: a clone beside W may be named
+  # anything, so each character outside letters, digits, `.`, `_` and `-` is
+  # written as `?`.
+  sc_said_name() {   # <name>
+    case "$1" in
+      *[!A-Za-z0-9._-]*) printf '%s' "$1" | LC_ALL=C tr -c 'A-Za-z0-9._-' '?' ;;
+      *) printf '%s' "$1" ;;
+    esac
+  }
+  sc_say_held() {   # <path> <why it was a candidate> <what holds it>
+    printf '    hold       %s  %s; holds: %s\n' "${1//[[:cntrl:]]/?}" "${2//[[:cntrl:]]/?}" "${3//[[:cntrl:]]/?}"
+    if sc_is_beside "$1"; then sc_nb_held=$((sc_nb_held + 1)); return 0; fi
+    sc_n_held=$((sc_n_held + 1)); sc_held_names="${sc_held_names:+$sc_held_names }${1##*/}"
+  }
+  # THE NOTED LINE'S TEXT, from what this run has done so far, and the two
+  # commands that finish its record by hand. The paths are spelled from the
+  # projects root, `<W>-lanes/<name>`, never from the host's own root, and
+  # every name in the line is one this sweep holds to letters, digits, `.`,
+  # `_` and `-` (a lane's by the lane-name rule, a clone beside W's by
+  # `sc_said_name`), so the free text's own rules (no ` — `, no newline, no
+  # leading arrow) hold for it. The clones beside W removed are named apart,
+  # and those left are counted.
+  sc_rel="${sc_home##*/}"
+  case "$sc_rel" in '' | *[!A-Za-z0-9._-]*) sc_rel="<W>-lanes" ;; esac
+  sc_noted_text() {   # [<what ended the run early>]
+    snt_t="sweep-checkouts (Amendment 23 S6.2): removed $((sc_n_removed - sc_nb_removed)) register checkout(s) under $sc_rel/ that held nothing unpublished"
+    if [ -n "$sc_removed_names" ]; then snt_t="$snt_t: $sc_removed_names"; fi
+    if [ -n "$sc_partial_names" ]; then snt_t="$snt_t; moved aside and not all removed: $sc_partial_names"; fi
+    if [ -n "$sc_held_names" ]; then snt_t="$snt_t; held and left: $sc_held_names"; fi
+    if [ "$sc_nb_removed" -gt 0 ]; then
+      snt_t="$snt_t; removed $sc_nb_removed clone(s) beside W that held nothing unpublished: $sc_bremoved_names"
+    fi
+    snt_t="$snt_t; $((sc_n_beside - sc_nb_removed - sc_nb_partial)) clone(s) beside W left"
+    if [ -n "${1-}" ]; then snt_t="$snt_t; $1"; fi
+    printf '%s' "$snt_t"
+  }
+  sc_by_hand_of() {   # <the line's text>
+    printf 'LANES_LANE=%q LANES_SESSION=%s lanes-edit.sh log NOTED %q %q' \
+      "$sc_runner" "$sc_uuid" "lane:$sc_runner" "$1"
+  }
+  sc_publish="LANES_LANE=$(printf '%q' "$sc_runner") lanes-edit.sh commit $(printf '%q' "the NOTED line of lane-end --sweep-checkouts")"
+  # THE CHECKOUT THE LINE GOES THROUGH, as `lanes-edit.sh` picks it (S2): the
+  # caller's `LANES_REPO`; under `LANES_ROUTE_WRITES=1`, the runner's own
+  # checkout; and W without either. A refused write is finished there.
+  if [ -n "$LE_REPO_GIVEN" ]; then sc_wco="${sc_xrepo:-$LE_REPO_GIVEN}"
+  elif [ "${LANES_ROUTE_WRITES:-}" = 1 ]; then sc_wco="$sc_home/$sc_runner"
+  else sc_wco="$sc_w"; fi
+  # The write, its words on stderr, or in a file: sent there inside its own
+  # subshell, so a signal's trap, run in this shell once the write is done,
+  # still speaks on this shell's own stderr.
+  sc_log_noted() {   # [<the file its words go to>]
+    ( unset LANES_NO_FETCH
+      if [ -n "${1-}" ]; then exec 2>"$1" || exit 1; fi
+      LANES_LANE="$sc_runner" LANES_SESSION="$sc_uuid" "$LANES_EDIT" log NOTED "lane:$sc_runner" "$sc_text" >&2 )
+  }
+  sc_partial_said=0
+  sc_say_partial() {
+    if [ -n "$sc_partial" ] && [ "$sc_partial_said" = 0 ]; then
+      sc_partial_said=1
+      note "the removal of $sc_partial did not finish (above): what is left is no checkout, under a hidden name, and the next write of a lane whose checkout it was clones afresh. Remove it by hand once you have looked at why; every later run names it again, with the command."
+    fi
+  }
+  # A SIGNAL NEVER CUTS A REMOVAL IN TWO, AND ONE THAT ENDS THE ACT LEAVES
+  # ITS RECORD (lane openRepoTools-3's SHOULD 372). INT and TERM wait while a
+  # checkout is moved aside, removed and counted: the `mv` and the `rm` run
+  # in subshells that ignore both, and an ignored signal stays ignored across
+  # `exec`, so a Ctrl-C to the process group does not stop them halfway, and
+  # this shell takes the signal once they are done. A signal ends the act
+  # then, or at once outside those steps, and after any removal it prints
+  # the NOTED line by hand for what was done. One that comes while the line
+  # is being written says the line may be on origin already, and hands out
+  # the publish act first, so the sweep is never recorded twice.
+  sc_sig=""; sc_noting=0; sc_text=""
+  sc_on_signal() {   # <the exit code, 128 plus the signal>
+    trap '' INT TERM
+    if [ "$sc_noting" = 1 ]; then
+      if [ -n "${LE_TMP:-}" ]; then cat -- "$LE_TMP" >&2 2>/dev/null || :; fi
+      note "a signal stopped this sweep while its NOTED line was being written, so the line may be on origin already, or committed in the checkout it went through and not yet published. Nothing was lost: each checkout removed held nothing unpublished. Look at lane $sc_runner's log on origin first. Where origin lacks the line, the publish act sends a commit that is kept:"
+      note "  $sc_publish"
+      note "Only where origin lacks the line and the publish act finds nothing to send is it written by hand:"
+      note "  $(sc_by_hand_of "$sc_text")"
+    elif [ $((sc_n_removed + sc_n_partial)) -gt 0 ]; then
+      note "a signal stopped this sweep after the removals above, before its NOTED line was written, so lane $sc_runner's log does not say what was removed. Nothing was lost: each checkout removed held nothing unpublished. Write the line by hand:"
+      note "  $(sc_by_hand_of "$(sc_noted_text "the sweep was stopped by a signal")")"
+    else
+      note "a signal stopped this sweep. Nothing was removed."
+    fi
+    sc_say_partial
+    exit "$1"
+  }
+  sc_sig_defer() { sc_sig=""; trap 'sc_sig=130' INT; trap 'sc_sig=143' TERM; }
+  sc_sig_arm() {
+    trap 'sc_on_signal 130' INT; trap 'sc_on_signal 143' TERM
+    if [ -n "$sc_sig" ]; then sc_on_signal "$sc_sig"; fi
+  }
+  if [ "$sweep_yes" = 1 ]; then sc_sig_arm; fi
+  for sc_i in ${sc_order[@]+"${sc_order[@]}"}; do
+    sc_c="${sc_cands[$sc_i]}"; sc_why="${sc_cand_why[$sc_i]}"
+    sc_l="${sc_cand_lane[$sc_i]}"; sc_new="${sc_cand_new[$sc_i]}"
+    if ! sc_under_home "$sc_c"; then
+      printf '    hold       %s  %s; it is not directly under %s/ or in %s/, and nothing else is ever removed\n' "${sc_c//[[:cntrl:]]/?}" "${sc_why//[[:cntrl:]]/?}" "${sc_home//[[:cntrl:]]/?}" "${sc_root//[[:cntrl:]]/?}"
+      if sc_is_beside "$sc_c"; then sc_nb_held=$((sc_nb_held + 1)); continue; fi
+      sc_n_held=$((sc_n_held + 1)); sc_held_names="${sc_held_names:+$sc_held_names }${sc_c##*/}"; continue
+    fi
+    if [ "$sweep_yes" != 1 ]; then
+      sc_judge_holds "$sc_c" 0 "$sc_gone"
+      if [ -n "$SC_HOLD" ]; then
+        sc_say_held "$sc_c" "$sc_why" "$SC_HOLD"
+      else
+        printf '    remove     %s  %s%s\n' "${sc_c//[[:cntrl:]]/?}" "${sc_why//[[:cntrl:]]/?}" "${SC_IGN:+; ${SC_IGN//[[:cntrl:]]/?}}"
+        sc_n_removable=$((sc_n_removable + 1)); sc_gone="$sc_gone$sc_c
+"
+        if sc_is_beside "$sc_c"; then sc_nb_removable=$((sc_nb_removable + 1)); fi
+      fi
+      continue
+    fi
+    # THE ACT, ONE CHECKOUT AT A TIME, every decision made again under its
+    # own writers' lock after a fetch: the lock first, so no writer of it is
+    # in it; then its fetch, the lane's state asked again (a clone beside W
+    # is no lane's: whether it is still a register clone is what is asked),
+    # every hold, what leans on it, the working directories and the windows'
+    # `LANES_REPO` read again; then, and only then, it is moved aside in the
+    # directory it stands in — so its path is absent at once, and the next
+    # write of a lane there clones afresh — and the aside removed.
+    # A CANDIDATE GONE AT ITS TURN IS SAID AS GONE (NIT 375), not held for
+    # want of a `lanes/` directory: a person, or a sweep on another
+    # workstation, removed or moved it after the listing. It is neither
+    # removed by this run nor held, and the NOTED line names it as neither.
+    if [ ! -e "$sc_c" ] && [ ! -L "$sc_c" ]; then
+      printf '    gone       %s  %s; it is no longer there: something removed or moved it after the listing, and this run did not\n' \
+        "${sc_c//[[:cntrl:]]/?}" "${sc_why//[[:cntrl:]]/?}"
+      continue
+    fi
+    if ! sc_lock_take "$sc_c"; then
+      sc_say_held "$sc_c" "$sc_why" "$SC_WHY"; continue
+    fi
+    sc_act_hold=""; sc_act_ign=""
+    sc_lock_beat
+    if ! sc_fetch "$sc_c"; then
+      sc_act_hold="its fetch of origin $sc_branch failed or timed out, and nothing is decided on an old origin/$sc_branch"
+    elif [ -n "$sc_l" ] && ! { sc_lock_beat; sc_still "$sc_c" "$sc_l" "$sc_new"; }; then
+      sc_act_hold="$SC_WHY"
+    elif ! sc_is_register_clone "$sc_c"; then
+      sc_act_hold="it is no longer what made it a candidate: $SC_WHY"
+    elif sc_is_a_w "$sc_c"; then
+      sc_act_hold="it is no longer what made it a candidate: $SC_WHY"
+    else
+      sc_dep_scan; sc_cwd_scan; sc_mount_scan; sc_repo_scan
+      sc_judge_holds "$sc_c" 1
+      sc_act_hold="$SC_HOLD"; sc_act_ign="$SC_IGN"
+    fi
+    if [ -z "$sc_act_hold" ]; then
+      sc_lock_beat
+      sc_holder="$(sc_lock_holder)"
+      if [ "$sc_holder" != "$$ $sc_ident" ]; then
+        sc_act_hold="its writers' lock lanes/.lanes-edit.lock is no longer this sweep's (${sc_holder:-its pid line cannot be read}): a writer took it over, and it is left to that writer"
+        SC_LOCK=""
+      fi
+    fi
+    if [ -n "$sc_act_hold" ]; then
+      sc_lock_drop
+      sc_say_held "$sc_c" "$sc_why" "$sc_act_hold"; continue
+    fi
+    # THE ASIDE'S NAME DOES NOT GROW WITH THE CHECKOUT'S (lane
+    # openRepoTools-3's NIT 379): with its suffix, a name near NAME_MAX could
+    # never be moved aside, so a 240-character one was `remove` in every dry
+    # run and held in every act. Its first 48 characters name it for a
+    # person, and the suffix makes it this run's.
+    sc_an="${sc_c##*/}"
+    sc_aside="${sc_c%/*}/.${sc_an:0:48}.removing-$sc_utc-$$"
+    sc_sig_defer
+    if ! sc_under_home "$sc_c" || [ -e "$sc_aside" ] || [ -L "$sc_aside" ] ||
+       ! ( trap '' INT TERM; exec mv -- "$sc_c" "$sc_aside" ) 2>/dev/null; then
+      sc_lock_drop
+      sc_say_held "$sc_c" "$sc_why" "it could not be moved aside to $sc_aside"
+      sc_sig_arm; continue
+    fi
+    SC_LOCK=""   # it went with the checkout
+    # THE MOVE IS THE COMMIT POINT (lane openRepoTools-3's NIT 353), as
+    # `mutex_steal`'s rename is. What the reads under the lock could not
+    # see, between them and the move, is asked of what was moved: the pid
+    # line of the lock that went with it (a writer that took the lock over
+    # after it was read), the working directories (a process that came in
+    # during the git reads now works in the aside), what leans on it (a
+    # clone made meanwhile names the old path, which is gone, so it is
+    # matched as written), the windows' `LANES_REPO` (D37: a window opened
+    # meanwhile names the old path as spelled), and the mounts (one made
+    # meanwhile is in the aside, which carried it) (rv4b's SHOULD D, for
+    # the last two). Any of them moves it back, and holds it.
+    sc_post=""; sc_moved_line=""
+    IFS= read -r sc_moved_line < "$sc_aside/lanes/.lanes-edit.lock/pid" 2>/dev/null || :
+    if [ "$sc_moved_line" != "$$ $sc_ident" ]; then
+      sc_post="its writers' lock was taken over as it was moved aside (${sc_moved_line:-its pid line cannot be read}), and it is left to that writer"
+    fi
+    sc_cwd_scan
+    sc_x="$(sc_cwd_inside "$sc_aside")"
+    if [ -n "$sc_x" ]; then sc_post="${sc_post:+$sc_post; }a live process came to work in it as it was moved aside (pid $sc_x)"; fi
+    sc_dep_scan
+    if [ -n "$sc_dep_fail" ]; then sc_post="${sc_post:+$sc_post; }what leans on it cannot be told: $sc_dep_fail"; fi
+    # What is inside the aside went with it, and leans on nothing here.
+    sc_x="$(sc_dependents "$sc_c" "$sc_gone$sc_aside
+")"
+    if [ -n "$sc_x" ]; then sc_post="${sc_post:+$sc_post; }leaned on by $sc_x, which came as it was moved aside"; fi
+    sc_repo_scan
+    sc_x="$(sc_repo_inside "$sc_c")"
+    if [ -n "$sc_x" ]; then sc_post="${sc_post:+$sc_post; }the LANES_REPO of a live process came to name it as it was moved aside (pid $sc_x)"; fi
+    if [ "$sc_repo_mode" = none ] && [ "${sc_c%/*}" = "$sc_root" ]; then
+      sc_post="${sc_post:+$sc_post; }whether a window's LANES_REPO names it cannot be told as it was moved aside: there is no /proc here to read a process's environment from"
+    fi
+    sc_mount_scan
+    case "$sc_mount_mode" in
+      none) sc_post="${sc_post:+$sc_post; }whether a file system is mounted in it cannot be told as it was moved aside: no mount table that names / could be read (${LANE_END_MOUNTINFO:-/proc/self/mountinfo}, or mount)" ;;
+      *)
+        sc_x="$(sc_mounts_inside "$sc_aside")" || sc_x="(the mount table could not be matched)"
+        if [ -n "$sc_x" ]; then sc_post="${sc_post:+$sc_post; }a file system came to be mounted at or under it as it was moved aside: $(sc_first "$sc_x")"; fi ;;
+    esac
+    if [ -n "$sc_post" ]; then
+      if [ ! -e "$sc_c" ] && [ ! -L "$sc_c" ] && ( trap '' INT TERM; exec mv -- "$sc_aside" "$sc_c" ) 2>/dev/null; then
+        if [ "$sc_moved_line" = "$$ $sc_ident" ]; then SC_LOCK="$sc_c/lanes/.lanes-edit.lock"; sc_lock_drop; fi
+        sc_say_held "$sc_c" "$sc_why" "$sc_post; it was moved back"
+      else
+        sc_say_held "$sc_c" "$sc_why" "$sc_post; it could not be moved back, and is at $sc_aside, which every later run names"
+      fi
+      sc_sig_arm; continue
+    fi
+    if sc_under_home "$sc_aside"; then
+      ( trap '' INT TERM; exec rm -rf ${sc_rm_x:+"$sc_rm_x"} -- "$sc_aside" ) 2>/dev/null || :
+    fi
+    if [ -e "$sc_aside" ] || [ -L "$sc_aside" ]; then
+      printf '    PARTLY     %s  %s; moved aside to %s, which could not all be removed%s\n' "${sc_c//[[:cntrl:]]/?}" "${sc_why//[[:cntrl:]]/?}" "${sc_aside//[[:cntrl:]]/?}" "${sc_act_ign:+; ${sc_act_ign//[[:cntrl:]]/?}}"
+      sc_partial="${sc_partial:+$sc_partial }$sc_aside"
+      sc_partial_names="${sc_partial_names:+$sc_partial_names }$(sc_said_name "${sc_aside##*/}")"
+      sc_n_partial=$((sc_n_partial + 1))
+      if sc_is_beside "$sc_c"; then sc_nb_partial=$((sc_nb_partial + 1)); fi
+    else
+      printf '    removed    %s  %s%s\n' "${sc_c//[[:cntrl:]]/?}" "${sc_why//[[:cntrl:]]/?}" "${sc_act_ign:+; ${sc_act_ign//[[:cntrl:]]/?}}"
+      sc_n_removed=$((sc_n_removed + 1))
+      if sc_is_beside "$sc_c"; then
+        sc_nb_removed=$((sc_nb_removed + 1))
+        sc_bremoved_names="${sc_bremoved_names:+$sc_bremoved_names }$(sc_said_name "${sc_c##*/}")"
+      else
+        sc_removed_names="${sc_removed_names:+$sc_removed_names }${sc_c##*/}"
+      fi
+    fi
+    sc_gone="$sc_gone$sc_c
+"
+    sc_sig_arm
+  done
+  printf '%s' "$sc_keep_lines"
+  for sc_e in ${sc_leftovers[@]+"${sc_leftovers[@]}"}; do
+    printf '    leftover   %s  the aside of a removal that did not finish (a sweep stopped by a signal, or an rm that met what it could not remove; or one still running): no checkout, and no write goes through it. Look at why, then remove it by hand: chmod -R u+rwX -- %q && rm -rf -- %q\n' \
+      "${sc_e//[[:cntrl:]]/?}" "$sc_e" "$sc_e"
+  done
+  if [ "${#sc_cands[@]}" = 0 ] && [ -z "$sc_keep_lines" ] && [ "${#sc_leftovers[@]}" = 0 ]; then printf '    (nothing)\n'; fi
+
+
+  if [ "$sweep_yes" != 1 ]; then
+    printf '\n  %s removable, %s held under %s/; %s removable, %s held of the %s clone(s) beside W.\n' \
+      "$((sc_n_removable - sc_nb_removable))" "$sc_n_held" "$sc_home" "$sc_nb_removable" "$sc_nb_held" "$sc_n_beside"
+    if [ "$sc_n_removable" -gt 0 ]; then
+      printf '\n  DRY RUN — nothing was removed. Make it the act with:\n'
+      printf '    LANES_LANE=<your lane> %s --sweep-checkouts --yes\n' "$prog"
+      exit 3
+    fi
+    printf '\n  DRY RUN — nothing was removed, and there is nothing to remove.\n'
+    if [ "${#sc_leftovers[@]}" -gt 0 ]; then
+      printf '  (%s leftover aside(s), above, are a person'"'"'s to remove: no sweep removes one)\n' "${#sc_leftovers[@]}"
+    fi
+    exit 0
+  fi
+  printf '\n  %s removed, %s moved aside and not all removed, %s held under %s/; %s removed, %s moved aside and not all removed, %s held of the %s clone(s) beside W.\n' \
+    "$((sc_n_removed - sc_nb_removed))" "$((sc_n_partial - sc_nb_partial))" "$sc_n_held" "$sc_home" \
+    "$sc_nb_removed" "$sc_nb_partial" "$sc_nb_held" "$sc_n_beside"
+  # THE NOTED LINE (S6.2; S2 lists the sweep among the writers): ONE line in
+  # the runner's own log, naming what was removed and what was held, written
+  # by `lanes-edit.sh log` and so through the runner's own checkout under S3
+  # and S4. It is written with `LANES_NO_FETCH` UNSET, because S3 refuses a
+  # writer whose fetch did not run (ratified choice 2; rv1b's MUST 3 on
+  # `lane-worktrees`). Nothing removed is nothing to record, and nothing is
+  # written (`sc_noted_text`, above, says how the line is spelled). A removal
+  # that did not finish is said FIRST, before the write, so no exit of the
+  # write can leave it unsaid (SHOULD 372). From the moment the write starts,
+  # a signal says the line may be on origin already (`sc_noting`).
+  sc_say_partial
+  if [ $((sc_n_removed + sc_n_partial)) -gt 0 ]; then
+    sc_text="$(sc_noted_text)"
+    sc_noted_rc=0
+    # WHAT THE WRITE SAYS IS KEPT, AS WELL AS SHOWN (lane openRepoTools-3's
+    # SHOULD 373): its exit 6 has three causes, and each is finished by other
+    # commands, so its own words choose them. A capture that cannot be made
+    # leaves its words on stderr only, and the remedies for an unknown cause.
+    sc_log_err=""
+    LE_TMP="$(mktemp "${TMPDIR:-/tmp}/lane-end-sweep.XXXXXX" 2>/dev/null || printf '')"
+    sc_noting=1
+    if [ -n "$LE_TMP" ]; then
+      sc_log_noted "$LE_TMP" || sc_noted_rc=$?
+      sc_log_err="$(cat -- "$LE_TMP" 2>/dev/null)" || sc_log_err=""
+      rm -f -- "$LE_TMP"; LE_TMP=""
+      if [ -n "$sc_log_err" ]; then printf '%s\n' "$sc_log_err" >&2; fi
+    else
+      sc_log_noted || sc_noted_rc=$?
+    fi
+    # A WRITE THAT DID NOT CONFIRM IS NOT A WRITE THAT DID NOT HAPPEN (rv4's
+    # SHOULD 2). `log`'s 3 is `pushed, not confirmed`: the line may be on
+    # origin already. Its 6 is, in most of its causes, the commit KEPT in the
+    # checkout the write went through and not on origin, and in the rest a
+    # `git add` or `commit` that failed, with nothing committed. Writing the
+    # line again after either would record the sweep twice, or meet S3's
+    # refusal of a checkout holding a commit origin lacks. So a 3 is handed
+    # THE PUBLISH ACT alone (Amendment 23 S4, #194): `commit` with nothing
+    # staged sends what origin lacks by content and says so where it lacks
+    # nothing, so it is safe to run whichever happened. A 6 is handed what
+    # its own cause needs (below), and every other refusal the line by hand.
+    if [ "$sc_noted_rc" != 0 ]; then
+      sc_by_hand="$(sc_by_hand_of "$sc_text")"
+      case "$sc_noted_rc" in
+        3)
+          note "the NOTED line recording this sweep was committed and pushed, and the read-back could not confirm it on origin (\`lanes-edit.sh log\` exited 3, above), so it may be on origin already, and it is not to be written again. Nothing was lost: each checkout removed held nothing unpublished. The publish act sends its commit only where origin lacks it by content, and says so where origin has it:"
+          note "  $sc_publish"
+          exit 1 ;;
+        6)
+          # EXIT 6 HAS THREE CAUSES, AND EACH IS FINISHED ITS OWN WAY (lane
+          # openRepoTools-3's SHOULD 373), chosen by the write's own words:
+          # a push refused with origin unmoved leaves the line committed, and
+          # the publish act sends it once what refused it is put right; a
+          # `git add` or `git commit` that failed leaves the line staged or
+          # in the tree, which the publish act and the line by hand would
+          # both refuse, so the log is put back first; and a push that lost
+          # the race to its bound leaves the line committed on a base origin
+          # has moved past, which the publish act (a fast-forward only) and
+          # the line by hand (S3: a commit origin lacks) would both refuse,
+          # so it is archived on origin (S6.3) and taken off the checkout
+          # first. Words this sweep does not know get both remedies, in the
+          # order that is safe whichever happened.
+          case "$sc_log_err" in
+            *"with origin/$sc_branch unmoved"*)
+              note "the NOTED line recording this sweep is committed in $sc_wco and was not published: its push was refused with origin/$sc_branch unmoved (\`lanes-edit.sh log\` exited 6, above), so only origin lacks it, and it is not to be written again. Nothing was lost: each checkout removed held nothing unpublished. Once what refused the push is put right, the publish act sends it:"
+              note "  $sc_publish" ;;
+            *"git add failed"* | *"git commit failed"*)
+              note "the NOTED line recording this sweep was NOT committed: git could not add or commit it in $sc_wco (\`lanes-edit.sh log\` exited 6, above), so it is left there, staged or in the working tree, and none of it is on origin. Nothing was lost: each checkout removed held nothing unpublished. Once what refused the commit is put right, put the log back and write the line by hand:"
+              note "  git -C $(printf '%q' "$sc_wco") restore --staged --worktree -- $(printf '%q' "lanes/log/$sc_runner.md")"
+              note "  $sc_by_hand" ;;
+            *"the commit is local and kept on HEAD"* | *"git could not name the commit to drop this write's to"*)
+              note "the NOTED line recording this sweep is committed in $sc_wco and could not be published: origin/$sc_branch moved under its push until the write gave up (\`lanes-edit.sh log\` exited 6, above), and the publish act makes only a fast-forward. Nothing was lost: each checkout removed held nothing unpublished. Archive the commit on origin (Amendment 23 S6.3), take it off the checkout, and write the line by hand:"
+              note "  git -C $(printf '%q' "$sc_wco") push origin HEAD:refs/heads/archive/$sc_runner-stranded-$sc_utc"
+              note "  git -C $(printf '%q' "$sc_wco") reset --keep refs/remotes/origin/$sc_branch"
+              note "  $sc_by_hand" ;;
+            *)
+              note "the NOTED line recording this sweep was not published (\`lanes-edit.sh log\` exited 6, above). Nothing was lost: each checkout removed held nothing unpublished. Where that says its commit is kept, the line is committed and only origin lacks it, so it is not to be written again: the publish act sends what origin lacks by content:"
+              note "  $sc_publish"
+              note "Only where the publish act finds nothing to send (git could not add or commit the line, above) is it written by hand:"
+              note "  $sc_by_hand" ;;
+          esac
+          exit 1 ;;
+      esac
+      die "the NOTED line recording this sweep was NOT written (\`lanes-edit.sh log\` exited $sc_noted_rc, above), so lane $sc_runner's log does not say what was removed. Nothing was lost: each checkout removed held nothing unpublished. Write the line by hand: $sc_by_hand" 1
+    fi
+    printf '  NOTED in lane %s'"'"'s log: %s\n' "$sc_runner" "$sc_text"
+  fi
+  # A removal that did not finish was said before the write (above).
+  if [ -n "$sc_partial" ]; then exit 1; fi
+  exit 0
+fi
+
 # THE SWEEP'S OWN FLAGS BELONG TO THE SWEEP (Copilot round 3 on #93). They are
 # parsed above for every invocation, and without this `lane-end <lane> --yes`
 # ran the ORDINARY ending — a line that reads like a confirmed sweep doing
@@ -873,7 +2629,7 @@ fi
 # reason on the floor. Neither is a typo this command may interpret.
 if [ -z "$retire_dormant" ]; then
   [ "$sweep_yes" = 0 ] ||
-    die "--yes is the word that makes the SWEEP the act (Amendment 19(c)) and it belongs to --retire-dormant. Ending one lane needs no confirmation and takes none: $prog <lane>. Nothing was written." 2
+    die "--yes is the word that makes a SWEEP the act and it belongs to --retire-dormant (Amendment 19(c)) or --sweep-checkouts (Amendment 23 S6.2). Ending one lane needs no confirmation and takes none: $prog <lane>. Nothing was written." 2
   [ -z "$sweep_reason" ] ||
     die "--reason says why a repository's DORMANT ROWS are being retired (Amendment 19(c)) and it belongs to --retire-dormant; ending one lane writes its own closing line and would drop these words. Nothing was written: $prog <lane>, or $prog --retire-dormant <repo> --reason \"$sweep_reason\"." 2
 fi
