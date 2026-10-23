@@ -2570,3 +2570,27 @@ def test_a_removal_beside_W_that_does_not_finish_leaves_its_aside_beside_W(sweep
             (aside / "scratch").chmod(0o755)
         if (c3 / "scratch").is_dir():
             (c3 / "scratch").chmod(0o755)
+
+
+# ------------------------------------------------------------ the source
+
+def _sweep_section() -> list:
+    """`lane-end`'s sweep, from its section's header to the `fi` that ends
+    it: `(line number, line)` pairs."""
+    lines = (REPO / "lane-end").read_text(encoding="utf-8").splitlines()
+    start = next(i for i, line in enumerate(lines)
+                 if line.startswith("# ---- AMENDMENT 23 S6.2: `--sweep-checkouts`"))
+    end = lines.index("fi", start)
+    return list(enumerate(lines[start:end + 1], start + 1))
+
+
+def test_the_sweeps_comments_are_80_columns_or_less():
+    """THE SWEEP'S COMMENTS WRAP AT 80 COLUMNS (lane openRepoTools-3's NIT
+    394): one line stood at 93 in a block that is otherwise 80 or less.
+    Every comment line of the section is held to it, counted in
+    characters, since a dash is one column and three bytes."""
+    section = _sweep_section()
+    assert len(section) > 1000, "the section was found whole"
+    wide = [(n, len(line)) for n, line in section
+            if line.lstrip().startswith("#") and len(line) > 80]
+    assert not wide, wide

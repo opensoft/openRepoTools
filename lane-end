@@ -1378,10 +1378,11 @@ SC_IDX
   #       `lanes/`, because no tool can tell a person's work from scratch; an
   #       operation in progress, unmerged entries, a held `index.lock`, the
   #       checkout's own writers' lock, and a hand edit of the register that
-  #       `lanes-edit.sh commit` keeps in `.git/lanes-edit/`. No `origin/<branch>` to compare
-  #       with is itself a hold: nothing can be proved published. IGNORED
-  #       files do not hold — the register's own rules keep them out of every
-  #       commit — and they are named, so a person sees them first;
+  #       `lanes-edit.sh commit` keeps in `.git/lanes-edit/`. No
+  #       `origin/<branch>` to compare with is itself a hold: nothing can be
+  #       proved published. IGNORED files do not hold — the register's own
+  #       rules keep them out of every commit — and they are named, so a
+  #       person sees them first;
   #   (b) another repository whose alternates file names its objects, looked
   #       for under W's parent, `$TMPDIR` and `$HOME` (SHOULD 352, below), and
   #       its own linked worktrees; a scan that cannot finish holds them all;
