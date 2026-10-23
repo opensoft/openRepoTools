@@ -1424,6 +1424,10 @@ SC_IDX
   #       it, a window that writes through it (D37, below).
   SC_HOLD=""; SC_IGN=""
   sc_hold() { SC_HOLD="${SC_HOLD:+$SC_HOLD; }$1"; }
+  # WHAT GOES WITH A CHECKOUT AND HOLDS NOTHING IS NAMED beside it, on the
+  # dry run's `remove` line and the act's `removed` line, so a person sees
+  # it first: its ignored files, and the commits only its reflog reaches.
+  sc_named() { SC_IGN="${SC_IGN:+$SC_IGN; }$1"; }
   sc_first() {   # <lines> — the count and the first three, as `N (a b c)`
     scf_n="$(printf '%s\n' "$1" | awk 'NF { n++ } END { print n + 0 }')" || scf_n="?"
     scf_h="$(printf '%s\n' "$1" | awk 'NF && k < 3 { print; k++ }' | tr '\n' ' ')" || scf_h=""
@@ -1525,7 +1529,14 @@ SH_REFS
       if [ -n "$sh_x" ]; then sc_hold "linked worktree(s) of it: $(sc_first "$sh_x") (git -C $sh_p worktree list)"; fi
     fi
     sh_x="$(git -C "$sh_p" ls-files --others --ignored --exclude-standard --directory 2>/dev/null)" || sh_x=""
-    if [ -n "$sh_x" ]; then SC_IGN="ignored, which holds nothing: $(sc_first "$sh_x")"; fi
+    if [ -n "$sh_x" ]; then sc_named "ignored, which holds nothing: $(sc_first "$sh_x")"; fi
+    # A COMMIT ONLY THE REFLOG REACHES (lane openRepoTools-3's NIT 354): one
+    # a reset took off its branch is on no ref, and the removal takes the
+    # reflog that could undo the reset. It holds nothing, since a write
+    # replayed after a lost push race leaves one whose patch origin has, so
+    # a hold would keep such a checkout for good; it is named.
+    sh_x="$(git -C "$sh_p" rev-list --abbrev-commit --reflog --not --all 2>/dev/null)" || sh_x=""
+    if [ -n "$sh_x" ]; then sc_named "commit(s) only its reflog reaches, which go with it: $(sc_first "$sh_x")"; fi
     return 0
   }
 

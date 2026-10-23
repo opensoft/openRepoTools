@@ -2732,3 +2732,25 @@ def test_a_name_with_a_control_character_writes_no_line_of_its_own(sweep):
         assert len(lines) == 1, lines
         assert lines[0].startswith(f"    keep       {shown}  "), lines
     assert odd.is_dir()
+
+
+def test_commits_only_the_reflog_reaches_are_named(sweep):
+    """A COMMIT ONLY THE REFLOG REACHES IS NAMED (lane openRepoTools-3's NIT
+    354). A commit taken off the branch by `reset --keep HEAD~1` is on no
+    ref, so nothing holds the checkout, and its removal takes the reflog
+    that could undo a mistaken reset. It holds nothing, since every write
+    that loses a push race leaves such a commit whose patch origin has; but
+    the dry run and the act name it beside the checkout, so a person sees
+    it first."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    box.write(c, "handoffs/undone.md", "a commit a reset took off the branch\n")
+    box.commit(c, "undone", "handoffs/undone.md")
+    sha = box.git("-C", str(c), "rev-parse", "--short", "HEAD").strip()
+    box.git("-C", str(c), "reset", "-q", "--keep", "HEAD~1")
+    said = f"commit(s) only its reflog reaches, which go with it: 1 ({sha})"
+    for args, env, tag in ((), {}, "remove"), (("--yes",), {"LANES_LANE": RUNNER}, "removed"):
+        result, rows = sweep(*args, **env)
+        assert result.returncode in (0, 3), (result.stdout, result.stderr)
+        assert rows[str(c)][0] == tag, rows[str(c)]
+        assert said in rows[str(c)][1], rows[str(c)]
