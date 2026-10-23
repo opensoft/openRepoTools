@@ -2620,3 +2620,34 @@ def test_a_lanes_folder_that_cannot_be_entered_or_listed_is_refused(sweep):
     finally:
         box.lanes_root.chmod(0o755)
     assert box.everything() == before
+
+
+@pytest.mark.parametrize("spelled", ["W", "a linked worktree of W"])
+def test_yes_with_LANES_REPO_naming_W_is_refused_before_anything_is_removed(sweep, spelled):
+    """UNDER ROUTING, A `LANES_REPO` THAT IS W REFUSES `--yes` BEFORE ANYTHING
+    IS REMOVED (lane openRepoTools-3's NIT 376). `lanes-edit.sh` refuses a
+    write through W, the readers' copy (Amendment 23 S5), by its toplevel or
+    its git common directory, so the sweep removed a checkout and then its
+    NOTED line was refused, and the by-hand line it printed again in that
+    window. Now it refuses with 2 in S5's words, the CLOSED lane's checkout
+    stays and nothing reaches origin. The dry run writes nothing, and still
+    lists. (A `LANES_REPO` naming W's `lanes/` directory is no register
+    checkout at all, and the listing itself refuses it.)"""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    named = box.w
+    if spelled == "a linked worktree of W":
+        named = box.root / "w-linked"
+        box.git("-C", str(box.w), "worktree", "add", "-q", "--detach", str(named))
+    head = box.origin_head()
+    result, rows = sweep(LANES_REPO=str(named))
+    assert result.returncode == 3, (result.stdout, result.stderr)
+    assert rows[str(c)][0] == "remove", rows[str(c)]
+    result, rows = sweep("--yes", LANES_LANE=RUNNER, LANES_REPO=str(named))
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "that checkout is the readers' copy: no tool writes there (Amendment 23 S5)" \
+        in result.stderr, result.stderr
+    assert f"the line goes through {box.lanes_root}/{RUNNER}/" in result.stderr, result.stderr
+    assert "Nothing was removed." in result.stderr, result.stderr
+    assert c.is_dir()
+    assert box.origin_head() == head, "nothing reached origin"
