@@ -2278,6 +2278,10 @@ DEPENDENTS_AFAR = [
                  id="five levels under W's parent"),
     pytest.param(lambda box: Path(box.env["TMPDIR"]) / "rescue",
                  id="in TMPDIR"),
+    pytest.param(lambda box: (Path(box.env["TMPDIR"]) / "claude-1000" / "-proj" / "sess"
+                              / "scratchpad" / "act2" / "w4" / "c23" / "clone"),
+                 id="in a Claude Code scratchpad, eight levels under TMPDIR"),
+    pytest.param(lambda box: box.home / "rescue", id="in HOME"),
     pytest.param(lambda box: box.lanes_root / "tab\there",
                  id="whose own path holds a TAB"),
 ]
@@ -2288,8 +2292,10 @@ def test_a_dependent_anywhere_in_the_scope_holds(sweep, where):
     """WHAT LEANS ON A CHECKOUT IS LOOKED FOR WHERE CLONES ARE MADE (lane
     openRepoTools-3's SHOULD 352; S6.2 (b): *"no other clone's alternates
     file names it"*): under W's parent to depth 6, hidden directories
-    included, and under `$TMPDIR` and `$HOME` to depth 4, not only in W, the
-    entries beside it and `<W>-lanes/`. A `--reference` clone of the CLOSED
+    included, under `$TMPDIR` to depth 8, where Claude Code's scratchpads
+    keep their clones at depth 5 and below (rv4b's SHOULD C, probe P3), and
+    under `$HOME` to depth 4, not only in W, the entries beside it and
+    `<W>-lanes/`. A `--reference` clone of the CLOSED
     lane's checkout, with a commit of its own, holds it in each place, by
     the dry run and by `--yes`, and stays whole. A TAB in the dependent's
     own path splits off only its name (NIT 378: the target is written
@@ -2314,8 +2320,9 @@ def test_the_dry_run_names_the_dependents_scope(sweep):
     result, _ = sweep()
     assert result.returncode == 3, (result.stdout, result.stderr)
     assert (f"  dependents     : every repository under {box.w.parent}/ to depth 6, hidden "
-            f"ones too, and under {box.env['TMPDIR']}/ and {box.home}/ to depth 4; read "
-            "again under each lock") in result.stdout, result.stdout
+            f"ones too, under {box.env['TMPDIR']}/ to depth 8, for the clones in a Claude "
+            f"Code scratchpad, and under {box.home}/ to depth 4; read again under each "
+            "lock") in result.stdout, result.stdout
 
 
 def test_a_dependents_scan_that_fails_holds_every_candidate(sweep):

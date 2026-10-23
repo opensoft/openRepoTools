@@ -1682,8 +1682,13 @@ SH_Y
   # (b) WHAT LEANS ON WHAT, LOOKED FOR WHERE CLONES ARE MADE (lane
   # openRepoTools-3's SHOULD 352; S6.2 (b): *"no other clone's alternates
   # file names it"*): every repository under W's parent to depth 6, hidden
-  # directories included, and under `$TMPDIR` (or /tmp) and `$HOME` to depth
-  # 4, by their real paths. `find` lists each object directory, pruned there,
+  # directories included, under `$TMPDIR` (or /tmp) to depth 8, and under
+  # `$HOME` to depth 4, by their real paths. `$TMPDIR` goes deeper for
+  # Claude Code's scratchpads (rv4b's SHOULD C): one is
+  # `claude-<uid>/<project>/<session>/scratchpad` under it, so a clone made
+  # in it stands at depth 5, its object directory at 7, and a clone in a
+  # folder of its own there deeper still. `find` lists each object
+  # directory, pruned there,
   # and each `.git` FILE. An object directory with an alternates file is a
   # repository's store, and each line of that file names an object directory
   # the repository borrows from: `sc_dep_lines` holds `<the real object
@@ -1727,7 +1732,7 @@ SH_Y
     printf '%s' "$sfe_x"
   }
   sc_dep_root 6 "$sc_root"
-  sc_dep_root 4 "${TMPDIR:-/tmp}"
+  sc_dep_root 8 "${TMPDIR:-/tmp}"
   sc_dep_root 4 "${HOME:-}"
   sc_dep_scan() {
     sc_dep_lines=""; sc_gitfile_lines=""; sc_dep_fail=""; sc_dep_unread=0
@@ -2164,8 +2169,8 @@ SS_ROW
   if [ "$sc_hidden" -gt 0 ]; then
     printf '  (%s hidden entr(ies) under %s/ - creation locks, partial clones, the sidecar lock - are never looked at)\n' "$sc_hidden" "$sc_home"
   fi
-  printf '  dependents     : every repository under %s/ to depth 6, hidden ones too, and under %s/ and %s/ to depth 4; read again under each lock\n' \
-    "${sc_dep_named[0]}" "${sc_dep_named[1]}" "${sc_dep_named[2]}"
+  printf '  dependents     : every repository under %s/ to depth %s, hidden ones too, under %s/ to depth %s, for the clones in a Claude Code scratchpad, and under %s/ to depth %s; read again under each lock\n' \
+    "${sc_dep_named[0]}" "${sc_dep_to[0]}" "${sc_dep_named[1]}" "${sc_dep_to[1]}" "${sc_dep_named[2]}" "${sc_dep_to[2]}"
   sc_cwd_scan; sc_mount_scan; sc_repo_scan
   if [ "$sc_cwd_unread" -gt 0 ]; then
     printf '  (%s process(es) whose working directory could not be read - another user'"'"'s, or ended while read - do not hold anything)\n' "$sc_cwd_unread"
