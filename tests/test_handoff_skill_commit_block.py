@@ -137,7 +137,8 @@ def _code_lines(blocks: list[str]) -> list[str]:
 STUB = f"""#!{sys.executable}
 import json, os, sys
 argv = sys.argv[1:]
-rec = {{"argv": argv, "lane": os.environ.get("LANES_LANE")}}
+rec = {{"argv": argv, "lane": os.environ.get("LANES_LANE"),
+       "no_fetch": os.environ.get("LANES_NO_FETCH")}}
 if argv[:1] == ["write-handoff"] and "--whole" in argv:
     try:
         with open(argv[argv.index("--whole") + 1], "rb") as f:
@@ -148,6 +149,8 @@ with open(os.environ["STUB_LOG"], "a", encoding="utf-8") as log:
     log.write(json.dumps(rec) + "\\n")
 verb = argv[0] if argv else ""
 if verb == "handoff-path":
+    if os.environ.get("STUB_HP_ERR"):
+        print(os.environ["STUB_HP_ERR"], file=sys.stderr)
     if os.environ.get("STUB_HP_OUT"):
         print(os.environ["STUB_HP_OUT"])
     sys.exit(int(os.environ.get("STUB_HP_RC", "0")))
@@ -433,21 +436,88 @@ def test_refusal_text_keeps_R_A11_11():
 
 # --- where the handoff is not found, and the file the session never wrote ----
 
+#: What the session is told to do with the top block it could not write.
+KEEP_IN_REPORT = "put it whole in the report"
+
+
 @pytest.mark.parametrize("shell", SHELLS)
 @pytest.mark.parametrize("how, extra", [
     ("exit 8: no row, or a row that names no handoff", {"STUB_HP_RC": "8", "STUB_HP_OUT": ""}),
-    ("exit 1: a register that could not be read", {"STUB_HP_RC": "1", "STUB_HP_OUT": ""}),
     ("exit 0 and a path that is not a file", {"STUB_HP_OUT": "/nowhere/at/all.md"}),
     ("exit 0 and no path", {"STUB_HP_OUT": ""}),
-], ids=["no-handoff", "unreadable", "not-a-file", "no-path"])
+], ids=["no-handoff", "not-a-file", "no-path"])
 def test_a_handoff_that_is_not_found_is_said_and_write_handoff_is_never_called(
         estate, shell, how, extra):
     proc = estate.run(shell, estate.step2(), **extra)
     assert proc.returncode == 0, "the swap goes on"
     assert "HANDOFF NOT FOUND" in proc.stdout, proc.stdout
-    assert "HANDOFF NOT WRITTEN" in proc.stdout and "was NOT called" in proc.stdout, proc.stdout
+    assert "HANDOFF READ FAILED" not in proc.stdout, proc.stdout
+    assert "HANDOFF NOT WRITTEN" in proc.stdout, proc.stdout
+    assert "was NOT called" in proc.stdout, proc.stdout
+    assert KEEP_IN_REPORT in proc.stdout, "the new top block is kept in the report"
     assert estate.verbs() == ["handoff-path"], estate.calls()
     assert proc.stdout.endswith("AFTER\n")
+
+
+#: `lanes-edit.sh`'s unknown-subcommand refusal, as a helper predating
+#: `handoff-path` (main at `33ce26d`) prints it on stderr, with exit 2.
+OLDER_HELPER = ("lanes-edit.sh: unknown subcommand 'handoff-path' "
+                "(verify-row|set-row-state|append-line|commit|publish-handoff)")
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("rc, err, must, never", [
+    ("1", "the register could not be read (R22: never 8)",
+     ["exited 1 (its words are above)"], ["Update lanes-edit.sh", "step 2 again"]),
+    ("2", "the clone of the lane checkout failed",
+     ["exited 2 (its words are above)"], ["Update lanes-edit.sh", "step 2 again"]),
+    ("2", OLDER_HELPER,
+     ["exited 2", "unknown subcommand", "predates handoff-path", "Update lanes-edit.sh",
+      "step 2 again"], []),
+    ("4", "the lock that makes the lane checkout is held",
+     ["exited 4", "Run step 2 again"], ["Update lanes-edit.sh"]),
+    ("64", "usage: handoff-path <lane> [--create]",
+     ["exited 64 (its words are above)"], ["Update lanes-edit.sh", "step 2 again"]),
+    ("127", "lanes-edit.sh: not found",
+     ["exited 127 (its words are above)"], ["Update lanes-edit.sh", "step 2 again"]),
+], ids=["unreadable", "clone-failed", "older-helper", "lock", "usage", "no-helper"])
+def test_a_read_that_failed_is_never_said_as_no_handoff(estate, shell, rc, err, must, never):
+    """rv3's MUST 1 on #311 at `b599ed9`: only `handoff-path`'s 8 is "no
+    handoff". Any other exit is a read that FAILED (Amendment 7(d); the verb's
+    own "R22: never 8"), and it says so with the code: an older helper's
+    unknown-subcommand 2 is told to update `lanes-edit.sh`, and the creation
+    lock's 4 to run step 2 again. In every one the call is not made, the
+    session is told to keep its new top block in the report, and the swap goes
+    on (`R-A11-11`)."""
+    proc = estate.run(shell, estate.step2(), STUB_HP_RC=rc, STUB_HP_OUT="", STUB_HP_ERR=err)
+    assert proc.returncode == 0, "the swap goes on"
+    assert proc.stdout.endswith("AFTER\n"), proc.stdout
+    assert "HANDOFF READ FAILED" in proc.stdout, proc.stdout
+    assert "The read failed" in proc.stdout, proc.stdout
+    assert "HANDOFF NOT FOUND" not in proc.stdout, f"exit {rc} is not 'no handoff'"
+    for words in must:
+        assert words in proc.stdout, f"{words!r} missing from\n{proc.stdout}"
+    for words in never:
+        assert words not in proc.stdout, f"{words!r} must not be said\n{proc.stdout}"
+    assert "was NOT called" in proc.stdout, proc.stdout
+    assert KEEP_IN_REPORT in proc.stdout, "the new top block is kept in the report"
+    assert "write-handoff" not in estate.verbs(), estate.calls()
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("rc", ["1", "2", "4"])
+def test_only_a_2_is_asked_again_and_never_with_create(estate, shell, rc):
+    """An older helper's words are read by asking the same read a second time
+    with only its stderr kept, as step 1's `sread` does, and only for a 2. The
+    second ask is a READ: no `--create`, so a clone that failed is not tried
+    again, and the fetch is skipped."""
+    estate.run(shell, estate.step2(), STUB_HP_RC=rc, STUB_HP_OUT="", STUB_HP_ERR=OLDER_HELPER)
+    asked = [(c["argv"], c["no_fetch"]) for c in estate.calls()]
+    if rc == "2":
+        assert asked == [(["handoff-path", LANE, "--create"], None),
+                         (["handoff-path", LANE], "1")], asked
+    else:
+        assert asked == [(["handoff-path", LANE, "--create"], None)], asked
 
 
 @pytest.mark.parametrize("shell", SHELLS)

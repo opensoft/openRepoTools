@@ -340,15 +340,27 @@ fallback. A read that failed is no answer (Amendment 7(d)), so nothing is guesse
 makes that checkout first where this is its first use, so that there is a file to read. The SHA-256 of the
 file as it stands is the digest the verb holds this write to: it replaces the file only while the file still
 has those bytes (exit 7 where it does not), so the new file is made from what was read here and never from a
-copy that has moved. Where the block below prints `HANDOFF NOT FOUND` there is no file to write into: the call
-under "THE WRITE IS ONE CALL" is not made, and the swap goes on with the gap in the report (`R-A11-11`, *a
-swap is never left unwritten*).
+copy that has moved. Where the block below prints `HANDOFF NOT FOUND` (`handoff-path`'s 8: no row, or a row
+that names no handoff) there is no file to write into. Where it prints `HANDOFF READ FAILED`, the read
+failed, and that is never "no handoff": every exit but 0 and 8 is one, and the line quotes it. A 2 whose words
+say "unknown subcommand" is a `lanes-edit.sh` predating `handoff-path`, to be updated; a 4 is the lock that
+makes the lane's checkout, and step 2 is run again. In either case the call under "THE WRITE IS ONE CALL" is
+not made, the new top block is still written and kept whole in the report, so that it can be put at the head
+of the handoff by hand, and the swap goes on with the gap in the report (`R-A11-11`, *a swap is never left
+unwritten*).
 
 ```sh
 # WHERE THE HANDOFF IS: derived, never spelled. `handoff-path` only reads, and `--create` makes the lane's own
 # checkout first where this is its first use.
-hf_rc=0; handoff_file=""; prior_sha256=""; prepared_file=""
+hf_rc=0; handoff_file=""; prior_sha256=""; prepared_file=""; hf_said=""
 handoff_file="$("$L" handoff-path "$lane" --create)" || hf_rc=$?
+# ONLY 8 IS "NO HANDOFF" (Amendment 7(d): a read that failed is no answer). 1 is a register it could not read
+# (its own "R22: never 8"), 2 a name refused or a clone that failed, 4 the lock that makes the checkout, and a
+# `lanes-edit.sh` predating `handoff-path` says 2 from its unknown-subcommand arm. A 2 is asked a second time
+# with only its stderr kept, as `sread` asks, to tell those apart: WITHOUT `--create`, so it is a read and
+# clones nothing, and without the fetch.
+[[ "$hf_rc" != 2 ]] || hf_said="$(LANES_NO_FETCH=1 "$L" handoff-path "$lane" 2>&1 >/dev/null || :)"
+hf_keep="Write the new top block all the same and put it whole in the report: it is then the one copy, and it goes at the head of the handoff by hand once this is answered. The swap goes on (R-A11-11)."
 if [[ "$hf_rc" == 0 && -n "$handoff_file" && -f "$handoff_file" ]]; then
   # THE DIGEST OF WHAT IS THERE NOW, by the two tools the helper's own `lane_handoff_digest` tries:
   # `sha256sum` on Linux, `shasum -a 256` on macOS.
@@ -366,8 +378,20 @@ if [[ "$hf_rc" == 0 && -n "$handoff_file" && -f "$handoff_file" ]]; then
   printf 'handoff_file=%s\nprior_sha256=%s\nprepared_file=%s\n' \
     "$handoff_file" "${prior_sha256:-<none>}" "${prepared_file:-<none>}"
 else
-  printf 'HANDOFF NOT FOUND: `%s handoff-path %s --create` exited %s and named %s, so there is no handoff to write into and the call under "THE WRITE IS ONE CALL" is NOT made. The swap goes on (R-A11-11); the report carries this line.\n' \
-    "$L" "$lane" "$hf_rc" "${handoff_file:-no file}"
+  case "$hf_rc:$hf_said" in
+    0:*|8:*)
+      printf 'HANDOFF NOT FOUND: `%s handoff-path %s --create` exited %s and named %s: the register has no row for this lane, its row names no handoff, or no file is there, so there is no handoff to write into and the call under "THE WRITE IS ONE CALL" is NOT made. %s\n' \
+        "$L" "$lane" "$hf_rc" "${handoff_file:-no file}" "$hf_keep" ;;
+    4:*)
+      printf 'HANDOFF READ FAILED: `%s handoff-path %s --create` exited 4: another write held the lock that makes the lane checkout. The read failed, and that is not "no handoff" (Amendment 7(d)), so the call under "THE WRITE IS ONE CALL" is NOT made. Run step 2 again, from the block under WHERE THE HANDOFF IS. %s\n' \
+        "$L" "$lane" "$hf_keep" ;;
+    2:*"unknown subcommand"*)
+      printf 'HANDOFF READ FAILED: `%s handoff-path %s --create` exited 2, and the helper says "unknown subcommand": this lanes-edit.sh predates handoff-path. The read failed, and that is not "no handoff" (Amendment 7(d)), so the call under "THE WRITE IS ONE CALL" is NOT made. Update lanes-edit.sh (openRepoTools --install installs it with this skill), then run step 2 again. %s\n' \
+        "$L" "$lane" "$hf_keep" ;;
+    *)
+      printf 'HANDOFF READ FAILED: `%s handoff-path %s --create` exited %s (its words are above). The read failed, and that is not "no handoff" (Amendment 7(d)), so the call under "THE WRITE IS ONE CALL" is NOT made. %s\n' \
+        "$L" "$lane" "$hf_rc" "$hf_keep" ;;
+  esac
   handoff_file=""
 fi
 ```
