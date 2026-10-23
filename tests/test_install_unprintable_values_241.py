@@ -41,6 +41,15 @@ places nothing. The cases are under "a bad value stops the run before it asks
 anyone anything". The colon, which only the directory refuses (in `wip init` as
 in `--install`), has cases of its own beside the rows the rule takes, for the
 repository and the ref and for the directory.
+
+THE DIRECTORY'S REFUSAL GIVES A REASON FOR THE KIND IT FOUND, and each command
+gives it in its own words (`REASONS`, below). A control character or a
+misdrawn one is a character no line can print as it reads. A `:` is one a
+`$PATH` cannot hold, because it splits one: the note about `$PATH` cannot name
+the directory, or be followed for it. The kind a refusal names is not its
+reason, so each of the four reasons is pinned beside the directory's rows, for
+`--install` and for `wip init`: a refusal that swapped the two would still name
+the right kind, and nothing else here would notice.
 """
 
 from __future__ import annotations
@@ -94,6 +103,34 @@ MISDRAWN = (0x00AD, 0x061C, 0x200B, 0x200E, 0x200F, *range(0x2028, 0x202F),
 #: What each refusal says of a value, by the kind it found.
 HOLDS_A_COLON = "holds a ':'"
 HOLDS_A_CONTROL_CHARACTER = "holds a control character"
+
+#: WHY the directory's refusal says the run will not go on, which is not the
+#: same for every kind it found, and is what `HOLDS_A_COLON` and the rest do
+#: not say. A control character or a misdrawn one is `UNPRINTABLE`: no line
+#: that names the directory can print it as it reads. A `:` is `SPLITS_A_PATH`:
+#: the directory goes on a `$PATH`, a `:` splits one whatever the quoting, and
+#: the note about `$PATH` cannot name the directory or be followed for it. A
+#: directory holding a `:` AND a control or misdrawn character is refused for
+#: that one first, so its reason is the unprintable one. `--install` and `wip
+#: init` each give each reason in their own words (`refuse_bad_bin_dir`), after
+#: the kind and before "Set ...", and `REASONS` is the four of them, by command
+#: and by reason, exactly as the refusal prints them.
+INSTALL_COMMAND = "--install"
+WIP_COMMAND = "wip init"
+UNPRINTABLE = "no line can print the name as it reads"
+SPLITS_A_PATH = "a ':' splits the $PATH that the note is about"
+REASONS = {
+    (INSTALL_COMMAND, UNPRINTABLE):
+        "so no line about $PATH can print the name as it reads.",
+    (INSTALL_COMMAND, SPLITS_A_PATH):
+        "so no line about $PATH can name it.",
+    (WIP_COMMAND, UNPRINTABLE):
+        "That command names the directory as typed, in its own lines and in a "
+        "note about $PATH, so none of them can print it as it reads.",
+    (WIP_COMMAND, SPLITS_A_PATH):
+        "That command's note about $PATH says to add the directory, which a "
+        "':' makes impossible.",
+}
 
 
 def drawn_as_another(named: str) -> str:
@@ -320,6 +357,22 @@ def refusal_words(opening: str, said: str) -> str:
                       else drawn_as_another(said))
 
 
+def assert_gives_the_reason(said_in_full: str, command: str, why: str) -> None:
+    """`said_in_full`, the refusal `assert_refused_saying` returned, gives
+    `command`'s reason for `why` (`UNPRINTABLE` or `SPLITS_A_PATH`), in
+    `command`'s words, and none of the other three reasons: not the other
+    kind's, and not either of the other command's. The kind a refusal names
+    says WHAT it found, and a refusal that named the right kind could still
+    give the wrong reason for it."""
+    assert REASONS[command, why] in said_in_full, (
+        f"{command}'s reason for {why!r} is not given: {said_in_full}")
+    for (other_command, other_why), other in REASONS.items():
+        if (other_command, other_why) != (command, why):
+            assert other not in said_in_full, (
+                f"{other_command}'s reason for {other_why!r} is given as "
+                f"well: {said_in_full}")
+
+
 # --- the directory: what no line about `$PATH` can name ---------------------
 
 #: Directories no `export PATH=` line can name, and what their refusal says:
@@ -327,33 +380,45 @@ def refusal_words(opening: str, said: str) -> str:
 #: holds one (nothing here spells one the way bash does, and on Windows the way
 #: in is WSL2). A control character or a misdrawn one is refused FIRST, so a
 #: directory holding both is refused for that, in its words: they are the
-#: checks that never echo.
+#: checks that never echo. The third column is the REASON the refusal gives
+#: (`REASONS`): a `:` alone is refused for the `$PATH` it splits, and a
+#: directory holding a `:` and a control or misdrawn character is refused for
+#: the unprintable one, because that check comes first.
 UNNAMEABLE_BIN_DIRS = [
-    pytest.param("{d}/a:b/bin", HOLDS_A_COLON, id="a-colon"),
-    pytest.param("{d}/bin:{d}/other", HOLDS_A_COLON, id="two-directories"),
-    pytest.param("D:tools", HOLDS_A_COLON, id="a-drive-relative-name"),
-    pytest.param("D:\\tools\\bin", HOLDS_A_COLON, id="a-windows-spelling"),
+    pytest.param("{d}/a:b/bin", HOLDS_A_COLON, SPLITS_A_PATH, id="a-colon"),
+    pytest.param("{d}/bin:{d}/other", HOLDS_A_COLON, SPLITS_A_PATH,
+                 id="two-directories"),
+    pytest.param("D:tools", HOLDS_A_COLON, SPLITS_A_PATH,
+                 id="a-drive-relative-name"),
+    pytest.param("D:\\tools\\bin", HOLDS_A_COLON, SPLITS_A_PATH,
+                 id="a-windows-spelling"),
     pytest.param("{d}/a:b" + ESCAPE + "[31mforged/bin",
-                 HOLDS_A_CONTROL_CHARACTER, id="a-colon-and-an-escape"),
+                 HOLDS_A_CONTROL_CHARACTER, UNPRINTABLE,
+                 id="a-colon-and-an-escape"),
     pytest.param("{d}/a:b" + RLO + "forged/bin",
-                 drawn_as_another("U+202E"), id="a-colon-and-u+202e"),
+                 drawn_as_another("U+202E"), UNPRINTABLE,
+                 id="a-colon-and-u+202e"),
     pytest.param("D:\\tools" + RLO + "forged\\bin",
-                 drawn_as_another("U+202E"),
+                 drawn_as_another("U+202E"), UNPRINTABLE,
                  id="a-windows-spelling-and-u+202e"),
 ]
 
 
-@pytest.mark.parametrize("value, said", UNNAMEABLE_BIN_DIRS)
+@pytest.mark.parametrize("value, said, why", UNNAMEABLE_BIN_DIRS)
 def test_a_bin_dir_no_path_line_can_name_is_refused_before_it_places_anything(
-        tmp_path, value, said):
+        tmp_path, value, said, why):
     """A `:` splits a `$PATH`, so the PATH note could not name such a
     directory: `--install` refuses it with exit 2, before a file is placed or
-    a directory made, naming the kind of character it found and saying what to
-    set instead. It never repeats the directory, not even for a colon (the
-    issue's line, and a stricter one than openRepoShape's, which names it)."""
+    a directory made, naming the kind of character it found, giving the reason
+    for that kind (`REASONS`: a `:` splits the `$PATH` the note is about, and
+    a control or misdrawn character cannot be printed as it reads) and saying
+    what to set instead. It never repeats the directory, not even for a colon
+    (the issue's line, and a stricter one than openRepoShape's, which names
+    it)."""
     typed = value.replace("{d}", str(sandbox(tmp_path)))
     result = go(tmp_path, "--install", env={BIN_DIR: typed})
     said_in_full = assert_refused_saying(result, said, typed)
+    assert_gives_the_reason(said_in_full, INSTALL_COMMAND, why)
     assert "NOTHING was installed and nothing already installed was replaced" \
         in said_in_full, said_in_full
     assert "Set $OPENREPOTOOLS_BIN_DIR to a directory without one" \
@@ -362,26 +427,29 @@ def test_a_bin_dir_no_path_line_can_name_is_refused_before_it_places_anything(
 
 
 #: A `$HOME` is the directory when `$OPENREPOTOOLS_BIN_DIR` is not set
-#: (`~/.local/bin`), so a home holding one is refused the same way.
+#: (`~/.local/bin`), so a home holding one is refused the same way, and for the
+#: same reason (the third column, `REASONS`), by `--install` and by `wip init`.
 BAD_HOMES = [
-    pytest.param("a:b", HOLDS_A_COLON, id="a-colon"),
-    pytest.param("a\nforged", HOLDS_A_CONTROL_CHARACTER, id="a-newline"),
-    pytest.param("a" + RLO + "forged", drawn_as_another("U+202E"),
+    pytest.param("a:b", HOLDS_A_COLON, SPLITS_A_PATH, id="a-colon"),
+    pytest.param("a\nforged", HOLDS_A_CONTROL_CHARACTER, UNPRINTABLE,
+                 id="a-newline"),
+    pytest.param("a" + RLO + "forged", drawn_as_another("U+202E"), UNPRINTABLE,
                  id="u+202e"),
 ]
 
 
-@pytest.mark.parametrize("name, said", BAD_HOMES)
+@pytest.mark.parametrize("name, said, why", BAD_HOMES)
 def test_a_home_no_path_line_can_name_is_refused_when_no_bin_dir_is_set(
-        tmp_path, name, said):
+        tmp_path, name, said, why):
     """The directory is `${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}`, as
     `install_commands` computes it: a `$HOME` holding a colon, a newline or
     U+202E makes the default one no line can name, and is refused before
-    anything is placed in it."""
+    anything is placed in it, for the reason of its kind."""
     home = tmp_path / name
     home.mkdir()
     result = go(tmp_path, "--install", home=home)
-    assert_refused_saying(result, said, str(home))
+    said_in_full = assert_refused_saying(result, said, str(home))
+    assert_gives_the_reason(said_in_full, INSTALL_COMMAND, why)
     assert nothing_placed(home)
 
 
@@ -702,15 +770,16 @@ def test_wip_init_from_an_installed_copy_goes_on_and_sends_a_sound_value_as_type
 #: A bad directory, the kinds of character the rule refuses in it: a control
 #: character (an escape, and a newline, which breaks a line in two), a misdrawn
 #: one and the `:` that only the directory refuses (a `$PATH` is what it
-#: splits), each as the directory and what its refusal says of it.
+#: splits), each as the directory, what its refusal says of it and the reason
+#: it gives (`REASONS`, in `wip init`'s words).
 WIP_BAD_DIRS = [
     pytest.param("{d}/a" + ESCAPE + "[31mforged/bin",
-                 HOLDS_A_CONTROL_CHARACTER, id="an-escape"),
-    pytest.param("{d}/a\nforged/bin", HOLDS_A_CONTROL_CHARACTER,
+                 HOLDS_A_CONTROL_CHARACTER, UNPRINTABLE, id="an-escape"),
+    pytest.param("{d}/a\nforged/bin", HOLDS_A_CONTROL_CHARACTER, UNPRINTABLE,
                  id="a-newline"),
     pytest.param("{d}/a" + RLO + "forged/bin", drawn_as_another("U+202E"),
-                 id="u+202e"),
-    pytest.param("{d}/a:b/bin", HOLDS_A_COLON, id="a-colon"),
+                 UNPRINTABLE, id="u+202e"),
+    pytest.param("{d}/a:b/bin", HOLDS_A_COLON, SPLITS_A_PATH, id="a-colon"),
 ]
 
 #: How `wip init`'s refusal of the directory opens. It is in `wip init`'s own
@@ -723,27 +792,33 @@ WIP_REFUSES_THE_DIRECTORY = ("`wip init` may run `link-estates` from a "
 @pytest.mark.parametrize("flags", [(), ("--dry-run",)],
                          ids=["a-run", "a-dry-run"])
 @pytest.mark.parametrize("route", WIP_ROUTES)
-@pytest.mark.parametrize("value, said", WIP_BAD_DIRS)
+@pytest.mark.parametrize("value, said, why", WIP_BAD_DIRS)
 def test_wip_init_refuses_a_bad_directory_before_it_asks_or_makes_anything(
-        tmp_path, value, said, route, flags):
+        tmp_path, value, said, why, route, flags):
     """`wip init` refuses an unsafe `$OPENREPOTOOLS_BIN_DIR` (the operator's
     word, after the review): exit 2, the variable named and never the
     directory, before it has asked the network anything or made anything.
 
     `wip init`'s own lines never name the directory (`wip_run_link_estates`
-    only runs `<dir>/link-estates`), but the `link-estates` it runs does, as
-    typed, in its `Error`, `STALE` and `NOTE` lines, and a `:` splits the
-    `$PATH` that `NOTE` is about. So the rule is `--install`'s whole, the colon
-    included, and the refusal is in `wip init`'s own words: it never says
-    `--install`. The sandbox HOME is as empty as it began and the fake server
-    holds no repository, from an installed copy, the checkout and a package,
-    with `--dry-run` as without."""
+    only RUNS a `link-estates`: the one in `<dir>`, or else the one on `PATH`),
+    but that command does, as typed, in its `Error`, `STALE` and `NOTE` lines
+    and in the `KEEP`, `PLAN` and `LINK` lines for the `lanes-edit.sh` link,
+    and a `:` splits the `$PATH` that `NOTE` is about. Some runs run none (a
+    dry run, a step 1 re-run that needs no link, a host with no
+    `link-estates`) and are refused all the same, which is why the refusal
+    says `wip init` MAY run it. So the rule is `--install`'s whole, the colon
+    included, and the refusal is in `wip init`'s own words, with the reason
+    for the kind it found in them (`REASONS`): it never says `--install`. The
+    sandbox HOME is as empty as it began and the fake server holds no
+    repository, from an installed copy, the checkout and a package, with
+    `--dry-run` as without."""
     command = WIP_ROUTES[route](tmp_path)
     typed = value.replace("{d}", str(sandbox(tmp_path)))
     result, net = run_wip_init(tmp_path, command, *flags, env={BIN_DIR: typed})
     assert calls_to(net) == [], "`wip init` asked the network before it refused"
     said_in_full = assert_refused_saying(
         result, WIP_REFUSES_THE_DIRECTORY + said, typed)
+    assert_gives_the_reason(said_in_full, WIP_COMMAND, why)
     assert "Set $OPENREPOTOOLS_BIN_DIR to a directory without one" \
         in said_in_full, said_in_full
     assert "Nothing was fetched, created or changed" in said_in_full, \
@@ -754,19 +829,21 @@ def test_wip_init_refuses_a_bad_directory_before_it_asks_or_makes_anything(
         "`wip init` made a repository"
 
 
-@pytest.mark.parametrize("name, said", BAD_HOMES)
+@pytest.mark.parametrize("name, said, why", BAD_HOMES)
 def test_wip_init_refuses_a_home_no_line_can_name_when_no_bin_dir_is_set(
-        tmp_path, name, said):
+        tmp_path, name, said, why):
     """The directory is `${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}`, as
     `link-estates` computes it and as `install_commands` does, so a `$HOME`
     holding a colon, a newline or U+202E makes the default one no line can name,
     and `wip init` refuses it as `--install` does, before it asks or makes
-    anything."""
+    anything, giving the reason for its kind in `wip init`'s own words."""
     home = tmp_path / name
     home.mkdir()
     result, net = run_wip_init(tmp_path, COMMAND, env={}, home=home)
     assert calls_to(net) == []
-    assert_refused_saying(result, WIP_REFUSES_THE_DIRECTORY + said, str(home))
+    said_in_full = assert_refused_saying(
+        result, WIP_REFUSES_THE_DIRECTORY + said, str(home))
+    assert_gives_the_reason(said_in_full, WIP_COMMAND, why)
     assert nothing_placed(home)
 
 
