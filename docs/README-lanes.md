@@ -2761,15 +2761,26 @@ So an ordinary handoff, `lane-handoff` or the skill alike:
 
 - writes the `PAUSED` record, the register line, the row and the restart line,
   and **publishes no handoff file**;
-- says so: on stdout after `READY` (`handoff: NOT published: …`), in the register
-  line, which ends `; handoff NOT published: object log unreadable` instead of
-  `; handoff refreshed`, and in the top block it prints on stderr, whose state line
-  names the gap;
+- says so, each in its own words: `lane-handoff` on stdout after `READY`
+  (`handoff: NOT published: …`), in a note and in the top block it prints on
+  stderr, whose state line names the gap; the skill, in step 2, in a
+  `HANDOFF NOT PUBLISHED: …` line of its own; and both in the register line, which
+  ends `; handoff NOT published: object log unreadable` instead of
+  `; handoff refreshed`;
 - tells the person what to wait on — the intent, not the log: once
   `lanes-edit.sh restart-intent <lane>` answers 8, `ready` or `failed`, publish
   the block with `publish-handoff`, and read `--restart-status` before relaunching;
 - exits **0**, because the swap is recorded and resumable, and every 1 this command
   spends comes before its first write.
+
+One of those 1s is this log's own. `lane-handoff` takes the session id for the
+record from the shell (`$CLAUDE_CODE_SESSION_ID`) and then from the lane's log, with
+`last-session`; where there is **no session id anywhere** and the log could not be
+read, that read fails, and the handoff refuses with 1 before any write, saying a read
+that failed is not "this lane has no recorded session". No `PAUSED` record and no
+register line could be written without an id, so nothing the swap is made of is
+lost by it. A session that has its own id never makes that read, and the skill
+takes its fallback id from the row, not from the log.
 
 `--exit` writes the same records and then refuses at its gate with 2, typing
 nothing, and its refusal says the same wait: *"The handoff was NOT published: the
@@ -2778,8 +2789,16 @@ answers 8, `ready` or `failed`, publish the block printed above with
 `publish-handoff`, and read `--restart-status` before relaunching. Then re-run."*
 On every other path where no top block was written, the gate says what it always
 said. `--restart` refuses before it writes anything, at its own read of the prior
-intent. The lane's lifecycle stays `SWAPPING`, because the handoff file is one of
-the writes a swap is made of.
+intent.
+
+What the lane's lifecycle does depends on whether the log could be read for it.
+Where `lane-handoff` took the lane to `SWAPPING`, the lane **stays `SWAPPING`**,
+because the handoff file is one of the writes a swap is made of and `SWAPPED` is
+recorded only once every one of them has landed. Where the log is unreadable when
+the handoff begins its lifecycle too, which is the same log, `lane-state` answers
+10, `lane-handoff` records **no transition at all** and says so in a note, and the
+snapshot is left as it was: a lane that was `RUNNING` is still `RUNNING` once the log
+can be read again, not `SWAPPING`.
 
 ### The launcher table — `lane-start --agent <name>`
 
