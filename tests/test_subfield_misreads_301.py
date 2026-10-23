@@ -638,6 +638,39 @@ def test_a_backslash_before_anything_else_is_kept_by_each_decoder(decoder, local
     assert not bad, f"{len(bad)} of {len(PASS_THROUGH)} miss, (id, raw, wanted, got): {bad}"
 
 
+def test_a_dir_the_encoder_cannot_escape_is_listed_as_none_and_the_listing_says_so(tmp_path):
+    """THE FALLBACK IN `lanes_rows` (the mutant pass, `fallback-removed`). An
+    encoder that fails prints nothing, and an empty column 7 is one a TAB-IFS
+    `read` cannot split (two TABs in a row are one separator, and every column
+    after it arrives a place early), so the column says `none`, the row keeps
+    its seventeen columns, and the listing says on stderr which lane's dir it
+    could not escape. The failure is an `awk` in the estate's bin that exits 1
+    for the one call that carries `RFE_IN`, the encoder's input, and is the real
+    one for every other."""
+    e = Estate(tmp_path / "e")
+    lane = "repoF-1"
+    (e.wip / "lanes" / "log" / f"{lane}.md").write_text(
+        _started(lane, "88888888-0001-4000-8000-000000008001", "/r/back\\slash/repoF"),
+        encoding="utf-8")
+    e._git("add", "-A")
+    e._git("commit", "-q", "-m", "repoF-1, a dir holding a backslash")
+    e._git("push", "-q", "origin", "main")
+    real_awk = shutil.which("awk")
+    assert real_awk, "no awk on PATH"
+    (e.fakebin / "awk").write_text(
+        f'#!/bin/sh\n[ -n "${{RFE_IN+x}}" ] && exit 1\nexec {real_awk} "$@"\n')
+    (e.fakebin / "awk").chmod(0o755)
+    res = e.edit("lanes", "--all")
+    assert res.returncode == 0, (res.returncode, res.stdout, res.stderr)
+    rows = {line.split(TAB)[0]: line.split(TAB) for line in res.stdout.split("\n") if line}
+    row = rows.get(lane)
+    assert row is not None, sorted(rows)
+    assert len(row) == 17, f"{len(row)} columns: " + _shown("|".join(row))
+    assert row[6] == "none", _shown("|".join(row))
+    assert (f"lane {lane}'s recorded dir could not be escaped for the listing, so its "
+            f"directory column says none.") in res.stderr, res.stderr
+
+
 # ---------------------------------------------------------- item 3: `by host`
 
 UUID_H = "77777777-0001-4000-8000-000000007001"
@@ -711,24 +744,100 @@ def test_a_host_the_binding_fence_refuses_is_never_written(tmp_path, variable, v
         assert e._git("show", "origin/main:lanes/log/repoH-1.md") == before, args
 
 
-@pytest.mark.parametrize("host", ["plainhost", "a.b-c_d:9"], ids=["plain", "whole-alphabet"])
-def test_a_host_the_binding_fence_takes_is_written_whole_on_both_paths(tmp_path, host):
-    """THE CONTROL FOR R: a host of the fence's own alphabet is written as it
-    is, by the request (`by host <h>`, read back whole) and by the forced
-    release that follows it (`forced by <uuid>@<h>/none`)."""
+#: WHERE A REFUSED NAME CAME FROM, AS THE REFUSAL SAYS IT (the mutant pass,
+#: `source-text-dropped`). The matrix above asks that the refusal names the
+#: variable, and its closing sentence names `LANES_HOST` or `LANES_CONTAINER`
+#: whichever clause went before it, so a refusal that gave the wrong source, or
+#: one clause for every source, passed. One row for each source a name can come
+#: from: (what is refused, the environment that selects the source, the name it
+#: gives, the clause the refusal carries). The seam, the workstation's name that
+#: a container writes as its host, and what `hostname` answered, which is a stub
+#: in the estate's bin because the box the suite runs on has a name of its own.
+SOURCES = {
+    "host-seam": ("host", {"LANES_HOST": "my host"}, "my host",
+                  "it is the value of LANES_HOST. A space there"),
+    "host-workstation": ("host", {"LANES_HOST": None, "LANES_IN_CONTAINER": "1",
+                                  "LANES_WORKSTATION": "my ws"}, "my ws",
+                         "it is this workstation's name, which a container writes as its "
+                         "host; LANES_HOST overrides it. A space there"),
+    "host-hostname": ("host", {"LANES_HOST": None}, "my box",
+                      "it is this machine's `hostname -s`; LANES_HOST overrides it. "
+                      "A space there"),
+    "container-seam": ("container", {"LANES_CONTAINER": "a b"}, "a b",
+                       "it is the value of LANES_CONTAINER. A space there"),
+    "container-hostname": ("container", {"LANES_CONTAINER": None, "LANES_IN_CONTAINER": "1"},
+                           "my box",
+                           "it is this container's own `hostname`, which a container with "
+                           "no LANES_CONTAINER writes; LANES_CONTAINER overrides it. "
+                           "A space there"),
+}
+
+
+@pytest.mark.parametrize("kind,env,name,clause", list(SOURCES.values()), ids=list(SOURCES))
+def test_the_refusal_says_where_the_refused_name_came_from(tmp_path, kind, env, name, clause):
+    """THE REFUSAL NAMES THE SOURCE OF THE VALUE IT REFUSES, for each source it
+    can have: the variable that was set (`LANES_HOST`, `LANES_CONTAINER`), the
+    workstation's name a container writes as its host, and what `hostname`
+    answered. The person is told which of them to put right, so the clause is
+    pinned whole, with the name between its quotes, on the request and on
+    `--force`, for the host and for the container alike, and nothing is
+    written."""
     e = _bound_elsewhere(tmp_path)
-    res = e.edit("request-handoff", "repoH-1", "--session", UUID_R, "--no-wait",
-                 env={"LANES_HOST": host})
+    (e.fakebin / "hostname").write_text("#!/bin/sh\nprintf 'my box\\n'\n")
+    (e.fakebin / "hostname").chmod(0o755)
+    before = e._git("show", "origin/main:lanes/log/repoH-1.md")
+    for args in (("--no-wait",), ("--force", "taking it")):
+        res = e.edit("request-handoff", "repoH-1", "--session", UUID_R, *args, env=env)
+        assert res.returncode == 2, (args, res.returncode, res.stderr)
+        assert f"request-handoff writes this {kind}'s name into lane repoH-1's" in res.stderr, \
+            (args, res.stderr)
+        assert f"and '{name}' is not one ref of Amendment 7(b)'s grammar" in res.stderr, \
+            (args, res.stderr)
+        assert f"): {clause}" in res.stderr, (args, res.stderr)
+        assert "Nothing was written." in res.stderr, (args, res.stderr)
+        assert e._git("show", "origin/main:lanes/log/repoH-1.md") == before, args
+
+
+def test_a_lane_that_is_free_is_told_so_before_a_bad_host_is_refused(tmp_path):
+    """THE FENCE COMES AFTER THE BINDING IS READ (the mutant pass,
+    `check-before-binding-read`). A lane with nobody bound has nothing to ask,
+    and what a requester is told is that it is FREE, with 8, whatever its host
+    or container is called: a refusal about the requester's own settings in
+    front of it would send a person to put right a name the request never
+    needed. Every other case here asks a lane that is bound."""
+    e = _bound_elsewhere(tmp_path)
+    for variable, value in (("LANES_HOST", "my host"), ("LANES_CONTAINER", "a b")):
+        res = e.edit("request-handoff", "repoC-1", "--session", UUID_R, "--no-wait",
+                     env={variable: value})
+        assert res.returncode == 8, (variable, res.returncode, res.stderr)
+        assert "lane repoC-1 is FREE" in res.stderr, (variable, res.stderr)
+        assert "not one ref" not in res.stderr, (variable, res.stderr)
+        assert _requests(e) == [], variable
+
+
+@pytest.mark.parametrize("host,container", [("plainhost", "none"), ("plainhost", "plainc"),
+                                            ("a.b-c_d:9", "a.b-c_d:9")],
+                         ids=["no-container", "plain", "whole-alphabet"])
+def test_a_host_the_binding_fence_takes_is_written_whole_on_both_paths(tmp_path, host, container):
+    """THE CONTROL FOR R: a host and a container of the fence's own alphabet are
+    written as they are, by the request (`by host <h>` and `container <c>`,
+    read back whole) and by the forced release that follows it (`forced by
+    <uuid>@<h>/<c>`). EVERY ROW OF THE MATRIX ABOVE IS A REFUSAL (lane 3's
+    re-check of #301, 841), so this is the one place a fence that took nothing
+    but `none` for a container is told from the one that takes the alphabet."""
+    e = _bound_elsewhere(tmp_path)
+    env = {"LANES_HOST": host, "LANES_CONTAINER": container}
+    res = e.edit("request-handoff", "repoH-1", "--session", UUID_R, "--no-wait", env=env)
     lines = _requests(e)
     assert len(lines) == 1, (res.returncode, res.stderr, lines)
     payload = lines[0].split(" → ", 1)[1].split(" — ", 1)[0]
     assert payload_subfield(payload, "by host") == host + "\n", payload
-    res = e.edit("request-handoff", "repoH-1", "--session", UUID_R, "--force", "taking it",
-                 env={"LANES_HOST": host})
+    assert payload_subfield(payload, "container") == container + "\n", payload
+    res = e.edit("request-handoff", "repoH-1", "--session", UUID_R, "--force", "taking it", env=env)
     assert res.returncode == 0, (res.returncode, res.stderr)
     last = e._git("show", "origin/main:lanes/log/repoH-1.md").splitlines()[-1]
     assert last.startswith(f"PAUSED — lane repoH-1, session {UUID_R}@"), last
-    assert f"; forced by {UUID_R}@{host}/none; " in last, last
+    assert f"; forced by {UUID_R}@{host}/{container}; " in last, last
 
 
 @pytest.mark.parametrize("host", ["plainhost", "my host"], ids=["plain", "space"])
