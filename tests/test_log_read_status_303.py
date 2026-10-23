@@ -42,20 +42,43 @@ a swap's `PAUSED`, a `NOTED` - still lands over a log nobody could read, and
 line says the log could not be read (546); and a lifecycle follow-up over a log
 it could not read for its root moves nothing and says why (R4).
 
+AND R7, BRETT HEAP'S RULING "Write swap, name the gap", with the items held for
+it (the review of #303's 541 and 546, and lane 3's review of R7's change,
+651-662). The restart intent is kept beside the directory the lane's log
+records, so a log nobody could read hid an intent in flight: `restart-intent`
+said 8, "no restart in flight", and `set-restart-intent` filed beside the
+third rung. It is 10 now, never 8, in each shape a read fails in, while a log
+that was read still answers 8 or 0. An ordinary `lane-handoff` over such a log
+writes the PAUSED record, the register line, the row and the restart line,
+publishes no handoff file, and says so on stdout; `--exit` writes them and
+types nothing, and `--restart` refuses before it writes anything. `lane-start`
+refuses at its restart fence and says the log is why, `rename-lane` refuses
+before the mutex rather than leave the lane's records under its old name, and
+`lane-objects` with nowhere to keep its read's warnings is no answer either.
+`skills/handoff/SKILL.md`'s twin of the handoff is held in
+`test_handoff_skill_303.py`.
+
 Every case runs on `test_lanes_index`'s own estate and its helpers, and builds
 on `test_named_read_unreadable_290`'s way of making a log unreadable.
 """
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import os
 import shutil
+import subprocess
+import types
 
 import pytest
 
 from conftest import REPO, WINDOWS_SKIP
-from test_lanes_index import (HEADS, SHOW_LOG_B1, UUID_A1B, UUID_B1, US, _git_shim, _shim_calls,
-                              _sidecar, _unreadable, inv)
+from test_lane_start_claude_current import FAKE_TMUX
+from test_lane_start_claude_current import LANE as START_LANE
+from test_lane_start_claude_current import Sandbox as StartSandbox
+from test_lanes_index import (HEADS, LANES_EDIT, SHOW_LOG_B1, UUID_A1B, UUID_B1, US, _git_shim,
+                              _shim_calls, _sidecar, _unreadable, inv)
 
 __all__ = ["inv"]  # the fixture, imported so that pytest finds it here
 
@@ -562,3 +585,611 @@ def test_a_lifecycle_follow_up_over_a_log_it_could_not_read_moves_nothing_and_sa
     assert "moved under this ENDED" not in res.stderr, res.stderr
     assert snap.read_bytes() == before, "the real root's snapshot was replaced"
     assert not third.exists(), sorted(str(p) for p in third.rglob("*"))
+
+
+# ======================================== R7: "Write swap, name the gap", and what it held
+
+LANE_HANDOFF = REPO / "lane-handoff"
+HANDOFF_CELL = f"handoffs/{LANE}.md"
+#: WHAT `lane-handoff` NAMES, on its stderr, on stdout after `READY` and in the
+#: top block it prints for publishing later.
+GAP = f"lane {LANE}'s object log could not be read, so where its restart intent is kept is NOT established"
+#: THE REGISTER LINE'S TAIL WHERE NO HANDOFF WAS PUBLISHED, ruled with R7 in
+#: place of `; handoff refreshed`.
+R7_TAIL = "; handoff NOT published: object log unreadable"
+#: `restart-intent`'s own sentence for its 10, and the advice that ends it: a
+#: read, for any caller, and never "re-run" - a caller mid-handoff that re-ran
+#: would write a second PAUSED (the review of R7, 654).
+INTENT_10 = (f"lane {LANE}'s object log could not be read, so the directory its restart intent is "
+             "kept beside is NOT established")
+READ_AGAIN = "Read it again once git can read the log."
+#: WHAT A PUBLICATION WAITS ON, which is the intent and not the log (the review
+#: of R7, 653(c)): right after the swap's own PAUSED the log reads again, while
+#: a restart may still own the lane.
+WAIT_ON = (f"once `lanes-edit.sh restart-intent {LANE}` answers 8, `ready` or `failed`, publish "
+           f"this block with `publish-handoff`; read `lane-handoff --restart-status --lane {LANE}` "
+           "before relaunching")
+NOTE_HEAD = "lane-handoff: the handoff file was NOT published"
+
+
+def _a_lane_with_a_row_and_a_handoff(inv, cell: str = HANDOFF_CELL, intent: bool = False):
+    """repoB-1's whole record, and what a handoff needs beside it: a register row
+    whose handoff column names `cell` - `handoffs/repoB-1.md` unless a case
+    names one nobody can find - and that handoff file. With `intent`, a
+    `preparing` restart intent is filed while the log reads whole, so it sits
+    beside the directory the log records, as a `/ctx` in flight leaves it (E1
+    of the review's probes). Returns the environment, the checkout and the
+    handoff file."""
+    env, checkout, _snap = _a_lane_with_a_whole_record(inv)
+    e = inv.e
+    register = e.wip / "lanes" / "LANES.md"
+    lines = register.read_text(encoding="utf-8").split("\n")
+    at = next(i for i, line in enumerate(lines) if line.startswith(f"| `{NO_LOG_LANE}` |"))
+    lines.insert(at + 1, f"| `{LANE}` | harness `{UUID_B1}` | Eagle / test / brett | "
+                         f"2026-10-01T00:00Z | none | {cell} | LIVE · 2026-10-05T00:00:00Z · working |")
+    register.write_text("\n".join(lines), encoding="utf-8")
+    handoff = e.wip / HANDOFF_CELL
+    handoff.parent.mkdir(parents=True, exist_ok=True)
+    handoff.write_text(f"Lane: {LANE} (team-02a, session old) — the older top block\n\nolder content\n",
+                       encoding="utf-8")
+    e._git("add", "-A")
+    e._git("commit", "-q", "-m", "a row and a handoff for repoB-1")
+    e._git("push", "-q", "origin", "main")
+    if intent:
+        put = e.edit("set-restart-intent", LANE, "preparing", "--expect", "none", "--operation",
+                     "op-test-r7", "--generation", "1", "--mode", "preservation-only", "--reason",
+                     "a restart owns the lane", env=env)
+        assert put.returncode == 0, put.stderr
+    return env, checkout, handoff
+
+
+def _hand_off(inv, env, *args, extra=None):
+    """`lane-handoff` as the lane's own session runs it, its transcript and its
+    profile exported as the harness exports them, and tmux untouched unless
+    `extra` hands it the recording one."""
+    full = {**env, "CLAUDE_CODE_SESSION_ID": UUID_B1, "CLAUDE_PROFILE_NAME": "team-02a",
+            "LANE_HANDOFF_NO_TMUX": "1", **(extra or {})}
+    return inv.e.run("bash", LANE_HANDOFF, "--lane", LANE, "--agent", "claude", *args,
+                     env=full, timeout=300)
+
+
+def _recording_tmux(inv, pane: bool = False):
+    """`test_lane_start_claude_current`'s recording fake tmux - this window is
+    `testsess:@1`, named `claude`; `rename-window` and `send-keys` are logged -
+    with `respawn-pane` logged too, first on `PATH` and with `$TMUX` set, so
+    `lane-handoff` takes itself to be inside tmux and what it types is SEEN.
+    `LANE_HANDOFF_NO_TMUX=1` could not see it, so "nothing typed" proved
+    nothing there (the review of R7, 658). Returns the environment and the
+    log."""
+    shim = inv.root / "recording-tmux"
+    shim.mkdir(exist_ok=True)
+    (shim / "tmux").write_text(FAKE_TMUX.replace(
+        "#!/usr/bin/env bash\n",
+        "#!/usr/bin/env bash\n"
+        "if [ \"${1-}\" = respawn-pane ]; then printf '%s\\n' \"$*\" >> \"$FAKE_TMUX_LOG\"; exit 0; fi\n",
+        1), encoding="utf-8")
+    (shim / "tmux").chmod(0o755)
+    log = inv.root / "tmux.log"
+    log.write_text("", encoding="utf-8")
+    env = {"PATH": inv.e.path_with(shim), "TMUX": f"{inv.root}/fake-tmux-socket,0,0",
+           "FAKE_TMUX_LOG": str(log), "LANE_HANDOFF_NO_TMUX": None}
+    if pane:
+        env["TMUX_PANE"] = "%1"
+    return env, log
+
+
+def _published(e, path: str):
+    """`path` as `origin/main` holds it, or None where git cannot show it."""
+    res = subprocess.run(["git", "show", f"origin/main:{path}"], cwd=str(e.wip), env=e.env,
+                         capture_output=True, text=True, check=False)
+    return res.stdout if res.returncode == 0 else None
+
+
+def _records(e):
+    """What a swap writes, as `origin` holds it: the lane's log's last line,
+    the register's last line, and the lane's rows."""
+    log = (_published(e, f"lanes/log/{LANE}.md") or "").rstrip("\n").split("\n")[-1]
+    register = _published(e, "lanes/LANES.md") or ""
+    last = register.rstrip("\n").split("\n")[-1]
+    rows = [line for line in register.split("\n") if line.startswith(f"| `{LANE}` |")]
+    return log, last, rows
+
+
+def _intents(inv) -> list:
+    return sorted(str(p.relative_to(inv.root)) for p in inv.root.rglob("restart-intent.yaml"))
+
+
+def _the_swap_is_written(inv, res) -> list:
+    """Every record R7 keeps, for a handoff whose file was not published: the
+    log's PAUSED, the register line with R7's tail, the row's PAUSED cell, and
+    the restart line with the gap named after it on STDOUT - so a caller that
+    keeps only stdout still learns of it - and no top block there."""
+    log, last, rows = _records(inv.e)
+    problems = []
+    if not log.startswith(f"PAUSED — lane {LANE}, session {UUID_B1}@Eagle, "):
+        problems.append(f"the log's last line is not the PAUSED: {log[:120]!r}")
+    if not (last.startswith(f"PAUSED — lane {LANE}, session {UUID_B1}@Eagle, ") and
+            last.endswith(R7_TAIL)):
+        problems.append(f"the register's last line is not the PAUSED naming the gap: {last[-160:]!r}")
+    if len(rows) != 1 or "| PAUSED · " not in rows[0]:
+        problems.append(f"the row's state cell is not PAUSED: {rows}")
+    out = res.stdout.splitlines()
+    if not any(line.startswith("READY — restart with: ") for line in out):
+        problems.append("stdout has no restart line")
+    if f"  handoff: NOT published: {GAP}" not in out:
+        problems.append(f"stdout does not name the gap: {res.stdout[-400:]!r}")
+    if f"Lane: {LANE} (" in res.stdout:
+        problems.append("the top block is on stdout")
+    return problems
+
+
+@contextlib.contextmanager
+def _log_unread(inv, shape: str):
+    """repoB-1's log, unreadable in one of the five shapes a read fails in: the
+    published blob, the published log tree, and with no `origin` a log
+    directory that lists and cannot be searched, one that cannot be listed,
+    and a log file that will not open. Yields what the read's environment
+    takes on top (`LANES_NO_GIT` for the last three)."""
+    if shape in ("blob", "tree"):
+        with _unreadable(inv.e, LOG_B1 if shape == "blob" else LOG_TREE):
+            yield {}
+        return
+    what, mode = shape.split("-")
+    logdir = inv.e.wip / "lanes" / "log"
+    target = logdir if what == "dir" else logdir / f"{LANE}.md"
+    before = target.stat().st_mode & 0o777
+    target.chmod(int(mode, 8))
+    try:
+        if _this_account_gets_in_anyway(target, what):
+            pytest.skip(f"this account reads a mode-{mode} {what} (root): nothing to prove")
+        yield dict(NO_GIT)
+    finally:
+        target.chmod(before)
+
+
+@pytest.mark.parametrize("shape", ["blob", "tree", "dir-400", "dir-000", "file-000"])
+def test_restart_intent_over_a_log_it_could_not_read_is_10_and_hides_no_intent(inv, shape):
+    """THE CHANGE AT `lanes-edit.sh:12318`, HELD FOR R7 (the review of #303,
+    541). A restart intent is kept beside the directory the lane's log
+    records, and the log was read for it with the failure thrown away: here a
+    `preparing` intent filed there reads 0 with the log whole, and with the log
+    unreadable the root fell to `$PROJECTS_ROOT/.lane-state`, where none is -
+    8, "this lane has no restart in flight", which every handoff and every
+    launch goes past. It is 10 in each shape a read fails in, with a sentence
+    that ends in a read and never in "re-run" (654), and nothing on stdout."""
+    env, _checkout, _handoff = _a_lane_with_a_row_and_a_handoff(inv, intent=True)
+    whole = inv.e.edit("restart-intent", LANE, env=env)
+    assert whole.returncode == 0 and "state\tpreparing" in whole.stdout, (whole.stdout, whole.stderr)
+    with _log_unread(inv, shape) as extra:
+        res = inv.e.edit("restart-intent", LANE, env={**env, **extra})
+    problems = []
+    if res.returncode != 10:
+        problems.append(f"exit {res.returncode}, not 10")
+    if INTENT_10 not in res.stderr or READ_AGAIN not in res.stderr:
+        problems.append(f"it does not say why, and what to do: {_said(res)!r}")
+    if "Re-run" in res.stderr:
+        problems.append("it tells its caller to re-run it")
+    if res.stdout:
+        problems.append(f"it printed an intent: {res.stdout[:80]!r}")
+    assert not problems, "\n" + "\n".join(problems)
+
+
+def test_restart_intent_still_answers_from_a_log_that_was_read(inv):
+    """A LOG THAT WAS READ IS NEVER 10 (the review of R7, 658). repoC-1 has no
+    log at all: 8, as it always was. repoN-1's log is read and records no
+    `dir`, so its intent's root is the rung beneath, `$PROJECTS_ROOT/.lane-
+    state/repoN-1`: 8 with no intent filed there, and 0 once one is."""
+    env = {"LANES_LANE_STATE_ROOT": None, "LANES_NO_FETCH": "1"}
+    inv.e.commit_paths({"lanes/log/repoN-1.md": (
+        f"STARTED — lane repoN-1, session {UUID_B1}@Eagle, 2026-10-06T00:00:00Z, "
+        "lane:repoN-1 → home opensoft/repoN\n")}, "a log that records no dir")
+    read = inv.e.edit("lane-dir", "repoN-1", env=env)
+    assert read.returncode == 8, (read.stdout, read.stderr)  # read, and no `dir`: not vacuous
+    no_log = inv.e.edit("restart-intent", NO_LOG_LANE, env=env)
+    none_yet = inv.e.edit("restart-intent", "repoN-1", env=env)
+    put = inv.e.edit("set-restart-intent", "repoN-1", "preparing", "--expect", "none",
+                     "--operation", "op-test-n1", "--generation", "1", "--mode",
+                     "preservation-only", "--reason", "an intent at the rung beneath", env=env)
+    filed = inv.e.edit("restart-intent", "repoN-1", env=env)
+    got = (no_log.returncode, none_yet.returncode, put.returncode, filed.returncode)
+    assert got == (8, 8, 0, 0), (got, no_log.stderr, none_yet.stderr, put.stderr, filed.stderr)
+    assert "state\tpreparing" in filed.stdout, filed.stdout
+    assert (inv.e.home / "projects" / ".lane-state" / "repoN-1" / "restart-intent.yaml").is_file()
+
+
+def test_restart_intent_over_two_logs_one_case_apart_names_both(inv):
+    """TWO LOGS ONE CASE APART ARE THIS 10 TOO (the review of R7, 661):
+    `lane_payload_field` answers 1 for them as for a log nobody could read. The
+    read that finds the root throws its stderr away, so `log_path_ci`'s own
+    words - both files, and Amendment 15(d)'s merge - were lost, and "once git
+    can read the log" is advice no wait makes true. They are said, and the
+    sentence ends on the merge."""
+    env, _checkout, _handoff = _a_lane_with_a_row_and_a_handoff(inv)
+    inv.e.commit_paths({"lanes/log/repob-1.md": (
+        f"NOTED — lane repob-1, session {UUID_B1}@Eagle, 2026-10-06T00:00:00Z, "
+        "lane:repob-1 — the other spelling\n")}, "a second spelling of repoB-1's log")
+    res = inv.e.edit("restart-intent", LANE, env=env)
+    assert res.returncode == 10, (res.returncode, res.stdout, res.stderr)
+    assert f"lane {LANE} has 2 object logs on origin/main whose names differ only by case" \
+        in res.stderr, res.stderr
+    assert "lanes/log/repoB-1.md" in res.stderr and "lanes/log/repob-1.md" in res.stderr
+    assert INTENT_10 in res.stderr, res.stderr
+    assert "Read it again once the logs named above are merged into one (Amendment 15(d))." \
+        in res.stderr, res.stderr
+
+
+def test_a_root_the_environment_names_is_read_without_the_log_and_the_handoff_publishes(inv):
+    """`LANES_LANE_STATE_ROOT` NAMES THE ROOT, AND THE LOG IS NOT ASKED (the
+    review of R7, 658). Over a log nobody could read, `restart-intent` answers
+    out of the named root - 8, never 10 - and a handoff publishes its file and
+    says `handoff refreshed`, as it did: the gap R7 names is where the log
+    places the intent, and here the log places nothing."""
+    env, _checkout, handoff = _a_lane_with_a_row_and_a_handoff(inv)
+    env = {**env, "LANES_LANE_STATE_ROOT": str(inv.lsr)}
+    before = handoff.read_bytes()
+    with _unreadable(inv.e, LOG_B1):
+        intent = inv.e.edit("restart-intent", LANE, env=env)
+        res = _hand_off(inv, env, "a swap under a named root")
+    assert intent.returncode == 8, (intent.returncode, intent.stderr)
+    assert res.returncode == 0, (res.returncode, res.stdout, res.stderr)
+    assert handoff.read_bytes() != before, "the handoff was not published"
+    _log, last, _rows = _records(inv.e)
+    assert last.endswith("; handoff refreshed"), last
+    assert "NOT published" not in res.stdout + res.stderr, res.stdout
+
+
+def test_set_restart_intent_over_a_log_it_could_not_read_files_nothing_and_names_no_other_root(inv):
+    """THE WRITER'S HALF (the review of #303, 546; of R7, 657). It filed the
+    intent at `$PROJECTS_ROOT/.lane-state`, beside the root the log records,
+    where no reader of that root looks. It writes nothing now, and its
+    refusal does not send the person to `LANES_LANE_STATE_ROOT`: over a log
+    nobody read, a root named that way hides an intent at the root the log
+    records, which is 541's hole reached by hand."""
+    env, _checkout, _handoff = _a_lane_with_a_row_and_a_handoff(inv)
+    with _unreadable(inv.e, LOG_B1):
+        res = inv.e.edit("set-restart-intent", LANE, "preparing", "--expect", "none",
+                         "--operation", "op-test-r7w", "--generation", "1", "--mode",
+                         "preservation-only", "--reason", "over a log nobody read", env=env)
+    assert res.returncode == 1, (res.returncode, res.stdout, res.stderr)
+    assert INTENT_10 in res.stderr and "Nothing was written" in res.stderr, res.stderr
+    assert "configure LANES_LANE_STATE_ROOT explicitly" not in res.stderr, res.stderr
+    assert _intents(inv) == [], _intents(inv)
+
+
+def test_publish_handoff_over_a_log_it_could_not_read_publishes_nothing(inv):
+    """THE PUBLISHER IS FENCED ON THE SAME READ (F1 of the review's probes), so
+    the skill's step 2, which publishes through it and never through
+    `lane-handoff`, cannot write a handoff over a restart nobody could look
+    for. It published, before."""
+    env, _checkout, handoff = _a_lane_with_a_row_and_a_handoff(inv)
+    prepared = inv.root / "prepared.md"
+    prepared.write_text("a new top block\n\n---\n\n" + handoff.read_text(encoding="utf-8"),
+                        encoding="utf-8")
+    before = handoff.read_bytes()
+    with _unreadable(inv.e, LOG_B1):
+        res = inv.e.edit("publish-handoff", LANE, str(handoff), str(prepared), "--expect-digest",
+                         hashlib.sha256(before).hexdigest(), env=env)
+    assert res.returncode == 1, (res.returncode, res.stdout, res.stderr)
+    assert "restart ownership could not be read; no handoff was published" in res.stderr
+    assert handoff.read_bytes() == before, "the handoff was published"
+
+
+def test_an_ordinary_handoff_over_a_log_it_could_not_read_writes_the_swap_and_names_the_gap(inv):
+    """R7, "WRITE SWAP, NAME THE GAP" (E1 of the review's probes). A `/ctx` is
+    preparing: its intent sits beside the directory the log records, and with
+    the log whole the handoff refuses. With the log unreadable the read said
+    8, and the handoff PUBLISHED its file over the restart that owns it. It
+    still writes the PAUSED record, the register line, the row and the restart
+    line (`R-A11-11`), exits 0, publishes nothing, and names the gap: on
+    stdout, in the register line, and in a note whose block is on stderr. The
+    note names the file, never says to edit it by hand, and waits on the
+    intent, not the log (653); the block names the gap itself (662). Right
+    after the swap's own PAUSED the log reads again - and the intent still
+    says `preparing`, which is why the wait is on it."""
+    env, _checkout, handoff = _a_lane_with_a_row_and_a_handoff(inv, intent=True)
+    intent = next(p for p in inv.root.rglob("restart-intent.yaml"))
+    intent_before = intent.read_bytes()
+    before = (handoff.read_bytes(), _published(inv.e, HANDOFF_CELL))
+    with _unreadable(inv.e, LOG_B1):
+        res = _hand_off(inv, env, "a swap over a log nobody could read")
+    notes = [line for line in res.stderr.splitlines() if line.startswith(NOTE_HEAD)]
+    problems = [] if res.returncode == 0 else [f"exit {res.returncode}: {_said(res)!r}"]
+    problems += _the_swap_is_written(inv, res)
+    if (handoff.read_bytes(), _published(inv.e, HANDOFF_CELL)) != before:
+        problems.append("the handoff was published")
+    if intent.read_bytes() != intent_before:
+        problems.append("the restart intent was changed")
+    if len(notes) != 1:
+        problems.append(f"{len(notes)} gap notes on stderr")
+    else:
+        if GAP not in notes[0] or WAIT_ON not in notes[0] or HANDOFF_CELL not in notes[0]:
+            problems.append(f"the note does not say what, where and what to wait on: {notes[0]!r}")
+        if "by hand" in notes[0]:
+            problems.append("the note says to edit the handoff by hand")
+    if f"Lane: {LANE} (team-02a, session {UUID_B1})" not in res.stderr:
+        problems.append("the top block is not on stderr")
+    if f"THIS BLOCK WAS NOT PUBLISHED WITH THE SWAP: {GAP}" not in res.stderr:
+        problems.append("the top block does not name the gap")
+    if "Re-run" in res.stderr:
+        problems.append("a note mid-handoff says to re-run")
+    assert not problems, "\n" + "\n".join(problems) + "\n" + res.stderr[-1500:]
+    again = inv.e.edit("restart-intent", LANE, env=env)
+    assert again.returncode == 0 and "state\tpreparing" in again.stdout, (again.stdout, again.stderr)
+
+
+def test_the_control_a_handoff_over_a_whole_log_publishes_and_says_refreshed(inv):
+    """THE CONTROL (E3 of the review's probes): with the log whole and no
+    restart in flight, the handoff publishes its file and the register line
+    says `handoff refreshed`, and nothing says NOT published."""
+    env, _checkout, handoff = _a_lane_with_a_row_and_a_handoff(inv)
+    before = handoff.read_bytes()
+    res = _hand_off(inv, env, "a swap over a whole log")
+    assert res.returncode == 0, (res.returncode, res.stdout, res.stderr)
+    assert handoff.read_bytes() != before, "the handoff was not published"
+    _log, last, _rows = _records(inv.e)
+    assert last.endswith("; handoff refreshed"), last
+    assert "NOT published" not in res.stdout + res.stderr, res.stdout
+
+
+def test_a_row_naming_a_handoff_nobody_can_find_is_named_and_never_an_empty_path(inv):
+    """E6 OF THE REVIEW'S PROBES (653(a)): the row names a handoff no rung
+    finds, so there is no file to name - and the note said "at the head of
+    ␣␣by hand", an empty path. It names the row's cell instead, and the swap
+    and the gap are written as for any other R7 handoff."""
+    env, _checkout, handoff = _a_lane_with_a_row_and_a_handoff(
+        inv, cell="handoffs/missing-repoB-1.md")
+    before = handoff.read_bytes()
+    with _unreadable(inv.e, LOG_B1):
+        res = _hand_off(inv, env, "a swap whose handoff the row misnames")
+    notes = [line for line in res.stderr.splitlines() if line.startswith(NOTE_HEAD)]
+    problems = [] if res.returncode == 0 else [f"exit {res.returncode}: {_said(res)!r}"]
+    problems += _the_swap_is_written(inv, res)
+    if len(notes) != 1:
+        problems.append(f"{len(notes)} gap notes on stderr")
+    elif "'handoffs/missing-repoB-1.md'" not in notes[0] or "  " in notes[0] or \
+            WAIT_ON not in notes[0]:
+        problems.append(f"the note names no handoff, or an empty one: {notes[0]!r}")
+    if handoff.read_bytes() != before:
+        problems.append("a handoff was written")
+    assert not problems, "\n" + "\n".join(problems) + "\n" + res.stderr[-1500:]
+
+
+def test_exit_over_a_log_it_could_not_read_writes_the_swap_and_types_nothing(inv):
+    """`--exit` (E4 of the review's probes, with the recording tmux of 658):
+    with the log whole it writes the swap and TYPES `/exit` into this pane -
+    the control, which shows the tmux here sees what is typed. With the log
+    unreadable it typed `/exit` too, over a handoff it had just published over
+    the restart's intent. It writes the four records, refuses at the gate
+    with 2 because the handoff was not refreshed, and types nothing."""
+    env, _checkout, handoff = _a_lane_with_a_row_and_a_handoff(inv)
+    tmux, typed = _recording_tmux(inv)
+    whole = _hand_off(inv, env, "--exit", "requested by a test", extra=tmux)
+    assert whole.returncode == 0, (whole.returncode, whole.stdout, whole.stderr)
+    assert "send-keys -t @1 /exit Enter" in typed.read_text(), typed.read_text()
+    typed.write_text("", encoding="utf-8")
+    before = handoff.read_bytes()
+    with _unreadable(inv.e, LOG_B1):
+        res = _hand_off(inv, env, "--exit", "requested by a test again", extra=tmux)
+    problems = [] if res.returncode == 2 else [f"exit {res.returncode}, not 2"]
+    problems += _the_swap_is_written(inv, res)
+    if "HANDOFF WAS NOT REFRESHED" not in res.stderr:
+        problems.append(f"the gate did not say why: {_said(res)!r}")
+    if [line for line in typed.read_text().splitlines() if line.startswith("send-keys")]:
+        problems.append(f"it typed into the pane: {typed.read_text()!r}")
+    if handoff.read_bytes() != before:
+        problems.append("the handoff was published")
+    assert not problems, "\n" + "\n".join(problems) + "\n" + res.stderr[-1500:]
+
+
+def test_restart_over_a_log_it_could_not_read_refuses_before_it_writes_anything(inv):
+    """`--restart` (E5 of the review's probes): it reserved its intent at the
+    third rung, wrote the swap and respawned the pane over a log nobody could
+    read. It refuses at its own read of the prior intent, before any write: the
+    register, the log, the handoff and the pane are as they were, and no
+    intent is filed anywhere."""
+    env, checkout, handoff = _a_lane_with_a_row_and_a_handoff(inv)
+    tmux, typed = _recording_tmux(inv, pane=True)
+    before = (handoff.read_bytes(), _published(inv.e, "lanes/LANES.md"),
+              _published(inv.e, f"lanes/log/{LANE}.md"))
+    with _unreadable(inv.e, LOG_B1):
+        res = _hand_off(inv, env, "--restart", "--dir", str(checkout), "clear", extra=tmux)
+    assert res.returncode == 2, (res.returncode, res.stdout, res.stderr)
+    assert "the prior legacy intent cannot be read. Nothing was written or respawned." \
+        in res.stderr, res.stderr
+    after = (handoff.read_bytes(), _published(inv.e, "lanes/LANES.md"),
+             _published(inv.e, f"lanes/log/{LANE}.md"))
+    assert after == before, "a record was written"
+    assert _intents(inv) == [], _intents(inv)
+    assert "respawn-pane" not in typed.read_text(), typed.read_text()
+
+
+def test_restart_over_a_log_it_can_read_still_publishes_and_respawns(inv):
+    """`--restart` WITH THE LOG WHOLE (the review of R7, 652). What R7 adds
+    to the ordinary handoff is read by every mode, and `lane-handoff` runs
+    under `set -u`: a value set only where the ordinary handoff reads the
+    intent would end every `/ctx` at its publication on an unbound variable.
+    It publishes, respawns, and leaves its intent pending."""
+    env, checkout, handoff = _a_lane_with_a_row_and_a_handoff(inv)
+    tmux, typed = _recording_tmux(inv, pane=True)
+    before = handoff.read_bytes()
+    res = _hand_off(inv, env, "--restart", "--dir", str(checkout), "clear", extra=tmux)
+    assert res.returncode == 0, (res.returncode, res.stdout, res.stderr)
+    assert "unbound variable" not in res.stderr, res.stderr
+    assert handoff.read_bytes() != before, "the handoff was not published"
+    assert any(line.startswith("respawn-pane ") for line in typed.read_text().splitlines()), \
+        typed.read_text()
+    intent = inv.e.edit("restart-intent", LANE, env=env)
+    assert "state\tpending" in intent.stdout, (intent.stdout, intent.stderr)
+    _log, last, _rows = _records(inv.e)
+    assert last.endswith("; handoff refreshed"), last
+
+
+def test_a_restart_intent_read_that_alone_fails_writes_the_swap_and_leaves_it_swapping(inv):
+    """A FAILURE THAT COMES AND GOES (the review of R7, 658): only the
+    handoff's own read of the restart intent fails - `restart-intent` is run
+    with a git that fails every read of repoB-1's log, and every other read of
+    it, before and after, is whole. That read said 8 and the handoff published
+    and called the lane SWAPPED. It is R7's path now: the swap is written, the
+    file is not published, and the lifecycle stays SWAPPING, because one of
+    the writes a swap is made of did not land."""
+    env, _checkout, handoff = _a_lane_with_a_row_and_a_handoff(inv)
+    shim, calls = _git_shim(inv, SHOW_LOG_B1, first=1)
+    wrapper = inv.root / "lanes-edit-wrapper"
+    wrapper.mkdir()
+    (wrapper / "lanes-edit.sh").write_text(
+        "#!/bin/sh\n"
+        "case \"${1-}\" in restart-intent) PATH=\"$SHIM_PATH\"; export PATH ;; esac\n"
+        "exec \"$REAL_LANES_EDIT\" \"$@\"\n", encoding="utf-8")
+    (wrapper / "lanes-edit.sh").chmod(0o755)
+    extra = {key: value for key, value in shim.items() if key != "PATH"}
+    extra.update(SHIM_PATH=shim["PATH"], REAL_LANES_EDIT=str(LANES_EDIT),
+                 LANES_EDIT=str(wrapper / "lanes-edit.sh"))
+    before = handoff.read_bytes()
+    res = _hand_off(inv, env, "a swap whose one read failed", extra=extra)
+    failed = _shim_calls(calls)
+    state = inv.e.edit("lane-state", LANE, env=env)
+    fields = dict(line.split("\t", 1) for line in state.stdout.splitlines() if "\t" in line)
+    assert failed, "no read of the log failed: vacuous"
+    problems = [] if res.returncode == 0 else [f"exit {res.returncode}: {_said(res)!r}"]
+    problems += _the_swap_is_written(inv, res)
+    if handoff.read_bytes() != before:
+        problems.append("the handoff was published")
+    if (fields.get("state"), fields.get("generation")) != ("SWAPPING", "2"):
+        problems.append(f"the lifecycle is {fields.get('state')} at generation "
+                        f"{fields.get('generation')}, not this handoff's SWAPPING")
+    assert not problems, "\n" + "\n".join(problems) + f"\nshim: {failed}\n" + res.stderr[-1500:]
+
+
+def test_lane_start_refuses_at_its_restart_fence_and_says_the_log_is_why(tmp_path):
+    """`lane-start` OVER A LOG NOBODY COULD READ (the review of R7, the start
+    consequence and 656). Its restart fence read 8 and went on, and it stopped
+    later, at `lane-last`. It stops at the fence now, before anything is
+    renamed, written or launched - and the fence threw the read's own words
+    away, so its refusal says what 10 is: the lane's log could not be read."""
+    box = StartSandbox(tmp_path / "start")
+    box.env["LANES_NO_FETCH"] = "1"
+    box.resolver()
+    first = box.start("--no-launch")
+    assert first.returncode == 0, (first.stdout, first.stderr)
+    clone = types.SimpleNamespace(wip=box.wip,
+                                  _git=lambda *a: box.git("-C", str(box.wip), *a))
+    register = box.wip / "lanes" / "LANES.md"
+    log_file = box.wip / "lanes" / "log" / f"{START_LANE}.md"
+    before = (register.read_bytes(), log_file.read_bytes(), box.tmux_log.read_text())
+    with _unreadable(clone, f"origin/main:lanes/log/{START_LANE}.md"):
+        res = box.start()
+    assert res.returncode == 2, (res.returncode, res.stdout, res.stderr)
+    assert "exited 10" in res.stderr and "object log could not be read" in res.stderr, res.stderr
+    assert "Nothing was changed" in res.stderr, res.stderr
+    assert not box.claude_runs().strip(), box.claude_runs()
+    assert (register.read_bytes(), log_file.read_bytes(), box.tmux_log.read_text()) == before
+
+
+def test_rename_lane_over_a_log_it_could_not_read_refuses_before_the_mutex(inv):
+    """`rename-lane`, A CALLER THE DESIGN DID NOT LIST (the review of #303,
+    546, and the behaviour change lane 3 accepted with R7's review). The old
+    name's lifecycle root was read with `|| rl_lsr_old=""`, so over a log
+    nobody read the rename went on and left the lane's snapshot and trees
+    under the old name. It refuses now, naming the log, and before the mutex:
+    here another live process holds it, and the refusal does not wait for it.
+    With the log whole the same rename lands - the control."""
+    env, _checkout, _handoff = _a_lane_with_a_row_and_a_handoff(inv)
+    lock = inv.e.wip / "lanes" / ".lanes-edit.lock"
+    lock.mkdir()
+    (lock / "pid").write_text(f"{inv.sleeper.pid}\n", encoding="utf-8")
+    tip = inv.e.tip()
+    try:
+        with _unreadable(inv.e, LOG_B1):
+            try:
+                res = inv.e.edit("rename-lane", LANE, "repoB-9", "--no-github", env=env, timeout=45)
+            except subprocess.TimeoutExpired:
+                pytest.fail("rename-lane waited on the mutex over a log it could not read: it "
+                            "did not refuse before it")
+    finally:
+        (lock / "pid").unlink()
+        lock.rmdir()
+    assert res.returncode == 1, (res.returncode, res.stdout, res.stderr)
+    assert f"lane {LANE}'s object log could not be read" in res.stderr, res.stderr
+    assert "under the old name" in res.stderr and "Nothing was written" in res.stderr, res.stderr
+    assert inv.e.tip() == tip, "the refused rename moved origin/main"
+    landed = inv.e.edit("rename-lane", LANE, "repoB-9", "--no-github", env=env)
+    assert landed.returncode == 0, (landed.returncode, landed.stdout, landed.stderr[-800:])
+
+
+def test_rename_lane_with_no_root_established_still_renames(inv):
+    """AND NO ROOT IS NOT A LOG NOBODY READ (lane 3's change to the behaviour
+    change: refuse only on 1, and on 8 the old root stays empty). repoN-1's log
+    is read and records no `dir`, and `$PROJECTS_ROOT` is not a directory
+    here, so neither the lifecycle root nor the restart intent's has a rung:
+    8, which renames as it always did."""
+    env = {"LANES_LANE_STATE_ROOT": None, "LANES_NO_FETCH": "1",
+           "PROJECTS_ROOT": str(inv.root / "no-projects-root")}
+    e = inv.e
+    register = e.wip / "lanes" / "LANES.md"
+    lines = register.read_text(encoding="utf-8").split("\n")
+    at = next(i for i, line in enumerate(lines) if line.startswith(f"| `{NO_LOG_LANE}` |"))
+    lines.insert(at + 1, f"| `repoN-1` | harness `{UUID_B1}` | Eagle / test / brett | "
+                         "2026-10-01T00:00Z | none | handoffs/repoN-1.md | PAUSED · "
+                         "2026-10-05T00:00:00Z · parked |")
+    register.write_text("\n".join(lines), encoding="utf-8")
+    (e.wip / "handoffs").mkdir(exist_ok=True)
+    (e.wip / "handoffs" / "repoN-1.md").write_text("Lane: repoN-1 — a handoff\n\nolder\n",
+                                                   encoding="utf-8")
+    (e.wip / "lanes" / "log" / "repoN-1.md").write_text(
+        f"STARTED — lane repoN-1, session {UUID_B1}@Eagle, 2026-10-06T00:00:00Z, "
+        "lane:repoN-1 → home opensoft/repoN\n", encoding="utf-8")
+    e._git("add", "-A")
+    e._git("commit", "-q", "-m", "repoN-1: a row, a handoff and a log with no dir")
+    e._git("push", "-q", "origin", "main")
+    root = e.edit("lane-state", "repoN-1", env=env)
+    assert root.returncode == 1 and "has no lifecycle control root" in root.stderr, \
+        (root.returncode, root.stderr)  # no rung: not vacuous
+    res = e.edit("rename-lane", "repoN-1", "repoN-2", "--no-github", env=env)
+    assert res.returncode == 0, (res.returncode, res.stdout, res.stderr[-800:])
+    rows = [line for line in register.read_text(encoding="utf-8").split("\n")
+            if line.startswith("| `repoN-")]
+    assert len(rows) == 1 and rows[0].startswith("| `repoN-2` "), rows
+
+
+def test_lane_objects_with_nowhere_to_keep_its_reads_warnings_is_no_answer(inv):
+    """THE ANSWER IS THE READ IT PROVED (544) ONLY WHERE THE READ'S WARNINGS
+    ARE KEPT (lane 3's change to the behaviour change). With no temporary file
+    they go to stderr and nowhere else, so whether repoB-1's log was read
+    whole is not known - and `lane-objects` answered 0 with its rows, which
+    `lane-end`'s gate ends a lane on. It is 1 now, naming the temporary
+    directory and not the log, which nobody showed was unread; `who --lane`
+    says the same."""
+    env = {"LANES_NO_FETCH": "1"}
+    whole = inv.e.edit("lane-objects", LANE, env=env)
+    assert whole.returncode == 0 and "opensoft/repoB#3" in whole.stdout, whole.stderr
+    nowhere = inv.root / "not-there"
+    res = inv.e.edit("lane-objects", LANE, env={**env, "TMPDIR": str(nowhere)})
+    who = inv.e.edit("who", "--lane", LANE, env={**env, "TMPDIR": str(nowhere)})
+    said = f"no temporary file could be made under {nowhere}"
+    assert res.returncode == 1 and res.stdout == "", (res.returncode, res.stdout, res.stderr)
+    assert said in res.stderr, res.stderr
+    assert "could not read lane repoB-1's object log" not in res.stderr, res.stderr
+    assert who.returncode == 1, (who.returncode, who.stdout, who.stderr)
+    assert said in who.stdout and "opensoft/repoB#3" not in who.stdout, who.stdout
+
+
+@pytest.mark.parametrize("mode", [0o000, 0o400], ids=["dir-000", "dir-400"])
+def test_the_inventory_with_no_origin_names_a_log_directory_it_cannot_list_once(inv, mode):
+    """THE NO-ORIGIN SPELLING, PINNED ONCE (the behaviour change lane 3
+    accepted). With no `origin` the inventory's `PARTIAL` line names this
+    checkout's log directory, in that spelling and once: the reason it adds
+    for a list of the logs that failed is spelled the same way, so the check
+    that keeps one reason from being said twice compares like with like, and
+    the origin's spelling never stands for a directory."""
+    logdir = inv.e.wip / "lanes" / "log"
+    logdir.chmod(mode)
+    try:
+        if _this_account_gets_in_anyway(logdir, "dir"):
+            pytest.skip(f"this account searches a mode-{mode:03o} directory (root)")
+        res = inv.e.edit("worktrees", "--all", env=dict(NO_GIT))
+    finally:
+        logdir.chmod(0o755)
+    assert res.returncode == 0, (res.returncode, res.stderr)
+    partial = [line.split(US) for line in res.stdout.splitlines() if line.startswith("PARTIAL" + US)]
+    assert partial == [["PARTIAL", "Eagle",
+                        f"the log directory {logdir} is there and could not be listed"]], partial
