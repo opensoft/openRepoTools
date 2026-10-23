@@ -40,7 +40,9 @@ from the read it proved and not a later one (544); a write that needs no home -
 a swap's `PAUSED`, a `NOTED` - still lands over a log nobody could read, and
 `--home` and a `#n` are refused (542, 546); the `SessionStart` hook's `open:`
 line says the log could not be read (546); and a lifecycle follow-up over a log
-it could not read for its root moves nothing and says why (R4).
+it could not read for its root moves nothing and says why (R4), while the same
+follow-up over a lane that has no root at all, which is not a log nobody read,
+says nothing (lane 3's review of R7, 1002).
 
 AND R7, BRETT HEAP'S RULING "Write swap, name the gap", with the items held for
 it (the review of #303's 541 and 546, and lane 3's review of R7's change,
@@ -587,6 +589,38 @@ def test_a_lifecycle_follow_up_over_a_log_it_could_not_read_moves_nothing_and_sa
     assert "moved under this ENDED" not in res.stderr, res.stderr
     assert snap.read_bytes() == before, "the real root's snapshot was replaced"
     assert not third.exists(), sorted(str(p) for p in third.rglob("*"))
+
+
+def test_a_lifecycle_follow_up_over_a_lane_with_no_root_says_nothing(inv):
+    """LANE 3'S 1002, A TEST GAP (the code is right). The follow-up's `8) return
+    0` is the pre-cutover case, and nothing pinned it: dropping the arm sends a
+    lane that has no control root to the arm that says "its object log could not
+    be read", on every `STARTED`, `RESUMED`, `ENDED` and `RETIRED` it writes,
+    and all of the cases above still passed. No root is not a log nobody read:
+    repoB-1's log is READ and records no `dir`, `$PROJECTS_ROOT` is not a
+    directory here, and no override names a root, so `lane-state` finds no rung
+    (8's own sentence, not a failed read). A `NOTED` and an `ENDED` then land,
+    and neither says the snapshot "was NOT moved", nor that a log could not be
+    read - nothing is said at all, and nothing is filed at the third rung."""
+    env = {"LANES_LANE_STATE_ROOT": None, "LANES_NO_FETCH": "1",
+           "PROJECTS_ROOT": str(inv.root / "no-projects-root"),
+           "LANES_LANE": LANE, "LANES_SESSION": UUID_B1}
+    no_root = inv.e.edit("lane-state", LANE, env=env)
+    assert no_root.returncode == 1 and "has no lifecycle control root" in no_root.stderr, \
+        (no_root.returncode, no_root.stderr)  # no rung answers: not vacuous
+    assert "could not be read" not in no_root.stderr, no_root.stderr  # ... and no read failed
+    log_rel = "lanes/log/repoB-1.md"
+    for verb, text in (("NOTED", "noted by a lane with no root"),
+                       ("ENDED", "ended by a lane with no root")):
+        res = inv.e.edit("log", verb, f"lane:{LANE}", text, env=env)
+        assert res.returncode == 0, (verb, res.returncode, res.stdout, res.stderr)
+        assert "was NOT moved" not in res.stderr, (verb, res.stderr)
+        assert "object log could not be read" not in res.stderr, (verb, res.stderr)
+        assert "lifecycle snapshot" not in res.stderr, (verb, res.stderr)
+        last = inv.e._git("show", f"origin/main:{log_rel}").rstrip("\n").splitlines()[-1]
+        assert last.startswith(f"{verb} — lane {LANE}, session {UUID_B1}@") and \
+            last.endswith(text), last  # the line landed
+    assert not (inv.root / "no-projects-root").exists(), "a snapshot was filed at the third rung"
 
 
 # ======================================== R7: "Write swap, name the gap", and what it held
