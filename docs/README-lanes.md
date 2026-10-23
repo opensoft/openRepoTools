@@ -197,9 +197,17 @@ creating a second one; two rows differing only by case are a refusal naming both
    fetch that failed, for a writer. A pending hand edit of `lanes/LANES.md`
    refuses every writer but `commit`, which carries it across the
    fast-forward and commits it as its own act. A row edit carries even where
-   origin changed the row beside it, and anything that no longer applies is
+   origin changed the row beside it, where every line it replaces occurs
+   once in origin's version and once in the version it was made on (a
+   repeated or blank line is no anchor, so such an edit is refused, kept and
+   named), and anything that no longer applies is
    kept in a file under the checkout's `.git/lanes-edit/` and named. The old
-   `LANES(pre-existing@…)` capture and `--sweep` are withdrawn (2);
+   `LANES(pre-existing@…)` capture and `--sweep` are withdrawn (2). For
+   `claim` and `add-row`, whose own checks ran before the lock, if S3's fetch
+   finds origin moved since those checks read it, nothing is written and the
+   verb runs again from the top with the lock held (within S4's six attempts;
+   2 at the sixth). The re-run makes no GitHub read: Rule 1's three reads
+   made at attempt 1 are printed and cited as they were;
 3. re-reads the file, edits **exactly one line** in place, and refuses if
    `git diff --numstat` says more than one line moved;
 4. commits as `LANES(<lane>@<workstation>): <what>` — workstation from
@@ -207,14 +215,22 @@ creating a second one; two rows differing only by case are a refusal naming both
 5. **S4, after the edit:** pushes `main` with no pull and reads origin back.
    Confirmed is 0 and `pushed`. A push that went, or timed out, and cannot be
    confirmed is **3, `pushed, not confirmed: <sha>`**, never success: the commit
-   stays on HEAD, and the next write's S3 finds it by content (published,
+   stays on HEAD (unless another writer in the checkout rewrote it while its
+   push was in flight, which the words then say), and the next write's S3
+   finds it by content (published,
    nothing to do; not, every write refuses until the publish act sends it). A
    push refused because origin moved drops this write's commit (only while
-   the branch still holds it, then the tree, as `reset --keep` moves it) and
+   the branch still holds it and it sits on origin's history, then the tree,
+   as `reset --keep` moves it) and
    runs the same write again on origin's new tip, so its
    own checks re-run on the new content — `claim`'s rescan included, which
-   ends a lost race as `CLAIM-LOST` (7). After six attempts, or a refusal with
-   origin unmoved, the commit is kept on HEAD and named (6).
+   ends a lost race as `CLAIM-LOST` (7). `commit`'s carry form drops to its
+   own commit's parent instead, by design: the change goes back to the
+   working tree as the hand edit it was, and the re-run carries it again,
+   or, where a commit under it is not on origin (an unlocked writer's),
+   refuses at S3 (2) with the edit in the working tree and its copy kept.
+   After six attempts, or a refusal with origin unmoved, the commit is kept
+   on HEAD and named (6).
 
 **No write rebases, and no recovery resets with `--hard`.** If a write refuses
 over commits origin lacks, list them first — `git -C <the checkout> cherry -v
@@ -326,11 +342,12 @@ pair, **64** usage — and that
 2 is RELAYED by `lane-start`, `lane-end` and `lane` rather than carried past,
 because the pair may be on `origin/<branch>` while this checkout still holds one
 row. `add-row` asks the published register as well as this copy of it for the
-same reason: a row a peer pushed is a refusal here, naming it and the `git pull
---rebase` that settles it, and never a second row. The LOG is held to the same
-rule — two files under `lanes/log/` whose names differ only by case are two logs
-for one lane, and every read and every write under that name refuses, naming
-both, until they are merged.
+same reason: a row a peer pushed is a refusal here, naming it and the row verbs
+(`set-row-state`, `replace-in-row`) that act on it, each of which fast-forwards
+this checkout to it first (Amendment 23 S3), and never a second row. The LOG is
+held to the same rule — two files under `lanes/log/` whose names differ only by
+case are two logs for one lane, and every read and every write under that name
+refuses, naming both, until they are merged.
 
 Honouring that by hand is five acts at one end of a lane and one at the other,
 and this register records where they get dropped: rows added hours late (`ROW
@@ -878,7 +895,11 @@ workstation. So:
    stops and reports, it does not author a successor. Nothing is written.
 3. Run Rule 1's three reads and print them; warn if this is a crossing.
 4. Append the `CLAIMED` line, commit, push (Amendment 23 S3–S4: fetched and
-   fast-forwarded first, no pull). A push refused because origin moved drops
+   fast-forwarded first, no pull). If S3's fetch finds origin moved since
+   steps 1–3 read it, nothing is written and the claim runs again from the
+   top with the lock held (within the six attempts; 2 at the sixth), and its
+   rescan comes first, as below; the re-run makes no GitHub read, and prints
+   and cites the three reads attempt 1 made. A push refused because origin moved drops
    the `CLAIMED` commit and runs the claim again on origin's new tip, and the
    re-run rescans first: if another lane's `CLAIMED` or `TAKEOVER` is there,
    **theirs landed first** — it appends `CLAIM-LOST → lane:<winner>`, pushes
@@ -1197,11 +1218,11 @@ else.
 |---|---|
 | 0 | done — and for a write, **confirmed**: the commit was read back on origin before the writer said `pushed` (Amendment 23 S4) |
 | 1 | environment — no register, no writer |
-| 2 | refusal — bad arguments, the object is held, an unknown alias, or `commit` refusing to publish local commits that are not register or handoff writes, from a checkout whose HEAD is off the branch, or that it cannot read (#194; it pushes none of them); and, Amendment 23 S3, every writer with nothing written, where its checkout cannot be brought to origin's tip: a fetch that failed (`LANES_NO_FETCH=1` is one, for a writer), an operation in progress or unmerged entries, HEAD off the branch, staged entries that are not the write's own, unpushed commits (the publish act excepted), a diverged branch, a pending change to a path the write commits, or a fast-forward git refused; the withdrawn `--sweep`; the publish act over a stack origin has moved past (S4); and `claim` or `add-row` meeting origin moved under its own checks on each of six attempts, before any edit (S3, S4) |
-| 3 | **pushed, not confirmed: `<sha>`** (Amendment 23 S4). The write committed and pushed — or its push timed out, and a hung push often lands — and the read-back could not confirm the commit on origin: the fetch failed or timed out, or origin does not hold it. Never success. The commit stays on HEAD, and the next write's S3 finds it by content either way: published, there is nothing to do; not, every write refuses until the publish act sends it or an archive (S6.3) takes it |
+| 2 | refusal — bad arguments, the object is held, an unknown alias, or `commit` refusing to publish local commits that are not register or handoff writes, from a checkout whose HEAD is off the branch, or that it cannot read (#194; it pushes none of them); and, Amendment 23 S3, every writer with nothing written, where its checkout cannot be brought to origin's tip: a fetch that failed (`LANES_NO_FETCH=1` is one, for a writer), an operation in progress or unmerged entries, HEAD off the branch, staged entries that are not the write's own, unpushed commits (the publish act excepted), a diverged branch, a pending change to a path the write commits, or a fast-forward git refused; a `LANES_REPO` naming a directory below its checkout's top level, from which git would read the write's pathspecs, before any edit; the withdrawn `--sweep`; the publish act over a stack origin has moved past (S4); and `claim` or `add-row` meeting origin moved under its own checks on each of six attempts, before any edit (S3, S4) |
+| 3 | **pushed, not confirmed: `<sha>`** (Amendment 23 S4). The write committed and pushed — or its push timed out, and a hung push often lands — and the read-back could not confirm the commit on origin: the fetch failed or timed out, or origin does not hold it. Never success. The commit stays on HEAD — unless another writer in the checkout **rewrote** it while its push was in flight (an unlocked writer's rebase), which the words then say: it is not on HEAD at all, and what reached origin is read by content — and the next write's S3 finds it by content either way: published, there is nothing to do; not, every write refuses until the publish act sends it or an archive (S6.3) takes it |
 | 4 | the mutex could not be taken within 60s |
 | 5 | an edit moved more than one line and was refused |
-| 6 | `git add` or `commit` failed — or the commit is **kept on HEAD and named** (sha, subject, `git show`): a sixth push refused because origin moved (Amendment 23 S4's bound; where S3 finds the sixth move before any edit, nothing is committed and it is 2), a replay's drop refused over an uncommitted change, a commit another writer made on top of this one in the checkout before the replay drops it (the drop moves the branch only from this write's own commit, so it never takes another), a push (a write's, or the publish act's) refused with origin unmoved, which no replay can mend, or a whole-file `write-handoff` whose copy origin changed meanwhile, which no replay may overwrite (S4.4), or a `--stamp` or `--prepend` one whose handoff origin deleted meanwhile, which a replay would find nothing to write into (one moved with its row's cell, to a file under `handoffs/` that origin has, is replayed into the moved file). Or another writer in the checkout **rewrote** this write's commit (a `pull --rebase` with no lock): it is not on HEAD at all, and what reached origin is read by content (`git cherry -v origin/main HEAD`). Or, where the drop's tree step was refused and another writer committed on the branch in between, the commit is named off HEAD, with `reflog -5`. Every later write from that checkout refuses until the lane publishes or archives it |
+| 6 | `git add` or `commit` failed — or the commit is **kept on HEAD and named** (sha, subject, `git show`): a sixth push refused because origin moved (Amendment 23 S4's bound; where S3 finds the sixth move before any edit, nothing is committed and it is 2), a replay's drop refused over an uncommitted change, a commit another writer made on top of this one in the checkout before the replay drops it, or under it (this write's commit is known by what it is, never by HEAD read after the fact, and the drop moves the branch only from that commit and only where it sits on origin's history, so it never takes another; `commit`'s carry form drops to its own commit's parent by design, so one under it stays, the hand edit goes back to the working tree with its copy kept, and the re-run's S3 refuses on it: 2, not 6), a commit made in the same moment as this write's that cannot be told from it (nothing is pushed), a push (a write's, or the publish act's) refused with origin unmoved, which no replay can mend, or a whole-file `write-handoff` whose copy origin changed meanwhile, which no replay may overwrite (S4.4), or a `--stamp` or `--prepend` one whose handoff origin deleted meanwhile, which a replay would find nothing to write into (one moved with its row's cell, to a file under `handoffs/` that origin has, is replayed into the moved file). Or another writer in the checkout **rewrote** this write's commit (a `pull --rebase` with no lock): it is not on HEAD at all, and what reached origin is read by content (`git cherry -v origin/main HEAD`). Or, where the drop's tree step was refused and another writer committed on the branch in between, the commit is named off HEAD, with `reflog -5`. Every later write from that checkout refuses until the lane publishes or archives it |
 | 7 | another act got there first and this one wrote nothing: `claim`'s `CLAIM-LOST` (another lane's claim landed first), and `set-lane-state` / `set-lane-tree`'s lifecycle fence (openRepoTools#91, below) |
 | 9 | `CLAIM-LOST` — issue #30's own dead-lane verdict could not be reconfirmed before a `--force` takeover's push landed: the source lane resumed, a live session now backs it up, or that could not be read at all (`claim` only). Never 7 — that code is a RIVAL's claim, and this is the same lane the takeover was granted over |
 | 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read, or is of this schema and not a whole record, so nothing can be read out of it as a snapshot (openRepoTools#91 and #115, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim`. `lane-trees`: the lane's `trees` directory is there and could not be listed (#157 item 4e) — never the 8 that means it recorded no tree |

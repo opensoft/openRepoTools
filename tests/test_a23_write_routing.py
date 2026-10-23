@@ -556,6 +556,16 @@ NAMED_WRITES = {
     "commit": (("commit", "a publish for a lane nobody started"), {"LANES_LANE": TYPO}),
     "request-handoff": (("request-handoff", TYPO, "--no-wait"), {"LANES_SESSION": ASKER_UUID}),
     "append-line": (("append-line", "LANDING — a line for a lane nobody started"), {"LANES_LANE": TYPO}),
+    # 285 of lane openRepoTools-3's review of #307: `claim` and `release` take
+    # their lane from LANES_LANE as `log` does, and a sweep goes through its
+    # runner's checkout.
+    "claim": (("claim", "opensoft/repoA23#1", "--no-github", "--home", "opensoft/repoA23"),
+              {"LANES_LANE": TYPO, "LANES_SESSION": UUID}),
+    "release": (("release", "opensoft/repoA23#1", "a release for a lane nobody started", "--no-github",
+                 "--home", "opensoft/repoA23"), {"LANES_LANE": TYPO, "LANES_SESSION": UUID}),
+    "retire-rows": (("retire-rows", DORMANT), {"LANES_LANE": TYPO, "LANES_SESSION": UUID}),
+    "archive-rows": (("archive-rows", "repoA23", "--yes"), {"LANES_LANE": TYPO, "LANES_SESSION": UUID}),
+    "migrate-state-cells": (("migrate-state-cells", "--yes"), {"LANES_LANE": TYPO, "LANES_SESSION": UUID}),
 }
 
 
@@ -566,7 +576,10 @@ def test_a_write_for_a_lane_with_no_row_and_no_log_clones_nothing(box: Box, verb
     Eagle) for a lane that does not exist, and left it. So did `commit`,
     `request-handoff` and `append-line`. Each takes a lane with no row, so
     the gate asks for a row OR a published log; with neither, after one fetch
-    of W, it refuses (2) and clones nothing."""
+    of W, it refuses (2) and clones nothing. So do `claim`, `release` and the
+    three sweeps' runner lane (285 of lane openRepoTools-3's review of #307:
+    `claim` and `release` cloned the checkout and published a CLAIMED or a
+    RELEASED for the typo, exit 0)."""
     args, env = NAMED_WRITES[verb]
     head, w_before = box.origin_head(), box.w_state()
     result = box.helper(*args, **env)
@@ -589,3 +602,50 @@ def test_a_lane_with_a_published_log_and_no_row_is_no_reason_to_refuse(box: Box)
     assert "has no row and no object log" not in result.stderr, result.stderr
     assert (box.checkout(ARCHIVED) / ".git").is_dir(), "it went through that lane's own checkout"
     assert "a note for an archived lane" in box.origin_file(f"lanes/log/{ARCHIVED}.md")
+
+
+# --------------------------- Q4 of lane openRepoTools-3's review of #307
+
+#: Writers for lanes W knows (a row, a log), each under LANES_NO_FETCH=1.
+KNOWN_WRITES = {
+    "set-row-state": (("set-row-state", LANE, "LIVE · no fetch"), {}),
+    "log": (("log", "NOTED", f"lane:{LANE}", "a note with no fetch", "--home", "opensoft/repoA23"),
+            {"LANES_LANE": LANE, "LANES_SESSION": UUID}),
+    "claim": (("claim", "opensoft/repoA23#2", "--no-github", "--home", "opensoft/repoA23"),
+              {"LANES_LANE": LANE, "LANES_SESSION": UUID}),
+    "retire-rows": (("retire-rows", DORMANT), {"LANES_LANE": LANE, "LANES_SESSION": UUID}),
+    "request-handoff": (("request-handoff", TARGET, "--no-wait"), {"LANES_SESSION": ASKER_UUID}),
+}
+
+
+@pytest.mark.parametrize("verb", sorted(KNOWN_WRITES))
+def test_no_fetch_refuses_every_routed_writer_before_any_clone(box: Box, verb: str):
+    """Q4 (its P6): under the opt-in and LANES_NO_FETCH=1, a write for a lane
+    W already knows still had its checkout cloned, about 0.4 GB, and S3 step 1
+    then refused it (2), as it must: for a writer a fetch that did not run is a
+    fetch that failed (ratified choice 2). Now every routed writer refuses
+    before any clone where its lane's checkout does not exist yet: 2, the same
+    reason, nothing cloned, nothing written."""
+    args, env = KNOWN_WRITES[verb]
+    head, w_before = box.origin_head(), box.w_state()
+    result = box.helper(*args, LANES_NO_FETCH="1", **env)
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "LANES_NO_FETCH=1 is set" in result.stderr, result.stderr
+    assert "ratified choice 2" in result.stderr
+    assert "was not cloned" in result.stderr
+    assert not box.lanes_root.exists(), "a write S3 step 1 must refuse clones nothing first"
+    assert_nothing_written(box, head, w_before)
+
+
+def test_no_fetch_through_an_existing_checkout_is_refused_there_as_before(box: Box):
+    """Q4's other half: a lane whose checkout exists keeps today's behaviour,
+    S3 step 1's refusal in that checkout, at no cost."""
+    first = box.helper("set-row-state", LANE, "LIVE · the first write")
+    assert first.returncode == 0, (first.stdout, first.stderr)
+    lc = box.checkout(LANE)
+    head = box.origin_head()
+    result = box.helper("set-row-state", LANE, "LIVE · no fetch", LANES_NO_FETCH="1")
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert f"refusing to set-row-state in {lc}: LANES_NO_FETCH=1 is set" in result.stderr, result.stderr
+    assert "was not cloned" not in result.stderr
+    assert box.origin_head() == head
