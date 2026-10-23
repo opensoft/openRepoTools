@@ -169,6 +169,15 @@ def _archive_pair(inv) -> tuple:
     return "repoP-1", "repop-1"
 
 
+def _archive_repeat(inv) -> tuple:
+    """ONE LANE ARCHIVED TWICE UNDER ONE SPELLING: retired, re-added and
+    retired again (788). The estate archives `repoZ-1` once; this is its second
+    row, spelled alike. It is one lane and no pair, so it is not one of PAIRS."""
+    _archive_rows(inv, _row("repoZ-1", f"`{UUID_W1}`", "RETIRED · 2026-09-06T00:00:00Z · retired again"),
+                  message="repoZ-1 archived a second time under one spelling")
+    return "REPOZ-1", "repoZ-1"
+
+
 def _log_pair(inv) -> tuple:
     """Two published logs one case apart, through git alone: a case-folding
     disk would make them one file (`commit_paths`)."""
@@ -264,6 +273,24 @@ def test_a_read_or_a_writer_over_an_unreadable_register_refuses_and_files_nothin
     assert res.returncode == 2, (res.returncode, res.stdout, res.stderr)
     assert res.stdout == "", res.stdout
     assert "NOT established" in res.stderr, res.stderr
+    assert _written(inv) == before
+
+
+def test_commit_with_a_lane_named_refuses_the_name_before_the_pathspec_check(inv):
+    """#170 G13's COMMIT CASE WITH `LANES_LANE` SET (lane 3's ruling 1). The
+    shell suite's case unsets it: `$LANES_PATH` is also where the register is
+    read on origin, so a bogus one leaves a register nobody could read, and a
+    lane that is named is refused by the resolver (2, "NOT established")
+    before the pathspec check the case pins - HEAD, origin and the tree
+    unmoved. Unnamed, the same call reaches that check (the control)."""
+    bogus = {"LANES_PATH": ":(bogus)x"}
+    before = _written(inv)
+    named = _edit(inv, "commit", "attach nothing", env={**bogus, "LANES_LANE": "repoA-1"})
+    assert named.returncode == 2, (named.returncode, named.stdout, named.stderr)
+    assert "NOT established" in named.stderr, named.stderr
+    unnamed = _edit(inv, "commit", "attach nothing", env=bogus)
+    assert unnamed.returncode == 2, (unnamed.returncode, unnamed.stdout, unnamed.stderr)
+    assert "could not read what this commit would stage" in unnamed.stderr, unnamed.stderr
     assert _written(inv) == before
 
 
@@ -377,6 +404,43 @@ def test_a_read_and_a_writer_refuse_an_archived_pair_and_file_nothing(inv):
         assert res.returncode == 2, (args, res.returncode, res.stdout, res.stderr)
         assert "Amendment 15(d)" in res.stderr, res.stderr
     assert _written(inv) == before
+
+
+@pytest.mark.parametrize("source", list(PAIRS), ids=["control-register", "archive", "logs"])
+def test_worktrees_of_a_case_pair_in_any_source_refuses_and_never_answers_8(inv, source):
+    """787: `worktrees <lane>` REFUSES A PAIR (2) WHICHEVER SOURCE HOLDS IT, as
+    the test above has the other reads and writers do for the archive's. Its
+    arm keeps the typed name over a 66 (#290's `UNREAD` line) and over nothing
+    else: a pair is the `*)` case, and where that case kept the name too the
+    read went on and answered 8, "no worktree is inventoried", for a lane the
+    register, the archive or the logs spell two ways. The words are
+    `canon-lane`'s, in whichever spelling is typed, and nothing is written."""
+    one, two = PAIRS[source](inv)
+    before = _written(inv)
+    for typed in (one.upper(), one, two):
+        res = _edit(inv, "worktrees", typed)
+        assert res.returncode == 2, (typed, res.returncode, res.stdout, res.stderr)
+        assert res.stdout == "", res.stdout
+        for said in ("Amendment 15(d)", one, two):
+            assert said in res.stderr, (typed, said, res.stderr)
+    assert _written(inv) == before
+
+
+def test_a_lane_archived_twice_under_one_spelling_is_one_lane_and_no_pair(inv):
+    """788: THE ARCHIVE SCAN COUNTS A SPELLING ONCE. A lane retired, re-added
+    and retired again has two archived rows under one spelling: one lane.
+    Amendment 15(d) refuses two SPELLINGS in one source, not two rows, so in
+    any case typed it resolves to its spelling and nothing says "15(d)" - where
+    a scan that counted rows would refuse a single-spelling lane that every act
+    would then fail to name."""
+    typed, canonical = _archive_repeat(inv)
+    archived = (inv.e.wip / "lanes/archive/LANES-retired.md").read_text(encoding="utf-8")
+    assert archived.count(f"| `{canonical}` |") == 2, archived  # the duplicate is there: not vacuous
+    for name in (typed, canonical):
+        res = _edit(inv, "canon-lane", name)
+        assert (res.returncode, res.stdout.strip()) == (0, canonical), (name, res.returncode,
+                                                                       res.stdout, res.stderr)
+        assert "Amendment 15(d)" not in res.stderr, (name, res.stderr)
 
 
 # ------------------------------ R2: an unreadable archive or list of the logs
