@@ -103,7 +103,7 @@ sread() {                      # sread <var> "<what the failure is NOT>" <verb> 
     2)   sr_why="$(LANES_NO_FETCH=1 "$L" "$@" 2>&1 >/dev/null || :)"
          case "$sr_why" in
            *"Amendment 15(d)"*)
-             printf 'REFUSED: `%s %s` says the register holds two rows for this lane that differ only by case, so no read of it is unambiguous and this skill will not pick one (Amendment 15(d)). It will not bind a lane, rename the window, write a PAUSED record or print a restart command; merge the two rows by hand first. The helper said:\n%s\n' \
+             printf "REFUSED: \`%s %s\` says one source spells this lane two ways that differ only by case — two register rows, two archived rows or two object logs — so no read of it is unambiguous and this skill will not pick one (Amendment 15(d)). It will not bind a lane, rename the window, write a PAUSED record or print a restart command; merge them by hand first: rows, the newer row's session id(s) into the older row's session cell, in order, removing the newer row in the same commit, and logs into one file, oldest lines first. The helper said:\n%s\n" \
                "$L" "$1" "$sr_why" >&2
              exit 2 ;;
          esac

@@ -516,11 +516,11 @@ class Helper:
         if proc.returncode == 0 and out:
             return out, ""
         if proc.returncode == 66:
-            return lane, ("the lane alias table could not be read (exit 66), so a renamed "
-                          f"lane's old name cannot be resolved: {_first_line(proc.stderr)}")
+            return lane, ("the register, the lane alias table, the archive or the list of the object logs - an input "
+                          f"a lane name is resolved by - could not be read (exit 66): {_first_line(proc.stderr)}")
         if proc.returncode == 2 and "Amendment 15(d)" in (proc.stderr or ""):
-            return lane, ("the published register spells this lane two ways (Amendment "
-                          f"15(d)): {_first_line(proc.stderr)}")
+            return lane, ("one source spells this lane two ways - two register rows, two archived rows or two object "
+                          f"logs (Amendment 15(d)): merge them by hand, the newer row's session id(s) into the older row or oldest lines first - {_first_line(proc.stderr)}")
         return lane, ""
 
     def lane_facts(self, lane: str) -> LaneFacts:

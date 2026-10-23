@@ -331,7 +331,11 @@ removed in the SAME commit, whose message names both spellings. `lanes-edit.sh
 canon-lane <name>` is that resolver as a read, and the one the commands share
 rather than each keeping its own: **0** with the canonical spelling (the typed
 one where no row matches, so `add-row` can still create a lane), **2** for the
-pair, **64** usage — and that
+pair, **64** usage, and **66** where an input it resolves names by could not be
+read — the register, the lane alias table, the archive or the list of the
+object logs: a name none of them could answer for is not established, which is
+never the same as a name nobody has, so `lane-start` and `lane-end` refuse it
+and `lane` and `lane-handoff` stop on it. That
 2 is RELAYED by `lane-start`, `lane-end` and `lane` rather than carried past,
 because the pair may be on `origin/<branch>` while this checkout still holds one
 row. `add-row` asks the published register as well as this copy of it for the

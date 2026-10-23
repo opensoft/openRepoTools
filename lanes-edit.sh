@@ -465,15 +465,21 @@
 #      contract because its four callers sit in front of a launch as those do. IT WAS IN NO TABLE AT ALL until this round (F-X16), while
 #      being the code the contract gives every one of those reads.
 #
-#  66  EX_NOINPUT — AMENDMENT 16(e)'s ALIAS TABLE COULD NOT BE READ, and
-#      `canon-lane` is the one verb that spends it. `lanes/aliases.tsv` is what
-#      makes a renamed lane's OLD name resolve, so a table nobody can read is
-#      not an estate with no renames: a former name would read as a lane nobody
-#      has, and `lane-start` would append a SECOND row for one that has been
-#      running all day. It is a number of its own because 2 already carries two
-#      meanings to `lane-start`, `lane-end`, `lane` and `lane-handoff` — 15(d)'s
-#      two-rows refusal, told by its words, and the unknown-subcommand 2 of an
-#      older helper, which they carry on past — and a third meaning there is the
+#  66  EX_NOINPUT — an input that `canon-lane` resolves names by could not be
+#      read: the register, AMENDMENT 16(e)'s lane alias table, the archive or
+#      the list of the object logs (opensoft/openRepoTools#310). ONE meaning,
+#      and `canon-lane` is the one verb that spends it. A name none of those
+#      inputs could answer for is not a name nobody has: the register's rows
+#      spell a lane, `lanes/aliases.tsv` makes a renamed lane's OLD name
+#      resolve, and the archive's rows and the logs' file names spell a lane
+#      with no row — so a former name, or a lane typed in another case, would
+#      read as a lane nobody has, `lane-start` would append a SECOND row for one
+#      that has been running all day, and a writer would file a second
+#      directory beside the lane's own. It is a number of its own because 2
+#      already carries two meanings to `lane-start`, `lane-end`, `lane` and
+#      `lane-handoff` — Amendment 15(d)'s refusal of two spellings in one
+#      source, told by its words, and the unknown-subcommand 2 of an older
+#      helper, which they carry on past — and a third meaning there is the
 #      fail-open this refusal exists to close.
 #
 #      WHY A SECOND USAGE CODE RATHER THAN 2. A read in front of a launch has to
@@ -11979,7 +11985,7 @@ migrate_state_cells() {   # <1 = the act, 0 = the dry run>
       msc_low="$(lc "$msc_lane")"
       while IFS= read -r msc_d; do
         [ -n "$msc_d" ] || continue
-        [ "$msc_d" = "$msc_low" ] && msc_why="the register holds more than one row whose lane name is $msc_lane under some case — one lane is ONE lane (Amendment 15), and the two are merged by hand into one row (15(d)) before either is migrated"
+        [ "$msc_d" = "$msc_low" ] && msc_why="the register holds more than one row whose lane name is $msc_lane under some case — one lane is ONE lane (Amendment 15), and the two are merged by hand into one row (Amendment 15(d)) before either is migrated"
       done <<EOF
 $msc_dups
 EOF
@@ -12052,16 +12058,16 @@ EOF
       msc_pub=""; msc_prc=0
       msc_pub="$(log_path_ci "$msc_lane")" || msc_prc=$?
       if [ "$msc_prc" != 0 ]; then
-        msc_why="its object log is published twice under names that differ only by case (above) — 15(d)'s hand merge"
+        msc_why="its object log is published twice under names that differ only by case (above) — Amendment 15(d)'s hand merge"
       else
         msc_loc="$(log_files_named_ci "$msc_lane")"
         msc_ln="$(printf '%s' "$msc_loc" | grep -c . || :)"
         if [ "$msc_ln" -gt 1 ]; then
-          msc_why="this checkout holds $msc_ln object logs for it whose names differ only by case — 15(d)'s hand merge"
+          msc_why="this checkout holds $msc_ln object logs for it whose names differ only by case — Amendment 15(d)'s hand merge"
         elif [ "$msc_ln" = 1 ]; then
           msc_lf="$msc_loc"; msc_rel="${LANES_LOG_PREFIX}${msc_loc##*/}"
           if [ "${msc_rel##*/}" != "${msc_pub##*/}" ]; then
-            msc_why="its object log is published as $msc_pub while this checkout has ${msc_rel##*/} — a case-only rename whose commit never landed. Pull first, or merge them (15(d))"
+            msc_why="its object log is published as $msc_pub while this checkout has ${msc_rel##*/} — a case-only rename whose commit never landed. Pull first, or merge them (Amendment 15(d))"
           elif [ "$NO_GIT" != 1 ] && ! git -C "$LANES_REPO" ls-files --error-unmatch -- "$msc_rel" >/dev/null 2>&1; then
             # AN UNTRACKED LOG IS SOMEBODY'S UNCOMMITTED WORK, AND THIS ACT WOULD
             # COMMIT IT (Copilot round 2 on openRepoTools#82). A log that is
@@ -12836,7 +12842,7 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
     # log" and the sweep went on. `ls-tree` reads the tree alone.
     rr_pubp=""
     rr_pubp="$(log_path_ci "$rr_l")" ||
-      die "lane $rr_l's object log is published twice under names that differ only by case (above) — 15(d)'s hand merge. Nothing was written." 2
+      die "lane $rr_l's object log is published twice under names that differ only by case (above) — Amendment 15(d)'s hand merge. Nothing was written." 2
     if [ "$NO_GIT" != 1 ] && have_remote_ref; then
       rr_intree=""
       rr_intree="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$rr_pubp" 2>/dev/null)" ||
@@ -12940,7 +12946,7 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
       die "the log directory $LANES_LOG_DIR exists and could not be listed, so whether lane $rr_l has a log of any case in this checkout is not known — and that is NOT 'it has none' (Amendment 7(d)). Nothing was written." 1
     rr_ln2="$(printf '%s' "$rr_loc" | grep -c . || :)"
     [ "$rr_ln2" -le 1 ] ||
-      die "lane $rr_l has $rr_ln2 object logs in this checkout whose names differ only by case: $(printf '%s\n' "$rr_loc" | tr '\n' ' ')— one lane is ONE lane under any case (Amendment 15) and no read of it is unambiguous. Merge them by hand into $(log_file_for "$rr_l") (15(d)) and re-run. Nothing was written." 2
+      die "lane $rr_l has $rr_ln2 object logs in this checkout whose names differ only by case: $(printf '%s\n' "$rr_loc" | tr '\n' ' ')— one lane is ONE lane under any case (Amendment 15) and no read of it is unambiguous. Merge them by hand into $(log_file_for "$rr_l") (Amendment 15(d)) and re-run. Nothing was written." 2
     if [ "$rr_ln2" = 1 ] && [ "$rr_loc" != "$(log_file_for "$rr_l")" ]; then
       die "lane $rr_l's object log is here as ${rr_loc##*/} while the row spells the lane $rr_l, so the first write to it RENAMES the file (Amendment 15) — and this sweep is one commit over several lanes, which is not the commit that rename belongs in. Take it first with a write of that lane's own (\`LANES_LANE=$rr_l lanes-edit.sh log NOTED lane:$rr_l \"<what it was>\"\`), then re-run. Nothing was written." 2
     fi
@@ -15792,7 +15798,7 @@ Nothing was written." 2
     # fail-closed rule is about.
     case "$rl_crc" in
       0) : ;;
-      66) die "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read ($(lane_alias_err)), and a rename whose alias table cannot be read is a rename whose old name may stop resolving — which is the one thing clause (e) promises for ever, so this fails closed. Nothing was written." 1 ;;
+      66) die "the old name could not be resolved: an input a lane name is resolved by — the register, the lane alias table, the archive or the list of the object logs — could not be read (above), and a rename whose old name nobody could resolve may rename another lane, or leave a former name that stops resolving, which is the one thing clause (e) promises for ever — so this fails closed. Nothing was written." 1 ;;
       *) exit 2 ;;
     esac
     # THE OLD NAME'S LIFECYCLE CONTROL ROOT, read while the old name still has
@@ -15863,7 +15869,7 @@ Nothing was written." 2
     # rebase the two together.
     rl_nh="$(printf '%s\n%s\n' "$(rows_named_ci "$rl_new" 2>/dev/null || :)" "$(rows_named_ci_local "$rl_new" 2>/dev/null || :)" | grep -v '^$' | LC_ALL=C sort -u || :)"
     if [ -n "$rl_nh" ]; then
-      die "lane '$rl_new' already has a row, spelled $(printf '%s\n' "$rl_nh" | tr '\n' ' ')— a lane name is ONE name under any case (Amendment 15(a)), so renaming into it would make TWO rows for one name, which is the state every writer in this file refuses until 15(d)'s merge. Nothing was written." 2
+      die "lane '$rl_new' already has a row, spelled $(printf '%s\n' "$rl_nh" | tr '\n' ' ')— a lane name is ONE name under any case (Amendment 15(a)), so renaming into it would make TWO rows for one name, which is the state every writer in this file refuses until Amendment 15(d)'s merge. Nothing was written." 2
     fi
 
     # `<new>` IS `<repo>-<n>` UNLESS `--verbatim` NAMES IT. Rule 4's form is
@@ -15963,7 +15969,7 @@ EOF
     rl_lfhits="$(log_files_named_ci "$rl_old")"
     rl_lfn="$(printf '%s' "$rl_lfhits" | grep -c . || :)"
     if [ "$rl_lfn" -gt 1 ]; then
-      die "lane $rl_old has $rl_lfn object logs whose names differ only by case: $(printf '%s\n' "$rl_lfhits" | tr '\n' ' ')— one lane is ONE lane under any case and its log is ONE file (Amendment 15). Merge them by hand into $(log_file_for "$rl_old"), oldest lines first, remove the others in the same commit (15(d)), and re-run. Nothing was written." 2
+      die "lane $rl_old has $rl_lfn object logs whose names differ only by case: $(printf '%s\n' "$rl_lfhits" | tr '\n' ' ')— one lane is ONE lane under any case and its log is ONE file (Amendment 15). Merge them by hand into $(log_file_for "$rl_old"), oldest lines first, remove the others in the same commit (Amendment 15(d)), and re-run. Nothing was written." 2
     fi
     rl_log_old=""; rl_log_old_rel=""
     if [ "$rl_lfn" = 1 ]; then
@@ -15997,7 +16003,7 @@ EOF
       fi
     fi
     if have_remote_ref; then
-      rl_pub="$(log_path_ci "$rl_old")" || die "lane $rl_old's object log is published twice (above), and one lane is ONE lane under any case: its log is ONE file (Amendment 15). Merge them by hand (15(d)) and re-run. Nothing was written." 2
+      rl_pub="$(log_path_ci "$rl_old")" || die "lane $rl_old's object log is published twice (above), and one lane is ONE lane under any case: its log is ONE file (Amendment 15). Merge them by hand (Amendment 15(d)) and re-run. Nothing was written." 2
       if [ "$rl_pub" != "$rl_log_old_rel" ] && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$rl_pub" 2>/dev/null; then
         die "lane $rl_old's object log is published as $rl_pub while this checkout has ${rl_log_old_rel:-no log for it at all}: a rename made from here would move one file and leave the other, which is two logs for one lane by the path \`ensure_log\` exists to close. Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run. Nothing was written." 2
       fi

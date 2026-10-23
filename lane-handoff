@@ -1455,7 +1455,7 @@ sread() {   # sread <var> "<what the failure is NOT>" <verb> [args…]
 		sr_why="$(LANES_NO_FETCH=1 "$LANES_EDIT" "$@" 2>&1 >/dev/null || :)"
 		case "$sr_why" in
 		*"Amendment 15(d)"*)
-			die "the register holds two rows for this lane that differ only by case, so no read of it is unambiguous and this command will not pick one (Amendment 15(d)). Nothing was written and nothing was renamed. The helper's own words:
+			die "one source spells this lane two ways that differ only by case — two register rows, two archived rows or two object logs — so no read of it is unambiguous and this command will not pick one (Amendment 15(d)): merge rows by hand, the newer row's session id(s) into the older row's session cell, in order, removing the newer row in the same commit, and logs into one file, oldest lines first. Nothing was written and nothing was renamed. The helper's own words:
 $sr_why" 2 ;;
 		esac
 		sr_out="" ;;
