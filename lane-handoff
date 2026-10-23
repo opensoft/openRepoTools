@@ -108,6 +108,10 @@
 #   1  a read failed, which is never "nothing to report" (Amendment 7(d))
 #
 #   $LANES_EDIT       the register's reader/writer (default: beside this file)
+#   $LANES_ROUTE_WRITES=1     Amendment 23's opt-in: the lane's writes, the
+#                             handoff's included, go through its own register
+#                             checkout `<W>-lanes/<lane>/`, and a `--restart`
+#                             respawn carries it to the supervisor
 #   $LANES_AGENT      this agent's name for the record (default: claude)
 #   $PCLAUDE          the launcher                 (default: lclaude, else pclaude, else claude-profile)
 #   $LANE_HANDOFF_NO_TMUX=1   never touch tmux (the identity fix, --exit, --restart)
@@ -2509,28 +2513,35 @@ step "writers polled: $writer_count under ${dir:-<no recorded checkout>}"
 # empty string before the leading pipe — `lanes-edit.sh`'s own `row_cell` /
 # `handoff_of_lane` convention. NEVER count back from `NF`: a lane's row carries
 # every state line to the RIGHT of the handoff column, so `$(NF-2)` lands on the
-# empty string and the commit below would `git add ""` — silently, in the one
-# step Amendment 6(e) exists for.
+# empty string. The cell is read here for the notes below; the FILE is the
+# helper's.
 sread row "'this lane has no row'" register-row "$lane"
 row_line="$(printf '%s\n' "$row" | grep '^|' | tail -n 1)"
 handoff_cell="$(printf '%s' "$row_line" | awk -F'|' '{print $7}' | awk '{$1=$1};1')"
 
-handoff_file=""
-if [ -n "$handoff_cell" ]; then
-	case "$handoff_cell" in
-	'~/'*) [ -f "$HOME/${handoff_cell#'~/'}" ] && handoff_file="$HOME/${handoff_cell#'~/'}" ;;
-	/*) [ -f "$handoff_cell" ] && handoff_file="$handoff_cell" ;;
-	*)
-		# THE WORKSPACE REPOSITORY, THROUGH THE HELPER'S OWN RESOLVER and never
-		# through a second reading of `workspace.yaml` — Amendment 9(a) is
-		# explicit that a second way to find one thing is a second answer.
-		hs_root="$("$LANES_EDIT" workspace-root 2>/dev/null || :)"
-		for hs_base in "${LANES_REPO:-}" "$hs_root"; do
-			[ -n "$hs_base" ] || continue
-			if [ -f "$hs_base/$handoff_cell" ]; then handoff_file="$hs_base/$handoff_cell"; break; fi
-		done ;;
-	esac
-fi
+# THE FILE IS THE ONE `write-handoff` WRITES (Amendment 23, slice 2b): the
+# row's cell out of the published register, TRANSLATED into the checkout this
+# lane's writes go through — its own `<W>-lanes/<lane>/` under the opt-in,
+# made here where it is not there yet; an explicit `LANES_REPO` in place; W
+# where the opt-in is off — by `lanes-edit.sh handoff-path`, the one
+# implementation of that answer. It used to be resolved here against
+# `LANES_REPO` and then W's `workspace-root`, which under the opt-in is the
+# readers' copy no tool writes (S5), so the block landed in W and was
+# committed there. Whether the file is THERE is not asked here: the write's own
+# S3 fast-forwards a checkout that is behind first, and its 8 is the answer
+# for a file that is not. 0 the path · 8 no row, or a row that names no
+# handoff · anything else a read or a creation that failed, in the helper's
+# own words above.
+handoff_file=""; hp_rc=0
+handoff_file="$("$LANES_EDIT" handoff-path "$lane" --create)" || hp_rc=$?
+case "$hp_rc" in
+0) : ;;
+8) handoff_file="" ;;
+*)
+	handoff_file=""
+	note "where lane $lane's handoff is written could not be read (\`$LANES_EDIT handoff-path $lane --create\` exited $hp_rc; its words are above)" ;;
+esac
+case "$handoff_file" in /*) : ;; *) handoff_file="" ;; esac
 
 # THE FRESH RULE 3 TOP BLOCK. It is PREPENDED and the file is never rewritten:
 # a handoff is the one document in this protocol whose whole purpose is to be
@@ -2602,6 +2613,38 @@ TB_ROWS
 	fi
 }
 
+# THE SUBJECT IS ONE LINE WITH NO CONTROL CHARACTER, which `write-handoff`
+# requires of it: it refuses one (64) and writes nothing. The why is one line
+# already (the door at the arguments refuses a newline and a carriage return);
+# a tab, or any other control character, is spelled as a space here, so a why
+# the old `git commit -m` took still refreshes the handoff.
+subject_text() {   # <text>
+	local LC_ALL=C
+	printf '%s' "${1//[[:cntrl:]]/ }"
+}
+
+# ONE `lanes-edit.sh write-handoff --prepend` (Amendment 23, slice 2b). Under
+# the lock of the checkout above, it fast-forwards that checkout (S3), reads
+# the file there, puts this block, a `---` line and a blank line in front of it
+# and PROVES the old file survives byte for byte, replaces it atomically under
+# a restart's fences, commits it by pathspec with the `Lane:` trailer and
+# pushes it (S4), replaying the block on origin's new tip where a peer won the
+# race. Its one stdout line is the file it wrote and that file's digest. The
+# commit used to be this command's own: made in whatever repository held the
+# file — W, under the opt-in — after the publish, outside any lock, with a
+# rebasing pull and every word git said sent to /dev/null (lane
+# openRepoTools-3's finding 282, the second of three such writers).
+#
+# THE FLAG FOLLOWS THE WRITE AND NEVER THE INTENTION (Copilot round 1 on
+# openRepoTools#47). `handoff_written=1` exactly where the helper's stdout
+# line says it wrote the file, committed or not: the gates below ask whether
+# the next session's first prompt is THIS act's block, and a block written and
+# not committed is that (R-A11-11: a swap is never left unwritten; S3's
+# refusal writes the file and commits nothing). A file that is read-only or on
+# a full filesystem, a refused S5, scope or proof, or a restart fence prints
+# no line — and `handoff_written=1` set regardless is what would let
+# `--restart` pass its gate and respawn the pane over a STALE top block, which
+# is the one document the new session is started with.
 handoff_written=0
 if [ -z "$handoff_file" ]; then
 	note "the row names no handoff this command could find${handoff_cell:+ ('$handoff_cell')}, so the top block was NOT written. The record below is still written; put this block at the head of the lane's handoff by hand:"
@@ -2610,81 +2653,45 @@ else
 	hs_tmpd="$(mktemp -d 2>/dev/null || printf '')"
 	if [ -z "$hs_tmpd" ]; then
 		note "could not create a temporary directory, so the handoff was not refreshed: $handoff_file"
-	else
-		hs_prior_digest="$(handoff_digest "$handoff_file")"
-		{ top_block
-		  printf -- '---\n\n'
-		  cat -- "$handoff_file"
-		} > "$hs_tmpd/out"
-		# PROVED BEFORE IT LANDS: taking the new block back out again must give
-		# the original file byte for byte. That is also what catches a file whose
-		# last line has no newline.
-		hs_added="$(( $(grep -c '' "$hs_tmpd/out") - $(grep -c '' "$handoff_file") ))"
-		if tail -n +$((hs_added + 1)) -- "$hs_tmpd/out" | cmp -s - "$handoff_file"; then
-			# THE FLAG FOLLOWS THE WRITE AND NEVER THE INTENTION (Copilot round 1 on
-			# openRepoTools#47). A handoff file that is read-only, or on a filesystem
-			# that is full, fails HERE — and `handoff_written=1` set regardless is
-			# what lets `--restart` pass its gate and respawn the pane over a STALE
-			# top block, which is the one document the new session is started with.
-			hs_publish_args=(publish-handoff "$lane" "$handoff_file" "$hs_tmpd/out" --expect-digest "$hs_prior_digest")
-			if [ "$do_restart" = 1 ]; then
-				# Bind preservation publication to this operation before replacing
-				# any canonical bytes; the helper verifies file identity under lock.
-				LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$lane" preparing \
-				  --expect preparing --expect-operation "$operation" --expect-generation "$ri_gen" --expect-attempt 0 \
-				  --handoff "$handoff_file" --digest "$hs_prior_digest" >/dev/null ||
-				  { rm -rf -- "$hs_tmpd"; die "the preservation handoff could not be bound to this restart. Nothing was published or respawned." 2; }
-				hs_publish_args+=(--operation "$operation" --generation "$ri_gen" --attempt 0 --state preparing --transcript none)
-			fi
-			if hs_published="$(LANES_NO_FETCH=1 "$LANES_EDIT" "${hs_publish_args[@]}")"; then
-				handoff_file="$hs_published"
-				handoff_written=1
-				step "handoff refreshed: $handoff_file (+$hs_added lines at the head)"
-			else
-				note "the refreshed top block could NOT be written to $handoff_file (the error above is the shell's own), so that file still carries the block it had. It is printed below; put it at the head of that file by hand:"
-				top_block >&2
-			fi
-		else
-			note "the splice of the new top block into $handoff_file did not prove out (the old file must survive it byte for byte), so NOTHING was written to it."
-			top_block >&2
-		fi
+	elif ! top_block > "$hs_tmpd/block"; then
 		rm -rf -- "$hs_tmpd"
-	fi
-fi
-
-# The commit is in the LANE'S OWN workspace repository and is not one of the
-# writes a missing workstation stops (A11 Addendum 4 ruling 11): it is where the
-# gap is NAMED. One commit, an explicit pathspec and the Rule 5 trailer.
-if [ "$handoff_written" = 1 ] && [ "${LANES_NO_GIT:-0}" != 1 ]; then
-	# THE PARENT IS RESOLVED WITH `cd -P`, NOT `readlink -f` (Copilot round 3 on
-	# openRepoTools#47, the same rule as `lane-start`'s `real_of`). Where
-	# `readlink -f` is not in the userland the fallback hands the path back
-	# UNRESOLVED, so `hs_repo` — which git answers with a PHYSICAL path — and
-	# `hs_rel`, derived from the symlinked spelling, disagree: `git add` then
-	# refuses a pathspec that "leaves the repository", and the handoff this act
-	# has just written is left uncommitted. A handoff is reached through the
-	# estate's `handoffs` symlink on every workstation that has one.
-	hs_dirreal="$( CDPATH=''; cd -P -- "$(dirname -- "$handoff_file")" 2>/dev/null && pwd -P )" ||
-		hs_dirreal="$(dirname -- "$handoff_file")"
-	hs_real="$hs_dirreal/$(basename -- "$handoff_file")"
-	hs_repo="$(git -C "$(dirname -- "$hs_real")" rev-parse --show-toplevel 2>/dev/null || :)"
-	if [ -n "$hs_repo" ]; then
-		hs_rel="${hs_real#"$hs_repo"/}"
-		if git -C "$hs_repo" add -- "$hs_rel" >/dev/null 2>&1 &&
-		   git -C "$hs_repo" commit -q -m "handoff($lane@${ws:-unknown}): PAUSED, ${why:-handoff}" -m "Lane: $lane" -- "$hs_rel" >/dev/null 2>&1; then
-			step "handoff commit: handoff($lane@${ws:-unknown}): PAUSED"
-			if git -C "$hs_repo" pull --rebase -q origin "${LANES_BRANCH:-main}" >/dev/null 2>&1 &&
-			   git -C "$hs_repo" push -q origin "${LANES_BRANCH:-main}" >/dev/null 2>&1; then
-				step "handoff pushed to origin/${LANES_BRANCH:-main}"
-			else
-				git -C "$hs_repo" rebase --abort >/dev/null 2>&1 || :
-				note "the handoff is committed here and was NOT pushed (a conflict, or no reachable origin). Never force; look first, then push:
-    git -C $hs_repo fetch origin ${LANES_BRANCH:-main} && git -C $hs_repo log --oneline origin/${LANES_BRANCH:-main} -3
-    git -C $hs_repo pull --rebase origin ${LANES_BRANCH:-main} && git -C $hs_repo push origin ${LANES_BRANCH:-main}"
-			fi
+		note "the new top block could not be put in a temporary file, so the handoff was not refreshed: $handoff_file. It is printed below; put it at the head of that file by hand:"
+		top_block >&2
+	else
+		hs_added="$(( $(grep -c '' "$hs_tmpd/block") + 2 ))"
+		hs_subject="handoff($lane@${ws:-unknown}): PAUSED, $(subject_text "${why:-handoff}")"
+		hs_args=(write-handoff "$lane" --prepend "$hs_tmpd/block" --subject "$hs_subject")
+		if [ "$do_restart" = 1 ]; then
+			# Bind preservation publication to this operation before replacing
+			# any canonical bytes: the file the helper writes, at the digest it
+			# has now (`none` where it is not there yet, and the write's own 8
+			# is then the answer). The helper verifies file identity under lock.
+			LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$lane" preparing \
+			  --expect preparing --expect-operation "$operation" --expect-generation "$ri_gen" --expect-attempt 0 \
+			  --handoff "$handoff_file" --digest "$(handoff_digest "$handoff_file")" >/dev/null ||
+			  { rm -rf -- "$hs_tmpd"; die "the preservation handoff could not be bound to this restart. Nothing was published or respawned." 2; }
+			hs_args+=(--restart "$operation" "$ri_gen" 0 preparing none)
+		fi
+		hs_out=""; hs_rc=0
+		hs_out="$(LANES_LANE="$lane" "$LANES_EDIT" "${hs_args[@]}")" || hs_rc=$?
+		rm -rf -- "$hs_tmpd"
+		hs_line="$(printf '%s\n' "$hs_out" | awk -F'\t' 'NF >= 2 && $1 != "" { l = $0 } END { print l }')"
+		if [ -n "$hs_line" ]; then
+			# THE FILE WRITTEN IS THE FILE BOUND: the pending intent below and
+			# its read-back name this path, as the helper resolved it.
+			handoff_file="${hs_line%%	*}"
+			handoff_written=1
+			step "handoff refreshed: $handoff_file (+$hs_added lines at the head)"
+			case "$hs_rc" in
+			0) step "handoff written through \`write-handoff\`, which exited 0: its words above say what it committed and pushed" ;;
+			2) note "the handoff is written in $handoff_file and NOT committed (\`write-handoff\` exited 2: the checkout refused, and its words above say why and give the commit to make once that is answered). Never re-run this handoff to commit it: a second run puts a second block on top." ;;
+			3) note "the handoff is written in $handoff_file and its commit pushed, and origin did not confirm it (\`write-handoff\` exited 3; its words above name the commit): look before writing it again, because a second block on top is a second handoff in the one document this protocol never rewrites." ;;
+			6) note "the handoff is written in $handoff_file and committed, and the commit is KEPT on HEAD of that checkout, not pushed (\`write-handoff\` exited 6; its words above name it). No later write publishes it, and each one refuses until it is published (Amendment 23 S3): once those words are answered, LANES_LANE=$lane $LANES_EDIT commit \"<what it is>\", the publish act." ;;
+			*) note "the handoff is written in $handoff_file and was NOT published (\`write-handoff\` exited $hs_rc; its words above say what is left)." ;;
+			esac
 		else
-			note "the handoff is written and NOT committed — an uncommitted write is captured by the next lane's commit and its attribution is lost (Amendment 4(d)). Commit it yourself:
-    git -C $hs_repo commit -m \"handoff($lane@${ws:-unknown}): PAUSED\" -m \"Lane: $lane\" -- $hs_rel"
+			note "the refreshed top block could NOT be written to $handoff_file (\`write-handoff\` exited $hs_rc; its words are above), so that file still carries the block it had. It is printed below; put it at the head of that file by hand:"
+			top_block >&2
 		fi
 	fi
 fi
@@ -2887,7 +2894,7 @@ else
 	# and no later line corrects any of them (Amendment 11 clause (e)); a
 	# register line naming it would be the fifth, one file along.
 	if [ -n "$uuid" ]; then
-		"$LANES_EDIT" append-line "PAUSED — lane $lane, session $uuid@$ws, $UTC, $why_text; handoff refreshed" >/dev/null 2>&1 ||
+		LANES_LANE="$lane" "$LANES_EDIT" append-line "PAUSED — lane $lane, session $uuid@$ws, $UTC, $why_text; handoff refreshed" >/dev/null 2>&1 ||
 			note "the LANES.md file-level PAUSED line was not appended (the register may be busy or behind); the object-log line above is the record readers take."
 	else
 		note "no transcript uuid is knowable for this lane, so neither the object log's PAUSED nor the register's file-level line was written — a record naming 'unknown' in that field is a record no restart can read (Amendment 11 clause (e)). The handoff file above is refreshed and is the whole of what this act left behind. Bind the session first:  lane-start --no-launch <repo> <n>"
@@ -3125,6 +3132,12 @@ if [ "$do_restart" = 1 ]; then
 	[ -z "${LANES_HOST:-}" ] || launch_line="LANES_HOST=$(quoted "$LANES_HOST") $launch_line"
 	[ -z "${LANES_OS:-}" ] || launch_line="LANES_OS=$(quoted "$LANES_OS") $launch_line"
 	[ -z "${LANES_CONTAINER:-}" ] || launch_line="LANES_CONTAINER=$(quoted "$LANES_CONTAINER") $launch_line"
+	# AND THE ROUTING OPT-IN (Amendment 23, slice 2b): the intent above binds
+	# the file in the checkout THIS command's writes went through, and the
+	# supervisor's `lane-start` compares the row's file with it. Under the
+	# opt-in that is the lane's own `<W>-lanes/<lane>/`; a respawn without it
+	# would resolve W's copy instead and refuse the restart as two handoffs.
+	[ -z "${LANES_ROUTE_WRITES:-}" ] || launch_line="LANES_ROUTE_WRITES=$(quoted "$LANES_ROUTE_WRITES") $launch_line"
 	say "  respawning $target: $launch_line"
 	if tmux respawn-pane -k -t "$target" "$launch_line" 2>/dev/null; then
 		say "  respawned into the supervisor — it launches the fresh session, confirms it came up, and stays in this pane if it did not"

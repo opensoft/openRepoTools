@@ -3267,10 +3267,11 @@ def test_the_exit_3_rule_is_green_on_a_rewording_that_keeps_the_meaning(
 #: AMENDMENT 23 S3-S4: NO LANE WRITER PULLS (#198). A `pull --rebase` in front
 #: of a push is what stranded a write on a stale base eight times in two days;
 #: every writer now fetches and fast-forwards before the edit, and a refused
-#: push replays the one edit. Asserted for `lanes-edit.sh` in slice 1b and for
-#: `lane-start` in slice 2b, whose Rule 3 stamp is `write-handoff`'s now; the
-#: handoff's other writers, which still pull until their slices, join it then.
-_NO_PULL_FILES = ("lanes-edit.sh", "lane-start")
+#: push replays the one edit. Asserted for `lanes-edit.sh` in slice 1b, and for
+#: `lane-start` and `lane-handoff` in slice 2b, whose Rule 3 stamp and PAUSED
+#: top block are `write-handoff`'s now; the skill, which still pulls until its
+#: slice, joins it then.
+_NO_PULL_FILES = ("lanes-edit.sh", "lane-start", "lane-handoff")
 #: A `pull` that rebases: `--rebase`, `-r` or `--rebase=…`, on a line that is
 #: not a comment.
 _PULL_REBASE = re.compile(r"\bpull\b[^\n]*?(?:--rebase\b|\s-r\b)")
@@ -3373,6 +3374,16 @@ def test_no_text_promises_the_carry():
     manual = doc("docs/README-lanes.md").read_text(encoding="utf-8")
     found = _carry_promises(manual, script=False)
     assert not found, f"docs/README-lanes.md promises the carry: {found}"
+
+
+@pytest.mark.parametrize("name", ("lane-start", "lane-handoff"))
+def test_no_lane_script_promises_the_carry(name):
+    """Nor do `lane-start` and `lane-handoff`, whose commits are
+    `write-handoff`'s since slice 2b: `lane-start`'s carry notes went with
+    `hs_carry_note`, and `lane-handoff`'s "captured by the next lane's commit"
+    with its own commit block (#198 §1.10)."""
+    found = _carry_promises((REPO / name).read_text(encoding="utf-8"), script=True)
+    assert not found, f"{name} promises the carry: {found}"
 
 
 @pytest.mark.parametrize("text,red", [
