@@ -2293,6 +2293,8 @@ GIT_FILES = [
     pytest.param(lambda c, sharer: f"gitdir: {c}/.git\r\n", id="CRLF, whose CR git strips"),
     pytest.param(lambda c, sharer: f"gitdir: {os.path.relpath(c / '.git', sharer)}\n",
                  id="relative to the directory it is in"),
+    pytest.param(lambda c, sharer: f"gitdir: {os.path.relpath(c / '.git', sharer)}\r\n",
+                 id="CRLF and relative, whose path resolves once the CR is gone"),
 ]
 
 
@@ -2304,7 +2306,13 @@ def test_a_git_file_naming_a_clones_git_directory_holds_it(sweep, spelled):
     clone is held, by the dry run and by `--yes`, naming the directory. The
     file is read as git reads it, so a CRLF line works in that directory too
     (rv4-c3's NIT c3-3, P3), and so does a path relative to the directory
-    the file is in (NIT c3-4, P4)."""
+    the file is in (NIT c3-4, P4).
+
+    A CRLF line with an absolute path holds even with its CR kept: a target
+    that does not resolve is kept as written (NIT 353), and `<clone>/.git`
+    with a CR after it is still under the clone. A relative one, as git
+    writes a submodule's, resolves only once the CR is gone, so that case
+    is the one a kept CR fails."""
     box = sweep.box
     c = box.checkout(CLOSED)
     sharer = box.w.parent / "sharer"
