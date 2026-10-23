@@ -6,9 +6,10 @@ Every lane writes the register through a clone of its own, `<W>-lanes/<lane>/`
 (S1). A lane that has CLOSED (Amendment 19) leaves its clone behind, and so
 does an old name beside its new one after a rename. The sweep has Amendment
 19's shape: a dry run that lists them and removes nothing, then a person's
-`--yes`, which needs `LANES_LANE`. The per-profile clones BESIDE W are listed
-with what they hold and never removed by this build: nothing outside
-`<W>-lanes/` is ever removed.
+`--yes`, which needs `LANES_LANE`. The per-profile clones BESIDE W are swept
+too, under the same holds and one more, a window whose `LANES_REPO` names
+one (Brett Heap's ruling on #308's question 1, D37); nothing else beside W,
+and nothing anywhere else, is ever removed.
 
 EVERY RUN HERE IS THE REAL `lane-end` AND THE REAL `lanes-edit.sh` IN A
 SANDBOX: `tests/a23_box.py`'s `RegisterBox` (a bare origin, W cloned from it,
@@ -53,6 +54,8 @@ UUID = {lane: f"a23a{n}04d-5404-4000-8000-a23a{n}04d5404"
         for n, lane in ((1, RUNNER), (2, CLOSED), (3, LIVE), (4, PAUSED),
                         (5, CHAIN[0]), (6, CHAIN[1]), (7, CHAIN[2]), (9, NEW))}
 PROFILE_CLONES = ("brett-wip-team01-laneA", "brett-wip-team02-laneA", "brett-wip-team03-laneA")
+PROFILE_NOTE = "profile-note.txt"   # untracked in the leaf clone beside W: it holds the chain
+BESIDE_WHY = "a clone of the register beside W (S6.2's per-profile clones)"
 
 
 def _row(lane: str, state: str) -> str:
@@ -76,7 +79,9 @@ class Sweep(RegisterBox):
     ENDED in the register and the logs, and have no checkout until `_chain`
     makes them. Beside W: three
     per-profile clones, each borrowing from the one before it and the first
-    from W (c3 → c2 → c1 → W), and a clone of another repository."""
+    from W (c3 → c2 → c1 → W), and a clone of another repository. The leaf,
+    c3, holds an untracked note, so all three are held unless a case takes
+    it away (`_free_profile_clones`)."""
 
     def __init__(self, root: Path) -> None:
         lanes = (RUNNER, CLOSED, LIVE, PAUSED, NEW)
@@ -110,6 +115,7 @@ class Sweep(RegisterBox):
         for name in PROFILE_CLONES:
             previous = self.clone(projects / name, reference=previous)
             self.profile_clones.append(previous)
+        self.write(previous, PROFILE_NOTE, "a person's note in this profile's clone\n")
         other = root / "other.git"
         self.git("init", "-q", "--bare", "-b", "main", str(other))
         self.clone(projects / "otherrepo", origin=other)
@@ -445,17 +451,25 @@ def test_a_W_that_is_a_lane_checkout_is_refused(sweep):
     assert box.everything() == before
 
 
-def test_clones_beside_W_are_listed_and_never_candidates(sweep):
-    """S6.2's per-profile clones are listed, and nothing outside `<W>-lanes/`
-    is a candidate. A clone of another repository is not listed at all."""
+def test_clones_beside_W_are_judged_by_what_they_hold(sweep):
+    """S6.2's PER-PROFILE CLONES ARE CANDIDATES (Brett Heap's ruling on #308's
+    question 1, D37), each judged by the holds: the leaf c3 holds an untracked
+    note, c2 is leaned on by c3, and c1 by c2, so the dry run holds all three
+    and removes nothing beside W. A clone of another repository is not listed
+    at all, and neither is W or `<W>-lanes/`."""
     box = sweep.box
+    c1, c2, c3 = box.profile_clones
+    before = box.everything()
     result, rows = sweep()
-    assert _tagged(rows, "beside") == {str(c) for c in box.profile_clones}, rows
-    assert str(box.w.parent / "otherrepo") not in rows, rows
-    judged = _tagged(rows, "remove") | _tagged(rows, "hold")
-    assert judged, rows
-    assert all(Path(p).parent == box.lanes_root for p in judged), rows
-    assert "listed and never removed by this build" in result.stdout
+    assert result.returncode == 3, (result.stdout, result.stderr)
+    assert rows[str(c3)] == ("hold", f"{BESIDE_WHY}; holds: untracked: 1 ({PROFILE_NOTE})"), rows
+    assert rows[str(c2)] == ("hold", f"{BESIDE_WHY}; holds: leaned on by {c3} (its alternates file names this clone's objects)"), rows
+    assert rows[str(c1)] == ("hold", f"{BESIDE_WHY}; holds: leaned on by {c2} (its alternates file names this clone's objects)"), rows
+    for never in (box.w.parent / "otherrepo", box.w, box.lanes_root):
+        assert str(never) not in rows, (never, rows)
+    assert "  1 removable, 0 held under " in result.stdout, result.stdout
+    assert "; 0 removable, 3 held of the 3 clone(s) beside W." in result.stdout, result.stdout
+    assert box.everything() == before
 
 
 # ------------------------------------------------------- the act, and holds
@@ -493,7 +507,7 @@ def test_closed_lane_checkout_removed_live_kept(sweep, tmp_path):
     assert box.git("-C", runner, "rev-parse", "HEAD").strip() == box.origin_head(), \
         "the runner's checkout moved only to the NOTED commit it pushed"
     assert after[runner][1:] == before[runner][1:], "and holds nothing new"
-    assert _tagged(rows, "beside") == {str(c) for c in box.profile_clones}
+    assert all(rows[str(c)][0] == "hold" for c in box.profile_clones), rows
     _no_aside(box)
     assert not list(box.lanes_root.glob("*/lanes/.lanes-edit.lock")), "every lock it took is released"
 
@@ -1577,18 +1591,21 @@ def test_a_register_unreadable_at_the_recheck_keeps_the_checkout(sweep):
     assert c.is_dir()
 
 
-def test_nothing_outside_W_lanes_is_removed(sweep):
-    """The clones beside W are listed with what holds them, and `--yes` removes
-    none of them: nothing outside `<W>-lanes/` is ever removed."""
+def test_held_clones_beside_W_are_left_by_yes(sweep):
+    """`--yes` takes each clone beside W under its lock after a fetch, as a
+    lane's checkout, and leaves every one that something holds exactly as it
+    was: the leaf by its untracked note, the other two by what leans on them.
+    Its NOTED line counts them as left."""
     box = sweep.box
     before = {str(c): box.everything()[str(c)] for c in box.profile_clones}
-    _, rows = sweep()
-    assert rows[str(box.profile_clones[0])] == ("beside", f"holds: leaned on by {box.profile_clones[1]} (its alternates file names this clone's objects)"), rows
-    assert rows[str(box.profile_clones[2])][1].startswith("nothing holds it"), rows
     result, rows = sweep("--yes", LANES_LANE=RUNNER)
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert {str(c): box.everything()[str(c)] for c in box.profile_clones} == before
-    assert all(rows[str(c)] == ("beside", "left") for c in box.profile_clones), rows
+    assert all(rows[str(c)][0] == "hold" for c in box.profile_clones), rows
+    assert "; 0 removed, 0 moved aside and not all removed, 3 held of the 3 clone(s) beside W." in result.stdout
+    assert _noted_on_origin(box)[0].endswith("; 3 clone(s) beside W left"), _noted_on_origin(box)
+    assert not list(box.w.parent.glob("*/lanes/.lanes-edit.lock")), "every lock it took is released"
+    assert not list(box.w.parent.glob(".*.removing-*")), "no aside is left beside W"
 
 
 # ------------------------------------------------- leaves first, and chains
@@ -1880,7 +1897,7 @@ def test_noted_line_written_through_runner_checkout(sweep):
     assert noted[0].endswith(
         "sweep-checkouts (Amendment 23 S6.2): removed 1 register checkout(s) under "
         f"brett-wip-lanes/ that held nothing unpublished: {CLOSED}; "
-        "3 clone(s) beside W listed and left"), noted
+        "3 clone(s) beside W left"), noted
     assert str(box.root) not in noted[0], "no host path is written into the log"
     assert box.git("-C", str(runner), "rev-parse", "HEAD").strip() == box.origin_head(), \
         "the NOTED commit is the runner's checkout's own"
@@ -2319,3 +2336,237 @@ def test_a_directory_sharing_Ws_git_directory_is_kept_as_W(sweep):
         assert rows[str(d)] == ("keep", "W itself, the readers' copy"), rows[str(d)]
     assert d.is_dir()
     assert box.w_state() == w_before
+
+
+# ------------------------------------------------ the clones beside W (D37)
+
+def _free_profile_clones(box: Sweep) -> None:
+    """The leaf clone beside W loses its untracked note: nothing holds the
+    chain c3 → c2 → c1 any more."""
+    (box.profile_clones[2] / PROFILE_NOTE).unlink()
+
+
+def test_clones_beside_W_are_removed_leaves_first(sweep, tmp_path):
+    """BRETT HEAP'S RULING ON #308's QUESTION 1 (D37): "yes, have the sweep
+    delete the 139 clones". With nothing holding them, the chain beside W
+    (c3 → c2 → c1 → W) is removable in ONE run, leaves first, in one order
+    with the lane checkouts', and `--yes` removes it in that order. A clone
+    whose name holds a character outside a lane name's is removed too, and
+    the NOTED line writes `?` for that character. W, `<W>-lanes/` and the
+    clone of another repository stay, and no aside is left beside W."""
+    box = sweep.box
+    _free_profile_clones(box)
+    odd = box.clone(box.w.parent / "brett-wip team04", reference=box.w)
+    chain = list(reversed(box.profile_clones))
+    result, rows = sweep()
+    assert result.returncode == 3, (result.stdout, result.stderr)
+    assert _entries(result.stdout, chain) == [("remove", str(c)) for c in chain], result.stdout
+    assert rows[str(odd)] == ("remove", BESIDE_WHY), rows
+    assert "; 4 removable, 0 held of the 4 clone(s) beside W." in result.stdout, result.stdout
+    other = box.everything()[str(box.w.parent / "otherrepo")]
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert _entries(result.stdout, chain) == [("removed", str(c)) for c in chain], result.stdout
+    assert rows[str(odd)][0] == "removed", rows
+    gone = [*chain, odd]
+    _assert_under(Path(os.path.realpath(tmp_path)), gone)
+    for c in gone:
+        assert not os.path.lexists(c), c
+    box.git("-C", str(box.w), "fsck", "--connectivity-only")   # W, which c1 borrowed from, is whole
+    assert box.w.is_dir() and box.lanes_root.is_dir()
+    assert box.everything()[str(box.w.parent / "otherrepo")] == other
+    assert not list(box.w.parent.glob(".*.removing-*")), "no aside is left beside W"
+    noted = _noted_on_origin(box)
+    assert len(noted) == 1, noted
+    said = noted[0].split("; removed 4 clone(s) beside W that held nothing unpublished: ", 1)[1]
+    names, _, tail = said.partition("; ")
+    names = names.split(" ")
+    assert sorted(names) == sorted([c.name for c in chain] + ["brett-wip?team04"]), noted
+    assert [n for n in names if n in PROFILE_CLONES] == [c.name for c in chain], noted
+    assert tail == "0 clone(s) beside W left", noted
+
+
+def test_a_held_clone_beside_W_keeps_what_it_borrows_from(sweep):
+    """S6.2 (b), BESIDE W: the middle clone, c2, holds a commit origin lacks.
+    The leaf, c3, which borrows from it, goes; c2 is held by its commit, and
+    c1, which c2 borrows from, by c2 — in the dry run and under `--yes`."""
+    box = sweep.box
+    c1, c2, c3 = box.profile_clones
+    _free_profile_clones(box)
+    _commit_unpushed(box, c2)
+    for args, env, gone in ((), {}, "remove"), (("--yes",), {"LANES_LANE": RUNNER}, "removed"):
+        result, rows = sweep(*args, **env)
+        assert result.returncode in (0, 3), (result.stdout, result.stderr)
+        assert rows[str(c3)][0] == gone, rows[str(c3)]
+        assert rows[str(c2)][0] == "hold", rows[str(c2)]
+        assert "commit(s) origin lacks by content" in rows[str(c2)][1], rows[str(c2)]
+        assert rows[str(c1)][0] == "hold", rows[str(c1)]
+        assert f"leaned on by {c2} " in rows[str(c1)][1], rows[str(c1)]
+    assert not os.path.lexists(c3)
+    assert c2.is_dir() and c1.is_dir()
+
+
+def _kept_edit(box: Sweep, c: Path) -> None:
+    box.write(c, ".git/lanes-edit/hand-edit-20261022T104947Z-1.diff", "a hand edit kept\n")
+
+
+BESIDE_HOLDS = [
+    pytest.param(_commit_unpushed, "commit(s) origin lacks by content", id="a + on main"),
+    pytest.param(_stash, "a stash of 1 entr(ies)", id="a stash"),
+    pytest.param(_untracked_elsewhere, "untracked: 1 (notes.txt)", id="untracked"),
+    pytest.param(_kept_edit, "lanes-edit.sh keeps 1 (hand-edit-20261022T104947Z-1.diff) in "
+                 ".git/lanes-edit/", id="a hand edit lanes-edit.sh kept"),
+]
+
+
+@pytest.mark.parametrize("make,said", BESIDE_HOLDS)
+def test_holds_beside_W(sweep, make, said):
+    """EVERY HOLD OF A LANE'S CHECKOUT HOLDS A CLONE BESIDE W (D37, lane
+    openRepoTools-3's conditions): unpublished content stays until its owner
+    acts. The leaf clone, freed of its note, is given one hold; the dry run
+    and `--yes` hold it, naming it, and leave it as it was."""
+    box = sweep.box
+    c3 = box.profile_clones[2]
+    _free_profile_clones(box)
+    make(box, c3)
+    before = box.everything()[str(c3)]
+    for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+        result, rows = sweep(*args, **env)
+        assert result.returncode in (0, 3), (result.stdout, result.stderr)
+        assert rows[str(c3)][0] == "hold", rows[str(c3)]
+        assert said in rows[str(c3)][1], rows[str(c3)]
+    assert box.everything()[str(c3)] == before, "the held clone is as it was"
+    assert not (c3 / "lanes" / ".lanes-edit.lock").exists(), "the sweep's own lock is released"
+
+
+@pytest.mark.parametrize("what", ["a mount", "a working directory"])
+def test_a_mount_or_a_process_in_a_clone_beside_W_holds_it(sweep, what):
+    """(c) AND SHOULD 371 BESIDE W: a process working in the leaf clone, or
+    a file system mounted in it (the mount table seam), holds it."""
+    box = sweep.box
+    c3 = box.profile_clones[2]
+    _free_profile_clones(box)
+    env, sleeper = {}, None
+    if what == "a mount":
+        (c3 / ".git" / "mnt").mkdir()
+        env["LANE_END_MOUNTINFO"] = _mount_table(box, c3 / ".git" / "mnt")
+        said = f"a file system is mounted at or under it: 1 ({c3}/.git/mnt)"
+    else:
+        sleeper = subprocess.Popen(["sleep", "600"], cwd=str(c3 / "lanes"))
+        said = f"a live process works in it (pid {sleeper.pid})"
+    try:
+        for args, more in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+            result, rows = sweep(*args, **env, **more)
+            assert result.returncode in (0, 3), (result.stdout, result.stderr)
+            assert rows[str(c3)][0] == "hold", rows[str(c3)]
+            assert said in rows[str(c3)][1], rows[str(c3)]
+        assert c3.is_dir()
+    finally:
+        if sleeper is not None:
+            sleeper.kill()
+            sleeper.wait()
+
+
+@pytest.mark.parametrize("spelled", ["its own path", "a link to it"])
+def test_a_window_whose_LANES_REPO_names_a_clone_beside_W_holds_it(sweep, spelled):
+    """A WINDOW THAT WRITES THROUGH A CLONE HOLDS IT (lane openRepoTools-3's
+    condition on the ruling, D37): a live process whose environment's
+    `LANES_REPO` names the leaf clone, by its own path or through a link to
+    it, holds it, by the dry run and `--yes`, naming the process. The process
+    is a `sleep` started with that `LANES_REPO`, killed by its PID."""
+    box = sweep.box
+    c3 = box.profile_clones[2]
+    _free_profile_clones(box)
+    named = c3
+    if spelled == "a link to it":
+        named = box.root / "link-to-c3"
+        named.symlink_to(c3)
+    sleeper = subprocess.Popen(["sleep", "600"], cwd=str(box.root),
+                               env=dict(box.env, LANES_REPO=str(named)))
+    try:
+        for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+            result, rows = sweep(*args, **env)
+            assert result.returncode in (0, 3), (result.stdout, result.stderr)
+            assert rows[str(c3)][0] == "hold", rows[str(c3)]
+            assert (f"the LANES_REPO of a live process names it (pid {sleeper.pid}): a window "
+                    "writes the register through it") in rows[str(c3)][1], rows[str(c3)]
+        assert c3.is_dir()
+    finally:
+        sleeper.kill()
+        sleeper.wait()
+
+
+def test_with_no_proc_whether_a_window_names_a_clone_beside_W_cannot_be_told(sweep):
+    """WITH NO `/proc`, A CLONE BESIDE W IS HELD AS "CANNOT TELL" (D37): no
+    lane's state keeps it, and no window's `LANES_REPO` can be read.
+    `LANE_END_PROC`, the seam, names an empty directory. The CLOSED lane's
+    checkout, which its lane's state keeps, is still removed."""
+    box = sweep.box
+    _free_profile_clones(box)
+    empty = box.root / "no-proc"
+    empty.mkdir()
+    for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+        result, rows = sweep(*args, LANE_END_PROC=str(empty), **env)
+        assert result.returncode in (0, 3), (result.stdout, result.stderr)
+        assert rows[str(box.checkout(CLOSED))][0] in ("remove", "removed"), rows
+        for c in box.profile_clones:
+            assert rows[str(c)][0] == "hold", rows[str(c)]
+            assert ("whether a window's LANES_REPO names it cannot be told: there is no /proc "
+                    "here to read a process's environment from") in rows[str(c)][1], rows[str(c)]
+    assert all(c.is_dir() for c in box.profile_clones)
+
+
+def test_the_clone_beside_W_the_callers_LANES_REPO_names_is_kept(sweep):
+    """THE CLONE A CALLER'S `LANES_REPO` NAMES IS KEPT, beside W as under
+    `<W>-lanes/`: a write of this window may go through it. The clone it
+    borrows from is held by it."""
+    box = sweep.box
+    c1, c2, c3 = box.profile_clones
+    _free_profile_clones(box)
+    result, rows = sweep(LANES_REPO=str(c3))
+    assert result.returncode == 3, (result.stdout, result.stderr)
+    assert rows[str(c3)] == ("keep", "the clone beside W that LANES_REPO names, which a write "
+                             "of this window may go through"), rows
+    assert rows[str(c2)][0] == "hold", rows[str(c2)]
+    assert f"leaned on by {c3} " in rows[str(c2)][1], rows[str(c2)]
+
+
+@pytest.mark.skipif(getattr(os, "geteuid", lambda: 1)() == 0,
+                    reason="root removes what a read-only directory holds")
+def test_a_removal_beside_W_that_does_not_finish_leaves_its_aside_beside_W(sweep):
+    """A CLONE BESIDE W IS MOVED ASIDE BESIDE W, NEVER INTO `<W>-lanes/`, and
+    an aside left there is named by every later run (SHOULD 372's rule,
+    D37). The leaf clone holds an ignored read-only directory: it is moved
+    aside, its removal stops partway, it is named PARTLY, the run exits 1,
+    its aside's name is in the NOTED line, and the next dry run lists the
+    aside as `leftover`, with the command that removes it."""
+    box = sweep.box
+    c3 = box.profile_clones[2]
+    _free_profile_clones(box)
+    (c3 / ".git" / "info" / "exclude").write_text("scratch/\n", encoding="utf-8")
+    box.write(c3, "scratch/kept.txt", "an ignored file in a read-only directory\n")
+    (c3 / "scratch").chmod(0o555)
+    try:
+        result, rows = sweep("--yes", LANES_LANE=RUNNER)
+        asides = list(box.w.parent.glob(f".{c3.name}.removing-*"))
+        assert rows[str(c3)][0] == "PARTLY", rows[str(c3)]
+        assert result.returncode == 1, (result.stdout, result.stderr)
+        assert len(asides) == 1, asides
+        assert not list(box.lanes_root.glob(f".{c3.name}.removing-*"))
+        assert not os.path.lexists(c3)
+        noted = _noted_on_origin(box)
+        assert len(noted) == 1, noted
+        assert f"; moved aside and not all removed: {asides[0].name};" in noted[0], noted
+        # The aside's own `.git` went before `rm` met the read-only directory,
+        # so nothing leans on c2 any more, and c2 and c1 go after it.
+        assert "2 removed, 1 moved aside and not all removed, 0 held of the 3 clone(s) beside W" \
+            in result.stdout, result.stdout
+        result, rows = sweep()
+        assert rows[str(asides[0])][0] == "leftover", rows
+        assert rows[str(asides[0])][1].endswith(
+            f"chmod -R u+rwX -- {asides[0]} && rm -rf -- {asides[0]}"), rows[str(asides[0])]
+    finally:
+        for aside in box.w.parent.glob(f".{c3.name}.removing-*"):
+            (aside / "scratch").chmod(0o755)
+        if (c3 / "scratch").is_dir():
+            (c3 / "scratch").chmod(0o755)

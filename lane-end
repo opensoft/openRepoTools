@@ -176,17 +176,15 @@
 #                       through its own clone, `<W>-lanes/<lane>/` (S1), and a
 #                       lane that has CLOSED (Amendment 19) leaves its clone
 #                       behind, as an old name leaves one beside its new name
-#                       after a rename. Without `--yes` this is a DRY RUN that
-#                       lists every one of them with what holds it, and every
-#                       register clone BESIDE W (a per-profile clone) with what
-#                       it holds; it fetches nothing and changes nothing.
-#                       With `--yes`, run by a PERSON and naming the lane that
-#                       runs it in `LANES_LANE`, it removes each clone under
-#                       `<W>-lanes/` that nothing holds, leaves first, and
-#                       records what it removed in one `NOTED` line of that
-#                       lane's log. A clone beside W is listed and never
-#                       removed by this build, and nothing outside
-#                       `<W>-lanes/` is ever removed
+#                       after a rename; the register clones BESIDE W (the
+#                       per-profile clones) are left from before S1. Without
+#                       `--yes` this is a DRY RUN that lists every one of them
+#                       with what holds it; it fetches nothing and changes
+#                       nothing. With `--yes`, run by a PERSON and naming the
+#                       lane that runs it in `LANES_LANE`, it removes each that
+#                       nothing holds, leaves first, and records what it
+#                       removed in one `NOTED` line of that lane's log.
+#                       Nothing else is ever removed
 #   --reason "<why>"    the words the sweep writes into each RETIRED line and
 #                       into each row's state cell. `--retire-dormant` only
 #   --yes               make the sweep the act. `--retire-dormant` and
@@ -293,6 +291,10 @@
 #   LANE_END_MOUNTINFO  the mount table `--sweep-checkouts` reads, in
 #               `/proc/self/mountinfo`'s form (default that file) — the test
 #               seam; one that names no `/` holds every checkout
+#   LANE_END_PROC   the `/proc` whose `<pid>/environ` files `--sweep-checkouts`
+#               reads for the windows' `LANES_REPO` (default /proc) — the
+#               test seam; one with no `self/environ` holds every clone
+#               beside W as "cannot tell"
 #   AGENT_PROTOCOL_ROOT   dir holding workspace.yaml (default ~/.agents)
 #   OPENREPOTOOLS_BIN_DIR where `--install` put the commands (default
 #               ~/.local/bin) — searched for lanes-edit.sh
@@ -945,11 +947,12 @@ fi
 # lists"*) once that lane is CLOSED too. NEVER W, never a LIVE lane's
 # checkout, never a lane's that is not CLOSED, never the checkout of the
 # lane that runs the sweep or of the `LANES_REPO` its caller names, never a
-# symbolic link and never anything a link leads to. A CLONE BESIDE W IS LISTED,
-# WITH WHAT IT HOLDS, AND NEVER REMOVED BY THIS BUILD: the brief this slice was
-# written under says nothing outside `<W>-lanes/` is removed, where S6.2 says
-# the per-profile clones are swept too, and the stricter rule is kept until
-# lane openRepoTools-3 rules between them.
+# symbolic link and never anything a link leads to. AND A REGISTER CLONE
+# BESIDE W, which S6.2 sweeps too, under the same holds and one more: a live
+# process whose `LANES_REPO` names it. The brief this slice was written under
+# said nothing outside `<W>-lanes/` is removed, and Brett Heap ruled between
+# the two texts on #308's question 1 (2026-10-22T12:46:57Z): "yes, have the
+# sweep delete the 139 clones" (D37). Never W, and never `<W>-lanes/` itself.
 if [ "$sweep_checkouts" = 1 ]; then
   [ "$retire" = 0 ] || die "--retire and --sweep-checkouts are two different acts: --retire ends a lane (or names a live fork's act), and --sweep-checkouts removes the register checkouts closed lanes left on disk, ending no lane. Run one of them. Nothing was written." 2
   [ "$force" = 0 ] || die "--force ends a lane that still holds something; it has no meaning for the sweep of register checkouts, which removes only what nothing holds. Nothing was removed." 2
@@ -1326,17 +1329,34 @@ SC_IDX
     done
   fi
 
-  # THE CLONES BESIDE W: listed, never removed by this build (above).
-  sc_beside=()
+  # THE CLONES BESIDE W, S6.2's per-profile clones, are candidates since
+  # Brett Heap's ruling on #308's question 1 (D37). They are no lane's, so no
+  # lane state is asked of them: what keeps one is every hold a lane's
+  # checkout has, and a window whose `LANES_REPO` names it (below). The one
+  # the caller's `LANES_REPO` names is kept, as under `<W>-lanes/`. The aside
+  # of a removal of one that did not finish stands beside W, and every run
+  # names it, as it names those under `<W>-lanes/`. Anything beside W that is
+  # not a register clone is not looked at.
+  sc_n_beside=0
   if ls -A -- "$sc_root" >/dev/null 2>&1; then
+    for sc_e in "$sc_root"/.[!.]* "$sc_root"/..?*; do
+      if [ ! -e "$sc_e" ] && [ ! -L "$sc_e" ]; then continue; fi
+      case "${sc_e##*/}" in .?*.removing-*) sc_leftovers+=("$sc_e") ;; esac
+    done
     for sc_e in "$sc_root"/*; do
       if [ -L "$sc_e" ] || [ ! -d "$sc_e" ]; then continue; fi
       if [ "$sc_e" = "$sc_w" ] || [ "$sc_e" = "$sc_home" ]; then continue; fi
       if [ ! -d "$sc_e/.git" ] || [ -L "$sc_e/.git" ]; then continue; fi
-      if sc_is_register_clone "$sc_e"; then sc_beside+=("$sc_e"); fi
+      if ! sc_is_register_clone "$sc_e"; then continue; fi
+      sc_n_beside=$((sc_n_beside + 1))
+      if [ -n "$sc_xrepo" ] && [ "$sc_e" = "$sc_xrepo" ]; then
+        sc_keep "$sc_e" "the clone beside W that LANES_REPO names, which a write of this window may go through"
+        continue
+      fi
+      sc_cand "$sc_e" "" "a clone of the register beside W (S6.2's per-profile clones)"
     done
   else
-    note "$sc_root, the directory W stands in, cannot be listed, so no clone beside W is listed. Nothing outside $sc_home/ is ever removed."
+    note "$sc_root, the directory W stands in, cannot be listed, so no clone beside W is looked at, and none is removed."
   fi
 
   # ------------------------------------------------------------ the holds
@@ -1373,7 +1393,8 @@ SC_IDX
   #       the work;
   #   and a file system mounted at or under it (lane openRepoTools-3's
   #       SHOULD 371), whose files are not the checkout's, or a mount table
-  #       that cannot be read.
+  #       that cannot be read; and a live process whose `LANES_REPO` names
+  #       it, a window that writes through it (D37, below).
   SC_HOLD=""; SC_IGN=""
   sc_hold() { SC_HOLD="${SC_HOLD:+$SC_HOLD; }$1"; }
   sc_first() {   # <lines> — the count and the first three, as `N (a b c)`
@@ -1704,6 +1725,64 @@ $sc_mount_pts
 SMI
   }
 
+  # A WINDOW THAT WRITES THROUGH IT (lane openRepoTools-3's condition on the
+  # ruling, D37): a live process whose environment's `LANES_REPO` names the
+  # clone, or a path in it, as spelled or by its real path. S6.2 honours a
+  # caller's `LANES_REPO`, and since 10-19 the launcher exports one into each
+  # lane window, so a window opened on a clone writes the register through it
+  # while it stands. `/proc/<pid>/environ` is read: a process's environment
+  # as it began, which is where the launcher's export is. A process whose
+  # environment cannot be read (another user's, or one that ended meanwhile)
+  # is counted and said, and holds nothing, as a working directory that
+  # cannot be read does not. With no `/proc` a clone beside W, which no
+  # lane's state keeps, is held as "cannot tell"; a lane's checkout is kept
+  # by its lane's state, asked again under the lock. `LANE_END_PROC` names
+  # another `/proc`: the test seam.
+  sc_repos=""; sc_repo_mode=none; sc_repo_unread=0
+  sc_repo_scan() {
+    sc_repos=""; sc_repo_unread=0; sc_repo_mode=none
+    srs_proc="${LANE_END_PROC:-/proc}"
+    if [ ! -d "$srs_proc/self" ] || [ ! -r "$srs_proc/self/environ" ]; then return 0; fi
+    sc_repo_mode=proc
+    for srs_d in "$srs_proc"/[0-9]*; do
+      # Read by the shell itself, NUL by NUL: no process is started per pid.
+      srs_v=""; srs_ok=0
+      { while IFS= read -r -d '' srs_kv; do
+          case "$srs_kv" in LANES_REPO=*) srs_v="${srs_kv#LANES_REPO=}"; break ;; esac
+        done; srs_ok=1; } 2>/dev/null < "$srs_d/environ" || :
+      if [ "$srs_ok" = 0 ]; then
+        if [ -d "$srs_d" ]; then sc_repo_unread=$((sc_repo_unread + 1)); fi
+        continue
+      fi
+      [ -n "$srs_v" ] || continue
+      case "$srs_v" in
+        /*) : ;;
+        *) srs_c="$(readlink "$srs_d/cwd" 2>/dev/null)" || srs_c=""
+           if [ -z "$srs_c" ]; then continue; fi
+           srs_v="$srs_c/$srs_v" ;;
+      esac
+      sc_repos="$sc_repos${srs_d##*/}$sc_tab$srs_v
+"
+      srs_r="$(sc_real "$srs_v")"
+      if [ -n "$srs_r" ] && [ "$srs_r" != "$srs_v" ]; then
+        sc_repos="$sc_repos${srs_d##*/}$sc_tab$srs_r
+"
+      fi
+    done
+  }
+  sc_repo_inside() {   # <path> — the pids whose LANES_REPO is at or under it
+    sri_out=""
+    while IFS="$sc_tab" read -r sri_pid sri_v; do
+      [ -n "$sri_pid" ] || continue
+      case "$sri_v" in "$1" | "$1"/*) : ;; *) continue ;; esac
+      case " $sri_out " in *" $sri_pid "*) continue ;; esac
+      sri_out="${sri_out:+$sri_out }$sri_pid"
+    done <<SRI
+$sc_repos
+SRI
+    printf '%s' "$sri_out"
+  }
+
   # ALL OF THEM, for one candidate: SC_HOLD empty means nothing holds it.
   sc_judge_holds() {   # <path> <1 when this run holds its lock> [<paths gone>]
     sc_holds "$1" "$2"
@@ -1718,6 +1797,11 @@ SMI
         sjh_pids="$(sc_cwd_inside "$1")"
         if [ -n "$sjh_pids" ]; then sc_hold "a live process works in it (pid $sjh_pids)"; fi ;;
     esac
+    sjh_pids="$(sc_repo_inside "$1")"
+    if [ -n "$sjh_pids" ]; then sc_hold "the LANES_REPO of a live process names it (pid $sjh_pids): a window writes the register through it"; fi
+    if [ "$sc_repo_mode" = none ] && [ "${1%/*}" = "$sc_root" ]; then
+      sc_hold "whether a window's LANES_REPO names it cannot be told: there is no /proc here to read a process's environment from"
+    fi
     case "$sc_mount_mode" in
       none) sc_hold "whether a file system is mounted in it cannot be told: no mount table that names / could be read (${LANE_END_MOUNTINFO:-/proc/self/mountinfo}, or mount)" ;;
       *)
@@ -1729,12 +1813,17 @@ SMI
     return 0
   }
 
-  # NEVER A PATH THAT IS NOT DIRECTLY UNDER `<W>-lanes/`, by its real parent,
-  # asked again at the moment of each act on it.
+  # NEVER A PATH THAT IS NOT DIRECTLY UNDER `<W>-lanes/` OR DIRECTLY IN W'S
+  # PARENT, by its real parent, and never W or `<W>-lanes/` itself, asked
+  # again at the moment of each act on it.
   sc_under_home() {   # <path>
-    suh_n="${1##*/}"
+    suh_n="${1##*/}"; suh_p="${1%/*}"
     case "$suh_n" in '' | . | ..) return 1 ;; esac
-    [ "${1%/*}" = "$sc_home" ] && [ "$(sc_real "${1%/*}")" = "$sc_home" ]
+    case "$suh_p" in
+      "$sc_home") [ "$(sc_real "$suh_p")" = "$sc_home" ] ;;
+      "$sc_root") [ "$1" != "$sc_w" ] && [ "$1" != "$sc_home" ] && [ "$(sc_real "$suh_p")" = "$sc_root" ] ;;
+      *) return 1 ;;
+    esac
   }
 
   # THE LOCK'S PID LINE, in `lanes-edit.sh`'s own form, `<pid> <container>
@@ -1889,9 +1978,12 @@ SS_ROW
   fi
   printf '  dependents     : every repository under %s/ to depth 6, hidden ones too, and under %s/ and %s/ to depth 4; read again under each lock\n' \
     "${sc_dep_named[0]}" "${sc_dep_named[1]}" "${sc_dep_named[2]}"
-  sc_cwd_scan; sc_mount_scan
+  sc_cwd_scan; sc_mount_scan; sc_repo_scan
   if [ "$sc_cwd_unread" -gt 0 ]; then
     printf '  (%s process(es) whose working directory could not be read - another user'"'"'s, or ended while read - do not hold anything)\n' "$sc_cwd_unread"
+  fi
+  if [ "$sc_repo_unread" -gt 0 ]; then
+    printf '  (%s process(es) whose environment could not be read - another user'"'"'s, or ended while read - are not asked which LANES_REPO they name)\n' "$sc_repo_unread"
   fi
   sc_dep_scan
   if [ "$sc_dep_unread" -gt 0 ]; then
@@ -1964,28 +2056,48 @@ SLU
     fi
   fi
 
-  printf '\n  under %s/:\n' "$sc_home"
-  # `sc_gone`: the paths this run removed (a dry run: would remove), one per line.
+  printf '\n  under %s/, and beside W in %s/:\n' "$sc_home" "$sc_root"
+  # `sc_gone`: the paths this run removed (a dry run: would remove), one per
+  # line. `sc_n_removed`, `sc_n_partial` and `sc_n_removable` count both
+  # places, and `sc_nb_*` the clones beside W among them; `sc_n_held` counts
+  # `<W>-lanes/` alone, and `sc_nb_held` the clones beside W.
   sc_gone=""; sc_n_removed=0; sc_n_partial=0; sc_n_held=0; sc_n_removable=0; sc_partial=""
-  sc_removed_names=""; sc_held_names=""; sc_partial_names=""
+  sc_nb_removed=0; sc_nb_partial=0; sc_nb_held=0; sc_nb_removable=0
+  sc_removed_names=""; sc_held_names=""; sc_partial_names=""; sc_bremoved_names=""
+  sc_is_beside() { [ "${1%/*}" = "$sc_root" ]; }
+  # A NAME AS THE NOTED LINE SPELLS IT: a clone beside W may be named
+  # anything, so each character outside letters, digits, `.`, `_` and `-` is
+  # written as `?`.
+  sc_said_name() {   # <name>
+    case "$1" in
+      *[!A-Za-z0-9._-]*) printf '%s' "$1" | LC_ALL=C tr -c 'A-Za-z0-9._-' '?' ;;
+      *) printf '%s' "$1" ;;
+    esac
+  }
   sc_say_held() {   # <path> <why it was a candidate> <what holds it>
     printf '    hold       %s  %s; holds: %s\n' "$1" "$2" "$3"
+    if sc_is_beside "$1"; then sc_nb_held=$((sc_nb_held + 1)); return 0; fi
     sc_n_held=$((sc_n_held + 1)); sc_held_names="${sc_held_names:+$sc_held_names }${1##*/}"
   }
   # THE NOTED LINE'S TEXT, from what this run has done so far, and the two
   # commands that finish its record by hand. The paths are spelled from the
   # projects root, `<W>-lanes/<name>`, never from the host's own root, and
-  # every name in the line is one this sweep already holds to letters,
-  # digits, `.`, `_` and `-`, so the free text's own rules (no ` — `, no
-  # newline, no leading arrow) hold for it.
+  # every name in the line is one this sweep holds to letters, digits, `.`,
+  # `_` and `-` (a lane's by the lane-name rule, a clone beside W's by
+  # `sc_said_name`), so the free text's own rules (no ` — `, no newline, no
+  # leading arrow) hold for it. The clones beside W removed are named apart,
+  # and those left are counted.
   sc_rel="${sc_home##*/}"
   case "$sc_rel" in '' | *[!A-Za-z0-9._-]*) sc_rel="<W>-lanes" ;; esac
   sc_noted_text() {   # [<what ended the run early>]
-    snt_t="sweep-checkouts (Amendment 23 S6.2): removed $sc_n_removed register checkout(s) under $sc_rel/ that held nothing unpublished"
+    snt_t="sweep-checkouts (Amendment 23 S6.2): removed $((sc_n_removed - sc_nb_removed)) register checkout(s) under $sc_rel/ that held nothing unpublished"
     if [ -n "$sc_removed_names" ]; then snt_t="$snt_t: $sc_removed_names"; fi
     if [ -n "$sc_partial_names" ]; then snt_t="$snt_t; moved aside and not all removed: $sc_partial_names"; fi
     if [ -n "$sc_held_names" ]; then snt_t="$snt_t; held and left: $sc_held_names"; fi
-    snt_t="$snt_t; ${#sc_beside[@]} clone(s) beside W listed and left"
+    if [ "$sc_nb_removed" -gt 0 ]; then
+      snt_t="$snt_t; removed $sc_nb_removed clone(s) beside W that held nothing unpublished: $sc_bremoved_names"
+    fi
+    snt_t="$snt_t; $((sc_n_beside - sc_nb_removed - sc_nb_partial)) clone(s) beside W left"
     if [ -n "${1-}" ]; then snt_t="$snt_t; $1"; fi
     printf '%s' "$snt_t"
   }
@@ -2012,7 +2124,7 @@ SLU
   sc_say_partial() {
     if [ -n "$sc_partial" ] && [ "$sc_partial_said" = 0 ]; then
       sc_partial_said=1
-      note "the removal of $sc_partial did not finish (above): what is left is no checkout, under a hidden name, so the next write of that lane clones afresh. Remove it by hand once you have looked at why; every later run names it again, with the command."
+      note "the removal of $sc_partial did not finish (above): what is left is no checkout, under a hidden name, and the next write of a lane whose checkout it was clones afresh. Remove it by hand once you have looked at why; every later run names it again, with the command."
     fi
   }
   # A SIGNAL NEVER CUTS A REMOVAL IN TWO, AND ONE THAT ENDS THE ACT LEAVES
@@ -2053,7 +2165,8 @@ SLU
     sc_c="${sc_cands[$sc_i]}"; sc_why="${sc_cand_why[$sc_i]}"
     sc_l="${sc_cand_lane[$sc_i]}"; sc_new="${sc_cand_new[$sc_i]}"
     if ! sc_under_home "$sc_c"; then
-      printf '    hold       %s  %s; it is not directly under %s/, and nothing else is ever removed\n' "$sc_c" "$sc_why" "$sc_home"
+      printf '    hold       %s  %s; it is not directly under %s/ or in %s/, and nothing else is ever removed\n' "$sc_c" "$sc_why" "$sc_home" "$sc_root"
+      if sc_is_beside "$sc_c"; then sc_nb_held=$((sc_nb_held + 1)); continue; fi
       sc_n_held=$((sc_n_held + 1)); sc_held_names="${sc_held_names:+$sc_held_names }${sc_c##*/}"; continue
     fi
     if [ "$sweep_yes" != 1 ]; then
@@ -2064,15 +2177,18 @@ SLU
         printf '    remove     %s  %s%s\n' "$sc_c" "$sc_why" "${SC_IGN:+; $SC_IGN}"
         sc_n_removable=$((sc_n_removable + 1)); sc_gone="$sc_gone$sc_c
 "
+        if sc_is_beside "$sc_c"; then sc_nb_removable=$((sc_nb_removable + 1)); fi
       fi
       continue
     fi
     # THE ACT, ONE CHECKOUT AT A TIME, every decision made again under its
     # own writers' lock after a fetch: the lock first, so no writer of it is
-    # in it; then its fetch, the lane's state asked again, every hold, what
-    # leans on it and the working directories read again; then, and only
-    # then, it is moved aside under `<W>-lanes/` — so its S1 path is absent at
-    # once and the next write there clones afresh — and the aside removed.
+    # in it; then its fetch, the lane's state asked again (a clone beside W
+    # is no lane's: whether it is still a register clone is what is asked),
+    # every hold, what leans on it, the working directories and the windows'
+    # `LANES_REPO` read again; then, and only then, it is moved aside in the
+    # directory it stands in — so its path is absent at once, and the next
+    # write of a lane there clones afresh — and the aside removed.
     if ! sc_lock_take "$sc_c"; then
       sc_say_held "$sc_c" "$sc_why" "$SC_WHY"; continue
     fi
@@ -2080,12 +2196,12 @@ SLU
     sc_lock_beat
     if ! sc_fetch "$sc_c"; then
       sc_act_hold="its fetch of origin $sc_branch failed or timed out, and nothing is decided on an old origin/$sc_branch"
-    elif ! { sc_lock_beat; sc_still "$sc_c" "$sc_l" "$sc_new"; }; then
+    elif [ -n "$sc_l" ] && ! { sc_lock_beat; sc_still "$sc_c" "$sc_l" "$sc_new"; }; then
       sc_act_hold="$SC_WHY"
     elif ! sc_is_register_clone "$sc_c"; then
       sc_act_hold="it is no longer what made it a candidate: $SC_WHY"
     else
-      sc_dep_scan; sc_cwd_scan; sc_mount_scan
+      sc_dep_scan; sc_cwd_scan; sc_mount_scan; sc_repo_scan
       sc_judge_holds "$sc_c" 1
       sc_act_hold="$SC_HOLD"; sc_act_ign="$SC_IGN"
     fi
@@ -2100,7 +2216,7 @@ SLU
       sc_lock_drop
       sc_say_held "$sc_c" "$sc_why" "$sc_act_hold"; continue
     fi
-    sc_aside="$sc_home/.${sc_c##*/}.removing-$sc_utc-$$"
+    sc_aside="${sc_c%/*}/.${sc_c##*/}.removing-$sc_utc-$$"
     sc_sig_defer
     if ! sc_under_home "$sc_c" || [ -e "$sc_aside" ] || [ -L "$sc_aside" ] ||
        ! ( trap '' INT TERM; exec mv -- "$sc_c" "$sc_aside" ) 2>/dev/null; then
@@ -2115,12 +2231,18 @@ SLU
     if [ -e "$sc_aside" ] || [ -L "$sc_aside" ]; then
       printf '    PARTLY     %s  %s; moved aside to %s, which could not all be removed%s\n' "$sc_c" "$sc_why" "$sc_aside" "${sc_act_ign:+; $sc_act_ign}"
       sc_partial="${sc_partial:+$sc_partial }$sc_aside"
-      sc_partial_names="${sc_partial_names:+$sc_partial_names }${sc_aside##*/}"
+      sc_partial_names="${sc_partial_names:+$sc_partial_names }$(sc_said_name "${sc_aside##*/}")"
       sc_n_partial=$((sc_n_partial + 1))
+      if sc_is_beside "$sc_c"; then sc_nb_partial=$((sc_nb_partial + 1)); fi
     else
       printf '    removed    %s  %s%s\n' "$sc_c" "$sc_why" "${sc_act_ign:+; $sc_act_ign}"
-      sc_removed_names="${sc_removed_names:+$sc_removed_names }${sc_c##*/}"
       sc_n_removed=$((sc_n_removed + 1))
+      if sc_is_beside "$sc_c"; then
+        sc_nb_removed=$((sc_nb_removed + 1))
+        sc_bremoved_names="${sc_bremoved_names:+$sc_bremoved_names }$(sc_said_name "${sc_c##*/}")"
+      else
+        sc_removed_names="${sc_removed_names:+$sc_removed_names }${sc_c##*/}"
+      fi
     fi
     sc_gone="$sc_gone$sc_c
 "
@@ -2133,24 +2255,10 @@ SLU
   done
   if [ "${#sc_cands[@]}" = 0 ] && [ -z "$sc_keep_lines" ] && [ "${#sc_leftovers[@]}" = 0 ]; then printf '    (nothing)\n'; fi
 
-  printf '\n  beside W (Amendment 23 S6.2), listed and never removed by this build:\n'
-  for sc_e in ${sc_beside[@]+"${sc_beside[@]}"}; do
-    if [ "$sweep_yes" = 1 ]; then
-      printf '    beside     %s  left\n' "$sc_e"
-      continue
-    fi
-    sc_judge_holds "$sc_e" 0 "$sc_gone"
-    if [ -n "$SC_HOLD" ]; then
-      printf '    beside     %s  holds: %s\n' "$sc_e" "$SC_HOLD"
-    else
-      printf '    beside     %s  nothing holds it%s\n' "$sc_e" "${SC_IGN:+; $SC_IGN}"
-    fi
-  done
-  if [ "${#sc_beside[@]}" = 0 ]; then printf '    (none)\n'; fi
 
   if [ "$sweep_yes" != 1 ]; then
-    printf '\n  %s removable, %s held under %s/; %s clone(s) beside W listed.\n' \
-      "$sc_n_removable" "$sc_n_held" "$sc_home" "${#sc_beside[@]}"
+    printf '\n  %s removable, %s held under %s/; %s removable, %s held of the %s clone(s) beside W.\n' \
+      "$((sc_n_removable - sc_nb_removable))" "$sc_n_held" "$sc_home" "$sc_nb_removable" "$sc_nb_held" "$sc_n_beside"
     if [ "$sc_n_removable" -gt 0 ]; then
       printf '\n  DRY RUN — nothing was removed. Make it the act with:\n'
       printf '    LANES_LANE=<your lane> %s --sweep-checkouts --yes\n' "$prog"
@@ -2162,8 +2270,9 @@ SLU
     fi
     exit 0
   fi
-  printf '\n  %s removed, %s moved aside and not all removed, %s held under %s/; %s clone(s) beside W left.\n' \
-    "$sc_n_removed" "$sc_n_partial" "$sc_n_held" "$sc_home" "${#sc_beside[@]}"
+  printf '\n  %s removed, %s moved aside and not all removed, %s held under %s/; %s removed, %s moved aside and not all removed, %s held of the %s clone(s) beside W.\n' \
+    "$((sc_n_removed - sc_nb_removed))" "$((sc_n_partial - sc_nb_partial))" "$sc_n_held" "$sc_home" \
+    "$sc_nb_removed" "$sc_nb_partial" "$sc_nb_held" "$sc_n_beside"
   # THE NOTED LINE (S6.2; S2 lists the sweep among the writers): ONE line in
   # the runner's own log, naming what was removed and what was held, written
   # by `lanes-edit.sh log` and so through the runner's own checkout under S3
