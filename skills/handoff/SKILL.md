@@ -282,7 +282,10 @@ publish that complete prepared file with:
 # (`R-A11-11`): step 4 still writes the PAUSED record, the register line and
 # the row, and step 5 prints the restart command, as `lane-handoff` does. The
 # gap is named here, and in step 4's register line. Any other refusal is the
-# helper's own, said in its own words above, and binds no gap.
+# helper's own, said in its own words above, and binds no gap: it STOPS the
+# skill, because the block's last line exits with `publish-handoff`'s own
+# status, and nothing after it (the commit, step 3, step 4's writes) may run
+# over a restart somebody can read (finding 1001).
 handoff_unpublished=""; pub_rc=0
 "$L" publish-handoff "$lane" "$handoff_file" "$prepared_file" --expect-digest "$prior_sha256" || pub_rc=$?
 if [ "$pub_rc" != 0 ]; then
@@ -293,6 +296,7 @@ if [ "$pub_rc" != 0 ]; then
     printf '%s\n' "HANDOFF NOT PUBLISHED: $handoff_unpublished, and publication is fenced on that intent (\`publish-handoff\` exited $pub_rc). The swap goes on: step 4 still writes the PAUSED record, the register line and the row, and step 5 prints the restart command (R-A11-11; R7 on #303, \"Write swap, name the gap\"). The prepared block is $prepared_file: once \`lanes-edit.sh restart-intent $lane\` answers 8, \`ready\` or \`failed\`, publish this block with \`publish-handoff\`; read \`lane-handoff --restart-status --lane $lane\` before relaunching. Nothing was published, so skip the commit below."
   fi
 fi
+[ "$pub_rc" = 0 ] || [ -n "$handoff_unpublished" ] || (exit "$pub_rc")
 ```
 
 The helper checks the expected bytes and atomically replaces the resolved target
@@ -303,6 +307,11 @@ perform the existing explicit-pathspec commit/push after successful publication.
 the commit block below and go on to step 3. Keep the prepared file, and say in it,
 before you publish it later, that this swap was written without it — the state
 line names the gap as `lane-handoff`'s printed block does.
+**Any other refusal stops the skill.** The block then ends on `publish-handoff`'s own
+status (7 where an active restart owns the handoff), and its own words are already on
+screen: say them, and do not go on to the commit, step 3 or step 4. R7 writes the swap
+over a log nobody could read, never over a restart somebody can; on this path nothing
+else reads the restart intent before step 2, so this refusal is the guard.
 Legacy `rename-lane` is a separate four-file transaction under the same mutex;
 it refuses unfinished/failed restart ownership and uses EXIT rollback. Its
 stamp now atomically replaces the handoff through a temporary file beside it

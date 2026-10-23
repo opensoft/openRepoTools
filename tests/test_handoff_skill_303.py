@@ -143,8 +143,12 @@ def _answers(publish_rc: int, intent_rc: int, err: str = "") -> Dict[str, str]:
 
 def _step2(box: Sandbox, shell: str, publish_rc: int, intent_rc: int,
            err: str = "") -> subprocess.CompletedProcess:
+    # The status the block itself ends on is the process's, so a refusal that
+    # stops the skill is read from `proc.returncode`: the line that prints
+    # what the block bound hands `$?` on as its own exit.
     script = (_bound(box) + _block(PUBLISH) +
-              "\nprintf 'AFTER unpublished=[%s]\\n' \"${handoff_unpublished-<unset>}\"\n")
+              "\nblock_rc=$?\nprintf 'AFTER unpublished=[%s]\\n' \"${handoff_unpublished-<unset>}\"\n"
+              "exit \"$block_rc\"\n")
     return box.run(shell, script, _answers(publish_rc, intent_rc, err))
 
 
@@ -196,9 +200,16 @@ def test_step_2_takes_no_other_refusal_for_the_gap(box: Sandbox, shell: str) -> 
     """AND ONLY THAT REFUSAL IS THE GAP: a publication refused because a
     restart that was READ owns the lane (7, the intent `preparing`) is the
     helper's own refusal, in its own words, and binds no gap - R7 writes the
-    swap over a log nobody could read, never over a restart somebody can."""
+    swap over a log nobody could read, never over a restart somebody can. So
+    the refusal STOPS the skill: the block exits with the helper's own status,
+    7 (lane 3's review of R7, finding 1001: on the skill's ordinary path
+    nothing reads the restart intent before step 2, so this refusal is the one
+    guard, and a block that exited 0 let step 4 write the PAUSED record, a
+    false `; handoff refreshed` and the row over a restart somebody can read;
+    `lane-handoff` refuses the same case before any write)."""
     proc = _step2(box, shell, publish_rc=7, intent_rc=0,
                   err="an active restart owns this handoff; nothing was published")
+    assert proc.returncode == 7, (proc.returncode, proc.stdout, proc.stderr)
     assert NO_GAP & set(proc.stdout.splitlines()), (proc.stdout, proc.stderr)
     assert "an active restart owns this handoff" in proc.stderr, proc.stderr
     assert "NOT PUBLISHED" not in proc.stdout + proc.stderr
