@@ -1535,7 +1535,7 @@ case "$eri_rc" in
     esac ;;
   8|2) : ;;
   1) die "the restart intent could not be read. That is NOT 'no restart is in flight': ordinary resume could open the transcript that /ctx PAUSED. Set LANES_LANE_STATE_ROOT to a readable control root. Nothing was changed." 2 ;;
-  *) die "the restart intent could not be read. Nothing was changed." 2 ;;
+  *) die "lane $LANE's restart intent could not be read (\`$LANES_EDIT restart-intent $LANE --dir $DIR\` exited $eri_rc; 10 is a lane whose object log could not be read, so where its intent is kept is NOT established). That is NOT 'no restart is in flight': ordinary resume could open the transcript that /ctx PAUSED. Nothing was changed. Run that command yourself to see what it says." 2 ;;
 esac
 
 # -------------------------------------------------------- 3. liveness check

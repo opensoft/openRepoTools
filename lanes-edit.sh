@@ -549,6 +549,11 @@
 #      the snapshot, so where it is kept is not known, which is not none.
 #      `lane-trees` spends it for the same read (#303): the trees are kept
 #      under the same root, and a log nobody read is not a lane with no tree.
+#      And `restart-intent` spends it where no `LANES_LANE_STATE_ROOT` names
+#      the root and the lane's object log could not be read (#303, R7): the
+#      restart intent is kept beside the directory that log records, so where
+#      it is kept is not established, which is not "no restart in flight". An
+#      intent file that is there and will not open is still 1, as it was.
 #
 # --no-sweep (DEFAULT, added 2026-09-09 after 0d84d34/a1f2438 swept another
 #   lane's uncommitted hand edit into an unrelated commit): every mutating
@@ -4129,16 +4134,23 @@ lane_objects() {
   # answer. The stream's build says which logs it could not read, or that it
   # could not list them, in the warnings it keeps (`lanes_rows` reads them the
   # same way), and either of those for this lane's log is 1. `lle_rel` is the
-  # path `lane_log_exists` just resolved. Where no temporary file could be made
-  # for the warnings, nothing kept them, and the stream answers as it always did.
+  # path `lane_log_exists` just resolved.
+  # AND WITH NOWHERE TO KEEP THOSE WARNINGS THERE IS NO ANSWER: 4 (#303, the
+  # behaviour change held for R7, as lane 3 accepted it). With no temporary file
+  # the build's warnings go to stderr and nowhere else, so whether this lane's
+  # log was read whole is not known - and the stream answered as it always did,
+  # which `lane-end`'s gate ends a lane on. 4 and not 1, because what failed is
+  # the temporary directory and not the log, and each caller says so in those
+  # words. It asks the one file the build already keeps, as `lanes_rows` does:
+  # nothing new is made here, so there is nothing new to remove.
+  [ -n "$SE_WARN_FILE" ] || return 4
   lo_ev="$(state_events)"
-  if [ -n "$SE_WARN_FILE" ] && [ -f "$SE_WARN_FILE" ]; then
-    lo_wrc=0
-    LO_UNREAD="lanes-edit: unreadable log: $lle_rel — " awk '
-      index($0, ENVIRON["LO_UNREAD"]) == 1 || index($0, "lanes-edit: unlisted logs: ") == 1 { hit = 1; exit }
-      END { if (hit) exit 3 }' "$SE_WARN_FILE" 2>/dev/null || lo_wrc=$?
-    [ "$lo_wrc" = 0 ] || return 1
-  fi
+  [ -f "$SE_WARN_FILE" ] || return 4
+  lo_wrc=0
+  LO_UNREAD="lanes-edit: unreadable log: $lle_rel — " awk '
+    index($0, ENVIRON["LO_UNREAD"]) == 1 || index($0, "lanes-edit: unlisted logs: ") == 1 { hit = 1; exit }
+    END { if (hit) exit 3 }' "$SE_WARN_FILE" 2>/dev/null || lo_wrc=$?
+  [ "$lo_wrc" = 0 ] || return 1
   # AMENDMENT 15 — THE LANE FIELD OF A LOG LINE IS MATCHED CASE-INSENSITIVELY,
   # and the caller has already resolved `$1` to the row's spelling. The line's
   # own spelling is whatever was TYPED on the day it was appended, and an
@@ -6582,6 +6594,8 @@ EOF
     8) printf 'no log for %s; see its row'"'"'s state cell\n' "$wl_lane"
        return 8 ;;
     2) return 2 ;;
+    4) printf 'UNKNOWN  no temporary file could be made under %s for the warnings of the read of lane %s'"'"'s objects, so what it holds open is NOT established — which is not the same as none (Amendment 7(d)). Make TMPDIR a directory this process can write, then: lanes-edit.sh who --lane %s\n' "${TMPDIR:-/tmp}" "$wl_lane" "$wl_lane"
+       return 1 ;;
     *) printf 'UNKNOWN  lane %s'"'"'s object log could not be read, so what it holds open is NOT established — which is not the same as none (Amendment 7(d)). Re-run once git can read it: lanes-edit.sh who --lane %s\n' "$wl_lane" "$wl_lane"
        return 1 ;;
   esac
@@ -9373,6 +9387,8 @@ lane_open_summary() {
     8) printf 'no log for %s (pre-cutover lane) — see its row'"'"'s state cell\n' "$los_l"
        return 0 ;;
     2) printf 'UNKNOWN — lane %s has two object logs whose names differ only by case, so what it holds open is NOT established (Amendment 15(d)); see: lanes-edit.sh who --lane %s\n' "$los_l" "$los_l"
+       return 0 ;;
+    4) printf 'UNKNOWN — no temporary file could be made under %s, so what lane %s holds open is NOT established, which is not the same as none (Amendment 7(d)); see: lanes-edit.sh who --lane %s\n' "${TMPDIR:-/tmp}" "$los_l" "$los_l"
        return 0 ;;
     *) printf 'UNKNOWN — lane %s'"'"'s object log could not be read, so what it holds open is NOT established, which is not the same as none (Amendment 7(d)); see: lanes-edit.sh who --lane %s\n' "$los_l" "$los_l"
        return 0 ;;
@@ -12469,7 +12485,18 @@ EOF
 LANE_RESTART_SCHEMA=1
 
 # THE CONTROL ROOT — explicit override, retained intent, then creation rungs.
-# 0 with a path, 8 with no rung, 1 for unknown or competing locations.
+# 0 with a path, 8 with no rung, 1 for unknown or competing locations, and 10
+# where no `LANES_LANE_STATE_ROOT` names the root and the lane's object log,
+# read for its `dir` because the caller handed none, could not be read
+# (opensoft/openRepoTools#303, R7) - or is two logs one case apart, which that
+# read answers alike.
+#
+# THAT 10 IS NOT A RUNG. The read ended in `|| :`, so a log nobody read and a
+# log that records no `dir` were the same empty string: the recorded checkout's
+# parent dropped out, the intent's root fell to `$PROJECTS_ROOT/.lane-state`,
+# and an intent a `/ctx` had filed beside the checkout read as 8, "no restart in
+# flight" - which every handoff and every launch goes past (the review of #303,
+# 541). A log that was read and records no `dir` still falls to the rungs below.
 lane_restart_control_root() {   # <lane> [<payload>] [<checkout hint>]
   lcr_lane="${1-}"; lcr_pay="${2-}"; lcr_dir=""; lcr_par=""
   lcr_record_root=""; lcr_projects_root=""; lcr_existing=""
@@ -12480,7 +12507,9 @@ lane_restart_control_root() {   # <lane> [<payload>] [<checkout hint>]
   fi
   [ -n "$lcr_pay" ] && lcr_dir="$(payload_subfield "$lcr_pay" dir)"
   if [ -z "$lcr_dir" ]; then
-    lcr_dir="$(lane_payload_field "$lcr_lane" dir 2>/dev/null || :)"
+    lcr_drc=0
+    lcr_dir="$(lane_payload_field "$lcr_lane" dir 2>/dev/null)" || lcr_drc=$?
+    case "$lcr_drc" in 0|8) : ;; *) return 10 ;; esac
   fi
   case "$lcr_dir" in
     /*) lcr_par="${lcr_dir%/*}" ;;
@@ -12668,10 +12697,14 @@ lane_restart_root_ok() {   # missing directories are allowed; unusable existing 
   return 0
 }
 
+# THE INTENT, READ: 0 with its fields, 8 where the established root holds none,
+# 10 where the lane's object log could not be read, so the root it places is not
+# established (#303, R7), and 1 for every other read that could not be made - an
+# intent file that is there and will not open among them.
 lane_restart_read() {   # <lane> [<resolved checkout hint>]
   lrr_lane="${1-}"; lrr_root=""; lrr_rc=0
   lrr_root="$(lane_restart_control_root "$lrr_lane" "" "${2-}")" || lrr_rc=$?
-  [ "$lrr_rc" = 0 ] || return 1
+  case "$lrr_rc" in 0) : ;; 10) return 10 ;; *) return 1 ;; esac
   lane_restart_root_ok "$lrr_root" || return 1
   lrr_f="$lrr_root/restart-intent.yaml"
   [ -e "$lrr_f" ] || [ -L "$lrr_f" ] || return 8
@@ -15241,7 +15274,14 @@ worktree_rows() {   # [<canonical lane> [register-unread]]
   wr_live_ok=1
   live_session_ids >/dev/null 2>&1 || wr_live_ok=0
   wr_partial=""
+  # ONE SPELLING OF "THE LIST OF THE LOGS COULD NOT BE MADE", for this read's
+  # origin or for its absence (#303, the behaviour change held for R7): the
+  # check below that keeps one reason from being said twice compares this
+  # string, so with no `origin` it is the directory's own spelling, and the
+  # branch that adds that reason adds this same string.
+  wr_origin=1; have_remote_ref || wr_origin=0
   wr_unlisted="the object logs under origin/$LANES_BRANCH:$LANES_LOG_PREFIX could not be listed"
+  [ "$wr_origin" = 1 ] || wr_unlisted="the log directory $LANES_LOG_DIR is there and could not be listed"
   wr_reg_ok=1; wr_evrc=0; wr_lp=""; wr_unread_lanes=" "; wr_binding_unread=0
   if [ -z "$wr_one" ]; then
     if ! register_text_checked >/dev/null 2>&1; then
@@ -15260,12 +15300,12 @@ worktree_rows() {   # [<canonical lane> [register-unread]]
     fi
     # `known_lanes`' OWN TWO READS, which print what they could, because the
     # listing unions them with the register. The published list answers 1
-    # where it could not be made (#290) - the listing says so and lists the
-    # rest - and the directory's, with no `origin`, answers 0 either way: so
-    # whether each was made is asked here, for the `PARTIAL` line. WITH NO
+    # where it could not be made (#290), and so does the directory's, with no
+    # `origin` (#303) - the listing says so and lists the rest - and whether
+    # each was made is asked here too, for the `PARTIAL` line. WITH NO
     # `origin`, A DIRECTORY THAT IS THERE IS ASKED AS THE TREES' IS BELOW: `ls`
     # lists an `r--` one, whose files no glob can then open (N1 of the review).
-    if have_remote_ref; then
+    if [ "$wr_origin" = 1 ]; then
       wr_pin=""
       if wr_pin="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_LOG_PREFIX" 2>/dev/null && printf x)"; then
         PIN_LOGS_TEXT="${wr_pin%x}"; PIN_LOGS=1
@@ -15274,7 +15314,7 @@ worktree_rows() {   # [<canonical lane> [register-unread]]
       fi
     elif [ -e "$LANES_LOG_DIR" ] || [ -L "$LANES_LOG_DIR" ]; then
       if [ ! -d "$LANES_LOG_DIR" ] || [ ! -r "$LANES_LOG_DIR" ] || [ ! -x "$LANES_LOG_DIR" ]; then
-        wr_partial="${wr_partial:+$wr_partial; }the log directory $LANES_LOG_DIR is there and could not be listed"
+        wr_partial="${wr_partial:+$wr_partial; }$wr_unlisted"
       fi
     fi
   else
@@ -16045,7 +16085,20 @@ Nothing was written." 2
     esac
     # THE OLD NAME'S LIFECYCLE CONTROL ROOT, read while the old name still has
     # its log (openRepoTools#91; `lane_state_rename` moves it after the commit).
-    rl_lsr_old="$(lane_control_root "$rl_old" 2>/dev/null)" || rl_lsr_old=""
+    # A LOG NOBODY COULD READ IS A REFUSAL, AND NO ROOT IS NOT (#303, the review
+    # of #303's 546, and lane 3's change to it with R7's review). The read ended
+    # in `|| rl_lsr_old=""`, so over a log nobody read the rename went on, and
+    # `lane_state_rename`, handed no root, moved nothing: the lane's snapshot and
+    # trees stayed under the old name, where no reader of the new one looks. 1
+    # refuses here, before the mutex and before anything is written; 8, a lane
+    # whose record places no root at all, renames as it always did.
+    rl_lsr_rc=0
+    rl_lsr_old="$(lane_control_root "$rl_old" 2>/dev/null)" || rl_lsr_rc=$?
+    case "$rl_lsr_rc" in
+      0) : ;;
+      1) die "lane $rl_old's object log could not be read, so the directory its lifecycle snapshot and worktree inventory are kept beside is NOT established, and a rename now would leave them under the old name, where no reader of '$rl_new' looks. Nothing was written. Re-run once git can read the log." 1 ;;
+      *) rl_lsr_old="" ;;
+    esac
     # THE SEAM (ruling 2026-10-04). A managed lane's marker names its lane as
     # `bound-lane=`, so renaming the row under it would turn a valid marker into
     # an unparseable one; the rename is the ledger's, and refused before the lock.
@@ -18326,7 +18379,9 @@ EOF
   # 0 with the rows · 8 the lane has no object log · 2 two logs differ only by
   # case · 1 THE LOG IS THERE AND COULD NOT BE READ (opensoft/openRepoTools#303),
   # which was 8 or 0 with no rows: `lane-end`'s gate read either as a lane that
-  # holds nothing and ended it over its open claims.
+  # holds nothing and ended it over its open claims. And 1 where no temporary
+  # file could be made for the read's warnings, which says so and not that the
+  # log could not be read: whether it was read whole is what is not known.
   lane-objects)
     lane="${1-}"; [ -n "$lane" ] || die "usage: lane-objects <lane>" 2
     log_sync
@@ -18336,6 +18391,7 @@ EOF
     case "$lob_rc" in
       0) : ;;
       2 | 8) exit "$lob_rc" ;;
+      4) die "lane-objects could not keep the warnings of the read it answers from: no temporary file could be made under ${TMPDIR:-/tmp}, so whether lane $lane's object log was read whole is NOT established. That is NOT 'this lane holds nothing' (Amendment 7(d)). Make TMPDIR a directory this process can write, and re-run." 1 ;;
       *) die "lane-objects could not read lane $lane's object log (exit $lob_rc), so what it holds open is NOT established. That is NOT 'this lane has no object log' — 8 says that, and \`lane-end\` reads an 8 as a pre-cutover lane and ends it on its row's state cell, over claims this read never saw (Amendment 7(d)). Re-run once git can read the log." 1 ;;
     esac
     ;;
@@ -18488,6 +18544,12 @@ EOF
   #       this file already spends 7 on (`claim`'s CLAIM-LOST, `set-lane-state`).
   #       Nothing was written and the current intent is printed.
   #   8   there is no intent for this lane
+  #  10   where no `LANES_LANE_STATE_ROOT` names the control root and the lane's
+  #       object log could not be read (#303, R7): the intent is kept beside the
+  #       directory that log records, so where it is kept is NOT established -
+  #       never the 8 of none. `restart-intent` exits 10; `set-restart-intent`
+  #       writes nothing and exits 1, as for any root it could not establish.
+  #       An intent file that is there and will not open is still 1.
   #  64   a usage error of this subcommand's own
 
   restart-intent)
@@ -18505,6 +18567,21 @@ EOF
     case "$lri_rc" in
       0) : ;;
       8) exit 8 ;;
+      10)
+        # ITS LAST SENTENCE IS A READ, FOR WHOEVER ASKED (#303, the review of R7,
+        # 654): `lane-handoff` asks this in the middle of a handoff and lets its
+        # stderr through, and goes on to write the swap - so "re-run" would have
+        # told a person to write a second PAUSED line. AND TWO LOGS ONE CASE APART
+        # ARE THIS 10 TOO (661): the read that finds the root answers them as it
+        # answers a log nobody could read, and throws its stderr away, so they are
+        # asked for again here, where a person reads the answer - `log_path_ci`
+        # names both files and Amendment 15(d)'s merge, which no wait on git ever
+        # brings about.
+        lri_lpc=0
+        log_path_ci "$lane" >/dev/null || lri_lpc=$?
+        lri_then="Read it again once git can read the log."
+        [ "$lri_lpc" != 2 ] || lri_then="Read it again once the logs named above are merged into one (Amendment 15(d))."
+        die "lane $lane's object log could not be read, so the directory its restart intent is kept beside is NOT established. That is NOT 'this lane has no restart in flight': a read that failed is never an answer (Amendment 7(d)). $lri_then" 10 ;;
       *) die "lane $lane has no lifecycle control root, so it can carry no restart intent: its record names no directory (Amendment 11(c)) and \$PROJECTS_ROOT is not a directory here. That is NOT 'this lane has no restart in flight' — a read that could not be made is never an answer (Amendment 7(d))." 1 ;;
     esac
     printf '%s\n' "$lri_out"
@@ -18712,8 +18789,12 @@ EOF
     managed_seam_refuse "$lane" "set-restart-intent"
     sri_root=""; sri_rrc=0
     sri_root="$(lane_restart_control_root "$lane")" || sri_rrc=$?
+    # OVER A LOG NOBODY COULD READ, NO OTHER ROOT IS ADVISED (#303, the review of
+    # R7, 657): one named by `LANES_LANE_STATE_ROOT` would hide an intent already
+    # filed beside the directory that log records - 541's hole, reached by hand.
     [ "$sri_rrc" = 0 ] || {
       release_lock
+      [ "$sri_rrc" != 10 ] || die "lane $lane's object log could not be read, so the directory its restart intent is kept beside is NOT established. Nothing was written. Do not name another root with LANES_LANE_STATE_ROOT to get past this: an intent may already sit beside the directory the log records, and the other root would hide it. Write it again once git can read the log: lanes-edit.sh restart-intent $lane says when it can." 1
       die "lane $lane's restart control root is unavailable, unreadable or ambiguous. Nothing was written. Inspect its recorded directory and projects-root intents, or configure LANES_LANE_STATE_ROOT explicitly." 1
     }
     sri_f="$sri_root/restart-intent.yaml"
