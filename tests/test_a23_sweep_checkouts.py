@@ -2467,6 +2467,14 @@ def test_a_dependents_file_that_cannot_be_read_holds_every_candidate(sweep, whic
         unreadable.chmod(0o644)
 
 
+def _crlf_through_a_link(c: Path, sharer: Path) -> str:
+    """A CRLF `.git` file naming a link, beside the directory, to the clone's
+    git directory: it resolves only once the CR is gone."""
+    link = sharer.parent / "git-dir-link"
+    link.symlink_to(c / ".git")
+    return f"gitdir: {link}\r\n"
+
+
 GIT_FILES = [
     pytest.param(lambda c, sharer: f"gitdir: {c}/.git\n", id="absolute"),
     pytest.param(lambda c, sharer: f"gitdir: {c}/.git\r\n", id="CRLF, whose CR git strips"),
@@ -2474,6 +2482,7 @@ GIT_FILES = [
                  id="relative to the directory it is in"),
     pytest.param(lambda c, sharer: f"gitdir: {os.path.relpath(c / '.git', sharer)}\r\n",
                  id="CRLF and relative, whose path resolves once the CR is gone"),
+    pytest.param(_crlf_through_a_link, id="CRLF, through a link that resolves once the CR is gone"),
 ]
 
 
@@ -2487,11 +2496,13 @@ def test_a_git_file_naming_a_clones_git_directory_holds_it(sweep, spelled):
     (rv4-c3's NIT c3-3, P3), and so does a path relative to the directory
     the file is in (NIT c3-4, P4).
 
-    A CRLF line with an absolute path holds even with its CR kept: a target
-    that does not resolve is kept as written (NIT 353), and `<clone>/.git`
-    with a CR after it is still under the clone. A relative one, as git
-    writes a submodule's, resolves only once the CR is gone, so that case
-    is the one a kept CR fails."""
+    A CRLF line holds even with its CR kept where the deepest directory on
+    its path that stands is the clone: a target that does not resolve is
+    spelled from that directory (NIT 353 and its gap, D46), and
+    `<clone>/.git` with a CR after it is still under the clone, whether the
+    line was absolute or relative. A line whose last name is a link to the
+    clone's git directory resolves only once the CR is gone, so that case is
+    the one a kept CR fails."""
     box = sweep.box
     c = box.checkout(CLOSED)
     sharer = box.w.parent / "sharer"
@@ -3243,3 +3254,44 @@ def test_a_proc_gone_as_a_clone_beside_W_is_moved_aside_moves_it_back(sweep):
     assert (c3 / ".git").is_dir()
     assert not os.path.lexists(box.lock_of(c3)), "its lock is let go"
     assert not list(box.w.parent.glob(".*.removing-*")), "no half-removed aside is left"
+
+
+
+@pytest.mark.parametrize("which", [".git file", "alternates file"])
+def test_a_relative_path_written_after_the_last_read_moves_it_back(sweep, which):
+    """THE MOVE IS THE COMMIT POINT FOR A RELATIVE PATH TOO (the 353 gap, D44's
+    note, D46): a `.git` file, or an alternates file, written after the last
+    read under the lock, with a path relative to its own directory through
+    `..`, names the old path. After the move that path no longer resolved,
+    and was kept as written, with its `..`, so it named no candidate and the
+    checkout was removed under it. Now the deepest directory on it that
+    stands is resolved and the rest appended as text, so it names the old
+    path: the checkout is moved back, and what names it stays whole."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    if which == ".git file":
+        sharer = box.w.parent / "late-sharer"
+        rel = os.path.relpath(c / ".git", sharer)
+        body = f"mkdir -p {sharer} && printf 'gitdir: %s\\n' {rel} > {sharer}/.git"
+        said = f"its git directory is named by the .git file of {sharer}, which works in it"
+    else:
+        sharer = Path(box.env["TMPDIR"]) / "late-borrower"
+        rel = os.path.relpath(c / ".git" / "objects", sharer / ".git" / "objects")
+        git = shutil.which("git")
+        body = (f"{git} clone -q --no-local --reference {c} {box.origin} {sharer} && "
+                f"printf '%s\\n' {rel} > {sharer}/.git/objects/info/alternates")
+        said = f"leaned on by {sharer}, which came as it was moved aside"
+    assert rel.startswith("../"), rel
+    _git_after_the_last_read(box, c, body)
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert (sharer / ".git").exists(), "the shim wrote it"
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+    assert said in rows[str(c)][1], rows[str(c)]
+    assert "it was moved back" in rows[str(c)][1], rows[str(c)]
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert (c / ".git").is_dir()
+    _no_aside(box)
+    if which == ".git file":
+        assert box.git("-C", str(sharer), "rev-parse", "--absolute-git-dir").strip() == f"{c}/.git"
+    else:
+        box.git("-C", str(sharer), "fsck", "--connectivity-only")

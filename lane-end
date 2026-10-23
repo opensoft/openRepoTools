@@ -1731,6 +1731,22 @@ SH_Y
     esac
     printf '%s' "$sfe_x"
   }
+  # A TARGET THAT DOES NOT RESOLVE (the 353 gap, D44's note) is spelled from
+  # the real path of the deepest directory on it that does, the rest
+  # appended as written: after the move, a relative
+  # `../<W>-lanes/<lane>/.git` that named the old path names it again, and
+  # an absolute one reads as it did.
+  sc_real_or_text() {   # <absolute path>
+    srt_r="$(sc_real "$1")"
+    if [ -n "$srt_r" ]; then printf '%s' "$srt_r"; return 0; fi
+    srt_p="$1"; srt_t=""
+    while [ -n "$srt_p" ]; do
+      srt_t="/${srt_p##*/}$srt_t"; srt_p="${srt_p%/*}"
+      srt_r="$(sc_real "${srt_p:-/}")"
+      if [ -n "$srt_r" ]; then break; fi
+    done
+    printf '%s%s' "${srt_r%/}" "$srt_t"
+  }
   sc_dep_root 6 "$sc_root"
   sc_dep_root 8 "${TMPDIR:-/tmp}"
   sc_dep_root 4 "${HOME:-}"
@@ -1786,10 +1802,10 @@ SDS_ERR
             fi
             sds_g="$(printf '%s\n' "$sds_g" | sed -n -e '1s/^gitdir: //p')"
             case "$sds_g" in '') continue ;; /*) : ;; *) sds_g="$sds_e/$sds_g" ;; esac
-            # A target that is gone is kept as written (NIT 353): after the
-            # move, a clone that named the old path is still matched.
-            sds_r="$(sc_real "$sds_g")"
-            sds_gl="$sds_gl${sds_r:-$sds_g}$sc_tab$sds_e
+            # A target that is gone is still matched (NIT 353, and its gap):
+            # after the move, a clone that named the old path names it.
+            sds_r="$(sc_real_or_text "$sds_g")"
+            sds_gl="$sds_gl$sds_r$sc_tab$sds_e
 " ;;
           */objects)
             sds_a="$sds_f/info/alternates"
@@ -1801,8 +1817,8 @@ SDS_ERR
             while IFS= read -r sds_l; do
               case "$sds_l" in '' | '#'*) continue ;; esac
               case "$sds_l" in /*) sds_t="$sds_l" ;; *) sds_t="$sds_f/$sds_l" ;; esac
-              sds_r="$(sc_real "$sds_t")"
-              sds_dl="$sds_dl${sds_r:-$sds_t}$sc_tab$sds_e
+              sds_r="$(sc_real_or_text "$sds_t")"
+              sds_dl="$sds_dl$sds_r$sc_tab$sds_e
 "
             done <<SDS_ALT
 $sds_x
