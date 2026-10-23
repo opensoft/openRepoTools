@@ -2187,7 +2187,8 @@ def test_a_dependent_anywhere_in_the_scope_holds(sweep, where):
         result, rows = sweep(*args, **env)
         assert result.returncode in (0, 3), (result.stdout, result.stderr)
         assert rows[str(c)][0] == "hold", rows[str(c)]
-        assert f"leaned on by {dep} " in rows[str(c)][1], rows[str(c)]
+        # A control character in a path is printed as `?` (NIT 358).
+        assert f"leaned on by {str(dep).replace(chr(9), '?')} " in rows[str(c)][1], rows[str(c)]
     assert c.is_dir()
     box.git("-C", str(dep), "fsck", "--connectivity-only")
 
@@ -2711,3 +2712,23 @@ def test_a_long_name_is_moved_aside_under_a_name_that_does_not_grow(sweep):
     assert asides[0].parent == box.w.parent, asides
     assert re.fullmatch(rf"\.{long.name[:48]}\.removing-\d{{8}}T\d{{6}}Z-\d+", asides[0].name), asides
     assert not list(box.w.parent.glob(".*.removing-*")), "no aside is left"
+
+
+def test_a_name_with_a_control_character_writes_no_line_of_its_own(sweep):
+    """NAMES ARE PRINTED WITH EACH CONTROL CHARACTER AS `?` (lane
+    openRepoTools-3's NIT 358). A newline in a name under `<W>-lanes/` wrote
+    a line of its own into the report, here one that reads as the removal
+    of `FORGED`. The name is kept, and said on its own line, in the dry run
+    and under `--yes`; the directory stays."""
+    box = sweep.box
+    odd = box.lanes_root / "odd\n    remove     FORGED  lane repoS4-2 is CLOSED (ENDED)"
+    odd.mkdir()
+    shown = str(odd).replace("\n", "?")
+    for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+        result, rows = sweep(*args, **env)
+        assert result.returncode in (0, 3), (result.stdout, result.stderr)
+        assert "FORGED" not in rows, rows
+        lines = [line for line in result.stdout.splitlines() if "FORGED" in line]
+        assert len(lines) == 1, lines
+        assert lines[0].startswith(f"    keep       {shown}  "), lines
+    assert odd.is_dir()

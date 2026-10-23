@@ -1214,8 +1214,14 @@ SC_IDX
   # is what holds it, and the holds are asked of candidates alone.
   sc_cands=(); sc_cand_why=(); sc_cand_lane=(); sc_cand_new=()
   sc_keep_lines=""
+  # EACH CONTROL CHARACTER OF A PATH OR A REASON THE REPORT PRINTS IS WRITTEN
+  # AS `?` (lane openRepoTools-3's NIT 358), by the shell's own pattern
+  # substitution, so no process is started per name: a newline in a name
+  # wrote a line of its own into the report, one that could read as another
+  # entry's. The commands the report hands out keep `%q`, which a shell
+  # reads back exactly.
   sc_keep() {   # <path> <why>
-    sc_keep_lines="${sc_keep_lines}    keep       $1  $2
+    sc_keep_lines="${sc_keep_lines}    keep       ${1//[[:cntrl:]]/?}  ${2//[[:cntrl:]]/?}
 "
   }
   sc_cand() {   # <path> <lane it is judged as> <why> [<new name's checkout>]
@@ -2104,7 +2110,7 @@ SLU
     esac
   }
   sc_say_held() {   # <path> <why it was a candidate> <what holds it>
-    printf '    hold       %s  %s; holds: %s\n' "$1" "$2" "$3"
+    printf '    hold       %s  %s; holds: %s\n' "${1//[[:cntrl:]]/?}" "${2//[[:cntrl:]]/?}" "${3//[[:cntrl:]]/?}"
     if sc_is_beside "$1"; then sc_nb_held=$((sc_nb_held + 1)); return 0; fi
     sc_n_held=$((sc_n_held + 1)); sc_held_names="${sc_held_names:+$sc_held_names }${1##*/}"
   }
@@ -2194,7 +2200,7 @@ SLU
     sc_c="${sc_cands[$sc_i]}"; sc_why="${sc_cand_why[$sc_i]}"
     sc_l="${sc_cand_lane[$sc_i]}"; sc_new="${sc_cand_new[$sc_i]}"
     if ! sc_under_home "$sc_c"; then
-      printf '    hold       %s  %s; it is not directly under %s/ or in %s/, and nothing else is ever removed\n' "$sc_c" "$sc_why" "$sc_home" "$sc_root"
+      printf '    hold       %s  %s; it is not directly under %s/ or in %s/, and nothing else is ever removed\n' "${sc_c//[[:cntrl:]]/?}" "${sc_why//[[:cntrl:]]/?}" "${sc_home//[[:cntrl:]]/?}" "${sc_root//[[:cntrl:]]/?}"
       if sc_is_beside "$sc_c"; then sc_nb_held=$((sc_nb_held + 1)); continue; fi
       sc_n_held=$((sc_n_held + 1)); sc_held_names="${sc_held_names:+$sc_held_names }${sc_c##*/}"; continue
     fi
@@ -2203,7 +2209,7 @@ SLU
       if [ -n "$SC_HOLD" ]; then
         sc_say_held "$sc_c" "$sc_why" "$SC_HOLD"
       else
-        printf '    remove     %s  %s%s\n' "$sc_c" "$sc_why" "${SC_IGN:+; $SC_IGN}"
+        printf '    remove     %s  %s%s\n' "${sc_c//[[:cntrl:]]/?}" "${sc_why//[[:cntrl:]]/?}" "${SC_IGN:+; ${SC_IGN//[[:cntrl:]]/?}}"
         sc_n_removable=$((sc_n_removable + 1)); sc_gone="$sc_gone$sc_c
 "
         if sc_is_beside "$sc_c"; then sc_nb_removable=$((sc_nb_removable + 1)); fi
@@ -2264,13 +2270,13 @@ SLU
       ( trap '' INT TERM; exec rm -rf ${sc_rm_x:+"$sc_rm_x"} -- "$sc_aside" ) 2>/dev/null || :
     fi
     if [ -e "$sc_aside" ] || [ -L "$sc_aside" ]; then
-      printf '    PARTLY     %s  %s; moved aside to %s, which could not all be removed%s\n' "$sc_c" "$sc_why" "$sc_aside" "${sc_act_ign:+; $sc_act_ign}"
+      printf '    PARTLY     %s  %s; moved aside to %s, which could not all be removed%s\n' "${sc_c//[[:cntrl:]]/?}" "${sc_why//[[:cntrl:]]/?}" "${sc_aside//[[:cntrl:]]/?}" "${sc_act_ign:+; ${sc_act_ign//[[:cntrl:]]/?}}"
       sc_partial="${sc_partial:+$sc_partial }$sc_aside"
       sc_partial_names="${sc_partial_names:+$sc_partial_names }$(sc_said_name "${sc_aside##*/}")"
       sc_n_partial=$((sc_n_partial + 1))
       if sc_is_beside "$sc_c"; then sc_nb_partial=$((sc_nb_partial + 1)); fi
     else
-      printf '    removed    %s  %s%s\n' "$sc_c" "$sc_why" "${sc_act_ign:+; $sc_act_ign}"
+      printf '    removed    %s  %s%s\n' "${sc_c//[[:cntrl:]]/?}" "${sc_why//[[:cntrl:]]/?}" "${sc_act_ign:+; ${sc_act_ign//[[:cntrl:]]/?}}"
       sc_n_removed=$((sc_n_removed + 1))
       if sc_is_beside "$sc_c"; then
         sc_nb_removed=$((sc_nb_removed + 1))
@@ -2286,7 +2292,7 @@ SLU
   printf '%s' "$sc_keep_lines"
   for sc_e in ${sc_leftovers[@]+"${sc_leftovers[@]}"}; do
     printf '    leftover   %s  the aside of a removal that did not finish (a sweep stopped by a signal, or an rm that met what it could not remove; or one still running): no checkout, and no write goes through it. Look at why, then remove it by hand: chmod -R u+rwX -- %q && rm -rf -- %q\n' \
-      "$sc_e" "$sc_e" "$sc_e"
+      "${sc_e//[[:cntrl:]]/?}" "$sc_e" "$sc_e"
   done
   if [ "${#sc_cands[@]}" = 0 ] && [ -z "$sc_keep_lines" ] && [ "${#sc_leftovers[@]}" = 0 ]; then printf '    (nothing)\n'; fi
 
