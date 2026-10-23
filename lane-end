@@ -922,10 +922,12 @@ cl_out="$("$LANES_EDIT" canon-lane "$LANE" 2>/dev/null)" || cl_rc=$?
 cl_why=""; cl_pair=0
 case "$cl_rc" in 2 | 66) cl_why="$(LANES_NO_FETCH=1 "$LANES_EDIT" canon-lane "$LANE" 2>&1 >/dev/null || :)" ;; esac
 case "$cl_why" in *"Amendment 15(d)"*) cl_pair=1 ;; esac
-# AMENDMENT 16(e) — AND 66 IS THE ALIAS TABLE THAT COULD NOT BE READ (Copilot
-# round 4 on openRepoTools#81). It is its own number because 2 already carries
-# two meanings here, and this command must not END a lane it cannot name: a
-# former name that resolves to nothing reads as a lane with no row, and the
+# AMENDMENT 16(e) AND #310 — AND 66 IS AN INPUT A LANE NAME IS RESOLVED BY THAT
+# COULD NOT BE READ: the register, the alias table, the archive or the list of
+# the object logs (Copilot round 4 on openRepoTools#81). It is its own number
+# because 2 already carries two meanings here, and this command must not END a
+# lane it cannot name: a former name, or a spelling only the archive or the
+# logs hold, that resolves to nothing reads as a lane with no row, and the
 # ENDED line would be written under a name no reader resolves.
 if [ "$cl_rc" = 66 ]; then
   printf '%s\n' "$cl_why" >&2

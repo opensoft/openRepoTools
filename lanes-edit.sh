@@ -435,8 +435,9 @@
 #   0  done (and #194's publish whose queue `pull --rebase` emptied)
 #   1  environment (no register, no writer)
 #   2  refusal: bad arguments, the object is held, an unknown alias, a
-#      checkout that cannot be rebased, — Amendment 15 — a register holding
-#      two rows whose lane names differ only by case, which every writer and
+#      checkout that cannot be rebased, — Amendment 15 — one source holding
+#      two spellings of a lane's name that differ only by case (register
+#      rows, archived rows or object logs, #310), which every writer and
 #      `canon-lane` refuse until 15(d)'s merge, or AMENDMENT 12's BLOCKED
 #      PROMPT, or — opensoft/openRepoTools#162 — a commit whose pathspec
 #      would stage bytecode, a cache or a virtual environment
@@ -15902,13 +15903,15 @@ Nothing was written." 2
     rl_crc=0
     rl_old="$(canon_lane "$rl_old")" || rl_crc=$?
     # ONE CONDITION, ONE CODE (Copilot round 6 on openRepoTools#81). `canon_lane`
-    # answers 66 for an alias table it could not read so that `canon-lane`'s four
-    # callers can tell it from a refusal — but a flat `|| exit 2` here made THIS
-    # writer answer 2 or 1 for the same fault depending on whether the typed name
-    # happened to have a row of its own, because a name with one never reaches
-    # the table at all. Translated to this command's own 1, which is what its
-    # other two alias-read refusals already spend and what the amendment's
-    # fail-closed rule is about.
+    # answers 66 for an input it could not read — the register, for every name
+    # (#310); the alias table, the archive or the list of the logs, for a name
+    # the inputs before them did not answer — so that `canon-lane`'s four
+    # callers can tell it from a refusal. A flat `|| exit 2` here made THIS
+    # writer answer 2 or 1 for an unreadable alias table depending on whether
+    # the typed name happened to have a row of its own, because a name with one
+    # never reaches the table at all. Translated to this command's own 1, which
+    # is what its other two alias-read refusals already spend and what the
+    # amendment's fail-closed rule is about.
     case "$rl_crc" in
       0) : ;;
       66) die "the old name could not be resolved: an input a lane name is resolved by — the register, the lane alias table, the archive or the list of the object logs — could not be read (above), and a rename whose old name nobody could resolve may rename another lane, or leave a former name that stops resolving, which is the one thing clause (e) promises for ever — so this fails closed. Nothing was written." 1 ;;

@@ -1142,13 +1142,16 @@ case "$cl_rc" in
       die "lane $LANE is spelled two ways that differ only by case in one source (above) — two register rows, two archived rows or two object logs — so no read and no write under that name is unambiguous and nothing here picks one. Amendment 15(d): for two rows, in the register or in the archive, merge the newer row's session id(s) into the older row's session cell, in order, and remove the newer row in the SAME commit naming both spellings; for two object logs, merge them into one file, oldest lines first, and remove the other in the SAME commit; push, and re-run. Nothing was launched, renamed or written." 2
     fi ;;
   66)
-    # AMENDMENT 16(e) — THE ALIAS TABLE COULD NOT BE READ, AND THAT IS NOT A
-    # SPELLING QUESTION (Copilot round 4 on openRepoTools#81). `lanes/aliases.tsv`
-    # is what makes a lane's OLD name resolve to its row, so a table nobody can
-    # read makes a RENAMED lane look like a lane nobody has — and the next line
-    # of this command is the one that decides whether to add a row. Carrying on
-    # with the typed name there is a SECOND row for a lane that has been running
-    # all day, which is the duplicate Amendment 15(a) exists to refuse.
+    # AMENDMENT 16(e) AND #310 — AN INPUT A LANE NAME IS RESOLVED BY COULD NOT BE
+    # READ (THE REGISTER, THE ALIAS TABLE, THE ARCHIVE OR THE LIST OF THE OBJECT
+    # LOGS), AND THAT IS NOT A SPELLING QUESTION (Copilot round 4 on
+    # openRepoTools#81). `lanes/aliases.tsv` is what makes a lane's OLD name
+    # resolve to its row, and the archive and the logs spell a lane with no row,
+    # so an input nobody can read makes a RENAMED lane, or one spelled another
+    # way, look like a lane nobody has — and the next line of this command is the
+    # one that decides whether to add a row. Carrying on with the typed name
+    # there is a SECOND row for a lane that has been running all day, which is
+    # the duplicate Amendment 15(a) exists to refuse.
     printf '%s\n' "$cl_why" >&2
     die "lane $LANE's name could not be resolved: ${LANES_EDIT##*/} could not read an input a lane name is resolved by — the register, the lane alias table, the archive or the list of the object logs (above, exit 66). A name none of them could answer for may be a lane that is already running under another spelling, or under a former name that Amendment 16(e) resolves for ever — and this command would add a second row for it. Fix the read and re-run. Nothing was launched, renamed or written." 2 ;;
   *) note "$LANES_EDIT canon-lane $LANE failed (exit $cl_rc) — carrying on with the name as typed, which the register may spell differently" ;;

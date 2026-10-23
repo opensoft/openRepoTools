@@ -507,10 +507,11 @@ class Helper:
 
     def canon_lane(self, lane: str):
         """(canonical spelling, refusal) - Amendment 15's resolver, as
-        `lane-end` reads it: 0 with the row's spelling; 66 the alias table
-        unreadable and 2 with 15(d)'s words a published case pair, both
-        refusals; any other answer (a helper predating the subcommand) keeps
-        the typed spelling."""
+        `lane-end` reads it: 0 with the lane's spelling; 66 an input a lane name
+        is resolved by unreadable (the register, the alias table, the archive or
+        the list of the logs) and 2 with 15(d)'s words a case pair in one source
+        (register rows, archived rows or object logs), both refusals; any other
+        answer (a helper predating the subcommand) keeps the typed spelling."""
         proc = self.call("canon-lane", lane, fetch=True)
         out = proc.stdout.strip()
         if proc.returncode == 0 and out:
