@@ -38,7 +38,7 @@ import pytest
 
 from a23_box import ME, REGISTER
 from conftest import WINDOWS_SKIP
-from test_a23_publish_replay import LANE, NEIGHBOUR, Box as ReplayBox
+from test_a23_publish_replay import LANE, NEIGHBOUR, Box as ReplayBox, _git_shim, _stamp
 
 pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
                                  reason="lanes-edit.sh is a bash script"),
@@ -2043,3 +2043,30 @@ def test_a_routed_bind_of_the_rows_cell_clones_no_checkout(box: Box):
     assert not c.exists(), "a bind makes no checkout"
     assert "clone" not in box.net_ops()
     assert box.w_state() == w_before
+
+
+# ------------------------------------------- lane openRepoTools-3's review of #312
+
+def test_a_commit_landing_just_after_this_writes_commit_is_told_by_its_trailer_exit_6(box: Box):
+    """606: slice 1b's 291 tells this write's commit by its message where an
+    unlocked writer's lands just after `git commit`. This write's message has
+    the `Lane:` trailer as its second paragraph, and the subject alone never
+    matched what git stored, so every such race was "cannot be told" (6,
+    nothing named). Given the whole message, this write's commit is found
+    under the stamp and named, nothing is replayed, and both are kept on HEAD
+    (6), as `set-row-state`'s are."""
+    c = box.seam()
+    box.race()
+    env = _git_shim(box, '*" commit -q -m handoff("*', after=_stamp(c))
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT, **env)
+    assert (box.root / "fired").exists(), "the stamp landed just after this write's commit"
+    assert result.returncode == 6, result.stderr
+    err = result.stderr
+    stamp, mine = box.head(c), box.git("-C", str(c), "rev-parse", "HEAD~1").strip()
+    assert box.subject(c, "HEAD~1") == SUBJECT, "this write's commit is under the stamp"
+    assert box.git("-C", str(c), "log", "-1", "--format=%B", mine).strip().splitlines()[1:] == ["", f"Lane: {LANE}"]
+    assert "cannot be told from another made in this checkout" not in err, err
+    assert f"HEAD is {stamp}, not this write's commit {mine}" in err, err
+    assert "push refused (attempt 1 of 6)" not in err, "nothing is replayed"
+    assert (c / "handoffs" / "stamp.md").is_file(), "the other writer's file is still there"
+    assert len(box.unpublished(c)) == 2, "both kept on HEAD"
