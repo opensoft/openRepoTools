@@ -36,7 +36,8 @@ lines; this file holds both:
   left to pipx where it is pipx's link now, and refused, naming it, where it
   is any other change; a link that appears as late as the rename is refused
   and left as it was, never replaced by a regular file, at a command, a
-  `SKILL.md` or a command file alike.
+  `SKILL.md` or a command file alike; and one made where the bytes are
+  already right is refused too, never stamped through by `chmod`.
 
 FAKE VENVS, NO PIPX, NO WHEEL. `tests/package_layout.py` lays each venv out
 of this checkout's own files. EVERY PACKAGE RUN HERE IS
@@ -1941,6 +1942,88 @@ def test_pipx_mid_run_a_link_at_a_skill_or_command_file_is_refused_and_left(
     assert there == order[:order.index(str(target)) + 1], (
         f"the run went past the link or stopped short of it:\n"
         f"{transcript(result)}")
+
+
+#: A LINK MADE WHERE THE BYTES ARE ALREADY RIGHT (#257, the review's SHOULD-1).
+#: A second `--install` over what a first one placed finds this release's
+#: bytes at every target and takes the arm that skips the copy and stamps the
+#: mode IN PLACE, and that `chmod` follows a link made since planning to a file
+#: that holds exactly those bytes. Three arms have it, one case each: a command
+#: in the bin directory (`park`, as `LATE_LINKS`' own link is), and the first
+#: `SKILL.md` and the first command file of the shared profile directory.
+LATE_LINKS_OVER_RIGHT_BYTES = ("a-bin-command", "a-skill-file",
+                               "a-command-file")
+
+
+@pytest.mark.parametrize("which", LATE_LINKS_OVER_RIGHT_BYTES)
+@NEEDS_JQ
+def test_pipx_mid_run_a_link_over_bytes_already_right_is_refused_and_not_stamped(
+        tmp_path, which):
+    """#257, THE ARMS WHOSE BYTES ARE ALREADY RIGHT (the review's SHOULD-1).
+    A first `--install` places everything. During a second, a person's own
+    link appears at one target after planning, to a file that holds exactly
+    this release's bytes at mode 600: the fake `cmp` makes it as that target's
+    arm compares, so `[ -e ]` and `cmp` read through it and both answer "the
+    bytes are right". The run refuses as it refuses a link at the rename: exit
+    2, one `REFUSED:` naming the link and where it points, the link as it was
+    made, the file it points to untouched AND STILL AT MODE 600, no temporary,
+    no `rm` advised, no line that calls the link installed, and the run goes
+    no further: the next target, left stale beforehand, is still stale.
+    Before the arm asked, its `chmod` followed the link and stamped the far
+    end 755 (644 for a document), the run said `already installed … (mode
+    restored to 755)` of a link, and it exited 0. The link is asked about
+    AFTER `cmp`, which is what the fake `cmp` pins: a question put before it
+    would not see a link made while it runs."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    shared = home / ".claude-profiles" / "shared"
+    if which == "a-bin-command":
+        target = bin_dir(home) / "park"
+    elif which == "a-skill-file":
+        target = shared / "skills" / SKILL_NAMES[0] / "SKILL.md"
+    else:
+        target = shared / "commands" / f"{COMMAND_NAMES[0]}.md"
+    first = install_as("checkout", root, home, pipx_env(home))
+    assert first.returncode == 0, transcript(first)
+    assert target.is_file() and not target.is_symlink(), transcript(first)
+    right = target.read_bytes()
+    far = root / "someones-own-file"
+    far.write_bytes(right)
+    far.chmod(0o600)
+    order = list(placed_files(home))
+    after = Path(order[order.index(str(target)) + 1])
+    stale = after.read_bytes() + b"# a copy this run must not touch\n"
+    after.write_bytes(stale)
+    fake, acted = mid_run(
+        root, "cmp", shlex.quote(str(target)),
+        f"{real_tool('ln')} -sf {shlex.quote(str(far))} "
+        f"{shlex.quote(str(target))}")
+
+    result = install_as("checkout", root, home,
+                        pipx_env(home, extra=first_on_path(fake)))
+    assert acted.exists(), f"no link was made mid-run:\n{transcript(result)}"
+    assert result.returncode == 2, transcript(result)
+    assert result.stderr.count("REFUSED:") == 1, transcript(result)
+    assert (f"REFUSED: {target} is a symlink to {far} now, and was not one "
+            "when this run planned, so nothing was placed there and the link "
+            "is left as it was") in result.stderr, transcript(result)
+    if which != "a-bin-command":
+        assert (f"The {len(INSTALLED)} commands above are placed;"
+                in result.stderr), transcript(result)
+    assert target.is_symlink() and os.readlink(target) == str(far), (
+        f"the link was replaced:\n{transcript(result)}")
+    assert far.read_bytes() == right
+    stamped = stat.S_IMODE(far.stat().st_mode)
+    assert stamped == 0o600, (
+        f"`chmod` followed the link and moded its far end {oct(stamped)}:\n"
+        f"{transcript(result)}")
+    assert placement_temporaries(home) == []
+    assert rm_lines_naming(result.stdout + result.stderr, target) == [], (
+        transcript(result))
+    assert str(target) not in result.stdout, (
+        f"the run reported the link as placed:\n{transcript(result)}")
+    assert after.read_bytes() == stale, (
+        f"the run went past the link:\n{transcript(result)}")
 
 
 @NEEDS_JQ

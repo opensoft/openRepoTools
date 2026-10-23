@@ -2140,7 +2140,18 @@ install_commands() {
     hook entries are not placed at all."
 			fi
 		fi
-		if [ -e "$target" ] && cmp -s "$source" "$target"; then
+		# A LINK IS NOT "THE BYTES ARE RIGHT" (#257). `[ -e ]` and `cmp` read
+		# THROUGH a link, so one made since planning to a file that holds
+		# exactly these bytes passes both, and the `chmod` below would stamp its
+		# far end: somebody's own file, moded by a run that says "already
+		# installed". Every planner refuses a link at every target it places
+		# over, so a link here appeared after planning, and it takes the other
+		# arm, where `place_by_rename` refuses it, naming it and leaving it as
+		# it was. The question is asked LAST, after `cmp`, so only `mode_is`'s
+		# `find` stands between it and `chmod`. A link made in that instant is
+		# still followed: no `chmod` this file can count on stops at one (GNU's
+		# has no `-h`).
+		if [ -e "$target" ] && cmp -s "$source" "$target" && [ ! -L "$target" ]; then
 			# THE BYTES WERE RIGHT, WHICH IS NOT THE SAME AS NOTHING TO DO
 			# (#40, finding 2). The `chmod` below has always run on this arm
 			# too — the eleven are the one set this installer never got wrong —
@@ -3105,8 +3116,9 @@ plan_install_targets() {
 		# one command pipx places. It is no bad target: the placement loop skips
 		# it, once it has asked again at that target's own turn and found it
 		# still pipx's (#257); a link that has gone or changed by then is
-		# refused there. A venv-shaped link IS one, listed for what it is, with
-		# the paragraph that says to leave it, and kept out of the `rm -f` line.
+		# refused there. A venv-shaped link IS a bad target, listed for what it
+		# is, with the paragraph that says to leave it, and kept out of the
+		# `rm -f` line.
 		if [ "$name" = openRepoTools ]; then
 			if pipx_link_match "$target"; then
 				continue
@@ -3478,7 +3490,10 @@ place_skill_and_hook() {
 		mkdir -p -- "$(dirname -- "$target")" ||
 			die "could not create $(dirname -- "$target") for the $name skill.
     The $placed commands above are placed; the skills and the hook are not."
-		if [ -e "$target" ] && cmp -s "$WORKDIR/skill-$name.md" "$target"; then
+		# A LINK TAKES THE OTHER ARM, AS IT DOES IN `install_commands` (#257):
+		# one made since planning is no "bytes already right", and its far end
+		# is not this installer's to `chmod`. `place_by_rename` refuses it.
+		if [ -e "$target" ] && cmp -s "$WORKDIR/skill-$name.md" "$target" && [ ! -L "$target" ]; then
 			# THE MODE IS STAMPED WHETHER OR NOT THE BYTES MOVED (#40, finding
 			# 2). This arm reported the file unchanged and then SKIPPED the
 			# `chmod` below, which sat inside the `else` — so a `SKILL.md` that
@@ -3530,7 +3545,8 @@ place_skill_and_hook() {
 			mkdir -p -- "$(dirname -- "$target")" ||
 				die "could not create $(dirname -- "$target") for the /$name command.
     The $placed commands above are placed; the skills, the command files and the hook are not."
-			if [ -e "$target" ] && cmp -s "$WORKDIR/command-$name.md" "$target"; then
+			# A LINK TAKES THE OTHER ARM HERE TOO (#257), as a skill's does.
+			if [ -e "$target" ] && cmp -s "$WORKDIR/command-$name.md" "$target" && [ ! -L "$target" ]; then
 				# The same stamp on the same arm, for the same reason a skill's
 				# is (#40, finding 2): the mode is this installer's to set on
 				# every artifact it places, and a mode it repaired is a line
