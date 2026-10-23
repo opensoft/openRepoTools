@@ -2683,7 +2683,15 @@ else
 			handoff_written=1
 			step "handoff refreshed: $handoff_file (+$hs_added lines at the head)"
 			case "$hs_rc" in
-			0) step "handoff written through \`write-handoff\`, which exited 0: its words above say what it committed and pushed" ;;
+			# THE WORDS SAY WHAT WAS DONE (lane openRepoTools-3's review of
+			# #316, 728 and its question 4): under the harness's
+			# LANES_NO_GIT=1 the helper writes the file, commits nothing and
+			# exits 0.
+			0) if [ "${LANES_NO_GIT:-0}" = 1 ]; then
+				step "handoff written through \`write-handoff\`, which exited 0 under LANES_NO_GIT=1: the block is written in $handoff_file and nothing is committed or pushed"
+			   else
+				step "handoff written through \`write-handoff\`, which exited 0: its words above say what it committed and pushed"
+			   fi ;;
 			2) note "the handoff is written in $handoff_file and NOT committed (\`write-handoff\` exited 2: the checkout refused, and its words above say why and give the commit to make once that is answered). Never re-run this handoff to commit it: a second run puts a second block on top." ;;
 			3) note "the handoff is written in $handoff_file and its commit pushed, and origin did not confirm it (\`write-handoff\` exited 3; its words above name the commit): look before writing it again, because a second block on top is a second handoff in the one document this protocol never rewrites." ;;
 			6) note "the handoff is written in $handoff_file and committed, and the commit is KEPT on HEAD of that checkout, not pushed (\`write-handoff\` exited 6; its words above name it). No later write publishes it, and each one refuses until it is published (Amendment 23 S3): once those words are answered, LANES_LANE=$lane $LANES_EDIT commit \"<what it is>\", the publish act." ;;

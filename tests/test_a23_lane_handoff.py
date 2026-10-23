@@ -151,3 +151,27 @@ exec '{box.bin / "lanes-edit.sh"}' "$@"
         register
     assert _published(box, cell).endswith("\n---\n\n" + HANDOFF)
     _assert_nothing_unpublished(box, checkout)
+
+
+def test_no_git_handoff_says_written_and_nothing_committed(tmp_path, short_root):
+    """728, and question 4 of the review of #316: under `LANES_NO_GIT=1` the
+    block is written in the lane's checkout and nothing is committed, and the
+    exit-0 words say so rather than point at a commit and a push."""
+    box, checkout, cell, _before = _ready(tmp_path, short_root)
+    # NOTHING IS FETCHED UNDER LANES_NO_GIT, so the checkout is current first.
+    box.git("-C", str(checkout), "fetch", "-q", "origin", "main")
+    box.git("-C", str(checkout), "merge", "-q", "--ff-only", "origin/main")
+    head = box.git("-C", str(checkout), "rev-parse", "HEAD")
+    tip = _tip(box)
+
+    result = _handoff(box, env={"LANES_NO_GIT": "1"})
+    assert result.returncode == 0, result.stderr
+    written = (checkout / cell).read_text(encoding="utf-8")
+    assert written.startswith(f"Lane: {LANE} (test-profile, session "), written
+    assert written.endswith("\n---\n\n" + HANDOFF), written
+    assert box.git("-C", str(checkout), "rev-parse", "HEAD") == head, "nothing is committed"
+    assert _tip(box) == tip, "or pushed"
+    assert "what it committed and pushed" not in result.stderr, result.stderr
+    said = [line for line in result.stderr.splitlines()
+            if "LANES_NO_GIT=1" in line and "nothing is committed" in line]
+    assert len(said) == 1, result.stderr

@@ -340,3 +340,30 @@ def test_no_lane_copy_launches_with_no_first_prompt_never_W_copy(tmp_path, short
     note = _first_prompt_note(start.stderr)
     assert f"{checkout}/{cell}" in note, note
     assert f"lane-checkout {LANE} --create" in note, note
+
+
+def test_no_git_stamp_says_written_and_not_committed(tmp_path, short_root):
+    """721, and question 4 of the review of #316 (rv2b's SHOULD 1): under
+    `LANES_NO_GIT=1` `write-handoff` writes the stamp, commits nothing and
+    exits 0. The exit-0 words say that, never "committed and pushed"."""
+    box, checkout, _lane_dir, _before = _started(tmp_path, short_root)
+    cell = _cell(box)
+    _peer_push(box, {cell: HANDOFF}, "the lane's handoff, written elsewhere")
+    # NOTHING IS FETCHED UNDER LANES_NO_GIT (S3 returns at once), so the
+    # checkout is brought up to the handoff first.
+    box.git("-C", str(checkout), "fetch", "-q", "origin", "main")
+    box.git("-C", str(checkout), "merge", "-q", "--ff-only", "origin/main")
+    head = box.git("-C", str(checkout), "rev-parse", "HEAD")
+    tip = _tip(box)
+    box.env["LANES_NO_GIT"] = "1"
+
+    start = box.start("--fresh", window_name=LANE)
+    assert start.returncode == 0, start.stderr
+    assert (checkout / cell).read_text(encoding="utf-8").splitlines()[2].startswith("RESUMED by "), \
+        "the stamp is written in the lane's checkout"
+    assert box.git("-C", str(checkout), "rev-parse", "HEAD") == head, "and nothing is committed"
+    assert _tip(box) == tip, "or pushed"
+    assert "committed and pushed" not in start.stderr, start.stderr
+    said = [line for line in start.stderr.splitlines() if "LANES_NO_GIT=1" in line and "NOT committed" in line]
+    assert len(said) == 1, start.stderr
+    assert f"{checkout}/{cell}" in said[0], said

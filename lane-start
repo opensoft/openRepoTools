@@ -4405,7 +4405,14 @@ if [ "$lane_verb" = RESUMED ] && [ "$row_count" = 1 ] && (( stamp_ok )); then
       # helper reserved in the intent before the bytes: 5d reads that file.
       if [ "$ri_active" = 1 ]; then ri_expected_digest="${hs_line##*	}"; fi
       case "$hs_rc" in
-        0) step "handoff stamped, committed and pushed: $hs_written: $hs_stamp" ;;
+        # THE WORDS SAY WHAT WAS DONE (lane openRepoTools-3's review of #316,
+        # 721 and its question 4): under the harness's LANES_NO_GIT=1 the
+        # helper writes the file and commits nothing, and exits 0.
+        0) if [ "${LANES_NO_GIT:-0}" = 1 ]; then
+             note "Rule 3's stamp is written in $hs_written and NOT committed: LANES_NO_GIT=1 commits and pushes nothing (\`write-handoff\` exited 0): $hs_stamp"
+           else
+             step "handoff stamped, committed and pushed: $hs_written: $hs_stamp"
+           fi ;;
         3) note "Rule 3's stamp is written in $hs_written and its commit pushed, and origin did not confirm it (\`write-handoff\` exited 3; its words above name the commit): look before writing it again, because a stamp written twice is two resumes in the one document this protocol never rewrites." ;;
         6) note "Rule 3's stamp is written in $hs_written and committed, and the commit is KEPT on HEAD of that checkout, not pushed (\`write-handoff\` exited 6; its words above name it). No later write publishes it, and each one refuses until it is published (Amendment 23 S3): once those words are answered, LANES_LANE=$LANE $LANES_EDIT commit \"<what it is>\", the publish act." ;;
         *) note "Rule 3's stamp is written in $hs_written and was NOT published (\`write-handoff\` exited $hs_rc; its words above say what is left). The launch is not refused for it." ;;
