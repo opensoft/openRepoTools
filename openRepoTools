@@ -25,7 +25,7 @@
 # change (Amendment 9(b), and R-A9-1). The identity that survives is narrower
 # and truer.
 #
-# `--install` PLACES SEVENTEEN FILES, not four: this file, `park`, `resume`,
+# `--install` PLACES EVERY FILE IN `INSTALLABLES`: this file, `park`, `resume`,
 # `status` (openRepoShape #82; the fourth under Brett Heap's RULING of
 # 2026-09-10 in this repository, "lets go with a fourth file"), `lane` and
 # `lanes` (lane-collision-protocol Amendment 18 Addendum 1 and Amendment 11's
@@ -46,9 +46,9 @@
 # register, which nothing that acts reads) — and `lane-worktrees`
 # (opensoft/openRepoTools#162, on Brett Heap's word of 2026-10-05, "build 162":
 # the sweep that retires a lane's abandoned worktrees, rescue first). It also
-# places THREE skills,
-# `/handoff`, `/lane-swap` and `/restart`, at two paths each, THREE command
-# files, `/handoff`, `/ctx` and `/swap`, at that same pair of paths (A11
+# places the skills `SKILLS` lists, `/handoff`, `/lane-swap` and `/restart`, at
+# two paths each, the command files `COMMANDS` lists, `/handoff`, `/ctx` and
+# `/swap`, at that same pair of paths (A11
 # Addendum 4 ruling 9; Amendment 17(a) and (f)), and merges TWO hook entries into
 # `~/.claude/settings.json` — the `SessionStart` one (Amendment 9(b), A8
 # Addendum 2 R-A8-5) and, since lane-collision-protocol Amendment 12 adoption
@@ -1228,7 +1228,7 @@ payload_select() {
 		say "openRepoTools: source: $REPO at $REF ($SOURCE_SHA) pins $PAYLOAD_REPO at $PAYLOAD_REV"
 }
 
-# THE SEVENTEEN FILES `--install` PLACES. One list, so the installer, the fetch
+# EVERY FILE `--install` PLACES. One list, so the installer, the fetch
 # fallback and the tests cannot disagree about what a complete install is.
 # `openRepoTools` is first because it is the one a person types to get the
 # others.
@@ -2065,8 +2065,8 @@ place_by_rename() {   # <staged source> <target> <mode> <what a refusal adds>
 install_commands() {
 	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
 	local name target source verb placed=0
-	# ALL THIRTY-ONE IN HAND BEFORE ANY IS PLACED. The seventeen files, the
-	# three skills, the three command files, and the TWO artifacts that are not
+	# ALL THIRTY-ONE IN HAND BEFORE ANY IS PLACED. Every file `INSTALLABLES`
+	# lists, the skills, the command files, and the TWO artifacts that are not
 	# whole files — the two hook entries merged into one `settings.json` —
 	# are all computed here, so a fetch that failed replaces nothing and a merge
 	# that cannot be computed refuses having placed nothing. That last one is
@@ -2220,7 +2220,7 @@ venv_note() {
 
 
 # =========================================================================
-# THE FOURTEEN ARTIFACTS THAT ARE NOT ONE OF THE SEVENTEEN FILES
+# THE FOURTEEN ARTIFACTS THAT ARE NOT BIN-DIRECTORY FILES
 # =========================================================================
 #
 # lane-collision-protocol Amendment 9(b), inheriting A8 Addendum 2's R-A8-5
@@ -2239,9 +2239,10 @@ venv_note() {
 #     settings.json at all. One path, one writer, in both halves.
 #
 # TWENTY-NINE ARTIFACTS ALWAYS, PLUS THE TWO HOOK ENTRIES ONCE THEIR TARGET
-# ANSWERS, AND THE COUNT IS THE INVARIANT: seventeen files in the bin
-# directory, three skills in the shared skills directory, their three bare-run
-# copies, THREE COMMAND FILES at those same two paths, and — once
+# ANSWERS, AND THE COUNT IS THE INVARIANT: one file per `INSTALLABLES` name in
+# the bin directory, one skill per `SKILLS` name in the shared skills
+# directory, its bare-run copy, one command file per `COMMANDS` name at those
+# same two paths, and — once
 # `~/projects/xFactory/lanes-edit.sh` exists, is executable and answers `guard`
 # (opensoft/openRepoTools#237, the launcher's own rule) — TWO merged entries in
 # `~/.claude/settings.json`. It was twelve before Amendment 11 added a SECOND
@@ -3426,9 +3427,9 @@ $(guard_block_text)"
 }
 
 # The fourteen artifacts that are not bin-directory files, in thirteen writes
-# (the two hook entries go into settings.json in one), AFTER the seventeen files
-# and the merge are all in hand. The last two only once their target answers
-# (#237): `place_hook_pair` asks, and says which.
+# (the two hook entries go into settings.json in one), AFTER every file
+# `INSTALLABLES` lists and the merge are all in hand. The last two only once
+# their target answers (#237): `place_hook_pair` asks, and says which.
 place_skill_and_hook() {
 	local shared_dir bare_dir target verb name
 	for name in "${SKILLS[@]}"; do
@@ -3714,7 +3715,7 @@ WIP_ORG_DEFAULT="opensoft"
 SHAPE_REPOSITORY="opensoft/openRepoShape"
 
 #: The template, `templates/workspace-root/` in openRepoShape (clause (d)).
-#: Nine files, named here because the amendment names them: a directory listing
+#: Its files, named here because the amendment names them: a directory listing
 #: fetched at runtime would make the set whatever upstream happened to hold.
 WIP_TEMPLATE_DIR="templates/workspace-root"
 WIP_TEMPLATE_FILES=(

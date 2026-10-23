@@ -65,7 +65,7 @@ ENTRY_POINT = "openrepotools.cli:main"
 PIPX_RELEASES = {"1.11.1": "python3.9", "1.17.8": "python3.12",
                  "1.18.3": "python3.13"}
 
-#: THE STAMP'S FIVE FIELDS, with the values the committed file holds
+#: THE STAMP'S FIELDS, with the values the committed file holds
 #: (contracts/stamp.md). Each committed line is `NAME = "VALUE"`.
 STAMP_FIELDS = ("VERSION", "TAG", "COMMIT", "DIGEST", "REPOSITORY")
 UNSTAMPED = {"VERSION": "0.0.0", "TAG": "", "COMMIT": "", "DIGEST": "",

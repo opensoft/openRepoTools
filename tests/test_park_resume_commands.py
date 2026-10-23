@@ -1326,8 +1326,8 @@ def test_a_name_that_is_not_an_estate_refuses_and_names_resume(home):
     assert "project  Atlas" in result.stderr
 
 
-#: The three spellings of one repository a clone's `origin` can carry. All
-#: three must answer `--repo testorg/atlas` — and the case difference is in the
+#: The spellings of one repository a clone's `origin` can carry. All of
+#: them must answer `--repo testorg/atlas` — and the case difference is in the
 #: flag on purpose: GitHub owners and names are case-insensitive.
 ORIGIN_SPELLINGS = [
     "https://github.com/TestOrg/Atlas.git",

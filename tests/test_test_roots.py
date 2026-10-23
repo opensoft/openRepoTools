@@ -50,7 +50,7 @@ DEPENDENCY = REPO / "upstream" / "openRepoShape"
 WRAPPER = REPO / "tests" / "run.sh"
 
 #: What a code leg does NOT carry after the split, by the adoption mapping's
-#: placement table: the root files went to the assembly and the four trees to
+#: placement table: the root files went to the assembly and the trees to
 #: the spec leg. A fixture code leg is the code root less these. EXCEPT
 #: `.gitattributes`, which the table also sends to the assembly and which the
 #: code leg must carry too — git never applies the assembly's inside a
