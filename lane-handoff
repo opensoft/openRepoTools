@@ -3023,6 +3023,15 @@ if [ "$do_restart" = 1 ] || [ "$do_exit" = 1 ]; then
 	# so both are gates, and each names the act that clears it.
 	[ -z "$row_write_refused" ] ||
 		die "the lane's PAUSED line is written and the ROW WAS NOT FLIPPED (the note above says why), so this pane is left exactly as it is: respawning it would leave the register reading RUNNING for a session that has just been replaced, and every other lane reads the row. Flip it and re-run, or restart by hand:  $restart_cmd" 2
+	# R7 ON #303, ON ITS PATH ONLY (lane 3's ruling 6367537964 on question 1):
+	# there no handoff was published at all, so "put the block at the head of
+	# the handoff" would send the person around `publish-handoff` and past a
+	# restart that may still own the lane (the review of R7, 653(b) and (c)).
+	# These words say what to wait on, as the note above does. The exit status
+	# is the same 2 at the same point, and every other path's words, below,
+	# are as they were.
+	[ "$handoff_written" = 1 ] || [ -z "$lh_log_unread" ] ||
+		die "The handoff was NOT published: the lane's object log could not be read. Once \`lanes-edit.sh restart-intent $lane\` answers 8, \`ready\` or \`failed\`, publish the block printed above with \`publish-handoff\`, and read \`--restart-status\` before relaunching. Then re-run." 2
 	[ "$handoff_written" = 1 ] ||
 		die "the lane's PAUSED line is written and the HANDOFF WAS NOT REFRESHED (the note above says why), so this pane is left exactly as it is: the top block of that file is what the new session is started with, and respawning now would hand it the block of a handoff this act has replaced. Put the block printed above at the head of the handoff, then re-run — or restart by hand once you have:  $restart_cmd" 2
 	have_tmux ||

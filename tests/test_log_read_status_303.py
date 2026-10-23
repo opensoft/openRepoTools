@@ -50,8 +50,10 @@ said 8, "no restart in flight", and `set-restart-intent` filed beside the
 third rung. It is 10 now, never 8, in each shape a read fails in, while a log
 that was read still answers 8 or 0. An ordinary `lane-handoff` over such a log
 writes the PAUSED record, the register line, the row and the restart line,
-publishes no handoff file, and says so on stdout; `--exit` writes them and
-types nothing, and `--restart` refuses before it writes anything. `lane-start`
+publishes no handoff file, and says so on stdout; `--exit` writes them, types
+nothing and says at its gate what to wait on before publishing (lane 3's
+ruling 6367537964, question 1), and `--restart` refuses before it writes
+anything. `lane-start`
 refuses at its restart fence and says the log is why, `rename-lane` refuses
 before the mutex rather than leave the lane's records under its old name, and
 `lane-objects` with nowhere to keep its read's warnings is no answer either.
@@ -610,6 +612,21 @@ WAIT_ON = (f"once `lanes-edit.sh restart-intent {LANE}` answers 8, `ready` or `f
            f"this block with `publish-handoff`; read `lane-handoff --restart-status --lane {LANE}` "
            "before relaunching")
 NOTE_HEAD = "lane-handoff: the handoff file was NOT published"
+#: `--exit`'s GATE ON R7'S PATH, word for word as lane 3 ruled it (6367537964,
+#: question 1): no handoff was published there, so it says what to wait on
+#: before publishing, and never to put the block at the head of the handoff,
+#: which is an edit by hand around `publish-handoff` (653(b) and (c)).
+GATE_R7 = ("lane-handoff: REFUSED: The handoff was NOT published: the lane's object log could not "
+           f"be read. Once `lanes-edit.sh restart-intent {LANE}` answers 8, `ready` or `failed`, "
+           "publish the block printed above with `publish-handoff`, and read `--restart-status` "
+           "before relaunching. Then re-run.")
+#: THE SAME GATE ON EVERY OTHER PATH, as it was at 969806f, up to the restart
+#: command it ends on.
+GATE_OTHER = ("lane-handoff: REFUSED: the lane's PAUSED line is written and the HANDOFF WAS NOT "
+              "REFRESHED (the note above says why), so this pane is left exactly as it is: the top "
+              "block of that file is what the new session is started with, and respawning now "
+              "would hand it the block of a handoff this act has replaced. Put the block printed "
+              "above at the head of the handoff, then re-run — or restart by hand once you have:  ")
 
 
 def _a_lane_with_a_row_and_a_handoff(inv, cell: str = HANDOFF_CELL, intent: bool = False):
@@ -960,7 +977,7 @@ def test_exit_over_a_log_it_could_not_read_writes_the_swap_and_types_nothing(inv
     the control, which shows the tmux here sees what is typed. With the log
     unreadable it typed `/exit` too, over a handoff it had just published over
     the restart's intent. It writes the four records, refuses at the gate
-    with 2 because the handoff was not refreshed, and types nothing."""
+    with 2 because the handoff was not published, and types nothing."""
     env, _checkout, handoff = _a_lane_with_a_row_and_a_handoff(inv)
     tmux, typed = _recording_tmux(inv)
     whole = _hand_off(inv, env, "--exit", "requested by a test", extra=tmux)
@@ -972,13 +989,59 @@ def test_exit_over_a_log_it_could_not_read_writes_the_swap_and_types_nothing(inv
         res = _hand_off(inv, env, "--exit", "requested by a test again", extra=tmux)
     problems = [] if res.returncode == 2 else [f"exit {res.returncode}, not 2"]
     problems += _the_swap_is_written(inv, res)
-    if "HANDOFF WAS NOT REFRESHED" not in res.stderr:
+    if "lane-handoff: REFUSED: The handoff was NOT published: " not in res.stderr:
         problems.append(f"the gate did not say why: {_said(res)!r}")
     if [line for line in typed.read_text().splitlines() if line.startswith("send-keys")]:
         problems.append(f"it typed into the pane: {typed.read_text()!r}")
     if handoff.read_bytes() != before:
         problems.append("the handoff was published")
     assert not problems, "\n" + "\n".join(problems) + "\n" + res.stderr[-1500:]
+
+
+def _gate_and_typed(res, typed):
+    """What `lane-handoff`'s gates refused with, one line each, and what was
+    typed into the pane."""
+    gates = [line for line in res.stderr.splitlines() if line.startswith("lane-handoff: REFUSED: ")]
+    keys = [line for line in typed.read_text().splitlines() if line.startswith("send-keys")]
+    return gates, keys
+
+
+def test_exit_over_a_log_it_could_not_read_says_at_its_gate_what_to_wait_on(inv):
+    """`--exit`'s GATE ON R7'S PATH (lane 3's ruling 6367537964, question 1),
+    under the recording tmux. It said "Put the block printed above at the head
+    of the handoff, then re-run": an edit by hand, around `publish-handoff`,
+    over a restart nobody could look for. It says what to wait on now, in the
+    words ruled and only those; the exit status is still 2, and nothing is
+    typed."""
+    env, _checkout, _handoff = _a_lane_with_a_row_and_a_handoff(inv)
+    tmux, typed = _recording_tmux(inv)
+    with _unreadable(inv.e, LOG_B1):
+        res = _hand_off(inv, env, "--exit", "requested by a test", extra=tmux)
+    gates, keys = _gate_and_typed(res, typed)
+    assert res.returncode == 2, (res.returncode, res.stdout, res.stderr[-1500:])
+    assert gates == [GATE_R7], gates
+    assert "Put the block printed above" not in res.stderr, res.stderr[-1500:]
+    assert keys == [], keys
+
+
+def test_exit_where_the_row_names_no_handoff_keeps_its_gates_words(inv):
+    """AND ONLY ON R7'S PATH (the same ruling). With the log whole, a row that
+    names a handoff nobody can find is another path on which no top block is
+    written, and the gate's words there are as they were at 969806f, ending on
+    the restart command the `READY` line names, with nothing of R7's in them.
+    The exit status is 2, and nothing is typed."""
+    env, _checkout, _handoff = _a_lane_with_a_row_and_a_handoff(
+        inv, cell="handoffs/missing-repoB-1.md")
+    tmux, typed = _recording_tmux(inv)
+    res = _hand_off(inv, env, "--exit", "requested by a test", extra=tmux)
+    gates, keys = _gate_and_typed(res, typed)
+    ready = [line[len("READY — restart with: "):] for line in res.stdout.splitlines()
+             if line.startswith("READY — restart with: ")]
+    assert res.returncode == 2, (res.returncode, res.stdout, res.stderr[-1500:])
+    assert len(ready) == 1 and ready[0], res.stdout
+    assert gates == [GATE_OTHER + ready[0]], gates
+    assert "NOT published" not in res.stdout + res.stderr, res.stderr[-1500:]
+    assert keys == [], keys
 
 
 def test_restart_over_a_log_it_could_not_read_refuses_before_it_writes_anything(inv):
