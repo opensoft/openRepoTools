@@ -2345,29 +2345,87 @@ def test_a_dependents_scan_that_fails_holds_every_candidate(sweep):
 
 @pytest.mark.skipif(getattr(os, "geteuid", lambda: 1)() == 0,
                     reason="root reads a directory whose mode is 000")
-def test_a_directory_the_dependents_scan_cannot_read_is_counted_and_holds_nothing(sweep):
-    """A DIRECTORY THE SCAN CANNOT READ IS COUNTED AND SAID, AND HOLDS NOTHING
-    (SHOULD 352, by question 2's rule for working directories): another
-    user's directories are never readable, and holding on them would hold
-    every checkout on any host that has one. Here a mode-000 directory
-    beside W is counted once, though two scopes meet it, and the CLOSED
-    lane's checkout is removed."""
+@pytest.mark.parametrize("name", ["private", "it's a b\\c"],
+                         ids=["plain", "with a quote, a blank and a backslash"])
+def test_a_directory_of_this_users_own_the_dependents_scan_cannot_read_holds_every_candidate(
+        sweep, name):
+    """A DIRECTORY OF THIS USER'S OWN THAT THE SCAN CANNOT READ HOLDS EVERY
+    CANDIDATE (rv4b's SHOULD B, probe P2): a clone kept in it is this user's
+    work, and what that clone leans on is unknown. Here a `--reference`
+    clone of the CLOSED lane's checkout, with a commit of its own, is kept in
+    a mode-000 directory beside W, so the scan cannot see it. Both CLOSED
+    lanes' checkouts are held, by the dry run and by `--yes`, in words that
+    name the directory and `chmod`, and the clone stays whole. GNU `find`
+    quotes the name in its words, escaping a quote and a backslash; the
+    directory is told by its own path once that quoting is undone."""
     box = sweep.box
-    c = box.checkout(CLOSED)
-    private = box.w.parent / "private"
-    private.mkdir()
+    c, other = box.checkout(CLOSED), _closed_checkout(box)
+    private = box.w.parent / name
+    dep = _borrower(box, private / "rescue", c)
     private.chmod(0)
     try:
-        result, rows = sweep()
-        assert result.returncode == 3, (result.stdout, result.stderr)
-        assert rows[str(c)][0] == "remove", rows[str(c)]
-        assert ("  (1 director(ies) the dependents scan could not read - another user's, or "
-                "gone while read - are not looked in)") in result.stdout, result.stdout
-        result, rows = sweep("--yes", LANES_LANE=RUNNER)
-        assert result.returncode == 0, (result.stdout, result.stderr)
-        assert rows[str(c)][0] == "removed", rows[str(c)]
+        for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+            result, rows = sweep(*args, **env)
+            assert result.returncode == 0, (result.stdout, result.stderr)
+            for path in (c, other):
+                assert rows[str(path)][0] == "hold", rows[str(path)]
+                assert (f"what leans on it cannot be told: {private}, a directory of this "
+                        "user's own, cannot be read by the dependents scan, so what in it "
+                        "leans on a checkout is unknown: make it readable (chmod u+rx -- "
+                        ) in rows[str(path)][1], rows[str(path)]
+        if name == "private":
+            assert f"(chmod u+rx -- {private}) and re-run" in rows[str(c)][1], rows[str(c)]
     finally:
         private.chmod(0o755)
+    assert c.is_dir()
+    assert other.is_dir()
+    box.git("-C", str(dep), "fsck", "--connectivity-only")
+
+
+def _a_directory_of_another_user() -> str:
+    """A directory here that is not this user's own: a test cannot make one
+    without root."""
+    for path in ("/", "/usr", "/etc", "/bin"):
+        try:
+            if os.stat(path).st_uid != os.geteuid():
+                return path
+        except OSError:
+            continue
+    pytest.skip("no directory here is another user's")
+
+
+@pytest.mark.skipif(getattr(os, "geteuid", lambda: 1)() == 0,
+                    reason="root owns every directory a test can name")
+def test_a_directory_of_another_user_the_dependents_scan_cannot_read_is_counted_and_holds_nothing(
+        sweep):
+    """ANOTHER USER'S DIRECTORY THE SCAN CANNOT READ IS COUNTED AND SAID, AND
+    HOLDS NOTHING (SHOULD 352, by question 2's rule for working directories,
+    kept by rv4b's SHOULD B): such a directory is never readable, and holding
+    on it would hold every checkout on any host that has one. No test can
+    make one without root, so a `find` first on PATH says, after the real
+    scan and in GNU `find`'s words, that it could not read one that is not
+    this user's (`/`, or the first of `/usr`, `/etc`, `/bin` that is not). It
+    is counted once, though every scope meets it, and the CLOSED lane's
+    checkout is removed."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    theirs = _a_directory_of_another_user()
+    real = shutil.which("find")
+    assert real, "no find on the test's own PATH"
+    shim = box.fakebin / "find"
+    shim.write_text("#!/usr/bin/env bash\n"
+                    'case " $* " in *" -name objects "*) '
+                    f"""{real} "$@"; printf '%s\\n' "find: '{theirs}': Permission denied" >&2; exit 1 ;; esac\n"""
+                    f'exec {real} "$@"\n', encoding="utf-8")
+    shim.chmod(0o755)
+    result, rows = sweep()
+    assert result.returncode == 3, (result.stdout, result.stderr)
+    assert rows[str(c)][0] == "remove", rows[str(c)]
+    assert ("  (1 director(ies) the dependents scan could not read - another user's, or "
+            "gone while read - are not looked in)") in result.stdout, result.stdout
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert rows[str(c)][0] == "removed", rows[str(c)]
 
 
 @pytest.mark.skipif(getattr(os, "geteuid", lambda: 1)() == 0,
