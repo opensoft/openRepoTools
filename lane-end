@@ -1700,18 +1700,31 @@ SH_Y
   #
   # A SCAN THAT CANNOT FINISH HOLDS EVERY CANDIDATE (`sc_dep_fail`), since
   # what leans on each is then unknown: a scope that cannot be entered, a
-  # `find` that fails for anything but a directory it cannot read, and an
-  # alternates or `.git` file that cannot be read (NIT 356). A DIRECTORY
-  # `find` CANNOT READ — another user's, or one gone while read — is counted
-  # and said, and holds nothing, by question 2's rule for working
-  # directories: one never readable would hold every checkout for good. It
-  # is counted once, though two scopes meet it.
+  # `find` that fails for anything but a directory it cannot read, an
+  # alternates or `.git` file that cannot be read (NIT 356), and a
+  # directory of THIS USER'S OWN that `find` cannot read (rv4b's SHOULD B):
+  # a clone kept in it is this user's work, and a mode this user set can be
+  # set back, so the words name it and `chmod`. ANOTHER USER'S DIRECTORY
+  # `find` cannot read, or one gone while read, is counted and said, and
+  # holds nothing, by question 2's rule for working directories: one never
+  # readable would hold every checkout for good. It is counted once, though
+  # two scopes meet it. `find`'s words name the directory as `find: 'P':`,
+  # in the C locale's quoting (GNU), or as `find: P:` (BSD).
   sc_dep_lines=""; sc_gitfile_lines=""; sc_dep_fail=""; sc_dep_unread=0
   sc_dep_at=(); sc_dep_to=(); sc_dep_named=()
   sc_dep_root() {   # <depth> <the directory as given>
     sdr_r=""
     if [ -n "$2" ]; then sdr_r="$(sc_real "$2")"; fi
     sc_dep_to+=("$1"); sc_dep_at+=("$sdr_r"); sc_dep_named+=("${sdr_r:-${2:-(unset)}}")
+  }
+  sc_find_err_path() {   # <find's error line, less its ": <error>"> — the path
+    sfe_x="${1#*: }"
+    case "$sfe_x" in
+      \'*\')
+        sfe_x="${sfe_x#\'}"; sfe_x="${sfe_x%\'}"; sfe_x="${sfe_x//\\\'/\'}"
+        case "$sfe_x" in *\\*) sfe_x="$(printf '%b' "$sfe_x")" ;; esac ;;
+    esac
+    printf '%s' "$sfe_x"
   }
   sc_dep_root 6 "$sc_root"
   sc_dep_root 4 "${TMPDIR:-/tmp}"
@@ -1735,7 +1748,16 @@ SH_Y
       while IFS= read -r sds_l; do
         case "$sds_l" in
           '') : ;;
-          *": Permission denied" | *": No such file or directory")
+          *": Permission denied")
+            sds_p="$(sc_find_err_path "${sds_l%: Permission denied}")"
+            if [ -n "$sds_p" ] && [ -O "$sds_p" ]; then
+              sds_w="$sds_p, a directory of this user's own, cannot be read by the dependents scan, so what in it leans on a checkout is unknown: make it readable (chmod u+rx -- $(printf '%q' "$sds_p")) and re-run"
+              sc_dep_fail="${sc_dep_fail:-$sds_w}"
+            else
+              sds_unread="$sds_unread$sds_l
+"; sds_counted=1
+            fi ;;
+          *": No such file or directory")
             sds_unread="$sds_unread$sds_l
 "; sds_counted=1 ;;
           *) sds_other="${sds_other:-$sds_l}" ;;
