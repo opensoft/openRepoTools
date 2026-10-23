@@ -270,7 +270,8 @@
 #      residue still on disk, or the sweep refusing the lane.
 #      `--sweep-checkouts`: `--yes` with no `LANES_LANE`, or with
 #      `LANES_NO_FETCH=1`, or under `LANES_ROUTE_WRITES=1` with a
-#      `LANES_REPO` that is W; a W that is itself a lane checkout; a runner lane
+#      `LANES_REPO` that is W, or while another `--yes` holds its lock in
+#      W's git directory; a W that is itself a lane checkout; a runner lane
 #      the register does not know, or one with no transcript uuid for the
 #      session field of its NOTED line
 #   3  `--sweep-checkouts`, the dry run: something under `<W>-lanes/` is
@@ -606,6 +607,9 @@ LE_TMP=""
 # `SC_LOCK` is a register checkout's `lanes/.lanes-edit.lock` that
 # `--sweep-checkouts --yes` took and holds, released on every way out.
 SC_LOCK=""
+# `SC_SLOCK` is the sweep-wide lock in W's git directory that
+# `--sweep-checkouts --yes` takes first (NIT 375), released the same way.
+SC_SLOCK=""
 cleanup() {
   [ -n "${LE_TMP:-}" ] && rm -f -- "$LE_TMP"
   # A LOCK WHOSE PID LINE NAMES ANOTHER HOLDER IS LEFT AS IT IS, as
@@ -615,6 +619,12 @@ cleanup() {
     cl_l=""; IFS= read -r cl_l < "$SC_LOCK/pid" 2>/dev/null || :
     if [ -z "$cl_l" ] || [ "$cl_l" = "$$ ${sc_ident:-}" ]; then
       rm -f -- "$SC_LOCK/pid"; rmdir -- "$SC_LOCK" 2>/dev/null || :
+    fi
+  fi
+  if [ -n "${SC_SLOCK:-}" ]; then
+    cl_l=""; IFS= read -r cl_l < "$SC_SLOCK/pid" 2>/dev/null || :
+    if [ -z "$cl_l" ] || [ "$cl_l" = "$$ ${sc_ident:-}" ]; then
+      rm -f -- "$SC_SLOCK/pid"; rmdir -- "$SC_SLOCK" 2>/dev/null || :
     fi
   fi
   return 0
@@ -1027,6 +1037,47 @@ if [ "$sweep_checkouts" = 1 ]; then
   [ -n "$sc_worigin" ] || die "W ($sc_w) names no origin, so no clone can be told to be the register's. Nothing was removed." 1
   sc_wgcd="$(sc_git_common "$sc_w")"
   [ -n "$sc_wgcd" ] || die "W's git directory could not be read ($sc_w), so W cannot be told from a clone of it. Nothing was removed." 1
+
+  # THE LOCK'S PID LINE, in `lanes-edit.sh`'s own form, `<pid> <container>
+  # <host>`, so a writer of that checkout in this container waits on a live
+  # holder and one in another container ages it by the directory's mtime.
+  # Each value is cleaned as `lock_ident` cleans its own (lane
+  # openRepoTools-3's NIT 359): kept where `lanes_binding_value_ok` takes
+  # it (letters, digits, `.`, `_`, `:`, `-`), the container `none` and the
+  # host `unknown` where empty, and either `unknown` where it holds anything
+  # else. A writer compares the line with its own `lock_ident`; cleaned
+  # another way, it read as another container's, and a killed sweep's lock
+  # was waited out for ten minutes instead of taken back.
+  sc_ident="none unknown"
+  if [ "$sweep_yes" = 1 ]; then
+    sc_wsl="$("$LANES_EDIT" workstation 2>/dev/null || :)"
+    sc_host="$(printf '%s\n' "$sc_wsl" | cut -f3)" || sc_host=""
+    sc_cont="$(printf '%s\n' "$sc_wsl" | cut -f7)" || sc_cont=""
+    sc_host="${sc_host:-unknown}"; sc_cont="${sc_cont:-none}"
+    case "$sc_host" in *[!A-Za-z0-9._:-]*) sc_host=unknown ;; esac
+    case "$sc_cont" in *[!A-Za-z0-9._:-]*) sc_cont=unknown ;; esac
+    sc_ident="$sc_cont $sc_host"
+  fi
+
+  # ONE `--yes` AT A TIME (lane openRepoTools-3's NIT 375). Two at once
+  # removed nothing twice, but each one's NOTED line called the other's
+  # removals "held and left", and one candidate was left by both. A lock in
+  # W's own git directory, there whatever `<W>-lanes/` is (the clones beside
+  # W are swept without one), refuses a second `--yes` with 2 before
+  # anything is read or removed. Its pid line is a writer's lock's, and it
+  # is let go on every way out (`cleanup`); one a killed sweep left is a
+  # person's to remove, and the refusal says how.
+  if [ "$sweep_yes" = 1 ]; then
+    sc_slock="$sc_wgcd/lanes-sweep-checkouts.lock"
+    if ! mkdir -- "$sc_slock" 2>/dev/null; then
+      sc_sl=""; IFS= read -r sc_sl < "$sc_slock/pid" 2>/dev/null || :
+      die "another lane-end --sweep-checkouts --yes holds $sc_slock (${sc_sl:-it names no holder}), and two at once would each record the other's removals as held and left. Wait for it to end, then re-run. Where none is running (a sweep that was killed leaves its lock), remove it by hand: rm -rf -- $(printf '%q' "$sc_slock"). Nothing was removed." 2
+    fi
+    SC_SLOCK="$sc_slock"
+    if ! printf '%s %s\n' "$$" "$sc_ident" 2>/dev/null > "$sc_slock/pid"; then
+      die "the sweep-wide lock $sc_slock was taken, and this sweep's pid line could not be written into it, so it was let go again. Nothing was removed." 1
+    fi
+  fi
 
   # A CLONE OF THE REGISTER, BY S1'S OWN TEST: a directory (never a symbolic
   # link) at its own real path, the root of its checkout, with a `.git`
@@ -1909,26 +1960,6 @@ SRI
     esac
   }
 
-  # THE LOCK'S PID LINE, in `lanes-edit.sh`'s own form, `<pid> <container>
-  # <host>`, so a writer of that checkout in this container waits on a live
-  # holder and one in another container ages it by the directory's mtime.
-  # Each value is cleaned as `lock_ident` cleans its own (lane
-  # openRepoTools-3's NIT 359): kept where `lanes_binding_value_ok` takes
-  # it (letters, digits, `.`, `_`, `:`, `-`), the container `none` and the
-  # host `unknown` where empty, and either `unknown` where it holds anything
-  # else. A writer compares the line with its own `lock_ident`; cleaned
-  # another way, it read as another container's, and a killed sweep's lock
-  # was waited out for ten minutes instead of taken back.
-  sc_ident="none unknown"
-  if [ "$sweep_yes" = 1 ]; then
-    sc_wsl="$("$LANES_EDIT" workstation 2>/dev/null || :)"
-    sc_host="$(printf '%s\n' "$sc_wsl" | cut -f3)" || sc_host=""
-    sc_cont="$(printf '%s\n' "$sc_wsl" | cut -f7)" || sc_cont=""
-    sc_host="${sc_host:-unknown}"; sc_cont="${sc_cont:-none}"
-    case "$sc_host" in *[!A-Za-z0-9._:-]*) sc_host=unknown ;; esac
-    case "$sc_cont" in *[!A-Za-z0-9._:-]*) sc_cont=unknown ;; esac
-    sc_ident="$sc_cont $sc_host"
-  fi
   sc_lock_take() {   # <path> — 0 holding it (SC_LOCK), 1 with SC_WHY
     slt_d="$1/lanes/.lanes-edit.lock"
     if [ -L "$1/lanes" ] || [ ! -d "$1/lanes" ]; then
@@ -2280,6 +2311,15 @@ SLU
     # `LANES_REPO` read again; then, and only then, it is moved aside in the
     # directory it stands in — so its path is absent at once, and the next
     # write of a lane there clones afresh — and the aside removed.
+    # A CANDIDATE GONE AT ITS TURN IS SAID AS GONE (NIT 375), not held for
+    # want of a `lanes/` directory: a person, or a sweep on another
+    # workstation, removed or moved it after the listing. It is neither
+    # removed by this run nor held, and the NOTED line names it as neither.
+    if [ ! -e "$sc_c" ] && [ ! -L "$sc_c" ]; then
+      printf '    gone       %s  %s; it is no longer there: something removed or moved it after the listing, and this run did not\n' \
+        "${sc_c//[[:cntrl:]]/?}" "${sc_why//[[:cntrl:]]/?}"
+      continue
+    fi
     if ! sc_lock_take "$sc_c"; then
       sc_say_held "$sc_c" "$sc_why" "$SC_WHY"; continue
     fi

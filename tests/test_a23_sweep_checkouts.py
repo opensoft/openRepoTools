@@ -2817,3 +2817,49 @@ def test_annotated_tags_are_named(sweep):
         assert result.returncode in (0, 3), (result.stdout, result.stderr)
         assert rows[str(c)][0] == tag, rows[str(c)]
         assert "annotated tag(s), which go with it: 1 (v-note)" in rows[str(c)][1], rows[str(c)]
+
+
+def test_a_second_sweep_is_refused_while_one_runs(sweep):
+    """ONE `--yes` AT A TIME (lane openRepoTools-3's NIT 375). Two at once
+    removed nothing twice, but each one's NOTED line called the other's
+    removals "held and left". A sweep-wide lock, taken before the listing,
+    refuses a second one with 2: here a hook at the CLOSED lane's fetch, in
+    the first sweep's act, runs a second `--yes`. It is refused, naming the
+    lock and its pid line, and removes nothing; the first removes the
+    checkout, writes one NOTED line, and lets its lock go."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    out = box.root / "second"
+    _hook_on_fetch_of(box, c, (
+        f"bash {REPO / 'lane-end'} --sweep-checkouts --yes > {out}.out 2> {out}.err; "
+        f"echo $? > {out}.rc"))
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert rows[str(c)][0] == "removed", rows[str(c)]
+    err = Path(f"{out}.err").read_text(encoding="utf-8")
+    assert Path(f"{out}.rc").read_text(encoding="utf-8") == "2\n", err
+    lock = box.w / ".git" / "lanes-sweep-checkouts.lock"
+    assert f"another lane-end --sweep-checkouts --yes holds {lock}" in err, err
+    assert "Nothing was removed." in err, err
+    assert Path(f"{out}.out").read_text(encoding="utf-8") == ""
+    assert len(_noted_on_origin(box)) == 1, _noted_on_origin(box)
+    assert not os.path.lexists(lock), "the first sweep let its lock go"
+
+
+def test_a_candidate_gone_at_its_turn_is_said_as_gone(sweep):
+    """A CANDIDATE GONE AT ITS TURN IS SAID AS GONE (NIT 375), not held: a
+    hook at the CLOSED lane's fetch moves the next candidate away, as a
+    person or another workstation's sweep might. It is reported `gone`, and
+    the NOTED line neither names it removed nor held and left."""
+    box = sweep.box
+    c, other = box.checkout(CLOSED), _closed_checkout(box)
+    _hook_on_fetch_of(box, c, f"mv -- {other} {box.root / 'moved-away'}")
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert rows[str(c)][0] == "removed", rows[str(c)]
+    assert rows[str(other)][0] == "gone", rows[str(other)]
+    assert "it is no longer there" in rows[str(other)][1], rows[str(other)]
+    noted = _noted_on_origin(box)
+    assert len(noted) == 1, noted
+    assert CHAIN[0] not in noted[0], noted
+    assert (box.root / "moved-away" / ".git").is_dir()
