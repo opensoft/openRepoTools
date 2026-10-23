@@ -271,7 +271,9 @@
 #      `--sweep-checkouts`: `--yes` with no `LANES_LANE`, or with
 #      `LANES_NO_FETCH=1`, or under `LANES_ROUTE_WRITES=1` with a
 #      `LANES_REPO` that is W, or while another `--yes` holds its lock in
-#      W's git directory; a W that is itself a lane checkout; a runner lane
+#      W's git directory, or with a `LANES_WORKSPACE_ROOT` that is not the
+#      directory workspace.yaml's `path:` names; a W that is itself a lane
+#      checkout; a runner lane
 #      the register does not know, or one with no transcript uuid for the
 #      session field of its NOTED line
 #   3  `--sweep-checkouts`, the dry run: something under `<W>-lanes/` is
@@ -290,7 +292,10 @@
 #   LANE_WORKTREES  default lane-worktrees beside this command: the close-out
 #               gate's sweep
 #   LANES_WORKSPACE_ROOT  the workspace repository, overriding workspace.yaml's
-#               `path:` — the test seam
+#               `path:` — the test seam, which lane windows export too.
+#               `--sweep-checkouts --yes` refuses while it names another
+#               directory than `path:` does (the dry run says so), and the
+#               directory `path:` names is never one of its candidates
 #   LANE_END_MOUNTINFO  the mount table `--sweep-checkouts` reads, in
 #               `/proc/self/mountinfo`'s form (default that file) — the test
 #               seam; one that names no `/` holds every checkout
@@ -1032,6 +1037,29 @@ if [ "$sweep_checkouts" = 1 ]; then
       fi
       die "$(lanes_ws_yaml) names path: $sc_w as W — but it stands in $sc_root/, where a workstation keeps its lane checkouts: it is a lane checkout, not W (Amendment 23 S1, S5). Point that \`path:\` at the workspace checkout itself. Nothing was removed." 2 ;;
   esac
+  # W IS THE DIRECTORY WORKSPACE.YAML'S `path:` NAMES (rv4b's MUST A, D45).
+  # `LANES_WORKSPACE_ROOT` overrides it for every helper: the test seam,
+  # and lane windows export it too. Set to a register clone beside the real
+  # W, it made that clone "W", and the real W, with every other clone
+  # beside it, "a clone of the register beside W", which `--yes` removed
+  # wherever nothing borrowed from it. So `path:` is read as every helper
+  # reads it, from the file (no `LANES_WORKSPACE_ROOT` reaches that read),
+  # and `--yes` refuses with 2, before any lock and any listing, while the
+  # two differ by real path. The dry run says so. And the directory
+  # `path:` names is never a candidate, nor is a clone beside W with a
+  # `<name>-lanes/` of its own beside it (`sc_is_a_w`, below).
+  sc_yaml="$(lanes_ws_yaml)"; sc_ypath=""
+  if [ -r "$sc_yaml" ]; then
+    sc_ypath="$(lanes_ws_field path "$sc_yaml" 2>/dev/null)" || sc_ypath=""
+    if [ -n "$sc_ypath" ]; then sc_ypath="$(sc_real "$sc_ypath")"; fi
+  fi
+  sc_wseam=""
+  if [ -n "${LANES_WORKSPACE_ROOT:-}" ] && [ "$sc_w" != "$sc_ypath" ]; then
+    sc_wseam="LANES_WORKSPACE_ROOT is $LANES_WORKSPACE_ROOT, so W resolves to $sc_w, and $sc_yaml's path: names ${sc_ypath:-no directory that can be entered}"
+    if [ "$sweep_yes" = 1 ]; then
+      die "$sc_wseam. --yes removes the register clones beside W, and with W taken from that variable, the real W, the readers' copy, would read as one of them. Unset LANES_WORKSPACE_ROOT, or point it at the directory path: names, and re-run. Nothing was removed." 2
+    fi
+  fi
   sc_home="$sc_w-lanes"
   sc_worigin="$(git -C "$sc_w" remote get-url origin 2>/dev/null || :)"
   [ -n "$sc_worigin" ] || die "W ($sc_w) names no origin, so no clone can be told to be the register's. Nothing was removed." 1
@@ -1114,6 +1142,20 @@ if [ "$sweep_checkouts" = 1 ]; then
       SC_WHY="a checkout of ${scr_o:-no origin at all}, not of the register's origin"; return 1
     fi
     return 0
+  }
+  # NEVER A CANDIDATE (D45): the directory workspace.yaml's `path:` names,
+  # wherever it stands, and a clone beside W with a `<name>-lanes/` beside
+  # it, which is a W with lane checkouts of its own. 0 with SC_WHY for one.
+  sc_is_a_w() {   # <path>
+    if [ -n "$sc_ypath" ] && [ "$1" = "$sc_ypath" ]; then
+      SC_WHY="it is the directory $sc_yaml's path: names, which every helper resolves as W where LANES_WORKSPACE_ROOT is unset: the readers' copy"
+      return 0
+    fi
+    if [ "${1%/*}" = "$sc_root" ] && { [ -e "$1-lanes" ] || [ -L "$1-lanes" ]; }; then
+      SC_WHY="${1##*/}-lanes/ stands beside it: it is a W with lane checkouts of its own, not a per-profile clone"
+      return 0
+    fi
+    return 1
   }
 
   # THE LANES, AS THE REGISTER AND THE LOGS HAVE THEM: `lanes --closed --all`,
@@ -1276,6 +1318,7 @@ SC_IDX
 "
   }
   sc_cand() {   # <path> <lane it is judged as> <why> [<new name's checkout>]
+    if sc_is_a_w "$1"; then sc_keep "$1" "$SC_WHY"; return 0; fi
     sc_cands+=("$1"); sc_cand_lane+=("$2"); sc_cand_why+=("$3"); sc_cand_new+=("${4-}")
   }
   # A lane's checkout, judged by the lane's state: CLOSED is a candidate,
@@ -2087,6 +2130,9 @@ SS_ROW
   printf '  W              : %s\n' "$sc_w"
   printf '  lane checkouts : %s/\n' "$sc_home"
   printf '  runner         : %s\n' "${sc_runner:-none named (LANES_LANE is unset)}"
+  if [ -n "$sc_wseam" ]; then
+    printf '  (--yes refuses here: %s, and W is the directory path: names)\n' "$sc_wseam"
+  fi
   if [ "$sweep_yes" = 1 ]; then
     printf '  origin         : each checkout is fetched under its own lock before it is decided\n'
   else
@@ -2328,6 +2374,8 @@ SLU
     elif [ -n "$sc_l" ] && ! { sc_lock_beat; sc_still "$sc_c" "$sc_l" "$sc_new"; }; then
       sc_act_hold="$SC_WHY"
     elif ! sc_is_register_clone "$sc_c"; then
+      sc_act_hold="it is no longer what made it a candidate: $SC_WHY"
+    elif sc_is_a_w "$sc_c"; then
       sc_act_hold="it is no longer what made it a candidate: $SC_WHY"
     else
       sc_dep_scan; sc_cwd_scan; sc_mount_scan; sc_repo_scan

@@ -451,6 +451,120 @@ def test_a_W_that_is_a_lane_checkout_is_refused(sweep):
     assert box.everything() == before
 
 
+def _unborrow(box: Sweep, repo: Path) -> None:
+    """`repo` takes every object it borrows into its own store, and borrows
+    no more (rv4b's probe P1)."""
+    alt = repo / ".git" / "objects" / "info" / "alternates"
+    if alt.exists():
+        box.git("-C", str(repo), "repack", "-a", "-d", "-q")
+        alt.write_text("", encoding="utf-8")
+
+
+def _nothing_borrows_from_W(box: Sweep) -> None:
+    """No clone under `<W>-lanes/` or beside W borrows objects any more, so
+    no alternates file holds W: only the rules hold it."""
+    for repo in sorted(box.lanes_root.iterdir()):
+        if not repo.is_symlink() and (repo / ".git").is_dir():
+            _unborrow(box, repo)
+    for repo in box.profile_clones:
+        _unborrow(box, repo)
+
+
+def _yaml_keep(box: Sweep) -> str:
+    return (f"it is the directory {box.home / '.agents' / 'workspace.yaml'}'s path: names, "
+            "which every helper resolves as W where LANES_WORKSPACE_ROOT is unset: the readers' copy")
+
+
+@pytest.mark.parametrize("yes", [False, True], ids=["dry run", "--yes"])
+def test_a_W_override_naming_a_clone_beside_W_never_sweeps_the_real_W(sweep, yes):
+    """MUST A (rv4b's pre-review of 811c10f, D45). `LANES_WORKSPACE_ROOT`
+    naming a per-profile clone beside the real W made that clone "W", and the
+    real W, the directory workspace.yaml's `path:` names, "a clone of the
+    register beside W": with nothing borrowing from it, `--yes` removed it.
+    `--yes` now refuses with 2 before anything is listed or locked, and the
+    dry run keeps the real W and says what `--yes` refuses."""
+    box = sweep.box
+    _nothing_borrows_from_W(box)
+    fake_w = box.profile_clones[2]
+    before = box.everything()
+    if yes:
+        result, rows = sweep("--yes", LANES_LANE=RUNNER, LANES_WORKSPACE_ROOT=str(fake_w))
+        assert result.returncode == 2, (result.stdout, result.stderr)
+        assert f"LANES_WORKSPACE_ROOT is {fake_w}" in result.stderr, result.stderr
+        assert f"path: names {box.w}." in result.stderr, result.stderr
+        assert "Nothing was removed." in result.stderr, result.stderr
+        assert rows == {}, rows
+    else:
+        result, rows = sweep(LANES_WORKSPACE_ROOT=str(fake_w))
+        assert rows.get(str(box.w)) == ("keep", _yaml_keep(box)), rows.get(str(box.w))
+        assert f"(--yes refuses here: LANES_WORKSPACE_ROOT is {fake_w}" in result.stdout, \
+            result.stdout
+    assert (box.w / ".git").is_dir(), "the real W is there"
+    assert box.everything() == before
+
+
+def test_the_directory_workspace_yaml_names_is_never_a_candidate(sweep):
+    """D45: workspace.yaml's `path:`, read as every helper reads it, names
+    the first clone beside W, while `LANES_WORKSPACE_ROOT` names W. Nothing
+    holds that clone, and it is kept for what it is, by the dry run, which
+    also says that `--yes` refuses."""
+    box = sweep.box
+    c1, c2, c3 = box.profile_clones
+    _free_profile_clones(box)
+    (box.home / ".agents" / "workspace.yaml").write_text(
+        f"repository: {box.origin}\npath: {c1}\n", encoding="utf-8")
+    result, rows = sweep(LANES_WORKSPACE_ROOT=str(box.w))
+    assert rows.get(str(c1)) == ("keep", _yaml_keep(box)), rows.get(str(c1))
+    assert rows[str(c2)][0] == "remove", rows[str(c2)]
+    assert rows[str(c3)][0] == "remove", rows[str(c3)]
+    assert f"(--yes refuses here: LANES_WORKSPACE_ROOT is {box.w}" in result.stdout, result.stdout
+
+
+@pytest.mark.parametrize("when", ["at the listing", "after the listing"])
+def test_a_clone_beside_W_with_lane_checkouts_of_its_own_is_never_a_candidate(sweep, when):
+    """D45: a clone beside W with a `<name>-lanes/` beside it is a W, with
+    lane checkouts of its own, and never a per-profile clone: kept at the
+    listing, and held when that directory comes after it (asked again under
+    the clone's lock, after its fetch)."""
+    box = sweep.box
+    c1, c2, c3 = box.profile_clones
+    _free_profile_clones(box)
+    own = c1.parent / f"{c1.name}-lanes"
+    why = f"{c1.name}-lanes/ stands beside it: it is a W with lane checkouts of its own, not a per-profile clone"
+    if when == "at the listing":
+        own.mkdir()
+        result, rows = sweep()
+        assert rows.get(str(c1)) == ("keep", why), rows.get(str(c1))
+        assert rows[str(c2)][0] == "remove", rows[str(c2)]
+        assert rows[str(c3)][0] == "remove", rows[str(c3)]
+    else:
+        _hook_on_fetch_of(box, c1, f"mkdir {own}")
+        result, rows = sweep("--yes", LANES_LANE=RUNNER)
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert rows.get(str(c1)) == (
+            "hold", f"{BESIDE_WHY}; holds: it is no longer what made it a candidate: {why}"), \
+            rows.get(str(c1))
+        assert rows[str(c2)][0] == "removed", rows[str(c2)]
+        assert rows[str(c3)][0] == "removed", rows[str(c3)]
+        assert (c1 / ".git").is_dir()
+
+
+@pytest.mark.parametrize("spelled", ["W", "a link to W"])
+def test_a_W_override_naming_W_itself_is_no_refusal(sweep, spelled):
+    """THE SEAM STAYS (D45): `LANES_WORKSPACE_ROOT` naming the directory
+    workspace.yaml's `path:` names, as spelled or through a link, is the W
+    the sweep would find without it, and `--yes` runs."""
+    box = sweep.box
+    seam = box.w
+    if spelled == "a link to W":
+        seam = box.root / "w-link"
+        seam.symlink_to(box.w)
+    result, rows = sweep("--yes", LANES_LANE=RUNNER, LANES_WORKSPACE_ROOT=str(seam))
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert rows[str(box.checkout(CLOSED))][0] == "removed", rows
+    assert "--yes refuses here" not in result.stdout, result.stdout
+
+
 def test_clones_beside_W_are_judged_by_what_they_hold(sweep):
     """S6.2's PER-PROFILE CLONES ARE CANDIDATES (Brett Heap's ruling on #308's
     question 1, D37), each judged by the holds: the leaf c3 holds an untracked
