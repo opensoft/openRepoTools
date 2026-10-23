@@ -421,6 +421,24 @@ def test_the_archive_answers_before_the_list_of_the_logs_is_asked(inv):
                                                                     res.stderr)
 
 
+@pytest.mark.parametrize("source", list(UNREAD_SOURCES))
+def test_worktrees_of_a_name_no_row_answers_names_the_unread_source(inv, source):
+    """`worktrees <lane>` KEEPS #290's `UNREAD` LINE where `canon-lane` refuses
+    (66): over an archive or a list of the logs that could not be read, a name
+    no row answers is read as typed, and the ONE line names the input - never
+    8, "no worktree is inventoried", which is what the read says when the arm
+    hands it no marker for the input that failed, having found no row, no log
+    and no tree. NEWLANE-9 has no row, no former name, no archived row and no
+    log in the estate, so only the unread input can make it answer at all."""
+    rev, named = UNREAD_SOURCES[source]
+    with _unreadable(inv.e, rev):
+        res = _edit(inv, "worktrees", "NEWLANE-9")
+    assert res.returncode == 0, (res.returncode, res.stdout, res.stderr)
+    lines = [line.split(US) for line in res.stdout.splitlines() if line]
+    assert len(lines) == 1 and lines[0][:3] == ["UNREAD", "Eagle", "NEWLANE-9"], res.stdout
+    assert named in lines[0][3], lines[0]
+
+
 # ------------------------------------------------ kept, and the order of all
 
 
