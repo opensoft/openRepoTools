@@ -2371,6 +2371,22 @@ cs_removed_unique() {   # <the saved diff>
   done < "$cs_tmp/removed"
   return 0
 }
+# THE EARLIER COPIES, BY NAME (707, lane openRepoTools-3's re-check of #307's
+# round 2): a lost race replays `commit`'s carry, which saves the hand edit
+# again, and where the re-run's carry is refused, both copies are kept. The
+# record (`CP_CARRY_COPIES`, 393) names them all; the last is `CS_CARRY_DIFF`.
+# The others are printed here. A replay in the same second as the run before
+# it reuses the name (704), and that copy is then the last one.
+cs_earlier_copies() {
+  cec_out=""
+  while IFS= read -r cec_f; do
+    case "$cec_f" in ''|*/*|"${CS_CARRY_DIFF##*/}") continue ;; esac
+    cec_out="${cec_out:+$cec_out, }$cs_tmp/$cec_f"
+  done <<CEC_EOF
+$CP_CARRY_COPIES
+CEC_EOF
+  printf '%s' "$cec_out"
+}
 checkout_sync() {   # <what> <lane> <write|carry|publish> [<pathspec it commits>…]
   cs_what="$1"; cs_lane="${2:-}"; cs_mode="$3"; shift 3
   CS_NO_ORIGIN_BRANCH=0; CS_CARRY_DIFF=""; CS_CARRY_BASE=""
@@ -2600,7 +2616,8 @@ CS_EOF
       note "origin changed a line beside the hand edit and none of the lines it replaces, each of which occurs once there and once in the version the edit was made on, so the edit was applied anchored by those lines alone"
     fi
     if [ "$cs_applied" = 0 ]; then
-      cs_refuse "$cs_what" "the hand edit of $LANES_PATH no longer applies to origin's version of it$cs_dup, so it is KEPT in $CS_CARRY_DIFF and the register is left at origin's version (Amendment 23 S3 step 4). git said: $(head -n 3 -- "$cs_tmp/apply.err" 2>/dev/null | tr '\n' ' ')" \
+      cs_also="$(cs_earlier_copies)"
+      cs_refuse "$cs_what" "the hand edit of $LANES_PATH no longer applies to origin's version of it$cs_dup, so it is KEPT in $CS_CARRY_DIFF${cs_also:+ (and, as this write saved it before its push lost the race, in $cs_also)} and the register is left at origin's version (Amendment 23 S3 step 4). git said: $(head -n 3 -- "$cs_tmp/apply.err" 2>/dev/null | tr '\n' ' ')" \
         "read what you wrote: cat $CS_CARRY_DIFF" \
         "make the edit again on the register as it now is, then: LANES_LANE=${cs_lane:-<lane>} $SELF commit \"<what you wrote>\""
     fi

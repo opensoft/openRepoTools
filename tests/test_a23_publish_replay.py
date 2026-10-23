@@ -780,6 +780,34 @@ def test_a_lost_races_two_copies_of_the_hand_edit_are_both_removed_once_origin_h
     _settled(box, c)
 
 
+def test_a_lost_races_refused_re_run_carry_names_every_copy_it_keeps(box: Box):
+    """707 of lane openRepoTools-3's re-check of #307's round 2, the small
+    follow-up the body disclosed: a `commit` that loses a push race replays
+    its carry, which saves the hand edit again; where the peer that won
+    changed the same row, the re-run's carry no longer applies, and the
+    refusal (2) kept both copies and named only the last. It names each copy
+    once now, by the names the carry notes printed, so it holds for one name
+    or two (704: a replay in the same second reuses the name)."""
+    c = box.seam()
+    box.peer_prepares(REGISTER, _row(LANE), _row(LANE, state="LIVE · the peer's own edit of this row"),
+                      "a peer edits the same row and lands first")
+    box.race(prepared=True)
+    box.hand_edit(c)
+    result = box.helper("commit", "the hand edit", LANES_LANE=LANE)
+    err = result.stderr
+    assert result.returncode == 2, err
+    assert "push refused (attempt 1 of 6)" in err, "the race was lost once"
+    refusal = [l for l in err.splitlines() if "no longer applies" in l]
+    assert len(refusal) == 1, err
+    copies = set(_copies_named(err)) | {str(p) for p in (c / ".git" / "lanes-edit").glob("hand-edit-*.diff")}
+    assert copies, err
+    for copy in copies:
+        assert Path(copy).is_file(), ("every copy is kept", copy)
+        assert refusal[0].count(copy) == 1, ("the refusal names each copy once", copy, refusal[0])
+    assert "LIVE · a hand edit" not in box.origin_register(), "nothing of the hand edit was pushed"
+    _settled(box, c)
+
+
 def test_a_carry_removes_only_the_copies_it_wrote_never_another_runs_under_the_same_pid(box: Box):
     """393's trap: pids recur, so an older run's KEPT copy (an edit that did
     not carry, a person's only copy of it) can bear this run's pid. A glob
