@@ -2679,3 +2679,35 @@ def test_the_locks_pid_line_is_lanes_edits_own(sweep, env, ident):
     pid, _, said = copy.read_text(encoding="utf-8").rstrip("\n").partition(" ")
     assert pid.isdigit(), pid
     assert said == ident, said
+
+
+def test_a_long_name_is_moved_aside_under_a_name_that_does_not_grow(sweep):
+    """THE ASIDE'S NAME DOES NOT GROW WITH THE CHECKOUT'S (lane
+    openRepoTools-3's NIT 379). `.<name>.removing-<UTC>-<pid>` is past
+    NAME_MAX for a 240-character name, so its `mv` always failed: `remove`
+    in every dry run, held "could not be moved aside" in every `--yes`. A
+    240-character clone beside W is now moved aside, through an aside (an
+    `mv` first on PATH logs it) named by its first 48 characters, and
+    removed."""
+    box = sweep.box
+    long = box.clone(box.w.parent / ("brett-wip-" + "x" * 230), reference=box.w)
+    assert len(long.name) == 240
+    real = shutil.which("mv")
+    assert real, "no mv on the test's own PATH"
+    log = box.root / "mv.log"
+    shim = box.fakebin / "mv"
+    shim.write_text(f'#!/usr/bin/env bash\nprintf "%s\\n" "${{@: -1}}" >> {log}\nexec {real} "$@"\n',
+                    encoding="utf-8")
+    shim.chmod(0o755)
+    result, rows = sweep()
+    assert rows[str(long)] == ("remove", BESIDE_WHY), rows.get(str(long))
+    result, rows = sweep("--yes", LANES_LANE=RUNNER)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert rows[str(long)][0] == "removed", rows[str(long)]
+    assert not os.path.lexists(long)
+    asides = [Path(line) for line in log.read_text(encoding="utf-8").splitlines()
+              if f"/.{long.name[:48]}." in line]
+    assert len(asides) == 1, log.read_text(encoding="utf-8")
+    assert asides[0].parent == box.w.parent, asides
+    assert re.fullmatch(rf"\.{long.name[:48]}\.removing-\d{{8}}T\d{{6}}Z-\d+", asides[0].name), asides
+    assert not list(box.w.parent.glob(".*.removing-*")), "no aside is left"

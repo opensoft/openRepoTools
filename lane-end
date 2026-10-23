@@ -1310,13 +1310,14 @@ SC_IDX
   # would lead the sweep out of it, and nothing in it is then looked at.
   #
   # A REMOVAL THAT DID NOT FINISH IS NAMED AGAIN BY EVERY RUN (lane
-  # openRepoTools-3's SHOULD 372). Its aside, `.<name>.removing-<UTC>-<pid>`,
-  # is hidden, so a later run would count it with the creation locks and say
-  # no more: a checkout moved aside by a sweep that was stopped, or whose
-  # `rm` met a file it could not remove, would be named nowhere again. Each
-  # one is listed by name, apart from the hidden count, with the command that
-  # removes it. The sweep never removes one itself: a person looks at why
-  # first, and one may be another sweep's, still running.
+  # openRepoTools-3's SHOULD 372). Its aside, `.<name>.removing-<UTC>-<pid>`
+  # (the name's first 48 characters, NIT 379), is hidden, so a later run
+  # would count it with the creation locks and say no more: a checkout moved
+  # aside by a sweep that was stopped, or whose `rm` met a file it could not
+  # remove, would be named nowhere again. Each one is listed by name, apart
+  # from the hidden count, with the command that removes it. The sweep never
+  # removes one itself: a person looks at why first, and one may be another
+  # sweep's, still running.
   sc_home_why=""; sc_hidden=0; sc_leftovers=()
   if [ -L "$sc_home" ]; then
     sc_home_why="$sc_home is a symbolic link, which this sweep never follows: nothing in it is looked at"
@@ -2244,7 +2245,13 @@ SLU
       sc_lock_drop
       sc_say_held "$sc_c" "$sc_why" "$sc_act_hold"; continue
     fi
-    sc_aside="${sc_c%/*}/.${sc_c##*/}.removing-$sc_utc-$$"
+    # THE ASIDE'S NAME DOES NOT GROW WITH THE CHECKOUT'S (lane
+    # openRepoTools-3's NIT 379): with its suffix, a name near NAME_MAX could
+    # never be moved aside, so a 240-character one was `remove` in every dry
+    # run and held in every act. Its first 48 characters name it for a
+    # person, and the suffix makes it this run's.
+    sc_an="${sc_c##*/}"
+    sc_aside="${sc_c%/*}/.${sc_an:0:48}.removing-$sc_utc-$$"
     sc_sig_defer
     if ! sc_under_home "$sc_c" || [ -e "$sc_aside" ] || [ -L "$sc_aside" ] ||
        ! ( trap '' INT TERM; exec mv -- "$sc_c" "$sc_aside" ) 2>/dev/null; then
