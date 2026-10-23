@@ -1233,7 +1233,7 @@ else.
 | 6 | `git add` / `commit` / `push` failed |
 | 7 | another act got there first and this one wrote nothing: `claim`'s `CLAIM-LOST` (another lane's claim landed first), and `set-lane-state` / `set-lane-tree`'s lifecycle fence (openRepoTools#91, below) |
 | 9 | `CLAIM-LOST` — issue #30's own dead-lane verdict could not be reconfirmed before a `--force` takeover's push landed: the source lane resumed, a live session now backs it up, or that could not be read at all (`claim` only). Never 7 — that code is a RIVAL's claim, and this is the same lane the takeover was granted over |
-| 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read, or is of this schema and not a whole record, so nothing can be read out of it as a snapshot (openRepoTools#91 and #115, below), or — where no `LANES_LANE_STATE_ROOT` names the control root — the lane's object log could not be read, so where its snapshot is kept is not known (openRepoTools#290, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim`. `lane-trees`: the lane's `trees` directory is there and could not be listed (#157 item 4e), or — where no `LANES_LANE_STATE_ROOT` names the control root — the lane's object log could not be read, so where its trees are kept is not known (openRepoTools#303) — never the 8 that means it recorded no tree |
+| 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read, or is of this schema and not a whole record, so nothing can be read out of it as a snapshot (openRepoTools#91 and #115, below), or — where no `LANES_LANE_STATE_ROOT` names the control root — the lane's object log could not be read, so where its snapshot is kept is not known (openRepoTools#290, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim`. `lane-trees`: the lane's `trees` directory is there and could not be listed (#157 item 4e), or — where no `LANES_LANE_STATE_ROOT` names the control root — the lane's object log could not be read, so where its trees are kept is not known (openRepoTools#303) — never the 8 that means it recorded no tree. `restart-intent`: where no `LANES_LANE_STATE_ROOT` names the control root, the lane's object log could not be read, so where its restart intent is kept is not known (openRepoTools#303, R7) — never the 8 that means no restart is in flight; an intent file that is there and will not open is still 1 |
 | 8 | no record — and no other meaning |
 | 64 | `swapped`'s own usage error — never the dispatcher's 2 — and the lifecycle arms' own: `set-lane-tree`'s partial observation, a count that is not one, or a field that is only blanks (below) |
 
@@ -1257,14 +1257,20 @@ no live session is in the window.
 (openRepoTools#290, #303). Every read of it — `lane-dir`, `lane-profile`,
 `lane-agent`, `lane-transcript`, `lane-last`, `history <lane>`, `binding`,
 `last-session`, `resolve-home`, `lane-objects`, `who --lane` and
-`request-handoff` — exits **1** with a sentence that says so, and `lane-state`
-and `lane-trees` exit **10**: a published log git could not show, a tree of the
-logs git could not list, and, with no `origin`, a log file that will not open
-or a log directory that cannot be searched. A lane with no log at all still
-answers 8. They answered 8 before, because the read's status was the parser's,
-and every caller read that 8 as a lane that has not started: `lane-end` ended
-a lane over the claims its log holds, and the lane's lifecycle records were
-filed beside the real ones.
+`request-handoff` — exits **1** with a sentence that says so, and `lane-state`,
+`lane-trees` and `restart-intent` exit **10**: a published log git could not
+show, a tree of the logs git could not list, and, with no `origin`, a log file
+that will not open or a log directory that cannot be searched. A lane with no
+log at all still answers 8. They answered 8 before, because the read's status
+was the parser's, and every caller read that 8 as a lane that has not started:
+`lane-end` ended a lane over the claims its log holds, the lane's lifecycle
+records were filed beside the real ones, and a restart intent filed beside the
+lane's checkout read as no restart in flight. `set-restart-intent` and
+`rename-lane` write nothing over such a log and exit 1, and `lane-start` stops
+at its restart fence with 2, saying the log is why. `lane-objects` (and with it
+`lane-end`'s gate and `who --lane`) also exits 1 where no temporary file could
+be made for its read's warnings — saying so, not that the log was unread —
+because whether this lane's log was read whole is then not known.
 
 **`swapped` exits 64 on a usage error of its own, never 2.** The launcher gates
 its whole Amendment 8 degrade on a `2` from `swapped` meaning one thing —
@@ -2743,6 +2749,38 @@ backfilled (Amendment 7(i)); each lane cuts over at its own next handoff. **The
 first field before the first tab is still the lane**, which is the contract every
 reader of this output takes and what makes a sixth and a seventh safe to add.
 
+### A log nobody could read: the swap is written, the gap is named
+
+Brett Heap's ruling R7 on openRepoTools#303, *"Write swap, name the gap"*. The
+handoff reads the lane's restart intent before it writes anything, and that
+intent is kept beside the directory the lane's object log records. Where the log
+could not be read, `restart-intent` exits 10 and whether a restart owns the lane
+is not established. Refusing the whole handoff would leave the swap unwritten
+(`R-A11-11`); reading the 10 as "no restart" would publish the handoff over one.
+So an ordinary handoff, `lane-handoff` or the skill alike:
+
+- writes the `PAUSED` record, the register line, the row and the restart line,
+  and **publishes no handoff file**;
+- says so: on stdout after `READY` (`handoff: NOT published: …`), in the register
+  line, which ends `; handoff NOT published: object log unreadable` instead of
+  `; handoff refreshed`, and in the top block it prints on stderr, whose state line
+  names the gap;
+- tells the person what to wait on — the intent, not the log: once
+  `lanes-edit.sh restart-intent <lane>` answers 8, `ready` or `failed`, publish
+  the block with `publish-handoff`, and read `--restart-status` before relaunching;
+- exits **0**, because the swap is recorded and resumable, and every 1 this command
+  spends comes before its first write.
+
+`--exit` writes the same records and then refuses at its gate with 2, typing
+nothing, and its refusal says the same wait: *"The handoff was NOT published: the
+lane's object log could not be read. Once `lanes-edit.sh restart-intent <lane>`
+answers 8, `ready` or `failed`, publish the block printed above with
+`publish-handoff`, and read `--restart-status` before relaunching. Then re-run."*
+On every other path where no top block was written, the gate says what it always
+said. `--restart` refuses before it writes anything, at its own read of the prior
+intent. The lane's lifecycle stays `SWAPPING`, because the handoff file is one of
+the writes a swap is made of.
+
 ### The launcher table — `lane-start --agent <name>`
 
 `lane-start <repo> <n>` reads the row and the last `PAUSED`. With no `--agent`
@@ -2814,6 +2852,13 @@ Distinct occupied intent locations or unreadable candidate ancestry refuse.
 Aliases of the same control-root directory count once; separate leaf symlink
 or hardlink entries refuse. With no existing intent, the recorded-parent rung precedes
 the projects-root fallback, with a checkout hint only when neither answers.
+The recorded checkout is read out of the lane's object log, so where that log
+could not be read — and no `$LANES_LANE_STATE_ROOT` is configured — the
+recorded-parent rung is not known: `restart-intent` exits **10**, never the 8 of
+no intent, `set-restart-intent` writes nothing and exits 1, and `publish-handoff`
+refuses (openRepoTools#303, R7). Naming another root with
+`$LANES_LANE_STATE_ROOT` to get past it would hide an intent already filed beside
+the checkout. An intent file that is there and will not open is still 1.
 Root selection shares the writer mutex with CAS. Recording a nested checkout
 cannot move this operation; PR #97 diagnostics retain their independent root
 selection and may reside elsewhere:
@@ -3572,7 +3617,11 @@ completed, not that every tree it left is clean, published and where it was.
 
 A **renamed** lane keeps its snapshot and inventory: `rename-lane` moves its
 control root to the new name once the rename's commit has landed, and never
-over something already there (Amendment 16). Its `.lane-worktrees/<old>` root
+over something already there (Amendment 16). Where the old name's object log
+could not be read, where that root is is not known, so `rename-lane` refuses
+(exit 1) before it takes the writer mutex, writing nothing, rather than leave the
+snapshot and the inventory under the old name; a lane whose record places no
+root at all renames as before (openRepoTools#303). Its `.lane-worktrees/<old>` root
 holds real git worktrees and is not moved — that is a `git worktree move`, and a
 person's. A lane retired by Amendment 19's sweep is taken to `CLOSED` exactly as
 a lane that ended itself is.
