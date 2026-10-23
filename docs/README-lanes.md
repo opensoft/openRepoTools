@@ -329,13 +329,17 @@ naming both**, until they are merged by hand — 15(d): the newer row's session
 id(s) appended to the older row's session cell, in order, and the newer row
 removed in the SAME commit, whose message names both spellings. `lanes-edit.sh
 canon-lane <name>` is that resolver as a read, and the one the commands share
-rather than each keeping its own: **0** with the canonical spelling (the typed
-one where no row matches, so `add-row` can still create a lane), **2** for the
-pair, **64** usage, and **66** where an input it resolves names by could not be
-read — the register, the lane alias table, the archive or the list of the
-object logs: a name none of them could answer for is not established, which is
-never the same as a name nobody has, so `lane-start` and `lane-end` refuse it
-and `lane` and `lane-handoff` stop on it. That
+rather than each keeping its own: **0** with the canonical spelling (the row's;
+for a name with no row, the lane the alias table names, else the spelling the
+archive's rows, else the logs' file names, hold, the first that knows the name
+deciding; and the typed one where none of them knows it, so `add-row` can still
+create a lane), **2** for a pair in any one of those sources, **64** usage, and
+**66** where an input it resolves names by could not be read — the register,
+for every name, and the lane alias table, the archive or the list of the object
+logs, for a name the inputs before them did not answer
+(opensoft/openRepoTools#310): a name none of them could answer for is not
+established, which is never the same as a name nobody has, so `lane-start` and
+`lane-end` refuse it and `lane` and `lane-handoff` stop on it. That
 2 is RELAYED by `lane-start`, `lane-end` and `lane` rather than carried past,
 because the pair may be on `origin/<branch>` while this checkout still holds one
 row. `add-row` asks the published register as well as this copy of it for the
@@ -343,7 +347,8 @@ same reason: a row a peer pushed is a refusal here, naming it and the `git pull
 --rebase` that settles it, and never a second row. The LOG is held to the same
 rule — two files under `lanes/log/` whose names differ only by case are two logs
 for one lane, and every read and every write under that name refuses, naming
-both, until they are merged.
+both, until they are merged, oldest lines first — and so is the archive, whose
+two rows for one name are merged as the register's are.
 
 Honouring that by hand is five acts at one end of a lane and one at the other,
 and this register records where they get dropped: rows added hours late (`ROW
@@ -3929,7 +3934,10 @@ that read fails and no `LANES_LANE_STATE_ROOT` names the root, the lane is one
 `UNREAD <ws> <lane> its object log <path> could not be read, …` line and exit
 **0**, never the **8** of "none"; so is a name whose register read failed
 where no tree was found under it, because the register is what spells it
-(opensoft/openRepoTools#290). `lanes --worktrees <lane>` prints either as
+(opensoft/openRepoTools#290), and a name with no row whose archive or list of
+the logs could not be read, because those spell such a lane (#310): the
+resolver refuses that name, and this read keeps it as typed and names the
+input instead. `lanes --worktrees <lane>` prints either as
 `inventory NOT READ`.
 
 Where those reads succeed, the listing makes each of them once, except the list

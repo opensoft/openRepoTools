@@ -1988,11 +1988,13 @@ R67_PS="$(printf '%s\t%s\t%s' 900671 1 "claude --session-id $R67_ID --fork-sessi
 run r67 "$E" duplicate-holder repo67-1
 is    "duplicate-holder over a readable register with no fork-session process: 8, none" "$rc" 8
 # …and over the register nobody could read, with a stray in the table, it is NOT
-# that 8: the ids are the whole search, and none of them was read.
+# that 8: the ids are the whole search, and none of them was read. Since #310
+# the lane's NAME is refused first (2): a register nobody could read resolves
+# no name at all (Brett Heap's ruling R1), so the ids are never asked for.
 run r67x env FAKE_PGREP_F_PIDS=900671 FAKE_PS_RECORDS="$R67_PS" "$E" duplicate-holder repo67-1
-is    "duplicate-holder over an UNREADABLE register is 1, never the 8 that means none is live" "$rc" 1
+is    "duplicate-holder over an UNREADABLE register is 2, never the 8 that means none is live" "$rc" 2
 has   "…naming the read that failed" "$err" "the register (origin/main:lanes/LANES.md"
-has   "…in the words that stop a reader believing there is none" "$err" "That is NOT 'no duplicate holder is live'"
+has   "…in the words that stop a reader believing there is none" "$err" "is NOT established"
 is    "…and listing nothing" "$out" ""
 
 r67_head="$(git -C "$R67_ORIGIN" rev-parse main)"
@@ -2002,7 +2004,7 @@ hasnt "…never as a dead lane's hold" "$err" "takeover of a dead lane's hold"
 run r67x "$E" claim "opensoft/repo67#5" --no-github --force
 is    "--force over an UNREADABLE register refuses too: it never confirms the lane dead" "$rc" 2
 has   "…naming the read that failed" "$err" "the register (origin/main:lanes/LANES.md"
-has   "…and saying what that is not" "$err" "That is NOT 'it has no session ids'"
+has   "…and saying what that is not" "$err" "not the same as no lane having it"
 hasnt "…never as a dead lane's hold" "$err" "takeover of a dead lane's hold"
 hasnt "…never blaming a live session nobody looked for" "$err" "is not a stale claim"
 is    "…and nothing is written: no TAKEOVER line" \
@@ -17011,7 +17013,10 @@ run "$E" pathspec-check ':(bogus)x'
 is   "a pathspec git cannot read is refused, never reported clean" "$rc" 2
 has  "…saying the read failed" "$err" "could not read what that pathspec would stage"
 b162_head="$(git -C "$WIP" rev-parse HEAD)"
-run env LANES_LANE=repoA-1 LANES_PATH=':(bogus)x' "$E" commit "attach nothing"
+# NO `LANES_LANE` FOR THIS ONE (#310): `$LANES_PATH` is also where the register
+# is read on origin, and a register nobody could read resolves no lane name, so
+# with a lane named the resolver refuses it (2) before this check is reached.
+run env -u LANES_LANE LANES_PATH=':(bogus)x' "$E" commit "attach nothing"
 is   "…and the commit path refuses it before the add" "$rc" 2
 has  "…saying so" "$err" "could not read what this commit would stage"
 is   "…committing nothing" "$(git -C "$WIP" rev-parse HEAD)" "$b162_head"

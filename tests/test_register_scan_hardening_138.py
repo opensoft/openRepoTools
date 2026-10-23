@@ -502,13 +502,15 @@ def test_item_18_next_free_refuses_a_published_register_git_cannot_read(reg):
 def test_item_18_the_seam_refuses_a_sweep_over_a_published_register_git_cannot_read(reg):
     """And the seam: with the published register unreadable and this checkout
     current, `register_text` handed it this checkout's copy, called every lane
-    legacy, and the sweep was published."""
+    legacy, and the sweep was published. Since #310 the sweep is refused one
+    step sooner, with 2: the sweeping lane's own name is resolved first, and a
+    register nobody could read resolves no name (Brett Heap's ruling R1)."""
     peer_publishes_repo_x_5(reg)
     delete_published_register_blob(reg, pull=True)
     before = reg.head()
     result = reg.sweep("repoX-3", LANES_SESSION=WRITER_ID)
-    assert result.returncode == 1, (result.stdout, result.stderr)
-    assert "is UNKNOWN" in result.stderr
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "NOT established" in result.stderr
     assert reg.head() == before
 
 
@@ -589,7 +591,10 @@ def test_item_1_an_unreadable_published_register_refuses_the_sweep(reg):
     from #97) reads the published register and this checkout's row with their
     status and refuses UNKNOWN (1) on either failing. Pinned here, because
     the fence for a live session whose id is only in the published row rests
-    on that refusal: here this checkout's uncommitted edit dropped the id."""
+    on that refusal: here this checkout's uncommitted edit dropped the id.
+    Since #310 the sweep is refused one step sooner, with 2: the sweeping
+    lane's own name is resolved first, and a register nobody could read
+    resolves no name (Brett Heap's ruling R1)."""
     live = "cccc0138-0003-4000-8000-000000000003"
     text = reg.read("lanes/LANES.md").replace(f"| `repoX-2` | harness `{OLD_ID}`", f"| `repoX-2` | harness `{live}`")
     reg.write("lanes/LANES.md", text)
@@ -599,7 +604,7 @@ def test_item_1_an_unreadable_published_register_refuses_the_sweep(reg):
     reg.refuse_git("show origin/main:lanes/LANES.md")
     before = reg.head()
     result = reg.sweep("repoX-2", LANES_SESSION=WRITER_ID)
-    assert result.returncode == 1, (result.stdout, result.stderr)
-    assert "is UNKNOWN" in result.stderr
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "NOT established" in result.stderr
     assert reg.head() == before
     assert not (reg.wip / "lanes/log/repoX-2.md").exists()

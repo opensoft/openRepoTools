@@ -5654,15 +5654,85 @@ rows_named_ci_alias() {   # <typed name>
   done
 }
 
+# THE SPELLING OF A LANE WITH NO ROW (opensoft/openRepoTools#310). The lane
+# listing names lanes from three reads - the register's rows, the archive's
+# rows and the object logs' file names - and `canon_lane` resolved a name by
+# the first alone (and the alias table), so a lane only the archive or the logs
+# know, typed in another case, went back as typed. A name no row and no alias
+# answers is therefore asked of the archive's rows, then of the logs' names,
+# IN THAT ORDER, and the first source that knows it spells it: a later source
+# spelling it otherwise is not asked, and is no pair. Two spellings are
+# Amendment 15(d)'s refusal only inside ONE source, as they are in the
+# register, and are refused here naming both, the source and its merge. A
+# source that could not be read is never "not there": whether the name is a
+# lane spelled another way is NOT established, which is 66 - for a brand-new
+# name too (lane 3's ruling R2). The archive's rows are parsed as
+# `rows_named_ci` parses the register's; the logs' names are `known_lanes`',
+# which is `origin/<branch>`'s list, the index's under `--index`, and this
+# checkout's directory where there is no `origin`. One spelling met twice is
+# one spelling.
+#   0 + the one spelling, or nothing where neither source knows the name ·
+#   2 two spellings in one source, refused naming both · 66 the archive, or
+#   the list of the logs, could not be read
+lane_spelling_known() {   # <typed name>
+  lsk_want="${1-}"
+  lsk_text=""
+  if ! lsk_text="$(archive_text 2>/dev/null)"; then
+    note "the archive ($LANES_ARCH_PATH) could not be read, so whether '$lsk_want' is a lane the archive spells another way is NOT established, and that is not the same as its not being one (opensoft/openRepoTools#310)."
+    note "Fix the read and re-run: a name taken as typed here could read a control root no lane has, and write a second one beside the lane's own."
+    return 66
+  fi
+  lsk_src=archive
+  lsk_hits="$(printf '%s\n' "$lsk_text" | awk -v want="$lsk_want" '
+    substr($0,1,1) == "|" {
+      p1 = index($0, "`"); if (p1 == 0) next
+      rest = substr($0, p1 + 1); p2 = index(rest, "`"); if (p2 == 0) next
+      t = substr(rest, 1, p2 - 1)
+      if (tolower(t) == tolower(want) && !(t in seen)) { seen[t] = 1; print t }
+    }')"
+  if [ -z "$lsk_hits" ]; then
+    lsk_text=""
+    if ! lsk_text="$(known_lanes 2>/dev/null)"; then
+      note "the list of the object logs ($LANES_LOG_PREFIX on origin/$LANES_BRANCH) could not be made, so whether '$lsk_want' is a lane whose log spells it another way is NOT established, and that is not the same as its not being one (opensoft/openRepoTools#310)."
+      note "Fix the read and re-run: a name taken as typed here could read a control root no lane has, and write a second one beside the lane's own."
+      return 66
+    fi
+    lsk_src=logs
+    lsk_hits="$(printf '%s\n' "$lsk_text" | awk -v want="$lsk_want" 'NF && tolower($0) == tolower(want) && !($0 in seen) { seen[$0] = 1; print }')"
+  fi
+  lsk_n="$(printf '%s' "$lsk_hits" | grep -c . || :)"
+  if [ "$lsk_n" -gt 1 ]; then
+    if [ "$lsk_src" = archive ]; then
+      note "the archive ($LANES_ARCH_PATH) has $lsk_n rows whose lane names differ only by case for '$lsk_want': $(printf '%s\n' "$lsk_hits" | tr '\n' ' ')"
+      note "a lane name is ONE name under any case (Amendment 15), so no read and no write under it is unambiguous. Merge them into one archived row (Amendment 15(d)): append the newer row's session id(s) to the older row's session cell, in order, remove the newer row in the SAME commit, and name both spellings in the commit message."
+    else
+      note "lane '$lsk_want' has $lsk_n object logs whose names differ only by case: $(printf '%s\n' "$lsk_hits" | awk -v p="$LANES_LOG_PREFIX" 'NF { printf "%s%s.md ", p, $0 }')"
+      note "one lane is ONE lane under any case and its log is ONE file (Amendment 15), so no read and no write under it is unambiguous and nothing here picks one of them. Merge them by hand into one object log, oldest lines first, remove the others in the same commit (Amendment 15(d)), name both spellings in the commit message, and re-run."
+    fi
+    return 2
+  fi
+  printf '%s' "$lsk_hits"
+  return 0
+}
+
 # canon_lane <typed> — the name every `<lane>` argument and `$LANES_LANE` is
-# read through BEFORE anything is read or written under it.
+# read through BEFORE anything is read or written under it. Asked in this
+# order, and the first that answers decides (opensoft/openRepoTools#310):
 #
+#   the register could not be read           REFUSE (66): no name is resolved
 #   exactly one row matches, ignoring case   its OWN spelling
-#   no row matches                           the typed spelling, unchanged —
+#   two or more                              REFUSE (2), naming them all
+#   no row; the alias table names it         the lane it names now (16(e))
+#   no row and no alias; the archive's rows,
+#     else the logs' file names, know it     the spelling that source holds —
+#                                            and two spellings in that ONE
+#                                            source are REFUSED (2), naming both
+#   none of them knows it                    the typed spelling, unchanged —
 #                                            which is what `add-row` needs, and
 #                                            what makes a brand-new lane's
 #                                            first act possible at all
-#   two or more                              REFUSE (2), naming them all
+#   the alias table, the archive or the
+#     list of the logs could not be read     REFUSE (66), where it was asked
 #
 # IT RETURNS AND NEVER EXITS, for `row_line`'s reason: every caller takes it
 # with `$( )`, and an `exit` there would leave only the substitution's subshell
@@ -5685,9 +5755,35 @@ rows_named_ci_alias() {   # <typed name>
 # is row first and alias second — a name that is a lane today is that lane — and
 # the resolution SAYS SO on stderr, because every act under an old name is an
 # act on a lane the caller did not name.
+#
+# AND #310 — A NAME NOTHING COULD RESOLVE IS NEVER TAKEN AS TYPED, AND A LANE
+# ONLY THE ARCHIVE OR THE LOGS KNOW IS SPELLED THEIR WAY. The register was
+# asked through `rows_named_ci`, whose 1 for a read that failed
+# `rows_named_ci_alias` threw away, so over a register nobody could read every
+# name went back as typed; and a name with no row was asked of nothing else,
+# though the listing names lanes from the archive's rows and the logs' names
+# too. A name kept as typed builds a control root no lane has: on a
+# case-sensitive file system the reads answered 8 over a snapshot that is
+# there, and the writers filed a second directory beside the lane's own. Brett
+# Heap ruled R1, "Refuse": the register is read FIRST, and one nobody could
+# read refuses every name, 66 — its callers refuse in turn, the handoff
+# included. Lane 3 ruled the rest: a name no row and no alias answers is asked
+# of the archive and then of the logs (`lane_spelling_known`), each 66 where
+# it could not be read.
 canon_lane() {   # <typed name>
   cl_want="${1-}"
   [ -n "$cl_want" ] || return 0
+  # THE REGISTER FIRST (#310, ruling R1). A read that succeeds here is the one
+  # every read below takes, out of its cache; one that fails is never cached
+  # (#67), so the next process asks again. 66 and not 2, for the reason the
+  # alias table's 66 below gives.
+  if ! register_text_checked >/dev/null 2>&1; then
+    cl_src="origin/$LANES_BRANCH:$LANES_PATH, or $LANES_FILE"
+    [ -z "$LANES_IDX_DIR" ] || cl_src="the index's copy at $LANES_IDX_DIR/register"
+    note "the register ($cl_src) could not be read, so how '$cl_want' is spelled — by a row, by a former name, or by the archive or the logs for a lane with no row — is NOT established, and that is not the same as no lane having it (opensoft/openRepoTools#310)."
+    note "Fix the read and re-run: a name taken as typed here could read a control root no lane has, and write a second one beside the lane's own."
+    return 66
+  fi
   cl_rc=0
   cl_hits="$(rows_named_ci_alias "$cl_want" 2>/dev/null)" || cl_rc=$?
   # AN ALIAS TABLE THAT CANNOT BE READ IS A REFUSAL HERE TOO (Copilot round 3
@@ -5737,6 +5833,15 @@ canon_lane() {   # <typed name>
       return 66
     elif [ -n "$cl_al" ]; then
       cl_out="$cl_al"
+    else
+      # NO ROW AND NO ALIAS: THE ARCHIVE'S ROWS, THEN THE LOGS' NAMES (#310).
+      cl_kn=""; cl_krc=0
+      cl_kn="$(lane_spelling_known "$cl_want")" || cl_krc=$?
+      case "$cl_krc" in
+        0) [ -z "$cl_kn" ] || cl_out="$cl_kn" ;;
+        2) return 2 ;;
+        *) return 66 ;;
+      esac
     fi
   fi
   if [ "$(lc "$cl_out")" != "$(lc "$cl_want")" ]; then
@@ -14981,7 +15086,11 @@ LRC_PAIRED
 # A lane's name is the register's spelling, and the caller says whether the
 # register read it was resolved by was made (`register-unread`): where it was
 # not, a name typed in another case named a root no lane has, so a read that
-# finds no tree there is an `UNREAD` line naming the register.
+# finds no tree there is an `UNREAD` line naming the register. The archive's
+# rows and the logs' names spell a lane with no row (#310), and the caller says
+# the same of those two reads (`archive-unread`, `logs-unread`): the line then
+# names that input, and the register's ids, which were read, still say who
+# writes.
 #
 # AND NO WRITER IS PRONOUNCED `0` OVER A READ NOBODY MADE (#290). `0` is "no
 # live record here names one of the lane's ids, and its binding is here or
@@ -14994,8 +15103,8 @@ LRC_PAIRED
 # in too: the two reads of one inventory are the same bytes.
 #   0 rows, with a PARTIAL line where the listing was not whole · 8 none ·
 #   1 the lane listing could not be read
-worktree_rows() {   # [<canonical lane> [register-unread]]
-  wr_one="${1-}"; wr_out=""
+worktree_rows() {   # [<lane> [register-unread | archive-unread | logs-unread]]
+  wr_one="${1-}"; wr_out=""; wr_spell=""
   wr_live_ok=1
   live_session_ids >/dev/null 2>&1 || wr_live_ok=0
   wr_partial=""
@@ -15036,7 +15145,11 @@ worktree_rows() {   # [<canonical lane> [register-unread]]
       fi
     fi
   else
-    [ "${2-}" != register-unread ] || wr_reg_ok=0
+    case "${2-}" in
+      register-unread) wr_reg_ok=0; wr_spell="the register $LANES_PATH could not be read" ;;
+      archive-unread)  wr_spell="the archive $LANES_ARCH_PATH could not be read" ;;
+      logs-unread)     wr_spell="$wr_unlisted" ;;
+    esac
     wr_ev=""
     wr_ev="$(lane_log_events "$wr_one" checked 2>/dev/null)" || wr_evrc=$?
     PIN_LANE_LOG_TEXT="$wr_ev"; PIN_LANE_LOG_RC="$wr_evrc"; PIN_LANE_LOG=1
@@ -15219,8 +15332,8 @@ WR_TREES
   done <<WR_LANES
 $wr_lanes
 WR_LANES
-  if [ -n "$wr_one" ] && [ "$wr_reg_ok" = 0 ] && [ -z "$wr_out" ]; then
-    wr_out="UNREAD$US$WS$US$wr_one${US}the register $LANES_PATH could not be read, so how lane $wr_one is spelled, and the root its trees are recorded under, is not established
+  if [ -n "$wr_one" ] && [ -n "$wr_spell" ] && [ -z "$wr_out" ]; then
+    wr_out="UNREAD$US$WS$US$wr_one${US}$wr_spell, so how lane $wr_one is spelled, and the root its trees are recorded under, is not established
 "
   fi
   [ -z "$wr_partial" ] || wr_out="${wr_out}PARTIAL$US$WS$US$wr_partial
@@ -18170,13 +18283,20 @@ EOF
   #
   # Read-only, out of `origin/<branch>` like every other state read (R19).
   #   0   the canonical spelling — the row's own where a row matches ignoring
-  #       case, and the TYPED spelling where none does, because a lane with no
-  #       row is a lane `add-row` is about to create and the typed name is all
-  #       there is.
-  #   2   the refusal: two or more rows differ only by case (15(d)). It is 2 and
+  #       case; for a name with no row, the lane the alias table names (16(e)),
+  #       else the spelling the archive's rows, else the logs' file names, hold
+  #       (opensoft/openRepoTools#310); and the TYPED spelling where none of
+  #       them knows it, because a lane with no row is a lane `add-row` is
+  #       about to create and the typed name is all there is.
+  #   2   the refusal: two or more spellings differ only by case in ONE source
+  #       — register rows, archived rows or object logs (15(d)). It is 2 and
   #       not 8 because it is a REFUSAL and not an absence — and `lane-start`
   #       already spends 2 on exactly this fact for two rows of one spelling.
   #   64  a usage error of its own, as every read in clause (h)'s table does.
+  #   66  an input it resolves names by could not be read: the register, for
+  #       every name (#310, Brett Heap's ruling R1), and the alias table, the
+  #       archive or the list of the logs, for a name the inputs before them
+  #       did not answer. Not established, which is never the typed spelling.
   # A caller that meets 2 from a helper predating this amendment is meeting the
   # `*)` arm's unknown-subcommand 2, told apart by the helper's own WORDS as
   # every other read here is; the four callers fall through to the typed
@@ -18187,8 +18307,8 @@ EOF
     [ "$#" -le 1 ] || die "canon-lane takes one lane: canon-lane <lane>" 64
     check_lane_name "$cl_in"
     log_sync
-    # THE CODE IS CARRIED, not flattened to 2: 66 is the alias table that could
-    # not be read and its four callers tell it from 2 by that number alone.
+    # THE CODE IS CARRIED, not flattened to 2: 66 is an input that could not be
+    # read and its four callers tell it from 2 by that number alone.
     cl_res="$(canon_lane "$cl_in")" || exit $?
     printf '%s\n' "$cl_res"
     ;;
@@ -19113,8 +19233,9 @@ EOF
   #   0 rows (`--all`: with one PARTIAL line where the lane listing they were
   #   read through was not whole, #173; a named lane: one UNREAD line where its
   #   object log, or the register its name is resolved by, could not be read,
-  #   #290) · 8 none · 2 a lane name refused (Amendment 15) · 64 usage · 1 a
-  #   read failed
+  #   #290, or the archive or the list of the logs that spell a lane with no
+  #   row, #310) · 8 none · 2 a lane name refused (Amendment 15) · 64 usage ·
+  #   1 a read failed
   worktrees)
     wt_lane=""; wt_all=0; wt_index=0; wt_fetch=0
     wt_usage="worktrees [<lane> | --all] [--index] [--fetch]"
@@ -19136,10 +19257,32 @@ EOF
     # that succeeds is the one `canon_lane` and the listing then take, out of
     # its cache; one that fails is not kept, and the name it could not resolve
     # is read as not established - never as a lane with no trees.
+    # AND THE RESOLVER'S 66 IS THAT SAME NOT-ESTABLISHED HERE (#310). Since
+    # #310 `canon_lane` refuses (66) a name it could not resolve because the
+    # register, the archive or the list of the logs could not be read; this
+    # read's contract for such a name is #290's `UNREAD` line and never a
+    # refusal, so it keeps the name as typed and tells `worktree_rows` which
+    # input failed. An alias table that could not be read is still the refusal
+    # it always was (2), and so is any other code - and a 66 whose input reads
+    # when it is asked again here, which is not established either.
     wt_reg=""
     if [ -n "$wt_lane" ]; then
       register_text_checked >/dev/null 2>&1 || wt_reg=register-unread
-      wt_lane="$(canon_lane "$wt_lane")" || exit 2          # Amendment 15
+      wt_typed="$wt_lane"; wt_crc=0
+      wt_lane="$(canon_lane "$wt_lane")" || wt_crc=$?          # Amendment 15
+      case "$wt_crc" in
+        0) : ;;
+        66)
+          lane_alias_text >/dev/null 2>&1 || exit 2
+          if [ -z "$wt_reg" ]; then
+            if ! archive_text >/dev/null 2>&1; then wt_reg=archive-unread
+            elif ! known_lanes >/dev/null 2>&1; then wt_reg=logs-unread
+            else exit 2
+            fi
+          fi
+          wt_lane="$wt_typed" ;;
+        *) exit 2 ;;
+      esac
     fi
     if [ "$wt_index" = 1 ] && index_open worktrees; then
       wt_out="$(awk -F"$US" -v l="$(lc "$wt_lane")" 'l == "" || tolower($3) == l' "$LANES_WT_IDX_DIR/worktrees" 2>/dev/null)"
