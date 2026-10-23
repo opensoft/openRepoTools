@@ -344,7 +344,11 @@ copy that has moved. Where the block below prints `HANDOFF NOT FOUND` (`handoff-
 that names no handoff) there is no file to write into. Where it prints `HANDOFF READ FAILED`, the read
 failed, and that is never "no handoff": every exit but 0 and 8 is one, and the line quotes it. A 2 whose words
 say "unknown subcommand" is a `lanes-edit.sh` predating `handoff-path`, to be updated; a 4 is the lock that
-makes the lane's checkout, and step 2 is run again. In either case the call under "THE WRITE IS ONE CALL" is
+makes the lane's checkout, and step 2 is run again. Any other 2 is a name refused, a clone that failed, or a
+handoff the row names in W or in another checkout of the register beside it (finding 601 of lane
+openRepoTools-3's review of opensoft/openRepoTools#312, refused by the translation `handoff-path` and
+`write-handoff` share): that file belongs to another repository, and nothing is written there, by this skill
+or by hand. In every one of these cases the call under "THE WRITE IS ONE CALL" is
 not made, the new top block is still written and kept whole in the report, so that it can be put at the head
 of the handoff by hand, and the swap goes on with the gap in the report (`R-A11-11`, *a swap is never left
 unwritten*).
@@ -387,6 +391,12 @@ else
         "$L" "$lane" "$hf_keep" ;;
     2:*"unknown subcommand"*)
       printf 'HANDOFF READ FAILED: `%s handoff-path %s --create` exited 2, and the helper says "unknown subcommand": this lanes-edit.sh predates handoff-path. The read failed, and that is not "no handoff" (Amendment 7(d)), so the call under "THE WRITE IS ONE CALL" is NOT made. Update lanes-edit.sh (openRepoTools --install installs it with this skill), then run step 2 again. %s\n' \
+        "$L" "$lane" "$hf_keep" ;;
+    2:*)
+      # 601 (lane openRepoTools-3's review of #312, and its correction 6368669583): a row whose handoff is in W
+      # or in another checkout of the register beside it is refused by the translation `write-handoff` shares
+      # with `handoff-path`, 2 with no path printed. That file is not this lane's to write, by hand either.
+      printf 'HANDOFF READ FAILED: `%s handoff-path %s --create` exited 2 (its words are above): a name refused, a clone of the lane checkout that failed, or a handoff the row names in W or in another checkout of the register beside it (601). Where its words name such a file, the handoff it names belongs to another repository and not to this lane: nothing is to be written there, by this skill or by hand. The read failed, and that is not "no handoff" (Amendment 7(d)), so the call under "THE WRITE IS ONE CALL" is NOT made. %s\n' \
         "$L" "$lane" "$hf_keep" ;;
     *)
       printf 'HANDOFF READ FAILED: `%s handoff-path %s --create` exited %s (its words are above). The read failed, and that is not "no handoff" (Amendment 7(d)), so the call under "THE WRITE IS ONE CALL" is NOT made. %s\n' \
@@ -482,8 +492,10 @@ checkout's lock, and `LANES_LANE` names the lane. (This block used to commit in 
 file, the shared workspace checkout among them, with no lock, and to rebase on a pull before its push; finding
 282 of the review of opensoft/openRepoTools#307 names it one of the three writers that did.) A STAGED ENTRY
 THIS HANDOFF DID NOT MAKE and an operation in progress are the verb's refusals now, made before anything is
-committed (2); once lane openRepoTools-3's finding 601 on opensoft/openRepoTools#312 is fixed, so is a
-handoff target in another lane's clone of the register, with nothing written. A handoff that moved after its
+committed (2); once lane openRepoTools-3's finding 601 on opensoft/openRepoTools#312 is in, so is a
+handoff target in W or in another checkout of the register beside it, with nothing written, and since
+`handoff-path` shares that refusal, the block under WHERE THE HANDOFF IS meets it first and this call is not
+made. A handoff that moved after its
 digest was read is exit 7, and nothing is published; once that review's finding 603 is in, a restart fence's
 refusal is 7 too, where it is 2 today. A 7 is not answered by calling again with the same digest: the block under WHERE THE HANDOFF IS is run
 again, for a new digest and a new prepared file, and the call is made once more, once. A lane checkout behind

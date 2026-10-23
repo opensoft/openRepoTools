@@ -384,10 +384,12 @@ def _says(estate: Estate) -> dict:
         "pushed": (0, True, [f"handoff written: {path}"], ["HANDOFF NOT"]),
         "refused-after-writing": (2, True, [
             "HANDOFF NOT COMMITTED", f"written at {path}, uncommitted", "Nothing was pushed",
-            "refused (7)"], ["HANDOFF NOT WRITTEN"]),
+            "Do not call it again", "refused (7)"], ["HANDOFF NOT WRITTEN"]),
         "refused-before-writing": (2, False, [
             "HANDOFF NOT WRITTEN", "wrote nothing"], ["HANDOFF NOT COMMITTED"]),
-        "pushed-not-confirmed": (3, True, ["HANDOFF PUSHED, NOT CONFIRMED", "(exit 3"], []),
+        "pushed-not-confirmed": (3, True, [
+            "HANDOFF PUSHED, NOT CONFIRMED", "(exit 3",
+            "Do not call it published until it is read back"], []),
         "kept-on-head": (6, True, ["HANDOFF NOT PUSHED", "kept on HEAD", "(exit 6)",
                                    "Never force"], []),
         "moved-or-owned": (7, False, [
@@ -395,14 +397,24 @@ def _says(estate: Estate) -> dict:
             "run the block under WHERE THE HANDOFF IS again", "reads a new digest",
             "makes a new prepared file", "run this block once more",
             "a restart owns it, do not retry"], []),
-        "no-handoff": (8, False, ["HANDOFF NOT PUBLISHED", "exited 8", "nothing was written"], []),
-        "environment": (1, False, ["HANDOFF NOT PUBLISHED", "exited 1", "nothing was written"], []),
-        "lock": (4, False, ["HANDOFF NOT PUBLISHED", "exited 4", "nothing was written"], []),
+        "no-handoff": (8, False, ["HANDOFF NOT PUBLISHED", "exited 8", "nothing was written"],
+                       ["the file is written at"]),
+        "environment": (1, False, ["HANDOFF NOT PUBLISHED", "exited 1", "nothing was written"],
+                        ["the file is written at"]),
+        "lock": (4, False, ["HANDOFF NOT PUBLISHED", "exited 4", "nothing was written"],
+                 ["the file is written at"]),
+        # rv3's SHOULD 4: the `*` arm WITH stdout, a verb that wrote the file and then
+        # failed otherwise (1). The path is followed by the sentence's full stop, so a
+        # stdout left unsplit (`<file><TAB><sha256>`) is not taken for the path.
+        "written-then-failed": (1, True, [
+            "HANDOFF NOT PUBLISHED", "exited 1", f"the file is written at {path}."],
+            ["nothing was written"]),
     }
 
 
 CASES = ["pushed", "refused-after-writing", "refused-before-writing", "pushed-not-confirmed",
-         "kept-on-head", "moved-or-owned", "no-handoff", "environment", "lock"]
+         "kept-on-head", "moved-or-owned", "no-handoff", "environment", "lock",
+         "written-then-failed"]
 
 
 @pytest.mark.parametrize("shell", SHELLS)
@@ -485,6 +497,17 @@ def test_a_handoff_that_is_not_found_is_said_and_write_handoff_is_never_called(
 OLDER_HELPER = ("lanes-edit.sh: unknown subcommand 'handoff-path' "
                 "(verify-row|set-row-state|append-line|commit|publish-handoff)")
 
+#: 601's refusal, as slice 2a's `handoff-path` says it from A54 (`6d861d4`) on:
+#: the row names a handoff in another checkout of the register beside W, so the
+#: path is not printed, with exit 2 (lane openRepoTools-3's correction 6368669583).
+ANOTHER_REPOSITORY = (
+    "lanes-edit.sh: lane repoHS-1's handoff handoffs/estate/repoHS-1.md is "
+    "/w-lanes/repoHS-2/handoffs/estate/repoHS-1.md, in another checkout of the register "
+    "beside W (/w), not in the checkout /w-lanes/repoHS-1 this lane's writes go through: "
+    "a lane's handoff is written in its own checkout only (Amendment 23 S1, S2): "
+    "`write-handoff` refuses it, so no path is printed for a restart to bind or a launch "
+    "to read (601). Nothing was written.")
+
 
 @pytest.mark.parametrize("shell", SHELLS)
 @pytest.mark.parametrize("rc, err, must, never", [
@@ -494,14 +517,20 @@ OLDER_HELPER = ("lanes-edit.sh: unknown subcommand 'handoff-path' "
      ["exited 2 (its words are above)"], ["Update lanes-edit.sh", "step 2 again"]),
     ("2", OLDER_HELPER,
      ["exited 2", "unknown subcommand", "predates handoff-path", "Update lanes-edit.sh",
-      "step 2 again"], []),
+      "step 2 again"], ["belongs to another repository"]),
+    ("2", ANOTHER_REPOSITORY,
+     ["exited 2 (its words are above)",
+      "the handoff it names belongs to another repository and not to this lane: "
+      "nothing is to be written there, by this skill or by hand"],
+     ["Update lanes-edit.sh", "step 2 again"]),
     ("4", "the lock that makes the lane checkout is held",
      ["exited 4", "Run step 2 again"], ["Update lanes-edit.sh"]),
     ("64", "usage: handoff-path <lane> [--create]",
      ["exited 64 (its words are above)"], ["Update lanes-edit.sh", "step 2 again"]),
     ("127", "lanes-edit.sh: not found",
      ["exited 127 (its words are above)"], ["Update lanes-edit.sh", "step 2 again"]),
-], ids=["unreadable", "clone-failed", "older-helper", "lock", "usage", "no-helper"])
+], ids=["unreadable", "clone-failed", "older-helper", "another-repository", "lock", "usage",
+        "no-helper"])
 def test_a_read_that_failed_is_never_said_as_no_handoff(estate, shell, rc, err, must, never):
     """rv3's MUST 1 on #311 at `b599ed9`: only `handoff-path`'s 8 is "no
     handoff". Any other exit is a read that FAILED (Amendment 7(d); the verb's
@@ -576,6 +605,8 @@ def _register_line(estate: Estate) -> str:
      "; handoff written, its publication NOT confirmed (write-handoff exited 3)"),
     ({"STUB_WH_RC": "6"}, True, True,
      "; handoff written, its publication NOT confirmed (write-handoff exited 6)"),
+    ({"STUB_WH_RC": "1"}, True, True,
+     "; handoff written, its publication NOT confirmed (write-handoff exited 1)"),
     ({"STUB_HP_RC": "8", "STUB_HP_OUT": ""}, False, True,
      "; handoff NOT refreshed (no handoff found)"),
     ({"STUB_HP_RC": "4", "STUB_HP_OUT": ""}, False, True,
@@ -584,8 +615,8 @@ def _register_line(estate: Estate) -> str:
      "; handoff NOT refreshed (the handoff read failed, exit 2)"),
     ({}, False, False, "; handoff NOT refreshed (write-handoff was not called)"),
 ], ids=["pushed", "moved-or-owned", "refused-before-writing", "refused-after-writing",
-        "pushed-not-confirmed", "kept-on-head", "not-found", "read-failed", "older-helper",
-        "never-prepared"])
+        "pushed-not-confirmed", "kept-on-head", "written-then-failed", "not-found", "read-failed",
+        "older-helper", "never-prepared"])
 def test_step4_register_line_says_what_step_2_did(estate, shell, extra, written, prepare, ends):
     """rv3's SHOULD 3 on #311 at `b599ed9`: the register's PAUSED line ended
     `; handoff refreshed` whatever step 2 printed. Step 2 now carries its
