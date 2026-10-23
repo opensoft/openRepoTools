@@ -461,6 +461,8 @@
 #      (`cp_publish_fence`), and pushes none of them; or — AMENDMENT 23 — a
 #      write that names no lane, a `LANES_REPO` that IS W (S5), a `LANES_DIR`
 #      or `LANES_FILE` outside the checkout the write goes through (S2), a
+#      `LANES_REPO` naming a directory below its checkout's top level (S3,
+#      before any edit), a
 #      lane checkout's clone that failed (S1), a W that is itself a lane
 #      checkout (S1, under the opt-in and for `lane-checkout` and
 #      `refresh-workspace`), a routed write while W's register holds an
@@ -2361,6 +2363,23 @@ checkout_sync() {   # <what> <lane> <write|carry|publish> [<pathspec it commits>
   cs_trk="refs/remotes/origin/$LANES_BRANCH"; cs_br="refs/heads/$LANES_BRANCH"
   cs_gd="$(git -C "$cs_c" rev-parse --absolute-git-dir 2>/dev/null)" ||
     cs_refuse "$cs_what" "it is not a git checkout, so there is no origin to bring it up to date from and no commit to make"
+  # A DIRECTORY INSIDE THE CHECKOUT IS NOT THE CHECKOUT (slice 2a's writer
+  # w2a-c10, on this slice). Every pathspec this file gives git is spelled
+  # from the top level (`LANES_PATH`, the lane's log, `LANES_PREFIX`), and git
+  # reads a pathspec relative to the directory it runs in: from below the top
+  # level the write's `git add` failed (6) after the edit was made, step 7
+  # asked about a register path that is not there (a pending hand edit went
+  # unseen), and every printed recovery named the wrong path. So `LANES_REPO`
+  # names the top level, or the write refuses here, before any edit. Not a
+  # rewrite to the top level: with no `LANES_FILE`, the register's default
+  # comes from `LANES_REPO`, so the recovery names both.
+  cs_pfx="$(git -C "$cs_c" rev-parse --show-prefix 2>/dev/null || :)"
+  if [ -n "$cs_pfx" ]; then
+    cs_top="$(git -C "$cs_c" rev-parse --show-toplevel 2>/dev/null || :)"
+    cs_refuse "$cs_what" "LANES_REPO names $cs_pfx inside the checkout ${cs_top:-<its top level>}, not its top level: git reads this write's pathspecs ($LANES_PATH, and the lane's log) relative to the directory it runs in, so its commit would fail after the edit" \
+      "name the checkout itself: LANES_REPO=${cs_top:-<its top level>} LANES_FILE=$LANES_FILE" \
+      "then re-run this write"
+  fi
   cs_tmp="$cs_gd/lanes-edit"
   mkdir -p -- "$cs_tmp" 2>/dev/null ||
     cs_refuse "$cs_what" "$cs_tmp could not be made, and this write keeps git's own words and any carried hand edit there"

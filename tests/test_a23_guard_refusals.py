@@ -815,3 +815,54 @@ def test_a_routed_sweep_names_its_runners_lane_in_the_publish_act(box: Box):
     again = box.helper("retire-rows", NEIGHBOUR, LANES_LANE=LANE, LANES_SESSION=UUID)
     assert again.returncode == 0, (again.stdout, again.stderr)
     assert f"RETIRED — lane {NEIGHBOUR}" in box.origin_file(rel)
+
+
+# -------------------------------------------------------- the top level
+
+@pytest.mark.parametrize("verb", sorted(VERBS))
+def test_a_lanes_repo_inside_the_checkout_refuses_before_any_edit(box: Box, verb: str):
+    """`LANES_REPO` naming a directory INSIDE the checkout, with `LANES_FILE`
+    naming the register (slice 2a's writer w2a-c10, on slice 1b's
+    `commit_publish`). Every pathspec the helper gives git is spelled from the
+    top level, and git reads one relative to the directory it runs in: the
+    write's `git add` failed (6) after the edit was made, and S3's own
+    pending-path check asked about a register path that is not there. It
+    refuses (2) before any edit, naming the top level and the register."""
+    c = box.seam()
+    inside = c / "handoffs"
+    if verb == "commit":
+        # `commit`'s hand-edit form; with nothing of its own it is the
+        # publish act, which reaches the same check.
+        box.hand_edit(c)
+    before = box.snapshot(c)
+    w_before = box.w_state()
+    result = run_verb(box, verb, LANES_REPO=str(inside), LANES_FILE=str(c / REGISTER))
+    err = result.stderr
+    assert result.returncode == 2, (result.stdout, err)
+    assert f"in {inside}:" in err, "the refusal names the directory it was given"
+    assert f"LANES_REPO names handoffs/ inside the checkout {c}, not its top level" in err, err
+    assert f"LANES_REPO={c} LANES_FILE={c / REGISTER}" in err, "the recovery names both"
+    assert "Nothing was written." in err, err
+    assert "git add failed" not in err, err
+    assert box.snapshot(c) == before, "HEAD, the branch, the index, the tree and origin are as they were"
+    assert box.w_state() == w_before, "W is untouched"
+    assert not box.lock_of(c).exists(), "the lock is released"
+
+
+def test_the_top_level_the_refusal_names_carries_the_hand_edit(box: Box):
+    """The recovery the refusal above prints, followed word for word: the
+    same `commit` through the top level carries the pending hand edit and
+    publishes it, and the edit was never lost to the refusal."""
+    c = box.seam()
+    box.hand_edit(c)
+    refused = box.helper("commit", "the guarded hand edit", LANES_LANE=LANE,
+                         LANES_REPO=str(c / "handoffs"), LANES_FILE=str(c / REGISTER))
+    assert refused.returncode == 2, (refused.stdout, refused.stderr)
+    assert "LIVE · a hand edit" in (c / REGISTER).read_text(encoding="utf-8"), "the edit is still in place"
+    line = re.search(r"name the checkout itself: (LANES_REPO=\S+ LANES_FILE=\S+)", refused.stderr)
+    assert line, refused.stderr
+    named = dict(word.split("=", 1) for word in line.group(1).split())
+    again = box.helper("commit", "the guarded hand edit", LANES_LANE=LANE, **named)
+    assert again.returncode == 0, (again.stdout, again.stderr)
+    assert "LIVE · a hand edit" in box.origin_register(), "the hand edit is published"
+    assert box.unpublished(c) == [], "nothing is left unpublished"
