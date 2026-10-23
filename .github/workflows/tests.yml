@@ -93,16 +93,20 @@ jobs:
         with:
           python-version: '3.x'
 
-      # pytest is the TEST RUNNER and is the only thing installed here.
-      # Nothing this repository ships needs a Python package: its commands are
-      # bash, or `python3` (`lanes-index`, `lane-worktrees`) importing only the
-      # standard library, and the suite itself imports only the standard
-      # library.
-      # PINNED. A CI job that resolves "latest" on every run is a job whose
-      # result depends on the day it ran, which is the same objection this
-      # family makes to pinning a tag instead of a commit.
+      # pytest is the TEST RUNNER, pytest-xdist is what runs it three workers
+      # wide, and they are the only things installed here (xdist brings its
+      # one dependency, execnet). Nothing this repository ships needs a Python
+      # package: its commands are bash, or `python3` (`lanes-index`,
+      # `lane-worktrees`) importing only the standard library, and the suite
+      # itself imports only the standard library.
+      # PINNED, BOTH. A CI job that resolves "latest" on every run is a job
+      # whose result depends on the day it ran, which is the same objection
+      # this family makes to pinning a tag instead of a commit. pytest-xdist
+      # 3.8.0 (PyPI, 2025-07-01) declares `pytest>=7.0.0`, which 8.3.4 meets, and
+      # runs each worker's tests on its main thread, which the shell suite's
+      # wrapper needs to relay a TERM to the suite (`tests/test_xdist_three_wide.py`).
       - name: install the test runner
-        run: python3 -m pip install --disable-pip-version-check pytest==8.3.4
+        run: python3 -m pip install --disable-pip-version-check pytest==8.3.4 pytest-xdist==3.8.0
 
       # Per-invocation identity, never `git config --global`: a lane that
       # mirrors this step on a workstation must not be able to rewrite the
@@ -117,8 +121,28 @@ jobs:
             echo "GIT_COMMITTER_EMAIL=ci@openrepotools.invalid"
           } >> "$GITHUB_ENV"
 
+      # THREE WIDE (#77, step 2; Brett Heap's ruling of 2026-10-23). The shell
+      # suite is one test of 20 to 30 minutes and the other files add up to
+      # about as much again, so run serially a job took the sum of the two.
+      # `tests/run.sh`, and so every local run, stays serial. EACH FLAG IS
+      # LOAD-BEARING:
+      #   -n 3                    three workers;
+      #   --dist loadfile         a file's tests stay on one worker, so each
+      #                           module's own fixtures are built once, as they are
+      #                           serially, and the shell suite's wrapper is one
+      #                           unit of work;
+      #   --no-loadscope-reorder  xdist 3.8.0 otherwise sorts those units by
+      #                           size, biggest first, which would hand out the
+      #                           wrapper's small module nearly last.
+      # `tests/conftest.py` puts that module first in a worker's collection, so
+      # with the flag it is the first unit a worker is handed, and the other two
+      # workers run every other file beside it. The shell suite's timing table
+      # is printed by pytest's controller at the foot of the log, because a
+      # worker's own output reaches no log; its step summary is written by the
+      # suite itself, to `$GITHUB_STEP_SUMMARY`, from inside the worker.
+      # `tests/test_tests_workflow.py` fails this line without any of the three.
       - name: tests
-        run: python3 -m pytest tests -q
+        run: python3 -m pytest tests -q -n 3 --dist loadfile --no-loadscope-reorder
 
   # THE SKIP PATH, PROVED. A fork's first command is `git clone` without
   # `--recurse-submodules` and then `pytest`, and if that goes RED the fork is
@@ -129,7 +153,9 @@ jobs:
   #
   # `pytest -q` exits 0 on skips and 1 on failures, so the job's own status IS
   # the assertion; `-rs` prints the skip reasons, which is what a person
-  # reading this job wants to see.
+  # reading this job wants to see. It runs three wide like `tests` above, with
+  # the same three flags for the same reasons: xdist's controller collects every
+  # worker's skips into the one `-rs` summary.
   tests-no-submodule:
     runs-on: ubuntu-24.04
     steps:
@@ -142,7 +168,7 @@ jobs:
           python-version: '3.x'
 
       - name: install the test runner
-        run: python3 -m pip install --disable-pip-version-check pytest==8.3.4
+        run: python3 -m pip install --disable-pip-version-check pytest==8.3.4 pytest-xdist==3.8.0
 
       - name: the submodule really is not materialized
         run: |
@@ -153,7 +179,7 @@ jobs:
           fi
 
       - name: the suite skips rather than fails
-        run: python3 -m pytest tests -q -rs
+        run: python3 -m pytest tests -q -rs -n 3 --dist loadfile --no-loadscope-reorder
 
   # THE openrepotools PACKAGE, BUILT, CHECKED AGAINST THIS COMMIT, INSTALLED
   # AS A PERSON INSTALLS IT AND TESTED (#228, contracts/workflows.md). The

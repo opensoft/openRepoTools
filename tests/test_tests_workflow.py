@@ -86,11 +86,26 @@ PULL_REQUEST = {"types": ["opened", "synchronize", "reopened", "labeled"]}
 PUSH = {"branches": ["main", "release/v*"]}
 SCHEDULE = [{"cron": "17 4 * * *"}]
 
+#: THE TWO TEST JOBS RUN THE PYTHON TESTS THREE WIDE (#77, step 2; Brett Heap's
+#: ruling of 2026-10-23), and these are the pieces. EACH FLAG IS LOAD-BEARING:
+#: `-n 3` is the width; `--dist loadfile` keeps a file's tests on one worker
+#: and makes the shell suite's wrapper one unit; and `--no-loadscope-reorder`,
+#: because pytest-xdist 3.8.0 otherwise sorts those units by size, biggest
+#: first, and the wrapper's module is one of the smallest, so
+#: `tests/conftest.py`'s hook that puts it first would be undone
+#: (`tests/test_xdist_three_wide.py` runs both). THE PIN IS EXACT, and one
+#: version: pytest-xdist 3.8.0 was released on 2025-07-01 and declares
+#: `pytest>=7.0.0`, which 8.3.4 meets.
+XDIST_PIN = "pytest-xdist==3.8.0"
+XDIST_FLAGS = "-n 3 --dist loadfile --no-loadscope-reorder"
+TEST_JOBS = ("tests", "tests-no-submodule")
+
 #: THE THREE EXISTING JOBS AS TODAY'S FILE HOLDS THEM, written out here and
 #: never read from history: CI checks out one commit at `fetch-depth: 1`.
 #: Each is its runner, its checkout's options, its Python and its `run:`
 #: commands in order. The pull request's diff review answers for the rest
-#: of "byte for byte".
+#: of "byte for byte", of `guard-launch-mode`, which has not moved; `tests`
+#: and `tests-no-submodule` carry #77's xdist pin and flags.
 EXISTING_JOBS = {
     "guard-launch-mode": {
         "checkout": {"submodules": True, "fetch-depth": 1},
@@ -105,27 +120,29 @@ EXISTING_JOBS = {
         "checkout": {"submodules": True, "fetch-depth": 1},
         "python": "3.x",
         "runs": [
-            "python3 -m pip install --disable-pip-version-check pytest==8.3.4",
+            "python3 -m pip install --disable-pip-version-check "
+            f"pytest==8.3.4 {XDIST_PIN}",
             "{\n"
             '  echo "GIT_AUTHOR_NAME=openRepoTools CI"\n'
             '  echo "GIT_AUTHOR_EMAIL=ci@openrepotools.invalid"\n'
             '  echo "GIT_COMMITTER_NAME=openRepoTools CI"\n'
             '  echo "GIT_COMMITTER_EMAIL=ci@openrepotools.invalid"\n'
             '} >> "$GITHUB_ENV"\n',
-            "python3 -m pytest tests -q",
+            f"python3 -m pytest tests -q {XDIST_FLAGS}",
         ],
     },
     "tests-no-submodule": {
         "checkout": {"submodules": False, "fetch-depth": 1},
         "python": "3.x",
         "runs": [
-            "python3 -m pip install --disable-pip-version-check pytest==8.3.4",
+            "python3 -m pip install --disable-pip-version-check "
+            f"pytest==8.3.4 {XDIST_PIN}",
             "set -euo pipefail\n"
             "if [ -f upstream/openRepoShape/scripts/repo_shape.py ]; then\n"
             '  echo "the submodule IS checked out; this job proves nothing" >&2\n'
             "  exit 1\n"
             "fi\n",
-            "python3 -m pytest tests -q -rs",
+            f"python3 -m pytest tests -q -rs {XDIST_FLAGS}",
         ],
     },
 }
@@ -849,8 +866,9 @@ def test_tests_yml_has_exactly_the_four_gate_jobs(workflow):
 @pytest.mark.parametrize("job_id", sorted(EXISTING_JOBS))
 def test_tests_yml_existing_job_keeps_todays_runner_checkout_python_and_runs(
         workflow, job_id):
-    """The three jobs the contract leaves byte for byte keep today's
-    runner, checkout options, Python and `run:` commands."""
+    """The three jobs the contract leaves alone keep today's runner, checkout
+    options, Python and `run:` commands, but for #77's xdist pin and flags on
+    the two test jobs, which are held by name below."""
     job = jobs_of(workflow).get(job_id)
     assert isinstance(job, dict), f"tests.yml has no `{job_id}` job"
     want = EXISTING_JOBS[job_id]
@@ -864,6 +882,59 @@ def test_tests_yml_existing_job_keeps_todays_runner_checkout_python_and_runs(
         steps[1].get("with")
     runs = [step["run"] for step in steps if "run" in step]
     assert runs == want["runs"], f"`{job_id}`'s `run:` commands moved: {runs}"
+
+
+@NEEDS_UPSTREAM
+@pytest.mark.parametrize("job_id", TEST_JOBS)
+def test_tests_yml_test_job_installs_one_pinned_xdist_and_runs_three_wide(
+        workflow, job_id):
+    """#77, step 2: the install names pytest-xdist at ONE exact version beside
+    pytest's own pin, and the run carries `-n 3`, `--dist loadfile` and
+    `--no-loadscope-reorder`. Each is held on its own, so that dropping any one
+    says which: the width is gone, a file's tests are split across workers, the
+    pin floats with the day, or xdist hands the shell suite out nearly last."""
+    runs = [step["run"] for step in jobs_of(workflow)[job_id]["steps"]
+            if "run" in step]
+    installs = [run for run in runs if "pip install" in run]
+    assert len(installs) == 1, f"`{job_id}` has {len(installs)} pip installs"
+    words = shlex.split(installs[0])
+    assert "pytest==8.3.4" in words, words
+    assert [w for w in words if "xdist" in w] == [XDIST_PIN], (
+        f"`{job_id}` installs {[w for w in words if 'xdist' in w]}, "
+        f"not exactly {XDIST_PIN}")
+    commands = [run for run in runs if "-m pytest" in run]
+    assert len(commands) == 1, f"`{job_id}` has {len(commands)} pytest commands"
+    argv = shlex.split(commands[0])
+    assert "-n" in argv and argv[argv.index("-n") + 1:][:1] == ["3"], (
+        f"`{job_id}` does not run `-n 3`: {commands[0]}")
+    assert "--dist" in argv and argv[argv.index("--dist") + 1:][:1] == ["loadfile"], (
+        f"`{job_id}` does not run `--dist loadfile`: {commands[0]}")
+    assert "--no-loadscope-reorder" in argv, (
+        f"`{job_id}` does not run `--no-loadscope-reorder`, so xdist sorts the "
+        f"shell suite's module by size and hands it out nearly last: {commands[0]}")
+
+
+@NEEDS_UPSTREAM
+@pytest.mark.parametrize("job_id", ("guard-launch-mode", "package"))
+def test_tests_yml_the_other_jobs_run_no_xdist(workflow, job_id):
+    """The guard job runs `tests/run.sh -k`, which is serial and stays so, and
+    the `package` job runs its three modules at the pin the lock gives it: no
+    xdist in either."""
+    job = jobs_of(workflow)[job_id]
+    text = "\n".join(step_text(step) for step in job["steps"])
+    assert "xdist" not in text, f"`{job_id}` mentions xdist"
+    commands = [line for line in text.replace("\\\n", " ").splitlines()
+                if "-m pytest" in line or "run.sh" in line]
+    assert all("-n" not in line.split() and "--dist" not in line.split()
+               for line in commands), f"`{job_id}` runs pytest three wide: {commands}"
+
+
+def test_tests_yml_no_longer_says_pytest_is_the_only_thing_installed():
+    """The comment above the install said so, and with pytest-xdist beside it
+    that is no longer true."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "is the only thing installed here" not in text
+    assert XDIST_PIN in text
 
 
 def test_tests_yml_header_comment_names_both_push_branches_and_four_jobs():
