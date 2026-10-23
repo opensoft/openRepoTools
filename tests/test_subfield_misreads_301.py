@@ -115,7 +115,9 @@ TREE_COLS = ["kind", "workstation", "lane", "owner", "path", "branch", "base", "
 #: estate's root, the dir's own name). The parent is a real directory, so the
 #: control root the recorded dir places is `<parent>/.lane-state/<lane>`, and
 #: that is where the writers have to file the lane. A backslash below is a
-#: backslash in the file name: `\t` is two characters, not a TAB.
+#: backslash in the file name: `\t` is two characters, not a TAB. `cr` holds a
+#: real carriage return and nothing else of the four: it is the one dir that
+#: only the guard's `\r` arm in `lanes_rows` escapes (lane 3's review, 783).
 CASES = {
     "plain": ("repoP-1", "plain", "repoP"),
     "space": ("repoS-1", "My Projects", "repoS"),
@@ -124,6 +126,7 @@ CASES = {
     "bs-bs": ("repoD-1", "work3/dbl\\\\slash", "repoD"),
     "bs-n": ("repoN-1", "work4/new\\nline", "repoN"),
     "bs-octal": ("repoO-1", "work5/oct\\101x", "repoO"),
+    "cr": ("repoR-1", "work6/a\rb", "repoR"),
 }
 BACKSLASH = [k for k in CASES if k.startswith("bs-")]
 
@@ -148,7 +151,13 @@ class Misread:
     that is somebody else's.
 
     Each recorded dir is a real directory too, as a lane's checkout is, so
-    `lane <name>` can be asked to reach it."""
+    `lane <name>` can be asked to reach it.
+
+    EVERY ANSWER IS READ AS BYTES AND DECODED, NEVER WITH `text=True`
+    (`edit` and `raw` here, not `Estate.edit`): universal newlines read a lone
+    carriage return as a line break, so the `cr` dir, answered by `lane-dir`,
+    shown by `lanes` and `lane`, would come back cut in two by the harness
+    whatever the tool printed."""
 
     def __init__(self, root: Path):
         self.root = root
@@ -182,8 +191,28 @@ class Misread:
         self._worktrees: tuple | None = None
         self._lanes: subprocess.CompletedProcess | None = None
 
+    def raw(self, *argv, env: dict | None = None, timeout: float = 120) -> subprocess.CompletedProcess:
+        """`Estate.run` with the answer decoded and nothing done to it: the
+        same environment, directory and stdin, and no translation of a carriage
+        return into a newline."""
+        child = dict(self.e.env)
+        for key, value in (env or {}).items():
+            if value is None:
+                child.pop(key, None)
+            else:
+                child[key] = value
+        proc = subprocess.run([str(a) for a in argv], capture_output=True, env=child,
+                              timeout=timeout, cwd=str(self.e.root), stdin=subprocess.DEVNULL,
+                              check=False)
+        return subprocess.CompletedProcess(proc.args, proc.returncode, proc.stdout.decode("utf-8"),
+                                           proc.stderr.decode("utf-8"))
+
+    def edit(self, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
+        """`Estate.edit`, as bytes: `bash lanes-edit.sh <args>`."""
+        return self.raw("bash", test_lanes_index.LANES_EDIT, *args, env=env)
+
     def ok(self, *args: str) -> subprocess.CompletedProcess:
-        res = self.e.edit(*args)
+        res = self.edit(*args)
         assert res.returncode == 0, (args, res.stdout, res.stderr)
         return res
 
@@ -202,7 +231,7 @@ class Misread:
     def worktrees(self, *args: str) -> tuple[subprocess.CompletedProcess, list, list]:
         """`lanes-edit.sh worktrees <args>`: the answer, its TREE rows as
         dicts, and every other line it printed (`UNREAD`, `PARTIAL`)."""
-        res = self.e.edit("worktrees", *args)
+        res = self.edit("worktrees", *args)
         lines = [line for line in res.stdout.split("\n") if line]
         rows = [dict(zip(TREE_COLS, line.split(US))) for line in lines
                 if line.startswith("TREE" + US)]
@@ -212,7 +241,7 @@ class Misread:
     def lanes_command(self) -> subprocess.CompletedProcess:
         """The `lanes` command's `--all`, the listing a person reads, run once."""
         if self._lanes is None:
-            self._lanes = self.e.run("bash", LANES, "--all")
+            self._lanes = self.raw("bash", LANES, "--all")
         return self._lanes
 
     def all_trees(self) -> tuple[subprocess.CompletedProcess, list, list]:
@@ -348,8 +377,8 @@ def test_lane_reaches_each_lanes_recorded_dir(misread, cid):
     the dir cut at the TAB; decoded nowhere, every backslash lane would be. A
     dry run prints the act and launches nothing."""
     lane = misread.lane[cid]
-    res = misread.e.run("bash", REPO / "lane", lane, "--dry-run",
-                        env={"PCLAUDE": shutil.which("true") or "/bin/true"})
+    res = misread.raw("bash", REPO / "lane", lane, "--dry-run",
+                      env={"PCLAUDE": shutil.which("true") or "/bin/true"})
     assert res.returncode == 0, (res.returncode, res.stdout, res.stderr)
     first = res.stdout.split("\n", 1)[0]
     assert first == f"lane {lane} · dir {misread.dir[cid]} · profile team-02a · from the lane record", \
@@ -387,8 +416,8 @@ def test_a_named_worktree_read_finds_every_lanes_trees(misread, cid):
 
 def test_the_inventory_index_keeps_every_lanes_trees(misread):
     """`lanes-index sync --source inventory` copies the `worktrees --all`
-    listing, so the index holds one tree for each lane. Before the fix it held
-    six: the lane whose dir holds a TAB was not in it."""
+    listing, so the index holds one tree for each lane. Before the fix the
+    lane whose dir holds a TAB was not in it."""
     res = misread.e.index("sync", "--source", "inventory")
     assert res.returncode == 0, (res.stdout, res.stderr)
     conn = sqlite3.connect(str(misread.e.sqlite))
@@ -412,7 +441,7 @@ def test_lane_dir_answers_the_recorded_path_as_recorded(misread, cid):
     `new\\nline` as two lines, `oct\\101x` as `octAx`: a path that does not
     exist, or somebody else's. The controls, a dir with a space and one with a
     real TAB in it, were read whole before the fix."""
-    res = misread.e.edit("lane-dir", misread.lane[cid])
+    res = misread.edit("lane-dir", misread.lane[cid])
     assert res.returncode == 0, (res.returncode, res.stdout, res.stderr)
     assert res.stdout == misread.dir[cid] + "\n", \
         f"recorded {misread.dir[cid]!r}, answered {res.stdout!r}"
@@ -560,6 +589,53 @@ def test_column_seven_round_trips_through_each_decoder(decoder, locale):
         if enc != _pesc_bytes(value) or dec != value or any(b in enc for b in (b"\t", b"\n", b"\r")):
             bad.append((value, enc, dec))
     assert not bad, f"{len(bad)} of {len(CODEC)} miss, first: {bad[:3]}"
+
+
+#: WHAT NO ENCODER WRITES, handed to each decoder raw (lane 3's review of #301,
+#: 784): (id, the field as a reader could meet it, what the decoder gives back).
+#: A backslash before anything but another backslash, `t`, `n` or `r` is kept
+#: as it stands, and so is a backslash with nothing after it, so text no
+#: encoder wrote reads back as itself. `CODEC` above only ever hands a decoder
+#: what `row_field_escape` wrote, which holds no such backslash, so this arm of
+#: all three copies never ran, and broken, 94 of 94 cases still passed. The last
+#: two rows mix the arm with the four escapes: it has to hand the character
+#: after the backslash back to the loop, which is what a missing `continue`
+#: would lose.
+PASS_THROUGH = [
+    ("other", b"a\\qb", b"a\\qb"),
+    ("octal", b"\\101", b"\\101"),
+    ("trailing", b"/r/trail\\", b"/r/trail\\"),
+    ("alone", b"\\", b"\\"),
+    ("hex-and-quote", b'/r/a\\x41b\\"c', b'/r/a\\x41b\\"c'),
+    ("slash-then-escapes", b"a\\/b\\tc\\\\d\\n", b"a\\/b\tc\\d\n"),
+    ("between-and-after", b"a\\qb\\tc\\\\d\\", b"a\\qb\tc\\d\\"),
+]
+
+
+@pytest.mark.parametrize("locale", ["C", "C.UTF-8"])
+@pytest.mark.parametrize("decoder", ["lanes-edit.sh", "lane", "lanes"])
+def test_a_backslash_before_anything_else_is_kept_by_each_decoder(decoder, locale):
+    """THE DECODER'S PASS-THROUGH ARM, in each of its three copies
+    (`lanes-edit.sh`, `lane`, `lanes`), under `set -euo pipefail` and in both
+    locales as the round trip runs them: `a\\qb`, `\\101` and a trailing
+    backslash come back as they went in, a backslash before another backslash
+    or `t`, `n` or `r` is still decoded around them, and nothing is lost,
+    doubled or left looping."""
+    script = (_function("row_field_unescape_into", decoder)
+              + "set -euo pipefail\n"
+              + 'for v in "$@"; do\n'
+              + '  row_field_unescape_into "$v"\n'
+              + "  printf '%s\\0' \"$ROW_FIELD_OUT\"\n"
+              + "done\n")
+    res = subprocess.run(["bash", "-c", script, "bash", *[raw for _, raw, _ in PASS_THROUGH]],
+                         capture_output=True, check=False, timeout=60,
+                         env={"PATH": os.environ["PATH"], "LC_ALL": locale})
+    assert res.returncode == 0, res.stderr
+    out = res.stdout.split(b"\0")
+    assert len(out) == len(PASS_THROUGH) + 1 and out[-1] == b"", (len(out), len(PASS_THROUGH))
+    bad = [(name, raw, want, got) for (name, raw, want), got in zip(PASS_THROUGH, out)
+           if got != want]
+    assert not bad, f"{len(bad)} of {len(PASS_THROUGH)} miss, (id, raw, wanted, got): {bad}"
 
 
 # ---------------------------------------------------------- item 3: `by host`

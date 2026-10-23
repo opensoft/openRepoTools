@@ -7965,8 +7965,17 @@ dhp_resume_value() {   # <flattened argv, lowercased> — sets dhp_rv
 # rendering: `restart` and `lanes` lay them out, and a third caller that wants
 # a different shape does not need a fourth read.
 #
-#   <lane> <state> <workstation> <profile> <window> <last uuid> <dir>
+#   <lane> <state> <workstation> <profile> <window> <last uuid> <dir, escaped>
 #   <objects> <age> <restart line> <home> <forks>
+#
+# `<dir>` IS COLUMN 7 AND IT IS ESCAPED, NOT PLAIN (#301): the lane's recorded
+# dir is written the way `lane-worktrees`' porcelain `pesc` writes a field - a
+# backslash as `\\`, a TAB as `\t`, a newline as `\n` and a carriage return as
+# `\r` - so a dir holding a TAB is still one column and the row still seventeen
+# (see `row_field_escape`). A dir holding none of the four is printed as it is.
+# A caller that shows the dir or takes it for a path DECODES it first with
+# `row_field_unescape_into`, as `worktree_rows`, `lane`'s `split_row` and the
+# `lanes` renderer do; the `--dir` filter compares the dir as stored.
 #
 # THE FIRST TEN ARE CLAUSE (j)'s TEN, IN CLAUSE (j)'s ORDER (A11 Addendum 4
 # ruling 7): *"`lanes` and `restart` each render the subset of clause (j)'s ten
