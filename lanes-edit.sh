@@ -3256,7 +3256,10 @@ cp_rewritten() {   # <sha> <subject> <HEAD> [<the refusal>, as `cp_not_head` tak
 # HEAD IS STILL THIS WRITE'S COMMIT (rv1b-c3's NIT E: the drop's compare-and-
 # swap refused for a reason that is not a moved branch, a `refs/heads/<b>.lock`
 # held), no commit was made on top, and none is named: git could not move the
-# branch, and nothing was moved.
+# branch, and nothing was moved. WHERE ORIGIN MOVED (no fourth argument) the
+# publish act refuses ("moved past", 2), so the recovery is S6.3's archive,
+# `cp_recovery_steps` (705); with a fourth, origin did not move, and the
+# publish act is offered.
 cp_not_head() {   # <sha> <subject> <when another commit was made> [<the refusal, where origin did not move>] [<the exit status, 6 unless given>]
   cnh_why="${4:-the push was refused because origin/$LANES_BRANCH moved}"
   cnh_drop=", and dropping this write's commit to replay it would drop that one too"
@@ -3268,7 +3271,12 @@ cp_not_head() {   # <sha> <subject> <when another commit was made> [<the refusal
   fi
   if [ "$cnh_head" = "$1" ]; then
     note "HEAD is still this write's commit $1, so no commit was made on top of it: git could not move refs/heads/$LANES_BRANCH off it $3, and nothing was moved."
-    note "look at it: git -C $LANES_REPO show $1; every later write from this checkout refuses (S3's unpushed row) until it is published — LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act — or archived (S6.3)."
+    if [ -z "${4:-}" ]; then
+      note "look at it: git -C $LANES_REPO show $1"
+      cp_recovery_steps "it is"
+    else
+      note "look at it: git -C $LANES_REPO show $1; every later write from this checkout refuses (S3's unpushed row) until it is published — LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act — or archived (S6.3)."
+    fi
     die "$cnh_why, and git could not move the branch off this write's commit to drop it, so nothing was moved and it is kept on HEAD: $1 $2" "${5:-6}"
   fi
   # A COMMIT ON TOP IS ONE CASE; A REWRITE IS ANOTHER (rv1b-c's SHOULD A).
@@ -3276,7 +3284,11 @@ cp_not_head() {   # <sha> <subject> <when another commit was made> [<the refusal
     cp_rewritten "$1" "$2" "$cnh_head" "$cnh_why" "${5:-6}"
   note "HEAD is $cnh_head, not this write's commit $1: another commit was made on top of it in this checkout $3$cnh_drop."
   note "look at both: git -C $LANES_REPO log --oneline $1^..HEAD"
-  note "every later write from this checkout refuses (S3's unpushed row) until they are published — LANES_LANE=<lane> $SELF commit \"<what they are>\", the publish act — or archived (S6.3)."
+  if [ -z "${4:-}" ]; then
+    cp_recovery_steps "they are"
+  else
+    note "every later write from this checkout refuses (S3's unpushed row) until they are published — LANES_LANE=<lane> $SELF commit \"<what they are>\", the publish act — or archived (S6.3)."
+  fi
   die "$cnh_why, and this write's commit is no longer HEAD, so it is not replayed: it and the commit on top of it are kept on HEAD (Amendment 23 S4): $1 $2" "${5:-6}"
 }
 # THE DROP MOVED THE BRANCH, ITS TREE STEP WAS REFUSED, AND THE BRANCH COULD
@@ -3320,13 +3332,13 @@ cp_replay() {   # <sha> <subject>
      ! git -C "$LANES_REPO" cat-file -e "refs/remotes/origin/$LANES_BRANCH:$CP_KEEP_IF_GONE" 2>/dev/null; then
     note "origin/$LANES_BRANCH no longer has $CP_KEEP_IF_GONE, which this write edits in place and its base had: another writer deleted or moved it while this write's push was in flight."
     note "look at it: git -C $LANES_REPO show $1; and at origin's: git -C $LANES_REPO log -1 --stat refs/remotes/origin/$LANES_BRANCH -- $CP_KEEP_IF_GONE"
-    note "every later write from this checkout refuses (S3's unpushed row) until it is published — LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act — or archived (S6.3) and \`git -C $LANES_REPO reset --keep refs/remotes/origin/$LANES_BRANCH\` run."
+    cp_recovery_steps "it is"
     die "the push was refused because origin/$LANES_BRANCH moved, and origin's copy of $CP_KEEP_IF_GONE was deleted while this write's push was in flight, so a replay would find nothing to write into and drop this write; the commit is local and kept on HEAD: $1 $2" 6
   fi
   if [ "$CP_ATTEMPT" -ge 6 ]; then
     note "origin/$LANES_BRANCH moved under this write six times (Amendment 23 S4, ratified choice 4)."
     note "look at it: git -C $LANES_REPO show $1"
-    note "every later write from this checkout refuses (S3's unpushed row) until it is published — LANES_LANE=<lane> $SELF commit \"<what it is>\", the publish act — or archived (S6.3) and \`git -C $LANES_REPO reset --keep refs/remotes/origin/$LANES_BRANCH\` run."
+    cp_recovery_steps "it is"
     die "could not push origin/$LANES_BRANCH after six attempts; the commit is local and kept on HEAD: $1 $2" 6
   fi
   cr_err="$(git -C "$LANES_REPO" rev-parse --absolute-git-dir 2>/dev/null)/lanes-edit/reset.err"
@@ -3457,10 +3469,22 @@ cp_publish_moved() {
   # openRepoTools-3's review of #307, NIT 294, and its answer to Q2): as S3's
   # own refusal and the manual give them. And the reset names the tracking ref
   # in full, since a local branch named `origin/<b>` wins the short name.
+  cp_recovery_steps
+  die "refusing to publish: origin/$LANES_BRANCH has moved past the local commits, and the publish act makes only a fast-forward push (Amendment 23 S4, Open question 2). Nothing was pushed." 2
+}
+# S6.3'S RECOVERY WHERE ORIGIN HAS MOVED PAST HEAD: the list and the STOP
+# line, then the archive and the drop. The publish act's refusal above gives
+# it, and so do the four notes that offered the publish act first (705, lane
+# openRepoTools-3's re-check of #307's round 2, 343's fix carried to them):
+# `cp_replay`'s bound and keep-if-gone notes, and `cp_not_head`'s two where
+# origin moved. The publish act refuses there ("moved past", 2), so it is not
+# offered. The argument, where given, says what is kept: "it is", "they are".
+cp_recovery_steps() {   # [<what is kept>]
+  [ -z "${1:-}" ] ||
+    note "every later write from this checkout refuses (S3's unpushed row) until $1 archived and dropped here: origin/$LANES_BRANCH has moved past HEAD, so the publish act refuses (2)."
   note "RECOVERY (S6.3), in this order:"
   note "  list them: git -C $LANES_REPO cherry -v refs/remotes/origin/$LANES_BRANCH HEAD; if any '+' line is not your own write, STOP and take it to the lane its subject names — never reset, stash or overwrite a peer's work"
   cp_archive_steps
-  die "refusing to publish: origin/$LANES_BRANCH has moved past the local commits, and the publish act makes only a fast-forward push (Amendment 23 S4, Open question 2). Nothing was pushed." 2
 }
 # S6.3'S ARCHIVE, AFTER THE LIST AND THE STOP LINE: the publish act's refusal
 # above and `cp_under` (343) give it in these words. The archive goes to

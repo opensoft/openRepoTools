@@ -306,6 +306,7 @@ def test_bound_keeps_the_commit_on_head_exit_6_and_next_write_refuses(box: Box):
     assert f"could not push origin/main after six attempts; the commit is local and kept on HEAD: {sha}" in err
     assert f"git -C {c} show {sha}" in err
     assert f"git -C {c} reset --keep refs/remotes/origin/main" in err, err   # 703
+    _recovery_is_s63s_archive(err, c, "it is")   # 705
     assert box.pushes() == 6
     assert _set("LIVE · six times beaten") in (c / REGISTER).read_text(encoding="utf-8")
     assert _set("LIVE · six times beaten") not in box.origin_register()
@@ -375,6 +376,8 @@ def test_a_push_refused_with_origin_unmoved_names_a_commit_on_top_exit_6(box: Bo
     assert box.pushes() == 1
     assert box.origin_head() == tip
     assert len(box.unpublished(c)) == 2, "both kept on HEAD, for the publish act"
+    assert 'commit "<what they are>", the publish act' in err and "# the archive, on origin" not in err, \
+        "origin is unmoved: the publish act is offered, not S6.3's archive (705)"
     _settled(box, c)
 
 
@@ -1140,6 +1143,7 @@ def test_a_commit_made_on_top_before_the_replay_is_kept_exit_6(box: Box):
     assert result.returncode == 6, result.stderr
     assert "is no longer HEAD, so it is not replayed" in result.stderr
     assert "in this checkout before or while its push was in flight" in result.stderr, "the HEAD check fired, not the drop's"
+    _recovery_is_s63s_archive(result.stderr, c, "they are")   # 705
     assert "push refused (attempt 1 of 6)" not in result.stderr, "no reset was made"
     assert box.subject(c) == "handoff(repoS4-2@Eagle): a stamp from an unlocked writer"
     assert box.subject(c, "HEAD~1").startswith(f"LANES({LANE}@"), "this write's commit is under it"
@@ -1700,6 +1704,7 @@ def test_a_commit_landing_before_the_replays_drop_is_never_dropped_exit_6(box: B
     assert result.returncode == 6, result.stderr
     assert "between the replay's HEAD check and its drop" in result.stderr
     assert "is no longer HEAD, so it is not replayed" in result.stderr
+    _recovery_is_s63s_archive(result.stderr, c, "they are")   # 705
     assert "push refused (attempt 1 of 6)" not in result.stderr, "nothing is replayed"
     assert box.subject(c) == "handoff(repoS4-2@Eagle): a stamp from an unlocked writer"
     assert box.subject(c, "HEAD~1").startswith(f"LANES({LANE}@"), "this write's commit is under it"
@@ -1736,6 +1741,7 @@ def test_a_drop_refused_for_another_reason_names_git_and_no_commit_on_top_exit_6
     assert "it and the commit on top of it" not in err
     assert f"not this write's commit {sha}" not in err
     assert f"HEAD is still this write's commit {sha}" in err
+    _recovery_is_s63s_archive(err, c, "it is")   # 705
     assert f"git could not move the branch off this write's commit to drop it, so nothing was moved and it is kept on HEAD: {sha}" in err
     assert "push refused (attempt 1 of 6)" not in err, "nothing is replayed"
     assert len(box.unpublished(c)) == 1, "the one commit is kept, for the publish act"
@@ -1820,6 +1826,7 @@ def test_a_commit_landing_just_after_this_writes_commit_is_never_taken_for_it_ex
     assert box.subject(c, "HEAD~1").startswith(f"LANES({LANE}@"), "this write's commit is under the stamp"
     assert f"Commit {stamp} is dropped" not in err, "the stamp was taken for this write's commit"
     assert f"HEAD is {stamp}, not this write's commit {mine}" in err, err
+    _recovery_is_s63s_archive(err, c, "they are")   # 705
     # 343's smaller half: the stamp came after this write's commit and BEFORE
     # its push, so "while its push was in flight" alone was not true here.
     assert "in this checkout before or while its push was in flight" in err, err
@@ -1841,6 +1848,23 @@ def _archive_comes_after_the_list_and_the_stop_line(err: str, base: str, mine: s
     drop = err.find("reset --keep refs/remotes/origin/main", archive)
     assert 0 <= listed < stop < archive < drop, err
     assert 'commit "<what they are>", the publish act' not in err, "the publish act refuses here"
+
+
+def _recovery_is_s63s_archive(err: str, c: Path, kept: str) -> None:
+    """705 of lane openRepoTools-3's re-check of #307's round 2, 343's fix
+    carried to four sibling notes: where origin moved (`cp_replay`'s bound
+    and keep-if-gone notes, `cp_not_head`'s HEAD-still and on-top notes), the
+    publish act refuses ("moved past", 2), and they offered it first. Now
+    each says what is kept must be archived, then gives S6.3's recovery: the
+    list, the STOP line, the archive and the drop, in that order."""
+    lead = err.find(f"until {kept} archived and dropped here")
+    rec = err.find("RECOVERY (S6.3), in this order:", max(lead, 0))
+    listed = err.find(f"list them: git -C {c} cherry -v refs/remotes/origin/main HEAD", max(rec, 0))
+    stop = err.find("STOP and take it to the lane its subject names", max(listed, 0))
+    archive = err.find("# the archive, on origin", max(stop, 0))
+    drop = err.find(f"git -C {c} reset --keep refs/remotes/origin/main", max(archive, 0))
+    assert 0 <= lead < rec < listed < stop < archive < drop, err
+    assert '", the publish act' not in err, ("the publish act refuses here", err)
 
 
 def test_a_commit_landing_just_before_this_writes_commit_is_never_dropped_with_it_exit_6(box: Box):
@@ -2179,6 +2203,7 @@ def test_a_file_the_write_edits_in_place_deleted_on_origin_keeps_the_commit_exit
         assert f"origin's copy of {log} was deleted while this write's push was in flight" in err, err
         assert f"kept on HEAD: {sha}" in err
         assert f"git -C {c} reset --keep refs/remotes/origin/main" in err, err   # 703
+        _recovery_is_s63s_archive(err, c, "it is")   # 705
         assert "push refused (attempt" not in err, "nothing is dropped or replayed"
         assert "the in-place write" in (c / log).read_text(encoding="utf-8"), "the write is in this checkout"
         assert log not in box.git("--git-dir", str(box.origin), "ls-tree", "-r", "--name-only", "main").split(), \
