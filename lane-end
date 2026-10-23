@@ -2414,9 +2414,12 @@ SLU
     # see, between them and the move, is asked of what was moved: the pid
     # line of the lock that went with it (a writer that took the lock over
     # after it was read), the working directories (a process that came in
-    # during the git reads now works in the aside), and what leans on it (a
+    # during the git reads now works in the aside), what leans on it (a
     # clone made meanwhile names the old path, which is gone, so it is
-    # matched as written). Any of them moves it back, and holds it.
+    # matched as written), the windows' `LANES_REPO` (D37: a window opened
+    # meanwhile names the old path as spelled), and the mounts (one made
+    # meanwhile is in the aside, which carried it) (rv4b's SHOULD D, for
+    # the last two). Any of them moves it back, and holds it.
     sc_post=""; sc_moved_line=""
     IFS= read -r sc_moved_line < "$sc_aside/lanes/.lanes-edit.lock/pid" 2>/dev/null || :
     if [ "$sc_moved_line" != "$$ $sc_ident" ]; then
@@ -2431,6 +2434,19 @@ SLU
     sc_x="$(sc_dependents "$sc_c" "$sc_gone$sc_aside
 ")"
     if [ -n "$sc_x" ]; then sc_post="${sc_post:+$sc_post; }leaned on by $sc_x, which came as it was moved aside"; fi
+    sc_repo_scan
+    sc_x="$(sc_repo_inside "$sc_c")"
+    if [ -n "$sc_x" ]; then sc_post="${sc_post:+$sc_post; }the LANES_REPO of a live process came to name it as it was moved aside (pid $sc_x)"; fi
+    if [ "$sc_repo_mode" = none ] && [ "${sc_c%/*}" = "$sc_root" ]; then
+      sc_post="${sc_post:+$sc_post; }whether a window's LANES_REPO names it cannot be told as it was moved aside: there is no /proc here to read a process's environment from"
+    fi
+    sc_mount_scan
+    case "$sc_mount_mode" in
+      none) sc_post="${sc_post:+$sc_post; }whether a file system is mounted in it cannot be told as it was moved aside: no mount table that names / could be read (${LANE_END_MOUNTINFO:-/proc/self/mountinfo}, or mount)" ;;
+      *)
+        sc_x="$(sc_mounts_inside "$sc_aside")" || sc_x="(the mount table could not be matched)"
+        if [ -n "$sc_x" ]; then sc_post="${sc_post:+$sc_post; }a file system came to be mounted at or under it as it was moved aside: $(sc_first "$sc_x")"; fi ;;
+    esac
     if [ -n "$sc_post" ]; then
       if [ ! -e "$sc_c" ] && [ ! -L "$sc_c" ] && ( trap '' INT TERM; exec mv -- "$sc_aside" "$sc_c" ) 2>/dev/null; then
         if [ "$sc_moved_line" = "$$ $sc_ident" ]; then SC_LOCK="$sc_c/lanes/.lanes-edit.lock"; sc_lock_drop; fi

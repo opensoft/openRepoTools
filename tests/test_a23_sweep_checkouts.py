@@ -3082,3 +3082,99 @@ def test_a_lock_taken_over_at_the_move_moves_it_back(sweep):
     assert (c / ".git").is_dir()
     assert pid.read_text(encoding="utf-8") == "1 other-container otherhost\n"
     _no_aside(box)
+
+
+def test_a_window_that_names_it_after_the_last_read_moves_it_back(sweep):
+    """THE MOVE IS THE COMMIT POINT FOR D37's HOLD TOO (rv4b's SHOULD D,
+    probe P4). The windows' `LANES_REPO` was read before the git reads
+    under the lock, so a window opened during them on the CLOSED lane's
+    checkout was missed, and the checkout removed under it. After the move
+    the environments are read again, and a window that names the old path
+    holds it: it is moved back, its lock let go."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    pidfile = box.root / "late.pid"
+    _git_after_the_last_read(box, c, (
+        f"(cd {box.root} && LANES_REPO={c} exec sleep 600) </dev/null >/dev/null 2>&1 & "
+        f"echo $! > {pidfile}"))
+    try:
+        result, rows = sweep("--yes", LANES_LANE=RUNNER)
+        late = pidfile.read_text(encoding="utf-8").strip()
+        assert rows[str(c)][0] == "hold", rows[str(c)]
+        assert (f"the LANES_REPO of a live process came to name it as it was moved aside "
+                f"(pid {late})") in rows[str(c)][1], rows[str(c)]
+        assert "it was moved back" in rows[str(c)][1], rows[str(c)]
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert (c / ".git").is_dir()
+        assert not os.path.lexists(box.lock_of(c)), "its lock is let go"
+        _no_aside(box)
+    finally:
+        if pidfile.exists():
+            try:
+                os.kill(int(pidfile.read_text(encoding="utf-8")), signal.SIGKILL)
+            except (ProcessLookupError, ValueError):
+                pass
+
+
+def _mv_then(box: Sweep, c: Path, act: str) -> None:
+    """An `mv` first on PATH that moves `c` aside, then runs `act` (its
+    `$3` is the aside), as a change made by another process at that moment
+    would show; every other `mv` is the real one."""
+    real = shutil.which("mv")
+    assert real, "no mv on the test's own PATH"
+    shim = box.fakebin / "mv"
+    shim.write_text("#!/usr/bin/env bash\n"
+                    f'case "$*" in "-- {c} "*"/.{c.name}.removing-"*) {real} "$@" || exit $?; {act}; exit 0 ;; esac\n'
+                    f'exec {real} "$@"\n', encoding="utf-8")
+    shim.chmod(0o755)
+
+
+@pytest.mark.parametrize("then,said", [
+    ("a mount in it", "a file system came to be mounted at or under it as it was moved aside: 1 ("),
+    ("no table", "whether a file system is mounted in it cannot be told as it was moved aside"),
+], ids=["a mount in it", "no table"])
+def test_a_mount_made_as_it_is_moved_aside_moves_it_back(sweep, then, said):
+    """THE MOVE IS THE COMMIT POINT FOR THE MOUNTS TOO (rv4b's SHOULD D). The
+    mount table was read before the git reads under the lock. An `mv` first
+    on PATH moves the checkout aside and then, as the kernel would show a
+    mount made meanwhile, names a mount point inside the aside in the table
+    (`LANE_END_MOUNTINFO`, the seam), or leaves no table at all. Read again
+    after the move, it holds the checkout, which is moved back."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    table = _mount_table(box)
+    act = ("printf '35 21 0:45 /outside-x %s/.git/mnt rw,relatime - ext4 /dev/x rw\\n' "
+           f'"$3" >> {table}' if then == "a mount in it" else f": > {table}")
+    _mv_then(box, c, act)
+    result, rows = sweep("--yes", LANES_LANE=RUNNER, LANE_END_MOUNTINFO=table)
+    assert rows[str(c)][0] == "hold", rows[str(c)]
+    assert said in rows[str(c)][1], rows[str(c)]
+    assert "it was moved back" in rows[str(c)][1], rows[str(c)]
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert (c / ".git").is_dir()
+    assert not os.path.lexists(box.lock_of(c)), "its lock is let go"
+    _no_aside(box)
+
+
+def test_a_proc_gone_as_a_clone_beside_W_is_moved_aside_moves_it_back(sweep):
+    """WITH NO `/proc` AFTER THE MOVE, A CLONE BESIDE W IS MOVED BACK (rv4b's
+    SHOULD D, as D37 holds it at the listing and under the lock): whether a
+    window came to write through it cannot be told. `LANE_END_PROC`, the
+    seam, is a link to `/proc` that an `mv` first on PATH takes away just
+    after it moves the leaf clone aside."""
+    box = sweep.box
+    c3 = box.profile_clones[2]
+    _free_profile_clones(box)
+    proc = box.root / "proc-link"
+    proc.symlink_to("/proc")
+    real = shutil.which("mv")
+    _mv_then(box, c3, f"{real} -- {proc} {proc}.gone")
+    result, rows = sweep("--yes", LANES_LANE=RUNNER, LANE_END_PROC=str(proc))
+    assert rows[str(c3)][0] == "hold", rows[str(c3)]
+    assert ("whether a window's LANES_REPO names it cannot be told as it was moved aside: "
+            "there is no /proc here") in rows[str(c3)][1], rows[str(c3)]
+    assert "it was moved back" in rows[str(c3)][1], rows[str(c3)]
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert (c3 / ".git").is_dir()
+    assert not os.path.lexists(box.lock_of(c3)), "its lock is let go"
+    assert not list(box.w.parent.glob(".*.removing-*")), "no half-removed aside is left"
