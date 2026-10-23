@@ -391,8 +391,10 @@ def _says(estate: Estate) -> dict:
         "kept-on-head": (6, True, ["HANDOFF NOT PUSHED", "kept on HEAD", "(exit 6)",
                                    "Never force"], []),
         "moved-or-owned": (7, False, [
-            "HANDOFF NOT WRITTEN", f"digest {OLD_DIGEST}", "(exit 7;", "once more",
-            "if a restart owns it, do not retry"], []),
+            "HANDOFF NOT WRITTEN", f"digest {OLD_DIGEST}", "(exit 7;",
+            "run the block under WHERE THE HANDOFF IS again", "reads a new digest",
+            "makes a new prepared file", "run this block once more",
+            "a restart owns it, do not retry"], []),
         "no-handoff": (8, False, ["HANDOFF NOT PUBLISHED", "exited 8", "nothing was written"], []),
         "environment": (1, False, ["HANDOFF NOT PUBLISHED", "exited 1", "nothing was written"], []),
         "lock": (4, False, ["HANDOFF NOT PUBLISHED", "exited 4", "nothing was written"], []),
@@ -416,6 +418,25 @@ def test_each_exit_of_the_verb_is_said_and_the_swap_goes_on(estate, shell, case)
     for words in never:
         assert words not in proc.stdout, f"{case}: {words!r} must not be said\n{proc.stdout}"
     assert estate.verbs().count("write-handoff") == 1, "one call, and it is never repeated"
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("case", CASES)
+def test_the_new_file_is_kept_and_named_wherever_nothing_was_written(estate, shell, case):
+    """rv3's MUST 1, for the call's own outcomes: where the verb wrote nothing
+    (no stdout), the session's new file is not lost with the swap. The block
+    names the temporary file that holds it, for the report; where the verb
+    wrote the handoff, there is nothing to keep and nothing is said of it."""
+    rc, written, _, _ = _says(estate)[case]
+    out = f"{estate.handoff}\tdeadbeef" if written else ""
+    proc = estate.run(shell, estate.step2(), STUB_WH_RC=str(rc), STUB_WH_OUT=out)
+    sent = _write_call(estate)["argv"][3]
+    kept = f"kept at {sent}"
+    if written:
+        assert kept not in proc.stdout, proc.stdout
+    else:
+        assert kept in proc.stdout, f"{case}: the new file is not named\n{proc.stdout}"
+        assert "name that path in the report" in proc.stdout, proc.stdout
 
 
 def test_refusal_text_keeps_R_A11_11():
@@ -625,6 +646,39 @@ def test_a_handoff_that_moved_after_its_digest_was_read_is_refused_and_nothing_i
     assert real.subjects()[0] == "a peer edits the handoff"
     assert "a peer line" in real.origin_file(HANDOFF_REL)
     assert real.origin_file(HANDOFF_REL) != REAL_NEW
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("how", ["routed", "seam"])
+def test_a_lane_checkout_behind_origin_is_7_once_and_written_when_step_2_is_run_again(
+        real, shell, how):
+    """rv3's SHOULD 2 (question 3 of the body), ported from its probe. A lane
+    checkout behind origin on its handoff: `handoff-path --create` leaves it
+    as it is, the digest is of its stale copy, and the verb fast-forwards it
+    first, so the first call is 7 with nothing published. The 7 arm's words
+    are the way out: the block under WHERE THE HANDOFF IS run again reads the
+    digest the checkout has now, and the call made once more writes the new
+    block over the peer's file, which survives under it."""
+    if how == "seam":
+        real.seam()
+    else:
+        made = real.helper("handoff-path", REAL_LANE, "--create")
+        assert made.returncode == 0, made.stderr
+    peer_text = HANDOFF + "a peer line, pushed from elsewhere\n"
+    real.peer_pushes(HANDOFF_REL, peer_text)
+    careful = (f'[ -z "$prepared_file" ] || {{ printf %s {shlex.quote(BLOCK)} '
+               "&& printf -- '---\\n\\n' && cat -- \"$handoff_file\"; } > \"$prepared_file\"")
+    script = "\n".join([f"L={shlex.quote(str(HELPER))}", f"lane={REAL_LANE}", "ws=Eagle",
+                        f"why={shlex.quote(REAL_WHY)}", _block(B1), careful, _block(B2)])
+    first = _real_run(real, shell, script)
+    assert first.returncode == 0, _said(first)
+    assert "(exit 7;" in first.stdout, _said(first)
+    assert "run the block under WHERE THE HANDOFF IS again" in first.stdout, _said(first)
+    assert real.origin_file(HANDOFF_REL) == peer_text, "nothing is published on a 7"
+    second = _real_run(real, shell, script)
+    assert second.returncode == 0, _said(second)
+    assert "handoff written:" in second.stdout, _said(second)
+    assert real.origin_file(HANDOFF_REL) == prepended(peer_text, BLOCK), _said(second)
 
 
 @pytest.mark.parametrize("shell", SHELLS)

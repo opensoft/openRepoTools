@@ -479,7 +479,13 @@ checkout's lock, and `LANES_LANE` names the lane. (This block used to commit in 
 file, the shared workspace checkout among them, with no lock, and to rebase on a pull before its push; finding
 282 of the review of opensoft/openRepoTools#307 names it one of the three writers that did.) A STAGED ENTRY
 THIS HANDOFF DID NOT MAKE and an operation in progress are the verb's refusals now, made before anything is
-committed (2); a handoff that moved after its digest was read is exit 7, and nothing is published.
+committed (2); once lane openRepoTools-3's finding 601 on opensoft/openRepoTools#312 is fixed, so is a
+handoff target in another lane's clone of the register, with nothing written. A handoff that moved after its
+digest was read is exit 7, and nothing is published; once that review's finding 603 is in, a restart fence's
+refusal is 7 too, where it is 2 today. A 7 is not answered by calling again with the same digest: the block under WHERE THE HANDOFF IS is run
+again, for a new digest and a new prepared file, and the call is made once more, once. A lane checkout behind
+origin on its handoff meets this on its first call, because the verb brings the checkout to origin before it
+compares.
 `$hf_subject` is the commit's one-line subject: the lane, the workstation (`none` where step 1 found none) and
 the why in the operator's words, `handoff` where there is none.
 
@@ -495,6 +501,7 @@ if [[ -n "$handoff_file" && -n "$prior_sha256" && -s "${prepared_file:-}" ]]; th
   # ITS STDOUT IS `<file><TAB><sha256>` ONCE THE FILE IS WRITTEN, whatever the exit; its own words are on stderr.
   hf_path="${hf_out%%$'\t'*}"
   hf_wrote="nothing was written"; [[ -z "$hf_out" ]] || hf_wrote="the file is written at $hf_path"
+  hf_kept="The new file is kept at $prepared_file: name that path in the report, so that its top block can be put at the head of the handoff by hand once this is answered."
   case "$hf_rc" in
     0) printf 'handoff written: %s (pushed from the lane checkout; a handoff in another repository is written and never committed, and its note above says so)\n' "$hf_path" ;;
     2) if [[ -n "$hf_out" ]]; then
@@ -504,11 +511,13 @@ if [[ -n "$handoff_file" && -n "$prior_sha256" && -s "${prepared_file:-}" ]]; th
        fi ;;
     3) printf 'HANDOFF PUSHED, NOT CONFIRMED: the push went, or timed out, and origin could not be read back to show the commit on it (exit 3; the note above names it). Do not call it published until it is read back.\n' ;;
     6) printf 'HANDOFF NOT PUSHED: its commit is kept on HEAD of the lane checkout and named above (exit 6), and every later write from that checkout refuses until it is published; the note above names the act. Never force.\n' ;;
-    7) printf 'HANDOFF NOT WRITTEN: the handoff is no longer the bytes digest %s names, or a restart owns it (exit 7; its words above say which), and nothing was published. If it moved, read it again, make the new file from what is there now, and make the call once more; if a restart owns it, do not retry, because that restart writes this handoff.\n' "$prior_sha256" ;;
+    7) printf 'HANDOFF NOT WRITTEN: the handoff is no longer the bytes digest %s names, or a restart owns it (exit 7; its words above say which), and nothing was published. If it moved, run the block under WHERE THE HANDOFF IS again, which reads a new digest and makes a new prepared file, make the new file in it from what is there now, and run this block once more. If a restart owns it, do not retry: that restart writes this handoff.\n' "$prior_sha256" ;;
     *) printf 'HANDOFF NOT PUBLISHED: write-handoff exited %s (its words are above); %s.\n' "$hf_rc" "$hf_wrote" ;;
   esac
+  # WHERE NOTHING WAS WRITTEN, THE NEW FILE IS NOT LOST WITH THE SWAP: its temporary file is named for the report.
+  [[ -n "$hf_out" ]] || printf '%s\n' "$hf_kept"
 else
-  printf 'HANDOFF NOT WRITTEN: there is no handoff located, no digest read or no prepared file written, so write-handoff was NOT called. The swap goes on (R-A11-11); the report carries this line.\n'
+  printf 'HANDOFF NOT WRITTEN: there is no handoff located, no digest read or no prepared file written, so write-handoff was NOT called. Write the new top block if it is not written yet, and put it whole in the report, so that it can be put at the head of the handoff by hand. The swap goes on (R-A11-11); the report carries this line.\n'
 fi
 ```
 
