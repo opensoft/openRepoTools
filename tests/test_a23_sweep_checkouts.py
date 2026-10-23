@@ -12,7 +12,8 @@ with what they hold and never removed by this build: nothing outside
 
 EVERY RUN HERE IS THE REAL `lane-end` AND THE REAL `lanes-edit.sh` IN A
 SANDBOX: `tests/a23_box.py`'s `RegisterBox` (a bare origin, W cloned from it,
-the `workspace.yaml` naming W, a `$HOME` of its own), with lanes in the
+the `workspace.yaml` naming W, a `$HOME` and a `$TMPDIR` of its own, which
+with W's parent are the places the dependents scan reads), with lanes in the
 register and the logs, their checkouts under `<W>-lanes/`, and three
 per-profile clones beside W chained by alternates. The fixture is #202's
 `ended` style (`tests/test_precision_90a_96.py`): one function that runs the
@@ -163,9 +164,10 @@ def sweep(tmp_path: Path):
     root = Path(os.path.realpath(tmp_path)) / "s"
     box = Sweep(root)
     # EVERY PATH A RUN COULD REMOVE IS UNDER THIS TEST'S OWN BASETEMP: W, its
-    # parent, `<W>-lanes/` and the `$HOME` every helper reads are the box's.
+    # parent, `<W>-lanes/` and the `$HOME` every helper reads are the box's,
+    # and so is the `$TMPDIR` the dependents scan reads with them.
     base = Path(os.path.realpath(tmp_path))
-    for path in (box.w, box.w.parent, box.lanes_root, box.home):
+    for path in (box.w, box.w.parent, box.lanes_root, box.home, Path(box.env["TMPDIR"])):
         assert Path(os.path.realpath(path)).is_relative_to(base), path
     assert box.env["HOME"] == str(box.home)
 
@@ -2119,6 +2121,153 @@ def test_a_store_kept_inside_a_clone_is_leaned_on(sweep):
     assert c.is_dir()
     assert store.is_dir()
     box.git("-C", str(borrower), "fsck", "--connectivity-only")
+
+
+def _borrower(box: Sweep, path: Path, lender: Path) -> Path:
+    """A clone at `path` that borrows `lender`'s objects through its
+    alternates file (`git clone --no-local --reference`, lane
+    openRepoTools-3's probe for 352), with a commit of its own that origin
+    lacks: removing `lender` would leave it unable to fsck or push it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    box.git("clone", "-q", "--no-local", "--reference", str(lender), str(box.origin), str(path))
+    box.quiet(path)
+    alternates = path / ".git" / "objects" / "info" / "alternates"
+    assert f"{lender}/.git/objects" in alternates.read_text(encoding="utf-8")
+    box.write(path, "rescue.md", "a commit only this clone has\n")
+    box.commit(path, "a commit of its own", "rescue.md")
+    return path
+
+
+DEPENDENTS_AFAR = [
+    pytest.param(lambda box: box.w.parent / ".lane-worktrees" / "lane-x",
+                 id="in a hidden directory beside W"),
+    pytest.param(lambda box: box.w.parent / "aproject" / "review" / "lane-x-review",
+                 id="in a project's review directory"),
+    pytest.param(lambda box: box.w.parent / "aproject" / "worktrees" / "wt-1" / "review" / "deep",
+                 id="five levels under W's parent"),
+    pytest.param(lambda box: Path(box.env["TMPDIR"]) / "rescue",
+                 id="in TMPDIR"),
+    pytest.param(lambda box: box.lanes_root / "tab\there",
+                 id="whose own path holds a TAB"),
+]
+
+
+@pytest.mark.parametrize("where", DEPENDENTS_AFAR)
+def test_a_dependent_anywhere_in_the_scope_holds(sweep, where):
+    """WHAT LEANS ON A CHECKOUT IS LOOKED FOR WHERE CLONES ARE MADE (lane
+    openRepoTools-3's SHOULD 352; S6.2 (b): *"no other clone's alternates
+    file names it"*): under W's parent to depth 6, hidden directories
+    included, and under `$TMPDIR` and `$HOME` to depth 4, not only in W, the
+    entries beside it and `<W>-lanes/`. A `--reference` clone of the CLOSED
+    lane's checkout, with a commit of its own, holds it in each place, by
+    the dry run and by `--yes`, and stays whole. A TAB in the dependent's
+    own path splits off only its name (NIT 378: the target is written
+    first, and the target is what is matched)."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    dep = _borrower(box, where(box), c)
+    for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+        result, rows = sweep(*args, **env)
+        assert result.returncode in (0, 3), (result.stdout, result.stderr)
+        assert rows[str(c)][0] == "hold", rows[str(c)]
+        assert f"leaned on by {dep} " in rows[str(c)][1], rows[str(c)]
+    assert c.is_dir()
+    box.git("-C", str(dep), "fsck", "--connectivity-only")
+
+
+def test_the_dry_run_names_the_dependents_scope(sweep):
+    """THE SCOPE IS SAID (SHOULD 352), so a person knows where a dependent
+    would not be seen."""
+    box = sweep.box
+    result, _ = sweep()
+    assert result.returncode == 3, (result.stdout, result.stderr)
+    assert (f"  dependents     : every repository under {box.w.parent}/ to depth 6, hidden "
+            f"ones too, and under {box.env['TMPDIR']}/ and {box.home}/ to depth 4; read "
+            "again under each lock") in result.stdout, result.stdout
+
+
+def test_a_dependents_scan_that_fails_holds_every_candidate(sweep):
+    """A SCAN THAT CANNOT FINISH HOLDS EVERY CANDIDATE (SHOULD 352): what
+    leans on them is then unknown. Here a `find` first on PATH fails the
+    scan with words of its own; both CLOSED lanes' checkouts are held, by
+    the dry run and by `--yes`, naming the failure."""
+    box = sweep.box
+    c, other = box.checkout(CLOSED), _closed_checkout(box)
+    real = shutil.which("find")
+    assert real, "no find on the test's own PATH"
+    shim = box.fakebin / "find"
+    shim.write_text("#!/usr/bin/env bash\n"
+                    'case " $* " in *" -name objects "*) '
+                    "echo 'find: FAKE: the scan broke' >&2; exit 1 ;; esac\n"
+                    f'exec {real} "$@"\n', encoding="utf-8")
+    shim.chmod(0o755)
+    for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+        result, rows = sweep(*args, **env)
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        for path in (c, other):
+            assert rows[str(path)][0] == "hold", rows[str(path)]
+            assert (f"what leans on it cannot be told: find over {box.w.parent} failed: "
+                    "find: FAKE: the scan broke") in rows[str(path)][1], rows[str(path)]
+    assert c.is_dir() and other.is_dir()
+
+
+@pytest.mark.skipif(getattr(os, "geteuid", lambda: 1)() == 0,
+                    reason="root reads a directory whose mode is 000")
+def test_a_directory_the_dependents_scan_cannot_read_is_counted_and_holds_nothing(sweep):
+    """A DIRECTORY THE SCAN CANNOT READ IS COUNTED AND SAID, AND HOLDS NOTHING
+    (SHOULD 352, by question 2's rule for working directories): another
+    user's directories are never readable, and holding on them would hold
+    every checkout on any host that has one. Here a mode-000 directory
+    beside W is counted once, though two scopes meet it, and the CLOSED
+    lane's checkout is removed."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    private = box.w.parent / "private"
+    private.mkdir()
+    private.chmod(0)
+    try:
+        result, rows = sweep()
+        assert result.returncode == 3, (result.stdout, result.stderr)
+        assert rows[str(c)][0] == "remove", rows[str(c)]
+        assert ("  (1 director(ies) the dependents scan could not read - another user's, or "
+                "gone while read - are not looked in)") in result.stdout, result.stdout
+        result, rows = sweep("--yes", LANES_LANE=RUNNER)
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert rows[str(c)][0] == "removed", rows[str(c)]
+    finally:
+        private.chmod(0o755)
+
+
+@pytest.mark.skipif(getattr(os, "geteuid", lambda: 1)() == 0,
+                    reason="root reads a file whose mode is 000")
+@pytest.mark.parametrize("which", [".git file", "alternates file"])
+def test_a_dependents_file_that_cannot_be_read_holds_every_candidate(sweep, which):
+    """A `.git` OR ALTERNATES FILE THAT CANNOT BE READ HOLDS EVERY CANDIDATE
+    (lane openRepoTools-3's NIT 356): whose objects it names is unknown. A
+    `.git` file of mode 000 was skipped before, and the checkout its
+    directory works in was removed."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    if which == ".git file":
+        sharer = box.w.parent / "sharer"
+        sharer.mkdir()
+        unreadable = sharer / ".git"
+        unreadable.write_text(f"gitdir: {c}/.git\n", encoding="utf-8")
+        named = f"the .git file of {sharer} cannot be read"
+    else:
+        dep = _borrower(box, box.w.parent / ".lane-worktrees" / "lane-x", c)
+        unreadable = dep / ".git" / "objects" / "info" / "alternates"
+        named = f"the alternates file of {dep} cannot be read"
+    unreadable.chmod(0)
+    try:
+        for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+            result, rows = sweep(*args, **env)
+            assert result.returncode == 0, (result.stdout, result.stderr)
+            assert rows[str(c)][0] == "hold", rows[str(c)]
+            assert f"what leans on it cannot be told: {named}" in rows[str(c)][1], rows[str(c)]
+        assert c.is_dir()
+    finally:
+        unreadable.chmod(0o644)
 
 
 GIT_FILES = [

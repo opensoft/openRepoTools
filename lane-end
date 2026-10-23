@@ -1362,8 +1362,9 @@ SC_IDX
   #       with is itself a hold: nothing can be proved published. IGNORED
   #       files do not hold — the register's own rules keep them out of every
   #       commit — and they are named, so a person sees them first;
-  #   (b) another repository whose alternates file names its objects, and its
-  #       own linked worktrees;
+  #   (b) another repository whose alternates file names its objects, looked
+  #       for under W's parent, `$TMPDIR` and `$HOME` (SHOULD 352, below), and
+  #       its own linked worktrees; a scan that cannot finish holds them all;
   #   (c) a process this user can see whose working directory is at or under
   #       it: `/proc/*/cwd` on Linux, `lsof` on macOS, and with neither it is
   #       held as "cannot tell". A process whose directory cannot be read
@@ -1480,62 +1481,140 @@ SH_REFS
     return 0
   }
 
-  # (b) WHAT LEANS ON WHAT: `<repository> TAB <the real object directory its
-  # alternates file names>`, for W, every repository in W's own directory and
-  # every entry of `<W>-lanes/`, hidden ones included. Read afresh before each
-  # removal, so a dependent kept earlier in the run still holds what it
-  # borrows from.
+  # (b) WHAT LEANS ON WHAT, LOOKED FOR WHERE CLONES ARE MADE (lane
+  # openRepoTools-3's SHOULD 352; S6.2 (b): *"no other clone's alternates
+  # file names it"*): every repository under W's parent to depth 6, hidden
+  # directories included, and under `$TMPDIR` (or /tmp) and `$HOME` to depth
+  # 4, by their real paths. `find` lists each object directory, pruned there,
+  # and each `.git` FILE. An object directory with an alternates file is a
+  # repository's store, and each line of that file names an object directory
+  # the repository borrows from: `sc_dep_lines` holds `<the real object
+  # directory named> TAB <the repository>`, THE TARGET FIRST (NIT 378), so a
+  # TAB in the repository's own path stays in its own field, and the target
+  # is what is matched. Read afresh under each lock, so a dependent kept
+  # earlier in the run still holds what it borrows from.
   #
   # AND A `.git` FILE IS READ THE SAME WAY (rv4's NIT 1): a directory whose
   # `.git` file names a clone's git directory, or one inside it, works in it,
   # and removing the clone takes that away. `sc_gitfile_lines` holds `<the
-  # directory> TAB <the real git directory its .git file names>`. A linked
+  # real git directory its .git file names> TAB <the directory>`. A linked
   # worktree is one, and is also held through `.git/worktrees/`.
-  sc_dep_lines=""; sc_gitfile_lines=""
+  #
+  # A SCAN THAT CANNOT FINISH HOLDS EVERY CANDIDATE (`sc_dep_fail`), since
+  # what leans on each is then unknown: a scope that cannot be entered, a
+  # `find` that fails for anything but a directory it cannot read, and an
+  # alternates or `.git` file that cannot be read (NIT 356). A DIRECTORY
+  # `find` CANNOT READ — another user's, or one gone while read — is counted
+  # and said, and holds nothing, by question 2's rule for working
+  # directories: one never readable would hold every checkout for good. It
+  # is counted once, though two scopes meet it.
+  sc_dep_lines=""; sc_gitfile_lines=""; sc_dep_fail=""; sc_dep_unread=0
+  sc_dep_at=(); sc_dep_to=(); sc_dep_named=()
+  sc_dep_root() {   # <depth> <the directory as given>
+    sdr_r=""
+    if [ -n "$2" ]; then sdr_r="$(sc_real "$2")"; fi
+    sc_dep_to+=("$1"); sc_dep_at+=("$sdr_r"); sc_dep_named+=("${sdr_r:-${2:-(unset)}}")
+  }
+  sc_dep_root 6 "$sc_root"
+  sc_dep_root 4 "${TMPDIR:-/tmp}"
+  sc_dep_root 4 "${HOME:-}"
   sc_dep_scan() {
-    sc_dep_lines=""; sc_gitfile_lines=""
-    for sds_e in "$sc_w" "$sc_root"/* "$sc_home"/* "$sc_home"/.[!.]* "$sc_home"/..?*; do
-      [ -d "$sds_e" ] || continue
-      if [ -f "$sds_e/.git" ] && [ ! -L "$sds_e/.git" ]; then
-        # git strips a trailing CR from the line (rv4-c3's NIT c3-3), and so
-        # does `tr`, first: BSD `sed` reads no `\r` in its script.
-        sds_g="$(tr -d '\r' 2>/dev/null < "$sds_e/.git" | sed -n -e '1s/^gitdir: //p')" || sds_g=""
-        case "$sds_g" in '') : ;; /*) : ;; *) sds_g="$sds_e/$sds_g" ;; esac
-        if [ -n "$sds_g" ]; then
-          sds_r="$(sc_real "$sds_g")"
-          if [ -n "$sds_r" ]; then
-            sc_gitfile_lines="${sc_gitfile_lines}${sds_e}${sc_tab}${sds_r}
-"
-          fi
-        fi
+    sc_dep_lines=""; sc_gitfile_lines=""; sc_dep_fail=""; sc_dep_unread=0
+    sds_dl=""; sds_gl=""; sds_unread=""; sds_i=0
+    while [ "$sds_i" -lt "${#sc_dep_to[@]}" ]; do
+      sds_root="${sc_dep_at[$sds_i]}"; sds_depth="${sc_dep_to[$sds_i]}"
+      sds_named="${sc_dep_named[$sds_i]}"; sds_i=$((sds_i + 1))
+      if [ -z "$sds_root" ] || [ ! -d "$sds_root" ] || [ ! -r "$sds_root" ] || [ ! -x "$sds_root" ]; then
+        sc_dep_fail="${sc_dep_fail:-$sds_named cannot be entered and listed}"; continue
       fi
-      if [ -f "$sds_e/.git/objects/info/alternates" ]; then
-        sds_a="$sds_e/.git/objects/info/alternates"; sds_o="$sds_e/.git/objects"
-      elif [ -f "$sds_e/objects/info/alternates" ]; then
-        sds_a="$sds_e/objects/info/alternates"; sds_o="$sds_e/objects"
-      else
-        continue
+      LE_TMP="$(mktemp "${TMPDIR:-/tmp}/lane-end-sweep.XXXXXX" 2>/dev/null || printf '')"
+      if [ -z "$LE_TMP" ]; then
+        sc_dep_fail="${sc_dep_fail:-no temporary file could be made for the list of what is under $sds_root}"; continue
       fi
-      while IFS= read -r sds_l || [ -n "$sds_l" ]; do
-        case "$sds_l" in '' | '#'*) continue ;; esac
-        case "$sds_l" in /*) sds_t="$sds_l" ;; *) sds_t="$sds_o/$sds_l" ;; esac
-        sds_r="$(sc_real "$sds_t")"
-        if [ -n "$sds_r" ]; then
-          sc_dep_lines="${sc_dep_lines}${sds_e}${sc_tab}${sds_r}
+      sds_rc=0
+      sds_err="$(LC_ALL=C find "$sds_root" -maxdepth $((sds_depth + 2)) \( -type d -name objects -print0 -prune \) -o \( -type f -name .git -print0 \) 2>&1 >"$LE_TMP")" || sds_rc=$?
+      sds_other=""; sds_counted=0
+      while IFS= read -r sds_l; do
+        case "$sds_l" in
+          '') : ;;
+          *": Permission denied" | *": No such file or directory")
+            sds_unread="$sds_unread$sds_l
+"; sds_counted=1 ;;
+          *) sds_other="${sds_other:-$sds_l}" ;;
+        esac
+      done <<SDS_ERR
+$sds_err
+SDS_ERR
+      if [ -n "$sds_other" ]; then
+        sc_dep_fail="${sc_dep_fail:-find over $sds_root failed: $sds_other}"
+      elif [ "$sds_rc" != 0 ] && [ "$sds_counted" = 0 ]; then
+        sc_dep_fail="${sc_dep_fail:-find over $sds_root exited $sds_rc}"
+      fi
+      while IFS= read -r -d '' sds_f; do
+        case "$sds_f" in
+          */.git)
+            sds_e="${sds_f%/.git}"
+            # git strips a trailing CR from the line (rv4-c3's NIT c3-3), and
+            # so does `tr`, first: BSD `sed` reads no `\r` in its script.
+            if ! sds_g="$(tr -d '\r' 2>/dev/null < "$sds_f")"; then
+              sc_dep_fail="${sc_dep_fail:-the .git file of $sds_e cannot be read}"; continue
+            fi
+            sds_g="$(printf '%s\n' "$sds_g" | sed -n -e '1s/^gitdir: //p')"
+            case "$sds_g" in '') continue ;; /*) : ;; *) sds_g="$sds_e/$sds_g" ;; esac
+            sds_r="$(sc_real "$sds_g")"
+            if [ -n "$sds_r" ]; then
+              sds_gl="$sds_gl$sds_r$sc_tab$sds_e
 "
-        fi
-      done < "$sds_a"
+            fi ;;
+          */objects)
+            sds_a="$sds_f/info/alternates"
+            if [ ! -e "$sds_a" ] && [ ! -L "$sds_a" ]; then continue; fi
+            sds_e="${sds_f%/objects}"; sds_e="${sds_e%/.git}"
+            if ! sds_x="$(cat -- "$sds_a" 2>/dev/null)"; then
+              sc_dep_fail="${sc_dep_fail:-the alternates file of $sds_e cannot be read}"; continue
+            fi
+            while IFS= read -r sds_l; do
+              case "$sds_l" in '' | '#'*) continue ;; esac
+              case "$sds_l" in /*) sds_t="$sds_l" ;; *) sds_t="$sds_f/$sds_l" ;; esac
+              sds_r="$(sc_real "$sds_t")"
+              if [ -n "$sds_r" ]; then
+                sds_dl="$sds_dl$sds_r$sc_tab$sds_e
+"
+              fi
+            done <<SDS_ALT
+$sds_x
+SDS_ALT
+            ;;
+        esac
+      done < "$LE_TMP"
+      rm -f -- "$LE_TMP"; LE_TMP=""
     done
+    sc_dep_lines="$(printf '%s' "$sds_dl" | awk '!seen[$0]++')" || sc_dep_lines="$sds_dl"
+    sc_gitfile_lines="$(printf '%s' "$sds_gl" | awk '!seen[$0]++')" || sc_gitfile_lines="$sds_gl"
+    sc_dep_unread="$(printf '%s' "$sds_unread" | awk 'NF && !seen[$0]++ { n++ } END { print n + 0 }')" || sc_dep_unread=0
   }
   # A REPOSITORY LEANS ON A CLONE when its alternates file names an object
   # directory AT OR UNDER that clone — its own `.git/objects`, or a store kept
   # anywhere inside it — because removing the clone removes that store too.
+  # A repository AT OR UNDER the clone goes with it, and so does one at or
+  # under a path this run removed (in a dry run, would remove): neither is
+  # what leans on it. The paths gone are one per line.
+  sc_in_gone() {   # <path> <paths gone> — 0 when it is at or under one of them
+    while IFS= read -r sig_g; do
+      [ -n "$sig_g" ] || continue
+      case "$1" in "$sig_g" | "$sig_g"/*) return 0 ;; esac
+    done <<SIG
+$2
+SIG
+    return 1
+  }
   sc_dependents() {   # <path> [<paths gone in this run>] [<lines>] — what leans on it
     scd_out=""; scd_lines="${3-$sc_dep_lines}"
-    while IFS="$sc_tab" read -r scd_d scd_t; do
-      [ -n "$scd_d" ] && [ "$scd_d" != "$1" ] || continue
+    while IFS="$sc_tab" read -r scd_t scd_d; do
+      [ -n "$scd_d" ] || continue
       case "$scd_t" in "$1" | "$1"/*) : ;; *) continue ;; esac
-      case " ${2-} " in *" $scd_d "*) continue ;; esac
+      case "$scd_d" in "$1" | "$1"/*) continue ;; esac
+      if sc_in_gone "$scd_d" "${2-}"; then continue; fi
       scd_out="${scd_out:+$scd_out }$scd_d"
     done <<SCD
 $scd_lines
@@ -1628,6 +1707,7 @@ SMI
   # ALL OF THEM, for one candidate: SC_HOLD empty means nothing holds it.
   sc_judge_holds() {   # <path> <1 when this run holds its lock> [<paths gone>]
     sc_holds "$1" "$2"
+    if [ -n "$sc_dep_fail" ]; then sc_hold "what leans on it cannot be told: $sc_dep_fail"; fi
     sjh_deps="$(sc_dependents "$1" "${3-}")"
     if [ -n "$sjh_deps" ]; then sc_hold "leaned on by $sjh_deps (its alternates file names this clone's objects)"; fi
     sjh_deps="$(sc_dependents "$1" "${3-}" "$sc_gitfile_lines")"
@@ -1807,11 +1887,16 @@ SS_ROW
   if [ "$sc_hidden" -gt 0 ]; then
     printf '  (%s hidden entr(ies) under %s/ - creation locks, partial clones, the sidecar lock - are never looked at)\n' "$sc_hidden" "$sc_home"
   fi
+  printf '  dependents     : every repository under %s/ to depth 6, hidden ones too, and under %s/ and %s/ to depth 4; read again under each lock\n' \
+    "${sc_dep_named[0]}" "${sc_dep_named[1]}" "${sc_dep_named[2]}"
   sc_cwd_scan; sc_mount_scan
   if [ "$sc_cwd_unread" -gt 0 ]; then
     printf '  (%s process(es) whose working directory could not be read - another user'"'"'s, or ended while read - do not hold anything)\n' "$sc_cwd_unread"
   fi
   sc_dep_scan
+  if [ "$sc_dep_unread" -gt 0 ]; then
+    printf '  (%s director(ies) the dependents scan could not read - another user'"'"'s, or gone while read - are not looked in)\n' "$sc_dep_unread"
+  fi
 
   # LEAVES FIRST (S6.2 (b): *"so leaves go first"*). The candidates are taken
   # in dependency order, every clone before the clones it borrows objects
@@ -1826,14 +1911,19 @@ SS_ROW
   sc_placed=(); sc_order=()
   sc_i=0
   while [ "$sc_i" -lt "${#sc_cands[@]}" ]; do sc_placed[$sc_i]=0; sc_i=$((sc_i + 1)); done
+  # A repository at or under a candidate not yet placed is that candidate
+  # leaning (it goes with it), and one at or under this candidate is not.
   sc_leaned_on_by_unplaced() {   # <index> — 0 when a candidate not yet placed leans on it
     slu_c="${sc_cands[$1]}"
-    while IFS="$sc_tab" read -r slu_d slu_t; do
-      [ -n "$slu_d" ] && [ "$slu_d" != "$slu_c" ] || continue
+    while IFS="$sc_tab" read -r slu_t slu_d; do
+      [ -n "$slu_d" ] || continue
       case "$slu_t" in "$slu_c" | "$slu_c"/*) : ;; *) continue ;; esac
+      case "$slu_d" in "$slu_c" | "$slu_c"/*) continue ;; esac
       slu_j=0
       while [ "$slu_j" -lt "${#sc_cands[@]}" ]; do
-        if [ "${sc_placed[$slu_j]}" = 0 ] && [ "${sc_cands[$slu_j]}" = "$slu_d" ]; then return 0; fi
+        if [ "${sc_placed[$slu_j]}" = 0 ]; then
+          case "$slu_d" in "${sc_cands[$slu_j]}" | "${sc_cands[$slu_j]}"/*) return 0 ;; esac
+        fi
         slu_j=$((slu_j + 1))
       done
     done <<SLU
@@ -1875,6 +1965,7 @@ SLU
   fi
 
   printf '\n  under %s/:\n' "$sc_home"
+  # `sc_gone`: the paths this run removed (a dry run: would remove), one per line.
   sc_gone=""; sc_n_removed=0; sc_n_partial=0; sc_n_held=0; sc_n_removable=0; sc_partial=""
   sc_removed_names=""; sc_held_names=""; sc_partial_names=""
   sc_say_held() {   # <path> <why it was a candidate> <what holds it>
@@ -1971,7 +2062,8 @@ SLU
         sc_say_held "$sc_c" "$sc_why" "$SC_HOLD"
       else
         printf '    remove     %s  %s%s\n' "$sc_c" "$sc_why" "${SC_IGN:+; $SC_IGN}"
-        sc_gone="${sc_gone:+$sc_gone }$sc_c"; sc_n_removable=$((sc_n_removable + 1))
+        sc_n_removable=$((sc_n_removable + 1)); sc_gone="$sc_gone$sc_c
+"
       fi
       continue
     fi
@@ -2030,7 +2122,8 @@ SLU
       sc_removed_names="${sc_removed_names:+$sc_removed_names }${sc_c##*/}"
       sc_n_removed=$((sc_n_removed + 1))
     fi
-    sc_gone="${sc_gone:+$sc_gone }$sc_c"
+    sc_gone="$sc_gone$sc_c
+"
     sc_sig_arm
   done
   printf '%s' "$sc_keep_lines"
