@@ -359,6 +359,45 @@ def test_a_record_that_names_no_absolute_path_holds_every_row_of_its_lane_until_
     assert final[f"{LANE}:{other}"]["dirty_count"] == 2 and f"{LANE}:{newer}" in final, sorted(final)
 
 
+def test_a_record_that_names_no_absolute_path_holds_its_own_lane_and_no_other(inv):
+    """THE CLAUSE IS ONE LANE'S (the review of the code). `worktree_rows` reads repoM-1 first, then repoM-2, repoA-2
+    and repoA-1, each with a tree of its own; a record with no `path:` in the FIRST of them holds that lane alone,
+    not the three read after it. Every other case in this file puts its record in repoB-1, which is read after
+    every lane that has a tree, so a clause carried over from one lane to the next would never be seen."""
+    assert inv.sync().returncode == 0
+    before = inv.rows()
+    record = next((inv.lsr / "repoM-1" / "trees").glob("*.yaml"))
+    record.write_text("".join(line for line in record.read_text(encoding="utf-8").splitlines(True)
+                              if not line.startswith("path:")), encoding="utf-8")
+
+    res = inv.sync()
+    assert res.returncode == 0, (res.stdout, res.stderr)
+    listed = inv.e.edit("worktrees", "--all")
+    assert listed.returncode == 0, listed.stderr
+    assert [row[2] for row in _lines(listed.stdout, "UNREAD")] == ["repoM-1"], listed.stdout
+    after = inv.rows()
+    assert sorted(key.split(":")[0] for key in after if "unread" in key) == ["repoM-1"], sorted(after)
+    assert {key: after[key] for key in before} == before, "a row moved"
+    assert " 0 removed" in res.stdout, res.stdout
+
+
+def test_the_line_names_every_record_that_names_no_absolute_path(inv):
+    """ONE LINE, EVERY OFFENDING RECORD IN IT (the review of the code). Three records of one lane - no `path:` line,
+    a relative path, an empty file - are all named, in the order the helper lists them, in the lane's one `UNREAD`
+    line. A list that kept only one of them would send a person to fix one record and find the lane still held."""
+    root, record, _ = _a_lane_with_a_whole_record(inv, ENV)
+    (root / "trees" / f"{SECOND}.yaml").write_text(_whole_record(tree=SECOND, path=RELATIVE), encoding="utf-8")
+    (root / "trees" / f"{THIRD}.yaml").write_text("", encoding="utf-8")
+    record.write_text(SHAPES["no-path-line"].text, encoding="utf-8")
+
+    res = inv.sync(env=ENV)
+    assert res.returncode == 0, (res.stdout, res.stderr)
+    said = _no_absolute_path(root, f"{SIDECAR_ID} {SECOND} {THIRD}")
+    assert _held(said) in res.stdout, res.stdout
+    listed = inv.e.edit("worktrees", "--all", env=ENV)
+    assert _lines(listed.stdout, "UNREAD", LANE) == [["UNREAD", "Eagle", LANE, said]], listed.stdout
+
+
 @NOT_AS_ROOT
 def test_an_unreadable_record_and_one_with_no_absolute_path_are_one_unread_line(inv):
     """ONE LANE, ONE `UNREAD` LINE, AND EVERY OFFENDING RECORD IN IT (#302). The
