@@ -101,6 +101,12 @@
 # EXIT CODES, this toolset's and the family's:
 #
 #   0  the handoff was written (and the pane respawned or exited, where asked)
+#      — or, where the lane's object log could not be read, the swap was (R7
+#      on #303, "Write swap, name the gap"): the PAUSED record, the register
+#      line, the row and the restart line are written, the handoff file is NOT
+#      published, and stdout says so after the restart line (`handoff: NOT
+#      published`). Not 1: every 1 below comes before the first write, and a
+#      caller that re-ran on it would write a second PAUSED
 #   2  REFUSED — nothing was written, or the record was written and the act
 #      that follows it was refused before touching the pane, or tmux would not
 #      rename the window and the record was NOT written (the refusal names
@@ -1736,6 +1742,17 @@ seam_refuse "$lane" "a handoff"
 # A plain preservation writer cannot modify an in-flight restart's input.
 # This read precedes window, row and log writes; publication checks it again
 # under the helper mutex, together with the prior handoff checksum.
+#
+# R7 ON #303, BRETT HEAP'S RULING "Write swap, name the gap": where the lane's
+# object log could not be read, `restart-intent` exits 10 - the intent is kept
+# beside the directory that log records, so whether a restart owns the lane is
+# NOT established. A refusal here would leave the swap unwritten (`R-A11-11`),
+# and reading it as 8 published the handoff over whatever restart might own
+# it. So the PAUSED record, the register line, the row and the restart line are
+# still written, NO handoff file is published, and the gap is named on stderr,
+# in the printed top block, in the register line and on stdout. Set here,
+# outside the `if`, because every mode reads it and this runs under `set -u`.
+lh_log_unread=""
 if [ "$do_restart" != 1 ]; then
   lh_irrc=0
   lh_intent="$(LANES_NO_FETCH=1 "$LANES_EDIT" restart-intent "$lane")" || lh_irrc=$?
@@ -1747,6 +1764,7 @@ if [ "$do_restart" != 1 ]; then
         *) die "a restart owns this lane, or its intent is malformed; preservation refused before window, handoff, row or log writes. Read it: $prog --restart-status --lane $lane" 2 ;;
       esac ;;
     8) : ;;
+    10) lh_log_unread="lane $lane's object log could not be read, so where its restart intent is kept is NOT established" ;;
     *) die "the legacy restart intent cannot be read; preservation refused before any writes." 2 ;;
   esac
 fi
@@ -2550,10 +2568,11 @@ top_block() {
 		"$UTC" "${why:-handoff}" "$agent" "$transcript" "$handoff_kind" "$kind_headline"
 	printf '**FIRST ACTS, in order.** (1) You are lane `%s`%s%s. Stamp this block RESUMED before anything else (Rule 3, single use) — `lane-start --no-launch <repo> <n>` in this window writes it. (2) Read AGENTS.md, then this block. (3) COUNT THE LIVE WRITERS before relaunching anything — the WRITERS section below is a list to COUNT, not a list to relaunch (Amendment 17 Addendum 1 (i)). ONE WORKTREE, ONE WRITER (k): a worktree is one writer'"'"'s for as long as that writer is live, a relaunch onto a live writer'"'"'s worktree is the writers'"'"' form of Amendment 18(h)'"'"'s second binding, and where you find one made you retire the newer before either commits. %s Older sections below are history.\n\n' \
 		"$lane" "${window_ref:+ in tmux window \`$window_ref\`}" "${dir:+, checkout \`$dir\`}" "$kind_act"
-	printf '**STATE at %s.** Handed off by `%s` on %s: %s. Agent `%s`, transcript `%s`. Kind `%s`: %s.%s\n\n' \
+	printf '**STATE at %s.** Handed off by `%s` on %s: %s. Agent `%s`, transcript `%s`. Kind `%s`: %s.%s%s\n\n' \
 		"$UTC" "$prog" "${ws:-<no workstation>}" "${why:-no why given}" "$agent" "$transcript" \
 		"$handoff_kind" "$kind_state" \
-		"${ws_missing:+ THE REGISTER AND OBJECT-LOG WRITES WERE NOT MADE: this session ran with no configured workstation, so the row still reads as it did and the register is BEHIND this file (\`R-A11-14\`). The next session binds with \`lane-start --no-launch\`.}"
+		"${ws_missing:+ THE REGISTER AND OBJECT-LOG WRITES WERE NOT MADE: this session ran with no configured workstation, so the row still reads as it did and the register is BEHIND this file (\`R-A11-14\`). The next session binds with \`lane-start --no-launch\`.}" \
+		"${lh_log_unread:+ THIS BLOCK WAS NOT PUBLISHED WITH THE SWAP: $lh_log_unread. The PAUSED record, the register line and the row ARE written (R7 on #303); this block was printed and published later, once \`lanes-edit.sh restart-intent $lane\` answered 8, \`ready\` or \`failed\`.}"
 	printf '**WRITERS at %s** (%s found under `%s`) — FIRST count the live writers: `ListAgents` in Claude, the agent'"'"'s equivalent elsewhere. A writer still live OWNS its worktree: do not relaunch it; one message telling it that its in-flight call died and who the coordinator now is, is enough. Relaunch only a writer that is NOT live, from where it stands — `git status` and `git log @{u}..` in its worktree, then its brief. WHERE THE COUNT AND THIS LIST DISAGREE, THE COUNT WINS: this list is what the paused session expected, the count is what is true.\n\n' \
 		"$UTC" "$writer_count" "${dir:-<no recorded checkout>}"
 	if [ "$writer_count" = 0 ]; then
@@ -2603,7 +2622,23 @@ TB_ROWS
 }
 
 handoff_written=0
-if [ -z "$handoff_file" ]; then
+if [ -n "$lh_log_unread" ]; then
+	# R7 ON #303: NO FILE IS PUBLISHED, AND THE NOTE SAYS WHAT TO WAIT ON. It
+	# is the intent, not the log: right after this swap's own PAUSED line the
+	# log reads again, while a restart may still own the lane (the review of
+	# R7, 653). Publication goes through `publish-handoff`, as every manual
+	# edit of a handoff does, and never by hand; and where the row names no
+	# handoff this command could find, the note names what the row says.
+	if [ -n "$handoff_file" ]; then
+		lh_block_for="$handoff_file"
+	elif [ -n "$handoff_cell" ]; then
+		lh_block_for="the lane's handoff, which the row names as '$handoff_cell' and this command could not find"
+	else
+		lh_block_for="the lane's handoff, which the row does not name"
+	fi
+	note "the handoff file was NOT published: $lh_log_unread, and publication is fenced on that intent. The PAUSED record, the register line, the row and the restart line below are still written (R-A11-11; R7 on #303, \"Write swap, name the gap\"). The top block below is for $lh_block_for: once \`lanes-edit.sh restart-intent $lane\` answers 8, \`ready\` or \`failed\`, publish this block with \`publish-handoff\`; read \`$prog --restart-status --lane $lane\` before relaunching."
+	top_block >&2
+elif [ -z "$handoff_file" ]; then
 	note "the row names no handoff this command could find${handoff_cell:+ ('$handoff_cell')}, so the top block was NOT written. The record below is still written; put this block at the head of the lane's handoff by hand:"
 	top_block >&2
 else
@@ -2886,8 +2921,13 @@ else
 	# literal `unknown` is in this estate's append-only log four times already
 	# and no later line corrects any of them (Amendment 11 clause (e)); a
 	# register line naming it would be the fifth, one file along.
+	# AND IT SAYS WHETHER THE HANDOFF WAS PUBLISHED (R7 on #303): where the
+	# lane's object log could not be read, it was not, and the line says so in
+	# the words lane 3 ruled, which `skills/handoff/SKILL.md`'s step 4 writes too.
+	lh_reg_tail=""
+	[ -z "$lh_log_unread" ] || lh_reg_tail="handoff NOT published: object log unreadable"
 	if [ -n "$uuid" ]; then
-		"$LANES_EDIT" append-line "PAUSED — lane $lane, session $uuid@$ws, $UTC, $why_text; handoff refreshed" >/dev/null 2>&1 ||
+		"$LANES_EDIT" append-line "PAUSED — lane $lane, session $uuid@$ws, $UTC, $why_text; ${lh_reg_tail:-handoff refreshed}" >/dev/null 2>&1 ||
 			note "the LANES.md file-level PAUSED line was not appended (the register may be busy or behind); the object-log line above is the record readers take."
 	else
 		note "no transcript uuid is knowable for this lane, so neither the object log's PAUSED nor the register's file-level line was written — a record naming 'unknown' in that field is a record no restart can read (Amendment 11 clause (e)). The handoff file above is refreshed and is the whole of what this act left behind. Bind the session first:  lane-start --no-launch <repo> <n>"
@@ -2951,6 +2991,9 @@ else
 fi
 say ""
 say "READY — restart with: $restart_cmd$restart_note"
+# ON STDOUT, BESIDE THE RESTART LINE (R7 on #303): a caller that keeps only
+# stdout still learns that no handoff file was published, and why.
+[ -z "$lh_log_unread" ] || say "  handoff: NOT published: $lh_log_unread"
 say "  record: PAUSED lane:$lane → $payload"
 say "  agent $agent, transcript $transcript (lane-start --agent $agent resumes it)"
 if [ -n "$lc_on" ]; then

@@ -273,13 +273,36 @@ Read the current file's SHA-256, write semantic updates to a temporary file, the
 publish that complete prepared file with:
 
 ```sh
-"$L" publish-handoff "$lane" "$handoff_file" "$prepared_file" --expect-digest "$prior_sha256"
+# R7 ON #303, BRETT HEAP'S RULING "Write swap, name the gap". The publisher is
+# fenced on the lane's restart intent, which is kept beside the directory the
+# lane's object log records: where that log could not be read, whether a
+# restart owns the lane is not established, and `publish-handoff` refuses
+# rather than write over it. That one refusal is told from every other by
+# `restart-intent`'s own answer, 10, and it does NOT stop the swap
+# (`R-A11-11`): step 4 still writes the PAUSED record, the register line and
+# the row, and step 5 prints the restart command, as `lane-handoff` does. The
+# gap is named here, and in step 4's register line. Any other refusal is the
+# helper's own, said in its own words above, and binds no gap.
+handoff_unpublished=""; pub_rc=0
+"$L" publish-handoff "$lane" "$handoff_file" "$prepared_file" --expect-digest "$prior_sha256" || pub_rc=$?
+if [ "$pub_rc" != 0 ]; then
+  pub_irc=0
+  LANES_NO_FETCH=1 "$L" restart-intent "$lane" >/dev/null 2>&1 || pub_irc=$?
+  if [ "$pub_irc" = 10 ]; then
+    handoff_unpublished="lane $lane's object log could not be read, so where its restart intent is kept is NOT established"
+    printf '%s\n' "HANDOFF NOT PUBLISHED: $handoff_unpublished, and publication is fenced on that intent (\`publish-handoff\` exited $pub_rc). The swap goes on: step 4 still writes the PAUSED record, the register line and the row, and step 5 prints the restart command (R-A11-11; R7 on #303, \"Write swap, name the gap\"). The prepared block is $prepared_file: once \`lanes-edit.sh restart-intent $lane\` answers 8, \`ready\` or \`failed\`, publish this block with \`publish-handoff\`; read \`lane-handoff --restart-status --lane $lane\` before relaunching. Nothing was published, so skip the commit below."
+  fi
+fi
 ```
 
 The helper checks the expected bytes and atomically replaces the resolved target
 while holding the workspace writer mutex. It refuses an active restart owned by
 another operation. Do not edit or redirect into the canonical handoff directly;
 perform the existing explicit-pathspec commit/push after successful publication.
+**Where the block above set `$handoff_unpublished`, nothing was published:** skip
+the commit block below and go on to step 3. Keep the prepared file, and say in it,
+before you publish it later, that this swap was written without it — the state
+line names the gap as `lane-handoff`'s printed block does.
 Legacy `rename-lane` is a separate four-file transaction under the same mutex;
 it refuses unfinished/failed restart ownership and uses EXIT rollback. Its
 stamp now atomically replaces the handoff through a temporary file beside it
@@ -740,7 +763,12 @@ LANES_LANE="$lane" LANES_SESSION="$uuid" "$L" log PAUSED "lane:$lane" \
 # is never left unwritten, so a lane whose object line was refused still gets
 # this line and the row's state cell, with the gap named in the handoff — EXCEPT
 # where there is no uuid to name, which is the `$uuid_missing` that skips both.
-"$L" append-line "PAUSED — lane $lane, session $uuid@$ws, $(date -u +%Y-%m-%dT%H:%M:%SZ), $why_text; handoff refreshed"
+# AND IT SAYS WHETHER THE HANDOFF WAS PUBLISHED (R7 on #303): where step 2's
+# publication was refused over a log nobody could read, it was not, and the
+# line ends in the words `lane-handoff` writes in that case.
+reg_tail=""
+[[ -z "${handoff_unpublished:-}" ]] || reg_tail="handoff NOT published: object log unreadable"
+"$L" append-line "PAUSED — lane $lane, session $uuid@$ws, $(date -u +%Y-%m-%dT%H:%M:%SZ), $why_text; ${reg_tail:-handoff refreshed}"
 fi
 fi
 # (c) the row: ONE WRITE, which sets the whole state cell (Amendment 13(a)).
