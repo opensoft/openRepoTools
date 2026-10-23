@@ -527,12 +527,13 @@ def _fill(root: Path) -> None:
 
 def _could_not_move(old: Path, lay: Layout) -> tuple:
     """The four things a note for a root nobody could look for says, none of
-    which a move or an absent root says. The last is its advice (563): a move
-    takes the two parts, and completed restart history stays where it is."""
+    which a move or an absent root says. The last is its advice (563, 769): the
+    new folder is made first (the rename did not make it), a move takes the
+    two parts, and completed restart history stays where it is."""
     return (f"could NOT be moved from {old} to {lay.state / NEW}",
             "the rename itself has landed",
             f"whether {old} is there could not be read, because {lay.why}",
-            f"move its lane-state.yaml and trees/ into {lay.state / NEW} by hand and "
+            f"create {lay.state / NEW} first, then move its lane-state.yaml and trees/ into it by hand and "
             f"leave any restart-intent.yaml where it is")
 
 

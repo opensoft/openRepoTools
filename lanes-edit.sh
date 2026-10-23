@@ -13975,7 +13975,7 @@ lane_state_rename() {   # <the old name's control root> <new lane>
   # whether there is any.
   if [ ! -e "$lsn_old" ] && [ ! -L "$lsn_old" ]; then
     if lookup_blocked "$lsn_old"; then
-      note "the lane lifecycle snapshot and inventory could NOT be moved from $lsn_old to ${lsn_old%/*}/$lsn_new (the rename itself has landed): whether $lsn_old is there could not be read, because $LOOKUP_BLOCKED_WHY. If it is there, nothing of it was touched. Once it can be searched, move its lane-state.yaml and trees/ into ${lsn_old%/*}/$lsn_new by hand and leave any restart-intent.yaml where it is; until then \`lanes-edit.sh lane-reconcile $lsn_new\` reads no snapshot for this lane."
+      note "the lane lifecycle snapshot and inventory could NOT be moved from $lsn_old to ${lsn_old%/*}/$lsn_new (the rename itself has landed): whether $lsn_old is there could not be read, because $LOOKUP_BLOCKED_WHY. If it is there, nothing of it was touched. Once it can be searched, create ${lsn_old%/*}/$lsn_new first, then move its lane-state.yaml and trees/ into it by hand and leave any restart-intent.yaml where it is; until then \`lanes-edit.sh lane-reconcile $lsn_new\` reads no snapshot for this lane."
     fi
     return 0
   fi
