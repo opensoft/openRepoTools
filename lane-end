@@ -1406,9 +1406,13 @@ SC_IDX
   #       checkout's own writers' lock, and a hand edit of the register that
   #       `lanes-edit.sh commit` keeps in `.git/lanes-edit/`. No
   #       `origin/<branch>` to compare with is itself a hold: nothing can be
-  #       proved published. IGNORED files do not hold — the register's own
-  #       rules keep them out of every commit — and they are named, so a
-  #       person sees them first;
+  #       proved published. IGNORED files do not hold, and they are
+  #       named, so a person sees them first — but `--exclude-standard`
+  #       reads the checkout's `.gitignore` files, its `.git/info/exclude`
+  #       and the user's `core.excludesFile`, not the register's rules
+  #       alone, so a repository of its own at an ignored path and an
+  #       editor's swap file hold (NIT 355), and so does an ignored
+  #       directory that cannot be looked in;
   #   (b) another repository whose alternates file names its objects, looked
   #       for under W's parent, `$TMPDIR` and `$HOME` (SHOULD 352, below), and
   #       its own linked worktrees; a scan that cannot finish holds them all;
@@ -1528,6 +1532,41 @@ SH_REFS
       sh_x="$(ls -A -- "$sh_gd/worktrees" 2>/dev/null)" || sh_x="?"
       if [ -n "$sh_x" ]; then sc_hold "linked worktree(s) of it: $(sc_first "$sh_x") (git -C $sh_p worktree list)"; fi
     fi
+    # WHAT IGNORED RULES HIDE IS NOT ALL DISPOSABLE (lane openRepoTools-3's
+    # NIT 355). `--exclude-standard` reads the checkout's `.gitignore` files,
+    # its `.git/info/exclude` and the user's `core.excludesFile`, not the
+    # register's rules alone. A repository of its own at an ignored path may
+    # hold commits nothing else has (at any other path it holds, as
+    # untracked), and an editor's swap file says a person has a file of it
+    # open: each holds. Each ignored directory is looked in for them; one
+    # that cannot be is a hold too, since what it keeps is unknown.
+    sh_rep=""; sh_swp=""; sh_unlooked=""
+    while IFS= read -r -d '' sh_e; do
+      case "$sh_e" in
+        */)
+          sh_y="$(find "$sh_p/$sh_e" \( -name .git -print -prune \) -o \( -type f -name '*.swp' -print \) 2>/dev/null)" ||
+            sh_unlooked="${sh_unlooked}$sh_e
+"
+          while IFS= read -r sh_f; do
+            [ -n "$sh_f" ] || continue
+            sh_f="${sh_f#"$sh_p/"}"
+            case "$sh_f" in
+              .git | */.git) sh_rep="${sh_rep}${sh_f%/.git}
+" ;;
+              *) sh_swp="${sh_swp}$sh_f
+" ;;
+            esac
+          done <<SH_Y
+$sh_y
+SH_Y
+          ;;
+        *.swp) sh_swp="${sh_swp}$sh_e
+" ;;
+      esac
+    done < <(git -C "$sh_p" ls-files -z --others --ignored --exclude-standard --directory 2>/dev/null)
+    if [ -n "$sh_rep" ]; then sc_hold "an ignored directory holds a repository of its own: $(sc_first "$sh_rep")"; fi
+    if [ -n "$sh_swp" ]; then sc_hold "an editor's swap file, ignored, says a file in it is open: $(sc_first "$sh_swp")"; fi
+    if [ -n "$sh_unlooked" ]; then sc_hold "an ignored directory could not be looked in: $(sc_first "$sh_unlooked")"; fi
     sh_x="$(git -C "$sh_p" ls-files --others --ignored --exclude-standard --directory 2>/dev/null)" || sh_x=""
     if [ -n "$sh_x" ]; then sc_named "ignored, which holds nothing: $(sc_first "$sh_x")"; fi
     # A COMMIT ONLY THE REFLOG REACHES (lane openRepoTools-3's NIT 354): one
@@ -1537,6 +1576,12 @@ SH_REFS
     # a hold would keep such a checkout for good; it is named.
     sh_x="$(git -C "$sh_p" rev-list --abbrev-commit --reflog --not --all 2>/dev/null)" || sh_x=""
     if [ -n "$sh_x" ]; then sc_named "commit(s) only its reflog reaches, which go with it: $(sc_first "$sh_x")"; fi
+    # AN ANNOTATED TAG (NIT 355) on a published commit reaches nothing
+    # origin lacks, so it holds nothing; its tag object goes with the
+    # checkout, so it is named.
+    sh_x="$(git -C "$sh_p" for-each-ref --format='%(objecttype) %(refname:short)' refs/tags 2>/dev/null |
+      awk '$1 == "tag" { print $2 }')" || sh_x=""
+    if [ -n "$sh_x" ]; then sc_named "annotated tag(s), which go with it: $(sc_first "$sh_x")"; fi
     return 0
   }
 

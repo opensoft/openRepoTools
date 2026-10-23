@@ -2754,3 +2754,66 @@ def test_commits_only_the_reflog_reaches_are_named(sweep):
         assert result.returncode in (0, 3), (result.stdout, result.stderr)
         assert rows[str(c)][0] == tag, rows[str(c)]
         assert said in rows[str(c)][1], rows[str(c)]
+
+
+def _repository_at_an_ignored_path(box: Sweep, c: Path) -> None:
+    """A repository of its own, with a commit only it has, at a path the
+    checkout's own `.git/info/exclude` ignores."""
+    (c / ".git" / "info" / "exclude").write_text("vendor/\n", encoding="utf-8")
+    nested = c / "vendor" / "tool"
+    box.git("init", "-q", "-b", "main", str(nested))
+    box.write(nested, "work.txt", "a commit only this repository has\n")
+    box.commit(nested, "work", "work.txt")
+
+
+def _swap_file_ignored(box: Sweep, c: Path) -> None:
+    """An editor's swap file, at a path the checkout's `.git/info/exclude` ignores."""
+    (c / ".git" / "info" / "exclude").write_text("*.swp\n", encoding="utf-8")
+    box.write(c, "handoffs/.note.md.swp", "an editor has handoffs/note.md open\n")
+
+
+IGNORED_HOLDS = [
+    pytest.param(_repository_at_an_ignored_path,
+                 "an ignored directory holds a repository of its own: 1 (vendor/tool)",
+                 id="a repository at an ignored path"),
+    pytest.param(_swap_file_ignored,
+                 "an editor's swap file, ignored, says a file in it is open: 1 (handoffs/.note.md.swp)",
+                 id="an ignored swap file"),
+]
+
+
+@pytest.mark.parametrize("make,said", IGNORED_HOLDS)
+def test_what_ignored_rules_hide_that_may_be_work_holds(sweep, make, said):
+    """IGNORED IS NOT ALWAYS DISPOSABLE (lane openRepoTools-3's NIT 355).
+    `--exclude-standard` reads the checkout's `.gitignore` files, its
+    `.git/info/exclude` and the user's `core.excludesFile`, not the
+    register's rules alone. A repository at an ignored path, whose commit
+    only it has, gave `remove` where the same repository at any other path
+    holds as untracked; an editor's swap file says a person has a file of it
+    open. Both hold, in the dry run and under `--yes`, and the checkout
+    stays as it was."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    make(box, c)
+    before = box.everything()[str(c)]
+    for args, env in ((), {}), (("--yes",), {"LANES_LANE": RUNNER}):
+        result, rows = sweep(*args, **env)
+        assert result.returncode in (0, 3), (result.stdout, result.stderr)
+        assert rows[str(c)][0] == "hold", rows[str(c)]
+        assert said in rows[str(c)][1], rows[str(c)]
+    assert box.everything()[str(c)] == before
+
+
+def test_annotated_tags_are_named(sweep):
+    """AN ANNOTATED TAG IS NAMED (NIT 355): on a published commit it reaches
+    nothing origin lacks, so it holds nothing, but its tag object goes with
+    the checkout, so the dry run and the act name it."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    box.git("-C", str(c), "tag", "-a", "-m", "a note on a published commit", "v-note", "HEAD")
+    box.git("-C", str(c), "tag", "light", "HEAD")
+    for args, env, tag in ((), {}, "remove"), (("--yes",), {"LANES_LANE": RUNNER}, "removed"):
+        result, rows = sweep(*args, **env)
+        assert result.returncode in (0, 3), (result.stdout, result.stderr)
+        assert rows[str(c)][0] == tag, rows[str(c)]
+        assert "annotated tag(s), which go with it: 1 (v-note)" in rows[str(c)][1], rows[str(c)]
