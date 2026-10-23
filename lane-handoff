@@ -103,10 +103,12 @@
 #   0  the handoff was written (and the pane respawned or exited, where asked)
 #      — or, where the lane's object log could not be read, the swap was (R7
 #      on #303, "Write swap, name the gap"): the PAUSED record, the register
-#      line, the row and the restart line are written, the handoff file is NOT
-#      published, and stdout says so after the restart line (`handoff: NOT
-#      published`). Not 1: every 1 below comes before the first write, and a
-#      caller that re-ran on it would write a second PAUSED
+#      line, the row and the restart line are written (with no configured
+#      workstation, `R-A11-14`, the first three are NOT, and only the restart
+#      line is printed), the handoff file is NOT published, and stdout says so
+#      after the restart line (`handoff: NOT published`). Not 1: every 1 below
+#      comes before the first write, and a caller that re-ran on it would write
+#      a second PAUSED
 #   2  REFUSED — nothing was written, or the record was written and the act
 #      that follows it was refused before touching the pane, or tmux would not
 #      rename the window and the record was NOT written (the refusal names
@@ -2568,11 +2570,17 @@ top_block() {
 		"$UTC" "${why:-handoff}" "$agent" "$transcript" "$handoff_kind" "$kind_headline"
 	printf '**FIRST ACTS, in order.** (1) You are lane `%s`%s%s. Stamp this block RESUMED before anything else (Rule 3, single use) — `lane-start --no-launch <repo> <n>` in this window writes it. (2) Read AGENTS.md, then this block. (3) COUNT THE LIVE WRITERS before relaunching anything — the WRITERS section below is a list to COUNT, not a list to relaunch (Amendment 17 Addendum 1 (i)). ONE WORKTREE, ONE WRITER (k): a worktree is one writer'"'"'s for as long as that writer is live, a relaunch onto a live writer'"'"'s worktree is the writers'"'"' form of Amendment 18(h)'"'"'s second binding, and where you find one made you retire the newer before either commits. %s Older sections below are history.\n\n' \
 		"$lane" "${window_ref:+ in tmux window \`$window_ref\`}" "${dir:+, checkout \`$dir\`}" "$kind_act"
+	# R7 ON #303: THE SWAP'S RECORDS "ARE written" ONLY WHERE THEY WERE (lane 3's
+	# review of R7, 1004). With no configured workstation `R-A11-14` writes none
+	# of them, and the sentence just above says so; this one then says nothing
+	# of them, for a block that says both is a block nobody can trust.
+	lh_state_swap=" The PAUSED record, the register line and the row ARE written (R7 on #303); this block"
+	[ -z "$ws_missing" ] || lh_state_swap=" This block"
 	printf '**STATE at %s.** Handed off by `%s` on %s: %s. Agent `%s`, transcript `%s`. Kind `%s`: %s.%s%s\n\n' \
 		"$UTC" "$prog" "${ws:-<no workstation>}" "${why:-no why given}" "$agent" "$transcript" \
 		"$handoff_kind" "$kind_state" \
 		"${ws_missing:+ THE REGISTER AND OBJECT-LOG WRITES WERE NOT MADE: this session ran with no configured workstation, so the row still reads as it did and the register is BEHIND this file (\`R-A11-14\`). The next session binds with \`lane-start --no-launch\`.}" \
-		"${lh_log_unread:+ THIS BLOCK WAS NOT PUBLISHED WITH THE SWAP: $lh_log_unread. The PAUSED record, the register line and the row ARE written (R7 on #303); this block was printed and published later, once \`lanes-edit.sh restart-intent $lane\` answered 8, \`ready\` or \`failed\`.}"
+		"${lh_log_unread:+ THIS BLOCK WAS NOT PUBLISHED WITH THE SWAP: $lh_log_unread.${lh_state_swap} was printed and published later, once \`lanes-edit.sh restart-intent $lane\` answered 8, \`ready\` or \`failed\`.}"
 	printf '**WRITERS at %s** (%s found under `%s`) — FIRST count the live writers: `ListAgents` in Claude, the agent'"'"'s equivalent elsewhere. A writer still live OWNS its worktree: do not relaunch it; one message telling it that its in-flight call died and who the coordinator now is, is enough. Relaunch only a writer that is NOT live, from where it stands — `git status` and `git log @{u}..` in its worktree, then its brief. WHERE THE COUNT AND THIS LIST DISAGREE, THE COUNT WINS: this list is what the paused session expected, the count is what is true.\n\n' \
 		"$UTC" "$writer_count" "${dir:-<no recorded checkout>}"
 	if [ "$writer_count" = 0 ]; then
@@ -2636,7 +2644,10 @@ if [ -n "$lh_log_unread" ]; then
 	else
 		lh_block_for="the lane's handoff, which the row does not name"
 	fi
-	note "the handoff file was NOT published: $lh_log_unread, and publication is fenced on that intent. The PAUSED record, the register line, the row and the restart line below are still written (R-A11-11; R7 on #303, \"Write swap, name the gap\"). The top block below is for $lh_block_for: once \`lanes-edit.sh restart-intent $lane\` answers 8, \`ready\` or \`failed\`, publish this block with \`publish-handoff\`; read \`$prog --restart-status --lane $lane\` before relaunching."
+	# AND THE NOTE SAYS "still written" ONLY WHERE THEY ARE (1004, as above).
+	lh_note_swap="The PAUSED record, the register line, the row and the restart line below are still written (R-A11-11; R7 on #303, \"Write swap, name the gap\")."
+	[ -z "$ws_missing" ] || lh_note_swap="With no configured workstation (R-A11-14) the PAUSED record, the register line and the row are NOT written either (a note below says so), and the restart line below carries --lane (R7 on #303, \"Write swap, name the gap\")."
+	note "the handoff file was NOT published: $lh_log_unread, and publication is fenced on that intent. $lh_note_swap The top block below is for $lh_block_for: once \`lanes-edit.sh restart-intent $lane\` answers 8, \`ready\` or \`failed\`, publish this block with \`publish-handoff\`; read \`$prog --restart-status --lane $lane\` before relaunching."
 	top_block >&2
 elif [ -z "$handoff_file" ]; then
 	note "the row names no handoff this command could find${handoff_cell:+ ('$handoff_cell')}, so the top block was NOT written. The record below is still written; put this block at the head of the lane's handoff by hand:"

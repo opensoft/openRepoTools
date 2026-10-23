@@ -646,6 +646,12 @@ WAIT_ON = (f"once `lanes-edit.sh restart-intent {LANE}` answers 8, `ready` or `f
            f"this block with `publish-handoff`; read `lane-handoff --restart-status --lane {LANE}` "
            "before relaunching")
 NOTE_HEAD = "lane-handoff: the handoff file was NOT published"
+#: WHAT THE NOTE AND THE TOP BLOCK'S STATE LINE SAY OF THE SWAP'S OWN RECORDS,
+#: which holds only where a workstation is configured: with none, `R-A11-14`
+#: writes no PAUSED line, no register line and no row, and neither may say they
+#: are written (lane 3's review of R7, 1004).
+SWAP_WRITTEN_NOTE = "The PAUSED record, the register line, the row and the restart line below are still written"
+SWAP_WRITTEN_BLOCK = "The PAUSED record, the register line and the row ARE written"
 #: `--exit`'s GATE ON R7'S PATH, word for word as lane 3 ruled it (6367537964,
 #: question 1): no handoff was published there, so it says what to wait on
 #: before publishing, and never to put the block at the head of the handoff,
@@ -961,6 +967,12 @@ def test_an_ordinary_handoff_over_a_log_it_could_not_read_writes_the_swap_and_na
         problems.append("the top block is not on stderr")
     if f"THIS BLOCK WAS NOT PUBLISHED WITH THE SWAP: {GAP}" not in res.stderr:
         problems.append("the top block does not name the gap")
+    # WHERE A WORKSTATION IS CONFIGURED the writes were made, and both say so
+    # (lane 3's 1004: they say it only then).
+    if SWAP_WRITTEN_NOTE not in res.stderr:
+        problems.append("the note does not say the swap's records are still written")
+    if SWAP_WRITTEN_BLOCK not in res.stderr:
+        problems.append("the top block's state line does not say the swap's records are written")
     if "Re-run" in res.stderr:
         problems.append("a note mid-handoff says to re-run")
     assert not problems, "\n" + "\n".join(problems) + "\n" + res.stderr[-1500:]
@@ -980,6 +992,52 @@ def test_the_control_a_handoff_over_a_whole_log_publishes_and_says_refreshed(inv
     _log, last, _rows = _records(inv.e)
     assert last.endswith("; handoff refreshed"), last
     assert "NOT published" not in res.stdout + res.stderr, res.stdout
+
+
+def test_a_handoff_over_a_log_it_could_not_read_with_no_workstation_does_not_say_it_wrote_the_swap(inv):
+    """LANE 3'S 1004: R7 AND A MISSING WORKSTATION (`R-A11-14`). A container with
+    no `LANES_WORKSTATION` writes no PAUSED line, no register line and no row,
+    and over a log nobody could read it publishes no handoff file either: exit
+    0 with the log, LANES.md, the row and the handoff all as they were. The
+    note said the PAUSED record, the register line, the row and the restart
+    line "are still written", and the top block's state line said they "ARE
+    written", right after saying the register and object-log writes "WERE NOT
+    MADE". Both depend on an empty `ws_missing` now; the gap itself is still
+    named, and the restart line is still printed."""
+    env, _checkout, handoff = _a_lane_with_a_row_and_a_handoff(inv)
+    # `lane-handoff` reads no workstation where `lanes-edit.sh workstation`
+    # exits 2, as a helper predating Amendment 11 does (`R-A11-8`): the helper
+    # below passes everything else through to this checkout's own.
+    old_helper = inv.root / "old-helper" / "lanes-edit.sh"
+    old_helper.parent.mkdir()
+    old_helper.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [ \"${1-}\" = workstation ]; then\n"
+        "  echo \"lanes-edit: unknown subcommand 'workstation'\" >&2; exit 2\n"
+        "fi\n"
+        f"exec bash {LANES_EDIT} \"$@\"\n", encoding="utf-8")
+    old_helper.chmod(0o755)
+    before = (_records(inv.e), handoff.read_bytes(), _published(inv.e, HANDOFF_CELL))
+    with _unreadable(inv.e, LOG_B1):
+        res = _hand_off(inv, env, "a swap with no workstation over a log nobody could read",
+                        extra={"LANES_EDIT": str(old_helper)})
+    notes = [line for line in res.stderr.splitlines() if line.startswith(NOTE_HEAD)]
+    problems = [] if res.returncode == 0 else [f"exit {res.returncode}: {_said(res)!r}"]
+    if (_records(inv.e), handoff.read_bytes(), _published(inv.e, HANDOFF_CELL)) != before:
+        problems.append("something was written or published")  # not vacuous: ws_missing's own words below
+    if "THE REGISTER AND OBJECT-LOG WRITES WERE NOT MADE" not in res.stderr:
+        problems.append("the top block does not say the writes were not made: no workstation was missing")
+    if len(notes) != 1 or GAP not in notes[0]:
+        problems.append(f"the gap is not named in one note: {notes!r}")
+    if f"THIS BLOCK WAS NOT PUBLISHED WITH THE SWAP: {GAP}" not in res.stderr:
+        problems.append("the top block does not name the gap")
+    for words in (SWAP_WRITTEN_NOTE, SWAP_WRITTEN_BLOCK, "ARE written", "are still written"):
+        if words in res.stderr:
+            problems.append(f"stderr says {words!r} where nothing was written")
+    if not any(line.startswith("READY — restart with: ") and "--lane" in line
+               for line in res.stdout.splitlines()):
+        problems.append("stdout has no restart line naming the lane")
+    assert not problems, "\n" + "\n".join(problems) + "\n" + res.stderr[-3000:] + "\nSTDOUT\n" + res.stdout
 
 
 def test_a_row_naming_a_handoff_nobody_can_find_is_named_and_never_an_empty_path(inv):
