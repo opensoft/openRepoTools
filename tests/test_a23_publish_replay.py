@@ -2182,3 +2182,57 @@ def test_a_file_the_write_edits_in_place_deleted_on_origin_keeps_the_commit_exit
         assert "the in-place write" in box.origin_file(log)
         assert box.unpublished(c) == []
     _settled(box, c)
+
+
+# ------------------------------------------------------------ #307's round 3
+
+ARCHIVE_LINE = r"(git -C \S+ push origin HEAD:refs/heads/archive/\S+)\s+# the archive, on origin"
+DROP_LINE = r"(git -C \S+ reset --keep \S+)\s+# then drop them here"
+
+
+def _run_as_printed(box: Box, err: str, pattern: str) -> subprocess.CompletedProcess:
+    """The command `pattern` finds in `err`, run by a shell exactly as printed."""
+    found = re.search(pattern, err)
+    assert found, err
+    return subprocess.run(["bash", "-c", found.group(1)], env=box.env, cwd=str(box.root),
+                          capture_output=True, text=True, timeout=60, check=False)
+
+
+@pytest.mark.parametrize("named", ["by-argument", "by-nobody"])
+def test_s63s_archive_and_drop_run_as_printed(tmp_path: Path, named: str):
+    """702 of lane openRepoTools-3's re-check of #307's round 2:
+    `cp_archive_steps` printed `archive/${LANES_LANE:-<lane>}-stranded-…`.
+    Where the lane is named by the write's argument alone (LANES_LANE
+    unset, `cp_under`'s case), the branch read `archive/<lane>-stranded-…`:
+    git made a branch of that name, and a shell reads `<lane>` as a
+    redirection. It now names the lane the write was given; where no lane
+    is named at all (`commit` with no LANES_LANE, the publish act's
+    refusal; without the opt-in, since under it a write names its lane, S2),
+    the archive carries no lane. Run by a shell as printed, the archive lands
+    the stack on origin and the drop puts HEAD at origin's tip."""
+    box = Box(tmp_path, route=named != "by-nobody")
+    c = box.seam()
+    if named == "by-argument":
+        box.race()
+        env = _git_shim(box, COMMIT_CALL, before=_stamp(c))
+        result = box.helper("set-row-state", LANE, STATE, **env)
+        assert result.returncode == 6, result.stderr
+        branch = f"refs/heads/archive/{LANE}-stranded-"
+    else:
+        box.use_net()
+        _queue(box, c)
+        box.peer_pushes("handoffs/repoS4/elsewhere.md", "a peer's file" + "\n")
+        result = box.helper("commit", "publish the queue")
+        assert result.returncode == 2, result.stderr
+        branch = "refs/heads/archive/stranded-"
+    err = result.stderr
+    assert "archive/<lane>" not in err, err
+    stack = box.head(c)
+    archived = _run_as_printed(box, err, ARCHIVE_LINE)
+    assert archived.returncode == 0, (archived.stdout, archived.stderr)
+    refs = box.git("--git-dir", str(box.origin), "for-each-ref",
+                   "--format=%(objectname) %(refname)", "refs/heads/archive/").splitlines()
+    assert len(refs) == 1 and refs[0].startswith(f"{stack} {branch}"), (refs, err)
+    dropped = _run_as_printed(box, err, DROP_LINE)
+    assert dropped.returncode == 0, (dropped.stdout, dropped.stderr)
+    assert box.head(c) == box.origin_head(), "the drop reached origin's tip"

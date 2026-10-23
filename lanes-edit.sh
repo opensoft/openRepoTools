@@ -1309,6 +1309,9 @@ CS_RECHECK=0
 # compares origin's tip with it. Set once per process, and never from the
 # environment: a replay's `exec` starts it again.
 CS_SEEN=""; CS_SEEN_SET=0
+# The lane S3 was given, by argument or by LANES_LANE (the verb's own), kept for
+# the words printed after it (`cp_archive_steps`, 702). Never from the environment.
+CS_LANE=""
 
 # die "<message>" [<exit code>] — the MESSAGE is $1 alone. It used to be "$*",
 # which joined the exit code on to the end of every refusal that passed one:
@@ -2364,6 +2367,7 @@ cs_removed_unique() {   # <the saved diff>
 checkout_sync() {   # <what> <lane> <write|carry|publish> [<pathspec it commits>…]
   cs_what="$1"; cs_lane="${2:-}"; cs_mode="$3"; shift 3
   CS_NO_ORIGIN_BRANCH=0; CS_CARRY_DIFF=""; CS_CARRY_BASE=""
+  CS_LANE="$cs_lane"
   [ "$NO_GIT" = 1 ] && return 0
   cs_c="$LANES_REPO"
   cs_trk="refs/remotes/origin/$LANES_BRANCH"; cs_br="refs/heads/$LANES_BRANCH"
@@ -3452,9 +3456,15 @@ cp_publish_moved() {
 }
 # S6.3'S ARCHIVE, AFTER THE LIST AND THE STOP LINE: the publish act's refusal
 # above and `cp_under` (343) give it in these words. The archive goes to
-# origin first, then the drop here names the tracking ref in full.
+# origin first, then the drop here names the tracking ref in full. THE BRANCH
+# IS RUNNABLE AS PRINTED (702, lane openRepoTools-3's re-check of #307's round
+# 2): the lane is LANES_LANE, or the one S3 was given (a lane named by argument
+# alone, LANES_LANE unset), and where no lane is named at all (`commit` with no
+# LANES_LANE) the archive carries none. A literal `<lane>` made a branch of
+# that name, and a shell reads it as a redirection.
 cp_archive_steps() {
-  note "  git -C $LANES_REPO push origin HEAD:refs/heads/archive/${LANES_LANE:-<lane>}-stranded-$(date -u +%Y%m%dT%H%MZ)   # the archive, on origin"
+  cas_lane="${LANES_LANE:-${CS_LANE:-}}"
+  note "  git -C $LANES_REPO push origin HEAD:refs/heads/archive/${cas_lane:+$cas_lane-}stranded-$(date -u +%Y%m%dT%H%MZ)   # the archive, on origin"
   note "  git -C $LANES_REPO reset --keep refs/remotes/origin/$LANES_BRANCH          # then drop them here"
   note "  then make again, with lanes-edit.sh, each edit that is still wanted on the register as it now is."
 }
