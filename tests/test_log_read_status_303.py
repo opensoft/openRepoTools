@@ -446,6 +446,39 @@ def test_a_listing_with_no_origin_says_a_log_directory_it_cannot_search(inv, mod
     assert not problems, "\n" + "\n".join(problems) + f"\nstderr: {res.stderr.strip()!r}"
 
 
+@pytest.mark.parametrize("mode", [0o400, 0o000], ids=["dir-400", "dir-000"])
+def test_a_listing_with_an_origin_says_a_log_directory_it_cannot_list_or_search(inv, mode):
+    """LANE 3'S 1005, CONSEQUENCE 3 OF 6353304444. With an `origin` the `lanes`
+    listing uses only the NAMES of this checkout's log files, to tell a log
+    this checkout has and `origin` has not; it asks the directory to be
+    searchable as well as listable (`-x`), and the behaviour stays: no row is
+    classed DORMANT over one that is not. The words were "could not be
+    listed", which `ls` contradicts for an `r--` directory (0400): it lists
+    one and the search is what fails. They say "could not be listed or
+    searched" now, for both shapes, with the directory named."""
+    env = {"LANES_NO_FETCH": "1"}
+    whole = inv.e.edit("lanes", "--all", env=env)
+    assert whole.returncode == 0, whole.stderr
+    assert "exists and could not be listed" not in whole.stderr, whole.stderr
+    logdir = inv.e.wip / "lanes" / "log"
+    logdir.chmod(mode)
+    try:
+        if _this_account_gets_in_anyway(logdir, "dir"):
+            pytest.skip(f"this account searches a mode-{mode:03o} directory (root): "
+                        "nothing to prove here")
+        res = inv.e.edit("lanes", "--all", env=env)
+    finally:
+        logdir.chmod(0o755)
+    assert res.returncode == 0, (res.stdout, res.stderr)
+    problems = []
+    if f"{logdir} exists and could not be listed or searched, so whether a row has a log this " \
+            "checkout has and origin has not is not known" not in res.stderr:
+        problems.append("it does not say that the log directory could not be listed or searched")
+    if "no row is classed DORMANT here" not in res.stderr:
+        problems.append("it does not withhold the DORMANT class")
+    assert not problems, "\n" + "\n".join(problems) + f"\nstderr: {res.stderr.strip()!r}"
+
+
 # ------------------------------------------------ the review of #303: its guards
 
 

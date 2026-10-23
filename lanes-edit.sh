@@ -8580,7 +8580,7 @@ lanes_rows() {
   fi
   lr_logfiles=" $(printf '%s\n' "$lr_logfiles" | awk '{ print tolower($0) }' | tr '\n' ' ')"
   if [ "$lr_logs_rc" != 0 ] && [ "$lr_origin" = 1 ]; then
-    note "$LANES_LOG_DIR exists and could not be listed, so whether a row has a log this checkout has and origin has not is not known, and no row is classed DORMANT here. Fix the read and re-run before sweeping."
+    note "$LANES_LOG_DIR exists and could not be listed or searched, so whether a row has a log this checkout has and origin has not is not known, and no row is classed DORMANT here. Fix the read and re-run before sweeping."
   elif [ "$lr_logs_rc" != 0 ]; then
     note "$LANES_LOG_DIR exists and could not be listed, so whether a row has a log at all is not known — with no origin, the logs are that directory's files — and no row is classed DORMANT here. Fix the read and re-run before sweeping."
   fi
