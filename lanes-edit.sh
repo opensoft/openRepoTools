@@ -577,7 +577,9 @@
 #      no replay may overwrite (S4.4), or a `--stamp` or `--prepend` one
 #      whose handoff origin deleted meanwhile, which a replay would find
 #      nothing to write into (one moved with its row's cell, to a file under
-#      `handoffs/` that origin has, is replayed into the moved file). Or another
+#      `handoffs/` that origin has, is replayed into the moved file), or an
+#      Amendment 8(d) handoff `write-handoff` wrote whose commit or push in its
+#      own repository failed (604; the command that finishes it is said). Or another
 #      writer in the checkout REWROTE this write's commit (a `pull --rebase`
 #      with no lock): it is not on HEAD at all, and what reached origin is
 #      read by content. Or, where the drop's tree step was refused and
@@ -16526,7 +16528,8 @@ lane_checkout_enter() {   # <write_lane_of's status> <its lane, or empty>
 # (`handoffs/<estate>/<f>`) is joined to the lane's checkout; a `~/…` or
 # absolute path whose physical parent is under W becomes the same path under
 # the lane's checkout; anything else is another repository's (Amendment 8(d)),
-# published and never committed by these tools. The row's cell keeps its
+# which `write-handoff` commits and pushes in its own repository (604) and
+# `publish-handoff` never commits. The row's cell keeps its
 # spelling: this answers where the file is WRITTEN.
 # A path's physical spelling: `~` expanded, the leaf's links followed (40 at
 # most), its directory resolved with `cd -P`. 1, and the path as far as it was
@@ -19968,8 +19971,10 @@ EOF
   #      is refused first, for its spelling, wherever it lands (602, A55).
   #      Where git cannot read a repository on the way up from the target, it
   #      refuses (1, R22).
-  #      One in ANOTHER REPOSITORY (Amendment 8(d)) is written there and never
-  #      committed, and S3's refusal of this checkout does not stop it.
+  #      One in ANOTHER REPOSITORY (Amendment 8(d)) is written there, then
+  #      committed and pushed in its own top level (604), and S3's refusal of
+  #      this checkout does not stop it; one in another clone of the
+  #      register not beside W is written and never committed (A57).
   #   3. S3 step 4 for the handoff's own path (`cs_own_pending`), and for a
   #      handoff git does not track yet, which a commit would add and a lost
   #      race's replay would drop.
@@ -19994,7 +19999,8 @@ EOF
   #      that origin has, which the re-run writes (A46, A48); otherwise the
   #      commit is kept on HEAD and named (6).
   # STDOUT: `<file><TAB><sha256>` once the file is written (`HANDOFF_OUT`).
-  #   0 pushed, or nothing to commit (another repository's file, S3's refusal
+  #   0 pushed — another repository's handoff in its own repository (8(d),
+  #     604) — or nothing to commit (a file in no git work tree, S3's refusal
   #     of this checkout or not; LANES_NO_GIT)
   #   1 environment: a checkout that cannot be entered, an unreadable file,
   #     a register that could not be read (R22: never 8), a repository on the
@@ -20003,7 +20009,9 @@ EOF
   #     is inside a git directory, one in a checkout beside W that is not this
   #     one, a relative spelling that climbs out of the checkout (S2), a
   #     proof, a restart intent that is malformed — never a restart fence (603)
-  #   3 pushed, not confirmed · 4 a lock · 6 kept on HEAD, named
+  #   3 pushed, not confirmed · 4 a lock · 6 kept on HEAD, named — and an
+  #     8(d) handoff, written, whose commit or push in its own repository
+  #     failed (the command that finishes it said)
   #   7 a restart fence — the five fences, an active restart, and the
   #     restart's bound file and pre-image, which `publish-handoff` answers 2
   #     (603) — or the handoff changed under the write
@@ -20195,13 +20203,14 @@ EOF
       fi
     fi
     # ANOTHER REPOSITORY'S HANDOFF IS NOT THIS CHECKOUT'S WRITE (rv2a's
-    # pre-review of slice 2a, SHOULD 2). It is written there and committed
-    # nowhere (Amendment 8(d)), so S3's refusal of the register checkout — an
+    # pre-review of slice 2a, SHOULD 2). It is written, committed and pushed
+    # in its own repository (Amendment 8(d); 604), so S3's refusal of the
+    # register checkout — an
     # offline lane's fetch, a staged entry — does not stop it, as the old
     # `publish-handoff` never fetched for it. The managed seam (asked above),
     # the restart fences and the digests still apply.
     if [ "$whf_other" = 1 ] && [ "$whf_s3" != 0 ]; then
-      note "the refusal above is this checkout's (Amendment 23 S3) and does not stop this write: $whf_phys is another repository's handoff (Amendment 8(d)), which no tool here commits"
+      note "the refusal above is this checkout's (Amendment 23 S3) and does not stop this write: $whf_phys is another repository's handoff (Amendment 8(d)), which is never committed through this checkout"
       whf_s3=0
     fi
     # ---- 3. S3 step 4 for the handoff itself: a change to it nobody committed,
@@ -20307,8 +20316,76 @@ EOF
       fi
       exit "$whf_s3"
     fi
+    # ANOTHER REPOSITORY'S HANDOFF IS COMMITTED AND PUSHED THERE (lane
+    # openRepoTools-3's review of #312, 604, ruled at #312 6368669583; A57).
+    # Amendment 23 S2 says an Amendment 8(d) handoff "is not the register's and
+    # is unchanged", and unchanged is what `lane-start` and `lane-handoff` did
+    # with it at e2037b9: one commit in the handoff's OWN top level, by
+    # pathspec, with this write's subject and the `Lane:` trailer, then a
+    # `push` of the branch that repository is on, which is `main` wherever
+    # theirs was. Their `pull --rebase` before the push is S3's way here, as
+    # no line of this file pulls (#198): the branch is fetched and
+    # fast-forwarded BEFORE the commit, so the commit sits on origin's tip,
+    # and a fast-forward that cannot be made (a local commit, or origin's
+    # change to this very file) is left to the push, which is refused, and the
+    # commit kept (6). Not S3 or S4 themselves: that repository is not the
+    # register, so no pending change there is asked about, nothing is
+    # replayed and nothing is read back. NEVER IN
+    # A CLONE OF THE REGISTER (A57): a top level that carries the register
+    # too (A44's test) is another lane's clone, not 8(d)'s "not the
+    # register's", and a commit and push there would publish to the
+    # register's origin outside S3 and S4, from a clone this lane does not
+    # hold; beside W, 601 refused it above, and elsewhere it is written and
+    # NOT committed, as before 604 (0, said; its lane commits it). A step
+    # that fails there leaves the handoff WRITTEN, says what is left with the
+    # command that finishes it, and is 6 (`git add` or `commit` failed, or the
+    # commit is kept on HEAD and named); a file in no git work tree is written
+    # and commits nowhere (0), as `lane-start` said; LANES_NO_GIT commits
+    # nothing (0).
     if [ "$whf_other" = 1 ]; then
-      note "$HPA_TARGET is another repository's handoff (Amendment 8(d)): it is written there, and these tools never commit it."
+      whf_8d="$HPA_TARGET is another repository's handoff (Amendment 8(d)): it is written there"
+      whf_8top="$(git -C "$(dirname -- "$HPA_TARGET")" rev-parse --show-toplevel 2>/dev/null || :)"
+      whf_8top="$( [ -n "$whf_8top" ] && cd -P -- "$whf_8top" 2>/dev/null && pwd -P || :)"
+      if [ -z "$whf_8top" ] || ! path_under "$HPA_TARGET" "$whf_8top"; then
+        note "$whf_8d, and it is in no git work tree, so nothing commits it from here."
+        exit 0
+      fi
+      if [ -e "$whf_8top/$LANES_PATH" ] || [ -L "$whf_8top/$LANES_PATH" ]; then
+        note "$HPA_TARGET is in $whf_8top, another clone of the register (its top level carries $LANES_PATH too), not this write's checkout $whf_c, so it is not Amendment 8(d)'s: it is written there and NOT committed, since a commit and push there would publish to the register outside Amendment 23 S3 and S4. That clone's lane commits it."
+        exit 0
+      fi
+      whf_8rel="${HPA_TARGET#"$whf_8top"/}"
+      whf_8cmd="git --literal-pathspecs -C $whf_8top add -- $whf_8rel && git --literal-pathspecs -C $whf_8top commit -m \"$whf_subject\" -m \"Lane: $lane\" -- $whf_8rel"
+      if [ "$NO_GIT" = 1 ]; then
+        note "$whf_8d, and NOT committed: LANES_NO_GIT=1. Commit it there by pathspec, then push it: $whf_8cmd"
+        exit 0
+      fi
+      whf_8br="$(git -C "$whf_8top" symbolic-ref -q --short HEAD 2>/dev/null || :)"
+      if [ -z "$whf_8br" ]; then
+        note "$whf_8d, and NOT committed: $whf_8top's HEAD is on no branch (a rebase in progress, or a detached checkout), and no commit is made there in the middle of one. Once it is on its branch: $whf_8cmd, then push it."
+        exit 6
+      fi
+      whf_8look="look first: git -C $whf_8top fetch origin $whf_8br && git -C $whf_8top log --oneline origin/$whf_8br -3, since a push that timed out may have landed; only if it is not there, put it on origin's tip (git -C $whf_8top rebase origin/$whf_8br) and push it: git -C $whf_8top push origin $whf_8br. Never force."
+      whf_8ff=0
+      if git_net -C "$whf_8top" fetch -q origin "$whf_8br" >&2 &&
+         git -C "$whf_8top" rev-parse -q --verify "refs/remotes/origin/$whf_8br" >/dev/null 2>&1; then
+        whf_8ff=1
+        git -C "$whf_8top" -c gc.auto=0 -c maintenance.auto=false merge --ff-only -q "refs/remotes/origin/$whf_8br" >/dev/null 2>&1 || :
+      fi
+      if ! git --literal-pathspecs -C "$whf_8top" add -- "$whf_8rel" >&2 ||
+         ! git --literal-pathspecs -C "$whf_8top" commit -q -m "$whf_subject" -m "Lane: $lane" -- "$whf_8rel" >&2; then
+        note "$whf_8d, and NOT committed: git's own words are above. Commit it there by pathspec, as this write's own, then push it: $whf_8cmd"
+        exit 6
+      fi
+      if [ "$whf_8ff" = 0 ]; then
+        note "$whf_8d and committed there, on $whf_8br, \"$whf_subject\", and NOT pushed: origin/$whf_8br could not be fetched there first (no origin, no reachable origin, or a timeout). The commit is kept on HEAD there — $whf_8look"
+        exit 6
+      fi
+      if ! git_net -C "$whf_8top" push -q origin "$whf_8br" >&2; then
+        note "$whf_8d and committed there, on $whf_8br, \"$whf_subject\", and the push was refused or timed out (a hung push often lands). The commit is kept on HEAD there — $whf_8look"
+        exit 6
+      fi
+      note "$whf_8d, committed there and pushed to origin/$whf_8br: \"$whf_subject\" (Lane: $lane)."
       exit 0
     fi
     # ---- 7. the commit, the push, the read-back.
@@ -20393,7 +20470,7 @@ EOF
     if handoff_beside_w "$HCO_PATH" "$hp_path"; then
       die "lane $hp_lane's handoff $hp_cell is $HBW_WHY: \`write-handoff\` refuses it, so no path is printed for a restart to bind or a launch to read (601). Nothing was written." 2
     fi
-    [ "$hp_rc" = 0 ] || note "$hp_path is another repository's handoff (Amendment 8(d)): \`write-handoff\` writes it there and commits it nowhere"
+    [ "$hp_rc" = 0 ] || note "$hp_path is another repository's handoff (Amendment 8(d)): \`write-handoff\` writes it there, and commits and pushes it in that repository (604), never in another clone of the register"
     printf '%s\n' "$hp_path"
     ;;
 

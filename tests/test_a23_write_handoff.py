@@ -535,26 +535,149 @@ def test_repo_relative_cell(tmp_path: Path, how: str):
     _released(box, c)
 
 
-def test_cell_in_another_repository_is_published_not_committed(box: Box):
-    """Amendment 8(d): a handoff in another repository is not the register's.
-    It is written there, and committed nowhere."""
+def _other_repository(box: Box, *, origin: bool = True) -> Path:
+    """Another repository, not the register: `<root>/other`, its handoff
+    committed on `main`, and (with `origin`) a bare origin `main` tracks."""
     other = box.root / "other"
     box.git("init", "-q", "-b", "main", str(other))
     box.write(other, "handoff.md", HANDOFF)
     box.commit(other, "another repository's handoff", "handoff.md")
+    if origin:
+        bare = box.root / "other.git"
+        box.git("init", "-q", "--bare", "-b", "main", str(bare))
+        box.git("-C", str(other), "remote", "add", "origin", str(bare))
+        box.git("-C", str(other), "push", "-q", "-u", "origin", "main")
+    return other
+
+
+def _committed_and_pushed_there(box: Box, other: Path, before: str, rel: str = "handoff.md") -> None:
+    """604's outcome: one commit on `main` in the handoff's own repository,
+    by pathspec, with this write's subject and `Lane:` trailer; its tree
+    clean; its origin holding it."""
+    o = ["-C", str(other)]
+    assert box.git(*o, "status", "--porcelain") == ""
+    assert box.git(*o, "rev-parse", "HEAD~1").strip() == before
+    assert box.git(*o, "log", "-1", "--format=%B").strip().splitlines() == [SUBJECT, "", f"Lane: {LANE}"]
+    assert box.git(*o, "diff", "--name-only", "HEAD~1", "HEAD").split() == [rel]
+    assert (box.git("--git-dir", str(box.root / "other.git"), "rev-parse", "main").strip()
+            == box.git(*o, "rev-parse", "HEAD").strip())
+
+
+def test_a_cell_in_another_repository_is_committed_and_pushed_there(box: Box):
+    """Amendment 8(d), as lane openRepoTools-3 ruled 604 (#312 6368669583):
+    Amendment 23 S2 says another repository's handoff "is not the register's
+    and is unchanged", so it is committed and pushed in its own top level,
+    as `lane-start` and `lane-handoff` did at e2037b9 — by pathspec, under
+    this write's subject and `Lane:` trailer — and its tree is left clean.
+    It was written there and committed nowhere, ` M` for good. This checkout
+    and the register's origin are as they were."""
+    other = _other_repository(box)
     box.cell_is(str(other / "handoff.md"))
     c = box.seam()
     other_head = box.git("-C", str(other), "rev-parse", "HEAD").strip()
     head, tip = box.head(c), box.origin_head()
     result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT)
     assert result.returncode == 0, result.stderr
-    assert "another repository's handoff (Amendment 8(d))" in result.stderr
+    assert (f"{other / 'handoff.md'} is another repository's handoff (Amendment 8(d)): it is written "
+            "there, committed there and pushed to origin/main") in result.stderr
     assert (other / "handoff.md").read_text(encoding="utf-8") == stamped(HANDOFF)
-    assert box.git("-C", str(other), "rev-parse", "HEAD").strip() == other_head
-    assert box.git("-C", str(other), "status", "--porcelain").split() == ["M", "handoff.md"]
+    _committed_and_pushed_there(box, other, other_head)
     assert box.head(c) == head
     assert box.origin_head() == tip
     assert result.stdout == _line(other / "handoff.md")
+    _released(box, c)
+
+
+@pytest.mark.parametrize("how", ["no-origin", "no-git"])
+def test_an_8d_handoff_that_cannot_be_committed_or_pushed_there_is_written_and_said(box: Box, how: str):
+    """604's other outcomes, each with the handoff WRITTEN (R-A11-11): where
+    its repository has no origin to push to, the commit is made and kept on
+    HEAD there, and the look-first commands said (6); under LANES_NO_GIT
+    nothing is committed, and the command that commits it is said (0)."""
+    other = _other_repository(box, origin=False)
+    box.cell_is(str(other / "handoff.md"))
+    c = box.seam()
+    other_head = box.git("-C", str(other), "rev-parse", "HEAD").strip()
+    head, tip = box.head(c), box.origin_head()
+    extra = {"LANES_NO_GIT": "1"} if how == "no-git" else {}
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT, **extra)
+    assert (other / "handoff.md").read_text(encoding="utf-8") == stamped(HANDOFF)
+    o = ["-C", str(other)]
+    if how == "no-origin":
+        assert result.returncode == 6, result.stderr
+        assert "and committed there, on main" in result.stderr
+        assert f"git -C {other} fetch origin main && git -C {other} log --oneline origin/main -3" in result.stderr
+        assert box.git(*o, "status", "--porcelain") == ""
+        assert box.git(*o, "rev-parse", "HEAD~1").strip() == other_head
+        assert box.git(*o, "log", "-1", "--format=%B").strip().splitlines() == [SUBJECT, "", f"Lane: {LANE}"]
+    else:
+        assert result.returncode == 0, result.stderr
+        assert "and NOT committed: LANES_NO_GIT=1" in result.stderr
+        assert f"git --literal-pathspecs -C {other} add -- handoff.md" in result.stderr
+        assert box.git(*o, "rev-parse", "HEAD").strip() == other_head
+        assert box.git(*o, "status", "--porcelain").split() == ["M", "handoff.md"]
+    assert box.head(c) == head
+    assert box.origin_head() == tip
+    assert result.stdout == _line(other / "handoff.md")
+    _released(box, c)
+
+
+def test_an_8d_handoff_whose_origin_moved_is_fast_forwarded_first_then_committed_and_pushed(box: Box):
+    """604 without a rebasing pull (no line of `lanes-edit.sh` pulls, #198):
+    where the handoff's repository's origin moved first, by a commit that
+    does not touch the handoff, the branch is fetched and fast-forwarded
+    BEFORE the commit, as S3 does, so this write's commit sits on that
+    commit and the push goes through (0), its tree clean."""
+    other = _other_repository(box)
+    peer = box.root / "other-peer"
+    box.git("clone", "-q", str(box.root / "other.git"), str(peer))
+    box.write(peer, "notes.md", "a peer's note\n")
+    box.commit(peer, "a peer's unrelated commit", "notes.md")
+    box.git("-C", str(peer), "push", "-q", "origin", "main")
+    moved = box.git("-C", str(peer), "rev-parse", "HEAD").strip()
+    box.cell_is(str(other / "handoff.md"))
+    c = box.seam()
+    head, tip = box.head(c), box.origin_head()
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT)
+    assert result.returncode == 0, result.stderr
+    assert "committed there and pushed to origin/main" in result.stderr
+    assert (other / "handoff.md").read_text(encoding="utf-8") == stamped(HANDOFF)
+    _committed_and_pushed_there(box, other, moved)
+    assert (other / "notes.md").read_text(encoding="utf-8") == "a peer's note\n"
+    assert box.head(c) == head
+    assert box.origin_head() == tip
+    _released(box, c)
+
+
+def test_a_handoff_in_another_clone_of_the_register_elsewhere_is_written_never_committed(box: Box):
+    """A57, because of 604: the 8(d) branch now commits and pushes in the
+    handoff's own top level, but never in one that carries the register
+    (A44's test). A file under `handoffs/` of another clone of the register
+    that is NOT beside W (601 refuses one beside W) is that clone's lane's,
+    not Amendment 8(d)'s "not the register's", and a commit and push there
+    would publish to the register's origin outside S3 and S4, from a clone
+    this lane does not hold. So it is written there and NOT committed, as
+    before 604 (0), and said: that clone's HEAD, this checkout and the
+    register's origin are as they were. Whether it should be refused
+    instead is put to lane openRepoTools-3 (the body's Q4)."""
+    c = box.seam()
+    d = box.clone(box.root / "elsewhere-clone")
+    f = d / HANDOFF_REL
+    text = f.read_text(encoding="utf-8")
+    d_head = box.git("-C", str(d), "rev-parse", "HEAD").strip()
+    mine, tip = box.snapshot(c), box.origin_head()
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT, "--target", str(f))
+    assert result.returncode == 0, result.stderr
+    assert (f"{f} is in {d}, another clone of the register (its top level carries {REGISTER} too), "
+            f"not this write's checkout {c}, so it is not Amendment 8(d)'s: it is written there and "
+            "NOT committed") in result.stderr
+    assert "committed there" not in result.stderr
+    assert f.read_text(encoding="utf-8") == stamped(text)
+    assert box.git("-C", str(d), "rev-parse", "HEAD").strip() == d_head
+    assert box.git("-C", str(d), "status", "--porcelain").split() == ["M", HANDOFF_REL]
+    assert box.origin_head() == tip
+    assert box.snapshot(c) == mine
+    assert result.stdout == _line(f)
     _released(box, c)
 
 
@@ -2011,12 +2134,10 @@ def test_a_handoff_that_links_out_of_the_checkout_is_another_repositorys(box: Bo
     """m2a's D08: the row's cell names a file of this checkout, and that file
     is a link to another repository's file outside W. The path is followed
     to the physical file, and that file is another repository's (Amendment
-    8(d)): written there, said, its line printed, 0, committed nowhere. This
-    checkout and origin are as they were, the link still a link."""
-    other = box.root / "other"
-    box.git("init", "-q", "-b", "main", str(other))
-    box.write(other, "handoff.md", HANDOFF)
-    box.commit(other, "another repository's handoff", "handoff.md")
+    8(d)): written there, said, its line printed, 0, and committed and
+    pushed in that repository (604), its tree clean. This checkout and
+    origin are as they were, the link still a link."""
+    other = _other_repository(box)
     other_head = box.git("-C", str(other), "rev-parse", "HEAD").strip()
     seed = box.seed
     box.git("-C", str(seed), "pull", "-q", "--ff-only", "origin", "main")
@@ -2031,8 +2152,7 @@ def test_a_handoff_that_links_out_of_the_checkout_is_another_repositorys(box: Bo
     assert result.returncode == 0, result.stderr
     assert "another repository's handoff (Amendment 8(d))" in result.stderr
     assert (other / "handoff.md").read_text(encoding="utf-8") == stamped(HANDOFF)
-    assert box.git("-C", str(other), "rev-parse", "HEAD").strip() == other_head
-    assert box.git("-C", str(other), "status", "--porcelain").split() == ["M", "handoff.md"]
+    _committed_and_pushed_there(box, other, other_head)
     assert (c / HANDOFF_REL).is_symlink()
     assert box.snapshot(c) == before
     assert result.stdout == _line(other / "handoff.md")
