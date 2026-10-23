@@ -1849,13 +1849,21 @@ SRI
   # THE LOCK'S PID LINE, in `lanes-edit.sh`'s own form, `<pid> <container>
   # <host>`, so a writer of that checkout in this container waits on a live
   # holder and one in another container ages it by the directory's mtime.
+  # Each value is cleaned as `lock_ident` cleans its own (lane
+  # openRepoTools-3's NIT 359): kept where `lanes_binding_value_ok` takes
+  # it (letters, digits, `.`, `_`, `:`, `-`), the container `none` and the
+  # host `unknown` where empty, and either `unknown` where it holds anything
+  # else. A writer compares the line with its own `lock_ident`; cleaned
+  # another way, it read as another container's, and a killed sweep's lock
+  # was waited out for ten minutes instead of taken back.
   sc_ident="none unknown"
   if [ "$sweep_yes" = 1 ]; then
     sc_wsl="$("$LANES_EDIT" workstation 2>/dev/null || :)"
     sc_host="$(printf '%s\n' "$sc_wsl" | cut -f3)" || sc_host=""
     sc_cont="$(printf '%s\n' "$sc_wsl" | cut -f7)" || sc_cont=""
-    case "$sc_host" in '' | *[!A-Za-z0-9._-]*) sc_host=unknown ;; esac
-    case "$sc_cont" in '' | *[!A-Za-z0-9._-]*) sc_cont=none ;; esac
+    sc_host="${sc_host:-unknown}"; sc_cont="${sc_cont:-none}"
+    case "$sc_host" in *[!A-Za-z0-9._:-]*) sc_host=unknown ;; esac
+    case "$sc_cont" in *[!A-Za-z0-9._:-]*) sc_cont=unknown ;; esac
     sc_ident="$sc_cont $sc_host"
   fi
   sc_lock_take() {   # <path> — 0 holding it (SC_LOCK), 1 with SC_WHY

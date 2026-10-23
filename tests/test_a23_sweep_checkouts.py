@@ -2651,3 +2651,31 @@ def test_yes_with_LANES_REPO_naming_W_is_refused_before_anything_is_removed(swee
     assert "Nothing was removed." in result.stderr, result.stderr
     assert c.is_dir()
     assert box.origin_head() == head, "nothing reached origin"
+
+
+@pytest.mark.parametrize("env,ident", [
+    ({"LANES_CONTAINER": "bench:a"}, "bench:a hosta"),
+    ({"LANES_CONTAINER": "bench a"}, "unknown hosta"),
+    ({"LANES_HOST": "host:1"}, "bench-a host:1"),
+], ids=["a container with a colon", "a container with a blank", "a host with a colon"])
+def test_the_locks_pid_line_is_lanes_edits_own(sweep, env, ident):
+    """THE SWEEP'S PID LINE IS `lanes-edit.sh`'S `lock_ident`, CHARACTER FOR
+    CHARACTER (lane openRepoTools-3's NIT 359): `<pid> <container> <host>`,
+    each kept where `lanes_binding_value_ok` takes it (letters, digits, `.`,
+    `_`, `:` and `-`), an empty container `none` and an empty host
+    `unknown`, and either `unknown` where it holds anything else. A writer
+    compares a lock's line with its own `lock_ident` to know a holder in its
+    own container, whose pid it can ask; the sweep's line, cleaned another
+    way, read as another container's, and a killed sweep's lock was waited
+    out for ten minutes. A hook at the CLOSED lane's fetch copies the line
+    the sweep wrote."""
+    box = sweep.box
+    c = box.checkout(CLOSED)
+    copy = box.root / "pid-line.txt"
+    _hook_on_fetch_of(box, c, f"cp -- {box.lock_of(c)}/pid {copy}")
+    result, rows = sweep("--yes", LANES_LANE=RUNNER, **env)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert rows[str(c)][0] == "removed", rows[str(c)]
+    pid, _, said = copy.read_text(encoding="utf-8").rstrip("\n").partition(" ")
+    assert pid.isdigit(), pid
+    assert said == ident, said
