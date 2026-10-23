@@ -1156,7 +1156,9 @@ def test_a_handoff_in_another_checkout_of_the_register_beside_W_is_refused(box: 
     `test_a_handoff_in_another_clone_of_the_register_is_still_another_repositorys`
     until lane 3's ruling. A lane's handoff is written in its own checkout
     only, so the path refuses it (2), by `--target` or by an absolute cell:
-    nothing written there or here, the stamp line said, nothing on stdout."""
+    nothing written there or here, the stamp line said, nothing on stdout.
+    A relative cell that climbs there with `..` is refused the same (2), by
+    602's rule, which asks the spelling first (A55)."""
     if how == "abs-cell":
         box.cell_is(str(_beside_w_dir(box, where) / HANDOFF_REL))
     if how == "climb-cell":
@@ -1168,7 +1170,12 @@ def test_a_handoff_in_another_checkout_of_the_register_beside_W_is_refused(box: 
     text, theirs, mine = f.read_bytes(), box.snapshot(d), box.snapshot(c)
     result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT, *args)
     assert result.returncode == 2, result.stderr
-    assert f"is {f}, in another checkout of the register beside W ({box.w})" in result.stderr
+    if how == "climb-cell":
+        assert (f"lane {LANE}'s handoff {_climb(box, f)} is a repository-relative spelling, joined to "
+                f"this write's checkout {c}, and its '.' or '..' components climb out of it (to {f})"
+                ) in result.stderr
+    else:
+        assert f"is {f}, in another checkout of the register beside W ({box.w})" in result.stderr
     assert "Nothing was written." in result.stderr
     assert "another repository's handoff" not in result.stderr
     assert f"the stamp line it would have written under the handoff's header block: {STAMP}" in result.stderr
@@ -1234,8 +1241,9 @@ def test_a_clone_git_cannot_read_is_never_taken_for_no_repository(box: Box, wher
     _released(box, c)
 
 
-HANDOFF_PATH_REFUSED = [("W", "climb-cell"), ("lanes-sibling", "abs-cell"), ("lanes-sibling", "climb-cell"),
-                        ("profile-clone", "abs-cell"), ("profile-clone", "climb-cell")]
+HANDOFF_PATH_REFUSED = [("W", "climb-cell"), ("W", "link-cell"), ("lanes-sibling", "abs-cell"),
+                        ("lanes-sibling", "climb-cell"), ("profile-clone", "abs-cell"),
+                        ("profile-clone", "climb-cell")]
 
 
 @pytest.mark.parametrize("where,how", HANDOFF_PATH_REFUSED)
@@ -1249,7 +1257,9 @@ def test_handoff_path_refuses_what_write_handoff_refuses(box: Box, where: str, h
     another checkout of the register beside W, absolute or climbing with
     `..`. No path on stdout, the refusal named, nothing written there or
     here. W's own absolute spelling is still translated into the checkout
-    (S2), so W is reached here only by climbing."""
+    (S2), so W is reached here only by climbing, or through a link in the
+    checkout. A relative cell that climbs out is refused by 602's rule,
+    which asks the spelling first (A55), as `write-handoff` does."""
     if where == "W":
         box.w_current()
         d = box.w
@@ -1257,16 +1267,26 @@ def test_handoff_path_refuses_what_write_handoff_refuses(box: Box, where: str, h
         d = _beside_w(box, where)
     f = d / HANDOFF_REL
     assert f.is_file()
-    box.cell_is(str(f) if how == "abs-cell" else _climb(box, f))
+    if how != "link-cell":
+        box.cell_is(str(f) if how == "abs-cell" else _climb(box, f))
     c = box.seam()
+    if how == "link-cell":
+        (c / HANDOFF_REL).unlink()
+        (c / HANDOFF_REL).symlink_to(f)
     theirs, mine = box.snapshot(d), box.snapshot(c)
     result = box.helper("handoff-path", LANE)
     assert result.returncode == 2, result.stderr
-    if where == "W":
+    if how == "climb-cell":
+        assert (f"lane {LANE}'s handoff cell {_climb(box, f)} is a repository-relative spelling, joined to "
+                "the checkout its writes go through, and its '.' or '..' components climb out of it"
+                ) in result.stderr
+        assert "so write-handoff refuses it too. Nothing was printed." in result.stderr
+    elif where == "W":
         assert f"is {f}, inside the workspace checkout {box.w}, the readers' copy" in result.stderr
     else:
         assert f"is {f}, in another checkout of the register beside W ({box.w}), not in the checkout {c}" in result.stderr
-    assert "`write-handoff` refuses it, so no path is printed" in result.stderr
+    if how != "climb-cell":
+        assert "`write-handoff` refuses it, so no path is printed" in result.stderr
     assert "another repository's handoff" not in result.stderr
     assert result.stdout == ""
     assert box.snapshot(d) == theirs
@@ -1987,6 +2007,116 @@ def test_a_handoff_that_links_out_of_the_checkout_is_another_repositorys(box: Bo
     assert box.snapshot(c) == before
     assert result.stdout == _line(other / "handoff.md")
     _released(box, c)
+
+
+# ------------------------------------------------- 602: a relative spelling that climbs out
+
+CLIMBS = {
+    # name: (the spelling, where it is given, the file it reaches from the seam `<root>/c`);
+    # None: the box's own file, spelled by `_climb` (a sibling checkout's handoff, W's)
+    "cell-outside": ("handoffs/../../outside/x.md", "cell", "outside/x.md"),
+    "target-outside": ("../outside/x.md", "target", "outside/x.md"),
+    "cell-sibling": (None, "cell", None),
+    "cell-W": (None, "cell", None),
+    "cell-through-a-link": ("handoffs/lnk/../x.md", "cell", "elsewhere/x.md"),
+    "cell-not-there-yet": ("handoffs/notyet/../../../outside/x.md", "cell", "outside/x.md"),
+}
+
+
+@pytest.mark.parametrize("case", CLIMBS)
+def test_a_relative_spelling_that_climbs_out_of_the_checkout_is_refused(box: Box, case: str):
+    """602 of lane openRepoTools-3's review of #312: a repository-relative
+    cell, or a relative `--target`, is joined to the checkout (S2), and one
+    whose `.` or `..` components climb out of it was written as another
+    repository's handoff, exit 0, where `set-restart-intent --handoff`
+    refuses the same cell (64). It names no other repository's handoff:
+    refused (2), nothing written anywhere, the stamp line said. Climbing out
+    is read from the text, and where the spelling resolves, from the file it
+    names: `handoffs/lnk/../x.md`, with `lnk` a link out, stays in the
+    checkout by its text and leaves it by its file. A link with no such
+    component is still Amendment 8(d)'s (D08's test). The spelling is asked
+    first (A55), so a cell that climbs into W or a checkout beside it is
+    refused for its spelling too. And one that climbs out THROUGH A
+    DIRECTORY NOT THERE YET (`handoffs/notyet/..`), whose file neither
+    `path_physical` nor the kernel can resolve, so no check by path can say
+    where it lands, is refused by its text (it said 8, "not there"), and no
+    directory is made for it."""
+    spelling, given, rel = CLIMBS[case]
+    if case == "cell-sibling":
+        f = box.lanes_root / NEIGHBOUR / HANDOFF_REL
+    elif case == "cell-W":
+        f = box.w / HANDOFF_REL
+    else:
+        f = box.root / rel
+    if spelling is None:
+        spelling = _climb(box, f)
+    if given == "cell":
+        box.cell_is(spelling)
+    c = box.seam()
+    if case == "cell-sibling":
+        box.clone(box.lanes_root / NEIGHBOUR)
+    elif case != "cell-W":
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(HANDOFF, encoding="utf-8")
+    if case == "cell-through-a-link":
+        (box.root / "elsewhere" / "a").mkdir()
+        (c / "handoffs" / "lnk").symlink_to(box.root / "elsewhere" / "a")
+    assert f.is_file()
+    args = ("--target", spelling) if given == "target" else ()
+    text, mine, w = f.read_bytes(), box.snapshot(c), box.w_state()
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT, *args)
+    assert result.returncode == 2, result.stderr
+    assert (f"lane {LANE}'s handoff {spelling} is a repository-relative spelling, joined to this "
+            f"write's checkout {c}, and its '.' or '..' components climb out of it") in result.stderr
+    assert "Nothing was written." in result.stderr
+    assert "another repository's handoff" not in result.stderr
+    assert f"the stamp line it would have written under the handoff's header block: {STAMP}" in result.stderr
+    assert f.read_bytes() == text
+    assert box.snapshot(c) == mine
+    assert box.w_state() == w
+    assert not (c / "handoffs" / "notyet").exists()
+    assert result.stdout == ""
+    _released(box, c)
+
+
+def test_a_relative_spelling_that_stays_in_the_checkout_is_its_own_handoff(box: Box):
+    """602's bound: the rule is a spelling that LEAVES the checkout, not any
+    `..`. A cell that climbs within it names the lane's own handoff, which
+    is written, committed and pushed as the plain cell's is."""
+    box.cell_is(f"handoffs/../{HANDOFF_REL}")
+    c = box.seam()
+    result = box.write_handoff("--stamp", STAMP, "--subject", SUBJECT)
+    assert result.returncode == 0, result.stderr
+    assert box.origin_file(HANDOFF_REL) == stamped(HANDOFF)
+    assert result.stdout == _line(c / HANDOFF_REL)
+    _released(box, c)
+
+
+@pytest.mark.parametrize("cell", ["handoffs/../../outside/x.md", "handoffs/notyet/../../../outside/x.md"])
+@pytest.mark.parametrize("how", ["seam", "routed"])
+def test_handoff_path_refuses_a_relative_cell_that_climbs_out_of_the_checkout(box: Box, how: str, cell: str):
+    """602 in `handoff-path`: it printed `<c>/handoffs/../../outside/x.md`
+    as this checkout's own file, with no note, for a cell `write-handoff`
+    now refuses, and the same for a cell that climbs out through a directory
+    not there yet. It answers where that write goes, so it refuses the cell
+    too (2), prints nothing, and routed, `--create` clones nothing for it:
+    the text is read before any checkout is made."""
+    f = box.root / "outside" / "x.md"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(HANDOFF, encoding="utf-8")
+    box.cell_is(cell)
+    c = box.seam() if how == "seam" else box.checkout(LANE)
+    for argv in ((LANE,), (LANE, "--create")):
+        result = box.helper("handoff-path", *argv)
+        assert result.returncode == 2, result.stderr
+        assert (f"lane {LANE}'s handoff cell {cell} is a repository-relative "
+                "spelling, joined to the checkout its writes go through, and its '.' or '..' "
+                "components climb out of it") in result.stderr
+        assert result.stdout == ""
+    if how == "routed":
+        assert not c.exists(), "a cell that climbs out gets no checkout"
+    else:
+        assert not (c / "handoffs" / "notyet").exists()
 
 
 # ------------------------------------------------- m2a's battery, its second half

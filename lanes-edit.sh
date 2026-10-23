@@ -494,7 +494,9 @@
 #      checkout of the register beside it (`<W>-lanes/<lane>/`, `<W>-<name>/`;
 #      a lane's handoff is written in its own checkout only, and
 #      `handoff-path` and `set-restart-intent --handoff` refuse the same
-#      handoff by the same check, 601), a restart's bound file or
+#      handoff by the same check, 601), a relative cell or `--target` whose
+#      `.` or `..` components climb out of the checkout (S2, 602; `handoff-path`
+#      refuses that cell too), a restart's bound file or
 #      pre-image that is not this one, or a splice that does not prove out,
 #      each with nothing written; while S3's refusal of a `--prepend` or a
 #      `--whole` has WRITTEN the handoff, uncommitted (R-A11-11), and printed
@@ -16644,6 +16646,41 @@ whf_in_scope() {   # <path relative to the clone's top level> — 0 in scope; 1 
   if [ -n "$LANES_PREFIX" ]; then case "$1" in "$LANES_PREFIX"*) return 1 ;; esac; fi
   return 0
 }
+# A REPOSITORY-RELATIVE SPELLING NAMES A FILE OF THE CHECKOUT IT IS JOINED TO
+# (Amendment 23 S2; lane openRepoTools-3's review of #312, 602), so one whose
+# `.` or `..` components climb out of that checkout names no other
+# repository's handoff: `write-handoff` and `handoff-path` refuse it (2), as
+# `set-restart-intent --handoff` refuses the same spelling (64). It climbs out
+# by its TEXT (a `..` above the checkout's top level, whether or not the
+# directories it climbs through exist yet), or, where the checkout is given
+# and the spelling resolves, by the FILE it names (a `..` after a link out).
+# A spelling with no such component is not this rule's: a link that carries
+# it out stays Amendment 8(d)'s (m2a's D08), and one that climbs within the
+# checkout is the checkout's own file. THE SPELLING IS ASKED FIRST (A55), in
+# both verbs, before where the path lands (S5, 601's `handoff_beside_w`): a
+# relative spelling that climbs out is refused for what it is, wherever it
+# lands, as `set-restart-intent`'s 64 already was, and `handoff-path`
+# refuses it before `--create` clones anything.
+handoff_rel_climbs_out() {   # <checkout, or empty for the text alone> <cell> — 0 it climbs out; 1 not
+  case "$2" in '~'|'~/'*|/*) return 1 ;; esac
+  case "/$2/" in */../*|*/./*) : ;; *) return 1 ;; esac
+  hrco_d=0; hrco_rest="$2"
+  while [ -n "$hrco_rest" ]; do
+    case "$hrco_rest" in
+      */*) hrco_part="${hrco_rest%%/*}"; hrco_rest="${hrco_rest#*/}" ;;
+      *)   hrco_part="$hrco_rest"; hrco_rest="" ;;
+    esac
+    case "$hrco_part" in
+      ''|.) : ;;
+      ..)   hrco_d=$((hrco_d - 1)); [ "$hrco_d" -ge 0 ] || return 0 ;;
+      *)    hrco_d=$((hrco_d + 1)) ;;
+    esac
+  done
+  [ -n "$1" ] || return 1
+  hrco_p="$(path_physical "$1/$2")" || return 1
+  path_under "$hrco_p" "$1" && return 1
+  return 0
+}
 # A37'S KEEP, ONLY WHERE A REPLAY COULD NOT FOLLOW THE FILE (rv2a-c2's
 # re-review of slice 2a, NIT 2; A46). Slice 1b's `cp_replay` asks it before it
 # keeps a write whose in-place file origin no longer has, of origin as
@@ -19914,8 +19951,11 @@ EOF
   #      never the register or `lanes/`), and one inside a git directory —
   #      another clone's `.git/`, a bare clone — and any path in W or in a
   #      checkout beside it (`<W>-lanes/<lane>/`, `<W>-<name>/`): a lane's
-  #      handoff is written in its own checkout only (601). Where git cannot
-  #      read a repository on the way up from the target, it refuses (1, R22).
+  #      handoff is written in its own checkout only (601). A relative cell
+  #      or `--target` whose `.` or `..` components climb out of the checkout
+  #      is refused first, for its spelling, wherever it lands (602, A55).
+  #      Where git cannot read a repository on the way up from the target, it
+  #      refuses (1, R22).
   #      One in ANOTHER REPOSITORY (Amendment 8(d)) is written there and never
   #      committed, and S3's refusal of this checkout does not stop it.
   #   3. S3 step 4 for the handoff's own path (`cs_own_pending`), and for a
@@ -19949,7 +19989,8 @@ EOF
   #     way up from the target that git could not read (R22)
   #   2 refused: S3 (step 6), S5, a target that is not under handoffs/ (S2) or
   #     is inside a git directory, one in a checkout beside W that is not this
-  #     one, a restart's bound file or pre-image, a proof
+  #     one, a relative spelling that climbs out of the checkout (S2), a
+  #     restart's bound file or pre-image, a proof
   #   3 pushed, not confirmed · 4 a lock · 6 kept on HEAD, named
   #   7 a restart fence, or the handoff changed under the write
   #   8 no handoff to write: no row for the lane (with `--target` too), the
@@ -20057,6 +20098,10 @@ EOF
     fi
     whf_other=0; whf_path="$(handoff_in_repo "$whf_c" "$whf_cell")" || whf_other=1
     whf_phys="$(path_physical "$whf_path")" || whf_phys="$whf_path"
+    if handoff_rel_climbs_out "$whf_c" "$whf_cell"; then
+      whf_stamp_said
+      die "lane $lane's handoff $whf_cell is a repository-relative spelling, joined to this write's checkout $whf_c, and its '.' or '..' components climb out of it (to $whf_phys): a relative cell or --target names a file of its checkout, never another repository's (Amendment 23 S2), as set-restart-intent --handoff refuses the same spelling. Nothing was written." 2
+    fi
     if [ -n "$LANES_WS_REAL" ] && [ "$whf_c" != "$LANES_WS_REAL" ] && path_under "$whf_phys" "$LANES_WS_REAL"; then
       whf_stamp_said
       die "lane $lane's handoff $whf_path resolves to $whf_phys, inside the workspace checkout $LANES_WS_REAL, the readers' copy, where no tool writes (Amendment 23 S5). Nothing was written. The lane's handoff is a file of its own checkout, $whf_c: make $whf_path one there, then run LANES_LANE=$lane $SELF write-handoff $lane … again." 2
@@ -20285,7 +20330,8 @@ EOF
   #   row that names no handoff, and nothing cloned · 1 a checkout there that
   #   is not a clone, or a register that could not be read (R22: never 8) ·
   #   2 a name refused, a handoff in W or in another checkout beside it
-  #   (601, as `write-handoff` refuses it; nothing on stdout),
+  #   (601, as `write-handoff` refuses it; nothing on stdout), a relative
+  #   cell whose `.` or `..` components climb out of the checkout (602, S2),
   #   or the clone failed · 4 the creation lock · 64 usage
   handoff-path)
     hp_lane=""; hp_create=0
@@ -20316,7 +20362,14 @@ EOF
       note "lane $hp_lane's row names no handoff"
       exit 8
     fi
+    # A RELATIVE CELL THAT CLIMBS OUT OF THE CHECKOUT (602): refused as
+    # `write-handoff` refuses it, and first, as there (A55) — by its text
+    # before any checkout is made, then by the file it names in the checkout
+    # there is.
+    hp_climbs="lane $hp_lane's handoff cell $hp_cell is a repository-relative spelling, joined to the checkout its writes go through, and its '.' or '..' components climb out of it: a relative cell names a file of that checkout, never another repository's (Amendment 23 S2), so write-handoff refuses it too. Nothing was printed."
+    ! handoff_rel_climbs_out "" "$hp_cell" || die "$hp_climbs" 2
     handoff_checkout_of "$hp_lane" "$hp_create"
+    ! handoff_rel_climbs_out "$HCO_PATH" "$hp_cell" || die "$hp_climbs" 2
     hp_rc=0; hp_path="$(handoff_in_repo "$HCO_PATH" "$hp_cell")" || hp_rc=$?
     # WHAT `write-handoff` REFUSES, NO PATH IS PRINTED FOR (finding 723 of
     # lane openRepoTools-3's review of #316): a caller binds a restart to this
