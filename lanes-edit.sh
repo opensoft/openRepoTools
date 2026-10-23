@@ -16815,8 +16815,12 @@ refresh_workspace() {
 # uncommitted, where nothing will commit it. Each one under `handoffs/` or
 # `lanes/` is named by path, and where a row's handoff cell names it, by the
 # lane whose handoff it is and the place in that lane's checkout it belongs.
+# THE SCAN WRITES NOTHING IN W (lane openRepoTools-3's review of #316, 732): a
+# plain `git status` that finds the index stat-dirty rewrites it under W's
+# `index.lock`, a write S5 forbids, which 2b's launch would make twice. So it
+# runs with `GIT_OPTIONAL_LOCKS=0`, as `ws_pending_refuse`'s status does.
 refresh_workspace_strays() {   # <W>
-  rws_list="$(git -C "$1" status --porcelain --untracked-files=all -- handoffs lanes 2>/dev/null || :)"
+  rws_list="$(GIT_OPTIONAL_LOCKS=0 git -C "$1" status --porcelain --untracked-files=all -- handoffs lanes 2>/dev/null || :)"
   [ -n "$rws_list" ] || return 0
   rws_map="$(awk -F'|' 'substr($0,1,1) == "|" {
       p1 = index($0, "`"); if (p1 == 0) next

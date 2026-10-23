@@ -2269,6 +2269,36 @@ def test_handoff_path_refuses_a_relative_cell_that_climbs_out_of_the_checkout(bo
         assert not (c / "handoffs" / "notyet").exists()
 
 
+# ------------------------------------------------- 732: 1a's stray scan, carried in 2a's file
+
+def test_refresh_workspaces_stray_scan_never_rewrites_Ws_index(box: Box):
+    """732 of lane openRepoTools-3's review of #316 (1a's code, in this
+    slice's file): `refresh_workspace_strays` ran a plain `git status` in W,
+    which, finding the index stat-dirty (a tracked file touched, its bytes
+    the same), rewrote it under W's `index.lock`: a write in W, which S5
+    forbids, and 2b's launch runs the scan twice. It runs with
+    `GIT_OPTIONAL_LOCKS=0`, as `ws_pending_refuse`'s status does: W's index
+    is as it was, its mtime and its bytes, and the stray is still named. A
+    plain `git status` afterwards does rewrite it, so the index was
+    stat-dirty."""
+    w = box.w
+    index = w / ".git" / "index"
+    reg = w / REGISTER
+    st = reg.stat()
+    os.utime(reg, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))
+    box.write(w, "handoffs/repoS4/stray.md", "# a stray\n")
+    time.sleep(1.1)
+    before = (index.stat().st_mtime_ns, index.read_bytes())
+    result = box.helper("refresh-workspace", timeout=120)
+    assert result.returncode == 0, result.stderr
+    assert "a stray in W: handoffs/repoS4/stray.md (??)" in result.stderr
+    assert (index.stat().st_mtime_ns, index.read_bytes()) == before, "W's index was rewritten"
+    plain = subprocess.run(["git", "-C", str(w), "status", "--porcelain"], env=box.env,
+                           capture_output=True, text=True, check=False)
+    assert plain.returncode == 0, plain.stderr
+    assert index.stat().st_mtime_ns != before[0], "the index was not stat-dirty: the case proves nothing"
+
+
 # ------------------------------------------------- m2a's battery, its second half
 
 def test_stamp_into_an_empty_handoff_is_refused_1_and_says_the_line(box: Box):
