@@ -497,7 +497,8 @@
 #      handoff by the same check, 601), a relative cell or `--target` whose
 #      `.` or `..` components climb out of the checkout (S2, 602; `handoff-path`
 #      refuses that cell too), a handoff whose path holds a glob character
-#      (607), or a splice that does not prove out, each with
+#      (607; `handoff-path` and `set-restart-intent --handoff` refuse it
+#      too, 991), or a splice that does not prove out, each with
 #      nothing written — a restart's bound file or pre-image that is not this
 #      one is `publish-handoff`'s 2 and `write-handoff`'s 7 (603: its 2 is
 #      never a restart fence's); while S3's refusal of a `--prepend` or a
@@ -16627,6 +16628,29 @@ handoff_beside_w() {   # <the checkout> <a path, as handoff_in_repo gave it> —
   esac
   return 1
 }
+# NO GLOB CHARACTER IN A HANDOFF'S PATH IN ITS CHECKOUT (lane
+# openRepoTools-3's review of #312, 607; A59), ASKED BY ALL THREE VERBS (991
+# of its first review of #311, under 723; A60). `commit_publish` stages and
+# commits its pathspec as git reads one, a pattern, so `handoffs/<e>/x[1].md`
+# names `handoffs/<e>/x1.md` too, a file the write never wrote, which its
+# commit could carry under its subject. No lane's handoff is named so (a lane
+# name has none of `*?[`), so `write-handoff` refuses it; and where
+# `handoff-path` printed that path, a restart was bound to a file the write
+# then refused. So `write-handoff`, `handoff-path` and `set-restart-intent
+# --handoff` ask this ONE question, as they ask 601's: of the PHYSICAL path
+# (`path_physical`, as `write-handoff`'s scope check reads it), relative to
+# the checkout. A path outside the checkout is not this rule's: another
+# repository's handoff is Amendment 8(d)'s, committed by its own top level's
+# pathspec (A57). Sets HRG_REL: the path in the checkout.
+HRG_REL=""
+handoff_rel_globbed() {   # <the checkout> <a path, as handoff_in_repo gave it> — 0 refused, HRG_REL set; 1 not
+  HRG_REL=""
+  hrg_p="$(path_physical "$2")" || hrg_p="$2"
+  path_under "$hrg_p" "$1" || return 1
+  HRG_REL="${hrg_p#"$1"/}"
+  case "$HRG_REL" in *'*'*|*'?'*|*'['*) return 0 ;; esac
+  return 1
+}
 # THE CHECKOUT A LANE'S HANDOFF IS WRITTEN THROUGH, for the two acts that answer
 # it without writing (`handoff-path`, `set-restart-intent`): S1's path under the
 # opt-in with no explicit `LANES_REPO` — made first with `create` 1, or checked
@@ -20175,17 +20199,11 @@ EOF
       die "lane $lane's handoff target $whf_path is $whf_rel in the checkout $whf_c, which is not a file under handoffs/: write-handoff writes a lane's handoff and nothing else, never the register ($LANES_PATH) or anything under lanes/ (Amendment 23 S2). Nothing was written." 2
     fi
     # NO GLOB CHARACTER IN THE HANDOFF'S PATH (lane openRepoTools-3's review
-    # of #312, 607; A58). `commit_publish` stages and commits its pathspec as
-    # git reads one, a pattern, so `handoffs/<e>/x[1].md` names
-    # `handoffs/<e>/x1.md` too, a file this write never wrote, which its
-    # commit could carry under its subject. No lane's handoff is named so
-    # (a lane name has none of `*?[`), so it is refused, nothing written.
-    if [ "$whf_other" = 0 ]; then
-      case "$whf_rel" in
-        *'*'*|*'?'*|*'['*)
-          whf_stamp_said
-          die "lane $lane's handoff $whf_rel in the checkout $whf_c has a glob character ('*', '?' or '[') in its path, and git reads a pathspec as a pattern, so this write's commit could stage a file it never wrote (607). Nothing was written. Name the handoff without one." 2 ;;
-      esac
+    # of #312, 607; A59): the question `handoff-path` and `set-restart-intent
+    # --handoff` ask too (`handoff_rel_globbed`, 991; A60), nothing written.
+    if [ "$whf_other" = 0 ] && handoff_rel_globbed "$whf_c" "$whf_path"; then
+      whf_stamp_said
+      die "lane $lane's handoff $HRG_REL in the checkout $whf_c has a glob character ('*', '?' or '[') in its path, and git reads a pathspec as a pattern, so this write's commit could stage a file it never wrote (607). Nothing was written. Name the handoff without one." 2
     fi
     # AND IN ANOTHER CLONE OF THE REGISTER (rv2a-c2's re-review of slice 2a,
     # SHOULD 1). A path outside this checkout, in a git work tree whose top
@@ -20469,7 +20487,9 @@ EOF
   #   2 a name refused, a handoff in W or in another checkout beside it
   #   (601, as `write-handoff` refuses it; nothing on stdout), a relative
   #   cell whose `.` or `..` components climb out of the checkout (602, S2),
-  #   or the clone failed · 4 the creation lock · 64 usage
+  #   a path in the checkout that holds a glob character (607, as
+  #   `write-handoff` refuses it, 991), or the clone failed · 4 the creation
+  #   lock · 64 usage
   handoff-path)
     hp_lane=""; hp_create=0
     while [ $# -gt 0 ]; do
@@ -20514,6 +20534,9 @@ EOF
     # W or in another checkout beside it is refused here by the same check.
     if handoff_beside_w "$HCO_PATH" "$hp_path"; then
       die "lane $hp_lane's handoff $hp_cell is $HBW_WHY: \`write-handoff\` refuses it, so no path is printed for a restart to bind or a launch to read (601). Nothing was written." 2
+    fi
+    if handoff_rel_globbed "$HCO_PATH" "$hp_path"; then
+      die "lane $hp_lane's handoff $hp_cell is $HRG_REL in the checkout $HCO_PATH, with a glob character ('*', '?' or '[') in its path: \`write-handoff\` refuses it (607), so no path is printed for a restart to bind or a launch to read (991). Nothing was written. Name the handoff without one." 2
     fi
     [ "$hp_rc" = 0 ] || note "$hp_path is another repository's handoff (Amendment 8(d)): \`write-handoff\` writes it there, and commits and pushes it in that repository (604), never in another clone of the register"
     printf '%s\n' "$hp_path"
@@ -20689,17 +20712,25 @@ EOF
       if handoff_beside_w "$HCO_PATH" "$sri_hf"; then
         die "--handoff $sri_hf_cell is $HBW_WHY: \`write-handoff\` refuses it, so no restart is bound to it (601). Nothing was written." 2
       fi
+      if handoff_rel_globbed "$HCO_PATH" "$sri_hf"; then
+        die "--handoff $sri_hf_cell is $HRG_REL in the checkout $HCO_PATH, with a glob character ('*', '?' or '[') in its path: \`write-handoff\` refuses it (607), so no restart is bound to it (991). Nothing was written." 2
+      fi
     elif [ -n "$sri_hf" ] && [ -n "$LANES_WS_REAL" ]; then
       # AN ABSOLUTE PATH IS KEPT AS GIVEN (W's spelling is every older
       # caller's, and `write-handoff` translates it on its side), but one that
-      # lands in a checkout beside W is asked the same question as a cell
-      # (601): only the lane's own checkout there is its handoff's.
+      # lands in a checkout beside W is asked the same questions as a cell
+      # (601): only the lane's own checkout there is its handoff's, and no
+      # glob character in its path there (607, 991) — the path `handoff-path`
+      # prints under the opt-in. W's own spelling is not asked (A60).
       sri_hf_phys="$(path_physical "$sri_hf")" || sri_hf_phys="$sri_hf"
       case "$sri_hf_phys" in
         "$LANES_WS_REAL"-*/*)
           handoff_checkout_of "$lane" 0
           if handoff_beside_w "$HCO_PATH" "$sri_hf"; then
             die "--handoff $sri_hf is $HBW_WHY: \`write-handoff\` refuses it, so no restart is bound to it (601). Nothing was written." 2
+          fi
+          if handoff_rel_globbed "$HCO_PATH" "$sri_hf"; then
+            die "--handoff $sri_hf is $HRG_REL in the checkout $HCO_PATH, with a glob character ('*', '?' or '[') in its path: \`write-handoff\` refuses it (607), so no restart is bound to it (991). Nothing was written." 2
           fi ;;
       esac
     fi

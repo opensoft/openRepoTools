@@ -2354,6 +2354,68 @@ def test_a_handoff_whose_path_holds_a_glob_character_is_refused(box: Box):
     _released(box, c)
 
 
+#: 607's handoff: a path whose part in the checkout holds a glob character.
+GLOB_REL = "handoffs/repoS4/x[1].md"
+
+
+@pytest.mark.parametrize("how,argv", [("seam", ()), ("routed", ()), ("routed", ("--create",))])
+def test_handoff_path_refuses_a_glob_character_as_write_handoff_does(tmp_path: Path, how: str, argv: tuple):
+    """991 of lane openRepoTools-3's first review of #311, 2a's to close
+    under 723: at 60ddad3 `handoff-path` printed `<c>/handoffs/repoS4/x[1].md`,
+    a path `write-handoff` refuses (607), for a restart to bind and a launch
+    to read. The verbs now ask one question of the physical path in the
+    checkout (`handoff_rel_globbed`, A60), so `handoff-path` refuses it too
+    (2): no path on stdout, the refusal named, nothing written. Routed, a
+    read without `--create` makes no checkout, and `--create` makes the
+    lane's own (S1's) before the question is asked, as 601's refusal does."""
+    box = Box(tmp_path, route=(how == "routed"))
+    box.peer_pushes(GLOB_REL, HANDOFF)
+    box.cell_is(GLOB_REL)
+    c = box.seam() if how == "seam" else box.checkout(LANE)
+    mine = box.snapshot(c) if how == "seam" else None
+    result = box.helper("handoff-path", LANE, *argv)
+    assert result.returncode == 2, result.stderr
+    assert (f"lane {LANE}'s handoff {GLOB_REL} is {GLOB_REL} in the checkout {c}, with a glob character "
+            "('*', '?' or '[') in its path: `write-handoff` refuses it (607), so no path is printed for "
+            "a restart to bind or a launch to read (991)") in result.stderr
+    assert "Nothing was written." in result.stderr
+    assert "another repository's handoff" not in result.stderr
+    assert result.stdout == ""
+    if how == "seam":
+        assert box.snapshot(c) == mine
+    elif argv:
+        assert (c / ".git").exists(), "--create made the lane's own checkout first"
+    else:
+        assert not c.exists(), "a read makes no checkout"
+
+
+@pytest.mark.parametrize("how", ["cell", "abs-in-lane-checkout"])
+def test_set_restart_intent_refuses_a_glob_character_as_write_handoff_does(tmp_path: Path, how: str):
+    """991 in the third verb that translates a handoff: `set-restart-intent
+    --handoff` bound a restart to `x[1].md`, a file `write-handoff` then
+    refuses (607). It asks the same question where it asks 601's (A60): of
+    the row's cell translated into the checkout, and of an absolute path in
+    the lane's own checkout beside W, the path `handoff-path` prints under
+    the opt-in. Refused (2): no intent written, nothing on stdout. W's own
+    absolute spelling is still kept as given (every older caller's binding,
+    A54), and `write-handoff` refuses it when it writes."""
+    box = Box(tmp_path, route=True)
+    if how == "cell":
+        c = box.seam()
+        spelled = GLOB_REL
+    else:
+        c = box.checkout(LANE)
+        spelled = str(c / GLOB_REL)
+    made = _bound(box, spelled)
+    assert made.returncode == 2, made.stderr
+    assert (f"--handoff {spelled} is {GLOB_REL} in the checkout {c}, with a glob character ('*', '?' or "
+            "'[') in its path: `write-handoff` refuses it (607), so no restart is bound to it (991)"
+            ) in made.stderr
+    assert "Nothing was written." in made.stderr
+    assert made.stdout == ""
+    assert not (box.state / LANE / "restart-intent.yaml").exists()
+
+
 def test_whole_kept_by_S4_4_names_the_commits_under_it(box: Box):
     """609: S4.4's refusal did not list the commits under this write's, as
     1b's 344 does. An unlocked writer's stamp landing just before this
