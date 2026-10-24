@@ -16,6 +16,12 @@ the commands resolve W from `workspace.yaml` as a lane window does, and with
 review of opensoft/openRepoTools#282, MUST 2); one case leaves it out. The
 sandbox is `test_lane_start_row_stamp`'s, with its explicit seam taken back
 out.
+
+Since slice 2b `lane-start` reads the row from W again, but only after
+`refresh-workspace` has fast-forwarded it, and makes the lane's checkout at
+"5. the row" (`tests/test_a23_lane_start.py`). So W's working tree now moves,
+by fast-forward and nothing else, and a checkout that cannot be made no longer
+changes which register the start reads. `lane-end` keeps slice 1a's read.
 """
 
 from __future__ import annotations
@@ -46,29 +52,45 @@ def rows(register: Path) -> list[str]:
             if r.startswith(f"| `{LANE}`")]
 
 
+def W_reflog(box: Sandbox) -> list[str]:
+    return box.git("-C", str(box.wip), "reflog", "--format=%gs", "HEAD").splitlines()
+
+
+def assert_W_moved_only_by_fast_forward(box: Sandbox, before: list[str]) -> None:
+    """W took no write: its HEAD moved only by `refresh-workspace`'s
+    fast-forward, and its working tree is clean (Amendment 23 S5)."""
+    after = W_reflog(box)
+    new = after[:len(after) - len(before)]
+    assert after[len(new):] == before, (before, after)
+    assert all(entry == "merge origin/main: Fast-forward" for entry in new), new
+    assert box.git("-C", str(box.wip), "status", "--porcelain") == "", "W is clean"
+
+
 def started(tmp_path: Path, short_root: Path) -> tuple[Sandbox, Path]:
     """A NEW lane's first start: its row is added through its own checkout."""
     box = Sandbox(tmp_path)
     checkout = default_resolution(box)
     lane_dir = _checkout_of_length(short_root, None)
     box.checkout(lane_dir)
+    before = W_reflog(box)
     first = box.start("--dir", str(lane_dir), window_name="claude")
     assert first.returncode == 0, first.stderr
     assert (checkout / ".git").is_dir(), "the first write made the lane's checkout"
     assert len(rows(checkout / "lanes" / "LANES.md")) == 1
-    assert rows(box.wip / "lanes" / "LANES.md") == [], "W's working tree took no write"
+    assert_W_moved_only_by_fast_forward(box, before)
     return box, checkout
 
 
 def test_a_new_lanes_second_start_reads_its_row_in_its_own_checkout(tmp_path, short_root):
     box, checkout = started(tmp_path, short_root)
+    before = W_reflog(box)
     second = box.start(window_name=LANE)
     assert second.returncode == 0, second.stderr
     assert "ALREADY has a row" not in second.stderr, second.stderr
     assert len(rows(checkout / "lanes" / "LANES.md")) == 1, "one row, and no second one added"
     published = box.git("--git-dir", str(box.root / "origin.git"), "show", "main:lanes/LANES.md")
     assert sum(1 for r in published.splitlines() if r.startswith(f"| `{LANE}`")) == 1
-    assert rows(box.wip / "lanes" / "LANES.md") == [], "and W's working tree still took none"
+    assert_W_moved_only_by_fast_forward(box, before)
 
 
 def test_lane_end_finds_the_row_its_lane_start_wrote(tmp_path, short_root):
@@ -80,7 +102,7 @@ def test_lane_end_finds_the_row_its_lane_start_wrote(tmp_path, short_root):
                          capture_output=True, text=True, timeout=120, check=False)
     assert "has no row for lane" not in end.stderr, end.stderr
     assert end.returncode == 0, (end.stdout, end.stderr)
-    assert rows(box.wip / "lanes" / "LANES.md") == []
+    assert box.git("-C", str(box.wip), "status", "--porcelain") == "", "W took no write"
 
 
 def test_a_dry_run_start_makes_no_checkout(tmp_path, short_root):
@@ -132,8 +154,9 @@ def test_without_the_opt_in_a_new_lane_starts_through_W(tmp_path, short_root):
 
 def test_a_checkout_that_cannot_be_made_is_said_and_the_start_goes_on(tmp_path, short_root):
     """SHOULD 2: where the lane's checkout cannot be cloned, the start says so
-    and reads W, as it does for a dry run with none: a register act it can do
-    without never refuses a launch (Amendment 8(d))."""
+    and goes on: a register act it can do without never refuses a launch
+    (Amendment 8(d)). Since slice 2b the row is W's read either way, so only
+    the writes are touched."""
     box = Sandbox(tmp_path)
     checkout = default_resolution(box, route=False)
     lane_dir = _checkout_of_length(short_root, None)
@@ -150,7 +173,7 @@ exec '{real}' "$@"
     box.env.update(LANES_ROUTE_WRITES="1", LANES_GIT=str(wrapper))
     second = box.start(window_name=LANE)
     assert "own register checkout could not be made" in second.stderr, second.stderr
-    assert "so this command reads W's register" in second.stderr
+    assert "ALREADY has a row" not in second.stderr, second.stderr
     assert not checkout.exists()
     assert second.returncode == 0, second.stderr
 
@@ -263,7 +286,7 @@ def test_a_held_creation_lock_is_said_and_the_start_goes_on(tmp_path, short_root
         second = box.start(window_name=LANE, timeout=SLOW)
     assert "own register checkout could not be made" in second.stderr, second.stderr
     assert "exited 4" in second.stderr, second.stderr
-    assert "so this command reads W's register" in second.stderr
+    assert "ALREADY has a row" not in second.stderr, second.stderr
     assert not checkout.exists()
     assert second.returncode == 0, second.stderr
 

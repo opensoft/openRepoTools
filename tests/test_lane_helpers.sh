@@ -3186,7 +3186,7 @@ run   "$START" --dry-run --dir "$HOME/projects/repoA" repoZF-1
 is    "a row this checkout has and origin/main does not still exits 0" "$rc" 0
 has   "…and says there is no published cell to read" "$err" "the register on origin/main has none"
 has   "…naming the id nothing outside this checkout can see" "$err" "which nothing else can see: $ZF1"
-has   "…and the act that publishes it" "$err" "push the register from here"
+has   "…and the act that publishes it, never a bare push (Amendment 23 S3)" "$err" "publish the register from here, then re-run: LANES_LANE=repoZF-1 "
 has   "…taking a NEW session rather than resuming an unpublished id" "$err" "PLAN exec claude --name repoZF-1"
 hasnt "…which is the whole of the rule: no decision comes off the working tree" "$err" "--resume $ZF1"
 git -C "$WIP" checkout -q -- lanes/LANES.md
@@ -3702,24 +3702,20 @@ is    "…and one set of records that agree: the row's newest stamp names it too
 unset FAKE_TMUX_WINDOW
 rm -f "$sessions_dir/live-dw.json"
 
-# ---- RV-B2: the handoff stamp's DEGRADED pushes, and which recovery each is
+# ---- RV-B2, after Amendment 23's slice 2b: the stamp's DEGRADED pushes
 #
-# F-B7's whole deliverable is a SENTENCE — `hs_carry_note` telling the reader
-# whether anything on this workstation will ever push the commit `lane-start`
-# just made — and at `77a2f49` not one assertion in this suite read either
-# branch of it (`grep -c "register's own checkout" test_lane_helpers.sh` -> 0).
-# An untested sentence is what drifts, and this one is the difference between a
-# stamp that lands by itself and a stamp nobody will ever see again.
+# The stamp is ONE `lanes-edit.sh write-handoff --stamp` now, through the
+# register's checkout and under its lock (S3, S4), and `lane-start` runs no git
+# of its own: no pull, no push, and no `hs_carry_note`. F-B7's sentence said
+# which later write would carry a stranded stamp out; under S3 none does, and
+# every later write refuses over it, so there is no sentence left to choose.
+# The reader is told the helper's own words, the commit kept and named, and
+# lane-start's note naming the publish act. The launch still exits 0.
 #
-# THE REJECTION IS SCOPED BY THE COMMIT, NOT BY THE DIRECTORY. In the first case
-# the handoff repo IS the register's checkout, so a blanket refusal of `push -C
-# $WIP` would fail `set-row-state` instead — and `lane-start` runs under
-# `set -e`, so it would never reach the handoff block the case is about.
-# Amendment 8(d) gives the stamp commit the subject `handoff(<lane>@<ws>): …`,
-# which no register write carries, and the push follows its own commit
-# immediately: HEAD is therefore an exact discriminator. `commit_push` commits
-# before it pulls or pushes for the same reason, so the register's own calls are
-# always looking at a register commit when this fake reads HEAD.
+# THE REJECTION IS SCOPED BY THE COMMIT, NOT BY THE DIRECTORY, as it was: the
+# stamp's commit is the only one whose subject is `handoff(<lane>@<ws>): …`,
+# and `commit_publish` pushes straight after it commits, so HEAD is an exact
+# discriminator. `LANES_GIT` is the binary `lanes-edit.sh`'s network calls use.
 cat > "$SANDBOX/rejectgit" <<'FAKE'
 #!/usr/bin/env bash
 # Refuses $RJ_VERB (`push` or `pull`) for the handoff stamp's commit ONLY;
@@ -3739,14 +3735,8 @@ exec git "$@"
 FAKE
 chmod +x "$SANDBOX/rejectgit"
 
-# The paths as GIT spells them, which is what `lane-start` prints: `hs_repo` is
-# `rev-parse --show-toplevel` of the handoff's real path, so comparing against
-# the shell's own `$WIP`/`$WS2` would compare two spellings of one directory.
-WIP_REAL="$(git -C "$WIP" rev-parse --show-toplevel)"
-
-# (a) THE HANDOFF IS IN THE REGISTER'S OWN CHECKOUT. The next `lanes-edit.sh`
-#     write out of it pushes the branch, and the orphaned commit rides out with
-#     it — so the note may promise the carry, and does.
+# (a) A REFUSED PUSH WITH ORIGIN UNMOVED is no lost race, so nothing is
+#     replayed: the stamp's commit is kept on HEAD and named (S4, exit 6).
 CN_A="cccc0001-1111-4000-8000-cccc00011111"
 printf '{"type":"custom-title","customTitle":"repoCN-1","sessionId":"%s"}\n' "$CN_A" > "$tdir/$CN_A.jsonl"
 mkdir -p "$WIP/handoffs/repoCN"
@@ -3761,26 +3751,22 @@ run env LANES_GIT="$SANDBOX/rejectgit" RJ_VERB=push "$START" --dir "$HOME/projec
 is   "a handoff stamp whose PUSH is rejected still exits 0 — the record is not the licence" "$rc" 0
 has  "…the stamp really written and committed all the same" "$(cat "$WIP/handoffs/repoCN/a.md")" "RESUMED by $CN_A (lane repoCN-1) at "
 has  "…in its own commit, which is the one nothing pushed" "$(git -C "$WIP" log --format=%s -n1)" "handoff(repoCN-1@"
-has  "…and the reader told what state that leaves, in the branch's own words" "$err" "the push was rejected — the stamp is a local commit here and other workstations cannot see it yet."
-has  "…told to LOOK before pushing again, never to push blind" "$err" "git -C $WIP_REAL fetch origin main && git -C $WIP_REAL log --oneline origin/main -3"
-has  "…the re-push conditional on what that look finds" "$err" "git -C $WIP_REAL push origin main      # only if it is not there"
-has  "…and F-B7's sentence for a handoff INSIDE the register's checkout, verbatim" "$err" "(this handoff is in the register's own checkout, so the next lanes-edit.sh write out of it pushes the branch and carries this commit with it.)"
-hasnt "…never the other branch's, which would be the wrong promise here" "$err" "no lanes-edit.sh write will ever push it"
-# AMENDMENT 23 S3 (#198, slice 1b): this stamp is now a commit origin lacks,
-# and every lanes-edit.sh write out of this checkout REFUSES over it instead of
-# carrying it out (lane-start's own note still promises the carry; it is slice
-# 2b's to reword). So the fixture publishes it here, as its owner would, and
-# the sections below start from a checkout with nothing unpublished.
+has  "…the helper saying why nothing was replayed, and that the commit is kept" "$err" "refused with origin/main unmoved, so this is no lost race and a replay would meet the same refusal; the commit is local and kept on HEAD"
+has  "…and lane-start naming the publish act, once those words are answered" "$err" "the commit is KEPT on HEAD of that checkout, not pushed"
+hasnt "…never promising that a later write carries it: S3 refuses every one" "$err" "carries this commit with it"
+# The fixture publishes it, as its owner would, and the sections below start
+# from a checkout with nothing unpublished (S3).
 git -C "$WIP" push -q origin main
 is   "…the stranded stamp is published before any later write meets it (S3)" "$(git -C "$WIP" fetch -q origin && git -C "$WIP" rev-list --count refs/remotes/origin/main..HEAD)" 0
 
-# (b) THE HANDOFF IS RESOLVED THROUGH `LANES_WORKSPACE_ROOT`, into a checkout no
-#     `lanes-edit.sh` write ever goes out of. Nothing will carry this commit,
-#     and promising a carry that will not happen is worse than printing the
-#     command — so the note names the checkout and says the command is the whole
-#     of the recovery. Its own bare origin, because the point is that this is a
-#     SECOND repository: `hs_resolve`'s case (b) must miss before case (c) hits,
-#     which is why the cell names a file `$WIP` does not have.
+# (b) A HANDOFF ONLY ANOTHER CHECKOUT HOLDS. `hs_resolve`'s case (c) found it
+#     through `LANES_WORKSPACE_ROOT` and stamped it there, in a checkout no
+#     write ever pushes from. Since slice 2b the stamp goes only where the
+#     row's cell resolves in the checkout this lane's writes go through
+#     (E15), so here it is NOT written: nothing is left in a checkout nothing
+#     publishes, and the line is printed for the session's own first act. The
+#     cell names a file `$WIP` does not have, in a second repository with its
+#     own bare origin.
 WS2_ORIGIN="$SANDBOX/ws2-origin.git"; WS2="$SANDBOX/ws2"
 git init -q --bare -b main "$WS2_ORIGIN"
 git clone -q "$WS2_ORIGIN" "$WS2" 2>/dev/null
@@ -3799,23 +3785,24 @@ is   "the cell names a handoff the register's checkout does NOT hold" "$([ -e "$
 
 run env LANES_GIT="$SANDBOX/rejectgit" RJ_VERB=push LANES_FILE="$LANES" LANES_REPO="$WIP" \
         LANES_WORKSPACE_ROOT="$WS2" "$START" --dir "$HOME/projects/repoA" repoCN-2 --no-launch
-is   "…and a rejected push on THAT checkout exits 0 too" "$rc" 0
-has  "…the stamp written into the second checkout, not the register's" "$(cat "$WS2/handoffs/repoCN/b.md")" "RESUMED by $CN_B (lane repoCN-2) at "
+is   "…and a handoff the register's checkout does not hold still exits 0" "$rc" 0
+hasnt "…the second checkout's copy NOT stamped: a handoff is written only where the lane's writes go" "$(cat "$WS2/handoffs/repoCN/b.md")" "RESUMED by"
+is   "…nor committed there" "$(git -C "$WS2" log --format=%s -n1)" "handoff fixture for repoCN-2"
 is   "…which the register's checkout never gained a copy of" "$([ -e "$WIP/handoffs/repoCN/b.md" ] && printf present || printf absent)" absent
-has  "…and F-B7's OTHER sentence, naming the checkout nothing will ever push" "$err" "(this handoff is NOT in the register's checkout ($WS2_REAL), so no lanes-edit.sh write will ever push it: the command above is the whole of the recovery.)"
+has  "…the run saying the stamp was not written" "$err" "Rule 3's stamp was NOT written"
+has  "…and printing the line for the session to write as its first act" "$err" "RESUMED by $CN_B (lane repoCN-2) at "
 hasnt "…never promising a carry that no write will perform" "$err" "carries this commit with it"
 
-# ---- RV-B3: an ABORTED PULL is not proof the commit stayed here
+# ---- RV-B3, after slice 2b: THE STAMP NO LONGER PULLS
 #
 # The case, live on 2026-09-12T23:04Z: this lane's handoff commit hit a
 # `pull --rebase` abort on a peer lane's untracked log file, and the peer's own
-# helper then rebased and pushed — carrying this lane's local commit `59a2576`
-# out to origin UNDERNEATH its own `f053245`. The branch's recovery was a bare
-# re-push, so a reader who ran it at that moment would have landed the same Rule
-# 3 stamp twice, in the one document this protocol never rewrites. The
-# push-rejected branch has always told the reader to look first; this one now
-# does too, and the test pins the ORDER as well as the text, because a look
-# printed after the push it is meant to gate is not a look.
+# helper then rebased and pushed, carrying this lane's local commit out to
+# origin underneath its own. That pull is gone: S3 fetches and fast-forwards
+# the checkout under its lock before the edit, and S4 replays the edit where
+# the push lost a race. So a git that refuses every `pull` while the stamp's
+# commit is HEAD changes nothing at all: the stamp is committed and pushed, and
+# no pull is run or printed.
 CN_C="cccc0003-3333-4000-8000-cccc00033333"
 printf '{"type":"custom-title","customTitle":"repoCN-3","sessionId":"%s"}\n' "$CN_C" > "$tdir/$CN_C.jsonl"
 printf 'Lane: repoCN-3 — single-use resume prompt\n\n# state\n' > "$WIP/handoffs/repoCN/c.md"
@@ -3826,24 +3813,12 @@ git -C "$WIP" push -q origin main
 "$E" add-row "| \`repoCN-3\` | harness \`$CN_C\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoCN/c.md | ACTIVE |" >/dev/null 2>&1
 
 run env LANES_GIT="$SANDBOX/rejectgit" RJ_VERB=pull "$START" --dir "$HOME/projects/repoA" repoCN-3 --no-launch
-is   "a handoff stamp whose PULL aborts still exits 0" "$rc" 0
-has  "…the stamp written and committed here all the same" "$(git -C "$WIP" log --format=%s -n1)" "handoff(repoCN-3@"
-has  "…the branch saying what happened, not the timeout's words" "$err" "the pull before the push did not apply (a conflict, or no reachable origin) — the rebase is aborted, the checkout is clean, and the stamp is a local commit here that was not pushed."
-hasnt "…and never ruling (h)'s line, which is a different failure" "$err" "the pull before the push TIMED OUT"
-has  "…then the LOOK, because a peer's push may already carry this very commit" "$err" "git -C $WIP_REAL fetch origin main && git -C $WIP_REAL log --oneline origin/main -3   # a peer's push may already carry it"
-has  "…and the re-push conditional on what it finds" "$err" "git -C $WIP_REAL pull --rebase origin main && git -C $WIP_REAL push origin main      # only if it is not there"
-cn_look="$(printf '%s\n' "$err" | grep -n -- 'log --oneline origin/main -3' | head -n1 | cut -d: -f1)"
-cn_push="$(printf '%s\n' "$err" | grep -n -- 'pull --rebase origin main && ' | head -n1 | cut -d: -f1)"
-is   "…the look printed BEFORE the re-push it gates, which is the whole of RV-B3" \
-     "$([ -n "$cn_look" ] && [ -n "$cn_push" ] && [ "$cn_look" -lt "$cn_push" ] && printf 'look first' || printf "look $cn_look, push $cn_push")" "look first"
-has  "…and F-B7's carry note under it, the same two branches as the push case" "$err" "(this handoff is in the register's own checkout, so the next lanes-edit.sh write out of it pushes the branch and carries this commit with it.)"
-# AMENDMENT 23 S3 (#198, slice 1b): this stamp is now a commit origin lacks,
-# and every lanes-edit.sh write out of this checkout REFUSES over it instead of
-# carrying it out (lane-start's own note still promises the carry; it is slice
-# 2b's to reword). So the fixture publishes it here, as its owner would, and
-# the sections below start from a checkout with nothing unpublished.
-git -C "$WIP" push -q origin main
-is   "…the aborted pull's stamp is published before any later write meets it (S3)" "$(git -C "$WIP" fetch -q origin && git -C "$WIP" rev-list --count refs/remotes/origin/main..HEAD)" 0
+is   "a launch whose git refuses the stamp's pull still exits 0" "$rc" 0
+has  "…the stamp written and committed here" "$(git -C "$WIP" log --format=%s -n1)" "handoff(repoCN-3@"
+is   "…and PUSHED: there is no pull for it to need" "$(git -C "$WIP" fetch -q origin && git -C "$WIP" rev-list --count refs/remotes/origin/main..HEAD)" 0
+hasnt "…no pull run or printed" "$err" "pull --rebase"
+hasnt "…and none of the old branch's words" "$err" "the pull before the push"
+has  "…the run saying where it went" "$err" "handoff stamped, committed and pushed: "
 
 # ------------------------------------------------- lane-start --confirm / --yes
 #

@@ -31,9 +31,10 @@ lanes-edit: LANES_NO_FETCH=1 — not fetching; reading origin/main as the ref al
 lane-handoff: lane=repoD-1 workstation=Eagle
 lane-handoff: lifecycle: RUNNING -> SWAPPING (generation 2, operation <OPERATION>)
 lane-handoff: writers polled: 1 under <HOME>/projects/repoD
+lanes-edit: committed: handoff(repoD-1@Eagle): PAUSED, t018 handoff
+lanes-edit: pushed origin/main (attempt 1)
 lane-handoff: handoff refreshed: <HOME>/projects/wip/handoffs/repoD-1.md (+14 lines at the head)
-lane-handoff: handoff commit: handoff(repoD-1@Eagle): PAUSED
-lane-handoff: handoff pushed to origin/main
+lane-handoff: handoff written through `write-handoff`, which exited 0: its words above say what it committed and pushed
 lanes-edit: 1 line appended to <HOME>/projects/wip/lanes/log/repoD-1.md
 lanes-edit: committed: LOG(repoD-1@Eagle): PAUSED lane:repoD-1
 lanes-edit: pushed origin/main (attempt 1)
@@ -105,9 +106,10 @@ lanes-edit: LANES_NO_FETCH=1 — not fetching; reading origin/main as the ref al
 lane-handoff: lane=repoQ-1 workstation=Eagle
 lane-handoff: lifecycle: RUNNING -> SWAPPING (generation 2, operation <OPERATION>)
 lane-handoff: writers polled: 1 under <HOME>/projects/repoQ
+lanes-edit: committed: handoff(repoQ-1@Eagle): PAUSED, t018 handoff
+lanes-edit: pushed origin/main (attempt 1)
 lane-handoff: handoff refreshed: <HOME>/projects/wip/handoffs/repoQ-1.md (+14 lines at the head)
-lane-handoff: handoff commit: handoff(repoQ-1@Eagle): PAUSED
-lane-handoff: handoff pushed to origin/main
+lane-handoff: handoff written through `write-handoff`, which exited 0: its words above say what it committed and pushed
 lanes-edit: 1 line appended to <HOME>/projects/wip/lanes/log/repoQ-1.md
 lanes-edit: committed: LOG(repoQ-1@Eagle): PAUSED lane:repoQ-1
 lanes-edit: pushed origin/main (attempt 1)
