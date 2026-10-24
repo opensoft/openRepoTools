@@ -150,6 +150,16 @@ def test_4d_a_malformed_local_row_with_no_vocabulary_is_legacy_and_its_writer_re
     result = helper(box, "managed-projection", LANE)
     assert result.returncode == 8, (result.stdout, result.stderr)
     before = fingerprint(box)
+    # AMENDMENT 23 S3 (#198, slice 1b): the commit is unpushed, so every writer
+    # refuses it first, by content, with nothing written — never as UNKNOWN.
+    result = helper(box, "set-row-state", LANE, "PAUSED · the writer asks")
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "1 unpublished commit(s)" in result.stderr
+    assert "UNKNOWN" not in result.stderr
+    assert fingerprint(box) == before
+    # Published, the same row is the writer's own row-shape refusal.
+    box.git("-C", str(box.wip), "push", "-q", "origin", "main")
+    before = fingerprint(box)
     result = helper(box, "set-row-state", LANE, "PAUSED · the writer asks")
     assert result.returncode == 2, (result.stdout, result.stderr)
     assert "separators where a seven-column row carries 6" in result.stderr

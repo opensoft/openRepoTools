@@ -100,7 +100,8 @@ class RenameBox:
     def __init__(self, root: Path, shape: str) -> None:
         self.box = box = Sandbox(root)
         box.env["LANES_LANE_STATE_ROOT"] = str(root / "state")
-        box.env["LANES_NO_FETCH"] = "1"
+        # No `LANES_NO_FETCH=1`: for a writer it is a failed fetch, and
+        # Amendment 23 S3 refuses the write (ratified choice 2, #198 slice 1b).
         box.resolver()
         started = box.start("--no-launch")
         assert started.returncode == 0, (started.stdout, started.stderr)
