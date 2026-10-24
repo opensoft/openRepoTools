@@ -107,6 +107,19 @@ Each item names what a test or a workflow run checks.
   - **Which bash.** It runs the first `bash` on `PATH`, as the payload's
     `#!/usr/bin/env bash` line would. With no `bash` on `PATH`, it refuses,
     naming the missing command, and runs nothing.
+    - **Amended 2026-10-22, for #256: every other `OSError` is a refusal
+      too.** `execvp` goes past an entry it cannot run to a later one it can,
+      and where none can it raises the first error that was not "not found".
+      The entry module now catches every `OSError`. The two not-found errors,
+      `FileNotFoundError` and `NotADirectoryError`, keep the no-bash refusal.
+      Every other one prints `REFUSED: openRepoTools needs bash, and no bash
+      on this PATH can be run (<why>). Nothing ran.` to stderr, with `<why>`
+      the error's `strerror`, and exits 2, after the signals are put back
+      (design.md Decision 3, amended again 2026-10-21). A runnable `bash`
+      later on `PATH` still runs, because `execvp` goes on to it. A `bash`
+      that is there but cannot be started, because its `#!` interpreter or ELF
+      loader is missing or it is a dangling link, keeps the no-bash refusal
+      (design.md's named limit).
   - **Held to the standard library.** A new test in `tests/test_repo_hygiene.py`
     fails when a module under `src/openrepotools/` imports anything outside
     the standard library. No rule holds that today, and
