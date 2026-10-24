@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import stat
 import subprocess
 from pathlib import Path
@@ -47,13 +48,17 @@ import pytest
 from conftest import REPO, WINDOWS_SKIP
 from test_install_skill_and_hook import (GUARD_COMMAND, GUARD_TIMEOUT,
                                          HOOK_COMMAND, HOOK_MATCHER,
-                                         HOOK_TIMEOUT, hook_commands,
+                                         HOOK_TIMEOUT, LINK_SEAMS,
+                                         assert_settings_link_refused,
+                                         hook_commands,
+                                         link_settings_mid_run,
+                                         run_signalled_at_the_settings_temporary,
                                          session_start_commands, settings_of,
                                          user_prompt_commands)
 from test_openrepotools_command import (ALWAYS, ARTIFACTS, COMMAND,
                                         HOOK_ENTRIES, NEEDS_JQ, command_env,
                                         link_xfactory, placed_files,
-                                        receipt_rows)
+                                        placement_temporaries, receipt_rows)
 from test_wip_init_command import NEEDS_TEMPLATE, fake_gh, wip_env
 
 pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
@@ -453,6 +458,82 @@ def test_wip_init_completes_the_pair_after_link_estates(tmp_path):
     assert stat.S_IMODE(settings_of(home).stat().st_mode) == 0o600
     assert "SessionStart hook: installed in" in result.stdout, result.stdout
     assert "UserPromptSubmit guard: installed in" in result.stdout
+
+
+@NEEDS_TEMPLATE
+@pytest.mark.parametrize("signame", ["SIGINT", "SIGTERM"])
+def test_a_wip_init_killed_while_the_settings_temporary_exists_leaves_none(
+        tmp_path, signame):
+    """`wip init` WRITES THE PAIR IN A SUBSHELL, AND THE SUBSHELL CLEANS UP
+    AFTER ITSELF (#332). `wip_hook_pair` runs planning and the write in one
+    `( … )`, which bash does not give the `EXIT` and `INT` traps `workdir` set,
+    and the `$PLACING` that `hook_write_settings` sets there is the subshell's
+    own: the traps of the shell around it ran with it empty, so a Ctrl-C or a
+    `kill` of the group left `settings.json.openrepotools.<pid>.XXXXXX` in
+    `~/.claude`, even where `--install`'s own run no longer did. The subshell's
+    own `EXIT` trap removes it.
+
+    The second `wip init` finds the workspace made, so it only reconciles the
+    pair, and it writes the file whole because the first one's was removed. A
+    `cp` that sleeps for the settings temporary holds it there, and the signal
+    goes to the whole group, where the subshell is the first to take it."""
+    home, env = wip_world(tmp_path)
+    (home / "projects" / "xFactory").mkdir()
+    assert run_with(env, "--install").returncode == 0
+    first = run_with(env, "wip", "init")
+    assert first.returncode == 0, first.stdout + first.stderr
+    settings_of(home).unlink()
+
+    code, out, err, seen = run_signalled_at_the_settings_temporary(
+        home, env, ["wip", "init"], signame, True,
+        tmp_path / "slow-settings-cp", cwd=REPO)
+    sig = getattr(signal, signame)
+    assert seen, (f"`wip init` never made a settings temporary for the signal "
+                  f"to land beside: exit {code}\n{out}{err}")
+    assert code in (-sig, 128 + sig), (
+        f"`wip init` did not die of {signame}: exit {code}\n{out}{err}")
+    assert placement_temporaries(home) == [], (
+        f"a settings temporary outlived `wip init`: {seen}")
+
+
+@NEEDS_TEMPLATE
+@pytest.mark.parametrize("arm", ["mode", "write"])
+def test_wip_init_refuses_a_link_made_at_the_settings_after_it_planned(
+        tmp_path, arm):
+    """`wip init` REACHES THE SAME TWO ACTS AS `--install`, WITH PLANNING AND THE
+    WRITE IN ONE SUBSHELL, SO IT ASKS THE SAME LATE QUESTION (#331). A first
+    `wip init` merges the pair; the second finds the workspace made and only
+    reconciles the pair. A link made at `settings.json` after that reconcile
+    planned — the `find` of `mode_is` and the `cp` of the settings temporary are
+    where `LINK_SEAMS` makes it — is refused where the act would meet it:
+    `mode`, the pair already there at 644, so the mode would be restored by a
+    `chmod` that follows the link; `write`, a file with neither entry, which the
+    `mv -f` would replace. The refusal is `--install`'s own, in planning's
+    words, and it is a note beside the workspace: the exit stays 0, the link is
+    as it was made, the file at its far end keeps its mode and bytes, and no
+    temporary is left."""
+    home, env = wip_world(tmp_path)
+    (home / "projects" / "xFactory").mkdir()
+    assert run_with(env, "--install").returncode == 0
+    first = run_with(env, "wip", "init")
+    assert first.returncode == 0, first.stdout + first.stderr
+    settings = settings_of(home)
+    if arm == "write":
+        settings.write_text(json.dumps({"theme": "dark"}, indent=2),
+                            encoding="utf-8")
+    os.chmod(settings, 0o644)
+    far = tmp_path / "dotfiles" / "settings.json"
+    far.parent.mkdir()
+    bytes_before = settings.read_bytes()
+    shim, acted = link_settings_mid_run(tmp_path, home, far,
+                                        LINK_SEAMS["before-the-act"])
+
+    result = run_with({**env, "PATH": f"{shim}{os.pathsep}{env['PATH']}"},
+                      "wip", "init")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "(not reconciled:" in result.stdout, result.stdout
+    assert_settings_link_refused(result, home, far, bytes_before, acted)
 
 
 @NEEDS_TEMPLATE
