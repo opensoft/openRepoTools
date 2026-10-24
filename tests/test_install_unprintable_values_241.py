@@ -25,6 +25,15 @@ cases that must show nothing was fetched put a `gh` and a `curl` first on
 environment as Python hands them to a child: a character is its UTF-8, and a
 surrogate (`chr(0xDCE9)`) is the one byte it stands for.
 
+THE LOCALE OF A RUN IS THE TEST'S, NEVER THE DEVELOPER'S (#320). The directory,
+and only the directory, is read under the person's own locale
+(`refuse_bad_bin_dir` asks `locale charmap`, which reads `LC_ALL`, `LC_CTYPE`
+and `LANG`; openRepoShape #858: the locale is taken at its word), and a
+multibyte locale that is not UTF-8 takes a name whose misdrawn character it
+reads as text. A run that named none would pass or fail by the charmap its
+developer's shell exports, so `go` sets all three (`locale_of_a_run`):
+`C.UTF-8`, unless the case names a locale itself.
+
 THE CHECKOUT ROUTE AND THE PACKAGE ROUTE ARE ONE SCRIPT. The wheel's payload is
 this checkout's `openRepoTools` byte for byte, so the cases at the end run the
 payload of a fake installed package (`package_layout.package_tree`) through the
@@ -256,6 +265,12 @@ PRINTED_FORMS = [form for form in FORMS if form.values[0] != BIN_DIR]
 
 # --- running the command -----------------------------------------------------
 
+#: The variables that name a locale, and the locale a run is made under when its
+#: case names none: `C.UTF-8` is what CI runs under, and one of `LOCALES`.
+LOCALE_VARIABLES = ("LANG", "LC_ALL", "LC_CTYPE")
+RUN_LOCALE = "C.UTF-8"
+
+
 def sandbox(tmp_path: Path) -> Path:
     """`<tmp_path>/home`, the HOME of a run, empty: whatever it holds after
     the run is what the run placed."""
@@ -290,6 +305,22 @@ def calls_to(net: Path) -> list:
     return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
 
 
+def locale_of_a_run(env: dict | None) -> dict:
+    """The three variables that name the locale of a run, all of them set, so
+    that none the developer's shell exports can win (#320). The directory is
+    read under the person's locale, and a multibyte one that is not UTF-8
+    takes a misdrawn character in it (openRepoShape #858), so a case that
+    expects such a directory to be refused must not run under the developer's.
+
+    A case that names none of them runs under `C.UTF-8`. A case that names one
+    (`LC_ALL` over `LOCALES`, or `the_persons_locale`) keeps what it names and
+    nothing else: the ones it leaves out are empty, which glibc, bash and the
+    `locale` of `put_a_locale` all read as unset, so that neither this pin nor
+    the developer's own can outrank the locale the case chose."""
+    named = any(name in (env or {}) for name in LOCALE_VARIABLES)
+    return dict.fromkeys(LOCALE_VARIABLES, "" if named else RUN_LOCALE)
+
+
 def go(tmp_path: Path, *args: str, env: dict | None = None,
        piped: bool = False, home: Path | None = None,
        command: Path = COMMAND,
@@ -300,9 +331,11 @@ def go(tmp_path: Path, *args: str, env: dict | None = None,
     one-line install: there is no file beside it, so `--install` fetches.
     `net` is put first on `$PATH`. The output is read as UTF-8 with
     `surrogateescape`, so a byte that is not UTF-8 comes back as the
-    surrogate a test spelled it with.
+    surrogate a test spelled it with. The run's locale is `C.UTF-8` unless
+    `env` names one (`locale_of_a_run`).
     """
-    environ = command_env(home if home is not None else sandbox(tmp_path), env)
+    environ = command_env(home if home is not None else sandbox(tmp_path),
+                          {**locale_of_a_run(env), **(env or {})})
     if net is not None:
         environ["PATH"] = f"{net}{os.pathsep}{environ['PATH']}"
     argv = ["bash", "-s", "--", *args] if piped else ["bash", str(command), *args]
@@ -477,8 +510,13 @@ def test_each_misdrawn_character_is_refused_by_its_code_point(
         tmp_path, variable, start, opening, code):
     """Every one of `MISDRAWN` in each of the three values, refused in words
     that name it by its code point, because nobody can see it, and say nothing
-    else of the value (openRepoShape #837). Its bytes are looked for as bytes,
-    so the locale changes nothing."""
+    else of the value (openRepoShape #837). The bytes are looked for as bytes,
+    and for the repository and the ref the locale changes nothing, because
+    neither ever asks it. The directory is another matter: `refuse_bad_bin_dir`
+    reads it under the person's locale (openRepoShape #858: the locale is
+    taken at its word), and a multibyte one that is not UTF-8 takes a
+    misdrawn character in it. So these run under the locale `go` gives them,
+    `C.UTF-8`, whatever the developer's shell exports (#320)."""
     typed = start.replace("{d}", str(sandbox(tmp_path))) \
         + "a" + chr(code) + "forged"
     args = ("--install",) if variable == BIN_DIR else ("--version",)
@@ -1206,6 +1244,60 @@ def test_a_bin_dir_is_refused_as_its_bytes_say_under_c_or_c_utf_8(
         tmp_path, name, {"LC_ALL": locale}, HONEST, MARKS)
     assert_refused_saying(result, said, typed)
     assert not (tmp_path / "tools" / "iconv-ran").exists()
+
+
+def export_a_locale(monkeypatch, tmp_path: Path, exported: dict) -> None:
+    """THE DEVELOPER'S SHELL, as `go` finds it: `exported` set in this
+    process's environment and `put_a_locale`'s `locale` first on its `$PATH`,
+    so that a charmap that is not UTF-8 can be exported on a machine that has
+    none installed. The variables of `LOCALE_VARIABLES` that `exported` leaves
+    out are not set."""
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    put_a_locale(tools)
+    for name in LOCALE_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in exported.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("PATH", f"{tools}{os.pathsep}{os.environ['PATH']}")
+
+
+@NEEDS_ICONV
+@pytest.mark.parametrize("charmap", ["GB18030", "GBK", "SHIFT_JIS"])
+@pytest.mark.parametrize("variable", LOCALE_VARIABLES)
+def test_a_case_that_names_no_locale_runs_under_the_tests_not_the_developers(
+        tmp_path, monkeypatch, variable, charmap):
+    """#320: the directory is read under the person's locale, and GB18030, GBK
+    and Shift_JIS read U+202E's bytes as text and take the name, so a developer
+    whose shell exports one of them, in `LANG`, `LC_CTYPE` or `LC_ALL`, would
+    see every case that expects a misdrawn character in a directory refused
+    fail, for a reason that has nothing to do with the change under test. A
+    case that names no locale is refused as it is under `C.UTF-8`, whichever
+    variable the developer's locale is in."""
+    export_a_locale(monkeypatch, tmp_path, {variable: f"xx_XX.{charmap}"})
+    typed = f"{sandbox(tmp_path)}/a{RLO}forged"
+    result = go(tmp_path, "--install", env={BIN_DIR: typed})
+    assert_refused_saying(result, drawn_as_another("U+202E"), typed)
+    assert nothing_placed(sandbox(tmp_path))
+
+
+@NEEDS_JQ
+@NEEDS_ICONV
+@pytest.mark.parametrize("variable", ["LANG", "LC_CTYPE"])
+def test_a_case_that_names_a_locale_keeps_it_whatever_the_developer_exports(
+        tmp_path, monkeypatch, variable):
+    """The other half: a case that names a locale gets the one it names, and
+    not the pin's or the developer's. The developer's shell exports `C.UTF-8`
+    in `LC_ALL`, which outranks both `LANG` and `LC_CTYPE`, and the case names
+    GB18030 in one of those two alone: the variables it leaves out are empty,
+    so its locale is the one `locale charmap` answers, and the directory
+    GB18030 reads as text is placed."""
+    export_a_locale(monkeypatch, tmp_path, {"LC_ALL": "C.UTF-8"})
+    typed = f"{sandbox(tmp_path)}/a{RLO}forged"
+    result = go(tmp_path, "--install",
+                env={BIN_DIR: typed, variable: "xx_XX.GB18030"})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (Path(typed) / "openRepoTools").read_bytes() == COMMAND.read_bytes()
 
 
 #: The Python codec that reads as each charset of `PLACED_AS_THE_LOCALE_READS`
