@@ -532,7 +532,10 @@ if [[ -n "$handoff_file" && -s "${block_file:-}" ]]; then
          printf 'HANDOFF NOT WRITTEN: write-handoff refused (exit 2; its words are above) and wrote nothing.\n'
        fi ;;
     3) printf 'HANDOFF PUSHED, NOT CONFIRMED: the push went, or timed out, and origin could not be read back to show the commit on it (exit 3; the note above names it). Do not call it published until it is read back.\n' ;;
-    6) printf 'HANDOFF NOT PUSHED: its commit is kept on HEAD of the lane checkout and named above (exit 6), and every later write from that checkout refuses until it is published; the note above names the act. Never force.\n' ;;
+    # A 6 IS SAID IN THE VERB'S WORDS (lane openRepoTools-3's finding 982 on #311): since 604 it is also an
+    # Amendment 8(d) handoff, written, whose commit or push in its own repository failed, and `commit_publish`'s
+    # failed add or commit is 6 with no commit at all. The verb's note says which, and where.
+    6) printf 'HANDOFF NOT PUSHED: write-handoff exited 6, and the file is written at %s. The note above says where its commit is kept, or that there is none: on HEAD of the lane checkout, named, where every later write from that checkout refuses until it is published; for an Amendment 8(d) handoff, in its own repository, where its commit or push there failed; or nowhere, where its add or its commit failed. Do the act the note names. Never force.\n' "$hf_path" ;;
     # A 7 WITH `--prepend` IS A RESTART'S (lane openRepoTools-3's finding 981 on #311): no digest is sent, so
     # it is never "moved since it was read". The verb's own "changed before publication" is another act's
     # write in the instant between its read and its replace, under the lock, and the same call reads it again.
@@ -560,8 +563,10 @@ A refusal, a conflict or a rejected push does not stop the swap (`R-A11-11`, *a 
 unwritten*): where the lane's checkout refuses the commit (2), the verb has still written the handoff, commits
 nothing and prints git's own words; where its push is refused it replays the write on origin's new tip, the
 block put in front of origin's copy of the handoff, and where origin no longer has that handoff, or its row
-names a file the replay cannot write, it keeps its commit on HEAD and names it (6). The block prints what it
-did NOT do, and the report carries that line. Never force, never
+names a file the replay cannot write, it keeps its commit on HEAD and names it (6). An Amendment 8(d)
+handoff, in another repository, is committed and pushed there (604), and a commit or push there that failed
+is 6 too, with the commit kept there or not made, as the verb's note says. The block prints what it did NOT
+do, and the report carries that line. Never force, never
 `git add -A`, and never commit staged entries you did not make.
 
 **WHAT THIS STEP DID IS CARRIED TO STEP 4 in `$hf_record`,** so that the register's PAUSED line says it and

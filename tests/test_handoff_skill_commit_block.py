@@ -65,7 +65,8 @@ from pathlib import Path
 import pytest
 
 from conftest import REPO, WINDOWS_SKIP
-from test_a23_write_handoff import BLOCK, HANDOFF, HANDOFF_REL, Box as RealBox, prepended
+from test_a23_write_handoff import (BLOCK, HANDOFF, HANDOFF_REL, Box as RealBox, _other_repository,
+                                   prepended)
 
 pytestmark = [WINDOWS_SKIP, pytest.mark.skipif(
     shutil.which("bash") is None or shutil.which("git") is None,
@@ -418,8 +419,12 @@ def _says(estate: Estate) -> dict:
         "pushed-not-confirmed": (3, True, [
             "HANDOFF PUSHED, NOT CONFIRMED", "(exit 3",
             "Do not call it published until it is read back"], []),
-        "kept-on-head": (6, True, ["HANDOFF NOT PUSHED", "kept on HEAD", "(exit 6)",
-                                   "Never force"], []),
+        # 982: the 6 arm in the verb's words after 604, where the commit is kept, or that there is none.
+        "kept-on-head": (6, True, [
+            "HANDOFF NOT PUSHED", "write-handoff exited 6", f"the file is written at {path}.",
+            "says where its commit is kept, or that there is none", "on HEAD of the lane checkout",
+            "for an Amendment 8(d) handoff, in its own repository", "where its add or its commit failed",
+            "Never force"], ["its commit is kept on HEAD of the lane checkout and named above (exit 6)"]),
         # 981, option (a): with `--prepend` no digest is sent, so a 7 is a restart's.
         "owned-by-a-restart": (7, False, [
             "HANDOFF NOT WRITTEN", "an active restart owns this handoff", "(exit 7;",
@@ -912,6 +917,34 @@ def test_a_staged_entry_in_the_lane_checkout_leaves_the_handoff_written_and_unco
     assert real.git("-C", str(c), "diff", "--cached", "--name-only").split() == [
         "handoffs/foreign.md"]
     assert "handoffs/foreign.md" not in _tree(real)
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_an_8d_handoff_whose_push_fails_there_is_6_and_its_commit_is_said_to_be_there(real, shell):
+    """982 of lane openRepoTools-3's review of #311: since 604 (2a's A57), a 6
+    is also an Amendment 8(d) handoff, written, whose commit or push in its
+    own repository failed. Here that repository has no origin: the handoff is
+    written and committed there, the push cannot be made (6), the lane
+    checkout's HEAD and the register's origin do not move, and the block's 6
+    arm says where the commit is kept, or that there is none, from the verb's
+    note, never that it is on HEAD of the lane checkout."""
+    other = _other_repository(real, origin=False)
+    real.cell_is(str(other / "handoff.md"))
+    c = real.seam()
+    before = real.git("-C", str(other), "rev-parse", "HEAD").strip()
+    head, tip = real.head(c), real.origin_head()
+    proc = _real_run(real, shell, _real_script())
+    assert proc.returncode == 0, _said(proc)
+    assert "HANDOFF NOT PUSHED" in proc.stdout, _said(proc)
+    assert "write-handoff exited 6" in proc.stdout, _said(proc)
+    assert "for an Amendment 8(d) handoff, in its own repository" in proc.stdout, _said(proc)
+    assert "and committed there, on main" in proc.stderr, _said(proc)
+    assert (other / "handoff.md").read_text(encoding="utf-8") == REAL_NEW
+    assert real.git("-C", str(other), "rev-parse", "HEAD~1").strip() == before
+    assert real.git("-C", str(other), "log", "-1", "--format=%B").strip().splitlines() == [
+        f"handoff({REAL_LANE}@Eagle): PAUSED, {REAL_WHY}", "", f"Lane: {REAL_LANE}"]
+    assert real.head(c) == head, "the lane checkout's HEAD did not move"
+    assert real.origin_head() == tip, "the register's origin did not move"
 
 
 @pytest.mark.parametrize("shell", SHELLS)
