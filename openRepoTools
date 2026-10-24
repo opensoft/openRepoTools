@@ -4448,7 +4448,10 @@ wip_run_link_estates() {
 # A LINK MADE BETWEEN THIS PLANNING AND THIS WRITE IS REFUSED AS `--install`
 # REFUSES IT (#331): the two functions it runs ask again where each acts, and
 # their refusal is a `die` in this subshell, so it is a note beside the workspace
-# and the exit stays 0, with the link and its far end as they were.
+# and the exit stays 0, with the link as it was made. The refusal itself changes
+# nothing, and the note says only that. A `chmod` before it may have restored the
+# mode of the regular file that is the far end of the link now, and the lines
+# above the note report it, so the note does not say nothing was changed (#331).
 wip_hook_pair() {
 	local rc
 	say ""
@@ -4463,7 +4466,7 @@ wip_hook_pair() {
 	set -e
 	if [ "$rc" -ne 0 ]; then
 		say "  (not reconciled: the refusal above is the one \`openRepoTools --install\` makes, and"
-		say "   nothing in that file was changed. Fix what it names, then run \`openRepoTools wip init\` again.)"
+		say "   this refusal changed nothing. Fix what it names, then run \`openRepoTools wip init\` again.)"
 	fi
 	return 0
 }
