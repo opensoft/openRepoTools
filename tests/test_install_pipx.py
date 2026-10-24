@@ -1995,7 +1995,7 @@ def test_pipx_mid_run_a_link_at_a_skill_or_command_file_is_refused_and_left(
 #: true at every position. #257's late-link cases pin only the start of the
 #: sentence, at the first file of each loop; these are the middle of each loop,
 #: with a file placed before the refused one in its own loop and one not placed
-#: after it.
+#: after it, and the last command file, where none follows it in its loop.
 REST_AT_A_SKILL = (
     "The {placed} commands above are placed; so is every skill file before "
     "this one. This one, the skill files after it, the command files and the "
@@ -2011,12 +2011,16 @@ REST_AT_A_COMMAND = (
 #: refuses is the other sentence of each loop, where the directory cannot be
 #: made. Index 2 is the shared directory's copy of the second skill or command
 #: and index 3 the bare copy of it, so both destinations have a file before the
-#: refused one, and the files after it include the other destination's.
+#: refused one, and the files after it include the other destination's. Index
+#: 5 of the command loop is the bare copy of the last command file, `swap.md`:
+#: no file follows it in its loop, and it is the last position before the hook
+#: pair, where "the hook is not placed" is closest to being false.
 MIDDLE_REFUSALS = (
     pytest.param("skill", "late-link", 2, id="skill-file-late-link"),
     pytest.param("skill", "mkdir", 3, id="skill-file-mkdir"),
     pytest.param("command", "late-link", 2, id="command-file-late-link"),
     pytest.param("command", "mkdir", 3, id="command-file-mkdir"),
+    pytest.param("command", "late-link", 5, id="last-command-file-late-link"),
 )
 
 

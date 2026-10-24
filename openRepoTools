@@ -3651,8 +3651,9 @@ $(guard_block_text)"
 # "This one" is the file that was to go there, at a `mkdir` refusal too: the
 # one the directory was for. Each loop's sentence is written once, in
 # `rest_at_a_skill` and `rest_at_a_command`, so its `mkdir` refusal and its
-# `place_by_rename` refusal cannot come to two answers, and each starts "The N
-# commands above are placed;" as the bin loop's refusals do about theirs.
+# `place_by_rename` refusal cannot come to two answers. Each starts "The N
+# commands above are placed;", where the bin loop's refusals start "Whatever
+# the lines above report is placed;".
 place_skill_and_hook() {
 	local shared_dir bare_dir target verb name profiles="" claude_dir="" parent=""
 	local rest_at_a_skill rest_at_a_command
