@@ -1612,7 +1612,9 @@ def test_the_placement_takes_no_answer_with_a_command_substitution_that_can_lose
         + "\n  ".join(found))
 
 
-@pytest.mark.parametrize("setup", ["a-pipx-link-at-the-target", "a-clean-home"])
+@pytest.mark.parametrize("setup", ["a-pipx-link-at-the-target",
+                                   "a-link-into-a-venv-with-no-pyvenv-cfg",
+                                   "a-clean-home"])
 def test_a_failed_mktemp_for_the_workdir_ends_the_install_with_exit_1_whatever_asks(
         tmp_path, setup):
     """A DIRECTORY THE INSTALL CANNOT MAKE ENDS THE RUN WITH EXIT 1, FROM
@@ -1624,9 +1626,16 @@ def test_a_failed_mktemp_for_the_workdir_ends_the_install_with_exit_1_whatever_a
     wrote `/answer`. `$TMPDIR` is a directory that is not there, which
     fails `mktemp -d` for any user, root included.
 
-    * With a pipx link at the target, that run took the failed write for "no
-      link here", exited 2 with a false `REFUSED` naming the link, and told
-      the person to `rm -f` it: pipx's own.
+    * With a pipx link at the target, into a venv that holds `pyvenv.cfg` as
+      pipx's does, that run took the failed write for "not pipx's link" and
+      exited 2 with a false `REFUSED`: a link into a Python environment in a
+      layout the installer does not recognise, to be left where it is. That
+      refusal has no `rm -f` in it.
+    * With the same link into a venv that has no `pyvenv.cfg`, the false
+      `REFUSED` was the other one, which tells the person to `rm -f` pipx's
+      own link. That is the case the `rm -f` assertion, the first one made,
+      bites in; a real pipx venv holds the file, so this one is a fixture's
+      shape and not pipx's.
     * On a clean home it exited 1 as it should, but only after trying to write
       `/answer` and after a second `mktemp` message.
 
@@ -1635,9 +1644,11 @@ def test_a_failed_mktemp_for_the_workdir_ends_the_install_with_exit_1_whatever_a
     """
     bin_dir = tmp_path / ".local" / "bin"
     link = value = None
-    if setup == "a-pipx-link-at-the-target":
+    if setup != "a-clean-home":
         venv = layout.pipx_venv(tmp_path / ".local" / "share" / "pipx",
                                 "1.17.8")
+        if setup == "a-link-into-a-venv-with-no-pyvenv-cfg":
+            (venv / "pyvenv.cfg").unlink()
         link = bin_dir / "openRepoTools"
         value = str(venv / "bin" / "openRepoTools")
         bin_dir.mkdir(parents=True)
@@ -1648,9 +1659,10 @@ def test_a_failed_mktemp_for_the_workdir_ends_the_install_with_exit_1_whatever_a
                      env={"TMPDIR": str(missing)})
 
     said = result.stdout + result.stderr
+    assert "rm -f" not in said, (
+        f"the run advised removing a link that is pipx's:\n{said}")
     assert result.returncode == 1, said
     assert "REFUSED" not in said, said
-    assert "rm -f" not in said, said
     assert result.stderr.count("mktemp:") == 1, (
         "the run did not end at the first failed `mktemp`:\n" + said)
     assert not re.search(r"(?:^|[\s'\"`])/answer(?![\w.-])", said,
