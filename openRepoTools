@@ -303,7 +303,15 @@ remove_workdir() {
 }
 workdir() {
 	if [ -z "$WORKDIR" ]; then
-		WORKDIR="$(mktemp -d)"
+		# A DIRECTORY THAT CANNOT BE MADE ENDS THE RUN HERE, ON ITS OWN (#318),
+		# for every caller: `set -e` cannot be what ends it, because
+		# `pipx_link_match`, which calls this, is itself asked inside an `if`,
+		# where `-e` is off. There a failed `mktemp` went on with `$WORKDIR`
+		# empty, wrote `/answer`, and refused a link that was pipx's. This runs
+		# in the shell, so the `exit` ends the run (a `return` would be
+		# swallowed by that `if`), and neither trap is set yet, so nothing is
+		# removed.
+		WORKDIR="$(mktemp -d)" || exit 1
 		trap remove_workdir EXIT
 		trap 'remove_workdir; trap - INT; kill -INT $$; exit 130' INT
 	fi
