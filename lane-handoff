@@ -127,6 +127,18 @@ say()  { printf '%s\n' "$*"; }
 note() { printf '%s: %s\n' "$prog" "$*" >&2; }
 step() { printf '%s: %s\n' "$prog" "$*" >&2; }
 die()  { printf '\n%s: REFUSED: %s\n' "$prog" "$1" >&2; exit "${2:-2}"; }
+check_claude_env_dual() {   # <WINDOW_REF|WINDOW_ID|LANE_DIR>
+	local cce_suffix="$1" cce_new_set cce_legacy_set cce_new cce_legacy
+	eval "cce_new_set=\${OPENBENCHES_CLAUDE_${cce_suffix}+set}"
+	eval "cce_legacy_set=\${WORKBENCHES_CLAUDE_${cce_suffix}+set}"
+	eval "cce_new=\${OPENBENCHES_CLAUDE_${cce_suffix}-}"
+	eval "cce_legacy=\${WORKBENCHES_CLAUDE_${cce_suffix}-}"
+	if [ "$cce_new_set" = set ] && [ "$cce_legacy_set" = set ] && [ "$cce_new" != "$cce_legacy" ]; then
+		printf 'REFUSED: OPENBENCHES_CLAUDE_%s and WORKBENCHES_CLAUDE_%s have conflicting values. Set both to the same value, or unset the incorrect one, then re-run. Nothing was renamed or written.\n' \
+			"$cce_suffix" "$cce_suffix" >&2
+		return 2
+	fi
+}
 # Exact launch facts must not carry record delimiters, on Bash 3.2 too.
 restart_fact_ok() {
   local LC_ALL=C
@@ -1580,6 +1592,11 @@ lifecycle_finish() {   # <what is unfinished, empty when nothing is>
 
 # ------------------------------------------------- 1. the identity triple
 #
+# Ambiguous old/new launcher values refuse before identity selection or any write.
+check_claude_env_dual WINDOW_REF || exit
+check_claude_env_dual WINDOW_ID || exit
+check_claude_env_dual LANE_DIR || exit
+#
 # THE WORKSTATION COMES FROM CONFIGURATION, NEVER FROM `hostname` (Amendment 11,
 # ratified decision 8(d)): the helper's own `workstation` read is the one
 # implementation, and its second tab-separated field says which rung answered.
@@ -1639,9 +1656,9 @@ if have_tmux; then
 	window_name="$(tmux display-message -p '#W' 2>/dev/null || :)"
 	win_harness="$(tmux display-message -p '#{session_name}:#{window_id}' 2>/dev/null || :)"
 fi
-[ -n "$win" ] || win="${WORKBENCHES_CLAUDE_WINDOW_REF:-}"
+[ -n "$win" ] || win="${OPENBENCHES_CLAUDE_WINDOW_REF:-${WORKBENCHES_CLAUDE_WINDOW_REF:-}}"
 window_ref_ok "$win" || win=""
-[ -n "$wid" ] || wid="${WORKBENCHES_CLAUDE_WINDOW_ID:-}"
+[ -n "$wid" ] || wid="${OPENBENCHES_CLAUDE_WINDOW_ID:-${WORKBENCHES_CLAUDE_WINDOW_ID:-}}"
 window_id_ok "$wid" || wid=""
 window_ref="${win}${wid:+ $wid}"
 
@@ -1866,7 +1883,7 @@ if [ -z "$dir" ]; then
 	*) dir=""; dir_read_failed="\`$LANES_EDIT lane-dir $lane\` failed (exit $dir_rc)" ;;
 	esac
 	if [ -z "$dir" ] && [ -z "$dir_read_failed" ]; then
-		dir="${WORKBENCHES_CLAUDE_LANE_DIR:-}"
+		dir="${OPENBENCHES_CLAUDE_LANE_DIR:-${WORKBENCHES_CLAUDE_LANE_DIR:-}}"
 		if [ -z "$dir" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && [ -n "${CLAUDE_CONFIG_DIR:-}" ] && command -v jq >/dev/null 2>&1; then
 			dir="$(jq -r --arg id "$CLAUDE_CODE_SESSION_ID" \
 				'select((.sessionId // "") == $id) | .cwd // empty' \

@@ -138,6 +138,33 @@ case "${why-}" in
 esac
 ```
 
+**THE LAUNCHER'S ENVIRONMENT IS NEW-FIRST WITH LEGACY FALLBACK, AND A DUAL CONFLICT IS A REFUSAL.** For
+`WINDOW_REF`, `WINDOW_ID` and `LANE_DIR`, step 4 reads `OPENBENCHES_CLAUDE_*` first and then the corresponding
+`WORKBENCHES_CLAUDE_*` name. A value supplied under only one name is used as before; equal old/new dual values
+are accepted. If both names are set to different values, the skill refuses before lane selection, window
+rename, handoff refresh or record writes rather than risking the wrong lane or checkout. Set both names to the
+same value, or unset the incorrect one, and run `/handoff` again. A set-but-empty value still counts as set,
+so an empty/non-empty pair conflicts too. These checks run now, ahead of step 1, because the directory and
+window reads in step 4 are too late to protect step 2's writes.
+
+```sh
+check_claude_env_dual() {   # <WINDOW_REF|WINDOW_ID|LANE_DIR>
+  local cce_suffix="$1" cce_new_set cce_legacy_set cce_new cce_legacy
+  eval "cce_new_set=\${OPENBENCHES_CLAUDE_${cce_suffix}+set}"
+  eval "cce_legacy_set=\${WORKBENCHES_CLAUDE_${cce_suffix}+set}"
+  eval "cce_new=\${OPENBENCHES_CLAUDE_${cce_suffix}-}"
+  eval "cce_legacy=\${WORKBENCHES_CLAUDE_${cce_suffix}-}"
+  if [ "$cce_new_set" = set ] && [ "$cce_legacy_set" = set ] && [ "$cce_new" != "$cce_legacy" ]; then
+    printf 'REFUSED: OPENBENCHES_CLAUDE_%s and WORKBENCHES_CLAUDE_%s have conflicting values. Set both to the same value, or unset the incorrect one, then re-run. Nothing was renamed or written.\n' \
+      "$cce_suffix" "$cce_suffix" >&2
+    return 2
+  fi
+}
+check_claude_env_dual WINDOW_REF || exit
+check_claude_env_dual WINDOW_ID || exit
+check_claude_env_dual LANE_DIR || exit
+```
+
 ## 1. Usage, then the identity triple — derived, not asked
 
 ```bash
@@ -542,7 +569,8 @@ below, and never a template placeholder (#80 item 7).
 #   1. the lane's own recorded `dir` (`lane-dir`), written by `lane-start` at
 #      every start under this amendment — the lane's checkout as the lane's own
 #      writer recorded it;
-#   2. the launcher's `WORKBENCHES_CLAUDE_LANE_DIR`, exported only where the
+#   2. the launcher's `OPENBENCHES_CLAUDE_LANE_DIR`, with legacy
+#      `WORKBENCHES_CLAUDE_LANE_DIR` fallback, exported only where the
 #      directory order's rungs 1-3 answered;
 #   3. THE LIVE SESSION'S OWN RECORD — the harness writes `"cwd"` beside
 #      `"tmux"` in `$CLAUDE_CONFIG_DIR/sessions/<pid>.json`, keyed by
@@ -580,7 +608,7 @@ case "$dir_rc" in
   *)   dir=""; dir_read_failed="\`$L lane-dir $lane\` failed (exit $dir_rc)" ;;
 esac
 if [[ -z "$dir" && -z "$dir_read_failed" ]]; then
-  dir="${WORKBENCHES_CLAUDE_LANE_DIR:-}"
+  dir="${OPENBENCHES_CLAUDE_LANE_DIR:-${WORKBENCHES_CLAUDE_LANE_DIR:-}}"
   if [[ -z "$dir" && -n "${CLAUDE_CODE_SESSION_ID:-}" && -n "${CLAUDE_CONFIG_DIR:-}" ]]; then
     dir="$(jq -r --arg id "$CLAUDE_CODE_SESSION_ID" \
       'select((.sessionId // "") == $id) | .cwd // empty' \
@@ -595,7 +623,8 @@ fi
 # SUPERSET, so a seventh divergence found after this is absorbed on the same
 # ground and needs no ruling of its own"*. On the normal path the launcher
 # started this session and threaded the window it captured across its re-exec
-# (`WORKBENCHES_CLAUDE_WINDOW_REF`, `_WINDOW_ID`, clause (b) act 1); a `tmux`
+# (`OPENBENCHES_CLAUDE_WINDOW_REF`, `_WINDOW_ID`, with the legacy
+# `WORKBENCHES_CLAUDE_*` names as fallback, clause (b) act 1); a `tmux`
 # that is missing, a server that has gone, or a shim that answers nothing then
 # costs the record a `window` sub-field it already had in hand. Each is SHAPE
 # CHECKED before it is taken, by the same two tests the live reads get, because
@@ -614,11 +643,11 @@ fi
 win="$(tmux display-message -p '#S:#I' 2>/dev/null)"
 [[ "$win" =~ ^.+:[0-9]+$ ]] || win=""
 case "$win" in *$'\n'*|*$'\r'*) win="" ;; esac
-[[ -n "$win" ]] || win="${WORKBENCHES_CLAUDE_WINDOW_REF:-}"
+[[ -n "$win" ]] || win="${OPENBENCHES_CLAUDE_WINDOW_REF:-${WORKBENCHES_CLAUDE_WINDOW_REF:-}}"
 [[ "$win" =~ ^.+:[0-9]+$ ]] || win=""
 case "$win" in *$'\n'*|*$'\r'*) win="" ;; esac
 wid="$(tmux display-message -p '#{window_id}' 2>/dev/null)"
-[[ "$wid" =~ ^@[0-9]+$ ]] || wid="${WORKBENCHES_CLAUDE_WINDOW_ID:-}"
+[[ "$wid" =~ ^@[0-9]+$ ]] || wid="${OPENBENCHES_CLAUDE_WINDOW_ID:-${WORKBENCHES_CLAUDE_WINDOW_ID:-}}"
 # AN `<@id>` IS `@<digits>` AND NOTHING ELSE (F-X13(a), A11 Addendum 4 ruling 10).
 # `== @*` accepted anything starting with an at-sign, and two things that are
 # not ids do: a tmux too old to know `#{window_id}` PRINTS THE FORMAT BACK, and
