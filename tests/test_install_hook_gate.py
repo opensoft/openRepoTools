@@ -48,9 +48,14 @@ import pytest
 from conftest import REPO, WINDOWS_SKIP
 from test_install_skill_and_hook import (GUARD_COMMAND, GUARD_TIMEOUT,
                                          HOOK_COMMAND, HOOK_MATCHER,
-                                         HOOK_TIMEOUT, hook_commands,
+                                         HOOK_TIMEOUT, LINK_AFTER_THE_STAMP,
+                                         LINK_SEAMS,
+                                         assert_settings_link_refused,
+                                         hook_commands,
+                                         link_settings_mid_run,
                                          run_signalled_at_the_settings_temporary,
                                          session_start_commands, settings_of,
+                                         settings_temporaries,
                                          user_prompt_commands)
 from test_openrepotools_command import (ALWAYS, ARTIFACTS, COMMAND,
                                         HOOK_ENTRIES, NEEDS_JQ, command_env,
@@ -491,6 +496,108 @@ def test_a_wip_init_killed_while_the_settings_temporary_exists_leaves_none(
         f"`wip init` did not die of {signame}: exit {code}\n{out}{err}")
     assert placement_temporaries(home) == [], (
         f"a settings temporary outlived `wip init`: {seen}")
+
+
+@NEEDS_TEMPLATE
+@pytest.mark.parametrize("arm", ["mode", "write"])
+def test_wip_init_refuses_a_link_made_at_the_settings_after_it_planned(
+        tmp_path, arm):
+    """`wip init` REACHES THE SAME TWO ACTS AS `--install`, WITH PLANNING AND THE
+    WRITE IN ONE SUBSHELL, SO IT ASKS THE SAME LATE QUESTION (#331). A first
+    `wip init` merges the pair; the second finds the workspace made and only
+    reconciles the pair. A link made at `settings.json` after that reconcile
+    planned — the `find` of `mode_is` and the `cp` of the settings temporary are
+    where `LINK_SEAMS` makes it — is refused where the act would meet it:
+    `mode`, the pair already there at 644, so the mode would be restored by a
+    `chmod` that follows the link; `write`, a file with neither entry, which the
+    `mv -f` would replace. The refusal is `--install`'s own, in planning's
+    words, and it is a note beside the workspace: the exit stays 0, the link is
+    as it was made, the file at its far end keeps its mode and bytes, and no
+    temporary is left."""
+    home, env = wip_world(tmp_path)
+    (home / "projects" / "xFactory").mkdir()
+    assert run_with(env, "--install").returncode == 0
+    first = run_with(env, "wip", "init")
+    assert first.returncode == 0, first.stdout + first.stderr
+    settings = settings_of(home)
+    if arm == "write":
+        settings.write_text(json.dumps({"theme": "dark"}, indent=2),
+                            encoding="utf-8")
+    os.chmod(settings, 0o644)
+    far = tmp_path / "dotfiles" / "settings.json"
+    far.parent.mkdir()
+    bytes_before = settings.read_bytes()
+    shim, acted = link_settings_mid_run(tmp_path, home, far,
+                                        LINK_SEAMS["before-the-act"])
+
+    result = run_with({**env, "PATH": f"{shim}{os.pathsep}{env['PATH']}"},
+                      "wip", "init")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "(not reconciled:" in result.stdout, result.stdout
+    assert_settings_link_refused(result, home, far, bytes_before, acted)
+
+
+@NEEDS_TEMPLATE
+def test_wip_init_note_does_not_say_nothing_was_changed_after_a_mode_was_restored(
+        tmp_path):
+    """THE NOTE BESIDE `wip init`'S REFUSAL SAYS ONLY WHAT IS TRUE IN THE STATE
+    WHERE A MODE WAS RESTORED BEFORE IT (#331). A second `wip init` on a
+    settings file that carries the `SessionStart` entry and not the guard's
+    (what an install from before Amendment 12 left), at mode 644, restores the
+    mode of the regular file and says so, then writes the file back with the
+    guard's entry added. A link made between the `chmod` and that write
+    (`LINK_AFTER_THE_STAMP`) is refused AFTER "mode restored to 600" was
+    printed, and the stamp is on the file at the far end of the link.
+
+    The note says the exit stays 0 and that the refusal changed nothing; it
+    does not say that nothing in the file was changed, under the line that says
+    its mode was. The far end is at 600 with its bytes, the link is as it was
+    made, and no temporary is left."""
+    home, env = wip_world(tmp_path)
+    (home / "projects" / "xFactory").mkdir()
+    assert run_with(env, "--install").returncode == 0
+    first = run_with(env, "wip", "init")
+    assert first.returncode == 0, first.stdout + first.stderr
+    settings = settings_of(home)
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    del data["hooks"]["UserPromptSubmit"]
+    settings.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    os.chmod(settings, 0o644)
+    far = tmp_path / "dotfiles" / "settings.json"
+    far.parent.mkdir()
+    bytes_before = settings.read_bytes()
+    shim, acted = link_settings_mid_run(tmp_path, home, far,
+                                        LINK_AFTER_THE_STAMP)
+
+    result = run_with({**env, "PATH": f"{shim}{os.pathsep}{env['PATH']}"},
+                      "wip", "init")
+
+    out = result.stdout + result.stderr
+    assert result.returncode == 0, out
+    assert acted.exists(), f"no link was made mid-run:\n{out}"
+    restored = (f"SessionStart hook: already installed in {settings} "
+                "(mode restored to 600)")
+    assert restored in result.stdout, (
+        f"the `present` arm did not restore the mode first, so this is not the "
+        f"state under test:\n{out}")
+    assert stat.S_IMODE(far.stat().st_mode) == 0o600, (
+        f"the mode the line reports was not stamped on the far end:\n{out}")
+    assert far.read_bytes() == bytes_before, (
+        f"the file at the far end was written:\n{out}")
+    assert settings.is_symlink() and os.readlink(settings) == str(far), (
+        f"the link was replaced:\n{out}")
+    assert settings_temporaries(home) == [] and placement_temporaries(home) == []
+    assert result.stderr.count("REFUSED:") == 1, out
+    assert "(not reconciled:" in result.stdout, out
+    assert result.stdout.index(restored) < result.stdout.index("(not reconciled:")
+    note = " ".join(result.stdout[result.stdout.index("(not reconciled:"):].split())
+    assert "nothing in that file was changed" not in note, (
+        f"the note says nothing was changed, under a line that says a mode "
+        f"was:\n{out}")
+    assert "this refusal changed nothing" in note, (
+        f"the note does not say what it can: that the refusal changed "
+        f"nothing:\n{out}")
 
 
 @NEEDS_TEMPLATE
