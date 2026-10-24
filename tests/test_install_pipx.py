@@ -30,7 +30,14 @@ lines; this file holds both:
   first `openRepoTools` on `PATH` is not its own, and its silence where the
   package's layout names no `<prefix>` (research R7);
 - `test_pipx_upgrade_*` and `test_pipx_uninstall_*`: a second wheel in the
-  same venv, and the link and the venv gone.
+  same venv, and the link and the venv gone;
+- `test_pipx_mid_run_*`: pipx's link appearing or going between `--install`'s
+  planning and its placement (#257): asked again at the target's own turn,
+  left to pipx where it is pipx's link now, and refused, naming it, where it
+  is any other change; a link that appears as late as the rename is refused
+  and left as it was, never replaced by a regular file, at a command, a
+  `SKILL.md` or a command file alike; and one made where the bytes are
+  already right is refused too, never stamped through by `chmod`.
 
 FAKE VENVS, NO PIPX, NO WHEEL. `tests/package_layout.py` lays each venv out
 of this checkout's own files. EVERY PACKAGE RUN HERE IS
@@ -70,9 +77,10 @@ import package_layout as layout
 from conftest import REPO, WINDOWS_SKIP
 from test_install_payload_source import (World, git, local_assembly, network,
                                          variant)
-from test_openrepotools_command import (ARTIFACTS, COMMAND, FETCHED,
-                                        HOOK_ENTRIES, INSTALLED, NEEDS_JQ,
-                                        command_env, path_without,
+from test_openrepotools_command import (ARTIFACTS, COMMAND, COMMAND_NAMES,
+                                        FETCHED, HOOK_ENTRIES, INSTALLED,
+                                        NEEDS_JQ, SKILL_NAMES, command_env,
+                                        link_xfactory, path_without,
                                         placed_files, placement_temporaries,
                                         receipt_path, receipt_rows,
                                         source_tree)
@@ -1722,3 +1730,476 @@ def test_pipx_uninstall_leaves_what_was_placed_and_a_checkout_then_places_a_regu
     assert len(rows) == ARTIFACTS - HOOK_ENTRIES
     assert ("openRepoTools", str(link), hashlib.sha256(
         link.read_bytes()).hexdigest()) in {row[:3] for row in rows}
+
+
+# --- test_pipx_mid_run_: pipx's link appearing or going mid-run (#257) ------
+
+def mid_run(root: Path, tool: str, when: str, act: str) -> tuple[Path, Path]:
+    """A `tool` first on `PATH` that runs the shell command `act` ONCE, the
+    first time one of its arguments matches the `case` pattern `when`, and is
+    the real `tool` for that call and every other. It is the seam this suite
+    already stands a fake in (a `cp` that fails, a `mktemp` that is slow):
+    `--install` reaches every outside tool through `PATH`, so a fake one acts
+    at one exact step of the run, with no clock and no race. Returns the
+    directory to put first on `PATH`, and the file `act` leaves once it has
+    run, which shows that it ran during the install and not before it."""
+    real = shutil.which(tool)
+    if real is None:
+        pytest.skip(f"no real `{tool}` on PATH for the fake to defer to")
+    fake = root / f"mid-run-{tool}"
+    fake.mkdir()
+    acted = shlex.quote(str(root / f"mid-run-{tool}.acted"))
+    (fake / tool).write_text(
+        "#!/bin/sh\n"
+        f"if [ ! -e {acted} ]; then\n"
+        '\tfor arg in "$@"; do\n'
+        '\t\tcase "$arg" in\n'
+        f"\t\t{when})\n"
+        f"\t\t\t{act} || exit 1\n"
+        f"\t\t\t: > {acted}\n"
+        "\t\t\tbreak ;;\n"
+        "\t\tesac\n"
+        "\tdone\n"
+        "fi\n"
+        f'exec {shlex.quote(real)} "$@"\n', encoding="utf-8")
+    (fake / tool).chmod(0o755)
+    return fake, root / f"mid-run-{tool}.acted"
+
+
+def real_tool(name: str) -> str:
+    """`name` as a fake's `act` runs it: by its real path, quoted."""
+    found = shutil.which(name)
+    if found is None:
+        pytest.skip(f"no `{name}` on PATH for the fake to run")
+    return shlex.quote(found)
+
+
+def first_on_path(fake: Path) -> dict:
+    """The `extra` that puts `fake` first on `PATH`."""
+    return {"PATH": f"{fake}{os.pathsep}{os.environ['PATH']}"}
+
+
+def refusing_mkdir(root: Path, where: Path, nth: int) -> tuple[Path, Path]:
+    """A `mkdir` first on `PATH` that REFUSES the `nth` call whose arguments
+    name `where` (it prints the real `mkdir`'s kind of message and exits 1)
+    and is the real `mkdir` for every other call, `where`'s other calls
+    included. `mid_run`'s one-shot fake acts at the first match only, and the
+    three command files at each destination share one directory, so a refusal
+    at a later one needs the count. Returns the directory to put first on
+    `PATH`, and the file the refused call leaves, which shows that it was
+    refused during the install and not before it."""
+    real = shutil.which("mkdir")
+    if real is None:
+        pytest.skip("no real `mkdir` on PATH for the fake to defer to")
+    fake = root / "refusing-mkdir"
+    fake.mkdir()
+    count = shlex.quote(str(root / "refusing-mkdir.count"))
+    refused = shlex.quote(str(root / "refusing-mkdir.refused"))
+    named = shlex.quote(str(where))
+    (fake / "mkdir").write_text(
+        "#!/bin/sh\n"
+        'for arg in "$@"; do\n'
+        f'\tif [ "$arg" = {named} ]; then\n'
+        f"\t\tseen=$(cat {count} 2>/dev/null || echo 0)\n"
+        "\t\tseen=$((seen + 1))\n"
+        f'\t\techo "$seen" > {count}\n'
+        f'\t\tif [ "$seen" -eq {nth} ]; then\n'
+        f"\t\t\t: > {refused}\n"
+        "\t\t\tprintf 'mkdir: cannot create directory %s: the test refuses "
+        f"it\\n' {named} >&2\n"
+        "\t\t\texit 1\n"
+        "\t\tfi\n"
+        "\t\tbreak\n"
+        "\tfi\n"
+        "done\n"
+        f'exec {shlex.quote(real)} "$@"\n', encoding="utf-8")
+    (fake / "mkdir").chmod(0o755)
+    return fake, root / "refusing-mkdir.refused"
+
+
+@NEEDS_JQ
+def test_pipx_mid_run_a_link_that_appears_after_planning_is_left_to_pipx(
+        tmp_path):
+    """#257, THE RACE ITSELF. A checkout's `--install`, beside pipx's venv and
+    no link yet. `pipx install` finishes after `plan_install_targets` has
+    found `<dir>/openRepoTools` empty and before the placement loop reaches
+    it: the fake `mkdir` makes pipx's link as the run creates `<dir>` for
+    that loop. The loop asks again at the target's own turn, so the run says
+    what a run beside a link that was there from the start says (US3
+    scenario 2): the exact skip line, the other-source count line naming
+    pipx's release, and 28 receipt rows. The link is still pipx's, the venv
+    is as it was, and no temporary is left. Before #257 the loop skipped only
+    the target planning had named, and the rename replaced pipx's link with a
+    regular file."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    venv = layout.pipx_venv(home / ".local" / "share" / "pipx", "1.17.8")
+    clause = give_pipx_a_stamp(venv, "unstamped")
+    link = bin_dir(home) / "openRepoTools"
+    value = str(venv / "bin" / "openRepoTools")
+    link.parent.mkdir(parents=True)
+    fake, acted = mid_run(
+        root, "mkdir", shlex.quote(str(link.parent)),
+        f"{real_tool('ln')} -s {shlex.quote(value)} {shlex.quote(str(link))}")
+    before = tree_state(venv)
+
+    result = install_as("checkout", root, home,
+                        pipx_env(home, extra=first_on_path(fake)))
+    assert acted.exists(), f"no link was made mid-run:\n{transcript(result)}"
+    assert_beside_the_link(result, link, " @ ".join(DEFAULT_SOURCE), clause)
+    assert link.is_symlink() and os.readlink(link) == value, (
+        f"pipx's link was replaced:\n{transcript(result)}")
+    assert tree_state(venv) == before, "the install wrote into pipx's venv"
+    assert_rows_beside_the_link(home, link)
+    assert placement_temporaries(home) == []
+
+
+#: A LINK THAT APPEARS AS LATE AS A TEST CAN MAKE IT (#257): at the mode stamp
+#: on the target's temporary, the last outside tool `place_by_rename` runs
+#: before its owner check and the rename. pipx's at `<dir>/openRepoTools`,
+#: which the loop's own question has just found empty, and a person's own at
+#: `<dir>/park`, the next target, so one file is placed before it.
+LATE_LINKS = ("pipx-s-link", "a-link-of-your-own")
+
+
+@pytest.mark.parametrize("which", LATE_LINKS)
+@NEEDS_JQ
+def test_pipx_mid_run_a_link_that_appears_at_the_rename_is_refused_and_left(
+        tmp_path, which):
+    """#257, THE LAST QUESTION BEFORE THE RENAME. The link appears after the
+    loop has asked about its target, while `place_by_rename` writes the
+    temporary: the fake `chmod` makes it as the temporary's mode is stamped.
+    The rename is refused, naming the link and where it points: exit 2, one
+    `REFUSED:`, the link exactly as it was made, no temporary, no `rm`
+    advised for it, and the loop no further. The run the refusal asks for
+    then asks about the link afresh: pipx's is left to pipx, with the skip
+    and count lines, and a person's own gets today's planning refusal, with
+    the `rm -f` line for it alone. Before #257 the rename replaced either
+    link with a regular file, and the run went on to exit 0."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    where = bin_dir(home)
+    where.mkdir(parents=True)
+    clause = None
+    if which == "pipx-s-link":
+        venv = layout.pipx_venv(home / ".local" / "share" / "pipx", "1.18.3")
+        clause = give_pipx_a_stamp(venv, "unstamped")
+        target, value = where / "openRepoTools", str(venv / "bin" / "openRepoTools")
+    else:
+        mine = home / "my-own" / "park"
+        mine.parent.mkdir()
+        mine.write_text("#!/usr/bin/env bash\necho my own park\n",
+                        encoding="utf-8")
+        target, value = where / "park", str(mine)
+    fake, acted = mid_run(
+        root, "chmod", shlex.quote(f"{where}/.{target.name}.openrepotools.") + "*",
+        f"{real_tool('ln')} -s {shlex.quote(value)} {shlex.quote(str(target))}")
+
+    result = install_as("checkout", root, home,
+                        pipx_env(home, extra=first_on_path(fake)))
+    assert acted.exists(), f"no link was made mid-run:\n{transcript(result)}"
+    assert result.returncode == 2, transcript(result)
+    assert result.stderr.count("REFUSED:") == 1, transcript(result)
+    assert (f"REFUSED: {target} is a symlink to {value} now, and was not one "
+            "when this run planned, so nothing was placed there and the link "
+            "is left as it was") in result.stderr, transcript(result)
+    assert target.is_symlink() and os.readlink(target) == value, (
+        f"the link was replaced:\n{transcript(result)}")
+    assert placement_temporaries(home) == []
+    assert rm_lines_naming(result.stdout + result.stderr, target) == [], (
+        transcript(result))
+    after = INSTALLED[INSTALLED.index(target.name) + 1]
+    assert f"{after}: " not in result.stdout, (
+        f"the loop carried on past a placement it refused:\n{transcript(result)}")
+
+    again = install_as("checkout", root, home, pipx_env(home))
+    if clause is not None:
+        assert_beside_the_link(again, target, " @ ".join(DEFAULT_SOURCE), clause)
+    else:
+        assert_refused_before_placing(again, home, {"openRepoTools", "park"})
+        assert_ordinary_link_refusal(again, target)
+    assert target.is_symlink() and os.readlink(target) == value
+
+
+#: THE SAME QUESTION AT THE OTHER TWO CALLERS OF `place_by_rename` (#257, the
+#: review's NIT 2). `place_skill_and_hook` places a `SKILL.md` and a command
+#: file through it too, in the shared profile directory and after all seventeen
+#: commands. The first of each is the target here. The guard asks about a
+#: target and not about the directory it is in, and one that stood at `<dir>`
+#: alone would pass every case above and put a regular file over a link made at
+#: either of these.
+LATE_LINKS_BEYOND_THE_BIN_DIRECTORY = ("a-skill-file", "a-command-file")
+
+
+@pytest.mark.parametrize("which", LATE_LINKS_BEYOND_THE_BIN_DIRECTORY)
+@NEEDS_JQ
+def test_pipx_mid_run_a_link_at_a_skill_or_command_file_is_refused_and_left(
+        tmp_path, which):
+    """#257, THE SAME LAST QUESTION, AT THE CALLERS THAT ARE NOT THE BIN
+    DIRECTORY'S. A person's own link appears as the mode is stamped on the
+    temporary of the first `SKILL.md`, or of the first command file, and the
+    rename is refused as it is at `<dir>`: exit 2, one `REFUSED:` naming the
+    link and where it points, the link as it was made, the file it points to
+    untouched, no temporary, no `rm` advised, and the run goes no further. The
+    files placed are exactly those before the link in the order `--install`
+    places them, and the refusal says the seventeen commands are among them.
+    A guard that stood at `<dir>` alone passes every case above and fails this
+    one: the rename replaces the link with a regular file and the run exits 0."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    shared = home / ".claude-profiles" / "shared"
+    if which == "a-skill-file":
+        target = shared / "skills" / SKILL_NAMES[0] / "SKILL.md"
+    else:
+        target = shared / "commands" / f"{COMMAND_NAMES[0]}.md"
+    far = root / "someones-own-file.md"
+    far.write_text("somebody's own file\n", encoding="utf-8")
+    value = str(far)
+    fake, acted = mid_run(
+        root, "chmod",
+        shlex.quote(f"{target.parent}/.{target.name}.openrepotools.") + "*",
+        f"{real_tool('ln')} -s {shlex.quote(value)} {shlex.quote(str(target))}")
+
+    result = install_as("checkout", root, home,
+                        pipx_env(home, extra=first_on_path(fake)))
+    assert acted.exists(), f"no link was made mid-run:\n{transcript(result)}"
+    assert result.returncode == 2, transcript(result)
+    assert result.stderr.count("REFUSED:") == 1, transcript(result)
+    assert (f"REFUSED: {target} is a symlink to {value} now, and was not one "
+            "when this run planned, so nothing was placed there and the link "
+            "is left as it was") in result.stderr, transcript(result)
+    assert (f"The {len(INSTALLED)} commands above are placed;"
+            in result.stderr), transcript(result)
+    assert target.is_symlink() and os.readlink(target) == value, (
+        f"the link was replaced:\n{transcript(result)}")
+    assert far.read_text(encoding="utf-8") == "somebody's own file\n"
+    assert placement_temporaries(home) == []
+    assert rm_lines_naming(result.stdout + result.stderr, target) == [], (
+        transcript(result))
+    order = list(placed_files(home))
+    there = [d for d in order if os.path.lexists(d)]
+    assert there == order[:order.index(str(target)) + 1], (
+        f"the run went past the link or stopped short of it:\n"
+        f"{transcript(result)}")
+
+
+#: WHAT A REFUSAL AT A SKILL FILE OR A COMMAND FILE SAYS IS PLACED (#321), read
+#: against the files on disk. `--install` places the six skill files, then the
+#: six command files, then the hook pair, and each refusal in the two loops
+#: ends with a sentence about what is and is not placed. The old one at a skill
+#: file, "the skills and the hook are not", was true only at the first of the
+#: six, and the old one at a command file, "the skills, the command files and
+#: the hook are not", was false wherever it fired: all six skill files and
+#: every command file before the refused one are placed. The new ones call the
+#: refused file "this one" and say what stands before and after it, so each is
+#: true at every position. #257's late-link cases pin only the start of the
+#: sentence, at the first file of each loop; these are the middle of each loop,
+#: with a file placed before the refused one in its own loop and one not placed
+#: after it, and the last command file, where none follows it in its loop.
+REST_AT_A_SKILL = (
+    "The {placed} commands above are placed; so is every skill file before "
+    "this one. This one, the skill files after it, the command files and the "
+    "hook are not.")
+REST_AT_A_COMMAND = (
+    "The {placed} commands above are placed; so are the skill files and every "
+    "command file before this one. This one, the command files after it and "
+    "the hook are not.")
+
+#: `(loop, how, index)`: the loop the refusal fires in, how the test makes it
+#: fire, and the refused file's place in `placed_files`' order within that
+#: loop. A link made after planning is #257's late-link shim; a `mkdir` that
+#: refuses is the other sentence of each loop, where the directory cannot be
+#: made. Index 2 is the shared directory's copy of the second skill or command
+#: and index 3 the bare copy of it, so both destinations have a file before the
+#: refused one, and the files after it include the other destination's. Index
+#: 5 of the command loop is the bare copy of the last command file, `swap.md`:
+#: no file follows it in its loop, and it is the last position before the hook
+#: pair, where "the hook is not placed" is closest to being false.
+MIDDLE_REFUSALS = (
+    pytest.param("skill", "late-link", 2, id="skill-file-late-link"),
+    pytest.param("skill", "mkdir", 3, id="skill-file-mkdir"),
+    pytest.param("command", "late-link", 2, id="command-file-late-link"),
+    pytest.param("command", "mkdir", 3, id="command-file-mkdir"),
+    pytest.param("command", "late-link", 5, id="last-command-file-late-link"),
+)
+
+
+@pytest.mark.parametrize("loop,how,index", MIDDLE_REFUSALS)
+@NEEDS_JQ
+def test_pipx_mid_run_a_refusal_in_the_middle_of_the_skill_or_command_files_says_what_is_placed(
+        tmp_path, loop, how, index):
+    """#321. The run refuses at a skill file or a command file that has a file
+    before it in its own loop, and the sentence that ends the refusal is the
+    full text of what is true there: the seventeen commands are placed, and so
+    is every skill file before the refused one (and, at a command file, all six
+    skill files and every command file before it); the refused file, those
+    after it in its loop, the later loop's files and the hook are not. The
+    files on disk are read against that sentence: exactly the files before the
+    refused one are there, the refused one is the link the test made or is
+    absent, and `settings.json` is not written, though `~/projects/xFactory`
+    answers `guard`, so that a run that got as far as the hook pair would have
+    merged it. Before #321 the sentences said no skill and no command file was
+    placed, which no refusal at a later file of either loop could make true."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    link_xfactory(home)
+    order = list(placed_files(home))
+    first = len(INSTALLED) + (0 if loop == "skill"
+                              else 2 * len(SKILL_NAMES))
+    cut = first + index
+    target = Path(order[cut])
+    far = root / "someones-own-file.md"
+    far.write_text("somebody's own file\n", encoding="utf-8")
+    if how == "late-link":
+        fake, acted = mid_run(
+            root, "chmod",
+            shlex.quote(f"{target.parent}/.{target.name}.openrepotools.") + "*",
+            f"{real_tool('ln')} -s {shlex.quote(str(far))} "
+            f"{shlex.quote(str(target))}")
+    else:
+        nth = 1 + sum(1 for d in order[first:cut]
+                      if Path(d).parent == target.parent)
+        fake, acted = refusing_mkdir(root, target.parent, nth)
+
+    result = install_as("checkout", root, home,
+                        pipx_env(home, extra=first_on_path(fake)))
+    assert acted.exists(), f"nothing was refused mid-run:\n{transcript(result)}"
+    assert result.returncode == 2, transcript(result)
+    assert result.stderr.count("REFUSED:") == 1, transcript(result)
+    rest = (REST_AT_A_SKILL if loop == "skill" else REST_AT_A_COMMAND).format(
+        placed=len(INSTALLED))
+    assert f"    {rest}" in result.stderr.splitlines(), (
+        f"the refusal does not end with the sentence:\n{transcript(result)}")
+    if how == "late-link":
+        assert target.is_symlink() and os.readlink(target) == str(far), (
+            f"the link was replaced:\n{transcript(result)}")
+    else:
+        assert not os.path.lexists(target), transcript(result)
+    # THE SENTENCE AGAINST THE DISK: what it says is placed is there, as a
+    # regular file, and everything else it names is not.
+    there = [d for d in order if os.path.lexists(d) and d != str(target)]
+    assert there == order[:cut], (
+        f"the files on disk are not the ones the sentence says are placed:\n"
+        f"{transcript(result)}")
+    assert not any(os.path.islink(d) for d in there), transcript(result)
+    assert not (home / ".claude" / "settings.json").exists(), (
+        f"the hook was placed by a run that refused:\n{transcript(result)}")
+    assert placement_temporaries(home) == []
+    assert far.read_text(encoding="utf-8") == "somebody's own file\n"
+
+
+#: A LINK MADE WHERE THE BYTES ARE ALREADY RIGHT (#257, the review's SHOULD-1).
+#: A second `--install` over what a first one placed finds this release's
+#: bytes at every target and takes the arm that skips the copy and stamps the
+#: mode IN PLACE, and that `chmod` follows a link made since planning to a file
+#: that holds exactly those bytes. Three arms have it, one case each: a command
+#: in the bin directory (`park`, as `LATE_LINKS`' own link is), and the first
+#: `SKILL.md` and the first command file of the shared profile directory.
+LATE_LINKS_OVER_RIGHT_BYTES = ("a-bin-command", "a-skill-file",
+                               "a-command-file")
+
+
+@pytest.mark.parametrize("which", LATE_LINKS_OVER_RIGHT_BYTES)
+@NEEDS_JQ
+def test_pipx_mid_run_a_link_over_bytes_already_right_is_refused_and_not_stamped(
+        tmp_path, which):
+    """#257, THE ARMS WHOSE BYTES ARE ALREADY RIGHT (the review's SHOULD-1).
+    A first `--install` places everything. During a second, a person's own
+    link appears at one target after planning, to a file that holds exactly
+    this release's bytes at mode 600: the fake `cmp` makes it as that target's
+    arm compares, so `[ -e ]` and `cmp` read through it and both answer "the
+    bytes are right". The run refuses as it refuses a link at the rename: exit
+    2, one `REFUSED:` naming the link and where it points, the link as it was
+    made, the file it points to untouched AND STILL AT MODE 600, no temporary,
+    no `rm` advised, no line that calls the link installed, and the run goes
+    no further: the next target, left stale beforehand, is still stale.
+    Before the arm asked, its `chmod` followed the link and stamped the far
+    end 755 (644 for a document), the run said `already installed … (mode
+    restored to 755)` of a link, and it exited 0. The link is asked about
+    AFTER `cmp`, which is what the fake `cmp` pins: a question put before it
+    would not see a link made while it runs."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    shared = home / ".claude-profiles" / "shared"
+    if which == "a-bin-command":
+        target = bin_dir(home) / "park"
+    elif which == "a-skill-file":
+        target = shared / "skills" / SKILL_NAMES[0] / "SKILL.md"
+    else:
+        target = shared / "commands" / f"{COMMAND_NAMES[0]}.md"
+    first = install_as("checkout", root, home, pipx_env(home))
+    assert first.returncode == 0, transcript(first)
+    assert target.is_file() and not target.is_symlink(), transcript(first)
+    right = target.read_bytes()
+    far = root / "someones-own-file"
+    far.write_bytes(right)
+    far.chmod(0o600)
+    order = list(placed_files(home))
+    after = Path(order[order.index(str(target)) + 1])
+    stale = after.read_bytes() + b"# a copy this run must not touch\n"
+    after.write_bytes(stale)
+    fake, acted = mid_run(
+        root, "cmp", shlex.quote(str(target)),
+        f"{real_tool('ln')} -sf {shlex.quote(str(far))} "
+        f"{shlex.quote(str(target))}")
+
+    result = install_as("checkout", root, home,
+                        pipx_env(home, extra=first_on_path(fake)))
+    assert acted.exists(), f"no link was made mid-run:\n{transcript(result)}"
+    assert result.returncode == 2, transcript(result)
+    assert result.stderr.count("REFUSED:") == 1, transcript(result)
+    assert (f"REFUSED: {target} is a symlink to {far} now, and was not one "
+            "when this run planned, so nothing was placed there and the link "
+            "is left as it was") in result.stderr, transcript(result)
+    if which != "a-bin-command":
+        assert (f"The {len(INSTALLED)} commands above are placed;"
+                in result.stderr), transcript(result)
+    assert target.is_symlink() and os.readlink(target) == str(far), (
+        f"the link was replaced:\n{transcript(result)}")
+    assert far.read_bytes() == right
+    stamped = stat.S_IMODE(far.stat().st_mode)
+    assert stamped == 0o600, (
+        f"`chmod` followed the link and moded its far end {oct(stamped)}:\n"
+        f"{transcript(result)}")
+    assert placement_temporaries(home) == []
+    assert rm_lines_naming(result.stdout + result.stderr, target) == [], (
+        transcript(result))
+    assert str(target) not in result.stdout, (
+        f"the run reported the link as placed:\n{transcript(result)}")
+    assert after.read_bytes() == stale, (
+        f"the run went past the link:\n{transcript(result)}")
+
+
+@NEEDS_JQ
+def test_pipx_mid_run_a_link_planning_left_to_pipx_that_has_gone_is_refused(
+        tmp_path):
+    """#257, THE OTHER WAY ROUND. Planning found pipx's link and left
+    `<dir>/openRepoTools` to pipx; then `pipx uninstall openrepotools` took
+    the link away before the placement loop reached it: the fake `mkdir`
+    moves it aside, whole, as the run creates `<dir>`. The loop asks again,
+    finds no link of pipx's, and refuses naming the target before anything
+    is placed, with no `rm` advised: a skip line now would say a link is left
+    to pipx that is not there. Before #257 the loop skipped the target by the
+    name planning had recorded, printed the skip line over an empty path, and
+    exited 0."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    _venv, link = pipx_install(home, "1.11.1")
+    value = os.readlink(link)
+    gone = root / "uninstalled-link"
+    fake, acted = mid_run(
+        root, "mkdir", shlex.quote(str(link.parent)),
+        f"{real_tool('mv')} {shlex.quote(str(link))} {shlex.quote(str(gone))}")
+
+    result = install_as("checkout", root, home,
+                        pipx_env(home, extra=first_on_path(fake)))
+    assert acted.exists(), f"the link was not taken mid-run:\n{transcript(result)}"
+    assert_refused_before_placing(result, home, set())
+    assert (f"REFUSED: {link} was pipx's link when this run planned, and is "
+            "not now, so nothing was placed there and what is there now is "
+            "left as it was") in result.stderr, transcript(result)
+    assert "left to pipx" not in result.stdout, transcript(result)
+    assert rm_lines_naming(result.stdout + result.stderr, link) == [], (
+        transcript(result))
+    assert not os.path.lexists(link)
+    assert gone.is_symlink() and os.readlink(gone) == value
