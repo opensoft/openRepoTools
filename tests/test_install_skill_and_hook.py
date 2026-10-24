@@ -28,9 +28,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shlex
 import shutil
+import signal
 import stat
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -38,8 +42,10 @@ import pytest
 from conftest import REPO, WINDOWS_SKIP
 from test_openrepotools_command import (COMMAND, command_env, run_cmd,
                                         COMMAND_NAMES, COMMAND_PATHS,
-                                        INSTALLED, NEEDS_JQ, SKILL_NAMES,
-                                        SKILL_PATH, link_xfactory)
+                                        HELD_ANSWER, INSTALLED, NEEDS_JQ,
+                                        SKILL_NAMES, SKILL_PATH, link_xfactory,
+                                        placement_temporaries,
+                                        signal_hook)  # noqa: F401 (a fixture)
 
 pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
                                  reason="openRepoTools is a bash script"),
@@ -1501,3 +1507,668 @@ def test_one_write_places_both_entries_in_one_file(tmp_path):
     assert session_start_commands(tmp_path) == [HOOK_COMMAND]
     assert user_prompt_commands(tmp_path) == [GUARD_COMMAND]
     assert stat.S_IMODE(settings_of(tmp_path).stat().st_mode) == 0o600
+
+
+# --- the temporary the settings write makes (#332) ----------------------------
+
+#: A `cp` that holds the run WHERE `hook_write_settings`' TEMPORARY EXISTS: it
+#: sleeps for a `settings.json.openrepotools.*` and defers to the real `cp` for
+#: every other file, so no placement before it is slowed. `mktemp` has made the
+#: file by then and `mv` has not moved it, which is the whole life of the
+#: temporary a signal used to find in no trap's reach.
+SLOW_SETTINGS_CP = ('for arg in "$@"; do\n'
+                    '\tcase "$arg" in */settings.json.openrepotools.*) sleep 3 ;; esac\n'
+                    'done\n'
+                    'exec {real} "$@"\n')
+
+
+def settings_temporaries(home: Path) -> list[str]:
+    """Every `settings.json.openrepotools.*` beside the settings file."""
+    claude = home / ".claude"
+    return sorted(p.name for p in claude.iterdir()
+                  if p.name.startswith("settings.json.openrepotools.")
+                  ) if claude.is_dir() else []
+
+
+def run_signalled_at_the_settings_temporary(
+        home: Path, env: dict, args: list[str], signame: str, to_group: bool,
+        shim_dir: Path, cwd: Path | None = None
+) -> tuple[int, str, str, list[str]]:
+    """`openRepoTools <args>` with `SLOW_SETTINGS_CP` first on PATH, signalled
+    once the settings temporary exists. Answers `(exit, stdout, stderr,
+    the temporaries seen when the signal was sent)`.
+
+    `to_group` is a Ctrl-C's: the whole foreground process group. Without it
+    the signal goes to the shell alone, as a `kill` from another shell sends it.
+    THE CHILD STARTS WITH ALL THREE SIGNALS AT THEIR DEFAULT, as a foreground
+    job at a terminal has them: a runner started in the background by a
+    non-interactive shell has SIGINT IGNORED, one started under `nohup` has
+    SIGHUP IGNORED, an ignored signal survives `exec`, and a shell may not
+    un-ignore one it was started with — so without this a SIGHUP case would
+    measure the runner, not the trap (it ended with exit 0 under `nohup`).
+    """
+    real = shutil.which("cp")
+    if real is None:
+        pytest.skip("no real `cp` on PATH for the slow one to defer to")
+    shim_dir.mkdir()
+    (shim_dir / "cp").write_text(
+        "#!/bin/sh\n" + SLOW_SETTINGS_CP.format(real=shlex.quote(real)),
+        encoding="utf-8")
+    (shim_dir / "cp").chmod(0o755)
+    sig = getattr(signal, signame)
+
+    def default_signals() -> None:
+        for each in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(each, signal.SIG_DFL)
+
+    run = subprocess.Popen(
+        ["bash", str(COMMAND), *args], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=cwd,
+        env={**env, "PATH": f"{shim_dir}{os.pathsep}{env['PATH']}"},
+        start_new_session=True, preexec_fn=default_signals)
+    try:
+        deadline = time.monotonic() + 60
+        while (time.monotonic() < deadline and run.poll() is None
+               and not settings_temporaries(home)):
+            time.sleep(0.05)
+        seen = settings_temporaries(home)
+        if seen and to_group:
+            os.killpg(run.pid, sig)
+        elif seen:
+            run.send_signal(sig)
+        out, err = run.communicate(timeout=60)
+    finally:
+        if run.poll() is None:
+            os.killpg(run.pid, signal.SIGKILL)
+            run.communicate()
+    return run.returncode, out, err, seen
+
+
+def settings_for(arm: str, home: Path) -> None:
+    """The three states a signal can find `hook_write_settings` in, reached
+    through the two functions that call it: `merge-nofile`, the first install,
+    writes the file whole; `merge-present`, a file that already carries the
+    `SessionStart` entry, merges the guard beside it; `defer-present`, a file
+    that carries both while the target does not answer `guard`, writes it back
+    with the guard taken out. `merge-*` link the target first, as a workstation
+    that has run `wip init` has it."""
+    claude = home / ".claude"
+    claude.mkdir(parents=True, exist_ok=True)
+    session_start = {"matcher": HOOK_MATCHER,
+                     "hooks": [{"type": "command", "command": HOOK_COMMAND,
+                                "timeout": HOOK_TIMEOUT}]}
+    guard = {"hooks": [{"type": "command", "command": GUARD_COMMAND,
+                        "timeout": GUARD_TIMEOUT}]}
+    if arm != "defer-present":
+        link_xfactory(home)
+    if arm == "merge-present":
+        (claude / "settings.json").write_text(json.dumps(
+            {"model": "opus", "hooks": {"SessionStart": [session_start]}},
+            indent=2), encoding="utf-8")
+    elif arm == "defer-present":
+        (claude / "settings.json").write_text(json.dumps(
+            {"model": "opus", "hooks": {"SessionStart": [session_start],
+                                        "UserPromptSubmit": [guard]}},
+            indent=2), encoding="utf-8")
+
+
+@NEEDS_JQ
+@pytest.mark.parametrize("arm, signame, to_group", [
+    ("merge-nofile", "SIGINT", True),
+    ("merge-present", "SIGINT", True),
+    ("defer-present", "SIGINT", True),
+    ("merge-nofile", "SIGTERM", False),
+    ("defer-present", "SIGHUP", False),
+], ids=["merge-nofile-SIGINT", "merge-present-SIGINT", "defer-present-SIGINT",
+        "merge-nofile-SIGTERM", "defer-present-SIGHUP"])
+def test_a_run_killed_while_the_settings_temporary_exists_leaves_none(
+        tmp_path, arm, signame, to_group):
+    """THE SETTINGS TEMPORARY IS WITHIN THE CLEANUP'S REACH FOR ITS WHOLE LIFE
+    (#332). `hook_write_settings` writes `~/.claude/settings.json` through a
+    `settings.json.openrepotools.XXXXXX` beside it, and removed it only on a
+    failure it saw: a signal between the `mktemp` and the `mv` left it in
+    `~/.claude`, empty, or a full copy of the person's merged settings where
+    the signal landed after the `cp`, and no later run looked for it. Now
+    `$PLACING` holds its prefix from before the `mktemp` until after the `mv`,
+    and the `EXIT` trap and #250's `INT` path remove whatever starts with it.
+
+    A `cp` that sleeps for exactly that temporary holds each run where it
+    exists, and the signal lands there: a Ctrl-C to the group for SIGINT, a
+    `kill` of the shell alone for SIGTERM and SIGHUP, which bash does not trap
+    and which run the `EXIT` trap as the shell dies. Each run dies of the
+    signal, and nothing named `*.openrepotools.*` is left in any directory
+    `--install` writes. The arms are the three that reach the write: the
+    first install, a `present` `SessionStart` entry whose guard is merged
+    beside it, and a `present` guard that the deferred pair takes out.
+    """
+    settings_for(arm, tmp_path)
+    code, out, err, seen = run_signalled_at_the_settings_temporary(
+        tmp_path, command_env(tmp_path), ["--install"], signame, to_group,
+        tmp_path / "slow-settings-cp", cwd=REPO)
+    sig = getattr(signal, signame)
+    assert seen, (f"the settings write never made a temporary for the signal "
+                  f"to land beside: exit {code}\n{out}{err}")
+    assert code in (-sig, 128 + sig), (
+        f"the run did not die of {signame}: exit {code}\n{out}{err}")
+    assert placement_temporaries(tmp_path) == [], (
+        f"a settings temporary outlived the run: {seen}")
+
+
+@NEEDS_JQ
+@pytest.mark.parametrize("tool, held_on", [
+    ("dirname", "settings"),
+    ("mktemp", "temporary"),
+], ids=["SIGINT-in-the-wait-for-dirname", "SIGINT-in-the-wait-for-mktemp"])
+def test_a_sigint_in_the_wait_for_an_answer_of_the_settings_write_ends_the_run(
+        tmp_path, signal_hook, tool, held_on):
+    """THE TWO ANSWERS `hook_write_settings` TOOK THROUGH `$(…)` ARE TAKEN
+    THROUGH A FILE (#332, #318): the `dirname` of the settings file, which it
+    asked for twice — once for the `mkdir -p` and once to build the `mktemp`
+    template — and the `mktemp` itself, whose answer is the temporary's name.
+    Bash waits for a command substitution's child outside its job table, so a
+    SIGINT that arrived there was lost and the install went on to exit 0; taken
+    through a file, the wait is a plain command's and the `INT` trap runs once
+    it is over.
+
+    `HELD_ANSWER`, first on `$PATH`, gives the real tool's answer, closes its
+    output and holds, and the hook lands the SIGINT in the shell's wait for it:
+    at the `dirname` of the settings file, or at the `mktemp` once the file is
+    made and before its name is read, which is where only a prefix set BEFORE
+    `mktemp` runs reaches it. The run dies of SIGINT and leaves no temporary.
+    `held` proves where it landed: it names the call the stand-in held, then
+    `released`, written only when the mark came while it was holding.
+    """
+    real = shutil.which(tool)
+    if real is None:
+        pytest.skip(f"no real `{tool}` on PATH for the stand-in to defer to")
+    settings = settings_of(tmp_path)
+    link_xfactory(tmp_path)
+    if held_on == "settings":
+        at, call = shlex.quote(str(settings)), re.escape(f"-- {settings}")
+    else:
+        prefix = f"{settings}.openrepotools."
+        at = shlex.quote(prefix) + "*"
+        call = re.escape(f"-- {prefix}") + r"[0-9]+\.XXXXXX"
+    shim = tmp_path / f"held-{tool}"
+    shim.mkdir()
+    (shim / tool).write_text(
+        "#!/bin/sh\n" + HELD_ANSWER.format(real=shlex.quote(real), at=at),
+        encoding="utf-8")
+    (shim / tool).chmod(0o755)
+    hook_dir = tmp_path / "held"
+    hook_dir.mkdir()
+    mark = tmp_path / "fired"
+    preload = os.environ.get("LD_PRELOAD")
+
+    def default_signals() -> None:
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+    run = subprocess.Popen(
+        ["bash", str(COMMAND), "--install"], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        cwd=REPO, env=command_env(tmp_path, {
+            "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
+            "LD_PRELOAD": f"{signal_hook}:{preload}" if preload
+                          else str(signal_hook),
+            "ORT_HOOK_DIR": str(hook_dir), "ORT_HOOK_AT": "waitpid",
+            "ORT_HOOK_SIG": str(int(signal.SIGINT)),
+            "ORT_HOOK_MARK": str(mark)}),
+        start_new_session=True, preexec_fn=default_signals)
+    try:
+        out, err = run.communicate(timeout=60)
+    finally:
+        if run.poll() is None:
+            os.killpg(run.pid, signal.SIGKILL)
+            run.communicate()
+    record = hook_dir / "held"
+    held = (record.read_text(encoding="utf-8").splitlines()
+            if record.exists() else [])
+    assert mark.exists(), (
+        f"the hook never fired, so no signal landed: exit {run.returncode}; "
+        f"the stand-in held {held}\n{out}{err}")
+    assert run.returncode == -signal.SIGINT, (
+        f"the run did not die of SIGINT: exit {run.returncode}; the stand-in "
+        f"held {held}\n{out}{err}")
+    assert (len(held) == 2 and re.fullmatch(call, held[0])
+            and held[1] == "released"), (
+        f"the SIGINT did not land while the shell waited for `{tool}` of the "
+        f"{held_on}: the stand-in held {held}")
+    assert placement_temporaries(tmp_path) == []
+
+
+def write_settings_harness(tmp_path: Path, workdir: str, fail: str = "") -> Path:
+    """`hook_write_settings` cut out of the command and run on its own, as
+    `mode_is` is above: with the `die` and the `$PLACING` it names — exported,
+    so a stand-in can read it — and a `$WORKDIR` as given. A stand-in first on
+    `$PATH` for each of the four commands that touch the temporary (`mktemp`,
+    `cp`, `chmod`, `mv`) says what `$PLACING` holds as it is called, on stderr,
+    and then refuses if it is `fail` or runs the real one. The shell's pid is
+    printed first, and `$PLACING` again as the shell exits."""
+    shim = tmp_path / "shim"
+    shim.mkdir(exist_ok=True)
+    for tool in ("mktemp", "cp", "chmod", "mv"):
+        (shim / tool).write_text(
+            "#!/bin/sh\n"
+            f"printf 'PLACING-AT-{tool}=[%s]\\n' \"$PLACING\" >&2\n"
+            f'[ "{fail}" != {tool} ] || exit 1\n'
+            f'exec {shlex.quote(shutil.which(tool) or tool)} "$@"\n',
+            encoding="utf-8")
+        (shim / tool).chmod(0o755)
+    harness = tmp_path / "harness.sh"
+    harness.write_text(
+        "set -euo pipefail\n"
+        'export PLACING=""\n'
+        f"WORKDIR={shlex.quote(workdir)}\n"
+        f'PATH={shlex.quote(str(shim))}:"$PATH"\n'
+        "die() { printf 'REFUSED: %s\\n' \"$1\" >&2; exit 2; }\n"
+        "printf 'PID=%s\\n' \"$$\" >&2\n"
+        "trap 'printf \"PLACING-AT-EXIT=[%s]\\n\" \"$PLACING\" >&2' EXIT\n"
+        + helper_source("settings_link_refusal")
+        + helper_source("settings_link_since_planning")
+        + helper_source("hook_write_settings")
+        + 'hook_write_settings "$1" "$2"\n', encoding="utf-8")
+    return harness
+
+
+def placing_seen(stderr: str) -> tuple[str, dict[str, str]]:
+    """The harness's pid and what `$PLACING` held at each call it reported."""
+    pid = re.search(r"^PID=(\d+)$", stderr, re.MULTILINE)
+    assert pid, stderr
+    return pid.group(1), dict(
+        re.findall(r"^PLACING-AT-(\w+)=\[(.*)\]$", stderr, re.MULTILINE))
+
+
+@pytest.mark.parametrize("fail, refusal, reached", [
+    ("", "", ["mktemp", "cp", "chmod", "mv"]),
+    ("cp", "could not stage the merged", ["mktemp", "cp"]),
+    ("chmod", "could not set mode 600 on the merged",
+     ["mktemp", "cp", "chmod"]),
+    ("mv", "could not move the merged settings into",
+     ["mktemp", "cp", "chmod", "mv"]),
+], ids=["written", "cp-fails", "chmod-fails", "mv-fails"])
+def test_the_settings_temporary_is_named_until_the_mv_and_cleared_after(
+        tmp_path, fail, refusal, reached):
+    """`$PLACING` IS THE TEMPORARY'S PREFIX FROM BEFORE `mktemp` UNTIL THE `mv`,
+    AND EMPTY WHEN THE FUNCTION IS OVER (#332). The prefix is
+    `<settings' directory>/settings.json.openrepotools.<this pid>.`, and it is
+    already set when `mktemp` is called — so no instant exists in which the
+    file is there and the trap does not know its name — and still set at the
+    `cp`, the `chmod` and the `mv`. It is empty again after the `mv`, so the
+    traps do not glob after a file that is no longer this write's, and in each
+    arm that removes the temporary and refuses. Nothing named
+    `*.openrepotools.*` is left beside the settings, whichever step failed, and
+    the settings keep their bytes unless the `mv` happened.
+
+    The directory has a space in its name, which a `dirname` taken through a
+    file and read back whole must not split."""
+    work = tmp_path / "work"
+    work.mkdir()
+    claude = tmp_path / "claude dir"
+    settings = claude / "settings.json"
+    staged = tmp_path / "staged"
+    staged.write_text("{}\n", encoding="utf-8")
+    claude.mkdir()
+    settings.write_text("old\n", encoding="utf-8")
+    harness = write_settings_harness(tmp_path, str(work), fail)
+    result = subprocess.run(["bash", str(harness), str(staged), str(settings)],
+                            capture_output=True, text=True, check=False)
+    pid, seen = placing_seen(result.stderr)
+    prefix = f"{claude}/settings.json.openrepotools.{pid}."
+    assert seen == {**{tool: prefix for tool in reached}, "EXIT": ""}, (
+        f"$PLACING was not the prefix at every call it reached, and empty "
+        f"at the exit:\n{result.stderr}")
+    assert sorted(p.name for p in claude.iterdir()) == ["settings.json"]
+    if not fail:
+        assert result.returncode == 0, result.stderr
+        assert settings.read_text(encoding="utf-8") == "{}\n"
+        assert stat.S_IMODE(settings.stat().st_mode) == 0o600
+    else:
+        assert result.returncode == 2, result.stderr
+        assert f"REFUSED: {refusal} {settings}" in result.stderr, result.stderr
+        assert settings.read_text(encoding="utf-8") == "old\n"
+
+
+@pytest.mark.parametrize("workdir", ["", "gone"],
+                         ids=["empty", "not-a-directory"])
+def test_the_settings_write_with_no_workdir_is_refused_and_makes_nothing(
+        tmp_path, workdir):
+    """THE WRITE PASSES EACH COMMAND'S ANSWER THROUGH `$WORKDIR`, SO IT REFUSES
+    WITHOUT ONE (#332, as #250 does for a placement). With `$WORKDIR` empty,
+    `"$WORKDIR/placing"` is `/placing`, at the root of the filesystem. Both
+    callers run `workdir` first, so this is the refusal for one that does not:
+    it names `$WORKDIR`, comes before anything is made, and leaves the
+    settings and the directory as they were."""
+    claude = tmp_path / "claude"
+    claude.mkdir()
+    settings = claude / "settings.json"
+    settings.write_text("old\n", encoding="utf-8")
+    staged = tmp_path / "staged"
+    staged.write_text("{}\n", encoding="utf-8")
+    if workdir:
+        workdir = str(tmp_path / workdir)
+    cause = f"{workdir}, which is not a directory" if workdir else "empty"
+    harness = write_settings_harness(tmp_path, workdir)
+    result = subprocess.run(["bash", str(harness), str(staged), str(settings)],
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert f"REFUSED: $WORKDIR is {cause}, " in result.stderr, result.stderr
+    assert f"so {settings} was not written" in result.stderr, result.stderr
+    assert settings.read_text(encoding="utf-8") == "old\n"
+    assert sorted(p.name for p in claude.iterdir()) == ["settings.json"]
+    assert placing_seen(result.stderr)[1] == {"EXIT": ""}, (
+        "nothing was made, so `$PLACING` never named anything")
+
+
+# --- a link made at settings.json after planning (#331) -----------------------
+
+#: WHERE THE LINK IS MADE, by the tool a stand-in first on `PATH` replaces and
+#: the argument that tool is handed when the run is that far (`case` patterns):
+#:
+#:   * `after-the-last-command-file` is #331's own measurement: the `cp` that
+#:     is handed the temporary beside the last command file,
+#:     `~/.claude/commands/.swap.md.openrepotools.*`, which is the last file
+#:     placed before the pair. Planning has long finished, and the pair is
+#:     about to be written.
+#:   * `before-the-act` is as late as a test can make one: the `find` of
+#:     `mode_is`, the last outside tool before either `chmod 600`, and the `cp`
+#:     of the settings temporary, the last but one before the `mv` (the
+#:     `chmod` of the temporary follows it). A question asked any earlier than
+#:     the act it guards does not see a link made here.
+LINK_SEAMS = {
+    "after-the-last-command-file": {
+        "cp": f"*/.claude/commands/.{COMMAND_NAMES[-1]}.md.openrepotools.*"},
+    "before-the-act": {
+        "find": "*/.claude/settings.json",
+        "cp": "*/.claude/settings.json.openrepotools.*"},
+}
+
+
+def link_settings_mid_run(root: Path, home: Path, far: Path,
+                          seams: dict[str, str]) -> tuple[Path, Path]:
+    """A stand-in first on `PATH` for each tool in `seams` that, the FIRST time
+    any of them is handed an argument matching its pattern, moves the settings
+    file to `far` and links it back — what a dotfiles manager does — and then
+    is the real tool, for that call and every other. The file at the far end
+    keeps the bytes and the mode it had. Returns the directory to put first on
+    `PATH`, and the file the stand-in leaves once it has acted, which shows the
+    link was made during the run and not before it."""
+    settings = settings_of(home)
+    shim = root / "link-settings-shim"
+    shim.mkdir()
+    acted = root / "link-settings.acted"
+    quote = shlex.quote
+    for tool, when in seams.items():
+        real = shutil.which(tool)
+        if real is None:
+            pytest.skip(f"no real `{tool}` on PATH for the stand-in to defer to")
+        (shim / tool).write_text(
+            "#!/bin/sh\n"
+            f"if [ ! -e {quote(str(acted))} ]; then\n"
+            '\tfor arg in "$@"; do\n'
+            '\t\tcase "$arg" in\n'
+            f"\t\t{when})\n"
+            f"\t\t\tmv -- {quote(str(settings))} {quote(str(far))} || exit 1\n"
+            f"\t\t\tln -s -- {quote(str(far))} {quote(str(settings))} || exit 1\n"
+            f"\t\t\t: > {quote(str(acted))}\n"
+            "\t\t\tbreak ;;\n"
+            "\t\tesac\n"
+            "\tdone\n"
+            "fi\n"
+            f'exec {quote(real)} "$@"\n', encoding="utf-8")
+        (shim / tool).chmod(0o755)
+    return shim, acted
+
+
+def settings_for_link(arm: str, home: Path) -> None:
+    """The four states of `settings.json` whose act a late link would meet, at
+    mode 644 so that a `chmod 600` through a link shows. `merge-write`: neither
+    entry there, so the pair is merged and written. `merge-mode`: both there, so
+    nothing is written and the mode is restored. `defer-write`: both there while
+    the target does not answer `guard`, so our guard entry is taken out and the
+    file written back. `defer-mode`: only the `SessionStart` entry there while
+    the target does not answer, so it is left and the mode is restored.
+    `merge-mixed`: only the `SessionStart` entry there while the target
+    answers, which is what an install from before Amendment 12 left, so the
+    mode is restored AND the file is written back with the guard's entry added.
+    The `merge-*` arms link the target first, as a workstation that has run
+    `wip init` has it."""
+    claude = home / ".claude"
+    claude.mkdir(parents=True, exist_ok=True)
+    session_start = {"matcher": HOOK_MATCHER,
+                     "hooks": [{"type": "command", "command": HOOK_COMMAND,
+                                "timeout": HOOK_TIMEOUT}]}
+    guard = {"hooks": [{"type": "command", "command": GUARD_COMMAND,
+                        "timeout": GUARD_TIMEOUT}]}
+    if arm.startswith("merge"):
+        link_xfactory(home)
+    data = {"merge-write": {"theme": "dark"},
+            "merge-mode": {"model": "opus", "hooks": {
+                "SessionStart": [session_start], "UserPromptSubmit": [guard]}},
+            "defer-write": {"model": "opus", "hooks": {
+                "SessionStart": [session_start], "UserPromptSubmit": [guard]}},
+            "defer-mode": {"model": "opus", "hooks": {
+                "SessionStart": [session_start]}},
+            "merge-mixed": {"model": "opus", "hooks": {
+                "SessionStart": [session_start]}}}[arm]
+    (claude / "settings.json").write_text(json.dumps(data, indent=2),
+                                          encoding="utf-8")
+    (claude / "settings.json").chmod(0o644)
+
+
+def assert_settings_link_refused(result: subprocess.CompletedProcess,
+                                 home: Path, far: Path, bytes_before: bytes,
+                                 acted: Path) -> None:
+    """What a link at `settings.json` made after planning must leave, whichever
+    act met it: ONE refusal in planning's words (the path, what it is, the `rm`
+    that clears it) that says the link is new and what is placed, with no
+    claim that nothing was; the link as it was made; the file at its far end
+    at the mode and with the bytes it had; no temporary; and no line that
+    reports the settings as installed, merged, left or restored."""
+    settings = settings_of(home)
+    out = result.stdout + result.stderr
+    assert acted.exists(), f"no link was made mid-run:\n{out}"
+    assert result.stderr.count("REFUSED:") == 1, out
+    assert ("`--install` merges its two hook entries into a REGULAR FILE, "
+            "and this is not\n    one:") in result.stderr, out
+    assert (f"{settings} — a symlink to {far} now, and it was not one when "
+            "this run planned") in result.stderr, out
+    assert f'rm -f -- "{settings}"' in result.stderr, out
+    assert "Whatever the lines above report is placed." in result.stderr, out
+    assert "NOTHING was installed" not in result.stderr, (
+        f"the refusal says nothing was installed, and the run placed the "
+        f"rest:\n{out}")
+    assert settings.is_symlink() and os.readlink(settings) == str(far), (
+        f"the link was replaced:\n{out}")
+    assert far.read_bytes() == bytes_before, (
+        f"the file at the far end was written:\n{out}")
+    stamped = stat.S_IMODE(far.stat().st_mode)
+    assert stamped == 0o644, (
+        f"`chmod` followed the link and moded its far end {oct(stamped)}:\n"
+        f"{out}")
+    assert settings_temporaries(home) == [] and placement_temporaries(home) == []
+    reported = [line for line in result.stdout.splitlines()
+                if str(settings) in line and re.search(
+                    r"installed|merged|left in|REMOVED|restored", line)]
+    assert reported == [], (
+        f"the run reported the settings as placed:\n{out}")
+
+
+@NEEDS_JQ
+@pytest.mark.parametrize("seam", list(LINK_SEAMS), ids=list(LINK_SEAMS))
+@pytest.mark.parametrize("arm", ["merge-write", "merge-mode", "defer-write",
+                                 "defer-mode"])
+def test_a_link_made_at_the_settings_after_planning_is_refused_and_left(
+        tmp_path, arm, seam):
+    """`--install` ASKED ABOUT A LINK AT `settings.json` ONCE, IN PLANNING (#331).
+    The pair is the last thing it writes, after the seventeen commands, the
+    skills and the command files, and nothing between planning and the act asked
+    again: the `present` arms of `hook_pair_merge` and `hook_pair_defer`
+    `chmod`-ed whatever was there, and `chmod` follows a link, so the file at
+    the far end of a dotfiles link was moded 600 under a line that said "already
+    installed"; and `hook_write_settings`' `mv -f` replaced a link with the
+    regular file it wrote, so the link was swallowed and its far end stopped
+    being what `claude` reads.
+
+    A link made after planning (see `LINK_SEAMS`) is now refused where each act
+    would meet it, in planning's words: the four states are the two arms of the
+    pair's merge and of its deferral, each at its `chmod` and at its write.
+    Exit 2, the link as made, the file at its far end at 644 with its bytes,
+    and no temporary. The rest of the run is placed, and the refusal says so
+    instead of saying that nothing was."""
+    home = tmp_path.resolve() / "home"
+    settings_for_link(arm, home)
+    far = tmp_path.resolve() / "dotfiles" / "settings.json"
+    far.parent.mkdir()
+    bytes_before = settings_of(home).read_bytes()
+    shim, acted = link_settings_mid_run(tmp_path.resolve(), home, far,
+                                        LINK_SEAMS[seam])
+
+    result = run_cmd("--install", home=home, env={
+        "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}"})
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert_settings_link_refused(result, home, far, bytes_before, acted)
+    last = home / ".claude" / "commands" / f"{COMMAND_NAMES[-1]}.md"
+    assert last.is_file() and not last.is_symlink(), (
+        "the run did not place the files before the pair")
+
+
+#: THE LINK IS MADE AFTER THE `present` ARM'S `chmod` (#331): the `cp` of the
+#: settings temporary alone. `LINK_SEAMS["before-the-act"]` also names the `find`
+#: of `mode_is`, which comes first and would make the link before the `chmod`.
+LINK_AFTER_THE_STAMP = {"cp": "*/.claude/settings.json.openrepotools.*"}
+
+
+@NEEDS_JQ
+def test_a_link_made_after_the_mode_was_restored_is_refused_without_saying_no_mode_was_stamped(
+        tmp_path):
+    """THE LATE REFUSAL SAYS ONLY WHAT IS TRUE IN THE ONE STATE WHERE A MODE WAS
+    STAMPED BEFORE IT (#331). `hook_pair_merge`'s `present` arm restores the
+    mode of a regular file and says so, and where the guard's entry is not
+    there yet (an install from before Amendment 12) the pair is then written
+    back, so a link made between the `chmod` and the write's own question is
+    refused AFTER "mode restored to 600" was printed, and the stamp is on the
+    file that is now the far end of the link.
+
+    The refusal does not say that no mode was stamped on what is there now, or
+    that the link and its far end are exactly as they were: the line above it
+    says the opposite, and the far end is at 600. It says the stamp may be on
+    the far end, and that this refusal wrote nothing and stamped no mode, so
+    the link is as it was made. Exit 2, the link as made, no temporary."""
+    home = tmp_path.resolve() / "home"
+    settings_for_link("merge-mixed", home)
+    settings = settings_of(home)
+    far = tmp_path.resolve() / "dotfiles" / "settings.json"
+    far.parent.mkdir()
+    bytes_before = settings.read_bytes()
+    shim, acted = link_settings_mid_run(tmp_path.resolve(), home, far,
+                                        LINK_AFTER_THE_STAMP)
+
+    result = run_cmd("--install", home=home, env={
+        "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}"})
+
+    out = result.stdout + result.stderr
+    assert result.returncode == 2, out
+    assert acted.exists(), f"no link was made mid-run:\n{out}"
+    assert (f"SessionStart hook: already installed in {settings} "
+            "(mode restored to 600)") in result.stdout, (
+        f"the `present` arm did not restore the mode first, so this is not "
+        f"the state under test:\n{out}")
+    assert stat.S_IMODE(far.stat().st_mode) == 0o600, (
+        f"the mode the line reports was not stamped on the far end:\n{out}")
+    assert far.read_bytes() == bytes_before, (
+        f"the file at the far end was written:\n{out}")
+    assert settings.is_symlink() and os.readlink(settings) == str(far), (
+        f"the link was replaced:\n{out}")
+    assert settings_temporaries(home) == [] and placement_temporaries(home) == []
+    assert result.stderr.count("REFUSED:") == 1, out
+    assert (f"{settings} — a symlink to {far} now, and it was not one when "
+            "this run planned") in result.stderr, out
+    assert f'rm -f -- "{settings}"' in result.stderr, out
+    refusal = " ".join(result.stderr.split())
+    assert "Whatever the lines above report is placed." in refusal, out
+    assert "no mode was stamped on what is there now" not in refusal, (
+        f"the refusal says no mode was stamped, under a line that says one "
+        f"was:\n{out}")
+    assert "exactly as they were" not in refusal, (
+        f"the refusal says the far end is as it was, and its mode is not:\n{out}")
+    assert "which may be what is on the other end of this link now" in refusal, (
+        f"the refusal does not say where the reported stamp may be:\n{out}")
+    assert ("This refusal wrote nothing there and stamped no mode, so the link "
+            "is as it was made.") in refusal, out
+
+
+def test_the_late_settings_refusal_reads_the_far_end_through_a_file():
+    """THE LINK'S FAR END IS READ THROUGH A FILE IN THE WORKDIR, NOT WITH
+    `$(readlink …)` (#331, #332). Bash waits for a command substitution's child
+    outside its job table, and a SIGINT that arrives in that wait can be lost,
+    trapped or not (#250, #318), so a refusal that reads its answer that way
+    would end the run with exit 2 where a signal should have ended it. The read
+    cannot be held open by a stand-in the way a case could land a signal in it,
+    so this is read from the text: no `$(…)` and no backtick in the function's
+    code. `$((…))` is arithmetic, not a substitution, and is not matched."""
+    code = [line.strip() for line in
+            helper_source("settings_link_since_planning").splitlines()
+            if not line.lstrip().startswith("#")]
+    found = [line for line in code if re.search(r"\$\((?!\()|(?<!\\)`", line)]
+    assert found == [], (
+        "`settings_link_since_planning` takes an answer with a command "
+        "substitution, where a SIGINT can be lost:\n  " + "\n  ".join(found))
+    assert any("readlink" in line and "$WORKDIR/placing" in line
+               for line in code), "the far end is no longer read through a file"
+
+
+@pytest.mark.parametrize("far_exists", [True, False],
+                         ids=["far-end-there", "dangling"])
+def test_a_link_at_the_settings_at_the_mv_removes_the_temporary_and_clears_the_name(
+        tmp_path, far_exists):
+    """THE REFUSAL AT THE `mv` TAKES ITS OWN TEMPORARY AND NAMES NOTHING AFTER
+    (#331). In a run the `EXIT` trap would remove the temporary at the `die`
+    whether or not the refusing arm did, so the end-to-end cases cannot tell the
+    arm from the trap. Cut out of the command and run on its own, with no trap
+    but the one that prints, `hook_write_settings` against a link made since
+    the temporary was written refuses in planning's words, never reaches the
+    `mv`, leaves nothing named `*.openrepotools.*`, and leaves `$PLACING`
+    empty at the exit, as every other arm that removes the temporary does. The
+    link and its far end are as they were.
+
+    The link is dangling in the second case, which is the `nofile` state of
+    planning (nothing at the path) met by a link made since: `[ -L ]` answers
+    for a link whose far end is not there, and `[ -e ]` does not, so a
+    question asked with `-e` would let the `mv` replace it."""
+    work = tmp_path / "work"
+    work.mkdir()
+    claude = tmp_path / "claude"
+    claude.mkdir()
+    far = tmp_path / "dotfiles" / "settings.json"
+    far.parent.mkdir()
+    if far_exists:
+        far.write_text("a person's own\n", encoding="utf-8")
+        far.chmod(0o644)
+    settings = claude / "settings.json"
+    settings.symlink_to(far)
+    staged = tmp_path / "staged"
+    staged.write_text("{}\n", encoding="utf-8")
+    harness = write_settings_harness(tmp_path, str(work))
+
+    result = subprocess.run(["bash", str(harness), str(staged), str(settings)],
+                            capture_output=True, text=True, check=False)
+
+    pid, seen = placing_seen(result.stderr)
+    prefix = f"{claude}/settings.json.openrepotools.{pid}."
+    assert result.returncode == 2, result.stderr
+    assert (f"REFUSED: `--install` merges its two hook entries into a REGULAR "
+            f"FILE, and this is not\n    one:\n    {settings} — a symlink to "
+            f"{far} now, and it was not one when this run planned"
+            in result.stderr), result.stderr
+    assert seen == {"mktemp": prefix, "cp": prefix, "chmod": prefix,
+                    "EXIT": ""}, (
+        f"the `mv` was reached, or `$PLACING` was left set:\n{result.stderr}")
+    assert sorted(p.name for p in claude.iterdir()) == ["settings.json"]
+    assert settings.is_symlink() and os.readlink(settings) == str(far)
+    if far_exists:
+        assert far.read_text(encoding="utf-8") == "a person's own\n"
+        assert stat.S_IMODE(far.stat().st_mode) == 0o644
+    else:
+        assert not far.exists(), "the refusal made the far end of the link"
