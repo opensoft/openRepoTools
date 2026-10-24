@@ -207,9 +207,10 @@ WHY_PRELUDE = ('if [ "${STUB_WHY+set}" = set ]; then why="$STUB_WHY"; '
 
 def _step4(box: Sandbox, shell: str, why: Optional[str],
            kind: Optional[str] = None) -> subprocess.CompletedProcess:
-    """Step 4's whole block, with what steps 1 and 2 would have bound."""
+    """Step 4's whole block, with what steps 1 and 2 would have bound: step 2's
+    `$hf_record` is a call that exited 0 (`lane-handoff`'s own line)."""
     script = (f'L="{box.helper}"\nlane={LANE}\nws={WS}\nuuid={UUID}\n'
-              'ws_missing=""\nuuid_missing=""\n' + WHY_PRELUDE +
+              'ws_missing=""\nuuid_missing=""\nhf_record="handoff refreshed"\n' + WHY_PRELUDE +
               '[ -z "${STUB_KIND-}" ] || kind="$STUB_KIND"\n' +
               _one_block(STEP4).body)
     proc = box.run(shell, script, _why_env(why, kind))
@@ -402,7 +403,7 @@ def test_an_unset_why_passes_the_door_under_set_u_and_is_written_handoff(
     run in the same `set -u` shell, writes it `handoff`, as `lane-handoff`
     does."""
     script = (f'set -u\nL="{box.helper}"\nlane={LANE}\nws={WS}\nuuid={UUID}\n'
-              'ws_missing=""\nuuid_missing=""\nunset why\n' +
+              'ws_missing=""\nuuid_missing=""\nhf_record="handoff refreshed"\nunset why\n' +
               _one_block(DOOR).body + "printf 'AFTER\\n'\n" +
               _one_block(STEP4).body)
     proc = box.run(shell, script)
