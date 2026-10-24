@@ -150,7 +150,7 @@ def drawn_as_another(named: str) -> str:
             "character, ends a line or reorders the text around it")
 
 
-#: The two locales a value is tried under: `C` reads one byte at a time, and
+#: Every locale a value is tried under: `C` reads one byte at a time, and
 #: `C.UTF-8` reads UTF-8 text where it is valid.
 LOCALES = ["C", "C.UTF-8"]
 
@@ -306,7 +306,7 @@ def calls_to(net: Path) -> list:
 
 
 def locale_of_a_run(env: dict | None) -> dict:
-    """The three variables that name the locale of a run, all of them set, so
+    """The variables that name the locale of a run, all of them set, so
     that none the developer's shell exports can win (#320). The directory is
     read under the person's locale, and a multibyte one that is not UTF-8
     takes a misdrawn character in it (openRepoShape #858), so a case that

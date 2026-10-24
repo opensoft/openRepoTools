@@ -868,7 +868,7 @@ def test_tests_yml_existing_job_keeps_todays_runner_checkout_python_and_runs(
         workflow, job_id):
     """The three jobs the contract leaves alone keep today's runner, checkout
     options, Python and `run:` commands, but for #77's xdist pin and flags on
-    the two test jobs, which are held by name below."""
+    the test jobs, which are held by name below."""
     job = jobs_of(workflow).get(job_id)
     assert isinstance(job, dict), f"tests.yml has no `{job_id}` job"
     want = EXISTING_JOBS[job_id]

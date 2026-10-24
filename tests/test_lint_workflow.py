@@ -19,7 +19,7 @@ reading them, under fakes, so nothing is fetched and neither tool is needed:
   that message on every actionlint bump;
 - the shellcheck step finds the shell scripts by shebang and holds the
   baseline the file's header documents: twelve named scripts at
-  `--severity=warning` less ten codes, every other script at every severity,
+  `--severity=warning` less the excluded codes, every other script at every severity,
   and `tests/test_lane_helpers.sh` not run (run, in a throwaway git
   repository, under a fake shellcheck). It does not die on an empty tracked
   file or on one with no final newline, and it fails closed, naming the file,
@@ -86,8 +86,8 @@ INSTALL_ENV = {
 }
 
 #: THE BASELINE, measured on main `33ce26d` with the two pinned tools: the
-#: ten codes the twelve baselined scripts fire at warning level, and the
-#: twelve scripts (the same ten codes and twelve scripts as on `a42946e`, its
+#: codes the twelve baselined scripts fire at warning level, and the
+#: twelve scripts (the same codes and twelve scripts as on `a42946e`, its
 #: first measure). `park`, `resume` and `status` have no finding at all, so
 #: they and every script added later are held to every severity.
 EXCLUDED_CODES = ("SC1007", "SC2034", "SC2069", "SC2088", "SC2128", "SC2141",
@@ -700,7 +700,7 @@ def test_lint_yml_shellcheck_step_finds_the_scripts_by_shebang_and_holds_the_bas
     helpers' suite. The step does not die on the empty file or on the two with
     no final newline: `read` returns 1 for each, which the guard on it
     swallows. The twelve named scripts are given `--severity=warning` and the
-    ten excluded codes, and every other script, a new one included, is given
+    excluded codes, and every other script, a new one included, is given
     nothing."""
     done, calls = run_shellcheck_step(workflow, tmp_path)
     assert done.returncode == 0, shown(done)
@@ -803,7 +803,7 @@ def test_lint_yml_shellcheck_step_names_every_file_whose_shell_shebang_it_does_n
 @NEEDS_UPSTREAM
 def test_lint_yml_shellcheck_step_names_the_baseline_this_file_pins(workflow):
     """The step's lists are the ones this file holds, so a change to the
-    baseline, a code or a script, is a change here as well: ten codes, twelve
+    baseline, a code or a script, is a change here as well: the excluded codes, twelve
     named scripts, the one suite not run, the floor `--severity=warning`, and
     never `--severity=error`, which would leave the baseline as nothing."""
     script = shellcheck_step(workflow)["run"]
@@ -822,7 +822,7 @@ def test_lint_yml_baselined_scripts_are_tracked_bash_files_and_the_clean_ones_st
     """Each name the workflow lists, as baselined or as not run, is a tracked
     file that starts with a bash shebang, so a script that was renamed or
     deleted leaves a stale entry that fails here and not one in a list nobody
-    reads. The three scripts that have no finding are tracked bash files too,
+    reads. The scripts that have no finding are tracked bash files too,
     and are in neither list: they stay held to every severity."""
     assert WORKFLOW.is_file(), f"{WORKFLOW} does not exist"
     script = WORKFLOW.read_text(encoding="utf-8")
@@ -842,7 +842,7 @@ def test_lint_yml_baselined_scripts_are_tracked_bash_files_and_the_clean_ones_st
 def test_lint_yml_header_documents_each_excluded_code_with_its_count():
     """THE BASELINE IS DOCUMENTED IN THE WORKFLOW FILE, a code at a time:
     each row of the header's table is `SCnnnn`, its count on main and its
-    reason, and the rows are the step's ten codes and no others. The counts
+    reason, and the rows are the step's excluded codes and no others. The counts
     add up to the header's 190 warnings, and every baselined script is
     named in the header."""
     text = WORKFLOW.read_text(encoding="utf-8")
@@ -865,7 +865,7 @@ def test_lint_yml_header_names_its_tree_and_its_totals_agree():
     where it stands. Its totals agree with each other, so that a re-measure
     that moves one moves them all: the findings are the warnings and the
     notes, every `N of the M findings` names that same M, and what the header
-    says it leaves out is the ones it counts: the warnings of the ten codes
+    says it leaves out is the ones it counts: the warnings of the excluded codes
     and the notes of eleven other codes."""
     words = header_of(WORKFLOW.read_text(encoding="utf-8"))
     tree = re.search(r"MEASURED ON main `([0-9a-f]{7,40})`", words)
