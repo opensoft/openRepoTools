@@ -753,14 +753,35 @@ def test_commit_replay_keeps_the_hand_edit(box: Box):
     _settled(box, c)
 
 
-def test_a_lost_races_two_copies_of_the_hand_edit_are_both_removed_once_origin_has_it(box: Box):
+def _one_second_for_the_copies(box: Box) -> None:
+    """704: a `date` first on PATH that answers the copies' own format with
+    one fixed second, and hands every other call to the real `date`."""
+    real = shutil.which("date", path=box.env["PATH"].split(os.pathsep, 1)[1])
+    assert real, "a real date"
+    shim = box.fakebin / "date"
+    shim.write_text("#!/usr/bin/env bash\n"
+                    '[ "$*" = "-u +%Y%m%dT%H%M%SZ" ] && { echo 20261023T120000Z; exit 0; }\n'
+                    f'exec {shlex.quote(real)} "$@"\n', encoding="utf-8")
+    shim.chmod(0o755)
+
+
+@pytest.mark.parametrize("clock", ["unforced", "same-second"])
+def test_a_lost_races_two_copies_of_the_hand_edit_are_both_removed_once_origin_has_it(box: Box, clock: str):
     """393 of lane openRepoTools-3 (#307): a `commit` that loses one push race
     replays its carry under the same pid, and the replay saves the hand edit
-    again under a new name, so one run leaves two copies while
-    `CS_CARRY_DIFF` names only the last. Every copy the run wrote is
-    recorded, the record crosses the replay's `exec`, and both go once the
-    read-back finds the edit on origin."""
+    again, so one run leaves two copies while `CS_CARRY_DIFF` names only the
+    last. Every copy the run wrote is recorded, the record crosses the
+    replay's `exec`, and both go once the read-back finds the edit on origin.
+
+    704 of lane 3's re-check of round 2: a copy's name carries the time to
+    the second, so a replay in the same second gives both copies one name:
+    one file, written twice and removed once origin has the edit, which is
+    right. The test asserted two distinct names; it asserts on the removal
+    notes now, and [same-second] gives both runs one second with a `date`
+    shim, which the replay's three-second pause hides unforced."""
     c = box.seam()
+    if clock == "same-second":
+        _one_second_for_the_copies(box)
     box.peer_prepares(REGISTER, _row(NEIGHBOUR, uuid=UUID2),
                       _row(NEIGHBOUR, uuid=UUID2, state="LIVE · landed mid-push"),
                       "a peer's row lands first")
@@ -770,10 +791,12 @@ def test_a_lost_races_two_copies_of_the_hand_edit_are_both_removed_once_origin_h
     assert result.returncode == 0, result.stderr
     assert "push refused (attempt 1 of 6)" in result.stderr, "the race was lost once"
     copies = _copies_named(result.stderr)
-    assert len(copies) == 2, result.stderr
-    assert len(set(copies)) == 2, "attempt 1 and its replay each saved a copy of its own"
+    assert len(copies) == 2, ("attempt 1 and its replay each saved a copy", result.stderr)
+    if clock == "same-second":
+        assert len(set(copies)) == 1, ("the shim gave both one second", copies)
+    removed = re.findall(r"its copy is removed: (\S+\.diff)", result.stderr)
+    assert sorted(removed) == sorted(copies), ("one removal note per copy recorded", removed, copies)
     for copy in copies:
-        assert f"its copy is removed: {copy}" in result.stderr, copy
         assert not Path(copy).exists(), copy
     assert list((c / ".git" / "lanes-edit").glob("hand-edit-*.diff")) == []
     assert "LIVE · a hand edit" in box.origin_register()
