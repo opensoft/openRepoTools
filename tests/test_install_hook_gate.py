@@ -48,7 +48,10 @@ import pytest
 from conftest import REPO, WINDOWS_SKIP
 from test_install_skill_and_hook import (GUARD_COMMAND, GUARD_TIMEOUT,
                                          HOOK_COMMAND, HOOK_MATCHER,
-                                         HOOK_TIMEOUT, hook_commands,
+                                         HOOK_TIMEOUT, LINK_SEAMS,
+                                         assert_settings_link_refused,
+                                         hook_commands,
+                                         link_settings_mid_run,
                                          run_signalled_at_the_settings_temporary,
                                          session_start_commands, settings_of,
                                          user_prompt_commands)
@@ -491,6 +494,46 @@ def test_a_wip_init_killed_while_the_settings_temporary_exists_leaves_none(
         f"`wip init` did not die of {signame}: exit {code}\n{out}{err}")
     assert placement_temporaries(home) == [], (
         f"a settings temporary outlived `wip init`: {seen}")
+
+
+@NEEDS_TEMPLATE
+@pytest.mark.parametrize("arm", ["mode", "write"])
+def test_wip_init_refuses_a_link_made_at_the_settings_after_it_planned(
+        tmp_path, arm):
+    """`wip init` REACHES THE SAME TWO ACTS AS `--install`, WITH PLANNING AND THE
+    WRITE IN ONE SUBSHELL, SO IT ASKS THE SAME LATE QUESTION (#331). A first
+    `wip init` merges the pair; the second finds the workspace made and only
+    reconciles the pair. A link made at `settings.json` after that reconcile
+    planned — the `find` of `mode_is` and the `cp` of the settings temporary are
+    where `LINK_SEAMS` makes it — is refused where the act would meet it:
+    `mode`, the pair already there at 644, so the mode would be restored by a
+    `chmod` that follows the link; `write`, a file with neither entry, which the
+    `mv -f` would replace. The refusal is `--install`'s own, in planning's
+    words, and it is a note beside the workspace: the exit stays 0, the link is
+    as it was made, the file at its far end keeps its mode and bytes, and no
+    temporary is left."""
+    home, env = wip_world(tmp_path)
+    (home / "projects" / "xFactory").mkdir()
+    assert run_with(env, "--install").returncode == 0
+    first = run_with(env, "wip", "init")
+    assert first.returncode == 0, first.stdout + first.stderr
+    settings = settings_of(home)
+    if arm == "write":
+        settings.write_text(json.dumps({"theme": "dark"}, indent=2),
+                            encoding="utf-8")
+    os.chmod(settings, 0o644)
+    far = tmp_path / "dotfiles" / "settings.json"
+    far.parent.mkdir()
+    bytes_before = settings.read_bytes()
+    shim, acted = link_settings_mid_run(tmp_path, home, far,
+                                        LINK_SEAMS["before-the-act"])
+
+    result = run_with({**env, "PATH": f"{shim}{os.pathsep}{env['PATH']}"},
+                      "wip", "init")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "(not reconciled:" in result.stdout, result.stdout
+    assert_settings_link_refused(result, home, far, bytes_before, acted)
 
 
 @NEEDS_TEMPLATE
