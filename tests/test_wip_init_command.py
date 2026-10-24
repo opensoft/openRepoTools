@@ -42,7 +42,7 @@ from conftest import REPO, WINDOWS_SKIP
 COMMAND = REPO / "openRepoTools"
 TEMPLATE = REPO / "upstream" / "openRepoShape" / "templates" / "workspace-root"
 
-#: The nine template files, which are clause (d)'s list and `openRepoTools`'
+#: The template files, which are clause (d)'s list and `openRepoTools`'
 #: own `WIP_TEMPLATE_FILES`. Named here rather than globbed, for the reason the
 #: command names them rather than listing a directory at runtime: the set is a
 #: published contract, not whatever upstream happens to hold.
@@ -739,7 +739,7 @@ def test_the_rerun_after_a_commit_that_failed_carries_the_seed_it_left_behind(
         tmp_path):
     """THE OTHER HALF OF THE SAME PATHSPEC, and the one it could have cost.
 
-    A first run that copied the nine template files and could not commit them
+    A first run that copied the template files and could not commit them
     — no `user.email`, which is what the refusal above is written about —
     leaves them in the worktree and in the index, and HEAD carrying none of
     them. The re-run seeds NOTHING, because step 7 leaves a file that is
@@ -1849,7 +1849,7 @@ def test_an_empty_main_with_a_persons_local_commit_is_refused(tmp_path):
     a commit of the person's own made in it first: step 8's push would make
     that commit the first thing on the workspace repository's `main`. The
     range is all of HEAD, the refusal says the remote has no `main` yet, and
-    not one of the nine template files is written.
+    not one of the template files is written.
     """
     home = tmp_path / "home"
     env = fake_gh(tmp_path, exists=True)

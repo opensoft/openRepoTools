@@ -40,7 +40,7 @@ per part of it (plan.md, "The test layout"):
   the ref step, run on a branch and on tags a forge and a `file://` origin
   hold, and the branch step, held to the rehearsal rule; the clean step run
   on a checkout moved or dirtied, the environments step under a forge, the
-  gate on `tests.yml`'s four jobs and the digest step, each run under a
+  gate on `tests.yml`'s jobs and the digest step, each run under a
   forge, the digest step also in a copy of the checkout whose standard or
   pin names another definition; the build step run with a fake build;
   step 13's wheel check run on synthetic wheels made from HEAD's blobs; and
@@ -166,7 +166,7 @@ PERMISSIONS = {
     "pypi": {"id-token": "write", "actions": "read", "contents": "read"},
 }
 
-#: The release gate's four job ids (FR-029, FR-046): `tests.yml` keeps them as
+#: The release gate's job ids (FR-029, FR-046): `tests.yml` keeps them as
 #: job ids with no `name:`, so a job's name in a run IS its id.
 GATE = ("guard-launch-mode", "tests", "tests-no-submodule", "package")
 
@@ -1548,7 +1548,7 @@ def test_release_build_the_branch_step_answers_from_the_forge_s_compare(tmp_path
             assert asked == {"main", line}, f"refused after asking {sorted(asked)}"
 
 
-# --- the gate: tests.yml's four jobs on this commit ------------------------------
+# --- the gate: tests.yml's jobs on this commit ------------------------------------
 
 #: A `gh` that answers the gate's reads as the forge does, from `FORGE_DATA`:
 #: a commit's `tests.yml` runs (`actions/runs`, or `actions/workflows/<file>/

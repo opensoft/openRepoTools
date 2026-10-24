@@ -72,7 +72,7 @@ WORKFLOW = REPO / ".github" / "workflows" / "tests.yml"
 BUILD_LOCK = REPO / ".github" / "release-build-requirements.txt"
 PINNED_READER = UPSTREAM / "scripts" / "repo_shape.py"
 
-#: THE RELEASE GATE'S FOUR JOB IDS (FR-046), in the file's order. The gate
+#: THE RELEASE GATE'S JOB IDS (FR-046), in the file's order. The gate
 #: reads them by name, so a fifth job, a renamed one or a `name:` on one is
 #: a gate that finds nothing.
 JOB_IDS = ("guard-launch-mode", "tests", "tests-no-submodule", "package")
@@ -851,7 +851,7 @@ def test_tests_yml_its_other_triggers_are_unchanged(workflow):
 
 @NEEDS_UPSTREAM
 def test_tests_yml_has_exactly_the_four_gate_jobs(workflow):
-    """The release gate's four ids (FR-046) and no fifth. None has a
+    """The release gate's ids (FR-046) and no fifth. None has a
     `name:`, so each check run is named by its id, and none has an `if:`,
     so every trigger runs all four."""
     jobs = jobs_of(workflow)

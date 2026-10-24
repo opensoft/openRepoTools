@@ -99,14 +99,15 @@ SKILL_PATH = SKILL_PATHS[0]
 COMMAND_NAMES = ("handoff", "ctx", "swap")
 COMMAND_PATHS = tuple(f"commands/{n}.md" for n in COMMAND_NAMES)
 
-#: Everything a stdin install has to fetch: the seventeen files, the three skills
-#: and the three command files.
+#: Everything a stdin install has to fetch: the files, the skills and the
+#: command files.
 FETCHED = INSTALLED + SKILL_PATHS + COMMAND_PATHS
 
-#: THIRTY-ONE ARTIFACTS, AND THE COUNT IS THE INVARIANT: seventeen files in the
-#: bin directory, three skills in the shared skills directory, their three
-#: bare-run copies, three command files at that same pair of destinations, and
-#: TWO merged entries in `~/.claude/settings.json`. Derived from the three
+#: THIRTY-ONE ARTIFACTS, AND THE COUNT IS THE INVARIANT: one file per `INSTALLED`
+#: name in the bin directory, one skill per `SKILL_NAMES` name in the shared
+#: skills directory, its bare-run copy, one command file per `COMMAND_NAMES`
+#: name at that same pair of destinations, and TWO merged entries in
+#: `~/.claude/settings.json`. Derived from the three
 #: lists rather than restated, so adding a skill or a command moves it.
 #:
 #: THE `HOOK_ENTRIES` IS THE ONE TERM THAT IS NOT A LIST, and it moved from 1
@@ -257,10 +258,10 @@ def test_help_prints_every_usage_line():
 
 
 def test_help_names_every_command_it_places_and_the_standards_front_door():
-    """`--install` places seventeen files, and sixteen of them are commands this one
-    knows nothing about — so `--help` has to say what they are and where the
-    rest is written down. A command a person has on PATH and cannot find
-    written down is a command they will not use.
+    """`--install` places everything `INSTALLED` lists, and most of it is commands
+    this one knows nothing about — so `--help` has to say what they are and
+    where the rest is written down. A command a person has on PATH and cannot
+    find written down is a command they will not use.
 
     It also has to say what this command is NOT: `openRepoShape` is the
     standard's front door, and somebody who typed `openRepoTools Atlas`

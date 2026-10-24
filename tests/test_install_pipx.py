@@ -937,7 +937,7 @@ def install_piped(home: Path, env: dict,
                           cwd=str(home))
 
 
-#: THE THREE WAYS AN `--install` RUNS THAT ARE NOT PIPX'S OWN: a checkout's,
+#: THE WAYS AN `--install` RUNS THAT ARE NOT PIPX'S OWN: a checkout's,
 #: the one-line install's, and a package's from outside any pipx venv.
 MODES = ("checkout", "one-line-install", "package")
 
