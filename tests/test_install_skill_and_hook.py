@@ -1927,8 +1927,11 @@ def settings_for_link(arm: str, home: Path) -> None:
     nothing is written and the mode is restored. `defer-write`: both there while
     the target does not answer `guard`, so our guard entry is taken out and the
     file written back. `defer-mode`: only the `SessionStart` entry there while
-    the target does not answer, so it is left and the mode is restored. The
-    `merge-*` arms link the target first, as a workstation that has run
+    the target does not answer, so it is left and the mode is restored.
+    `merge-mixed`: only the `SessionStart` entry there while the target
+    answers, which is what an install from before Amendment 12 left, so the
+    mode is restored AND the file is written back with the guard's entry added.
+    The `merge-*` arms link the target first, as a workstation that has run
     `wip init` has it."""
     claude = home / ".claude"
     claude.mkdir(parents=True, exist_ok=True)
@@ -1945,6 +1948,8 @@ def settings_for_link(arm: str, home: Path) -> None:
             "defer-write": {"model": "opus", "hooks": {
                 "SessionStart": [session_start], "UserPromptSubmit": [guard]}},
             "defer-mode": {"model": "opus", "hooks": {
+                "SessionStart": [session_start]}},
+            "merge-mixed": {"model": "opus", "hooks": {
                 "SessionStart": [session_start]}}}[arm]
     (claude / "settings.json").write_text(json.dumps(data, indent=2),
                                           encoding="utf-8")
@@ -2029,8 +2034,95 @@ def test_a_link_made_at_the_settings_after_planning_is_refused_and_left(
         "the run did not place the files before the pair")
 
 
-def test_a_link_at_the_settings_at_the_mv_removes_the_temporary_and_clears_the_name(
+#: THE LINK IS MADE AFTER THE `present` ARM'S `chmod` (#331): the `cp` of the
+#: settings temporary alone. `LINK_SEAMS["before-the-act"]` also names the `find`
+#: of `mode_is`, which comes first and would make the link before the `chmod`.
+LINK_AFTER_THE_STAMP = {"cp": "*/.claude/settings.json.openrepotools.*"}
+
+
+@NEEDS_JQ
+def test_a_link_made_after_the_mode_was_restored_is_refused_without_saying_no_mode_was_stamped(
         tmp_path):
+    """THE LATE REFUSAL SAYS ONLY WHAT IS TRUE IN THE ONE STATE WHERE A MODE WAS
+    STAMPED BEFORE IT (#331). `hook_pair_merge`'s `present` arm restores the
+    mode of a regular file and says so, and where the guard's entry is not
+    there yet (an install from before Amendment 12) the pair is then written
+    back, so a link made between the `chmod` and the write's own question is
+    refused AFTER "mode restored to 600" was printed, and the stamp is on the
+    file that is now the far end of the link.
+
+    The refusal does not say that no mode was stamped on what is there now, or
+    that the link and its far end are exactly as they were: the line above it
+    says the opposite, and the far end is at 600. It says the stamp may be on
+    the far end, and that this refusal wrote nothing and stamped no mode, so
+    the link is as it was made. Exit 2, the link as made, no temporary."""
+    home = tmp_path.resolve() / "home"
+    settings_for_link("merge-mixed", home)
+    settings = settings_of(home)
+    far = tmp_path.resolve() / "dotfiles" / "settings.json"
+    far.parent.mkdir()
+    bytes_before = settings.read_bytes()
+    shim, acted = link_settings_mid_run(tmp_path.resolve(), home, far,
+                                        LINK_AFTER_THE_STAMP)
+
+    result = run_cmd("--install", home=home, env={
+        "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}"})
+
+    out = result.stdout + result.stderr
+    assert result.returncode == 2, out
+    assert acted.exists(), f"no link was made mid-run:\n{out}"
+    assert (f"SessionStart hook: already installed in {settings} "
+            "(mode restored to 600)") in result.stdout, (
+        f"the `present` arm did not restore the mode first, so this is not "
+        f"the state under test:\n{out}")
+    assert stat.S_IMODE(far.stat().st_mode) == 0o600, (
+        f"the mode the line reports was not stamped on the far end:\n{out}")
+    assert far.read_bytes() == bytes_before, (
+        f"the file at the far end was written:\n{out}")
+    assert settings.is_symlink() and os.readlink(settings) == str(far), (
+        f"the link was replaced:\n{out}")
+    assert settings_temporaries(home) == [] and placement_temporaries(home) == []
+    assert result.stderr.count("REFUSED:") == 1, out
+    assert (f"{settings} — a symlink to {far} now, and it was not one when "
+            "this run planned") in result.stderr, out
+    assert f'rm -f -- "{settings}"' in result.stderr, out
+    refusal = " ".join(result.stderr.split())
+    assert "Whatever the lines above report is placed." in refusal, out
+    assert "no mode was stamped on what is there now" not in refusal, (
+        f"the refusal says no mode was stamped, under a line that says one "
+        f"was:\n{out}")
+    assert "exactly as they were" not in refusal, (
+        f"the refusal says the far end is as it was, and its mode is not:\n{out}")
+    assert "which may be what is on the other end of this link now" in refusal, (
+        f"the refusal does not say where the reported stamp may be:\n{out}")
+    assert ("This refusal wrote nothing there and stamped no mode, so the link "
+            "is as it was made.") in refusal, out
+
+
+def test_the_late_settings_refusal_reads_the_far_end_through_a_file():
+    """THE LINK'S FAR END IS READ THROUGH A FILE IN THE WORKDIR, NOT WITH
+    `$(readlink …)` (#331, #332). Bash waits for a command substitution's child
+    outside its job table, and a SIGINT that arrives in that wait can be lost,
+    trapped or not (#250, #318), so a refusal that reads its answer that way
+    would end the run with exit 2 where a signal should have ended it. The read
+    cannot be held open by a stand-in the way a case could land a signal in it,
+    so this is read from the text: no `$(…)` and no backtick in the function's
+    code. `$((…))` is arithmetic, not a substitution, and is not matched."""
+    code = [line.strip() for line in
+            helper_source("settings_link_since_planning").splitlines()
+            if not line.lstrip().startswith("#")]
+    found = [line for line in code if re.search(r"\$\((?!\()|(?<!\\)`", line)]
+    assert found == [], (
+        "`settings_link_since_planning` takes an answer with a command "
+        "substitution, where a SIGINT can be lost:\n  " + "\n  ".join(found))
+    assert any("readlink" in line and "$WORKDIR/placing" in line
+               for line in code), "the far end is no longer read through a file"
+
+
+@pytest.mark.parametrize("far_exists", [True, False],
+                         ids=["far-end-there", "dangling"])
+def test_a_link_at_the_settings_at_the_mv_removes_the_temporary_and_clears_the_name(
+        tmp_path, far_exists):
     """THE REFUSAL AT THE `mv` TAKES ITS OWN TEMPORARY AND NAMES NOTHING AFTER
     (#331). In a run the `EXIT` trap would remove the temporary at the `die`
     whether or not the refusing arm did, so the end-to-end cases cannot tell the
@@ -2039,15 +2131,21 @@ def test_a_link_at_the_settings_at_the_mv_removes_the_temporary_and_clears_the_n
     the temporary was written refuses in planning's words, never reaches the
     `mv`, leaves nothing named `*.openrepotools.*`, and leaves `$PLACING`
     empty at the exit, as every other arm that removes the temporary does. The
-    link and its far end are as they were."""
+    link and its far end are as they were.
+
+    The link is dangling in the second case, which is the `nofile` state of
+    planning (nothing at the path) met by a link made since: `[ -L ]` answers
+    for a link whose far end is not there, and `[ -e ]` does not, so a
+    question asked with `-e` would let the `mv` replace it."""
     work = tmp_path / "work"
     work.mkdir()
     claude = tmp_path / "claude"
     claude.mkdir()
     far = tmp_path / "dotfiles" / "settings.json"
     far.parent.mkdir()
-    far.write_text("a person's own\n", encoding="utf-8")
-    far.chmod(0o644)
+    if far_exists:
+        far.write_text("a person's own\n", encoding="utf-8")
+        far.chmod(0o644)
     settings = claude / "settings.json"
     settings.symlink_to(far)
     staged = tmp_path / "staged"
@@ -2069,5 +2167,8 @@ def test_a_link_at_the_settings_at_the_mv_removes_the_temporary_and_clears_the_n
         f"the `mv` was reached, or `$PLACING` was left set:\n{result.stderr}")
     assert sorted(p.name for p in claude.iterdir()) == ["settings.json"]
     assert settings.is_symlink() and os.readlink(settings) == str(far)
-    assert far.read_text(encoding="utf-8") == "a person's own\n"
-    assert stat.S_IMODE(far.stat().st_mode) == 0o644
+    if far_exists:
+        assert far.read_text(encoding="utf-8") == "a person's own\n"
+        assert stat.S_IMODE(far.stat().st_mode) == 0o644
+    else:
+        assert not far.exists(), "the refusal made the far end of the link"

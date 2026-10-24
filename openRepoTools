@@ -3296,8 +3296,16 @@ settings_link_refusal() {   # <settings> <what it is> <what was and was not plac
 # that instant is still followed or replaced, because GNU `chmod` has no `-h`
 # and no `mv` this file can count on refuses a link at its destination. The
 # link's far end is read through a file in the workdir and not `$(readlink …)`,
-# the way every answer on this path is (#250, #318); where there is no workdir
-# it is said to be unreadable.
+# the way `hook_write_settings` takes each of its answers (#332); where there is
+# no workdir it is said to be unreadable.
+#
+# WHAT IT SAYS WAS STAMPED IS TRUE IN EVERY CORNER IT FIRES IN (#331). In one,
+# the `present` arm of `hook_pair_merge` has already restored the mode of the
+# regular file that was here (the `SessionStart` entry there and the guard's
+# not: an install from before Amendment 12), a link is made, and the write that
+# follows meets it. "mode restored to 600" was true when printed, and the stamp
+# may be on what is now the far end, so the text says only that THIS refusal
+# wrote nothing there and stamped no mode.
 settings_link_since_planning() {   # <settings>
 	local far=""
 	if [ -n "$WORKDIR" ] && [ -d "$WORKDIR" ]; then
@@ -3307,9 +3315,10 @@ settings_link_since_planning() {   # <settings>
 	fi
 	[ -n "$far" ] || far="<unreadable>"
 	settings_link_refusal "$1" "a symlink to $far now, and it was not one when this run planned" \
-		"Whatever the lines above report is placed. Nothing was written at that path and no mode
-    was stamped on what is there now, so the link, and what is on the other end of it, are
-    exactly as they were."
+		"Whatever the lines above report is placed. If they report this path's mode
+    restored, that stamp landed on whatever was here then, which may be what is on the
+    other end of this link now. This refusal wrote nothing there and stamped no mode,
+    so the link is as it was made."
 }
 
 plan_hook_merge() {
