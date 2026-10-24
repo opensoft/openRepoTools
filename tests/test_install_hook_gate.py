@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import stat
 import subprocess
 from pathlib import Path
@@ -48,12 +49,13 @@ from conftest import REPO, WINDOWS_SKIP
 from test_install_skill_and_hook import (GUARD_COMMAND, GUARD_TIMEOUT,
                                          HOOK_COMMAND, HOOK_MATCHER,
                                          HOOK_TIMEOUT, hook_commands,
+                                         run_signalled_at_the_settings_temporary,
                                          session_start_commands, settings_of,
                                          user_prompt_commands)
 from test_openrepotools_command import (ALWAYS, ARTIFACTS, COMMAND,
                                         HOOK_ENTRIES, NEEDS_JQ, command_env,
                                         link_xfactory, placed_files,
-                                        receipt_rows)
+                                        placement_temporaries, receipt_rows)
 from test_wip_init_command import NEEDS_TEMPLATE, fake_gh, wip_env
 
 pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
@@ -453,6 +455,42 @@ def test_wip_init_completes_the_pair_after_link_estates(tmp_path):
     assert stat.S_IMODE(settings_of(home).stat().st_mode) == 0o600
     assert "SessionStart hook: installed in" in result.stdout, result.stdout
     assert "UserPromptSubmit guard: installed in" in result.stdout
+
+
+@NEEDS_TEMPLATE
+@pytest.mark.parametrize("signame", ["SIGINT", "SIGTERM"])
+def test_a_wip_init_killed_while_the_settings_temporary_exists_leaves_none(
+        tmp_path, signame):
+    """`wip init` WRITES THE PAIR IN A SUBSHELL, AND THE SUBSHELL CLEANS UP
+    AFTER ITSELF (#332). `wip_hook_pair` runs planning and the write in one
+    `( … )`, which bash does not give the `EXIT` and `INT` traps `workdir` set,
+    and the `$PLACING` that `hook_write_settings` sets there is the subshell's
+    own: the traps of the shell around it ran with it empty, so a Ctrl-C or a
+    `kill` of the group left `settings.json.openrepotools.<pid>.XXXXXX` in
+    `~/.claude`, even where `--install`'s own run no longer did. The subshell's
+    own `EXIT` trap removes it.
+
+    The second `wip init` finds the workspace made, so it only reconciles the
+    pair, and it writes the file whole because the first one's was removed. A
+    `cp` that sleeps for the settings temporary holds it there, and the signal
+    goes to the whole group, where the subshell is the first to take it."""
+    home, env = wip_world(tmp_path)
+    (home / "projects" / "xFactory").mkdir()
+    assert run_with(env, "--install").returncode == 0
+    first = run_with(env, "wip", "init")
+    assert first.returncode == 0, first.stdout + first.stderr
+    settings_of(home).unlink()
+
+    code, out, err, seen = run_signalled_at_the_settings_temporary(
+        home, env, ["wip", "init"], signame, True,
+        tmp_path / "slow-settings-cp", cwd=REPO)
+    sig = getattr(signal, signame)
+    assert seen, (f"`wip init` never made a settings temporary for the signal "
+                  f"to land beside: exit {code}\n{out}{err}")
+    assert code in (-sig, 128 + sig), (
+        f"`wip init` did not die of {signame}: exit {code}\n{out}{err}")
+    assert placement_temporaries(home) == [], (
+        f"a settings temporary outlived `wip init`: {seen}")
 
 
 @NEEDS_TEMPLATE

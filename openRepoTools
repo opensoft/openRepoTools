@@ -85,6 +85,9 @@ STAGED=""
 # name (Copilot round 2 on #172). Knowing the name was not the whole of it: the
 # cleanup could stop before its `rm`, and a SIGINT could be lost outright
 # (#250). `workdir` and `place_by_rename` each say how theirs is closed.
+# `hook_write_settings`' temporary beside `settings.json` is the other one this
+# names, from its `mktemp` to its `mv` (#332); the two never overlap, so one
+# variable carries both.
 PLACING=""
 
 say() { printf '%s\n' "$*"; }
@@ -3662,18 +3665,52 @@ place_hook_pair() {
 # file uses: an installer that widened it would be silently undone, or would widen
 # it behind that script's back. Stamped on the TEMPORARY, so the file never
 # exists at a wider mode for even an instant. One writer for both outcomes.
+#
+# THE TEMPORARY IS WITHIN THE CLEANUP'S REACH FROM `mktemp` TO THE `mv` (#332),
+# as a placement's is (#167): `$PLACING` holds its PREFIX —
+# `settings.json.openrepotools.<this pid>.` — before `mktemp` runs, and
+# `remove_workdir`, which the `EXIT` and `INT` traps run, removes whatever
+# starts with it. The three failure arms below remove the temporary where the
+# shell goes on; a signal is the failure none of them sees, and it left
+# `settings.json.openrepotools.XXXXXX` in `~/.claude`, one per interrupted run,
+# which no later run looked for — empty or, where the signal landed after the
+# `cp`, a full copy of the person's merged settings. Cleared once the `mv` has
+# happened, and in each arm that removes the temporary, so the traps never
+# glob after a file that is no longer this write's. A SIGTERM or a SIGHUP is not
+# trapped, and does not need to be: bash runs the `EXIT` trap as it dies of
+# either, so `remove_workdir` takes the temporary then; `wip init` runs this in
+# a subshell and `wip_hook_pair` says how that is closed.
+#
+# NO ANSWER HERE IS TAKEN WITH `$(…)` (#250, #318): bash waits for a command
+# substitution's child outside its job table, and a SIGINT that arrives in that
+# wait can be lost, trapped or not. The `dirname` of the settings and the
+# `mktemp` each write to a file in the workdir, as `place_by_rename`'s do — a
+# wait the `INT` trap is run after — and `read` takes the answer back: a path up
+# to a NUL, which no path holds, so a directory with a newline in its name comes
+# back whole, less the one newline the command ends it with. So this write needs
+# the workdir and refuses without one, before anything is made.
 hook_write_settings() {   # <the staged whole file> <settings>
-	local staged="$1" settings="$2" hook_tmp
-	mkdir -p -- "$(dirname -- "$settings")" ||
-		die "could not create $(dirname -- "$settings") for the hook entries."
-	hook_tmp="$(mktemp -- "$(dirname -- "$settings")/settings.json.openrepotools.XXXXXX")" ||
-		die "could not create a temporary file beside $settings."
+	local staged="$1" settings="$2" parent="" hook_tmp=""
+	if [ -z "$WORKDIR" ] || [ ! -d "$WORKDIR" ]; then
+		die "\$WORKDIR is ${WORKDIR:-empty}${WORKDIR:+, which is not a directory}, and writing the hook entries passes each command's answer through a file in it, so $settings was not written and what was there is untouched."
+	fi
+	dirname -- "$settings" >"$WORKDIR/placing"
+	IFS= read -r -d '' parent <"$WORKDIR/placing" || :
+	parent="${parent%$'\n'}"
+	mkdir -p -- "$parent" ||
+		die "could not create $parent for the hook entries."
+	PLACING="$parent/settings.json.openrepotools.$$."
+	mktemp -- "${PLACING}XXXXXX" >"$WORKDIR/placing" ||
+		{ rm -f -- "$PLACING"*; PLACING=""; die "could not create a temporary file beside $settings."; }
+	IFS= read -r -d '' hook_tmp <"$WORKDIR/placing" || :
+	hook_tmp="${hook_tmp%$'\n'}"
 	cp -- "$staged" "$hook_tmp" ||
-		{ rm -f -- "$hook_tmp"; die "could not stage the merged $settings."; }
+		{ rm -f -- "$hook_tmp"; PLACING=""; die "could not stage the merged $settings."; }
 	chmod 600 "$hook_tmp" ||
-		{ rm -f -- "$hook_tmp"; die "could not set mode 600 on the merged $settings."; }
+		{ rm -f -- "$hook_tmp"; PLACING=""; die "could not set mode 600 on the merged $settings."; }
 	mv -f -- "$hook_tmp" "$settings" ||
-		{ rm -f -- "$hook_tmp"; die "could not move the merged settings into $settings."; }
+		{ rm -f -- "$hook_tmp"; PLACING=""; die "could not move the merged settings into $settings."; }
+	PLACING=""
 }
 
 # THE TARGET ANSWERS: the pair, merged exactly as it was before #237.
@@ -4331,13 +4368,27 @@ wip_run_link_estates() {
 # `set +e` that lets this read the subshell's status would otherwise reach
 # everything the two functions run, and they are written for `--install`'s
 # `set -e`.
+#
+# THE SUBSHELL CLEANS UP AFTER ITSELF (#332). A subshell does not keep the traps
+# `workdir` set — bash resets the ones a shell caught — and the `$PLACING` that
+# `hook_write_settings` sets in it is the subshell's own, so the `EXIT` and
+# `INT` traps of this shell would run with it empty and never name the
+# temporary: a Ctrl-C, or a `kill` of the group, left
+# `settings.json.openrepotools.<pid>.XXXXXX` behind, as it did for `--install`
+# before. So the subshell sets an `EXIT` trap of its own, which removes only the
+# temporary — never the workdir, which this shell goes on using. Bash runs an
+# `EXIT` trap as it dies of a SIGINT, a SIGTERM or a SIGHUP too, and the
+# subshell is where the signal of a group lands first.
 wip_hook_pair() {
 	local rc
 	say ""
 	say "  hook entries in $(claude_home)/settings.json:"
 	workdir
 	set +e
-	( set -e; plan_hook_merge; place_hook_pair )
+	( set -e
+	  trap '[ -z "$PLACING" ] || rm -f -- "$PLACING"* || :' EXIT
+	  plan_hook_merge
+	  place_hook_pair )
 	rc=$?
 	set -e
 	if [ "$rc" -ne 0 ]; then
