@@ -3812,7 +3812,7 @@ $(guard_block_text)"
 # is a plain command.
 #
 # WHAT A REFUSAL HERE SAYS IS PLACED IS WHAT IS TRUE AT THE POSITION IT FIRES AT
-# (#321). The six skill files go first (each of the three skills, at the shared
+# (#321). The six skill files go first (each skill `SKILLS` lists, at the shared
 # directory and then the bare one), the six command files next, the hook pair
 # last. So at a skill file every skill file before it is placed, and it and the
 # ones after it are not; no command file is placed there, and the hook pair is
