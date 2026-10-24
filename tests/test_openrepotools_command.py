@@ -40,6 +40,7 @@ from pathlib import Path
 
 import pytest
 
+import package_layout as layout
 from conftest import REPO, ROOTS, WINDOWS_SKIP
 
 COMMAND = REPO / "openRepoTools"
@@ -1229,20 +1230,26 @@ def test_a_signal_at_each_instant_of_a_placement_ends_the_run_and_leaves_no_temp
 #: `dirname` for the target's directory; after the `cp` and the `chmod` it asks
 #: `owner_of` (`ls -lnd` into `awk`) who owns the target, then the temporary.
 #: Each answer came back through `$(…)`, whose wait bash keeps outside its job
-#: table, so a SIGINT there was lost however it was trapped. The test above
-#: lands only at the fork and in the wait of the `cp`, and in the wait for
-#: `mktemp`, so it passed with any of these three put back.
+#: table. `dirname` was its substitution's one process, and a SIGINT that
+#: reached the shell once it had closed its output was lost however it was
+#: trapped. Each `owner_of` was a pipeline in its substitution's subshell, which
+#: held the output open until its `ls` had exited: a SIGINT during that hold was
+#: run once the substitution finished, and only one in the instant between the
+#: subshell's end and its reaping was lost (#318). The test above lands only at
+#: the fork and in the wait of the `cp`, and in the wait for `mktemp`, so it
+#: passed with any of these three put back.
 #:
 #: SO A STAND-IN FIRST ON `$PATH` HOLDS EACH OF THOSE WAITS OPEN. It gives the
-#: real tool's answer and closes its output, so a shell that takes the answer
-#: through `$(…)` has all of it and waits, as one that takes it through a file
-#: does. Then, once (at the first call whose last argument `{at}` matches,
-#: while the hook has not fired), it writes what it was asked to `held`, leaves
-#: a `.openrepotools.` name in `$ORT_HOOK_DIR`, which nothing else writes to,
-#: and stays until the hook's mark. The hook, at `waitpid`, fires in the
-#: shell's first wait that sees that name. `released` follows in `held` only
-#: when the mark came before the bound: the signal reached the shell while it
-#: waited, and the command it was waiting for was the stand-in's.
+#: real tool's answer and closes its output, so where that answer is all a
+#: `$(…)` waits to read, as `dirname`'s is, the shell has all of it and waits,
+#: as one that takes it through a file does. Then, once (at the first call
+#: whose last argument `{at}` matches, while the hook has not fired), it
+#: writes what it was asked to `held`, leaves a `.openrepotools.` name in
+#: `$ORT_HOOK_DIR`, which nothing else writes to, and stays until the hook's
+#: mark. The hook, at `waitpid`, fires in the shell's first wait that sees
+#: that name. `released` follows in `held` only when the mark came before the
+#: bound: the signal reached the shell while it waited, and the command it was
+#: waiting for was the stand-in's.
 HELD_ANSWER = ('last=""\n'
                'for arg in "$@"; do last="$arg"; done\n'
                '{real} "$@"\n'
@@ -1281,10 +1288,16 @@ def test_a_sigint_in_the_wait_for_each_answer_of_a_placement_ends_the_run_and_le
       with the temporary beside it;
     * THE WAIT FOR THE OWNER OF THE TEMPORARY, just after that.
 
-    Taken through `$(…)`, each of these waits lost the SIGINT, and the install
-    went on to exit 0. Taken through a file, the `INT` trap is run once the
-    wait is over: the run dies of SIGINT, re-raised rather than exited with a
-    status, and nothing is left beside a target.
+    Taken through `$(…)`, no SIGINT the hook landed ended the run in the wait
+    held. In the wait for `dirname` it landed while the stand-in held, and was
+    lost: the install went on to exit 0. For each owner it landed only once
+    the hold was over, because the hook fires where the shell blocks in
+    `waitpid`, and until then the shell was still reading the output
+    `owner_of`'s subshell held open: there it was lost, or it ended the run
+    later, and `released` never came. A SIGINT during that hold would have
+    been run after it (#318). Taken through a file, the `INT` trap is run once
+    the wait is over: the run dies of SIGINT, re-raised rather than exited
+    with a status, and nothing is left beside a target.
 
     EACH CASE PROVES WHERE IT LANDED: the hook's mark, and `held`, which names
     the call the stand-in held and then `released`, written only when the mark
@@ -1348,6 +1361,255 @@ def test_a_sigint_in_the_wait_for_each_answer_of_a_placement_ends_the_run_and_le
         f"the SIGINT did not land while the shell waited for `{tool} {flags}` "
         f"on the {held_on}: the stand-in held {held}")
     assert placement_temporaries(tmp_path) == []
+
+
+#: THE SAME HOLD, AT THE WAITS #318 TOOK OUT OF `$(…)`. `HELD_ANSWER` holds the
+#: first call whose last argument matches; these need two things more. `find`
+#: names its path FIRST, so `{key}` is the argument `{at}` is matched against.
+#: And pipx's link is asked about twice with the same arguments, in planning
+#: and at the placement loop's own turn, so the stand-in lets `{skip}` matching
+#: calls through before it holds one, counting each with a file of its own in
+#: `$ORT_HOOK_DIR`. The rest is `HELD_ANSWER`'s: the real answer, the output
+#: closed, `held`, the `.openrepotools.` name the hook fires at, and `released`
+#: only when the mark came while the stand-in was holding.
+HELD_CALL = ('asked="$*"\n'
+             'first="$1"\n'
+             'last=""\n'
+             'for arg in "$@"; do last="$arg"; done\n'
+             '{real} "$@"\n'
+             'answered=$?\n'
+             'case "{key}" in\n'
+             '{at})\n'
+             '\tif [ ! -e "$ORT_HOOK_MARK" ]; then\n'
+             '\t\t: >"$ORT_HOOK_DIR/call.$$"\n'
+             '\t\tset -- "$ORT_HOOK_DIR"/call.*\n'
+             '\t\tif [ "$#" -gt {skip} ]; then\n'
+             '\t\t\texec >&-\n'
+             "\t\t\tprintf '%s\\n' \"$asked\" >\"$ORT_HOOK_DIR/held\"\n"
+             '\t\t\t: >"$ORT_HOOK_DIR/.held.openrepotools.$$"\n'
+             '\t\t\t' + WAIT_FOR_MARK +
+             '\t\t\t[ "$i" -ge 200 ] || '
+             "printf 'released\\n' >>\"$ORT_HOOK_DIR/held\"\n"
+             '\t\tfi\n'
+             '\tfi\n'
+             '\t;;\n'
+             'esac\n'
+             'exit "$answered"\n')
+
+#: A `chmod` THAT MAKES A LINK AS LATE AS A TEST CAN, as #257's cases of a late
+#: link do: the first time it is handed `{at}`, the temporary beside the
+#: target, it makes the target a link to `{value}`, then stamps the mode as the
+#: real `chmod` does.
+LINK_AT_THE_STAMP = ('for arg in "$@"; do\n'
+                     '\tcase "$arg" in\n'
+                     '\t{at})\n'
+                     '\t\tif [ ! -e {made} ]; then\n'
+                     '\t\t\t{ln} -s {value} {target} || exit 1\n'
+                     '\t\t\t: >{made}\n'
+                     '\t\tfi\n'
+                     '\t\tbreak ;;\n'
+                     '\tesac\n'
+                     'done\n'
+                     'exec {real} "$@"\n')
+
+
+def stand_in(shim: Path, name: str, body: str, **fields: str) -> None:
+    """`shim/name`, a `/bin/sh` script of `body` with `fields` filled in and
+    `{real}` the real `name` on `PATH`, quoted; or a skip where there is none."""
+    real = shutil.which(name)
+    if real is None:
+        pytest.skip(f"no real `{name}` on PATH for the stand-in to defer to")
+    shim.mkdir(exist_ok=True)
+    (shim / name).write_text(
+        "#!/bin/sh\n" + body.format(real=shlex.quote(real), **fields),
+        encoding="utf-8")
+    (shim / name).chmod(0o755)
+
+
+#: THE WAITS #318 TOOK OUT OF `$(…)`, one case each: the tool `HELD_CALL`
+#: holds, the argument it matches, how many matching calls it lets through,
+#: and what the home holds before the run.
+SIGINT_WAITS_318 = {
+    "SIGINT-in-the-wait-for-find-asking-a-command-mode":
+        ("find", "$first", 0, "installed"),
+    "SIGINT-in-the-wait-for-dirname-before-a-skill-file-mkdir":
+        ("dirname", "$last", 0, "skill"),
+    "SIGINT-in-the-wait-for-dirname-before-a-command-file-mkdir":
+        ("dirname", "$last", 0, "command"),
+    "SIGINT-in-the-wait-for-pipx-link-in-planning":
+        ("readlink", "$last", 0, "pipx"),
+    "SIGINT-in-the-wait-for-pipx-link-at-its-own-turn":
+        ("readlink", "$last", 1, "pipx"),
+    "SIGINT-in-the-wait-for-readlink-naming-a-late-link":
+        ("readlink", "$last", 0, "late-link"),
+}
+
+
+@pytest.mark.parametrize("case", list(SIGINT_WAITS_318))
+@NEEDS_JQ
+def test_a_sigint_in_each_wait_on_the_placement_path_ends_the_run_and_leaves_no_temporary(
+        tmp_path, signal_hook, case):
+    """A SIGINT IN THE WAIT FOR ANY ANSWER THE PLACEMENT TAKES ENDS THE RUN,
+    AND LEAVES NO TEMPORARY (#318), at the waits #250 left in `$(…)`. Each is
+    held by `HELD_CALL`, and the hook lands its SIGINT there:
+
+    * `find`, asking `mode_is` the mode of `openRepoTools` in the bin
+      directory, on a second `--install` that finds its bytes already right;
+    * `dirname`, asked for the directory of the first `SKILL.md`, and of the
+      first command file, before each one's `mkdir -p`;
+    * `readlink`, where pipx's link at `<dir>/openRepoTools` is asked about:
+      in planning, and again at the placement loop's own turn;
+    * `readlink`, naming a link that appears at `<dir>/park` as its
+      temporary's mode is stamped, in the refusal before the rename.
+
+    Taken through `$(…)`, no SIGINT ended the run in the wait held. For
+    `dirname` the substitution's one process is the stand-in, so the hook
+    lands while it is held, and the SIGINT is lost: the install goes on to
+    exit 0. The others run under a subshell of the substitution's own: bash
+    does not replace it with `find`, which carries a `2>/dev/null`, nor with
+    the late link's `readlink`, behind a `||`, and `link_venv` is a function
+    whose `readlink` is deeper still. That subshell holds its output open
+    until the stand-in has exited, so the hook, which fires where the shell
+    blocks in `waitpid`, lands only after the hold, as the shell reaps it:
+    there the SIGINT was lost and the install went on to exit 0, or it ended
+    the run later, and `released` never came. Taken as #318 takes them,
+    the shell waits for a plain command, a pipeline or a `( … )` subshell, the
+    hook lands while the stand-in holds, and the run dies of SIGINT, with no
+    temporary beside a target and a link left as it was.
+
+    EACH CASE PROVES WHERE IT LANDED, as `HELD_ANSWER`'s do: the hook's mark,
+    and `held`, the call the stand-in held, then `released`.
+    """
+    tool, key, skip, setup = SIGINT_WAITS_318[case]
+    home = tmp_path
+    bin_dir = home / ".local" / "bin"
+    shared = home / ".claude-profiles" / "shared"
+    shim = tmp_path / "held-tools"
+    link = value = None
+    if setup == "installed":
+        first = run_cmd("--install", home=home)
+        assert first.returncode == 0, first.stdout + first.stderr
+        target = bin_dir / INSTALLED[0]
+        call = f"{target} -maxdepth 0 -perm 755 -print"
+    elif setup in ("skill", "command"):
+        target = (shared / "skills" / SKILL_NAMES[0] / "SKILL.md"
+                  if setup == "skill"
+                  else shared / "commands" / f"{COMMAND_NAMES[0]}.md")
+        call = f"-- {target}"
+    elif setup == "pipx":
+        venv = layout.pipx_venv(home / ".local" / "share" / "pipx", "1.17.8")
+        target = link = bin_dir / "openRepoTools"
+        value = str(venv / "bin" / "openRepoTools")
+        bin_dir.mkdir(parents=True)
+        link.symlink_to(value)
+        call = f"-- {target}"
+    else:
+        mine = home / "my-own" / "park"
+        mine.parent.mkdir()
+        mine.write_text("#!/usr/bin/env bash\necho my own park\n",
+                        encoding="utf-8")
+        target = link = bin_dir / "park"
+        value = str(mine)
+        ln = shutil.which("ln")
+        if ln is None:
+            pytest.skip("no `ln` on PATH for the late link")
+        stand_in(shim, "chmod", LINK_AT_THE_STAMP,
+                 at=shlex.quote(f"{bin_dir}/.park.openrepotools.") + "*",
+                 made=shlex.quote(str(tmp_path / "linked")),
+                 ln=shlex.quote(ln), value=shlex.quote(value),
+                 target=shlex.quote(str(target)))
+        call = f"-- {target}"
+    stand_in(shim, tool, HELD_CALL, key=key, at=shlex.quote(str(target)),
+             skip=str(skip))
+    hook_dir = tmp_path / "held"
+    hook_dir.mkdir()
+    mark = tmp_path / "fired"
+    preload = os.environ.get("LD_PRELOAD")
+
+    def default_signals() -> None:
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+    run = subprocess.Popen(
+        ["bash", str(COMMAND), "--install"], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=command_env(home, {
+            "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
+            "LD_PRELOAD": f"{signal_hook}:{preload}" if preload
+                          else str(signal_hook),
+            "ORT_HOOK_DIR": str(hook_dir), "ORT_HOOK_AT": "waitpid",
+            "ORT_HOOK_SIG": str(int(signal.SIGINT)),
+            "ORT_HOOK_MARK": str(mark)}),
+        start_new_session=True, preexec_fn=default_signals)
+    try:
+        out, err = run.communicate(timeout=60)
+    finally:
+        if run.poll() is None:
+            os.killpg(run.pid, signal.SIGKILL)
+            run.communicate()
+    record = hook_dir / "held"
+    held = (record.read_text(encoding="utf-8").splitlines()
+            if record.exists() else [])
+    assert mark.exists(), (
+        f"the hook never fired, so no signal landed: exit {run.returncode}; "
+        f"the stand-in held {held}\n{out}{err}")
+    assert run.returncode == -signal.SIGINT, (
+        f"the run did not die of SIGINT: exit {run.returncode}; the stand-in "
+        f"held {held}\n{out}{err}")
+    assert held == [call, "released"], (
+        f"the SIGINT did not land while the shell waited for `{tool} {call}`: "
+        f"the stand-in held {held}")
+    assert placement_temporaries(home) == []
+    if link is not None:
+        assert link.is_symlink() and os.readlink(link) == value, (
+            f"the link at {link} was not left as it was:\n{out}{err}")
+
+
+#: WHERE THE PLACEMENT RUNS (#318): the functions it calls from the `mkdir` of
+#: the bin directory to the hook pair, and that stretch of `install_commands`,
+#: which the comment above `remove_workdir` says take no answer with `$(…)`.
+#: Left out is what that comment says still does: `hook_write_settings`,
+#: `hook_target_answers` and `hook_pair_defer`'s refusal. `pipx_link_paths` is
+#: left out too: it runs only inside `pipx_link_match`'s `( … )`, so its
+#: `$(…)` are that subshell's waits and not the shell's.
+PLACEMENT_FUNCTIONS = ("mode_is", "place_by_rename", "pipx_link_match",
+                       "pipx_release", "place_skill_and_hook",
+                       "place_hook_pair", "install_commands")
+
+
+def placement_code(name: str) -> list[str]:
+    """The lines of `name` as the installer carries it, less its comments; of
+    `install_commands`, only those from the `mkdir` of the bin directory to
+    the call of `place_skill_and_hook`."""
+    text = COMMAND.read_text(encoding="utf-8")
+    found = re.search(rf"^{re.escape(name)}\(\) \{{[^\n]*\n.*?^\}}\n", text,
+                      re.MULTILINE | re.DOTALL)
+    assert found, f"`{name}() {{` … `}}` is no longer in openRepoTools"
+    body = found.group(0)
+    if name == "install_commands":
+        start = body.index('\tmkdir -p -- "$dir" ||')
+        body = body[start:body.index("\n\tplace_skill_and_hook\n", start)]
+    return [line for line in body.splitlines()
+            if not line.lstrip().startswith("#")]
+
+
+@pytest.mark.parametrize("name", PLACEMENT_FUNCTIONS)
+def test_the_placement_takes_no_answer_with_a_command_substitution_that_can_lose_a_sigint(
+        name):
+    """NO ANSWER THE PLACEMENT WAITS FOR IS TAKEN WITH `$(…)` (#318), read
+    from the installer's text. The cases above land a SIGINT in each wait a
+    stand-in can hold open, and these are the ones it cannot: a `$(…)` whose
+    child runs only builtins (`skills_home`, `claude_home`, `install_source`,
+    `pipx_release`'s reader) closes its output only as it exits, so no case
+    can land a signal there, and put back, each would still lose one in the
+    instant between that exit and its reaping. `$((…))` is arithmetic, not a
+    substitution, and is not matched."""
+    found = [line.strip() for line in placement_code(name)
+             if re.search(r"\$\((?!\()", line)]
+    assert found == [], (
+        f"`{name}` takes an answer with `$(…)`, where a SIGINT can be lost "
+        "(search \"A `$(…)` IS NOT A PLAIN COMMAND\" in openRepoTools):\n  "
+        + "\n  ".join(found))
 
 
 #: THE WORDS THIS INSTALLER USED TO PLACE AND DOES NOT ANY MORE. `restart` left
