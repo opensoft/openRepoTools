@@ -367,3 +367,35 @@ def test_no_git_stamp_says_written_and_not_committed(tmp_path, short_root):
     said = [line for line in start.stderr.splitlines() if "LANES_NO_GIT=1" in line and "NOT committed" in line]
     assert len(said) == 1, start.stderr
     assert f"{checkout}/{cell}" in said[0], said
+
+
+NEWER = "Lane: repoZ-1 — single-use resume prompt\n\n# state\n\nNEWER BLOCK FROM ANOTHER WORKSTATION\n"
+
+
+def test_refused_stamp_names_a_checkout_copy_behind_origin(tmp_path, short_root):
+    """725 of the review of #316: the lane's checkout refuses a plain launch's
+    stamp (a stray is staged there) while origin holds a newer PAUSED block
+    from another workstation. The launch goes on with the checkout's copy,
+    and says that origin's differs: it names both copies and the command that
+    brings the checkout up to date."""
+    box, checkout, _lane_dir, _before = _started(tmp_path, short_root)
+    cell = _cell(box)
+    _peer_push(box, {cell: HANDOFF}, "the lane's handoff")
+    box.git("-C", str(checkout), "fetch", "-q", "origin", "main")
+    box.git("-C", str(checkout), "merge", "-q", "--ff-only", "origin/main")
+    _peer_push(box, {cell: NEWER}, "a newer PAUSED block, from another workstation")
+    foreign = checkout / "handoffs" / "repoQ" / "foreign.md"
+    foreign.parent.mkdir(parents=True, exist_ok=True)
+    foreign.write_text("a person's file, staged and never committed\n", encoding="utf-8")
+    box.git("-C", str(checkout), "add", "--", "handoffs/repoQ/foreign.md")
+
+    start = box.start("--fresh", window_name=LANE)
+    assert start.returncode == 0, start.stderr
+    assert "Rule 3's stamp was NOT written" in start.stderr, start.stderr
+    said = [line for line in start.stderr.splitlines() if "is not origin's" in line]
+    assert len(said) == 1, start.stderr
+    assert f"{checkout}/{cell}" in said[0], said
+    assert f"origin/main:{cell}" in said[0], said
+    assert f"git -C {checkout} merge --ff-only origin/main" in said[0], said
+    assert "own words" in start.stdout, "the first prompt is the checkout's copy, as said"
+    assert "NEWER BLOCK" not in start.stdout

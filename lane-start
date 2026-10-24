@@ -4377,6 +4377,7 @@ hs_bound_unchanged() {   # the restart's bound file still digests as the restart
   [ "${ri_expected_digest:-none}" != none ] || return 0
   [ -n "$ri_hf" ] && [ "$ri_hf" != none ] && [ "$(handoff_digest_of "$ri_hf")" = "$ri_expected_digest" ]
 }
+hs_none=0   # 1: 5c ran and wrote nothing, and the launch goes on (725, in 5d)
 if [ "$lane_verb" = RESUMED ] && [ "$row_count" = 1 ] && (( stamp_ok )); then
   hs_cell="$(cell 7 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' || :)"
   hs_stamp="RESUMED by $stamp_who (lane $LANE) at $utc — lane-start on $ws"
@@ -4422,6 +4423,7 @@ if [ "$lane_verb" = RESUMED ] && [ "$row_count" = 1 ] && (( stamp_ok )); then
     elif [ "$ri_active" = 1 ] && ! hs_bound_unchanged; then
       die "the restart handoff changed before its owned resume stamp. Nothing was launched." 2
     else
+      hs_none=1
       note "Rule 3's stamp was NOT written (\`write-handoff\` exited $hs_rc; its words are above), and the launch is not refused for it: the stamp is the record of this resume, not its licence."
       note "  STAMP IT AS THIS SESSION'S FIRST ACT — this line under the handoff's header block:"
       note "    $hs_stamp"
@@ -4470,6 +4472,26 @@ if (( first_prompt )); then
   fp_file=""
   if [ -n "$fp_cell" ] && [ -n "$HS_PATH" ] && [ -f "$HS_PATH" ]; then
     fp_file="$HS_PATH"
+  fi
+  # A REFUSED STAMP LEAVES THE CHECKOUT WHERE IT WAS (lane openRepoTools-3's
+  # review of #316, 725). S3 fetched origin before it refused, and it did not
+  # fast-forward, so the file read below may be older than origin's, which
+  # another workstation may have moved on. A plain launch still goes on with
+  # this file, the one this lane's writes go to; where the checkout's own
+  # `origin/<branch>` differs, both copies are named, and the command that
+  # brings the checkout up to date. (Under a restart the bound file is the
+  # prompt, by the fences below.)
+  if [ "$hs_none" = 1 ] && [ "$ri_active" != 1 ] && [ -n "$fp_file" ]; then
+    fp_dir="$(dirname -- "$fp_file")"; fp_base="$(basename -- "$fp_file")"
+    fp_br="${LANES_BRANCH:-main}"
+    fp_theirs="$(git -C "$fp_dir" rev-parse -q --verify "refs/remotes/origin/$fp_br:./$fp_base" 2>/dev/null || :)"
+    fp_ours="$(git -C "$fp_dir" hash-object -- "$fp_base" 2>/dev/null || :)"
+    if [ -n "$fp_theirs" ] && [ -n "$fp_ours" ] && [ "$fp_theirs" != "$fp_ours" ]; then
+      fp_top="$(git -C "$fp_dir" rev-parse --show-toplevel 2>/dev/null || :)"
+      [ -n "$fp_top" ] || fp_top="$fp_dir"
+      fp_rel="${fp_file#"$fp_top"/}"
+      note "this lane's handoff in its checkout, $fp_file, is not origin's: origin/$fp_br:$fp_rel, as the refused stamp's fetch left it in $fp_top, differs, so the first prompt below is the checkout's copy and may be older than origin's. Once the refusal above is answered, git -C $fp_top merge --ff-only origin/$fp_br brings the checkout up to date (origin's copy reads with git -C $fp_top show origin/$fp_br:$fp_rel)."
+    fi
   fi
   if [ "$ri_active" = 1 ] && (( fresh )); then
     [ -n "$fp_file" ] && [ "$fp_file" -ef "$ri_hf" ] ||
