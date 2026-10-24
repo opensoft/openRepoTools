@@ -269,16 +269,16 @@ Only the second branch leaves anything blank, and it leaves it blank because not
 
 ## 2. Refresh the handoff
 
-The handoff is written by ONE call, `lanes-edit.sh write-handoff --whole` (Amendment 23, S2–S4), and this
+The handoff is written by ONE call, `lanes-edit.sh write-handoff --prepend` (Amendment 23, S2–S4), and this
 skill holds no lock and runs no `git` of its own. Under the lane checkout's lock the verb brings that
-checkout to origin, checks that the file still has the bytes this session read, replaces it atomically
+checkout to origin, reads the handoff there, puts the new top block, a `---` line and a blank line in front
+of it, proves byte for byte that the block and the old file both survive, replaces the file atomically
 under the workstation's sidecar lock, commits it by its own pathspec with the Rule 5 `Lane:` trailer,
 pushes with no pull, reads origin back, and replays the one write on a refused push. It refuses an active
-restart owned by another operation. So the order below is: say where the handoff is and read its SHA-256,
-write the new top block, and only it, to a temporary file, then run the block under "THE WRITE IS ONE CALL",
-which builds the complete new file from that block and the old file whole, proves that the old file survives
-at its end, and makes the one call. Do not edit or redirect into the canonical handoff directly, do not write
-the complete new file by hand, and do not commit it: the verb is the commit.
+restart owned by another operation. So the order below is: say where the handoff is, write the new top
+block, and only it, to a temporary file, then run the block under "THE WRITE IS ONE CALL", which makes the
+one call. Do not edit or redirect into the canonical handoff directly, do not write the complete new file
+by hand, and do not commit it: the verb is the commit.
 Legacy `rename-lane` is a separate four-file transaction under the workspace's writer mutex;
 it refuses unfinished/failed restart ownership and uses EXIT rollback. Its
 stamp now atomically replaces the handoff through a temporary file beside it
@@ -340,10 +340,11 @@ check above is all this skill asks of it. The file `write-handoff` writes is `ha
 translated into the lane's OWN checkout (Amendment 23 S2), derived here and never spelled. No checkout path is
 written anywhere in this step, and none is taken from the environment or from the helper's workspace root as a
 fallback. A read that failed is no answer (Amendment 7(d)), so nothing is guessed in its place. `--create`
-makes that checkout first where this is its first use, so that there is a file to read. The SHA-256 of the
-file as it stands is the digest the verb holds this write to: it replaces the file only while the file still
-has those bytes (exit 7 where it does not), so the new file is made from what was read here and never from a
-copy that has moved. Where the block below prints `HANDOFF NOT FOUND` (`handoff-path`'s 8: no row, or a row
+makes that checkout first where this is its first use, so that there is a file to read: the session reads
+it there for what its new top block carries forward. No digest is taken and no new file is built here: the
+verb reads the handoff again under the lock, from what S3 has just brought from origin, and puts the block
+in front of it as it is then, so a peer's block that landed meanwhile is kept under the new one, newest on
+top. Where the block below prints `HANDOFF NOT FOUND` (`handoff-path`'s 8: no row, or a row
 that names no handoff) there is no file to write into. Where it prints `HANDOFF READ FAILED`, the read
 failed, and that is never "no handoff": every exit but 0 and 8 is one, and the line quotes it. A 2 whose words
 say "unknown subcommand" is a `lanes-edit.sh` predating `handoff-path`, to be updated; a 4 is the lock that
@@ -359,7 +360,7 @@ unwritten*).
 ```sh
 # WHERE THE HANDOFF IS: derived, never spelled. `handoff-path` only reads, and `--create` makes the lane's own
 # checkout first where this is its first use.
-hf_rc=0; handoff_file=""; prior_sha256=""; prepared_file=""; block_file=""; hf_said=""; hf_record=""
+hf_rc=0; handoff_file=""; block_file=""; hf_said=""; hf_record=""
 handoff_file="$("$L" handoff-path "$lane" --create)" || hf_rc=$?
 # ONLY 8 IS "NO HANDOFF" (Amendment 7(d): a read that failed is no answer). 1 is a register it could not read
 # (its own "R22: never 8"), 2 a name refused or a clone that failed, 4 the lock that makes the checkout, and a
@@ -369,22 +370,11 @@ handoff_file="$("$L" handoff-path "$lane" --create)" || hf_rc=$?
 [[ "$hf_rc" != 2 ]] || hf_said="$(LANES_NO_FETCH=1 "$L" handoff-path "$lane" 2>&1 >/dev/null || :)"
 hf_keep="Write the new top block all the same and put it whole in the report: it is then the one copy, and it goes at the head of the handoff by hand once this is answered. The swap goes on (R-A11-11)."
 if [[ "$hf_rc" == 0 && -n "$handoff_file" && -f "$handoff_file" ]]; then
-  # THE DIGEST OF WHAT IS THERE NOW, by the two tools the helper's own `lane_handoff_digest` tries:
-  # `sha256sum` on Linux, `shasum -a 256` on macOS.
-  if command -v sha256sum >/dev/null 2>&1; then
-    prior_sha256="$(sha256sum -- "$handoff_file" | awk '{print $1; exit}')"
-  elif command -v shasum >/dev/null 2>&1; then
-    prior_sha256="$(shasum -a 256 -- "$handoff_file" | awk '{print $1; exit}')"
-  fi
-  sha_re='^[0-9a-f]{64}$'
-  [[ "$prior_sha256" =~ $sha_re ]] || prior_sha256=""
-  # THE NEW TOP BLOCK, AND ONLY IT, goes in `$block_file`. The block under THE WRITE IS ONE CALL builds the
-  # complete new file in `$prepared_file` from it and the old file whole; an empty `$block_file` is no block,
-  # and nothing is sent.
-  prepared_file="$(mktemp "${TMPDIR:-/tmp}/handoff-prepared.XXXXXX")" || prepared_file=""
+  # THE NEW TOP BLOCK, AND ONLY IT, goes in `$block_file`, ending with a newline. `write-handoff --prepend`
+  # puts it in front of the handoff as the verb reads it under the lock (lane openRepoTools-3's finding 981
+  # on #311, option (a)); an empty `$block_file` is no block, and nothing is sent.
   block_file="$(mktemp "${TMPDIR:-/tmp}/handoff-block.XXXXXX")" || block_file=""
-  printf 'handoff_file=%s\nprior_sha256=%s\nblock_file=%s\nprepared_file=%s\n' \
-    "$handoff_file" "${prior_sha256:-<none>}" "${block_file:-<none>}" "${prepared_file:-<none>}"
+  printf 'handoff_file=%s\nblock_file=%s\n' "$handoff_file" "${block_file:-<none>}"
 else
   case "$hf_rc:$hf_said" in
     0:*|8:*)
@@ -422,8 +412,9 @@ EVERY WRITER THE LANE HAS RUNNING (its worktree, its branch, its brief, what it 
 **Addendum 1 (i)** reads that section — *"a list to COUNT, not a list to relaunch"*, in force 2026-09-14T20:59:31Z).
 Write it exactly this shape, and prepend it — a handoff is the one document in this protocol whose purpose is
 to be read by a later session, so nothing below is rewritten and everything already there stays as history
-under a `---` rule. Write the block, and nothing else, to the `$block_file` the block above printed; the block
-under "THE WRITE IS ONE CALL" puts it in front of the old file, so the history is never retyped:
+under a `---` rule. Write the block, and nothing else, to the `$block_file` the block above printed, and end
+its last line with a newline; `write-handoff --prepend` puts it in front of the old file, so the history is
+never retyped:
 
 ```text
 Lane: <lane> (<profile>, session <uuid>) — single-use resume prompt: stamp RESUMED-by before acting (lane-collision-protocol rule 3)
@@ -500,20 +491,20 @@ THIS HANDOFF DID NOT MAKE and an operation in progress are the verb's refusals n
 committed (2); once lane openRepoTools-3's finding 601 on opensoft/openRepoTools#312 is in, so is a
 handoff target in W or in another checkout of the register beside it, with nothing written, and since
 `handoff-path` shares that refusal, the block under WHERE THE HANDOFF IS meets it first and this call is not
-made. A handoff that moved after its
-digest was read is exit 7, and nothing is published; once that review's finding 603 is in, a restart fence's
-refusal is 7 too, where it is 2 today. A 7 is not answered by calling again with the same digest: the block under WHERE THE HANDOFF IS is run
-again, for a new digest and a new prepared file, the top block is written to its new block file, and this
-block is run once more, once. A lane checkout behind
-origin on its handoff meets this on its first call, because the verb brings the checkout to origin before it
-compares.
-THE COMPLETE NEW FILE IS BUILT BY THE BLOCK, NEVER BY HAND (rv3's SHOULD 1 on #311): the new top block from
-`$block_file`, a `---` line and a blank line, then `cat -- "$handoff_file"`, which is `write-handoff
---prepend`'s own layout. Before the call it proves that the old file survives at the end of the new one, byte
-for byte, as `--prepend` proves it: the last bytes of `$prepared_file`, as many as the old file has, are
-compared with the old file. Where they differ, or the build failed, the call is not made and nothing is
-written. (`--whole` takes any file that is not empty, so a file written whole from what a session remembered
-of the old one, the act that lost two lanes' rows on 2026-09-08, would be published as written.)
+made.
+THE NEW FILE IS MADE BY THE VERB, NEVER BY HAND (rv3's SHOULD 1 and lane openRepoTools-3's finding 981 on
+#311, option (a)): `--prepend "$block_file"` reads the handoff under the lane checkout's lock, from the bytes
+S3 has just brought to origin's, puts the new top block, a `---` line and a blank line in front of it, and
+proves byte for byte that the block, the rule and the old file whole are all there before it replaces the
+file. A file written whole from what a session remembered of the old one, the act that lost two lanes' rows on
+2026-09-08, is never sent, and neither is a digest: a peer's block pushed after this session read the handoff
+is not a refusal, it is kept under the new block, newest on top, which is the shape every handoff has. It is
+`lane-handoff`'s own write of the same act (Amendment 17(a)). The verb refuses a block whose last byte is not
+a newline (64) and writes nothing, because the `---` under it would join its last line and `lane-start` reads
+the top block only to the first line that opens with `---`, so the next session's first prompt would run on
+into the block before it: end the block file with a newline and run this block once more, once. A 7 with
+`--prepend` is a restart's: an active restart owns the handoff, and that restart writes it, so the call is
+not made again.
 `$hf_subject` is the commit's one-line subject: the lane, the workstation (`unknown` where step 1 found none)
 and the why in the operator's words, `handoff` where there is none, each control character made a space. It is
 `lane-handoff`'s subject for the same act, spelled the same way.
@@ -524,32 +515,31 @@ and the why in the operator's words, `handoff` where there is none, each control
 # subject the same way (its `subject_text`, and `unknown` for a missing workstation; rv3's NIT 1 on #311).
 hf_subject="handoff($lane@${ws:-unknown}): PAUSED, ${why:-handoff}"
 hf_subject="$(printf '%s' "$hf_subject" | LC_ALL=C tr '[:cntrl:]' ' ')"
-hf_rc=0; hf_out=""; hf_tried=""; hf_built=""; hf_old_size=""
-# THE COMPLETE NEW FILE, AND THE PROOF THAT THE OLD ONE SURVIVES AT ITS END (`--prepend`'s layout and its proof).
-if [[ -n "$handoff_file" && -n "$prior_sha256" && -n "${prepared_file:-}" && -s "${block_file:-}" ]]; then
-  hf_tried=1; size_re='^[0-9]+$'
-  hf_old_size="$(wc -c < "$handoff_file" | tr -d ' ')"
-  { cat -- "$block_file" && printf -- '---\n\n' && cat -- "$handoff_file"; } > "$prepared_file" &&
-    [[ "$hf_old_size" =~ $size_re ]] &&
-    tail -c "$hf_old_size" -- "$prepared_file" | cmp -s - "$handoff_file" && hf_built=1
-fi
-if [[ -n "$hf_built" ]]; then
-  hf_out="$(LANES_LANE="$lane" "$L" write-handoff "$lane" --whole "$prepared_file" \
-    --expect-digest "$prior_sha256" --subject "$hf_subject")" || hf_rc=$?
+hf_rc=0; hf_out=""
+# THE ONE CALL: the verb reads the handoff under the lock and puts the block in front of it (`--prepend`).
+if [[ -n "$handoff_file" && -s "${block_file:-}" ]]; then
+  hf_out="$(LANES_LANE="$lane" "$L" write-handoff "$lane" --prepend "$block_file" \
+    --subject "$hf_subject")" || hf_rc=$?
   # ITS STDOUT IS `<file><TAB><sha256>` ONCE THE FILE IS WRITTEN, whatever the exit; its own words are on stderr.
   hf_path="${hf_out%%$'\t'*}"
   hf_wrote="nothing was written"; [[ -z "$hf_out" ]] || hf_wrote="the file is written at $hf_path"
-  hf_kept="The new file is kept at $prepared_file, and its new top block alone at $block_file: name both paths in the report, so that the top block can be put at the head of the handoff by hand once this is answered."
+  hf_kept="The new top block is kept at $block_file: name that path in the report, so that the top block can be put at the head of the handoff by hand once this is answered."
   case "$hf_rc" in
     0) printf 'handoff written: %s (the note above, from write-handoff, says what was committed and where it was pushed)\n' "$hf_path" ;;
     2) if [[ -n "$hf_out" ]]; then
-         printf 'HANDOFF NOT COMMITTED: write-handoff refused the commit (exit 2; its words are above) and the file is written at %s, uncommitted. Nothing was pushed. Do not call it again: the file no longer has the bytes the digest names, so a second call is refused (7). Answer the refusal, then commit and publish the file as the note above says.\n' "$hf_path"
+         printf 'HANDOFF NOT COMMITTED: write-handoff refused the commit (exit 2; its words are above) and the file is written at %s, uncommitted. Nothing was pushed. Do not call it again: the new top block is at the head of the file now, and a second call would put a second copy of it on top. Answer the refusal, then commit and publish the file as the note above says.\n' "$hf_path"
        else
          printf 'HANDOFF NOT WRITTEN: write-handoff refused (exit 2; its words are above) and wrote nothing.\n'
        fi ;;
     3) printf 'HANDOFF PUSHED, NOT CONFIRMED: the push went, or timed out, and origin could not be read back to show the commit on it (exit 3; the note above names it). Do not call it published until it is read back.\n' ;;
     6) printf 'HANDOFF NOT PUSHED: its commit is kept on HEAD of the lane checkout and named above (exit 6), and every later write from that checkout refuses until it is published; the note above names the act. Never force.\n' ;;
-    7) printf 'HANDOFF NOT WRITTEN: the handoff is no longer the bytes digest %s names, or a restart owns it (exit 7; its words above say which), and nothing was published. If it moved, run the block under WHERE THE HANDOFF IS again, which reads a new digest and makes a new prepared file and a new block file, write the new top block to the new block file, and run this block once more: it builds the new file from what is there now. If a restart owns it, do not retry: that restart writes this handoff.\n' "$prior_sha256" ;;
+    # A 7 WITH `--prepend` IS A RESTART'S (lane openRepoTools-3's finding 981 on #311): no digest is sent, so
+    # it is never "moved since it was read". The verb's own "changed before publication" is another act's
+    # write in the instant between its read and its replace, under the lock, and the same call reads it again.
+    7) printf 'HANDOFF NOT WRITTEN: an active restart owns this handoff (exit 7; its words are above), and nothing was published. Do not retry: that restart writes this handoff. (Where its words say instead that the handoff changed before publication, another act wrote it in the instant of this write: run this block once more, once.)\n' ;;
+    # 64 IS A CALL THE VERB REFUSED AS GIVEN, and the one this block can make is a block whose last byte is no
+    # newline (981): the `---` under it would join its last line. The verb never alters a caller's bytes.
+    64) printf 'HANDOFF NOT WRITTEN: write-handoff refused the call (exit 64; its words are above) and wrote nothing. Where they say the block does not end with a newline, end it with one (echo >> %s) and run this block once more, once.\n' "$block_file" ;;
     *) printf 'HANDOFF NOT PUBLISHED: write-handoff exited %s (its words are above); %s.\n' "$hf_rc" "$hf_wrote" ;;
   esac
   # WHAT THIS CALL DID, CARRIED TO STEP 4'S REGISTER LINE (rv3's SHOULD 3 on #311): refreshed only on a 0, written
@@ -557,14 +547,10 @@ if [[ -n "$hf_built" ]]; then
   hf_record="handoff NOT refreshed (write-handoff exited $hf_rc and wrote nothing)"
   [[ -z "$hf_out" ]] || hf_record="handoff written, its publication NOT confirmed (write-handoff exited $hf_rc)"
   [[ "$hf_rc" != 0 ]] || hf_record="handoff refreshed"
-  # WHERE NOTHING WAS WRITTEN, THE NEW FILE IS NOT LOST WITH THE SWAP: its temporary file is named for the report.
+  # WHERE NOTHING WAS WRITTEN, THE NEW TOP BLOCK IS NOT LOST WITH THE SWAP: its temporary file is named for the report.
   [[ -n "$hf_out" ]] || printf '%s\n' "$hf_kept"
-elif [[ -n "$hf_tried" ]]; then
-  printf 'HANDOFF NOT WRITTEN: the new file built at %s does not end with the old handoff whole (the last %s bytes of it are not %s, or the build failed), so write-handoff was NOT called and nothing was written. The new top block is kept at %s: name that path in the report, so that it can be put at the head of the handoff by hand. The swap goes on (R-A11-11); the report carries this line.\n' \
-    "$prepared_file" "${hf_old_size:-<unread>}" "$handoff_file" "$block_file"
-  hf_record="handoff NOT refreshed (the new file did not keep the old handoff whole)"
 else
-  printf 'HANDOFF NOT WRITTEN: there is no handoff located, no digest read or no new top block written to its file, so write-handoff was NOT called. Write the new top block if it is not written yet, and put it whole in the report, so that it can be put at the head of the handoff by hand. The swap goes on (R-A11-11); the report carries this line.\n'
+  printf 'HANDOFF NOT WRITTEN: there is no handoff located, or no new top block written to its file, so write-handoff was NOT called. Write the new top block if it is not written yet, and put it whole in the report, so that it can be put at the head of the handoff by hand. The swap goes on (R-A11-11); the report carries this line.\n'
   # Block 1's reason where it gave one: a handoff not found, or a read that failed.
   hf_record="${hf_record:-handoff NOT refreshed (write-handoff was not called)}"
 fi
@@ -572,9 +558,10 @@ fi
 
 A refusal, a conflict or a rejected push does not stop the swap (`R-A11-11`, *a swap is never left
 unwritten*): where the lane's checkout refuses the commit (2), the verb has still written the handoff, commits
-nothing and prints git's own words; where its push is refused it replays the write on origin's new tip if
-origin's copy of the handoff is still the one this write was made from, and otherwise keeps its commit on HEAD
-and names it (6). The block prints what it did NOT do, and the report carries that line. Never force, never
+nothing and prints git's own words; where its push is refused it replays the write on origin's new tip, the
+block put in front of origin's copy of the handoff, and where origin no longer has that handoff, or its row
+names a file the replay cannot write, it keeps its commit on HEAD and names it (6). The block prints what it
+did NOT do, and the report carries that line. Never force, never
 `git add -A`, and never commit staged entries you did not make.
 
 **WHAT THIS STEP DID IS CARRIED TO STEP 4 in `$hf_record`,** so that the register's PAUSED line says it and

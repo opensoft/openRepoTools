@@ -19,14 +19,18 @@ the three writers that commit to a checkout with NO LOCK and then pull and push
 copy (Amendment 23 S5). Slice 2a gave the one act that replaces all of it:
 
     handoff-path <lane> --create                                  where the file is
-    write-handoff <lane> --whole <prepared> --expect-digest <sha> --subject <s>
+    write-handoff <lane> --prepend <block file> --subject <s>
 
-which takes the lane checkout's lock, brings the checkout to origin, checks the
-digest, replaces the file atomically, commits it by its own pathspec with the
-`Lane:` trailer, pushes, reads origin back and replays a refused push. So this
-file holds the skill's two blocks to what is left of them: derive the path and
-the digest, send the call with exactly those arguments, say what each exit
-means and never stop the swap (`R-A11-11`), and spell no checkout of its own.
+which takes the lane checkout's lock, brings the checkout to origin, reads the
+handoff there, puts the new top block, `---` and a blank line in front of it,
+proves the old file survives, replaces the file atomically, commits it by its
+own pathspec with the `Lane:` trailer, pushes, reads origin back and replays a
+refused push (lane openRepoTools-3's finding 981 on #311, option (a): the
+`--whole` call this file held before took a file the session had glued
+together, and a block with no final newline merged into the old one). So this
+file holds the skill's two blocks to what is left of them: derive the path,
+send the call with exactly those arguments, say what each exit means and never
+stop the swap (`R-A11-11`), and spell no checkout of its own.
 
 THE BLOCKS ARE RUN, NOT READ, under `bash` and under `zsh` where one is
 installed, because the Bash tool runs a skill's block under the user's own
@@ -48,7 +52,6 @@ real helper runs only in the sandbox, whose `gh` and `tmux` refuse.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -73,7 +76,7 @@ HELPER = REPO / "lanes-edit.sh"
 
 #: Each carried by exactly one shell block of the skill: how the blocks are found.
 B1 = 'handoff_file="$("$L" handoff-path "$lane" --create)"'
-B2 = '--whole "$prepared_file"'
+B2 = '--prepend "$block_file"'
 STEP4 = "# (c) the row: ONE WRITE"
 
 LANE = "repoHS-1"
@@ -81,11 +84,9 @@ UUID = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
 OLD = ("Lane: repoHS-1 (p, session s) — single-use resume prompt\n\n"
        "## RESUME PROMPT — PAUSED, the old block\n\nthe old state\n")
 #: The session's new top block, which it writes to `$block_file`, and the
-#: complete new file the skill builds from it: `write-handoff --prepend`'s layout.
+#: complete new file `write-handoff --prepend` makes of it under its lock.
 TOP = ("Lane: repoHS-1 (p, session s) — single-use resume prompt\n\n"
        "## RESUME PROMPT — PAUSED, the new block\n\n")
-NEW = TOP + "---\n\n" + OLD
-OLD_DIGEST = hashlib.sha256(OLD.encode("utf-8")).hexdigest()
 
 SHELLS = [
     pytest.param("bash", id="bash"),
@@ -142,12 +143,12 @@ import json, os, sys
 argv = sys.argv[1:]
 rec = {{"argv": argv, "lane": os.environ.get("LANES_LANE"),
        "no_fetch": os.environ.get("LANES_NO_FETCH")}}
-if argv[:1] == ["write-handoff"] and "--whole" in argv:
+if argv[:1] == ["write-handoff"] and "--prepend" in argv:
     try:
-        with open(argv[argv.index("--whole") + 1], "rb") as f:
-            rec["prepared"] = f.read().decode("utf-8")
+        with open(argv[argv.index("--prepend") + 1], "rb") as f:
+            rec["block"] = f.read().decode("utf-8")
     except (OSError, IndexError):
-        rec["prepared"] = None
+        rec["block"] = None
 with open(os.environ["STUB_LOG"], "a", encoding="utf-8") as log:
     log.write(json.dumps(rec) + "\\n")
 verb = argv[0] if argv else ""
@@ -208,22 +209,18 @@ class Estate:
         return [c["argv"][0] for c in self.calls()]
 
     def step2(self, *, ws: str = "Eagle", why: str = "'a usage reset'",
-              prepare: str = "block", between: str = ":") -> str:
+              prepare: str = "block") -> str:
         """Step 2 as a session runs it: the first block, the session's own act
         of writing its new top block, and only it, to `$block_file`, then the
-        block that builds the complete new file and makes the one call. `ws` and
-        `why` are shell words, so a case can hand the block an ANSI-C string.
-        `prepare` is "block" (as the skill says), "none" (nothing written), or
-        "by-hand" (the old habit: the whole new file written into
-        `$prepared_file`, and `$block_file` left empty). `between` is shell run
-        after that write and before the second block."""
+        block that makes the one call. `ws` and `why` are shell words, so a
+        case can hand the block an ANSI-C string. `prepare` is "block" (as the
+        skill says) or "none" (nothing written)."""
         write = {
             "block": f'[ -z "$block_file" ] || printf %s {shlex.quote(TOP)} > "$block_file"',
             "none": ":",
-            "by-hand": f'[ -z "$prepared_file" ] || printf %s {shlex.quote(NEW)} > "$prepared_file"',
         }[prepare]
         return "\n".join([f"L={shlex.quote(str(self.helper))}", f"lane={LANE}", f"ws={ws}",
-                          f"why={why}", _block(B1), write, between, _block(B2),
+                          f"why={why}", _block(B1), write, _block(B2),
                           'printf "AFTER\\n"'])
 
     def tool(self, name: str, script: str) -> None:
@@ -253,23 +250,22 @@ def _write_call(estate: Estate) -> dict:
 # --- the call: the arguments, and nothing else -------------------------------
 
 @pytest.mark.parametrize("shell", SHELLS)
-def test_block_calls_write_handoff_with_whole_and_expect_digest(estate, shell):
-    """The handoff's place is asked of `handoff-path --create`, its digest is
-    read from the bytes there, and `write-handoff` is called ONCE with the
-    prepared file the session wrote, that digest, and the subject: the lane, the
-    workstation and the why. `LANES_LANE` is the lane."""
+def test_block_calls_write_handoff_with_prepend_and_the_block_file(estate, shell):
+    """The handoff's place is asked of `handoff-path --create`, and
+    `write-handoff` is called ONCE with `--prepend` and the block file block 1
+    printed, which holds the session's new top block and only it, and the
+    subject: the lane, the workstation and the why. No digest is sent: the verb
+    reads the handoff itself, under its lock (lane openRepoTools-3's finding 981
+    on #311, option (a)). `LANES_LANE` is the lane."""
     proc = estate.run(shell, estate.step2(), STUB_WH_OUT=f"{estate.handoff}\tdeadbeef")
     assert proc.returncode == 0, proc.stderr
     assert estate.verbs() == ["handoff-path", "write-handoff"], estate.calls()
     assert estate.calls()[0]["argv"] == ["handoff-path", LANE, "--create"]
     call = _write_call(estate)
-    argv = call["argv"]
-    assert argv[:3] == ["write-handoff", LANE, "--whole"], argv
-    assert argv[4:] == ["--expect-digest", OLD_DIGEST, "--subject",
-                        f"handoff({LANE}@Eagle): PAUSED, a usage reset"], argv
-    assert call["prepared"] == NEW, (
-        "the file sent is the session's top block, `---` and a blank line, then the old file whole")
-    assert Path(argv[3]).parent == estate.tmp, "the prepared file is a temporary one"
+    assert call["argv"] == ["write-handoff", LANE, "--prepend", _block_file(proc), "--subject",
+                            f"handoff({LANE}@Eagle): PAUSED, a usage reset"], call["argv"]
+    assert call["block"] == TOP, "the file sent is the session's new top block, and only it"
+    assert Path(_block_file(proc)).parent == estate.tmp, "the block file is a temporary one"
     assert call["lane"] == LANE
     assert f"handoff written: {estate.handoff}" in proc.stdout, proc.stdout
     assert proc.stdout.endswith("AFTER\n")
@@ -278,73 +274,22 @@ def test_block_calls_write_handoff_with_whole_and_expect_digest(estate, shell):
 
 
 @pytest.mark.parametrize("shell", SHELLS)
-def test_the_digest_is_of_the_bytes_that_are_there(estate, shell):
-    """Not of a copy and not of the row's spelling: the file `handoff-path`
-    named, read as it stands."""
-    other = "a different handoff\nwith other bytes\n"
-    estate.handoff.write_text(other, encoding="utf-8")
-    estate.run(shell, estate.step2())
-    argv = _write_call(estate)["argv"]
-    assert argv[argv.index("--expect-digest") + 1] == hashlib.sha256(other.encode()).hexdigest()
-
-
-def _digest_sent(estate: Estate) -> str:
-    argv = _write_call(estate)["argv"]
-    return argv[argv.index("--expect-digest") + 1]
-
-
-@pytest.mark.parametrize("shell", SHELLS)
-@pytest.mark.parametrize("answer", [
-    "sha256sum:", OLD_DIGEST.upper(), OLD_DIGEST[:63],
-], ids=["a-word", "upper-case", "63-digits"])
-def test_a_digest_that_is_not_a_sha256_is_no_digest_and_nothing_is_sent(estate, shell, answer):
-    """rv3's mutant A on #311: the digest is held to the shape the verb's
-    `--expect-digest` takes, 64 lower-case hex digits, as it is read. A tool
-    that answers with anything else, an error word, upper case or a digest cut
-    short, gives no digest: block 1 prints none, the call is not made, and
-    step 4's line says the handoff was NOT refreshed."""
-    estate.tool("sha256sum", f'#!/bin/sh\nprintf "%s  %s\\n" {shlex.quote(answer)} "$2"\n')
-    proc = estate.run(shell, estate.step2() + "\n" + estate.step4())
+def test_no_digest_is_read_and_no_new_file_is_built(estate, shell):
+    """981, option (a): the skill reads no digest and builds no complete new
+    file, so a `sha256sum` or `shasum` it would ask is never asked, the one
+    temporary file it makes is the block file, and none of `--whole`,
+    `--expect-digest`, `prior_sha256` or `prepared_file` is left in either
+    block for a later edit to send."""
+    for tool in ("sha256sum", "shasum"):
+        estate.tool(tool, f'#!/bin/sh\necho "w3 shim {tool} asked" >&2\nexit 1\n')
+    proc = estate.run(shell, estate.step2(), STUB_WH_OUT=f"{estate.handoff}\tdeadbeef")
     assert proc.returncode == 0, proc.stderr
-    assert "prior_sha256=<none>" in proc.stdout, proc.stdout
-    assert "write-handoff" not in estate.verbs(), estate.calls()
-    assert "HANDOFF NOT WRITTEN" in proc.stdout, proc.stdout
-    assert "no digest read" in proc.stdout, proc.stdout
-    assert _register_line(estate).endswith(
-        "; handoff NOT refreshed (write-handoff was not called)"), _register_line(estate)
-
-
-@pytest.mark.skipif(shutil.which("sha256sum") is None,
-                    reason="the order of the two tools counts only where both are there")
-@pytest.mark.parametrize("shell", SHELLS)
-def test_sha256sum_gives_the_digest_where_shasum_is_there_too(estate, shell):
-    """rv3's mutant E on #311: the digest is read by the two tools the
-    helper's own `lane_handoff_digest` tries, in its order, `sha256sum` and
-    then `shasum -a 256`. Where both are there, `sha256sum`'s is the one: a
-    `shasum` that answers otherwise is never asked."""
-    estate.tool("shasum", '#!/bin/sh\necho "w3 shim shasum: $*" >&2\n'
-                          f'printf "%s  %s\\n" {"f" * 64} "$4"\n')
-    proc = estate.run(shell, estate.step2())
-    assert proc.returncode == 0, proc.stderr
-    assert _digest_sent(estate) == OLD_DIGEST, proc.stderr
-    assert "w3 shim shasum" not in proc.stderr, proc.stderr
-
-
-@pytest.mark.parametrize("shell", SHELLS)
-def test_the_digest_sent_is_block_1s_even_where_the_file_moved_before_the_call(estate, shell):
-    """rv3's mutant I on #311: the digest is of the bytes the session read in
-    block 1, which its new top block was written from, and is never read
-    again at the call. Here the file moves between the blocks: the new file is
-    built from what is there now, and the call still carries block 1's digest,
-    so the verb finds other bytes and refuses (7) rather than taking a top
-    block written from a file that is no longer there."""
-    moved = OLD + "a peer line, written between the blocks\n"
-    between = f"printf %s {shlex.quote(moved)} > {shlex.quote(str(estate.handoff))}"
-    proc = estate.run(shell, estate.step2(between=between))
-    assert proc.returncode == 0, proc.stderr
-    assert _digest_sent(estate) == OLD_DIGEST, proc.stdout
-    assert _write_call(estate)["prepared"] == TOP + "---\n\n" + moved, (
-        "the new file is built from the file as it is at the call")
+    assert "w3 shim" not in proc.stderr, proc.stderr
+    assert [p.name.split(".")[0] for p in estate.tmp.iterdir()] == ["handoff-block"], (
+        list(estate.tmp.iterdir()))
+    code = "\n".join(_code_lines([_block(B1), _block(B2)]))
+    for gone in ("--whole", "--expect-digest", "prior_sha256", "prepared_file", "sha256sum", "shasum"):
+        assert gone not in code, f"step 2's blocks still say {gone!r}"
 
 
 @pytest.mark.parametrize("shell", SHELLS)
@@ -387,7 +332,7 @@ def test_no_spelled_checkout_and_no_workspace_root_fallback(estate, shell):
         for call in estate.calls():
             argv = list(call["argv"])
             if argv[0] == "write-handoff":
-                argv[3] = "<prepared>"
+                argv[3] = "<block file>"
             out.append(dict(call, argv=argv))
         return out
 
@@ -400,11 +345,12 @@ def test_no_spelled_checkout_and_no_workspace_root_fallback(estate, shell):
     assert shape() == plain, "an ambient LANES_REPO changed the call"
 
 
-def test_the_three_variables_the_old_call_named_are_defined_in_a_block():
+def test_the_variables_the_call_names_are_defined_in_block_1():
     """`publish-handoff "$lane" "$handoff_file" "$prepared_file" --expect-digest
-    "$prior_sha256"` used its three variables without defining any of them."""
+    "$prior_sha256"` used its three variables without defining any of them.
+    The call `--prepend` makes names two, and block 1 defines both."""
     code = "\n".join(_code_lines([_block(B1)]))
-    for name in ("handoff_file", "prior_sha256", "prepared_file"):
+    for name in ("handoff_file", "block_file"):
         assert re.search(rf"(?m)^\s*{name}=", code), f"no block defines ${name}"
     assert "publish-handoff" not in "\n".join(_blocks(_text())), (
         "the old call is gone: write-handoff is the one act")
@@ -466,7 +412,7 @@ def _says(estate: Estate) -> dict:
                    ["HANDOFF NOT", "pushed from the lane checkout", "never committed"]),
         "refused-after-writing": (2, True, [
             "HANDOFF NOT COMMITTED", f"written at {path}, uncommitted", "Nothing was pushed",
-            "Do not call it again", "refused (7)"], ["HANDOFF NOT WRITTEN"]),
+            "Do not call it again", "a second copy of it on top"], ["HANDOFF NOT WRITTEN"]),
         "refused-before-writing": (2, False, [
             "HANDOFF NOT WRITTEN", "wrote nothing"], ["HANDOFF NOT COMMITTED"]),
         "pushed-not-confirmed": (3, True, [
@@ -474,11 +420,16 @@ def _says(estate: Estate) -> dict:
             "Do not call it published until it is read back"], []),
         "kept-on-head": (6, True, ["HANDOFF NOT PUSHED", "kept on HEAD", "(exit 6)",
                                    "Never force"], []),
-        "moved-or-owned": (7, False, [
-            "HANDOFF NOT WRITTEN", f"digest {OLD_DIGEST}", "(exit 7;",
-            "run the block under WHERE THE HANDOFF IS again", "reads a new digest",
-            "makes a new prepared file", "run this block once more",
-            "a restart owns it, do not retry"], []),
+        # 981, option (a): with `--prepend` no digest is sent, so a 7 is a restart's.
+        "owned-by-a-restart": (7, False, [
+            "HANDOFF NOT WRITTEN", "an active restart owns this handoff", "(exit 7;",
+            "nothing was published", "Do not retry: that restart writes this handoff"],
+            ["digest", "WHERE THE HANDOFF IS", "prepared file"]),
+        # 981: the verb refuses a block whose last byte is no newline (64), and writes nothing.
+        "block-with-no-final-newline": (64, False, [
+            "HANDOFF NOT WRITTEN", "(exit 64;", "wrote nothing",
+            "Where they say the block does not end with a newline, end it with one (echo >> ",
+            "run this block once more, once"], ["the file is written at"]),
         "no-handoff": (8, False, ["HANDOFF NOT PUBLISHED", "exited 8", "nothing was written"],
                        ["the file is written at"]),
         "environment": (1, False, ["HANDOFF NOT PUBLISHED", "exited 1", "nothing was written"],
@@ -495,8 +446,8 @@ def _says(estate: Estate) -> dict:
 
 
 CASES = ["pushed", "refused-after-writing", "refused-before-writing", "pushed-not-confirmed",
-         "kept-on-head", "moved-or-owned", "no-handoff", "environment", "lock",
-         "written-then-failed"]
+         "kept-on-head", "owned-by-a-restart", "block-with-no-final-newline", "no-handoff",
+         "environment", "lock", "written-then-failed"]
 
 
 @pytest.mark.parametrize("shell", SHELLS)
@@ -516,24 +467,23 @@ def test_each_exit_of_the_verb_is_said_and_the_swap_goes_on(estate, shell, case)
 
 @pytest.mark.parametrize("shell", SHELLS)
 @pytest.mark.parametrize("case", CASES)
-def test_the_new_file_is_kept_and_named_wherever_nothing_was_written(estate, shell, case):
+def test_the_new_top_block_is_kept_and_named_wherever_nothing_was_written(estate, shell, case):
     """rv3's MUST 1, for the call's own outcomes: where the verb wrote nothing
-    (no stdout), the session's new file is not lost with the swap. The block
-    names the temporary file that holds it, for the report; where the verb
-    wrote the handoff, there is nothing to keep and nothing is said of it."""
+    (no stdout), the session's new top block is not lost with the swap. The
+    block names the temporary file that holds it, the one sent, for the
+    report; where the verb wrote the handoff, there is nothing to keep and
+    nothing is said of it."""
     rc, written, _, _ = _says(estate)[case]
     out = f"{estate.handoff}\tdeadbeef" if written else ""
     proc = estate.run(shell, estate.step2(), STUB_WH_RC=str(rc), STUB_WH_OUT=out)
     sent = _write_call(estate)["argv"][3]
-    kept = f"kept at {sent}"
-    top = f"its new top block alone at {_block_file(proc)}"
+    assert sent == _block_file(proc)
+    kept = f"The new top block is kept at {sent}"
     if written:
         assert kept not in proc.stdout, proc.stdout
-        assert top not in proc.stdout, proc.stdout
     else:
-        assert kept in proc.stdout, f"{case}: the new file is not named\n{proc.stdout}"
-        assert top in proc.stdout, f"{case}: the top block's file is not named\n{proc.stdout}"
-        assert "name both paths in the report" in proc.stdout, proc.stdout
+        assert kept in proc.stdout, f"{case}: the top block's file is not named\n{proc.stdout}"
+        assert "name that path in the report" in proc.stdout, proc.stdout
 
 
 def _block_file(proc: subprocess.CompletedProcess) -> str:
@@ -675,49 +625,15 @@ def test_only_a_2_is_asked_again_and_never_with_create(estate, shell, rc):
 
 
 @pytest.mark.parametrize("shell", SHELLS)
-@pytest.mark.parametrize("prepare", ["none", "by-hand"])
+@pytest.mark.parametrize("prepare", ["none"])
 def test_a_top_block_the_session_never_wrote_is_never_sent(estate, shell, prepare):
     """`mktemp` makes an empty file, and an empty `$block_file` is no new top
-    block: the block does not build a file or ask. A whole file written by hand
-    into `$prepared_file` (the old habit, where a session that forgot the
-    history sent only its block, rv3's SHOULD 1) is not what is sent either."""
+    block: the block does not ask (the verb would refuse it, 1)."""
     proc = estate.run(shell, estate.step2(prepare=prepare))
     assert proc.returncode == 0
     assert "HANDOFF NOT WRITTEN" in proc.stdout, proc.stdout
     assert "was NOT called" in proc.stdout, proc.stdout
     assert estate.verbs() == ["handoff-path"], estate.calls()
-
-
-#: The register line's last phrase where the new file did not keep the old one.
-LOST = "; handoff NOT refreshed (the new file did not keep the old handoff whole)"
-
-
-@pytest.mark.parametrize("shell", SHELLS)
-@pytest.mark.parametrize("how", ["short", "failed"])
-def test_a_new_file_that_lost_the_old_one_is_never_sent(estate, shell, how):
-    """rv3's SHOULD 1 on #311, option (b): the block builds the complete new
-    file itself, the top block from `$block_file`, `---` and a blank line, then
-    `cat -- "$handoff_file"`, and proves the old file survives at its end, byte
-    for byte (`tail -c <old size> | cmp`), before the call. A build that lost the
-    old file's bytes, here a `cat` that wrote only the first ten of them or
-    failed, is never sent: the call is not made, the block says why and names
-    the top block's file for the report, and step 4's line says the handoff was
-    NOT refreshed."""
-    cut = 'head -c 10 -- "$last"; exit 0' if how == "short" else "exit 1"
-    shim = estate.bin / "cat"
-    shim.write_text(f'#!/bin/sh\nfor last in "$@"; do :; done\n'
-                    f'[ "$last" = "$STUB_CAT_CUT" ] || exec {shutil.which("cat")} "$@"\n{cut}\n',
-                    encoding="utf-8")
-    shim.chmod(shim.stat().st_mode | stat.S_IXUSR)
-    proc = estate.run(shell, estate.step2() + "\n" + estate.step4(),
-                      STUB_CAT_CUT=str(estate.handoff))
-    assert proc.returncode == 0, proc.stderr
-    assert "write-handoff" not in estate.verbs(), estate.calls()
-    assert "HANDOFF NOT WRITTEN" in proc.stdout, proc.stdout
-    assert "does not end with the old handoff whole" in proc.stdout, proc.stdout
-    assert "write-handoff was NOT called" in proc.stdout, proc.stdout
-    assert f"kept at {_block_file(proc)}" in proc.stdout, proc.stdout
-    assert _register_line(estate).endswith(LOST), _register_line(estate)
 
 
 # --- step 4's register line says what step 2 did (rv3's SHOULD 3) ------------
@@ -737,6 +653,8 @@ def _register_line(estate: Estate) -> str:
     ({}, True, True, REFRESHED),
     ({"STUB_WH_RC": "7"}, False, True,
      "; handoff NOT refreshed (write-handoff exited 7 and wrote nothing)"),
+    ({"STUB_WH_RC": "64"}, False, True,
+     "; handoff NOT refreshed (write-handoff exited 64 and wrote nothing)"),
     ({"STUB_WH_RC": "2"}, False, True,
      "; handoff NOT refreshed (write-handoff exited 2 and wrote nothing)"),
     ({"STUB_WH_RC": "2"}, True, True,
@@ -754,7 +672,8 @@ def _register_line(estate: Estate) -> str:
     ({"STUB_HP_RC": "2", "STUB_HP_OUT": "", "STUB_HP_ERR": OLDER_HELPER}, False, True,
      "; handoff NOT refreshed (the handoff read failed, exit 2)"),
     ({}, False, False, "; handoff NOT refreshed (write-handoff was not called)"),
-], ids=["pushed", "moved-or-owned", "refused-before-writing", "refused-after-writing",
+], ids=["pushed", "owned-by-a-restart", "block-with-no-final-newline", "refused-before-writing",
+        "refused-after-writing",
         "pushed-not-confirmed", "kept-on-head", "written-then-failed", "not-found", "read-failed",
         "older-helper", "never-prepared"])
 def test_step4_register_line_says_what_step_2_did(estate, shell, extra, written, prepare, ends):
@@ -794,14 +713,16 @@ REAL_LANE = "repoS4-1"
 REAL_WHY = "a usage reset"
 
 
-def _real_script(shell_between: str = "", *, lane: str = REAL_LANE, block: str = BLOCK) -> str:
-    """Step 2 whole: the session writes its new top block alone, and the skill
-    builds `REAL_NEW` from it and the old file."""
+def _real_script(shell_between: str = "", *, lane: str = REAL_LANE, block: str = BLOCK,
+                 after: str = "") -> str:
+    """Step 2 whole: the session writes its new top block alone, and the verb
+    puts it in front of the old file under its lock (`REAL_NEW`). `after` is
+    shell run once block 2 is done, in the same shell."""
     return "\n".join([
         f"L={shlex.quote(str(HELPER))}", f"lane={lane}", "ws=Eagle", f"why={shlex.quote(REAL_WHY)}",
         _block(B1), shell_between,
         f'[ -z "$block_file" ] || printf %s {shlex.quote(block)} > "$block_file"',
-        _block(B2)])
+        _block(B2), after])
 
 
 def _real_run(box: RealBox, shell: str, script: str) -> subprocess.CompletedProcess:
@@ -834,7 +755,7 @@ def test_the_handoff_is_pushed_from_the_lane_checkout_and_W_is_untouched(real, s
     not the entry another lane left STAGED there, which the old block committed
     and published. The session wrote its new top block alone, as rv3's probe of
     SHOULD 1 did, and origin's handoff is that block over the old file whole:
-    the history survives, because the skill builds the file."""
+    the history survives, because the verb makes the file (`--prepend`)."""
     if how == "seam":
         c = real.seam()
     else:
@@ -866,40 +787,42 @@ def test_the_handoff_is_pushed_from_the_lane_checkout_and_W_is_untouched(real, s
     assert not real.lock_of(c).exists(), "the checkout's lock is released"
 
 
-@pytest.mark.parametrize("shell", SHELLS)
-def test_a_handoff_that_moved_after_its_digest_was_read_is_refused_and_nothing_is_published(
-        real, shell):
-    """The digest is of the bytes the new file was made from. A peer's edit that
-    lands between the read and the call is exit 7: the verb fetches the lane's
-    checkout, finds other bytes, and publishes nothing; the block says so and
-    tells the session to read it again."""
-    peer = shlex.quote(str(real.seed))
+def _peer_edit(box: RealBox) -> str:
+    """Shell that a peer runs between the blocks: it appends a line to the
+    lane's handoff in another clone and pushes it."""
+    peer = shlex.quote(str(box.seed))
     rel = shlex.quote(HANDOFF_REL)
-    between = (f"git -C {peer} pull -q --ff-only origin main && "
-               f"printf '%s\\n' 'a peer line' >> {peer}/{rel} && "
-               f"git -C {peer} add -- {rel} && "
-               f"git -C {peer} commit -q -m 'a peer edits the handoff' && "
-               f"git -C {peer} push -q origin main")
-    proc = _real_run(real, shell, _real_script(between))
+    return (f"git -C {peer} pull -q --ff-only origin main && "
+            f"printf '%s\\n' 'a peer line' >> {peer}/{rel} && "
+            f"git -C {peer} add -- {rel} && "
+            f"git -C {peer} commit -q -m 'a peer edits the handoff' && "
+            f"git -C {peer} push -q origin main")
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_a_peers_edit_pushed_between_the_blocks_is_kept_under_the_new_block(real, shell):
+    """981, option (a), as lane openRepoTools-3 answered question 1: with
+    `--whole` and a digest, a peer's edit that landed between the read and
+    the call was 7 and nothing was published. With `--prepend` the verb
+    reads the handoff under its lock, from what S3 has just brought from
+    origin, so the new block goes on top of the peer's file and both are
+    kept, newest on top: the handoff's normal shape, at the first call."""
+    proc = _real_run(real, shell, _real_script(_peer_edit(real)))
     assert proc.returncode == 0, _said(proc)
-    assert "HANDOFF NOT WRITTEN" in proc.stdout, _said(proc)
-    assert "once more" in proc.stdout, _said(proc)
-    assert "nothing was published" in proc.stderr, _said(proc)
-    assert real.subjects()[0] == "a peer edits the handoff"
-    assert "a peer line" in real.origin_file(HANDOFF_REL)
-    assert real.origin_file(HANDOFF_REL) != REAL_NEW
+    assert "handoff written:" in proc.stdout, _said(proc)
+    assert real.subjects()[:2] == [f"handoff({REAL_LANE}@Eagle): PAUSED, {REAL_WHY}",
+                                   "a peer edits the handoff"]
+    assert real.origin_file(HANDOFF_REL) == prepended(HANDOFF + "a peer line\n", BLOCK), _said(proc)
 
 
 @pytest.mark.parametrize("shell", SHELLS)
 @pytest.mark.parametrize("how", ["routed", "seam"])
-def test_a_lane_checkout_behind_origin_is_7_once_and_written_when_step_2_is_run_again(
-        real, shell, how):
-    """rv3's SHOULD 2 (question 3 of the body), ported from its probe. A lane
-    checkout behind origin on its handoff: `handoff-path --create` leaves it
-    as it is, the digest is of its stale copy, and the verb fast-forwards it
-    first, so the first call is 7 with nothing published. The 7 arm's words
-    are the way out: the block under WHERE THE HANDOFF IS run again reads the
-    digest the checkout has now, and the call made once more writes the new
+def test_a_lane_checkout_behind_origin_is_written_on_the_first_call(real, shell, how):
+    """rv3's SHOULD 2 (question 3 of the body), ported from its probe, and
+    lane openRepoTools-3's answer to question 4: a lane checkout behind origin
+    on its handoff was 7 once with `--whole`, because the digest was of its
+    stale copy. With `--prepend` the case goes away: the verb fast-forwards
+    the checkout and reads the file there, so the first call writes the new
     block over the peer's file, which survives under it."""
     if how == "seam":
         real.seam()
@@ -908,24 +831,70 @@ def test_a_lane_checkout_behind_origin_is_7_once_and_written_when_step_2_is_run_
         assert made.returncode == 0, made.stderr
     peer_text = HANDOFF + "a peer line, pushed from elsewhere\n"
     real.peer_pushes(HANDOFF_REL, peer_text)
-    script = _real_script()
-    first = _real_run(real, shell, script)
+    proc = _real_run(real, shell, _real_script())
+    assert proc.returncode == 0, _said(proc)
+    assert "handoff written:" in proc.stdout, _said(proc)
+    assert real.origin_file(HANDOFF_REL) == prepended(peer_text, BLOCK), _said(proc)
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_a_block_with_no_final_newline_is_refused_and_written_once_it_has_one(real, shell):
+    """981 (MUST) of lane openRepoTools-3's review of #311 at `1913db9`: a
+    top block with no final newline (a Write-tool body, a `printf %s`) was
+    glued to the `---` under it, so origin's handoff read `…the newer
+    block---`, and `lane-start`'s `handoff_top_block`, which stops at the
+    first line opening with `---`, gave the next session the new block and the
+    old one as one prompt. The verb refuses that block (64) and writes nothing;
+    the block says so, and what its 64 arm says to do, an `echo` onto the
+    block file and block 2 once more, writes the handoff whole."""
+    c = real.seam()
+    tip = real.origin_head()
+    unterminated = BLOCK.rstrip("\n")
+    assert not unterminated.endswith("\n")
+    first = _real_run(real, shell, _real_script(
+        block=unterminated, after='printf "FIRST_RECORD=%s\\n" "$hf_record"'))
     assert first.returncode == 0, _said(first)
-    assert "(exit 7;" in first.stdout, _said(first)
-    assert "run the block under WHERE THE HANDOFF IS again" in first.stdout, _said(first)
-    assert real.origin_file(HANDOFF_REL) == peer_text, "nothing is published on a 7"
-    second = _real_run(real, shell, script)
-    assert second.returncode == 0, _said(second)
-    assert "handoff written:" in second.stdout, _said(second)
-    assert real.origin_file(HANDOFF_REL) == prepended(peer_text, BLOCK), _said(second)
+    assert "(exit 64;" in first.stdout, _said(first)
+    assert "does not end with a newline" in first.stderr, _said(first)
+    assert "HANDOFF NOT WRITTEN" in first.stdout, _said(first)
+    assert real.origin_head() == tip, "nothing is published on a 64"
+    assert (c / HANDOFF_REL).read_text(encoding="utf-8") == HANDOFF, "nothing is written on a 64"
+    assert ("FIRST_RECORD=handoff NOT refreshed (write-handoff exited 64 and wrote nothing)"
+            in first.stdout), _said(first)
+    fixed = _real_run(real, shell, _real_script(
+        block=unterminated, after='echo >> "$block_file"\n' + _block(B2)))
+    assert fixed.returncode == 0, _said(fixed)
+    assert "handoff written:" in fixed.stdout, _said(fixed)
+    assert real.origin_file(HANDOFF_REL) == prepended(HANDOFF, unterminated + "\n"), _said(fixed)
+    top = real.origin_file(HANDOFF_REL).split("\n---\n")[0]
+    assert top == unterminated, "the rule is a line of its own: no line of the block runs into it"
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_an_active_restart_is_a_7_and_the_block_says_not_to_retry(real, shell):
+    """981, option (a): with `--prepend` a 7 is a restart's (`an active
+    restart owns this handoff`), never "moved since it was read", so the arm
+    says that restart writes the handoff and does not send the session back
+    for a new digest. Nothing is written or published."""
+    c = real.seam()
+    real.restart(c / HANDOFF_REL)
+    tip = real.origin_head()
+    proc = _real_run(real, shell, _real_script())
+    assert proc.returncode == 0, _said(proc)
+    assert "an active restart owns this handoff" in proc.stderr, _said(proc)
+    assert "(exit 7;" in proc.stdout, _said(proc)
+    assert "Do not retry: that restart writes this handoff" in proc.stdout, _said(proc)
+    assert "WHERE THE HANDOFF IS" not in proc.stdout, _said(proc)
+    assert (c / HANDOFF_REL).read_text(encoding="utf-8") == HANDOFF
+    assert real.origin_head() == tip
 
 
 @pytest.mark.parametrize("shell", SHELLS)
 def test_a_staged_entry_in_the_lane_checkout_leaves_the_handoff_written_and_uncommitted(
         real, shell):
-    """S3's refusal (2) with `--whole`: the file is written (`R-A11-11`), nothing
+    """S3's refusal (2) with `--prepend`: the file is written (`R-A11-11`), nothing
     is committed or pushed, the entry that is not the handoff's stays staged and
-    unpublished, and the block says exactly that."""
+    unpublished, and the block says exactly that, and not to call it again."""
     c = real.seam()
     real.write(c, "handoffs/foreign.md", "someone else's entry\n")
     real.git("-C", str(c), "add", "--", "handoffs/foreign.md")
@@ -936,6 +905,7 @@ def test_a_staged_entry_in_the_lane_checkout_leaves_the_handoff_written_and_unco
     assert proc.returncode == 0, _said(proc)
     assert "HANDOFF NOT COMMITTED" in proc.stdout, _said(proc)
     assert f"written at {c / HANDOFF_REL}, uncommitted" in proc.stdout, _said(proc)
+    assert "Do not call it again" in proc.stdout, _said(proc)
     assert (c / HANDOFF_REL).read_text(encoding="utf-8") == REAL_NEW
     assert real.origin_head() == tip
     assert real.head(c) == head
