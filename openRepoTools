@@ -3624,8 +3624,24 @@ $(guard_block_text)"
 # `claude_home` are functions of builtins, which this shell runs itself, and
 # `read_answer` takes the value `$(…)` took, the one planning checked; `dirname`
 # is a plain command.
+#
+# WHAT A REFUSAL HERE SAYS IS PLACED IS WHAT IS TRUE AT THE POSITION IT FIRES AT
+# (#321). The six skill files go first (each of the three skills, at the shared
+# directory and then the bare one), the six command files next, the hook pair
+# last. So at a skill file every skill file before it is placed, and it and the
+# ones after it are not; no command file is placed there, and the hook pair is
+# placed at neither. At a command file all six skill files and every command
+# file before it are placed, and it and the command files after it are not.
+# "This one" is the file that was to go there, at a `mkdir` refusal too: the
+# one the directory was for. Each loop's sentence is written once, in
+# `rest_at_a_skill` and `rest_at_a_command`, so its `mkdir` refusal and its
+# `place_by_rename` refusal cannot come to two answers, and each starts "The N
+# commands above are placed;" as the bin loop's refusals do about theirs.
 place_skill_and_hook() {
 	local shared_dir bare_dir target verb name profiles="" claude_dir="" parent=""
+	local rest_at_a_skill rest_at_a_command
+	rest_at_a_skill="The $placed commands above are placed; so is every skill file before this one. This one, the skill files after it, the command files and the hook are not."
+	rest_at_a_command="The $placed commands above are placed; so are the skill files and every command file before this one. This one, the command files after it and the hook are not."
 	skills_home >"$WORKDIR/answer"
 	read_answer profiles "$WORKDIR/answer"
 	claude_home >"$WORKDIR/answer"
@@ -3643,7 +3659,7 @@ place_skill_and_hook() {
 		read_answer parent "$WORKDIR/answer"
 		mkdir -p -- "$parent" ||
 			die "could not create $parent for the $name skill.
-    The $placed commands above are placed; the skills and the hook are not."
+    $rest_at_a_skill"
 		# A LINK TAKES THE OTHER ARM, AS IT DOES IN `install_commands` (#257):
 		# one made since planning is no "bytes already right", and its far end
 		# is not this installer's to `chmod`. `place_by_rename` refuses it.
@@ -3668,7 +3684,7 @@ place_skill_and_hook() {
 			# garbage — but one way to place a file is one rule to read, and a
 			# reader that opens it mid-install still sees the old text or the
 			# new, never a truncated one.
-			place_by_rename "$WORKDIR/skill-$name.md" "$target" 644 "The $placed commands above are placed; the skills and the hook are not."
+			place_by_rename "$WORKDIR/skill-$name.md" "$target" 644 "$rest_at_a_skill"
 		fi
 		# 644: a SKILL.md is a document a session READS, not a command. The
 		# seventeen in the bin directory are stamped 755 for the reason that loop
@@ -3700,7 +3716,7 @@ place_skill_and_hook() {
 			read_answer parent "$WORKDIR/answer"
 			mkdir -p -- "$parent" ||
 				die "could not create $parent for the /$name command.
-    The $placed commands above are placed; the skills, the command files and the hook are not."
+    $rest_at_a_command"
 			# A LINK TAKES THE OTHER ARM HERE TOO (#257), as a skill's does.
 			if [ -e "$target" ] && cmp -s "$WORKDIR/command-$name.md" "$target" && [ ! -L "$target" ]; then
 				# The same stamp on the same arm, for the same reason a skill's
@@ -3715,7 +3731,7 @@ place_skill_and_hook() {
 				chmod 644 "$target" || die "could not set the mode on $target."
 			else
 				if [ -e "$target" ]; then verb="updated at $target"; else verb="installed at $target"; fi
-				place_by_rename "$WORKDIR/command-$name.md" "$target" 644 "The $placed commands above are placed; the skills, the command files and the hook are not."
+				place_by_rename "$WORKDIR/command-$name.md" "$target" 644 "$rest_at_a_command"
 			fi
 			say "/$name: $verb"
 		done
