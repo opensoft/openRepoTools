@@ -292,8 +292,9 @@ USAGE
 # every `$(…)` before the first placement (planning, the source, the fetch) and
 # after the last (the receipt, the retirement, the notes). None of them waits
 # while a temporary of `place_by_rename`'s exists. A SIGINT lost in the refusal
-# ends the run with its exit 2, not by the signal; one lost in any other does
-# nothing at that instant: the run goes on to the next.
+# would end the run with its exit 2, not by the signal; one lost in any other
+# would do nothing at that instant: the run would go on to the next. Both are
+# inferred from how bash waits, and no case measures either.
 # TERM is not trapped: bash runs a trap only once the command it is waiting
 # for has finished, so a TERM trap would let a hung fetch hold off a `kill`.
 # shellcheck disable=SC2317  # run by the two traps below, which it cannot see
@@ -303,7 +304,19 @@ remove_workdir() {
 }
 workdir() {
 	if [ -z "$WORKDIR" ]; then
-		WORKDIR="$(mktemp -d)"
+		# A DIRECTORY THAT CANNOT BE MADE ENDS THE RUN HERE, ON ITS OWN (#318),
+		# for a caller that runs in the shell: `set -e` cannot be what ends it,
+		# because `pipx_link_match`, which calls this, is itself asked inside an
+		# `if`, where `-e` is off. There a failed `mktemp` went on with
+		# `$WORKDIR` empty, wrote `/answer`, and refused a link that was pipx's.
+		# Called in the shell, the `exit` ends the run (a `return` would be
+		# swallowed by that `if`), and neither trap is set yet, so nothing is
+		# removed. In a `$(…)` or `( … )` caller the `exit` ends only that
+		# subshell: `wip_shape_ref`'s caller passes its status on
+		# (`ref="$(wip_shape_ref)" || exit "$?"`), and `venv_shaped_link`'s
+		# nested `( pipx_link_match … )` relies on planning's own call, which
+		# runs in the shell, having made the workdir first.
+		WORKDIR="$(mktemp -d)" || exit 1
 		trap remove_workdir EXIT
 		trap 'remove_workdir; trap - INT; kill -INT $$; exit 130' INT
 	fi
@@ -2089,8 +2102,11 @@ owner_of() {   # <path>
 # less the one newline the command ends it with. `parent` holds the directory,
 # never `$PLACING`, which the traps glob. The `readlink` that names a link
 # refused before the rename writes there too (#318), and `read_answer` takes
-# its answer as the `$(…)` it replaces did: a SIGINT lost in that wait turned a
-# death by SIGINT into the refusal's exit 2.
+# its answer as the `$(…)` it replaces did. Had a SIGINT been lost in that
+# wait, the run would have gone on to the refusal and its exit 2 instead of
+# dying of the signal. That is inferred from how bash waits, not measured: at
+# the merge of #250's and #257's branches the late-link case (a link made after
+# planning) died of SIGINT after its hold.
 #
 # SO A PLACEMENT NEEDS THE WORKDIR, AND REFUSES WITHOUT ONE (#250). With
 # `$WORKDIR` empty, each answer above would be written to `/placing`, at the
