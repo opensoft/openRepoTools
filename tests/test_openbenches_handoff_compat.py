@@ -76,6 +76,17 @@ def _environment_block():
     return "\n".join(_one_block("check_claude_env_dual() {")) + "\n"
 
 
+def _command_environment_block():
+    source = (REPO / "lane-handoff").read_text()
+    start = source.index("check_claude_env_dual() {")
+    end = source.index("\n}\n", start) + 3
+    return source[start:end] + (
+        "check_claude_env_dual WINDOW_REF || exit\n"
+        "check_claude_env_dual WINDOW_ID || exit\n"
+        "check_claude_env_dual LANE_DIR || exit\n"
+    )
+
+
 def _directory_block():
     first = 'dir=""; dir_read_failed='
     return _cut(_one_block(first), first, "fi", exact_last=True)
@@ -123,6 +134,32 @@ def test_openbenches_handoff_skill_environment_matrix(skill_box, shell, suffix, 
         assert proc.returncode == 0, (proc.stdout, proc.stderr)
         assert proc.stdout == f"AFTER [{expected}]\n", (proc.stdout, proc.stderr)
         assert proc.stderr == "", proc.stderr
+
+
+@pytest.mark.parametrize("implementation", ("skill", "command"))
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("suffix", SUFFIXES)
+def test_openbenches_handoff_environment_values_are_not_executed(
+    skill_box, shell, suffix, implementation, tmp_path
+):
+    script = (
+        _environment_block()
+        if implementation == "skill"
+        else _command_environment_block()
+    )
+    script += "printf 'AFTER\\n'\n"
+    for index, payload in enumerate(
+        ("$(touch {marker})", "`touch {marker}`", '"; touch {marker}; #')
+    ):
+        marker = tmp_path / f"executed-{implementation}-{suffix}-{index}"
+        value = payload.format(marker=shlex.quote(str(marker)))
+        env = {}
+        _set_pair(env, suffix, "equal-dual", value, value)
+        proc = skill_box.run(shell, script, env)
+        assert proc.returncode == 0, (implementation, proc.stdout, proc.stderr)
+        assert proc.stdout == "AFTER\n", (implementation, proc.stdout, proc.stderr)
+        assert proc.stderr == "", (implementation, proc.stdout, proc.stderr)
+        assert not marker.exists(), (implementation, payload, proc.stdout, proc.stderr)
 
 
 @pytest.fixture

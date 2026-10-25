@@ -150,10 +150,30 @@ window reads in step 4 are too late to protect step 2's writes.
 ```sh
 check_claude_env_dual() {   # <WINDOW_REF|WINDOW_ID|LANE_DIR>
   local cce_suffix="$1" cce_new_set cce_legacy_set cce_new cce_legacy
-  eval "cce_new_set=\${OPENBENCHES_CLAUDE_${cce_suffix}+set}"
-  eval "cce_legacy_set=\${WORKBENCHES_CLAUDE_${cce_suffix}+set}"
-  eval "cce_new=\${OPENBENCHES_CLAUDE_${cce_suffix}-}"
-  eval "cce_legacy=\${WORKBENCHES_CLAUDE_${cce_suffix}-}"
+  case "$cce_suffix" in
+    WINDOW_REF)
+      cce_new_set="${OPENBENCHES_CLAUDE_WINDOW_REF+set}"
+      cce_legacy_set="${WORKBENCHES_CLAUDE_WINDOW_REF+set}"
+      cce_new="${OPENBENCHES_CLAUDE_WINDOW_REF-}"
+      cce_legacy="${WORKBENCHES_CLAUDE_WINDOW_REF-}"
+      ;;
+    WINDOW_ID)
+      cce_new_set="${OPENBENCHES_CLAUDE_WINDOW_ID+set}"
+      cce_legacy_set="${WORKBENCHES_CLAUDE_WINDOW_ID+set}"
+      cce_new="${OPENBENCHES_CLAUDE_WINDOW_ID-}"
+      cce_legacy="${WORKBENCHES_CLAUDE_WINDOW_ID-}"
+      ;;
+    LANE_DIR)
+      cce_new_set="${OPENBENCHES_CLAUDE_LANE_DIR+set}"
+      cce_legacy_set="${WORKBENCHES_CLAUDE_LANE_DIR+set}"
+      cce_new="${OPENBENCHES_CLAUDE_LANE_DIR-}"
+      cce_legacy="${WORKBENCHES_CLAUDE_LANE_DIR-}"
+      ;;
+    *)
+      printf 'REFUSED: unknown Claude environment suffix: %s\n' "$cce_suffix" >&2
+      return 2
+      ;;
+  esac
   if [ "$cce_new_set" = set ] && [ "$cce_legacy_set" = set ] && [ "$cce_new" != "$cce_legacy" ]; then
     printf 'REFUSED: OPENBENCHES_CLAUDE_%s and WORKBENCHES_CLAUDE_%s have conflicting values. Set both to the same value, or unset the incorrect one, then re-run. Nothing was renamed or written.\n' \
       "$cce_suffix" "$cce_suffix" >&2
