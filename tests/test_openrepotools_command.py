@@ -74,7 +74,7 @@ COMMAND = REPO / "openRepoTools"
 #: than bash, which made the list SIXTEEN. `lane-worktrees` joined it for
 #: opensoft/openRepoTools#162 (Brett Heap's word of 2026-10-05, "build 162"),
 #: at the END for the same reason, and Python like `lanes-index`: the list is
-#: SEVENTEEN.
+#: what follows.
 INSTALLED = ("openRepoTools", "park", "resume", "status", "lane", "lanes",
              "lane-handoff", "lane-rename", "lanes-edit.sh", "lane-start",
              "lane-end", "link-estates", "repos.tsv", "claude-current",
@@ -453,7 +453,7 @@ def test_installing_twice_changes_nothing(tmp_path):
     assert second.returncode == 0, second.stderr
     for name in INSTALLED:
         assert f"{name}: already installed at" in second.stdout, name
-    # THIRTY-ONE, not seventeen: the six skill copies, the six command-file copies
+    # EVERY ARTIFACT, not only `INSTALLED`: the skill and command-file copies
     # and BOTH hook entries each report `unchanged` too, and the count is the
     # invariant Amendment 9(b) names — derived from the three lists, never
     # restated, so a new skill or command moves it. It was eighteen until
@@ -467,8 +467,8 @@ def test_installing_twice_changes_nothing(tmp_path):
 @pytest.mark.parametrize("name", INSTALLED)
 @NEEDS_JQ
 def test_install_replaces_a_copy_that_has_drifted(tmp_path, name):
-    """Per file, and only the one that drifted: an install that rewrote all
-    seventeen every time would have nothing to say about which one was stale."""
+    """Per file, and only the one that drifted: an install that rewrote all of
+    `INSTALLED` every time would have nothing to say about which one was stale."""
     assert run_cmd("--install", home=tmp_path).returncode == 0
     target = tmp_path / ".local" / "bin" / name
     target.write_text(target.read_text(encoding="utf-8") + "# drift\n",

@@ -64,8 +64,8 @@ def tracked_files():
 #: file a person has on their PATH — the installer, the two estate verbs, the
 #: read-only `status` and the two lane words below — so each is held to the
 #: same shebang, mode bit and `set -euo pipefail` rule. The macOS job parses
-#: these same SIX with `/bin/bash -n`, one command per file, which is what
-#: keeps the bash-3.2 claim true. (It said "four" while the list held six,
+#: these same files with `/bin/bash -n`, one command per file, which is what
+#: keeps the bash-3.2 claim true. (It once gave a count the list had outgrown,
 #: which is a description contradicting the inventory it explains; Copilot
 #: round 3 on #45.)
 #: `lane` and `lanes` join under lane-collision-protocol Amendment 18 Addendum 1
