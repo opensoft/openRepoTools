@@ -2233,6 +2233,16 @@ def test_a_run_killed_while_the_receipt_temporary_exists_leaves_none(
     `installed.tsv.*` beside the receipt, and no temporary beside a target.
     THE CHILD STARTS WITH ALL THREE SIGNALS AT THEIR DEFAULT, for the reason
     `run_signalled_at_the_settings_temporary` gives.
+
+    `SIGTERM-in-the-cp` PASSES PARTLY BY ORDER, and is #250's `cp` window,
+    which the comment above `remove_workdir` names. The SIGTERM reaches the
+    shell alone, so the stand-in `cp` outlives the shell and copies about
+    three seconds after the run has died. That copy fails, and makes no
+    temporary again, only because the `EXIT` trap had already removed its
+    source, `$WORKDIR/receipt-rows`, with the workdir; from a source outside
+    the workdir it would make `installed.tsv.<pid>.*` again after the run
+    was over. What this case holds is that the trap ran and took the
+    temporary that existed, not that no late `cp` can make one.
     """
     real = shutil.which(tool)
     if real is None:
@@ -2276,6 +2286,111 @@ def test_a_run_killed_while_the_receipt_temporary_exists_leaves_none(
         f"the run did not die of {signame}: exit {run.returncode}\n{out}{err}")
     assert receipt_temporaries(tmp_path) == [], (
         f"a receipt temporary outlived the run: {seen}\n{out}{err}")
+    assert placement_temporaries(tmp_path) == []
+
+
+#: A `mktemp` THAT HOLDS ONCE IT HAS MADE THE RECEIPT'S TEMPORARY (#342): for
+#: the receipt's template it makes the file with the real one, gives the
+#: answer, closes its output and leaves a `.openrepotools.` name in
+#: `$ORT_HOOK_DIR`, then stays until the signal hook has fired (ten seconds at
+#: most), writes `released` to `$ORT_HOOK_DIR/held` if it saw the hook's mark
+#: before then, and exits 0, as `HELD_CALL` holds #318's waits. Every other
+#: call goes to the real one.
+RECEIPT_MKTEMP_HELD = ('case "$*" in\n'
+                       '*/installed.tsv.*)\n'
+                       '\tmade=$({real} "$@") || exit $?\n'
+                       "\tprintf '%s\\n' \"$made\"\n"
+                       '\texec >&-\n'
+                       '\t: >"$ORT_HOOK_DIR/.made.openrepotools.$$"\n'
+                       '\ti=0\n'
+                       '\twhile [ ! -e "$ORT_HOOK_MARK" ] && [ "$i" -lt 200 ]; do\n'
+                       '\t\tsleep 0.05\n'
+                       '\t\ti=$((i + 1))\n'
+                       '\tdone\n'
+                       '\t[ "$i" -ge 200 ] || '
+                       "printf 'released\\n' >\"$ORT_HOOK_DIR/held\"\n"
+                       '\texit 0 ;;\n'
+                       'esac\n'
+                       'exec {real} "$@"\n')
+
+
+@NEEDS_JQ
+def test_a_sigint_in_the_wait_for_the_receipt_mktemp_ends_the_run_and_leaves_no_temporary(
+        tmp_path, signal_hook):
+    """THE SHELL WAITS FOR THE RECEIPT'S `mktemp` AS A PLAIN COMMAND, SO A
+    SIGINT LANDS IN THAT WAIT WHILE `mktemp` IS STILL THERE, AND THE RUN DIES
+    OF IT WITH NO TEMPORARY LEFT (#342), as the workdir's `mktemp` case holds
+    for the workdir. `receipt_replace` sets `$PLACING` first and takes
+    `mktemp`'s answer through the workdir, so the shell waits for `mktemp` in
+    its job table: the SIGINT runs the `INT` trap once `mktemp` is done, which
+    removes what starts with `$PLACING`, and the run dies of the SIGINT.
+
+    Taken through `$(…)` instead, with `$PLACING` still set first, the shell
+    does not wait for `mktemp` while it runs at all: with that `$(…)`'s
+    `2>/dev/null`, bash forks a subshell for it and reads its pipe until the
+    subshell is gone, and waits only after, outside its job table, where a
+    SIGINT that the child does not die of is lost (the comment above
+    `remove_workdir`). Measured on bash 5.2.21, such a run left the stand-in
+    unreleased for its whole ten seconds, then still died of the SIGINT and
+    left no temporary, as it did with a stand-in that exited at once: so the
+    release is what tells the plain wait from the `$(…)`.
+
+    `RECEIPT_MKTEMP_HELD` makes the temporary, answers, closes its output,
+    leaves its name in `$ORT_HOOK_DIR` and holds; `SIGNAL_HOOK_C`, at
+    `waitpid`, sends the SIGINT to the shell in its wait for a child once
+    that name is there. The hook's mark proves it fired, and the stand-in's
+    `released` that it fired while the stand-in held. THE CHILD STARTS WITH
+    ALL THREE SIGNALS AT THEIR DEFAULT, for the reason
+    `run_signalled_at_the_settings_temporary` gives.
+    """
+    real = shutil.which("mktemp")
+    if real is None:
+        pytest.skip("no real `mktemp` on PATH for the stand-in to defer to")
+    shim = tmp_path / "held-receipt-mktemp"
+    shim.mkdir()
+    (shim / "mktemp").write_text(
+        "#!/bin/sh\n" + RECEIPT_MKTEMP_HELD.format(real=shlex.quote(real)),
+        encoding="utf-8")
+    (shim / "mktemp").chmod(0o755)
+    made, mark = tmp_path / "made", tmp_path / "fired"
+    made.mkdir()
+    preload = os.environ.get("LD_PRELOAD")
+
+    def default_signals() -> None:
+        for each in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(each, signal.SIG_DFL)
+
+    run = subprocess.Popen(
+        ["bash", str(COMMAND), "--install"], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=command_env(tmp_path, {
+            "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
+            "LD_PRELOAD": f"{signal_hook}:{preload}" if preload
+                          else str(signal_hook),
+            "ORT_HOOK_DIR": str(made), "ORT_HOOK_AT": "waitpid",
+            "ORT_HOOK_SIG": str(int(signal.SIGINT)),
+            "ORT_HOOK_MARK": str(mark)}),
+        start_new_session=True, preexec_fn=default_signals)
+    try:
+        out, err = run.communicate(timeout=60)
+    finally:
+        if run.poll() is None:
+            os.killpg(run.pid, signal.SIGKILL)
+            run.communicate()
+    record = made / "held"
+    held = (record.read_text(encoding="utf-8").splitlines()
+            if record.exists() else [])
+    assert mark.exists(), (
+        f"the hook never fired, so no signal landed: exit {run.returncode}"
+        f"\n{out}{err}")
+    assert held == ["released"], (
+        "the SIGINT did not land while the shell waited for the receipt's "
+        "`mktemp`, which held unreleased: the shell was not waiting for it as "
+        f"a plain command (exit {run.returncode})\n{out}{err}")
+    assert run.returncode == -signal.SIGINT, (
+        f"the run did not die of SIGINT: exit {run.returncode}\n{out}{err}")
+    assert receipt_temporaries(tmp_path) == [], (
+        f"a receipt temporary outlived the run:\n{out}{err}")
     assert placement_temporaries(tmp_path) == []
 
 
