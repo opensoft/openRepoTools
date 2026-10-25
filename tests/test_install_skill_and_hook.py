@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-"""`--install`'s artifacts that are not one of the SEVENTEEN files: the three
-skills at two paths each, the three command files at two more each, and the
-TWO merged hook entries.
+"""`--install`'s artifacts that are not one of the files `INSTALLED` lists: the
+skills at two paths each, the command files at two more each, and the TWO
+merged hook entries.
 
 lane-collision-protocol Amendment 9(b), inheriting A8 Addendum 2's R-A8-5
 unvaried — the skill into the SHARED skills directory every profile reads
@@ -330,8 +330,8 @@ def helper_source(name: str) -> str:
 
 
 #: Every mode `--install` stamps, asked of a file at each of them: 755 for the
-#: eleven, 644 for the four skill copies and the two command files, 600 for
-#: `settings.json`.
+#: files `INSTALLED` lists, 644 for the skill copies and the command files, 600
+#: for `settings.json`.
 MODE_ANSWERS = (
     (0o755, "755", True), (0o644, "644", True), (0o600, "600", True),
     (0o755, "644", False), (0o644, "755", False), (0o600, "644", False),
