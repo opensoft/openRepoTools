@@ -24,6 +24,7 @@ verb, no `--doctor` and no `setup.sh`.
 
 from __future__ import annotations
 
+import bisect
 import hashlib
 import os
 import re
@@ -1610,6 +1611,294 @@ def test_the_placement_takes_no_answer_with_a_command_substitution_that_can_lose
         f"`{name}` takes an answer with `$(…)`, where a SIGINT can be lost "
         "(search \"A `$(…)` IS NOT A PLAIN COMMAND\" in openRepoTools):\n  "
         + "\n  ".join(found))
+
+
+def two_substitution_commands(text: str) -> list[int]:
+    """The first line of each simple command, at the shell's own level, that
+    holds two or more `$(…)` (#342): in its words, its assignments, its
+    redirections and the `${…}` in them, and in a `for`'s list. A `$(…)`
+    inside another is that substitution's child's, and is not counted; nor is
+    a `$((…))`, a backtick, a `<(…)` or a heredoc's body. A newline, `;`, `&`,
+    `|`, `(` and `)` end a command, except the `(` that opens an array
+    assignment, whose elements are words of the same one. Comments are
+    skipped. It reads text, so a command inside a `( … )` counts as well: a
+    conservative reading, and this file has none."""
+    n = len(text)
+    newlines = [k for k, ch in enumerate(text) if ch == "\n"]
+    found: list[int] = []
+    state = {"count": 0, "start": None}
+
+    def begin(k: int) -> None:
+        if state["start"] is None:
+            state["start"] = k
+
+    def flush() -> None:
+        if state["start"] is not None and state["count"] >= 2:
+            found.append(bisect.bisect_left(newlines, state["start"]) + 1)
+        state["count"], state["start"] = 0, None
+
+    def skip_single(k: int) -> int:          # after the opening '
+        end = text.find("'", k)
+        return n if end < 0 else end + 1
+
+    def skip_escaped(k: int, close: str) -> int:   # after $' or `
+        while k < n:
+            if text[k] == "\\":
+                k += 2
+            elif text[k] == close:
+                return k + 1
+            else:
+                k += 1
+        return n
+
+    def skip_arith(k: int) -> int:           # after $(( or ((
+        depth = 2
+        while k < n and depth:
+            depth += {"(": 1, ")": -1}.get(text[k], 0)
+            k += 1
+        return k
+
+    def skip_dollar(k: int, counting: bool) -> int:   # at a $: one expansion
+        if text.startswith("$((", k):
+            return skip_arith(k + 3)
+        if text.startswith("$(", k):
+            if counting:
+                begin(k)
+                state["count"] += 1
+            return skip_body(k + 2)
+        if text.startswith("${", k):
+            return skip_brace(k + 2, counting)
+        if text.startswith("$'", k):
+            return skip_escaped(k + 2, "'")
+        if text.startswith('$"', k):
+            return skip_double(k + 2, counting)
+        return k + 1
+
+    def skip_double(k: int, counting: bool) -> int:   # after the opening "
+        while k < n:
+            ch = text[k]
+            if ch == "\\":
+                k += 2
+            elif ch == '"':
+                return k + 1
+            elif ch == "$":
+                k = skip_dollar(k, counting)
+            elif ch == "`":
+                k = skip_escaped(k + 1, "`")
+            else:
+                k += 1
+        return n
+
+    def skip_brace(k: int, counting: bool) -> int:    # after ${
+        depth = 1
+        while k < n:
+            ch = text[k]
+            if ch == "\\":
+                k += 2
+            elif ch == "'":
+                k = skip_single(k + 1)
+            elif ch == '"':
+                k = skip_double(k + 1, counting)
+            elif ch == "$":
+                k = skip_dollar(k, counting)
+            elif ch == "`":
+                k = skip_escaped(k + 1, "`")
+            else:
+                depth += {"{": 1, "}": -1}.get(ch, 0)
+                k += 1
+                if depth == 0:
+                    return k
+        return n
+
+    def skip_body(k: int) -> int:            # after $( or <( : past its )
+        depth, at_word = 1, True
+        while k < n:
+            ch = text[k]
+            if ch == "#" and at_word:
+                end = text.find("\n", k)
+                k = n if end < 0 else end
+                continue
+            at_word = ch in " \t\n;&|()"
+            if ch == "\\":
+                k += 2
+            elif ch == "'":
+                k = skip_single(k + 1)
+            elif ch == '"':
+                k = skip_double(k + 1, False)
+            elif ch == "`":
+                k = skip_escaped(k + 1, "`")
+            elif ch == "$":
+                k = skip_dollar(k, False)
+            else:
+                depth += {"(": 1, ")": -1}.get(ch, 0)
+                k += 1
+                if depth == 0:
+                    return k
+        return n
+
+    heredocs: list[tuple[str, bool]] = []
+    i, at_word = 0, True
+    while i < n:
+        ch = text[i]
+        if ch == "\n":
+            flush()
+            i += 1
+            while heredocs:
+                delimiter, tabs = heredocs.pop(0)
+                while i < n:
+                    end = text.find("\n", i)
+                    end = n if end < 0 else end
+                    body = text[i:end]
+                    i = end + 1
+                    if (body.lstrip("\t") if tabs else body) == delimiter:
+                        break
+            at_word = True
+            continue
+        if ch == "#" and at_word:
+            end = text.find("\n", i)
+            i = n if end < 0 else end
+            continue
+        at_word = ch in " \t;&|()"
+        if ch in " \t":
+            i += 1
+        elif ch == "\\" and text.startswith("\\\n", i):
+            i += 2
+        elif ch in ";&|":
+            flush()
+            while i < n and text[i] in ";&|":
+                i += 1
+        elif ch == "(" and state["start"] is None and text.startswith("((", i):
+            i = skip_arith(i + 2)
+        elif ch == "(" and state["start"] is not None and text[i - 1] == "=":
+            i += 1                           # x=( and x+=( : an array's words
+        elif ch in "()":
+            flush()
+            i += 1
+        else:
+            begin(i)
+            if ch == "\\":
+                i += 2
+            elif ch == "'":
+                i = skip_single(i + 1)
+            elif ch == '"':
+                i = skip_double(i + 1, True)
+            elif ch == "`":
+                i = skip_escaped(i + 1, "`")
+            elif ch == "$":
+                i = skip_dollar(i, True)
+            elif ch in "<>" and text.startswith("(", i + 1):
+                i = skip_body(i + 2)         # a process substitution's child
+            elif text.startswith("<<", i) and not text.startswith("<<<", i):
+                opened = re.match(r"<<(-?)[ \t]*(['\"]?)\\?([A-Za-z_]\w*)\2",
+                                  text[i:])
+                if opened:
+                    heredocs.append((opened.group(3), bool(opened.group(1))))
+                    i += opened.end()
+                else:
+                    i += 2
+            else:
+                i += 1
+    flush()
+    return found
+
+
+def function_spans(text: str) -> list[tuple[int, int, str]]:
+    """`(first line, last line, name)` of each `name() {` … `}` in `text`:
+    closed on its own line, as `say() { …; }` is, or by the `}` in the first
+    column, as `placement_code` reads the others."""
+    spans = []
+    for opened in re.finditer(r"^([A-Za-z_]\w*)\(\) \{(.*)$", text,
+                              re.MULTILINE):
+        first = text.count("\n", 0, opened.start()) + 1
+        if re.search(r"\}\s*(#.*)?$", opened.group(2)):
+            spans.append((first, first, opened.group(1)))
+            continue
+        closed = text.find("\n}\n", opened.start())
+        spans.append((first, text.count("\n", 0, closed) + 2 if closed >= 0
+                      else len(text), opened.group(1)))
+    return spans
+
+
+def enclosing_function(spans: list[tuple[int, int, str]], line: int) -> str:
+    """The function of `function_spans` that holds `line`, or `(top level)`."""
+    for first, last, name in spans:
+        if first <= line <= last:
+            return name
+    return "(top level)"
+
+
+#: THE FUNCTIONS WHOSE COMMANDS MAY HOLD TWO `$(…)`, AND WHY (#342): no line of
+#: theirs runs in a shell whose `INT` trap is set. The test below checks each
+#: reason against the file's text as well as the lines.
+TWO_SUBSTITUTIONS_ALLOWED = {
+    "stamp_read": "run by `package_init`, at the top level before any "
+                  "argument is read, so before `workdir` can set a trap, and "
+                  "by `pipx_release` only inside a `( … )` subshell, where a "
+                  "trap is reset",
+    "hook_strip_refusal": "run only as `$(hook_strip_refusal …)`, in that "
+                          "substitution's subshell, where a trap is reset",
+}
+
+
+def test_a_sigint_cannot_meet_a_command_holding_two_command_substitutions():
+    """NO SIMPLE COMMAND THAT CAN RUN ONCE THE `INT` TRAP IS SET HOLDS TWO
+    `$(…)` (#342), read from the installer's text, as
+    `test_the_placement_takes_no_answer_with_a_command_substitution_that_can_lose_a_sigint`
+    reads it. A SIGINT that bash took while it waited for the first `$(…)` was
+    run as bash parsed the second, and parsed the trap's string as the rest of
+    that `$(…)`: `interrupt trap: line 2: unexpected EOF while looking for
+    matching `)'`, and exit 2 under `set -e`, the refusal's code, instead of
+    death by the signal. Fourteen commands at the merge of #318's and #332's
+    branches held two: the `for` lists and `dirs+=(…)` of the two homes in
+    `receipt_record` and `plan_skill_targets`, `venv_note`'s `say`,
+    `payload_local_feature`'s `[`, `receipt_record`'s note on a relative data
+    directory, and five refusals in `plan_hook_merge`.
+
+    `TWO_SUBSTITUTIONS_ALLOWED` names the functions that are not exposed, and
+    their reasons hold: every call of `stamp_read` is in `package_init`, which
+    runs once at the top level before the arguments are read and does not
+    reach `workdir`, or opens a `( … )`; every call of `hook_strip_refusal` is
+    a `$(…)`."""
+    text = COMMAND.read_text(encoding="utf-8")
+    lines = text.split("\n")
+    spans = function_spans(text)
+    exposed = [f"openRepoTools:{line} ({enclosing_function(spans, line)}): "
+               f"{lines[line - 1].strip()}"
+               for line in two_substitution_commands(text)
+               if enclosing_function(spans, line) not in TWO_SUBSTITUTIONS_ALLOWED]
+    assert exposed == [], (
+        "a command that can run once the INT trap is set holds two `$(…)`, so "
+        "a SIGINT in the first ends the run with a false parse error and exit "
+        "2 (search \"HOLDS TWO\" in openRepoTools):\n  " + "\n  ".join(exposed))
+
+    def calls(name: str) -> list[tuple[int, str]]:
+        """Each line that runs `name`: the word, unquoted and outside a
+        comment, and not followed by the `()` of its definition."""
+        found = []
+        for number, code in enumerate(lines, 1):
+            code = re.sub(r"(^|\s)#.*", "", code)
+            code = re.sub(r"`[^`]*`|'[^']*'", "", code)
+            if re.search(rf"(?<![\w-]){name}(?![\w(-])", code):
+                found.append((number, code))
+        return found
+
+    for number, code in calls("stamp_read"):
+        assert (enclosing_function(spans, number) == "package_init"
+                or re.search(r"\(\s*stamp_read\b", code)), (
+            f"`stamp_read` is called at openRepoTools:{number} outside "
+            f"`package_init` and outside a `( … )`: {code.strip()}")
+    for number, code in calls("package_init"):
+        assert enclosing_function(spans, number) == "(top level)", (
+            f"`package_init` is called from a function at openRepoTools:{number}")
+    for name in ("package_init", "stamp_read"):
+        body = re.search(rf"^{name}\(\) \{{.*?^\}}$", text,
+                         re.MULTILINE | re.DOTALL)
+        assert body and not re.search(r"\bworkdir\b", body.group(0)), (
+            f"`{name}` reaches `workdir`, which sets the INT trap")
+    for number, code in calls("hook_strip_refusal"):
+        assert re.search(r"\$\(hook_strip_refusal\b", code), (
+            f"`hook_strip_refusal` is called at openRepoTools:{number} other "
+            f"than inside a `$(…)`: {code.strip()}")
 
 
 @pytest.mark.parametrize("setup", ["a-pipx-link-at-the-target",

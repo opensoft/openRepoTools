@@ -2085,3 +2085,91 @@ def test_the_receipt_write_with_no_workdir_makes_nothing_and_answers_1(
         f"the write made {data} with no workdir to take answers through")
     assert placing_seen(result.stderr)[1] == {"EXIT": ""}, (
         "nothing was made, so `$PLACING` never named anything")
+
+
+# --- a refusal that held two `$(…)` (#342) ------------------------------------
+
+#: A `jq` THAT HOLDS THE RIVAL REFUSAL'S FIRST `$(…)`: the call `hook_rivals`
+#: makes, the one `jq` is asked with `--arg e`, leaves a `.openrepotools.`
+#: name in `$ORT_HOOK_DIR` and stays (ten seconds at most) before it runs the
+#: real `jq`. Every other call goes to the real one at once.
+RIVALS_JQ = ('case " $* " in\n'
+             '*" --arg e "*)\n'
+             '\t: >"$ORT_HOOK_DIR/.rivals.openrepotools.$$"\n'
+             '\ti=0\n'
+             '\twhile [ "$i" -lt 200 ]; do\n'
+             '\t\tsleep 0.05\n'
+             '\t\ti=$((i + 1))\n'
+             '\tdone ;;\n'
+             'esac\n'
+             'exec {real} "$@"\n')
+
+
+@NEEDS_JQ
+def test_a_sigint_in_the_rival_refusal_s_first_substitution_ends_the_run_by_the_signal(
+        tmp_path):
+    """A SIGINT WHILE THE RIVAL REFUSAL NAMES THE RIVALS ENDS THE RUN BY THE
+    SIGNAL, NOT WITH A PARSE ERROR (#342). The refusal for a second writer of
+    the `SessionStart` hook was one `die` whose message held two `$(…)`:
+    `hook_rivals`, then `hook_block_text`. A SIGINT that bash took while it
+    waited for the first was run as bash parsed the second, and bash parsed
+    the `INT` trap's string as the rest of that `$(…)`: it printed `interrupt
+    trap: line 2: unexpected EOF while looking for matching `)'`, and `set -e`
+    ended the run with exit 2 — the refusal's code, so the caller could not
+    tell the signal from the refusal. Now `hook_rivals` answers into a
+    variable first, and the trap runs once that command is over.
+
+    `RIVALS_JQ` holds `hook_rivals`' `jq` with a rival in `settings.json`, and
+    a Ctrl-C reaches the group while it holds: the run dies of SIGINT, prints
+    no parse error, and leaves the settings as they were. THE CHILD STARTS
+    WITH ALL THREE SIGNALS AT THEIR DEFAULT, for the reason
+    `run_signalled_at_the_settings_temporary` gives.
+    """
+    rival = "~/bin/lane-hook.sh session-start || true"
+    settings = settings_of(tmp_path)
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({"hooks": {"SessionStart": [
+        {"matcher": HOOK_MATCHER,
+         "hooks": [{"type": "command", "command": rival, "timeout": 5}]}]}}),
+        encoding="utf-8")
+    real = shutil.which("jq")
+    shim = tmp_path / "held-jq"
+    shim.mkdir()
+    (shim / "jq").write_text(
+        "#!/bin/sh\n" + RIVALS_JQ.format(real=shlex.quote(real)),
+        encoding="utf-8")
+    (shim / "jq").chmod(0o755)
+    made = tmp_path / "held"
+    made.mkdir()
+
+    def default_signals() -> None:
+        for each in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(each, signal.SIG_DFL)
+
+    run = subprocess.Popen(
+        ["bash", str(COMMAND), "--install"], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=command_env(tmp_path, {
+            "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
+            "ORT_HOOK_DIR": str(made)}),
+        start_new_session=True, preexec_fn=default_signals)
+    try:
+        deadline = time.monotonic() + 60
+        while (time.monotonic() < deadline and run.poll() is None
+               and not any(made.iterdir())):
+            time.sleep(0.05)
+        held = any(made.iterdir())
+        if held:
+            os.killpg(run.pid, signal.SIGINT)
+        out, err = run.communicate(timeout=60)
+    finally:
+        if run.poll() is None:
+            os.killpg(run.pid, signal.SIGKILL)
+            run.communicate()
+    assert held, (f"`hook_rivals`' jq was never reached for the SIGINT to land "
+                  f"in: exit {run.returncode}\n{out}{err}")
+    assert "unexpected EOF" not in err, (
+        f"the SIGINT ran the INT trap inside a parse:\n{err}")
+    assert run.returncode == -signal.SIGINT, (
+        f"the run did not die of SIGINT: exit {run.returncode}\n{out}{err}")
+    assert session_start_commands(tmp_path) == [rival], "it changed the file"
