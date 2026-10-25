@@ -459,7 +459,7 @@ already a task: T024. No other task depends on FR-047.
 
 ## Notes
 
-- The tier counts: 25 tasks, of which 19 are `[O]` and 6 are `[S]`, with no
+- The tier counts: 26 tasks, of which 20 are `[O]` and 6 are `[S]`, with no
   `[H]`.
 - Every task carries one tier tag, a `files:` list and a `verify:` command.
 - `actionlint` is used by T016 and T019 to T021. Install it where it is
