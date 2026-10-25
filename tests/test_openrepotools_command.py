@@ -1615,7 +1615,8 @@ def test_the_placement_takes_no_answer_with_a_command_substitution_that_can_lose
         + "\n  ".join(found))
 
 
-def two_substitution_commands(text: str) -> list[int]:
+def two_substitution_commands(
+        text: str, seen: list[tuple[int, int]] | None = None) -> list[int]:
     """The first line of each command, at the shell's own level, that
     holds two or more substitutions (#342): `$(…)`, backticks, `<(…)` and
     `>(…)`. Each counts toward the command that owns it, wherever it stands
@@ -1639,8 +1640,14 @@ def two_substitution_commands(text: str) -> list[int]:
     It reads text, so a command inside a `( … )` counts too: a conservative
     reading, and this file has none. It does not parse a `case` or a
     here-document inside a `$(…)`, whose `)` and lines it reads as that
-    substitution's own text, or an extglob's parentheses; this file has
-    neither."""
+    substitution's own text, or an extglob's parentheses, and it reads `>|`,
+    the redirection that overrides `noclobber`, as a pipe; this file has
+    none of them.
+
+    `seen`, when given, collects the `(start, end)` offsets of each
+    substitution it counts, `end` being the one after its close, so that a
+    test can hold the scanner to the text it reads: a substitution it did not
+    reach is in none of them."""
     opener = re.compile(r"<<(-?)[ \t]*(['\"]?)(\\?)([A-Za-z_]\w*)\2")
     array_name = re.compile(r"[A-Za-z_]\w*(\[[^]]*\])?\+?=")
     n = len(text)
@@ -1665,10 +1672,16 @@ def two_substitution_commands(text: str) -> list[int]:
                 k += 1
         return n
 
+    def count(word: dict, start: int, end: int) -> None:
+        word["subs"] += 1
+        if seen is not None:
+            seen.append((start, end))
+
     def skip_backtick(k: int, word: dict | None) -> int:   # at a `
+        end = skip_escaped(k + 1, "`")
         if word is not None:
-            word["subs"] += 1
-        return skip_escaped(k + 1, "`")
+            count(word, k, end)
+        return end
 
     def skip_arith(k: int, word: dict | None) -> int:   # after $(( or ((
         depth = 2
@@ -1693,9 +1706,10 @@ def two_substitution_commands(text: str) -> list[int]:
         if text.startswith("$((", k):
             return skip_arith(k + 3, word)
         if text.startswith("$(", k):
+            end = skip_body(k + 2)
             if word is not None:
-                word["subs"] += 1
-            return skip_body(k + 2)
+                count(word, k, end)
+            return end
         if text.startswith("${", k):
             return skip_brace(k + 2, word)
         if text.startswith("$'", k):
@@ -1787,8 +1801,9 @@ def two_substitution_commands(text: str) -> list[int]:
             elif ch == "$":
                 k = skip_dollar(k, word)
             elif ch in "<>" and text.startswith("(", k + 1):
-                word["subs"] += 1            # a process substitution
-                k = skip_body(k + 2)
+                end = skip_body(k + 2)       # a process substitution
+                count(word, k, end)
+                k = end
             elif ch in "<>" and text.startswith("&", k + 1):
                 k += 2                       # >&2 and <&3, not an &
             elif text.startswith("<<<", k):
@@ -2067,6 +2082,59 @@ def test_a_sigint_cannot_meet_a_command_holding_two_command_substitutions():
         assert re.search(r"\$\(hook_strip_refusal\b", code), (
             f"`hook_strip_refusal` is called at openRepoTools:{number} other "
             f"than inside a `$(…)`: {code.strip()}")
+
+
+#: WHAT OPENS A SUBSTITUTION IN CODE (#342): a `$(` that is not `$((`, and a
+#: `<(` or `>(` after whitespace. Backticks are left out, for a bare backtick
+#: is as often text in a comment or a string as a substitution.
+SUBSTITUTION_OPENER = re.compile(r"\$\((?!\()|(?<=\s)[<>]\(")
+
+
+def test_the_two_substitution_scan_still_reads_every_substitution_of_the_installer():
+    """THE SCANNER IS STILL IN STEP WITH THE INSTALLER'S TEXT (#342), which
+    the test above cannot tell: it asserts `exposed == []`, and a scanner that
+    counts nothing, or stops counting partway, satisfies that. A here-document
+    whose delimiter `opener` cannot read, a quote it opens in error, or an
+    extglob would do it: the rest of the file is read as text, silently, and a
+    later command holding two `$(…)` passes. So two more things must hold
+    against the real file.
+
+    Each name in `TWO_SUBSTITUTIONS_ALLOWED` is named at least once: both hold
+    two substitutions today, so a scanner that no longer names one has lost
+    sight of it.
+
+    And every `$(` (not `$((`), and every `<(` or `>(` after whitespace, on a
+    line that is not a comment lies at, or inside, a substitution the scanner
+    counted, which `seen` collects as `(start, end)` offsets. Inside covers a
+    `$(…)` that sits in a counted one, as the one in a `$(gh api …)`'s
+    arguments, whose text the scanner leaves to its child. A trailing comment
+    that names a `$(` is read as code here: reword it."""
+    text = COMMAND.read_text(encoding="utf-8")
+    lines = text.split("\n")
+    spans = function_spans(text)
+    newlines = [k for k, ch in enumerate(text) if ch == "\n"]
+    seen: list[tuple[int, int]] = []
+    named = two_substitution_commands(text, seen)
+    lost = sorted(set(TWO_SUBSTITUTIONS_ALLOWED)
+                  - {enclosing_function(spans, line) for line in named})
+    assert lost == [], (
+        "the scanner no longer names a function that holds two substitutions "
+        "(TWO_SUBSTITUTIONS_ALLOWED), so it is out of step with "
+        f"openRepoTools: {lost}")
+    unread = []
+    for found in SUBSTITUTION_OPENER.finditer(text):
+        line = bisect.bisect_left(newlines, found.start()) + 1
+        if lines[line - 1].lstrip().startswith("#"):
+            continue
+        if not any(start <= found.start() < end for start, end in seen):
+            unread.append(f"openRepoTools:{line} "
+                          f"({enclosing_function(spans, line)}): "
+                          f"{lines[line - 1].strip()}")
+    assert unread == [], (
+        f"{len(unread)} substitution(s) of openRepoTools lie where the "
+        "scanner counted none, so it stopped reading before them or reads "
+        "them as text (see `two_substitution_commands`):\n  "
+        + "\n  ".join(unread))
 
 
 #: THE SHAPES THAT MET THE FALSE PARSE ERROR, each a snippet and the line

@@ -2010,14 +2010,21 @@ def test_a_sigint_in_the_wait_for_the_receipt_mktemp_ends_the_run_and_leaves_no_
     removes what starts with `$PLACING`, and the run dies of the SIGINT.
 
     Taken through `$(…)` instead, with `$PLACING` still set first, the shell
-    does not wait for `mktemp` while it runs at all: with that `$(…)`'s
-    `2>/dev/null`, bash forks a subshell for it and reads its pipe until the
-    subshell is gone, and waits only after, outside its job table, where a
-    SIGINT that the child does not die of is lost (the comment above
-    `remove_workdir`). Measured on bash 5.2.21, such a run left the stand-in
-    unreleased for its whole ten seconds, then still died of the SIGINT and
-    left no temporary, as it did with a stand-in that exited at once: so the
-    release is what tells the plain wait from the `$(…)`.
+    does not wait for `mktemp` as a plain command, and this case kills both
+    forms of that `$(…)`, each by its own assertion (both measured on bash
+    5.2.21, in #342's re-check):
+    * with `2>/dev/null`, bash forks a subshell for `mktemp` and reads its
+      pipe until that subshell is gone, so the stand-in is never released: it
+      holds for its whole ten seconds, `held` is not `released`, and the run
+      then still dies of the SIGINT and leaves no temporary, as it did with a
+      stand-in that exited at once. The `held` assertion kills it.
+    * without the redirect, bash reads the closed pipe to its end and waits
+      for `mktemp` after, outside its job table, where a SIGINT that the child
+      does not die of is lost (the comment above `remove_workdir`): the
+      stand-in is released, but the run exits 0 and the install goes on. The
+      exit-status assertion kills it.
+    So the release tells the plain wait from the first form only, and the
+    exit status the second.
 
     `RECEIPT_MKTEMP_HELD` makes the temporary, answers, closes its output,
     leaves its name in `$ORT_HOOK_DIR` and holds; `SIGNAL_HOOK_C`, at

@@ -320,9 +320,12 @@ USAGE
 # TERM is not trapped: bash runs a trap only once the command it is waiting
 # for has finished, so a TERM trap would let a hung fetch hold off a `kill`.
 #
-# AND NO SIMPLE COMMAND THAT CAN RUN ONCE THE `INT` TRAP IS SET HOLDS TWO
-# `$(…)` (#342), in its words, its assignments, its redirections or a `for`'s
-# list. A SIGINT that bash took while it waited for the first was run as bash
+# AND NO COMMAND THAT CAN RUN ONCE THE `INT` TRAP IS SET HOLDS TWO
+# SUBSTITUTIONS (#342): `$(…)`, backticks, `<(…)` or `>(…)`, wherever they
+# stand in it: in its words, its assignments, its redirections or a `for`'s
+# list, inside `$((…))` or `((…))`, and in an unquoted here-document's body.
+# A `[[ … ]]` is taken whole, and a `case` word with its patterns.
+# A SIGINT that bash took while it waited for the first was run as bash
 # parsed the second, and bash parsed the trap's string as the rest of that
 # `$(…)`: it printed `interrupt trap: line 2: unexpected EOF while looking for
 # matching `)'`, and `set -e` ended the run with exit 2, the refusal's code,
