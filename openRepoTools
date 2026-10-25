@@ -3354,6 +3354,64 @@ hook_rivals() {   # <settings> <event> <our command> <verb pattern>
 		printf '        (that file could not be re-read to name them)'
 }
 
+# THE REFUSAL FOR A LINK (OR ANYTHING BUT A REGULAR FILE) AT `settings.json`,
+# ONE TEXT FOR EVERY PLACE THAT ASKS (#331). Planning asks first, and so
+# does each act that would go THROUGH the file or OVER it: the two `chmod 600`
+# of `hook_pair_merge` and `hook_pair_defer`, and the `mv` of
+# `hook_write_settings`. Four wordings of one reason is how one of them comes to
+# omit the `rm` that clears it, so the reason and the remedy are spelled here
+# once and the caller says what is and is not placed.
+settings_link_refusal() {   # <settings> <what it is> <what was and was not placed>
+	die "\`--install\` merges its two hook entries into a REGULAR FILE, and this is not
+    one:
+    $1 — $2
+    A \`chmod\` follows a link, so the mode this installer stamps would land on
+    whatever is on the other end of it; and the merge itself writes a temporary
+    beside this path and moves it here, which would take the link away.
+    $3
+    Clear it — what is on the other end keeps its bytes and its mode — then
+    re-run:
+        rm -f -- \"$1\""
+}
+
+# A LINK THAT IS AT `settings.json` NOW AND WAS NOT WHEN THIS RUN PLANNED (#331).
+# Planning refuses a link there once, and the pair is the last thing `--install`
+# writes — after the seventeen commands, the skills and the command files —
+# so a dotfiles manager, a second run or a person has had that long to make one,
+# and `chmod` would stamp the file at its far end while `mv -f` would swallow
+# the link: the two harms planning's refusal exists for (#44 round 1). It is
+# the late refusal `place_by_rename` makes of a link at a placed file (#257),
+# in planning's own words, and it leaves the link and its far end alone. Each
+# caller asks `[ -L ]`, a builtin, as the LAST question before its act, so
+# nothing runs between the test and `chmod` or `mv` starting; a link made in
+# that instant is still followed or replaced, because GNU `chmod` has no `-h`
+# and no `mv` this file can count on refuses a link at its destination. The
+# link's far end is read through a file in the workdir and not `$(readlink …)`,
+# the way `hook_write_settings` takes each of its answers (#332); where there is
+# no workdir it is said to be unreadable.
+#
+# WHAT IT SAYS WAS STAMPED IS TRUE IN EVERY CORNER IT FIRES IN (#331). In one,
+# the `present` arm of `hook_pair_merge` has already restored the mode of the
+# regular file that was here (the `SessionStart` entry there and the guard's
+# not: an install from before Amendment 12), a link is made, and the write that
+# follows meets it. "mode restored to 600" was true when printed, and the stamp
+# may be on what is now the far end, so the text says only that THIS refusal
+# wrote nothing there and stamped no mode.
+settings_link_since_planning() {   # <settings>
+	local far=""
+	if [ -n "$WORKDIR" ] && [ -d "$WORKDIR" ]; then
+		{ readlink -- "$1" 2>/dev/null || printf '<unreadable>'; } >"$WORKDIR/placing"
+		IFS= read -r -d '' far <"$WORKDIR/placing" || :
+		far="${far%$'\n'}"
+	fi
+	[ -n "$far" ] || far="<unreadable>"
+	settings_link_refusal "$1" "a symlink to $far now, and it was not one when this run planned" \
+		"Whatever the lines above report is placed. If they report this path's mode
+    restored, that stamp landed on whatever was here then, which may be what is on the
+    other end of this link now. This refusal wrote nothing there and stamped no mode,
+    so the link is as it was made."
+}
+
 plan_hook_merge() {
 	local settings existing kind
 	settings="$(claude_home)/settings.json"
@@ -3385,16 +3443,8 @@ $(guard_block_text)"
 	# place, which takes the DIRECTORY's write bit and not the file's, so a
 	# read-only `settings.json` is one this command may still merge into.
 	if kind="$(path_kind "$settings")"; then
-		die "\`--install\` merges its two hook entries into a REGULAR FILE, and this is not
-    one:
-    $settings — $kind
-    A \`chmod\` follows a link, so the mode this installer stamps would land on
-    whatever is on the other end of it; and the merge itself writes a temporary
-    beside this path and moves it here, which would take the link away.
-    NOTHING was installed and nothing already installed was replaced.
-    Clear it — what is on the other end keeps its bytes and its mode — then
-    re-run:
-        rm -f -- \"$settings\""
+		settings_link_refusal "$settings" "$kind" \
+			"NOTHING was installed and nothing already installed was replaced."
 	fi
 
 	workdir
@@ -3818,6 +3868,16 @@ hook_write_settings() {   # <the staged whole file> <settings>
 		{ rm -f -- "$hook_tmp"; PLACING=""; die "could not stage the merged $settings."; }
 	chmod 600 "$hook_tmp" ||
 		{ rm -f -- "$hook_tmp"; PLACING=""; die "could not set mode 600 on the merged $settings."; }
+	# A LINK AT THE SETTINGS IS REFUSED HERE, AS THE LAST QUESTION BEFORE THE
+	# RENAME (#331): `mv -f` replaces a link with the regular file it moves, so
+	# the link a person put there would be swallowed and its far end would stop
+	# being what `claude` reads. The temporary is removed first, and `$PLACING`
+	# cleared, as in every arm above.
+	if [ -L "$settings" ]; then
+		rm -f -- "$hook_tmp"
+		PLACING=""
+		settings_link_since_planning "$settings"
+	fi
 	mv -f -- "$hook_tmp" "$settings" ||
 		{ rm -f -- "$hook_tmp"; PLACING=""; die "could not move the merged settings into $settings."; }
 	PLACING=""
@@ -3852,6 +3912,12 @@ hook_pair_merge() {   # <settings>
 		if mode_is 600 "$settings"; then
 			say "SessionStart hook: already installed in $settings (unchanged)"
 		else
+			# A LINK MADE SINCE PLANNING IS NOT A FILE TO STAMP (#331). `mode_is`
+			# reads a link's OWN mode, which a link `ln -s` makes does not have
+			# at 600, so a link lands here and the `chmod` below would follow it
+			# to the file at its far end. Asked after `mode_is`, as the last
+			# question before the `chmod`.
+			[ ! -L "$settings" ] || settings_link_since_planning "$settings"
 			chmod 600 "$settings" ||
 				die "could not set mode 600 on $settings, which already carries this entry.
     Nothing in that file was changed."
@@ -3905,6 +3971,8 @@ hook_pair_defer() {   # <settings>
 		if [ "$wrote" -eq 1 ] || mode_is 600 "$settings"; then
 			say "SessionStart hook: left in $settings as an earlier run placed it (it ends in \`|| true\`, so it cannot fail a session while the pair is deferred)"
 		else
+			# THE SAME QUESTION AS `hook_pair_merge`'s, for the same reason (#331).
+			[ ! -L "$settings" ] || settings_link_since_planning "$settings"
 			chmod 600 "$settings" ||
 				die "could not set mode 600 on $settings, which already carries the SessionStart entry.
     Nothing in that file was changed."
@@ -4489,6 +4557,14 @@ wip_run_link_estates() {
 # temporary — never the workdir, which this shell goes on using. Bash runs an
 # `EXIT` trap as it dies of a SIGINT, a SIGTERM or a SIGHUP too, and the
 # subshell is where the signal of a group lands first.
+#
+# A LINK MADE BETWEEN THIS PLANNING AND THIS WRITE IS REFUSED AS `--install`
+# REFUSES IT (#331): the two functions it runs ask again where each acts, and
+# their refusal is a `die` in this subshell, so it is a note beside the workspace
+# and the exit stays 0, with the link as it was made. The refusal itself changes
+# nothing, and the note says only that. A `chmod` before it may have restored the
+# mode of the regular file that is the far end of the link now, and the lines
+# above the note report it, so the note does not say nothing was changed (#331).
 wip_hook_pair() {
 	local rc
 	say ""
@@ -4503,7 +4579,7 @@ wip_hook_pair() {
 	set -e
 	if [ "$rc" -ne 0 ]; then
 		say "  (not reconciled: the refusal above is the one \`openRepoTools --install\` makes, and"
-		say "   nothing in that file was changed. Fix what it names, then run \`openRepoTools wip init\` again.)"
+		say "   this refusal changed nothing. Fix what it names, then run \`openRepoTools wip init\` again.)"
 	fi
 	return 0
 }
