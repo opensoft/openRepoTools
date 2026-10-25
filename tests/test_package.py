@@ -95,8 +95,8 @@ PROJECT_KEYS = ("name", "dynamic", "requires-python", "license",
                 "license-files", "dependencies", "scripts")
 PROJECT_KEYS_ALLOWED = ("description", "authors", "classifiers", "urls")
 
-#: THE WHEEL'S MEMBERS beside the payload (contracts/wheel.md): the three
-#: modules, and the five names in `openrepotools-<version>.dist-info/`.
+#: THE WHEEL'S MEMBERS beside the payload (contracts/wheel.md): the modules,
+#: and the names in `openrepotools-<version>.dist-info/`.
 MODULES = ("__init__.py", "cli.py", "_release.py")
 DIST_INFO = ("METADATA", "WHEEL", "RECORD", "entry_points.txt",
              "licenses/LICENSE")
@@ -521,8 +521,8 @@ def test_wheel_holds_its_member_list_and_nothing_else(built_wheel,
                                                       payload_list):
     """contracts/wheel.md's CHECK 6, AND ITS LIST HELD THE OTHER WAY TOO.
 
-    The members are the three modules, the 24 payload files and the five
-    `.dist-info` names, and "the wheel holds nothing else": a member outside
+    The members are the modules, the 24 payload files and the `.dist-info`
+    names, and "the wheel holds nothing else": a member outside
     the list is named, and so is one the list has and the wheel lacks, which
     checks 2, 3 and 5 alone would pass over. A wheel without `cli.py` has no
     console script to run. A name the archive holds twice is named too.

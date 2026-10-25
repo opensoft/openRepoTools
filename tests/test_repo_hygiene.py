@@ -19,11 +19,13 @@ the root it needs, and in the composed run it fails rather than skip.
 from __future__ import annotations
 
 import ast
+import io
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tokenize
 from collections import namedtuple
 from pathlib import Path
 
@@ -539,7 +541,7 @@ def test_the_estate_commands_name_no_runtime_dependency_on_the_standard():
                 f"{name} calls the API; the verbs fetch nothing")
 
 
-#: THE VALUE-TAKING ARMS ACROSS THE THREE COMMANDS: `park`'s three (--lane,
+#: THE VALUE-TAKING ARMS ACROSS THE ESTATE COMMANDS: `park`'s three (--lane,
 #: --repo, --name | --project), `resume`'s four (--repo, --workspace, --org,
 #: --name | --project) and `status`'s two (--repo, --name | --project). Kept
 #: by hand so that a TENTH is read through `flag_value` rather than straight
@@ -548,8 +550,8 @@ VALUE_TAKING_ARMS = 9
 
 
 def test_every_value_taking_arm_reads_its_value_through_flag_value():
-    """A FLAG GIVEN NO VALUE, AN EMPTY ONE, OR A FLAG is refused, in all three
-    commands, and every arm can also be given its value after an `=`.
+    """A FLAG GIVEN NO VALUE, AN EMPTY ONE, OR A FLAG is refused, in every
+    estate command, and every arm can also be given its value after an `=`.
 
     `[ $# -ge 2 ]` checks only that an argument slot exists; the `${2:?…}` it
     replaced rejected an unset OR NULL one; and neither ever asked what the
@@ -3538,7 +3540,7 @@ def test_the_manual_offers_the_fork_act_and_not_a_kill():
     them kills anything - retiring is `kill <pid>`, typed by a person"*, and
     the two halves of that contradiction sat on two different lines, so no
     line-matching rule could see it and the document went on offering the one
-    act clause (k) rule (e) refuses BY NAME while the five surfaces beside it
+    act clause (k) rule (e) refuses BY NAME while the surfaces beside it
     had all been corrected (F-X8).
 
     So the manual is read as PARAGRAPHS: any paragraph that speaks of a fork
@@ -4464,3 +4466,664 @@ def test_the_suite_wrapper_takes_one_lock_and_names_it_where_agents_read_it():
     by_hand = [ln for ln in agents.splitlines() if lock in ln and "python3 -m pytest" in ln]
     assert by_hand and all("-p no:cacheprovider" in ln and "PYTHONPYCACHEPREFIX=" in ln
                            for ln in by_hand), by_hand
+
+
+# --- #58: NO PROSE SPELLS A COUNT OF AN INVENTORY ITS OWN FILE DEFINES --------
+
+_COUNT_WORDS = tuple(
+    "two three four five six seven eight nine ten eleven twelve thirteen "
+    "fourteen fifteen sixteen seventeen eighteen nineteen twenty".split())
+_COUNT_VALUE = {word: number for number, word in enumerate(_COUNT_WORDS, start=2)}
+#: A number word on its own: `thirty-two` and `three-wide` are not one.
+_COUNT_WORD = re.compile(
+    r"(?<![\w-])(" + "|".join(_COUNT_WORDS) + r")(?![\w-])", re.IGNORECASE)
+
+#: Words that end a noun group, so a noun followed by one of them is the group's
+#: head. A noun followed by anything else is a modifier of what comes next.
+_FUNCTION_WORDS = frozenset(
+    "and or of in inside into on at to from by with without for than is are "
+    "was were be been that which who whose where when while as not but it its "
+    "they them their an a the this these those each every all both also only "
+    "now then still can could will would should must may might has have had "
+    "do does did per beside across here there".split())
+_DETERMINERS = frozenset(
+    "the a an every each all these those this that its their our any some "
+    "only".split())
+#: Where the first noun phrase of an inventory's own comment ends.
+_LEAD_ENDS = frozenset(
+    "that which this these those for in into of under from on at with and by "
+    "as is are was were to also joins carries holds".split())
+
+_Inventory = namedtuple("_Inventory", "name items line nouns vocab")
+_SpelledCount = namedtuple(
+    "_SpelledCount", "line number phrase context inventories")
+
+
+def _singular(word: str) -> str:
+    word = word.lower().strip("`'")
+    if word.endswith("ies") and len(word) > 4:
+        return word[:-3] + "y"
+    if word.endswith("sses"):
+        return word[:-2]
+    if word.endswith("s") and not word.endswith("ss") and len(word) > 3:
+        return word[:-1]
+    return word
+
+
+def _comment_above(lines: list, number: int) -> list:
+    """The unbroken run of `#` lines directly above 1-based line `number`."""
+    block = []
+    index = number - 2
+    while index >= 0 and lines[index].lstrip().startswith("#"):
+        block.insert(0, re.sub(r"^\s*#:?\s?", "", lines[index]))
+        index -= 1
+    return block
+
+
+def _inventory_words(name: str, comment: list) -> tuple:
+    """(item nouns, the inventory's own words): the last word of its NAME and
+    the head of the first noun phrase of the comment above it, which is the
+    last word before a code span, a relative word, a preposition or any
+    punctuation: `EVERY BASH FILE THIS REPOSITORY SHIPS` gives `file`."""
+    tokens = [_singular(token) for token in name.strip("_").split("_") if token]
+    phrase = re.split(
+        r"[.,:;()—`]", " ".join(comment).strip(), maxsplit=1)[0]
+    lead = []
+    for word in re.findall(r"[A-Za-z][A-Za-z'-]*", phrase):
+        lowered = word.lower()
+        if lowered in _DETERMINERS and not lead:
+            continue
+        if lowered in _LEAD_ENDS or lowered in _DETERMINERS:
+            break
+        if lowered in _COUNT_VALUE or lowered == "one":
+            continue
+        lead.append(_singular(word))
+    nouns = {tokens[-1]} | ({lead[-1]} if lead else set())
+    return nouns, set(tokens) | set(lead)
+
+
+_NAME_ITEM = re.compile(r"[\w./:@-]+")
+
+
+def _python_inventories(tree: ast.Module, lines: list) -> dict:
+    found = {}
+
+    def items_of(node):
+        if isinstance(node, (ast.List, ast.Tuple)):
+            items = [element.value for element in node.elts
+                     if isinstance(element, ast.Constant)
+                     and isinstance(element.value, str)
+                     and _NAME_ITEM.fullmatch(element.value)]
+            return items if len(items) == len(node.elts) >= 2 else None
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            left, right = items_of(node.left), items_of(node.right)
+            return None if left is None or right is None else left + right
+        if isinstance(node, ast.Name) and node.id in found:
+            return found[node.id].items
+        return None
+
+    for statement in tree.body:
+        if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
+            target = statement.targets[0]
+        elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
+            target = statement.target
+        else:
+            continue
+        items = items_of(statement.value) if isinstance(target, ast.Name) else None
+        if items is not None:
+            nouns, vocab = _inventory_words(
+                target.id, _comment_above(lines, statement.lineno))
+            found[target.id] = _Inventory(
+                target.id, items, statement.lineno, nouns, vocab)
+    return found
+
+
+_BASH_ARRAY = re.compile(
+    r"^\s*(?:local\s+|declare\s+(?:-\w+\s+)?|readonly\s+)?"
+    r"([A-Z][A-Z0-9_]*)=\((.*)$")
+_COMMAND_LINE_NAME = re.compile(r"_(?:ARGS|ARGV|CALL|CMD)$")
+_BASH_ITEM = re.compile(r"\"[^\"]*\"|'[^']*'|[^\s\"']+")
+_HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+
+
+def _without_comment(line: str) -> str:
+    return re.sub(r"(^|\s)#.*$", r"\1", line)
+
+
+def _bash_heredoc_lines(lines: list) -> set:
+    """The 1-based numbers of the lines inside a here-document: text a command
+    reads, so neither prose nor an array."""
+    inside, terminator = set(), None
+    for number, line in enumerate(lines, start=1):
+        if terminator is not None:
+            inside.add(number)
+            if line.strip() == terminator:
+                terminator = None
+        elif not line.lstrip().startswith("#"):
+            opener = _HEREDOC.search(line)
+            if opener:
+                terminator = opener.group(2)
+    return inside
+
+
+def _bash_inventories(lines: list, heredocs: set) -> dict:
+    found, index = {}, 0
+    while index < len(lines):
+        match = _BASH_ARRAY.match(lines[index])
+        if (not match or lines[index].lstrip().startswith("#")
+                or index + 1 in heredocs):
+            index += 1
+            continue
+        name, body, end = match.group(1), _without_comment(match.group(2)), index
+        while ")" not in body and end + 1 < len(lines):
+            end += 1
+            body += " " + _without_comment(lines[end])
+        body = body.split(")")[0]
+        if (not any(char in body for char in "$`(")
+                and not _COMMAND_LINE_NAME.search(name)):
+            items = [item.strip("\"'") for item in _BASH_ITEM.findall(body)]
+            if len(items) >= 2:
+                nouns, vocab = _inventory_words(
+                    name, _comment_above(lines, index + 1))
+                found[name] = _Inventory(name, items, index + 1, nouns, vocab)
+        index = end + 1
+    return found
+
+
+def _python_prose(source: str, tree: ast.Module) -> dict:
+    """{line: text} for every comment and every docstring line."""
+    lines = source.splitlines()
+    prose = {}
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        if token.type == tokenize.COMMENT:
+            prose[token.start[0]] = token.string
+    for node in ast.walk(tree):
+        if (isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef,
+                              ast.ClassDef)) and node.body):
+            first = node.body[0]
+            if (isinstance(first, ast.Expr)
+                    and isinstance(first.value, ast.Constant)
+                    and isinstance(first.value.value, str)):
+                for number in range(first.lineno, first.end_lineno + 1):
+                    prose[number] = lines[number - 1]
+    return prose
+
+
+def _bash_prose(lines: list, heredocs: set) -> dict:
+    """{line: text} for every whole-line comment, as `code_lines` reads them."""
+    return {number: line.lstrip() for number, line in enumerate(lines, start=1)
+            if line.lstrip().startswith("#")
+            and not line.lstrip().startswith("#!") and number not in heredocs}
+
+
+def _python_scope_reader(lines: list, tree: ast.Module):
+    """A function from a line to the code its prose is in scope of: the module
+    docstring, the innermost def or class around it, or the next top-level
+    statement when it is a comment between statements."""
+    defs = [(node.lineno, node.end_lineno) for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.ClassDef))]
+    tops = [(node.lineno, node.end_lineno) for node in tree.body]
+    doc = None
+    if (tree.body and isinstance(tree.body[0], ast.Expr)
+            and isinstance(tree.body[0].value, ast.Constant)
+            and isinstance(tree.body[0].value.value, str)):
+        doc = tops[0]
+
+    def scope_of(number: int) -> str:
+        if doc and doc[0] <= number <= doc[1]:
+            span = doc
+        else:
+            around = [span for span in defs if span[0] <= number <= span[1]]
+            following = [span for span in tops if span[0] > number]
+            span = (min(around, key=lambda s: s[1] - s[0]) if around
+                    else following[0] if following else (number, number))
+        return "\n".join(lines[span[0] - 1:span[1]])
+
+    return scope_of
+
+
+_BASH_FUNCTION = re.compile(r"^(?:function\s+)?[A-Za-z_][\w.:-]*\s*\(\)\s*\{")
+
+
+def _bash_scope_reader(lines: list):
+    """The same for bash: the function around a comment, or the comment block
+    and the statement under it, up to the next blank line."""
+    spans, index = [], 0
+    while index < len(lines):
+        if _BASH_FUNCTION.match(lines[index]):
+            end = index
+            if not lines[index].rstrip().endswith("}"):
+                end = index + 1
+                while end < len(lines) and lines[end].rstrip() != "}":
+                    end += 1
+            spans.append((index + 1, end + 1))
+            index = end
+        index += 1
+
+    def scope_of(number: int) -> str:
+        for first, last in spans:
+            if first <= number <= last:
+                return "\n".join(lines[first - 1:last])
+        first = number
+        while first > 1 and lines[first - 2].lstrip().startswith("#"):
+            first -= 1
+        last = number
+        while last <= len(lines) and lines[last - 1].lstrip().startswith("#"):
+            last += 1
+        stop = last
+        while (stop <= len(lines) and lines[stop - 1].strip()
+               and stop - last < 40):
+            stop += 1
+        return "\n".join(lines[first - 1:stop])
+
+    return scope_of
+
+
+def _prose_blocks(prose: dict):
+    """(text, [(offset, line)]) for each run of consecutive prose lines, joined
+    so that a sentence wrapped across lines reads as one."""
+    blocks, current, previous = [], [], None
+    for number in sorted(prose):
+        if previous is not None and number != previous + 1:
+            blocks.append(current)
+            current = []
+        current.append(number)
+        previous = number
+    if current:
+        blocks.append(current)
+    for block in blocks:
+        text, offsets = "", []
+        for number in block:
+            offsets.append((len(text), number))
+            text += re.sub(r"^\s*#:?\s?", "", prose[number]).strip() + " "
+        yield text, offsets
+
+
+def _counted_phrase(rest: str, inventory: _Inventory):
+    """The words after a number word, if they count `inventory`'s items: only
+    its own words as modifiers, then one of its item nouns that ends the group.
+    "two upload jobs" is not a count of `JOBS`, since `upload` is not its
+    word, and "two command destinations" is not one of `COMMANDS`, since the
+    noun `command` carries on into `destinations`."""
+    words = []
+    for found in re.finditer(r"\s+([A-Za-z][A-Za-z'-]*)|(.)", rest):
+        if found.group(1) is None or len(words) >= 4:
+            break
+        words.append((found.group(1), found.end()))
+    for position, (word, end) in enumerate(words):
+        singular = _singular(word)
+        following = re.match(r"\s+([A-Za-z][A-Za-z'-]*)", rest[end:])
+        continues = (following is not None
+                     and following.group(1).lower() not in _FUNCTION_WORDS)
+        if singular in inventory.nouns and not continues:
+            return " ".join(piece for piece, _ in words[:position + 1])
+        if singular not in inventory.vocab and singular not in inventory.nouns:
+            return None
+    return None
+
+
+def _anaphor(text: str, match) -> str:
+    """"of them", "or none" or "of the" when the number word has no noun of its
+    own: the shapes #58 found in `the four of them`, `all four or none` and
+    `which of the four were missing`."""
+    before = text[max(0, match.start() - 12):match.start()].lower()
+    after = text[match.end():match.end() + 16].lower()
+    if re.match(r"\s+of\s+(?:them|these|those)\b", after):
+        return "of them"
+    if re.match(r"\s+or\s+none\b", after):
+        return "or none"
+    if re.search(r"\bof\s+the\s+$", before):
+        following = re.match(r"\s+([a-z]+)", after)
+        if following is None or following.group(1) in _FUNCTION_WORDS:
+            return "of the"
+    return ""
+
+
+def _spelled_counts(kind: str, source: str) -> list:
+    """Every spelled count of an inventory that `source` defines, in its own
+    prose. `kind` is "python" or "bash"."""
+    lines = source.splitlines()
+    if kind == "python":
+        tree = ast.parse(source)
+        inventories = _python_inventories(tree, lines)
+        if not inventories:
+            return []
+        prose = _python_prose(source, tree)
+        scope_of = _python_scope_reader(lines, tree)
+    else:
+        heredocs = _bash_heredoc_lines(lines)
+        inventories = _bash_inventories(lines, heredocs)
+        if not inventories:
+            return []
+        prose = _bash_prose(lines, heredocs)
+        scope_of = _bash_scope_reader(lines)
+    findings = []
+    for text, offsets in _prose_blocks(prose):
+        for match in _COUNT_WORD.finditer(text):
+            value = _COUNT_VALUE[match.group(1).lower()]
+            line = max(at for offset, at in offsets if offset <= match.start())
+            rest = text[match.end():match.end() + 120]
+            anaphor = _anaphor(text, match)
+            scope, tied, phrase = None, [], ""
+            for inventory in inventories.values():
+                counted = _counted_phrase(rest, inventory)
+                if counted is None and not anaphor:
+                    continue
+                scope = scope_of(line) if scope is None else scope
+                named = re.search(
+                    r"(?<!\w)" + re.escape(inventory.name) + r"(?!\w)", scope)
+                equal = value == len(inventory.items)
+                # A noun ties it where it is in scope OR is the size today; with
+                # no noun, only where it is both.
+                if (named or equal) if counted is not None else (named and equal):
+                    tied.append((inventory.name, len(inventory.items)))
+                    phrase = phrase or f"{match.group(1)} {counted or anaphor}"
+            if tied:
+                context = " ".join(
+                    text[max(0, match.start() - 24):match.start() + 60].split())
+                findings.append(_SpelledCount(
+                    line, match.group(1), phrase, context, tuple(tied)))
+    return findings
+
+
+def _spelled_count_refusal(rel: str, finding: _SpelledCount) -> str:
+    inventories = ", ".join(
+        f"{name} ({size} items)" for name, size in finding.inventories)
+    return (f"{rel}:{finding.line}: '{finding.number}' counts {inventories} in "
+            f"prose (\"{finding.phrase}\") — derive the count or drop it, as "
+            "#58 did")
+
+
+#: Each entry is (file, text, why): a spelled count the rule reads as one of an
+#: inventory and that is a count of something else. `text` is a part of the
+#: finding's own words, so an entry follows its sentence when the file moves
+#: under it, and `test_every_spelled_count_allowance_still_matches_a_finding`
+#: fails on one that no longer matches anything.
+SPELLED_COUNT_ALLOWED = [
+    ("openRepoTools", "rename is four files",
+     "the files one rename commit writes: it counts a rename, and nothing here "
+     "is a list of them"),
+    ("tests/test_openrepotools_command.py", "rename is four files",
+     "the same sentence as the one in `openRepoTools`, for the same reason"),
+    ("openRepoTools", "THE SIX FILES INSIDE THEM",
+     "the SKILL.md files, 3 skills at 2 paths each: a count of paths, and not "
+     "of the command names `COMMANDS` holds"),
+    ("tests/test_install_pipx.py", "IN TWO MODES",
+     "the 2 modes that case is parametrized over, `checkout` and `package`: a "
+     "subset of the ways `MODES` lists, which is one more"),
+    ("tests/test_repo_hygiene.py", "four helpers every assertion",
+     "the assertion helpers of the shell suite, which only happen to be as "
+     "many as `LANE_BASH` holds"),
+]
+
+
+def _repository_spelled_counts() -> list:
+    """(file, finding) for every file this rule reads: each `tests/*.py`, and
+    each bash file the hygiene checks already read, `ALL_BASH`."""
+    sources = [(path.relative_to(REPO).as_posix(), "python", path)
+               for path in sorted((REPO / "tests").glob("*.py"))]
+    sources += [(name, "bash", REPO / name) for name in ALL_BASH]
+    return [(rel, finding) for rel, kind, path in sources
+            for finding in _spelled_counts(kind, path.read_text(encoding="utf-8"))]
+
+
+def _spelled_count_allowance(rel: str, finding: _SpelledCount) -> list:
+    return [entry for entry in SPELLED_COUNT_ALLOWED
+            if entry[0] == rel and entry[1] in finding.context]
+
+
+def test_no_prose_spells_a_count_of_an_inventory_its_own_file_defines():
+    """#58's second decision, which Brett Heap ruled on 2026-10-23: "Add the
+    rule". The prose said "four" about inventories that held 6, 10 and 11
+    items, in 6 places, and each was fixed by deriving the count or wording the
+    sentence without one. This is what keeps it fixed.
+
+    WHAT IS READ. A file that DEFINES an inventory: a module-level list or
+    tuple of names in `tests/*.py` (2 or more strings without a space, or a
+    `+` of such), or an upper-case `NAME=( … )` array literal of 2 or more
+    plain words in a bash file this module reads (`ALL_BASH`). An array holding
+    an expansion, one named `*_ARGS`, `*_ARGV`, `*_CALL` or `*_CMD` (a command
+    line), a lower-case one and one inside a here-document is not an inventory.
+    Its PROSE is the Python comments and docstrings and the bash whole-line
+    comments, with a sentence wrapped across lines joined. A string is not
+    prose, and neither is a file that defines no inventory: `README.md` and
+    `tests.yml` said "four" about lists they do not define.
+
+    WHAT IS REFUSED. A number word from 2 to 20, in any case, that counts the
+    inventory's items. It is TIED to an inventory by the nouns its NAME and its
+    OWN COMMENT give its items, and never by a guess:
+      * the item nouns are the last word of the name (`INSTALLABLES`,
+        `ESTATE_COMMANDS`) and the head of the first noun phrase of the comment
+        directly above it (`EVERY BASH FILE THIS REPOSITORY SHIPS` gives `file`);
+      * a count is the number word, modifiers that are the inventory's own
+        words, then an item noun that ends the noun group — "all <N> files are",
+        "each of the <N> bash files with", "the <N> installables";
+      * "two upload jobs" (a modifier `JOBS` does not use), "two command
+        destinations" (the noun runs on into another), "<N>-wide" and
+        "thirty-five" are other counts, and pass.
+    A noun alone is too loose, since `file` is the head of half the inventories
+    here, so it must ALSO be in SCOPE (the prose is the comment above the
+    inventory or lives in a function, class, statement or module docstring
+    whose code names it) or VALUE (the number is today's size of the
+    inventory). Each refusal names the file, the line, the number word and the
+    inventory with its size, and says to derive the count or drop it, as #58
+    did.
+
+    WHAT IS NOT CAUGHT. A count with no noun — "the <N> of them", "all <N> or
+    none", "which of the <N> were missing" — has nothing to tie to an
+    inventory. The fallback ties one only where its number EQUALS the size of
+    an inventory in scope, which refuses it on the day it is true and lets it
+    pass once the inventory has grown past it. A DRIFTED "the <N> of them" is
+    NOT caught, and no wording of this rule can catch it without guessing which
+    set "them" is; `test_a_drifted_count_with_no_noun_is_not_caught` pins the
+    limit so it is not hidden. Prose in a file that defines no inventory, a
+    count the nouns do not reach ("the <N> artifacts"), and a count spelled
+    over the next noun group of a wrapped list are not caught either.
+
+    A refusal that is a count of something else goes in `SPELLED_COUNT_ALLOWED`
+    with the reason.
+    """
+    refused = [_spelled_count_refusal(rel, finding)
+               for rel, finding in _repository_spelled_counts()
+               if not _spelled_count_allowance(rel, finding)]
+    assert not refused, "\n".join(refused)
+
+
+def test_every_spelled_count_allowance_still_matches_a_finding():
+    """An entry whose sentence was fixed or reworded matches nothing, and an
+    allowlist that keeps entries nothing needs is how a real finding gets
+    waved through by a stale one."""
+    findings = _repository_spelled_counts()
+    unused = [entry[:2] for entry in SPELLED_COUNT_ALLOWED
+              if not any(entry[0] == rel and entry[1] in finding.context
+                         for rel, finding in findings)]
+    assert not unused, f"no longer matches a finding, delete it: {unused}"
+
+
+_Shape = namedtuple("_Shape", "site sentence inventory caught")
+
+#: (name, the comment above it, how many items it held when #58 was filed).
+_SHAPE_INVENTORIES = {
+    "bash files": ("SHIPPED_BASH", "EVERY BASH FILE THIS REPOSITORY SHIPS.", 6),
+    "installables": ("INSTALLABLES", "EVERY FILE `--install` PLACES.", 11),
+    "commands": ("COMMANDS", "THE COMMANDS THIS REPOSITORY SHIPS.", 6),
+}
+
+#: #58's sentences as its body quotes them, each with the inventory it was
+#: about. `caught` is whether the rule refuses it once the inventory has
+#: drifted past the number, as it had in every one of them: the 4 that have no
+#: noun are not.
+_SHAPES_58 = [
+    _Shape("README.md:333", "Windows: all four files are bash",
+           "bash files", True),
+    _Shape("README.md:403",
+           "The macOS job parses each of the four bash files with `/bin/bash -n`",
+           "bash files", True),
+    _Shape(".github/workflows/tests.yml:177",
+           "THE SAME SUITE ON macOS, because these four files are what a Mac runs",
+           "bash files", True),
+    _Shape("openRepoTools:370", "ONE PATH NOTE for the four of them",
+           "installables", False),
+    _Shape("tests/test_repo_hygiene.py:6",
+           "facts about the four bash files and the four documents",
+           "bash files", True),
+    _Shape("tests/test_repo_hygiene.py:2126",
+           "every `\\n` in these four bash files", "bash files", True),
+    _Shape("tests/test_openrepotools_command.py:9-11",
+           "There are FOUR files to answer for (`openRepoTools`, `park`, "
+           "`resume`, `status`), because `--install` places all four or none",
+           "installables", True),
+    _Shape("tests/test_openrepotools_command.py:530", "the four of them",
+           "installables", False),
+    _Shape("tests/test_openrepotools_command.py:590", "all four or none",
+           "installables", False),
+    _Shape("tests/test_openrepotools_command.py:632",
+           "the four files `--install` places", "installables", True),
+    _Shape("tests/test_openrepotools_command.py:644",
+           "which of the four were missing", "installables", False),
+    _Shape("tests/test_lane_helpers.sh:30",
+           "The four commands and the shipped alias table", "commands", True),
+]
+_SHAPE_FORMS = ("bash comment", "python comment", "python docstring")
+
+
+def _shape_source(form: str, shape: _Shape, size: int) -> tuple:
+    """(kind, source) for `shape`'s sentence, written as `form` beside the
+    inventory it was about, holding `size` items."""
+    name, lead, _ = _SHAPE_INVENTORIES[shape.inventory]
+    items = [f"item{number}" for number in range(size)]
+    if form == "bash comment":
+        return "bash", f"# {lead}\n# {shape.sentence}\n{name}=({' '.join(items)})\n"
+    listing = f"{name} = [{', '.join(repr(item) for item in items)}]\n"
+    if form == "python comment":
+        return "python", f"#: {lead}\n#: {shape.sentence}\n{listing}"
+    return "python", (f"#: {lead}\n{listing}\n\ndef test_it():\n"
+                      f"    '''{shape.sentence}'''\n    return {name}\n")
+
+
+def _shape_cases(caught: bool) -> list:
+    return [pytest.param(shape, form, id=f"{shape.site} as a {form}")
+            for shape in _SHAPES_58 if shape.caught == caught
+            for form in _SHAPE_FORMS]
+
+
+@pytest.mark.parametrize("shape, form", _shape_cases(True))
+def test_the_spelled_count_rule_refuses_58s_sentences_once_the_list_has_drifted(
+        shape, form):
+    """The 8 sentences with a noun, rebuilt from #58's body, beside an
+    inventory that holds more than they say — which is how each was found."""
+    kind, source = _shape_source(
+        form, shape, _SHAPE_INVENTORIES[shape.inventory][2])
+    found = _spelled_counts(kind, source)
+    assert found, f"{shape.site}: {shape.sentence!r} is not refused as {form}"
+    assert all(name == _SHAPE_INVENTORIES[shape.inventory][0]
+               for finding in found for name, _ in finding.inventories)
+
+
+@pytest.mark.parametrize("shape, form", _shape_cases(True) + _shape_cases(False))
+def test_the_spelled_count_rule_refuses_every_shape_at_the_size_it_was_written_for(
+        shape, form):
+    """All 12 sentences, with the inventory as long as the number says. That
+    is the only size at which the 4 with no noun are refused, and it is the
+    day the sentence is written: the rule would have stopped them then."""
+    size = _COUNT_VALUE[_COUNT_WORD.search(shape.sentence).group(1).lower()]
+    kind, source = _shape_source(form, shape, size)
+    assert _spelled_counts(kind, source), (
+        f"{shape.site}: {shape.sentence!r} is not refused as {form}")
+
+
+@pytest.mark.parametrize("shape, form", _shape_cases(False))
+def test_a_drifted_count_with_no_noun_is_not_caught(shape, form):
+    """THE LIMIT, PINNED. "the 4 of them", "all 4 or none" and "which of the 4
+    were missing" name nothing the rule can tie to an inventory, so once the
+    inventory has grown past the number they pass. If this test starts to
+    fail, the rule has learned to read an antecedent: say so in the rule's
+    docstring and move these 4 sentences into the refused cases."""
+    kind, source = _shape_source(
+        form, shape, _SHAPE_INVENTORIES[shape.inventory][2])
+    assert not _spelled_counts(kind, source), (
+        f"{shape.site}: {shape.sentence!r} is caught now as {form}")
+
+
+_OTHER_COUNTS = [
+    pytest.param("bash", (
+        "# EVERY BASH FILE THIS REPOSITORY SHIPS.\n"
+        "SHIPPED_BASH=(openRepoTools park resume status lane lanes)\n"
+        "\n"
+        "# The three skills at two destinations each, three-wide, thirty-five\n"
+        "# lines, twenty-one files, thirty files and one file.\n"
+        "echo done\n"), id="counts of other things beside the inventory"),
+    pytest.param("python", (
+        "#: THE JOBS A RELEASE RUNS.\n"
+        "JOBS = ('build', 'testpypi', 'install', 'pypi')\n\n\n"
+        "#: Only the two upload jobs mint a token.\n"
+        "def mint():\n    return JOBS\n"), id="a modifier the inventory does not use"),
+    pytest.param("bash", (
+        "# THE COMMANDS THIS REPOSITORY SHIPS.\n"
+        "COMMANDS=(handoff ctx swap)\n"
+        "# the two command destinations are added once rather than once per name.\n"
+        "echo \"${COMMANDS[@]}\"\n"), id="a noun that runs on into another"),
+    pytest.param("python", (
+        "#: EVERY BASH FILE THIS REPOSITORY SHIPS.\n"
+        "SHIPPED_BASH = ['openRepoTools', 'park', 'resume', 'status', 'lane', "
+        "'lanes']\n\n\n"
+        "def other():\n"
+        "    '''Reads three files in this repository, none of them listed.'''\n"
+        "    return 1\n"), id="the same noun out of scope at another size"),
+    pytest.param("python", (
+        "#: EVERY BASH FILE THIS REPOSITORY SHIPS.\n"
+        "SHIPPED_BASH = ['openRepoTools', 'park', 'resume', 'status']\n\n\n"
+        "def other():\n    '''Reads the four of them.'''\n    return 1\n"),
+        id="a count with no noun, out of scope"),
+    pytest.param("python", (
+        "#: EVERY BASH FILE THIS REPOSITORY SHIPS.\n"
+        "SHIPPED_BASH = ['openRepoTools', 'park', 'resume', 'status', 'lane', "
+        "'lanes']\n"
+        "MESSAGE = 'all four files are bash'\n"), id="a count in a string"),
+    pytest.param("bash", (
+        "# EVERY BASH FILE THIS REPOSITORY SHIPS.\n"
+        "SHIPPED_BASH=(openRepoTools park resume status lane lanes)\n"
+        "echo \"all four files are bash\"\n"), id="a count in a command"),
+    pytest.param("bash", (
+        "# the three retired files\n"
+        "RETIRED=(restart)\n"
+        "args=(status --porcelain)\n"
+        "# the two files\n"), id="arrays that are not inventories"),
+]
+
+
+@pytest.mark.parametrize("kind, source", _OTHER_COUNTS)
+def test_the_spelled_count_rule_passes_counts_of_other_things(kind, source):
+    """The true negatives: a count the nouns, the scope and the size do not
+    tie to an inventory is a count of something else."""
+    assert _spelled_counts(kind, source) == []
+
+
+def test_the_spelled_count_rule_reads_inventories_as_defined():
+    python = ("A = ['x', 'y']\n"
+              "B = ['x']\n"
+              "C = ['two words', 'y']\n"
+              "D = A + ['z', 'w']\n"
+              "E = (1, 2)\n"
+              "F = A + ['z']\n")
+    found = _python_inventories(ast.parse(python), python.splitlines())
+    assert {name: len(inventory.items)
+            for name, inventory in found.items()} == {"A": 2, "D": 4}
+
+    bash = ["# THE FILES THIS PLACES.", "PLACED=(a b", "  c  # a note, not an item",
+            "  \"d e\")", "RETIRED=(restart)", "lowercase=(x y)",
+            "DERIVED=(a \"$b\")", "CHILD_ARGS=(make resume)", "cat <<'EOF'",
+            "HEREDOC=(p q)", "EOF"]
+    found = _bash_inventories(bash, _bash_heredoc_lines(bash))
+    assert {name: inventory.items for name, inventory in found.items()} == {
+        "PLACED": ["a", "b", "c", "d e"]}
+    assert found["PLACED"].nouns == {"placed", "file"}
+
+
+def test_a_spelled_count_refusal_names_where_what_and_how_to_fix_it():
+    _, source = _shape_source("bash comment", _SHAPES_58[0], 6)
+    (finding,) = _spelled_counts("bash", source)
+    refusal = _spelled_count_refusal("README.md", finding)
+    assert refusal.startswith("README.md:2: 'four' counts SHIPPED_BASH (6 items)")
+    assert "derive the count or drop it, as #58 did" in refusal
