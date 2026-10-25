@@ -28,9 +28,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shlex
 import shutil
+import signal
 import stat
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -38,8 +42,10 @@ import pytest
 from conftest import REPO, WINDOWS_SKIP
 from test_openrepotools_command import (COMMAND, command_env, run_cmd,
                                         COMMAND_NAMES, COMMAND_PATHS,
-                                        INSTALLED, NEEDS_JQ, SKILL_NAMES,
-                                        SKILL_PATH, link_xfactory)
+                                        HELD_ANSWER, INSTALLED, NEEDS_JQ,
+                                        SKILL_NAMES, SKILL_PATH, link_xfactory,
+                                        placement_temporaries,
+                                        signal_hook)  # noqa: F401 (a fixture)
 
 pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
                                  reason="openRepoTools is a bash script"),
@@ -1501,3 +1507,784 @@ def test_one_write_places_both_entries_in_one_file(tmp_path):
     assert session_start_commands(tmp_path) == [HOOK_COMMAND]
     assert user_prompt_commands(tmp_path) == [GUARD_COMMAND]
     assert stat.S_IMODE(settings_of(tmp_path).stat().st_mode) == 0o600
+
+
+# --- the temporary the settings write makes (#332) ----------------------------
+
+#: A `cp` that holds the run WHERE `hook_write_settings`' TEMPORARY EXISTS: it
+#: sleeps for a `settings.json.openrepotools.*` and defers to the real `cp` for
+#: every other file, so no placement before it is slowed. `mktemp` has made the
+#: file by then and `mv` has not moved it, which is the whole life of the
+#: temporary a signal used to find in no trap's reach.
+SLOW_SETTINGS_CP = ('for arg in "$@"; do\n'
+                    '\tcase "$arg" in */settings.json.openrepotools.*) sleep 3 ;; esac\n'
+                    'done\n'
+                    'exec {real} "$@"\n')
+
+
+def settings_temporaries(home: Path) -> list[str]:
+    """Every `settings.json.openrepotools.*` beside the settings file."""
+    claude = home / ".claude"
+    return sorted(p.name for p in claude.iterdir()
+                  if p.name.startswith("settings.json.openrepotools.")
+                  ) if claude.is_dir() else []
+
+
+def run_signalled_at_the_settings_temporary(
+        home: Path, env: dict, args: list[str], signame: str, to_group: bool,
+        shim_dir: Path, cwd: Path | None = None
+) -> tuple[int, str, str, list[str]]:
+    """`openRepoTools <args>` with `SLOW_SETTINGS_CP` first on PATH, signalled
+    once the settings temporary exists. Answers `(exit, stdout, stderr,
+    the temporaries seen when the signal was sent)`.
+
+    `to_group` is a Ctrl-C's: the whole foreground process group. Without it
+    the signal goes to the shell alone, as a `kill` from another shell sends it.
+    THE CHILD STARTS WITH ALL THREE SIGNALS AT THEIR DEFAULT, as a foreground
+    job at a terminal has them: a runner started in the background by a
+    non-interactive shell has SIGINT IGNORED, one started under `nohup` has
+    SIGHUP IGNORED, an ignored signal survives `exec`, and a shell may not
+    un-ignore one it was started with — so without this a SIGHUP case would
+    measure the runner, not the trap (it ended with exit 0 under `nohup`).
+    """
+    real = shutil.which("cp")
+    if real is None:
+        pytest.skip("no real `cp` on PATH for the slow one to defer to")
+    shim_dir.mkdir()
+    (shim_dir / "cp").write_text(
+        "#!/bin/sh\n" + SLOW_SETTINGS_CP.format(real=shlex.quote(real)),
+        encoding="utf-8")
+    (shim_dir / "cp").chmod(0o755)
+    sig = getattr(signal, signame)
+
+    def default_signals() -> None:
+        for each in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(each, signal.SIG_DFL)
+
+    run = subprocess.Popen(
+        ["bash", str(COMMAND), *args], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=cwd,
+        env={**env, "PATH": f"{shim_dir}{os.pathsep}{env['PATH']}"},
+        start_new_session=True, preexec_fn=default_signals)
+    try:
+        deadline = time.monotonic() + 60
+        while (time.monotonic() < deadline and run.poll() is None
+               and not settings_temporaries(home)):
+            time.sleep(0.05)
+        seen = settings_temporaries(home)
+        if seen and to_group:
+            os.killpg(run.pid, sig)
+        elif seen:
+            run.send_signal(sig)
+        out, err = run.communicate(timeout=60)
+    finally:
+        if run.poll() is None:
+            os.killpg(run.pid, signal.SIGKILL)
+            run.communicate()
+    return run.returncode, out, err, seen
+
+
+def settings_for(arm: str, home: Path) -> None:
+    """The three states a signal can find `hook_write_settings` in, reached
+    through the two functions that call it: `merge-nofile`, the first install,
+    writes the file whole; `merge-present`, a file that already carries the
+    `SessionStart` entry, merges the guard beside it; `defer-present`, a file
+    that carries both while the target does not answer `guard`, writes it back
+    with the guard taken out. `merge-*` link the target first, as a workstation
+    that has run `wip init` has it."""
+    claude = home / ".claude"
+    claude.mkdir(parents=True, exist_ok=True)
+    session_start = {"matcher": HOOK_MATCHER,
+                     "hooks": [{"type": "command", "command": HOOK_COMMAND,
+                                "timeout": HOOK_TIMEOUT}]}
+    guard = {"hooks": [{"type": "command", "command": GUARD_COMMAND,
+                        "timeout": GUARD_TIMEOUT}]}
+    if arm != "defer-present":
+        link_xfactory(home)
+    if arm == "merge-present":
+        (claude / "settings.json").write_text(json.dumps(
+            {"model": "opus", "hooks": {"SessionStart": [session_start]}},
+            indent=2), encoding="utf-8")
+    elif arm == "defer-present":
+        (claude / "settings.json").write_text(json.dumps(
+            {"model": "opus", "hooks": {"SessionStart": [session_start],
+                                        "UserPromptSubmit": [guard]}},
+            indent=2), encoding="utf-8")
+
+
+@NEEDS_JQ
+@pytest.mark.parametrize("arm, signame, to_group", [
+    ("merge-nofile", "SIGINT", True),
+    ("merge-present", "SIGINT", True),
+    ("defer-present", "SIGINT", True),
+    ("merge-nofile", "SIGTERM", False),
+    ("defer-present", "SIGHUP", False),
+], ids=["merge-nofile-SIGINT", "merge-present-SIGINT", "defer-present-SIGINT",
+        "merge-nofile-SIGTERM", "defer-present-SIGHUP"])
+def test_a_run_killed_while_the_settings_temporary_exists_leaves_none(
+        tmp_path, arm, signame, to_group):
+    """THE SETTINGS TEMPORARY IS WITHIN THE CLEANUP'S REACH FOR ITS WHOLE LIFE
+    (#332). `hook_write_settings` writes `~/.claude/settings.json` through a
+    `settings.json.openrepotools.XXXXXX` beside it, and removed it only on a
+    failure it saw: a signal between the `mktemp` and the `mv` left it in
+    `~/.claude`, empty, or a full copy of the person's merged settings where
+    the signal landed after the `cp`, and no later run looked for it. Now
+    `$PLACING` holds its prefix from before the `mktemp` until after the `mv`,
+    and the `EXIT` trap and #250's `INT` path remove whatever starts with it.
+
+    A `cp` that sleeps for exactly that temporary holds each run where it
+    exists, and the signal lands there: a Ctrl-C to the group for SIGINT, a
+    `kill` of the shell alone for SIGTERM and SIGHUP, which bash does not trap
+    and which run the `EXIT` trap as the shell dies. Each run dies of the
+    signal, and nothing named `*.openrepotools.*` is left in any directory
+    `--install` writes. The arms are the three that reach the write: the
+    first install, a `present` `SessionStart` entry whose guard is merged
+    beside it, and a `present` guard that the deferred pair takes out.
+    """
+    settings_for(arm, tmp_path)
+    code, out, err, seen = run_signalled_at_the_settings_temporary(
+        tmp_path, command_env(tmp_path), ["--install"], signame, to_group,
+        tmp_path / "slow-settings-cp", cwd=REPO)
+    sig = getattr(signal, signame)
+    assert seen, (f"the settings write never made a temporary for the signal "
+                  f"to land beside: exit {code}\n{out}{err}")
+    assert code in (-sig, 128 + sig), (
+        f"the run did not die of {signame}: exit {code}\n{out}{err}")
+    assert placement_temporaries(tmp_path) == [], (
+        f"a settings temporary outlived the run: {seen}")
+
+
+@NEEDS_JQ
+@pytest.mark.parametrize("tool, held_on", [
+    ("dirname", "settings"),
+    ("mktemp", "temporary"),
+], ids=["SIGINT-in-the-wait-for-dirname", "SIGINT-in-the-wait-for-mktemp"])
+def test_a_sigint_in_the_wait_for_an_answer_of_the_settings_write_ends_the_run(
+        tmp_path, signal_hook, tool, held_on):
+    """THE TWO ANSWERS `hook_write_settings` TOOK THROUGH `$(…)` ARE TAKEN
+    THROUGH A FILE (#332, #318): the `dirname` of the settings file, which it
+    asked for twice — once for the `mkdir -p` and once to build the `mktemp`
+    template — and the `mktemp` itself, whose answer is the temporary's name.
+    Bash waits for a command substitution's child outside its job table, so a
+    SIGINT that arrived there was lost and the install went on to exit 0; taken
+    through a file, the wait is a plain command's and the `INT` trap runs once
+    it is over.
+
+    `HELD_ANSWER`, first on `$PATH`, gives the real tool's answer, closes its
+    output and holds, and the hook lands the SIGINT in the shell's wait for it:
+    at the `dirname` of the settings file, or at the `mktemp` once the file is
+    made and before its name is read, which is where only a prefix set BEFORE
+    `mktemp` runs reaches it. The run dies of SIGINT and leaves no temporary.
+    `held` proves where it landed: it names the call the stand-in held, then
+    `released`, written only when the mark came while it was holding.
+    """
+    real = shutil.which(tool)
+    if real is None:
+        pytest.skip(f"no real `{tool}` on PATH for the stand-in to defer to")
+    settings = settings_of(tmp_path)
+    link_xfactory(tmp_path)
+    if held_on == "settings":
+        at, call = shlex.quote(str(settings)), re.escape(f"-- {settings}")
+    else:
+        prefix = f"{settings}.openrepotools."
+        at = shlex.quote(prefix) + "*"
+        call = re.escape(f"-- {prefix}") + r"[0-9]+\.XXXXXX"
+    shim = tmp_path / f"held-{tool}"
+    shim.mkdir()
+    (shim / tool).write_text(
+        "#!/bin/sh\n" + HELD_ANSWER.format(real=shlex.quote(real), at=at),
+        encoding="utf-8")
+    (shim / tool).chmod(0o755)
+    hook_dir = tmp_path / "held"
+    hook_dir.mkdir()
+    mark = tmp_path / "fired"
+    preload = os.environ.get("LD_PRELOAD")
+
+    def default_signals() -> None:
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+    run = subprocess.Popen(
+        ["bash", str(COMMAND), "--install"], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        cwd=REPO, env=command_env(tmp_path, {
+            "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
+            "LD_PRELOAD": f"{signal_hook}:{preload}" if preload
+                          else str(signal_hook),
+            "ORT_HOOK_DIR": str(hook_dir), "ORT_HOOK_AT": "waitpid",
+            "ORT_HOOK_SIG": str(int(signal.SIGINT)),
+            "ORT_HOOK_MARK": str(mark)}),
+        start_new_session=True, preexec_fn=default_signals)
+    try:
+        out, err = run.communicate(timeout=60)
+    finally:
+        if run.poll() is None:
+            os.killpg(run.pid, signal.SIGKILL)
+            run.communicate()
+    record = hook_dir / "held"
+    held = (record.read_text(encoding="utf-8").splitlines()
+            if record.exists() else [])
+    assert mark.exists(), (
+        f"the hook never fired, so no signal landed: exit {run.returncode}; "
+        f"the stand-in held {held}\n{out}{err}")
+    assert run.returncode == -signal.SIGINT, (
+        f"the run did not die of SIGINT: exit {run.returncode}; the stand-in "
+        f"held {held}\n{out}{err}")
+    assert (len(held) == 2 and re.fullmatch(call, held[0])
+            and held[1] == "released"), (
+        f"the SIGINT did not land while the shell waited for `{tool}` of the "
+        f"{held_on}: the stand-in held {held}")
+    assert placement_temporaries(tmp_path) == []
+
+
+def write_settings_harness(tmp_path: Path, workdir: str, fail: str = "") -> Path:
+    """`hook_write_settings` cut out of the command and run on its own, as
+    `mode_is` is above: with the `die` and the `$PLACING` it names — exported,
+    so a stand-in can read it — and a `$WORKDIR` as given. A stand-in first on
+    `$PATH` for each of the four commands that touch the temporary (`mktemp`,
+    `cp`, `chmod`, `mv`) says what `$PLACING` holds as it is called, on stderr,
+    and then refuses if it is `fail` or runs the real one. The shell's pid is
+    printed first, and `$PLACING` again as the shell exits."""
+    shim = tmp_path / "shim"
+    shim.mkdir(exist_ok=True)
+    for tool in ("mktemp", "cp", "chmod", "mv"):
+        (shim / tool).write_text(
+            "#!/bin/sh\n"
+            f"printf 'PLACING-AT-{tool}=[%s]\\n' \"$PLACING\" >&2\n"
+            f'[ "{fail}" != {tool} ] || exit 1\n'
+            f'exec {shlex.quote(shutil.which(tool) or tool)} "$@"\n',
+            encoding="utf-8")
+        (shim / tool).chmod(0o755)
+    harness = tmp_path / "harness.sh"
+    harness.write_text(
+        "set -euo pipefail\n"
+        'export PLACING=""\n'
+        f"WORKDIR={shlex.quote(workdir)}\n"
+        f'PATH={shlex.quote(str(shim))}:"$PATH"\n'
+        "die() { printf 'REFUSED: %s\\n' \"$1\" >&2; exit 2; }\n"
+        "printf 'PID=%s\\n' \"$$\" >&2\n"
+        "trap 'printf \"PLACING-AT-EXIT=[%s]\\n\" \"$PLACING\" >&2' EXIT\n"
+        + helper_source("hook_write_settings")
+        + 'hook_write_settings "$1" "$2"\n', encoding="utf-8")
+    return harness
+
+
+def placing_seen(stderr: str) -> tuple[str, dict[str, str]]:
+    """The harness's pid and what `$PLACING` held at each call it reported."""
+    pid = re.search(r"^PID=(\d+)$", stderr, re.MULTILINE)
+    assert pid, stderr
+    return pid.group(1), dict(
+        re.findall(r"^PLACING-AT-(\w+)=\[(.*)\]$", stderr, re.MULTILINE))
+
+
+@pytest.mark.parametrize("fail, refusal, reached", [
+    ("", "", ["mktemp", "cp", "chmod", "mv"]),
+    ("cp", "could not stage the merged", ["mktemp", "cp"]),
+    ("chmod", "could not set mode 600 on the merged",
+     ["mktemp", "cp", "chmod"]),
+    ("mv", "could not move the merged settings into",
+     ["mktemp", "cp", "chmod", "mv"]),
+], ids=["written", "cp-fails", "chmod-fails", "mv-fails"])
+def test_the_settings_temporary_is_named_until_the_mv_and_cleared_after(
+        tmp_path, fail, refusal, reached):
+    """`$PLACING` IS THE TEMPORARY'S PREFIX FROM BEFORE `mktemp` UNTIL THE `mv`,
+    AND EMPTY WHEN THE FUNCTION IS OVER (#332). The prefix is
+    `<settings' directory>/settings.json.openrepotools.<this pid>.`, and it is
+    already set when `mktemp` is called — so no instant exists in which the
+    file is there and the trap does not know its name — and still set at the
+    `cp`, the `chmod` and the `mv`. It is empty again after the `mv`, so the
+    traps do not glob after a file that is no longer this write's, and in each
+    arm that removes the temporary and refuses. Nothing named
+    `*.openrepotools.*` is left beside the settings, whichever step failed, and
+    the settings keep their bytes unless the `mv` happened.
+
+    The directory has a space in its name, which a `dirname` taken through a
+    file and read back whole must not split."""
+    work = tmp_path / "work"
+    work.mkdir()
+    claude = tmp_path / "claude dir"
+    settings = claude / "settings.json"
+    staged = tmp_path / "staged"
+    staged.write_text("{}\n", encoding="utf-8")
+    claude.mkdir()
+    settings.write_text("old\n", encoding="utf-8")
+    harness = write_settings_harness(tmp_path, str(work), fail)
+    result = subprocess.run(["bash", str(harness), str(staged), str(settings)],
+                            capture_output=True, text=True, check=False)
+    pid, seen = placing_seen(result.stderr)
+    prefix = f"{claude}/settings.json.openrepotools.{pid}."
+    assert seen == {**{tool: prefix for tool in reached}, "EXIT": ""}, (
+        f"$PLACING was not the prefix at every call it reached, and empty "
+        f"at the exit:\n{result.stderr}")
+    assert sorted(p.name for p in claude.iterdir()) == ["settings.json"]
+    if not fail:
+        assert result.returncode == 0, result.stderr
+        assert settings.read_text(encoding="utf-8") == "{}\n"
+        assert stat.S_IMODE(settings.stat().st_mode) == 0o600
+    else:
+        assert result.returncode == 2, result.stderr
+        assert f"REFUSED: {refusal} {settings}" in result.stderr, result.stderr
+        assert settings.read_text(encoding="utf-8") == "old\n"
+
+
+@pytest.mark.parametrize("workdir", ["", "gone"],
+                         ids=["empty", "not-a-directory"])
+def test_the_settings_write_with_no_workdir_is_refused_and_makes_nothing(
+        tmp_path, workdir):
+    """THE WRITE PASSES EACH COMMAND'S ANSWER THROUGH `$WORKDIR`, SO IT REFUSES
+    WITHOUT ONE (#332, as #250 does for a placement). With `$WORKDIR` empty,
+    `"$WORKDIR/placing"` is `/placing`, at the root of the filesystem. Both
+    callers run `workdir` first, so this is the refusal for one that does not:
+    it names `$WORKDIR`, comes before anything is made, and leaves the
+    settings and the directory as they were."""
+    claude = tmp_path / "claude"
+    claude.mkdir()
+    settings = claude / "settings.json"
+    settings.write_text("old\n", encoding="utf-8")
+    staged = tmp_path / "staged"
+    staged.write_text("{}\n", encoding="utf-8")
+    if workdir:
+        workdir = str(tmp_path / workdir)
+    cause = f"{workdir}, which is not a directory" if workdir else "empty"
+    harness = write_settings_harness(tmp_path, workdir)
+    result = subprocess.run(["bash", str(harness), str(staged), str(settings)],
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert f"REFUSED: $WORKDIR is {cause}, " in result.stderr, result.stderr
+    assert f"so {settings} was not written" in result.stderr, result.stderr
+    assert settings.read_text(encoding="utf-8") == "old\n"
+    assert sorted(p.name for p in claude.iterdir()) == ["settings.json"]
+    assert placing_seen(result.stderr)[1] == {"EXIT": ""}, (
+        "nothing was made, so `$PLACING` never named anything")
+
+
+# --- the temporary the receipt write makes (#342) -----------------------------
+
+#: A TOOL THAT HOLDS THE RUN WHERE `receipt_replace`'s TEMPORARY EXISTS. The
+#: `mktemp` makes it with the real one and sleeps before it answers, so the
+#: shell is still waiting for its answer; the `cp` sleeps before it copies into
+#: it. Every other call goes to the real tool, so nothing before the receipt
+#: is slowed.
+SLOW_RECEIPT_TOOLS = {
+    "mktemp": ('case "$*" in\n'
+               '*/installed.tsv.*)\n'
+               '\tmade=$({real} "$@") || exit $?\n'
+               '\tsleep 3\n'
+               "\tprintf '%s\\n' \"$made\"\n"
+               '\texit 0 ;;\n'
+               'esac\n'
+               'exec {real} "$@"\n'),
+    "cp": ('for arg in "$@"; do\n'
+           '\tcase "$arg" in */installed.tsv.*) sleep 3 ;; esac\n'
+           'done\n'
+           'exec {real} "$@"\n'),
+}
+
+
+def receipt_temporaries(home: Path) -> list[str]:
+    """Every `installed.tsv.*` beside the receipt: a temporary
+    `receipt_replace` made and never moved or removed. `placement_temporaries`
+    does not look in the data directory, so it cannot see one."""
+    data = home / ".local" / "share" / "openRepoTools"
+    return sorted(p.name for p in data.iterdir()
+                  if p.name.startswith("installed.tsv.")
+                  ) if data.is_dir() else []
+
+
+@NEEDS_JQ
+@pytest.mark.parametrize("tool, signame, to_group", [
+    ("mktemp", "SIGINT", True),
+    ("cp", "SIGINT", True),
+    ("cp", "SIGTERM", False),
+], ids=["SIGINT-in-the-wait-for-mktemp", "SIGINT-in-the-cp",
+        "SIGTERM-in-the-cp"])
+def test_a_run_killed_while_the_receipt_temporary_exists_leaves_none(
+        tmp_path, tool, signame, to_group):
+    """THE RECEIPT'S TEMPORARY IS WITHIN THE CLEANUP'S REACH FOR ITS WHOLE LIFE
+    (#342), as the settings temporary is (#332). `receipt_replace` writes
+    `installed.tsv` through an `installed.tsv.XXXXXX` beside it, made with a
+    bare `$(mktemp …)` whose name no trap knew, and removed it only on a
+    failure it saw: a signal between the `mktemp` and the `mv` left it in the
+    data directory, where no later run looked for it. Now `$PLACING` holds its
+    prefix from before the `mktemp` until after the `mv`, and the `EXIT` trap
+    and the `INT` trap remove whatever starts with it.
+
+    `SLOW_RECEIPT_TOOLS` holds each run where the temporary exists: in the
+    `mktemp` once it has made the file and before it answers, and in the `cp`
+    into it. The signal lands there: a Ctrl-C to the group, or a `kill` of the
+    shell alone for SIGTERM, which bash does not trap and which runs the
+    `EXIT` trap as the shell dies. Each run dies of the signal and leaves no
+    `installed.tsv.*` beside the receipt, and no temporary beside a target.
+    THE CHILD STARTS WITH ALL THREE SIGNALS AT THEIR DEFAULT, for the reason
+    `run_signalled_at_the_settings_temporary` gives.
+
+    `SIGTERM-in-the-cp` PASSES PARTLY BY ORDER, and is #250's `cp` window,
+    which the comment above `remove_workdir` names. The SIGTERM reaches the
+    shell alone, so the stand-in `cp` outlives the shell and copies about
+    three seconds after the run has died. That copy fails, and makes no
+    temporary again, only because the `EXIT` trap had already removed its
+    source, `$WORKDIR/receipt-rows`, with the workdir; from a source outside
+    the workdir it would make `installed.tsv.<pid>.*` again after the run
+    was over. What this case holds is that the trap ran and took the
+    temporary that existed, not that no late `cp` can make one.
+    """
+    real = shutil.which(tool)
+    if real is None:
+        pytest.skip(f"no real `{tool}` on PATH for the slow one to defer to")
+    shim = tmp_path / f"slow-receipt-{tool}"
+    shim.mkdir()
+    (shim / tool).write_text(
+        "#!/bin/sh\n" + SLOW_RECEIPT_TOOLS[tool].format(real=shlex.quote(real)),
+        encoding="utf-8")
+    (shim / tool).chmod(0o755)
+    sig = getattr(signal, signame)
+
+    def default_signals() -> None:
+        for each in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(each, signal.SIG_DFL)
+
+    run = subprocess.Popen(
+        ["bash", str(COMMAND), "--install"], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=command_env(tmp_path, {
+            "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}"}),
+        start_new_session=True, preexec_fn=default_signals)
+    try:
+        deadline = time.monotonic() + 60
+        while (time.monotonic() < deadline and run.poll() is None
+               and not receipt_temporaries(tmp_path)):
+            time.sleep(0.05)
+        seen = receipt_temporaries(tmp_path)
+        if seen and to_group:
+            os.killpg(run.pid, sig)
+        elif seen:
+            run.send_signal(sig)
+        out, err = run.communicate(timeout=60)
+    finally:
+        if run.poll() is None:
+            os.killpg(run.pid, signal.SIGKILL)
+            run.communicate()
+    assert seen, (f"the receipt write never made a temporary for the signal "
+                  f"to land beside: exit {run.returncode}\n{out}{err}")
+    assert run.returncode == -sig, (
+        f"the run did not die of {signame}: exit {run.returncode}\n{out}{err}")
+    assert receipt_temporaries(tmp_path) == [], (
+        f"a receipt temporary outlived the run: {seen}\n{out}{err}")
+    assert placement_temporaries(tmp_path) == []
+
+
+#: A `mktemp` THAT HOLDS ONCE IT HAS MADE THE RECEIPT'S TEMPORARY (#342): for
+#: the receipt's template it makes the file with the real one, gives the
+#: answer, closes its output and leaves a `.openrepotools.` name in
+#: `$ORT_HOOK_DIR`, then stays until the signal hook has fired (ten seconds at
+#: most), writes `released` to `$ORT_HOOK_DIR/held` if it saw the hook's mark
+#: before then, and exits 0, as `HELD_CALL` holds #318's waits. Every other
+#: call goes to the real one.
+RECEIPT_MKTEMP_HELD = ('case "$*" in\n'
+                       '*/installed.tsv.*)\n'
+                       '\tmade=$({real} "$@") || exit $?\n'
+                       "\tprintf '%s\\n' \"$made\"\n"
+                       '\texec >&-\n'
+                       '\t: >"$ORT_HOOK_DIR/.made.openrepotools.$$"\n'
+                       '\ti=0\n'
+                       '\twhile [ ! -e "$ORT_HOOK_MARK" ] && [ "$i" -lt 200 ]; do\n'
+                       '\t\tsleep 0.05\n'
+                       '\t\ti=$((i + 1))\n'
+                       '\tdone\n'
+                       '\t[ "$i" -ge 200 ] || '
+                       "printf 'released\\n' >\"$ORT_HOOK_DIR/held\"\n"
+                       '\texit 0 ;;\n'
+                       'esac\n'
+                       'exec {real} "$@"\n')
+
+
+@NEEDS_JQ
+def test_a_sigint_in_the_wait_for_the_receipt_mktemp_ends_the_run_and_leaves_no_temporary(
+        tmp_path, signal_hook):
+    """THE SHELL WAITS FOR THE RECEIPT'S `mktemp` AS A PLAIN COMMAND, SO A
+    SIGINT LANDS IN THAT WAIT WHILE `mktemp` IS STILL THERE, AND THE RUN DIES
+    OF IT WITH NO TEMPORARY LEFT (#342), as the workdir's `mktemp` case holds
+    for the workdir. `receipt_replace` sets `$PLACING` first and takes
+    `mktemp`'s answer through the workdir, so the shell waits for `mktemp` in
+    its job table: the SIGINT runs the `INT` trap once `mktemp` is done, which
+    removes what starts with `$PLACING`, and the run dies of the SIGINT.
+
+    Taken through `$(…)` instead, with `$PLACING` still set first, the shell
+    does not wait for `mktemp` while it runs at all: with that `$(…)`'s
+    `2>/dev/null`, bash forks a subshell for it and reads its pipe until the
+    subshell is gone, and waits only after, outside its job table, where a
+    SIGINT that the child does not die of is lost (the comment above
+    `remove_workdir`). Measured on bash 5.2.21, such a run left the stand-in
+    unreleased for its whole ten seconds, then still died of the SIGINT and
+    left no temporary, as it did with a stand-in that exited at once: so the
+    release is what tells the plain wait from the `$(…)`.
+
+    `RECEIPT_MKTEMP_HELD` makes the temporary, answers, closes its output,
+    leaves its name in `$ORT_HOOK_DIR` and holds; `SIGNAL_HOOK_C`, at
+    `waitpid`, sends the SIGINT to the shell in its wait for a child once
+    that name is there. The hook's mark proves it fired, and the stand-in's
+    `released` that it fired while the stand-in held. THE CHILD STARTS WITH
+    ALL THREE SIGNALS AT THEIR DEFAULT, for the reason
+    `run_signalled_at_the_settings_temporary` gives.
+    """
+    real = shutil.which("mktemp")
+    if real is None:
+        pytest.skip("no real `mktemp` on PATH for the stand-in to defer to")
+    shim = tmp_path / "held-receipt-mktemp"
+    shim.mkdir()
+    (shim / "mktemp").write_text(
+        "#!/bin/sh\n" + RECEIPT_MKTEMP_HELD.format(real=shlex.quote(real)),
+        encoding="utf-8")
+    (shim / "mktemp").chmod(0o755)
+    made, mark = tmp_path / "made", tmp_path / "fired"
+    made.mkdir()
+    preload = os.environ.get("LD_PRELOAD")
+
+    def default_signals() -> None:
+        for each in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(each, signal.SIG_DFL)
+
+    run = subprocess.Popen(
+        ["bash", str(COMMAND), "--install"], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=command_env(tmp_path, {
+            "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
+            "LD_PRELOAD": f"{signal_hook}:{preload}" if preload
+                          else str(signal_hook),
+            "ORT_HOOK_DIR": str(made), "ORT_HOOK_AT": "waitpid",
+            "ORT_HOOK_SIG": str(int(signal.SIGINT)),
+            "ORT_HOOK_MARK": str(mark)}),
+        start_new_session=True, preexec_fn=default_signals)
+    try:
+        out, err = run.communicate(timeout=60)
+    finally:
+        if run.poll() is None:
+            os.killpg(run.pid, signal.SIGKILL)
+            run.communicate()
+    record = made / "held"
+    held = (record.read_text(encoding="utf-8").splitlines()
+            if record.exists() else [])
+    assert mark.exists(), (
+        f"the hook never fired, so no signal landed: exit {run.returncode}"
+        f"\n{out}{err}")
+    assert held == ["released"], (
+        "the SIGINT did not land while the shell waited for the receipt's "
+        "`mktemp`, which held unreleased: the shell was not waiting for it as "
+        f"a plain command (exit {run.returncode})\n{out}{err}")
+    assert run.returncode == -signal.SIGINT, (
+        f"the run did not die of SIGINT: exit {run.returncode}\n{out}{err}")
+    assert receipt_temporaries(tmp_path) == [], (
+        f"a receipt temporary outlived the run:\n{out}{err}")
+    assert placement_temporaries(tmp_path) == []
+
+
+def receipt_write_harness(tmp_path: Path, workdir: str, data: Path,
+                          fail: str = "") -> Path:
+    """`receipt_replace` cut out of the command and run on its own, as
+    `write_settings_harness` runs the settings write: with `read_answer`, a
+    `receipt_file` that answers `<data>/installed.tsv`, the `$PLACING` it
+    names — exported, so a stand-in can read it — and a `$WORKDIR` as given.
+    It is called inside an `if`, as both its callers call it. A stand-in
+    first on `$PATH` for each of the three commands that touch the temporary
+    (`mktemp`, `cp`, `mv`) says what `$PLACING` holds as it is called, on fd 3,
+    which the harness opens on its stderr because the function sends each
+    command's own stderr to `/dev/null`, and then refuses if it is `fail` or
+    runs the real one. The shell's pid is printed first, the function's answer
+    after it returns, and `$PLACING` again as the shell exits."""
+    shim = tmp_path / "shim"
+    shim.mkdir(exist_ok=True)
+    for tool in ("mktemp", "cp", "mv"):
+        (shim / tool).write_text(
+            "#!/bin/sh\n"
+            f"printf 'PLACING-AT-{tool}=[%s]\\n' \"$PLACING\" >&3\n"
+            f'[ "{fail}" != {tool} ] || exit 1\n'
+            f'exec {shlex.quote(shutil.which(tool) or tool)} "$@"\n',
+            encoding="utf-8")
+        (shim / tool).chmod(0o755)
+    receipt = shlex.quote(str(data / "installed.tsv"))
+    harness = tmp_path / "receipt-harness.sh"
+    harness.write_text(
+        "set -euo pipefail\n"
+        "exec 3>&2\n"
+        'export PLACING=""\n'
+        f"WORKDIR={shlex.quote(workdir)}\n"
+        f'PATH={shlex.quote(str(shim))}:"$PATH"\n'
+        f"receipt_file() {{ printf '%s\\n' {receipt}; }}\n"
+        "printf 'PID=%s\\n' \"$$\" >&2\n"
+        "trap 'printf \"PLACING-AT-EXIT=[%s]\\n\" \"$PLACING\" >&2' EXIT\n"
+        + helper_source("read_answer")
+        + helper_source("receipt_replace")
+        + 'if receipt_replace "$1"; then answer=0; else answer=$?; fi\n'
+        + "printf 'ANSWER=%s\\n' \"$answer\" >&2\n", encoding="utf-8")
+    return harness
+
+
+def receipt_answer(stderr: str) -> str:
+    """What `receipt_replace` answered in the harness."""
+    found = re.search(r"^ANSWER=(\d+)$", stderr, re.MULTILINE)
+    assert found, stderr
+    return found.group(1)
+
+
+@pytest.mark.parametrize("fail, reached", [
+    ("", ["mktemp", "cp", "mv"]),
+    ("mktemp", ["mktemp"]),
+    ("cp", ["mktemp", "cp"]),
+    ("mv", ["mktemp", "cp", "mv"]),
+], ids=["written", "mktemp-fails", "cp-fails", "mv-fails"])
+def test_the_receipt_temporary_is_named_until_the_mv_and_cleared_after(
+        tmp_path, fail, reached):
+    """`$PLACING` IS THE RECEIPT TEMPORARY'S PREFIX FROM BEFORE `mktemp` UNTIL
+    THE `mv`, AND EMPTY WHEN THE FUNCTION IS OVER (#342), as #332 holds the
+    settings write to it. The prefix is `<the receipt's directory>/
+    installed.tsv.<this pid>.`, already set when `mktemp` is called, so no
+    instant exists in which the file is there and the trap does not know its
+    name, and still set at the `cp` and the `mv`. It is empty again after the
+    `mv`, and after each arm that removes the temporary and answers 1, so the
+    traps never glob after a file that is no longer this write's, and a later
+    writer of `$PLACING` never meets it set. Nothing named `installed.tsv.*` is
+    left beside the receipt, whichever step failed, and the receipt keeps its
+    bytes unless the `mv` happened.
+
+    The directory has a space in its name, which the prefix's glob and the
+    name read back from the workdir must not split."""
+    work = tmp_path / "work"
+    work.mkdir()
+    data = tmp_path / "data dir"
+    data.mkdir()
+    receipt = data / "installed.tsv"
+    receipt.write_text("old\n", encoding="utf-8")
+    staged = tmp_path / "staged"
+    staged.write_text("new\n", encoding="utf-8")
+    harness = receipt_write_harness(tmp_path, str(work), data, fail)
+    result = subprocess.run(["bash", str(harness), str(staged)],
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    pid, seen = placing_seen(result.stderr)
+    prefix = f"{data}/installed.tsv.{pid}."
+    assert seen == {**{tool: prefix for tool in reached}, "EXIT": ""}, (
+        f"$PLACING was not the prefix at every call it reached, and empty "
+        f"at the exit:\n{result.stderr}")
+    assert sorted(p.name for p in data.iterdir()) == ["installed.tsv"]
+    if not fail:
+        assert receipt_answer(result.stderr) == "0", result.stderr
+        assert receipt.read_text(encoding="utf-8") == "new\n"
+    else:
+        assert receipt_answer(result.stderr) == "1", result.stderr
+        assert receipt.read_text(encoding="utf-8") == "old\n"
+
+
+@pytest.mark.parametrize("workdir", ["", "gone"],
+                         ids=["empty", "not-a-directory"])
+def test_the_receipt_write_with_no_workdir_makes_nothing_and_answers_1(
+        tmp_path, workdir):
+    """THE RECEIPT WRITE TAKES `mktemp`'s ANSWER THROUGH `$WORKDIR`, SO WITHOUT
+    ONE IT MAKES NOTHING AND ANSWERS 1 (#342), the answer each caller turns
+    into its note: a receipt is never a refusal (#57). With `$WORKDIR` empty,
+    `"$WORKDIR/placing"` is `/placing`, at the root of the filesystem, which a
+    root run would have written. Both callers make the workdir first, so this
+    is the answer for one that does not. It comes before anything is made:
+    the data directory, which did not exist, still does not, and `$PLACING`
+    never named anything."""
+    data = tmp_path / "data"
+    staged = tmp_path / "staged"
+    staged.write_text("new\n", encoding="utf-8")
+    if workdir:
+        workdir = str(tmp_path / workdir)
+    harness = receipt_write_harness(tmp_path, workdir, data)
+    result = subprocess.run(["bash", str(harness), str(staged)],
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert receipt_answer(result.stderr) == "1", result.stderr
+    assert not data.exists(), (
+        f"the write made {data} with no workdir to take answers through")
+    assert placing_seen(result.stderr)[1] == {"EXIT": ""}, (
+        "nothing was made, so `$PLACING` never named anything")
+
+
+# --- a refusal that held two `$(…)` (#342) ------------------------------------
+
+#: A `jq` THAT HOLDS THE RIVAL REFUSAL'S FIRST `$(…)`: the call `hook_rivals`
+#: makes, the one `jq` is asked with `--arg e`, leaves a `.openrepotools.`
+#: name in `$ORT_HOOK_DIR` and stays (ten seconds at most) before it runs the
+#: real `jq`. Every other call goes to the real one at once.
+RIVALS_JQ = ('case " $* " in\n'
+             '*" --arg e "*)\n'
+             '\t: >"$ORT_HOOK_DIR/.rivals.openrepotools.$$"\n'
+             '\ti=0\n'
+             '\twhile [ "$i" -lt 200 ]; do\n'
+             '\t\tsleep 0.05\n'
+             '\t\ti=$((i + 1))\n'
+             '\tdone ;;\n'
+             'esac\n'
+             'exec {real} "$@"\n')
+
+
+@NEEDS_JQ
+def test_a_sigint_in_the_rival_refusal_s_first_substitution_ends_the_run_by_the_signal(
+        tmp_path):
+    """A SIGINT WHILE THE RIVAL REFUSAL NAMES THE RIVALS ENDS THE RUN BY THE
+    SIGNAL, NOT WITH A PARSE ERROR (#342). The refusal for a second writer of
+    the `SessionStart` hook was one `die` whose message held two `$(…)`:
+    `hook_rivals`, then `hook_block_text`. A SIGINT that bash took while it
+    waited for the first was run as bash parsed the second, and bash parsed
+    the `INT` trap's string as the rest of that `$(…)`: it printed `interrupt
+    trap: line 2: unexpected EOF while looking for matching `)'`, and `set -e`
+    ended the run with exit 2 — the refusal's code, so the caller could not
+    tell the signal from the refusal. Now `hook_rivals` answers into a
+    variable first, and the trap runs once that command is over.
+
+    `RIVALS_JQ` holds `hook_rivals`' `jq` with a rival in `settings.json`, and
+    a Ctrl-C reaches the group while it holds: the run dies of SIGINT, prints
+    no parse error, and leaves the settings as they were. THE CHILD STARTS
+    WITH ALL THREE SIGNALS AT THEIR DEFAULT, for the reason
+    `run_signalled_at_the_settings_temporary` gives.
+    """
+    rival = "~/bin/lane-hook.sh session-start || true"
+    settings = settings_of(tmp_path)
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({"hooks": {"SessionStart": [
+        {"matcher": HOOK_MATCHER,
+         "hooks": [{"type": "command", "command": rival, "timeout": 5}]}]}}),
+        encoding="utf-8")
+    real = shutil.which("jq")
+    shim = tmp_path / "held-jq"
+    shim.mkdir()
+    (shim / "jq").write_text(
+        "#!/bin/sh\n" + RIVALS_JQ.format(real=shlex.quote(real)),
+        encoding="utf-8")
+    (shim / "jq").chmod(0o755)
+    made = tmp_path / "held"
+    made.mkdir()
+
+    def default_signals() -> None:
+        for each in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(each, signal.SIG_DFL)
+
+    run = subprocess.Popen(
+        ["bash", str(COMMAND), "--install"], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=command_env(tmp_path, {
+            "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
+            "ORT_HOOK_DIR": str(made)}),
+        start_new_session=True, preexec_fn=default_signals)
+    try:
+        deadline = time.monotonic() + 60
+        while (time.monotonic() < deadline and run.poll() is None
+               and not any(made.iterdir())):
+            time.sleep(0.05)
+        held = any(made.iterdir())
+        if held:
+            os.killpg(run.pid, signal.SIGINT)
+        out, err = run.communicate(timeout=60)
+    finally:
+        if run.poll() is None:
+            os.killpg(run.pid, signal.SIGKILL)
+            run.communicate()
+    assert held, (f"`hook_rivals`' jq was never reached for the SIGINT to land "
+                  f"in: exit {run.returncode}\n{out}{err}")
+    assert "unexpected EOF" not in err, (
+        f"the SIGINT ran the INT trap inside a parse:\n{err}")
+    assert run.returncode == -signal.SIGINT, (
+        f"the run did not die of SIGINT: exit {run.returncode}\n{out}{err}")
+    assert session_start_commands(tmp_path) == [rival], "it changed the file"
