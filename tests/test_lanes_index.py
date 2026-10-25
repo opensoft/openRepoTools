@@ -1765,11 +1765,14 @@ class Inventory:
         """An answer with what is the SANDBOX's taken out: its paths (as given
         and resolved), a tree id - `c<cksum>-<the folded path>`, whose tail
         alone survives a path longer than 180 bytes - and the live session's
-        pid."""
-        text = TREE_ID.sub("<TREE>", text)
+        pid. THE ROOT GOES FIRST (#334): a root whose own path holds what another
+        rule matches (`rv-c302-309-work` for the tree id, the pid as a segment)
+        is cut up by that rule and leaves no root to take out."""
         text = text.replace(os.path.realpath(self.root), str(self.root))
+        text = text.replace(str(self.root), "<ROOT>")
+        text = TREE_ID.sub("<TREE>", text)
         text = re.sub(rf"\b{self.sleeper.pid}\b", "<PID>", text)
-        return normal(text, self.root)
+        return normal(text)
 
     def close(self) -> None:
         self.sleeper.kill()
@@ -1781,6 +1784,72 @@ def inv(tmp_path):
     made = Inventory(tmp_path / "i")
     yield made
     made.close()
+
+
+#: The live session's pid in the next test: a number no `pytest-<n>` folder reaches.
+NORM_PID = 987654
+
+#: THE SHAPES OF A SANDBOX ROOT `Inventory.norm` HAS TO TAKE OUT (#334): each row is
+#: (id, the root as the sandbox is given it, the folder that root resolves to), both
+#: below the test's `tmp_path`. The plain root is what a rule that runs first leaves
+#: whole; the others hold what such a rule matches - a segment like `rv-c302-309-work`
+#: for `TREE_ID` (in the third row only in the resolved path, since the root is a link)
+#: and the live session's pid for the pid rule.
+NORM_ROOTS = [
+    ("plain", "i", "i"),
+    ("tree-id-segment", "rv-c302-309-work/i", "rv-c302-309-work/i"),
+    ("tree-id-segment-in-the-resolved-path-only", "link", "rv-c302-309-work/i"),
+    ("pid-segment", f"{NORM_PID}/i", f"{NORM_PID}/i"),
+]
+
+
+def _norm_of(root: Path, pid: int, text: str) -> str:
+    """`Inventory.norm` for a sandbox at `root` whose live session is `pid`. That is
+    all `norm` reads off its object, so none of the sandbox is built."""
+    bare = Inventory.__new__(Inventory)
+    bare.root = root
+    bare.sleeper = type("Session", (), {"pid": pid})
+    return bare.norm(text)
+
+
+@pytest.mark.parametrize("shape,given,resolved", NORM_ROOTS, ids=[s for s, _, _ in NORM_ROOTS])
+def test_norm_takes_the_sandbox_root_out_before_any_rule_that_could_cut_it_up(
+        tmp_path, shape, given, resolved):
+    """THE ROOT GOES FIRST (#334). `norm` applied `TREE_ID` to the whole answer
+    before it took out the sandbox root, so a root whose own path held a segment
+    `TREE_ID` matches - `rv-c302-309-work`, a folder named for a review - was cut up
+    (`rv-<TREE>`) and no root was left to take out: the two inventory tests that
+    compare one sandbox's answer with another's failed for no reason but the
+    folder the suite ran from. The pid rule had the same fault for a root with the
+    live session's pid as a segment. One answer, written under each root, must leave
+    the same text."""
+    target = tmp_path / resolved
+    target.mkdir(parents=True)
+    root = tmp_path / given
+    if root != target:
+        root.symlink_to(target)
+    real = Path(os.path.realpath(root))
+    tree = real / "repos" / "repoA" / ".claude" / "worktrees" / "w-run"
+    # `tree_id_for`'s shape: a `cksum`, then the path with what a name cannot hold
+    # folded to `-`.
+    folded = re.sub(r"-+", "-", re.sub(r"[^A-Za-z0-9._-]", "-", str(tree))).strip("-")
+    answer = "\n".join([
+        f"ROOT\t{root}/lane-state/repoA-1",
+        f"TREE\tc410664495-{folded}\tok\t{root}/repos/repoA/.claude/worktrees/w-run"
+        "\tbranch feat/run head 0123456789abcdef0123456789abcdef01234567"
+        " observed 2026-10-04T00:00:00Z",
+        f"TREE\tc410664495-{folded}\tok\t{real}/repos/repoA/.claude/worktrees/w-run",
+        f"HOLDER\tlive\t{NORM_PID}\torphan",
+    ])
+    want = "\n".join([
+        "ROOT\t<ROOT>/lane-state/repoA-1",
+        "TREE\t<TREE>\tok\t<ROOT>/repos/repoA/.claude/worktrees/w-run"
+        "\tbranch feat/run head <HEX> observed <UTC>",
+        "TREE\t<TREE>\tok\t<ROOT>/repos/repoA/.claude/worktrees/w-run",
+        "HOLDER\tlive\t<PID>\torphan",
+    ])
+    got = _norm_of(root, NORM_PID, answer)
+    assert got == want, f"{shape}:\n{got}"
 
 
 def test_the_inventory_source_mirrors_every_lanes_sidecars(inv):
