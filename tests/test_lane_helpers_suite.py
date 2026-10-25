@@ -483,8 +483,17 @@ def stand_in_suite(monkeypatch):
 #: below rather than only removed: a runner that exports `FORCE_COLOR=1` and a
 #: `PY_COLORS=1` ends every `E` line in an escape sequence, and `lines_ending`
 #: then counts nothing.
+#:
+#: The three `PYTEST_XDIST_*` variables are in the list as well: an xdist worker
+#: sets them for itself, and a child of one (this suite, under CI's `-n 3`)
+#: would inherit them. Nothing here reads them, so no case depends on it. They
+#: are there so that this list says what `_NOT_INHERITED` says in
+#: `tests/test_xdist_three_wide.py`, the list that file strips from its own
+#: child pytests.
 _CHILD_NOT_INHERITED = ("PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_CURRENT_TEST",
-                        "CI", "BUILD_NUMBER", "NO_COLOR", "FORCE_COLOR")
+                        "PYTEST_XDIST_TESTRUNUID", "PYTEST_XDIST_WORKER",
+                        "PYTEST_XDIST_WORKER_COUNT", "CI", "BUILD_NUMBER",
+                        "NO_COLOR", "FORCE_COLOR")
 
 _REAL_TEST = "test_the_lane_helper_suite_passes"
 

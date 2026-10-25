@@ -94,19 +94,26 @@ jobs:
           python-version: '3.x'
 
       # pytest is the TEST RUNNER, pytest-xdist is what runs it three workers
-      # wide, and they are the only things installed here (xdist brings its
-      # one dependency, execnet). Nothing this repository ships needs a Python
-      # package: its commands are bash, or `python3` (`lanes-index`,
-      # `lane-worktrees`) importing only the standard library, and the suite
-      # itself imports only the standard library.
-      # PINNED, BOTH. A CI job that resolves "latest" on every run is a job
-      # whose result depends on the day it ran, which is the same objection
-      # this family makes to pinning a tag instead of a commit. pytest-xdist
-      # 3.8.0 (PyPI, 2025-07-01) declares `pytest>=7.0.0`, which 8.3.4 meets, and
-      # runs each worker's tests on its main thread, which the shell suite's
-      # wrapper needs to relay a TERM to the suite (`tests/test_xdist_three_wide.py`).
+      # wide, and they are the only two packages this job names (xdist brings
+      # `execnet`, and pytest its own requirements). Nothing this repository
+      # ships needs a Python package: its commands are bash, or `python3`
+      # (`lanes-index`, `lane-worktrees`) importing only the standard library,
+      # and the suite itself imports only the standard library.
+      # PINNED, BOTH: those two packages, and nothing they bring. A CI job that
+      # resolves "latest" on every run is a job whose result depends on the day
+      # it ran, which is the same objection this family makes to pinning a tag
+      # instead of a commit. `execnet>=2.1`, which xdist requires, and pytest's
+      # own requirements (`iniconfig`, `packaging`, `pluggy`, and below Python
+      # 3.11 `exceptiongroup` and `tomli`) are NOT pinned: each is the newest
+      # version that meets its bound on the day the job runs.
+      # `--only-binary=:all:`, as `guard-launch-mode`'s install has it, keeps
+      # every package of the install to a wheel; all of them are wheels today.
+      # pytest-xdist 3.8.0 (PyPI, 2025-07-01) declares `pytest>=7.0.0`, which
+      # 8.3.4 meets, and runs each worker's tests on its main thread, which the
+      # shell suite's wrapper needs to relay a TERM to the suite
+      # (`tests/test_xdist_three_wide.py`).
       - name: install the test runner
-        run: python3 -m pip install --disable-pip-version-check pytest==8.3.4 pytest-xdist==3.8.0
+        run: 'python3 -m pip install --disable-pip-version-check --only-binary=:all: pytest==8.3.4 pytest-xdist==3.8.0'
 
       # Per-invocation identity, never `git config --global`: a lane that
       # mirrors this step on a workstation must not be able to rewrite the
@@ -132,8 +139,9 @@ jobs:
       #                           serially, and the shell suite's wrapper is one
       #                           unit of work;
       #   --no-loadscope-reorder  xdist 3.8.0 otherwise sorts those units by
-      #                           size, biggest first, which would hand out the
-      #                           wrapper's small module nearly last.
+      #                           size, biggest first, and the wrapper's module
+      #                           is not the biggest, so it would not be handed
+      #                           out first.
       # `tests/conftest.py` puts that module first in a worker's collection, so
       # with the flag it is the first unit a worker is handed, and the other two
       # workers run every other file beside it. The shell suite's timing table
@@ -168,7 +176,7 @@ jobs:
           python-version: '3.x'
 
       - name: install the test runner
-        run: python3 -m pip install --disable-pip-version-check pytest==8.3.4 pytest-xdist==3.8.0
+        run: 'python3 -m pip install --disable-pip-version-check --only-binary=:all: pytest==8.3.4 pytest-xdist==3.8.0'
 
       - name: the submodule really is not materialized
         run: |

@@ -560,9 +560,10 @@ def pytest_collection_modifyitems(config, items):
     run says `--no-loadscope-reorder`: `if self.config.option.loadscopereorder:`
     is the branch that sorts by `-len(item[1])`, and that option DEFAULTS TO
     TRUE (`plugin.py`, `--loadscope-reorder`, `default=True`). The wrapper
-    module is about fifteen tests, one of the smaller modules, so without that
-    flag it would be handed out nearly last. `.github/workflows/tests.yml`
-    passes it, and `tests/test_tests_workflow.py` fails the workflow without it.
+    module is not the biggest, so it is not first under that sort: the hook
+    puts it first in the collection, and the flag turns the sort off so that
+    the collection's order stands. `.github/workflows/tests.yml` passes the
+    flag, and `tests/test_tests_workflow.py` fails the workflow without it.
 
     ONLY IN A WORKER: `workerinput` is the attribute xdist's own
     `is_xdist_worker` reads, and it is there only in a worker. With xdist

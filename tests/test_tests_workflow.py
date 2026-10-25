@@ -91,11 +91,13 @@ SCHEDULE = [{"cron": "17 4 * * *"}]
 #: `-n 3` is the width; `--dist loadfile` keeps a file's tests on one worker
 #: and makes the shell suite's wrapper one unit; and `--no-loadscope-reorder`,
 #: because pytest-xdist 3.8.0 otherwise sorts those units by size, biggest
-#: first, and the wrapper's module is one of the smallest, so
+#: first, and the wrapper's module is not the biggest, so
 #: `tests/conftest.py`'s hook that puts it first would be undone
 #: (`tests/test_xdist_three_wide.py` runs both). THE PIN IS EXACT, and one
 #: version: pytest-xdist 3.8.0 was released on 2025-07-01 and declares
-#: `pytest>=7.0.0`, which 8.3.4 meets.
+#: `pytest>=7.0.0`, which 8.3.4 meets. It covers those two packages only: what
+#: they bring (`execnet`, and pytest's own requirements) floats. Both install
+#: lines carry `--only-binary=:all:`, as `guard-launch-mode`'s does.
 XDIST_PIN = "pytest-xdist==3.8.0"
 XDIST_FLAGS = "-n 3 --dist loadfile --no-loadscope-reorder"
 TEST_JOBS = ("tests", "tests-no-submodule")
@@ -121,7 +123,7 @@ EXISTING_JOBS = {
         "python": "3.x",
         "runs": [
             "python3 -m pip install --disable-pip-version-check "
-            f"pytest==8.3.4 {XDIST_PIN}",
+            f"--only-binary=:all: pytest==8.3.4 {XDIST_PIN}",
             "{\n"
             '  echo "GIT_AUTHOR_NAME=openRepoTools CI"\n'
             '  echo "GIT_AUTHOR_EMAIL=ci@openrepotools.invalid"\n'
@@ -136,7 +138,7 @@ EXISTING_JOBS = {
         "python": "3.x",
         "runs": [
             "python3 -m pip install --disable-pip-version-check "
-            f"pytest==8.3.4 {XDIST_PIN}",
+            f"--only-binary=:all: pytest==8.3.4 {XDIST_PIN}",
             "set -euo pipefail\n"
             "if [ -f upstream/openRepoShape/scripts/repo_shape.py ]; then\n"
             '  echo "the submodule IS checked out; this job proves nothing" >&2\n'
@@ -892,7 +894,8 @@ def test_tests_yml_test_job_installs_one_pinned_xdist_and_runs_three_wide(
     pytest's own pin, and the run carries `-n 3`, `--dist loadfile` and
     `--no-loadscope-reorder`. Each is held on its own, so that dropping any one
     says which: the width is gone, a file's tests are split across workers, the
-    pin floats with the day, or xdist hands the shell suite out nearly last."""
+    pin floats with the day, or xdist's size sort stops the shell suite going
+    first."""
     runs = [step["run"] for step in jobs_of(workflow)[job_id]["steps"]
             if "run" in step]
     installs = [run for run in runs if "pip install" in run]
@@ -911,7 +914,8 @@ def test_tests_yml_test_job_installs_one_pinned_xdist_and_runs_three_wide(
         f"`{job_id}` does not run `--dist loadfile`: {commands[0]}")
     assert "--no-loadscope-reorder" in argv, (
         f"`{job_id}` does not run `--no-loadscope-reorder`, so xdist sorts the "
-        f"shell suite's module by size and hands it out nearly last: {commands[0]}")
+        f"units by size and the shell suite's module, which is not the biggest, "
+        f"is not handed out first: {commands[0]}")
 
 
 @NEEDS_UPSTREAM

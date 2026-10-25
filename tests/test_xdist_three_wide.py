@@ -47,7 +47,9 @@ REAL_CONFTEST = Path(__file__).resolve().with_name("conftest.py")
 #: A child's environment must not carry what changes how pytest WRITES or what it
 #: RUNS: the colour and CI variables, `PYTEST_ADDOPTS` and the like, and the
 #: variables an xdist worker sets for itself, which a child of a worker (this
-#: run, under CI's `-n 3`) would otherwise inherit.
+#: run, under CI's `-n 3`) would otherwise inherit. It is the same list as
+#: `_CHILD_NOT_INHERITED` in `tests/test_lane_helpers_suite.py`, which
+#: `run_wrapper_over` (the two `-n 1` cases below) strips from its children.
 _NOT_INHERITED = ("PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_CURRENT_TEST",
                   "PYTEST_XDIST_TESTRUNUID", "PYTEST_XDIST_WORKER",
                   "PYTEST_XDIST_WORKER_COUNT", "CI", "BUILD_NUMBER", "NO_COLOR",
@@ -135,11 +137,11 @@ def test_a_worker_is_handed_the_shell_suite_first_only_with_the_workflows_flags(
         tmp_path, flags, first):
     """xdist 3.8.0 sorts its work units by size, biggest first, unless the run
     says `--no-loadscope-reorder` (`loadscopereorder` defaults to true), which
-    would hand the wrapper's small module out nearly last whatever the hook
-    does. One worker runs its units in the order it is handed them, so the
-    first test to run is the first unit handed out. The second case is the
-    reason the first has its flag: if a later xdist changed that default, the
-    pin to this one would move and this would say so."""
+    would not hand the wrapper's module out first whatever the hook does, since
+    it is not the biggest. One worker runs its units in the order it is handed
+    them, so the first test to run is the first unit handed out. The second
+    case is the reason the first has its flag: if a later xdist changed that
+    default, the pin to this one would move and this would say so."""
     (tmp_path / "conftest.py").write_text(
         _CHILD_CONFTEST.format(real=str(REAL_CONFTEST)), encoding="utf-8")
     for module, count in (("test_a_big.py", 6), (SHELL_SUITE_WRAPPER, 2)):
