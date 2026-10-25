@@ -80,9 +80,10 @@ from test_install_payload_source import (World, git, local_assembly, network,
 from test_openrepotools_command import (ARTIFACTS, COMMAND, COMMAND_NAMES,
                                         FETCHED, HOOK_ENTRIES, INSTALLED,
                                         NEEDS_JQ, SKILL_NAMES, command_env,
-                                        path_without, placed_files,
-                                        placement_temporaries, receipt_path,
-                                        receipt_rows, source_tree)
+                                        link_xfactory, path_without,
+                                        placed_files, placement_temporaries,
+                                        receipt_path, receipt_rows,
+                                        source_tree)
 
 pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
                                  reason="openRepoTools is a bash script"),
@@ -1778,6 +1779,44 @@ def first_on_path(fake: Path) -> dict:
     return {"PATH": f"{fake}{os.pathsep}{os.environ['PATH']}"}
 
 
+def refusing_mkdir(root: Path, where: Path, nth: int) -> tuple[Path, Path]:
+    """A `mkdir` first on `PATH` that REFUSES the `nth` call whose arguments
+    name `where` (it prints the real `mkdir`'s kind of message and exits 1)
+    and is the real `mkdir` for every other call, `where`'s other calls
+    included. `mid_run`'s one-shot fake acts at the first match only, and the
+    three command files at each destination share one directory, so a refusal
+    at a later one needs the count. Returns the directory to put first on
+    `PATH`, and the file the refused call leaves, which shows that it was
+    refused during the install and not before it."""
+    real = shutil.which("mkdir")
+    if real is None:
+        pytest.skip("no real `mkdir` on PATH for the fake to defer to")
+    fake = root / "refusing-mkdir"
+    fake.mkdir()
+    count = shlex.quote(str(root / "refusing-mkdir.count"))
+    refused = shlex.quote(str(root / "refusing-mkdir.refused"))
+    named = shlex.quote(str(where))
+    (fake / "mkdir").write_text(
+        "#!/bin/sh\n"
+        'for arg in "$@"; do\n'
+        f'\tif [ "$arg" = {named} ]; then\n'
+        f"\t\tseen=$(cat {count} 2>/dev/null || echo 0)\n"
+        "\t\tseen=$((seen + 1))\n"
+        f'\t\techo "$seen" > {count}\n'
+        f'\t\tif [ "$seen" -eq {nth} ]; then\n'
+        f"\t\t\t: > {refused}\n"
+        "\t\t\tprintf 'mkdir: cannot create directory %s: the test refuses "
+        f"it\\n' {named} >&2\n"
+        "\t\t\texit 1\n"
+        "\t\tfi\n"
+        "\t\tbreak\n"
+        "\tfi\n"
+        "done\n"
+        f'exec {shlex.quote(real)} "$@"\n', encoding="utf-8")
+    (fake / "mkdir").chmod(0o755)
+    return fake, root / "refusing-mkdir.refused"
+
+
 @NEEDS_JQ
 def test_pipx_mid_run_a_link_that_appears_after_planning_is_left_to_pipx(
         tmp_path):
@@ -1942,6 +1981,111 @@ def test_pipx_mid_run_a_link_at_a_skill_or_command_file_is_refused_and_left(
     assert there == order[:order.index(str(target)) + 1], (
         f"the run went past the link or stopped short of it:\n"
         f"{transcript(result)}")
+
+
+#: WHAT A REFUSAL AT A SKILL FILE OR A COMMAND FILE SAYS IS PLACED (#321), read
+#: against the files on disk. `--install` places the six skill files, then the
+#: six command files, then the hook pair, and each refusal in the two loops
+#: ends with a sentence about what is and is not placed. The old one at a skill
+#: file, "the skills and the hook are not", was true only at the first of the
+#: six, and the old one at a command file, "the skills, the command files and
+#: the hook are not", was false wherever it fired: all six skill files and
+#: every command file before the refused one are placed. The new ones call the
+#: refused file "this one" and say what stands before and after it, so each is
+#: true at every position. #257's late-link cases pin only the start of the
+#: sentence, at the first file of each loop; these are the middle of each loop,
+#: with a file placed before the refused one in its own loop and one not placed
+#: after it, and the last command file, where none follows it in its loop.
+REST_AT_A_SKILL = (
+    "The {placed} commands above are placed; so is every skill file before "
+    "this one. This one, the skill files after it, the command files and the "
+    "hook are not.")
+REST_AT_A_COMMAND = (
+    "The {placed} commands above are placed; so are the skill files and every "
+    "command file before this one. This one, the command files after it and "
+    "the hook are not.")
+
+#: `(loop, how, index)`: the loop the refusal fires in, how the test makes it
+#: fire, and the refused file's place in `placed_files`' order within that
+#: loop. A link made after planning is #257's late-link shim; a `mkdir` that
+#: refuses is the other sentence of each loop, where the directory cannot be
+#: made. Index 2 is the shared directory's copy of the second skill or command
+#: and index 3 the bare copy of it, so both destinations have a file before the
+#: refused one, and the files after it include the other destination's. Index
+#: 5 of the command loop is the bare copy of the last command file, `swap.md`:
+#: no file follows it in its loop, and it is the last position before the hook
+#: pair, where "the hook is not placed" is closest to being false.
+MIDDLE_REFUSALS = (
+    pytest.param("skill", "late-link", 2, id="skill-file-late-link"),
+    pytest.param("skill", "mkdir", 3, id="skill-file-mkdir"),
+    pytest.param("command", "late-link", 2, id="command-file-late-link"),
+    pytest.param("command", "mkdir", 3, id="command-file-mkdir"),
+    pytest.param("command", "late-link", 5, id="last-command-file-late-link"),
+)
+
+
+@pytest.mark.parametrize("loop,how,index", MIDDLE_REFUSALS)
+@NEEDS_JQ
+def test_pipx_mid_run_a_refusal_in_the_middle_of_the_skill_or_command_files_says_what_is_placed(
+        tmp_path, loop, how, index):
+    """#321. The run refuses at a skill file or a command file that has a file
+    before it in its own loop, and the sentence that ends the refusal is the
+    full text of what is true there: the seventeen commands are placed, and so
+    is every skill file before the refused one (and, at a command file, all six
+    skill files and every command file before it); the refused file, those
+    after it in its loop, the later loop's files and the hook are not. The
+    files on disk are read against that sentence: exactly the files before the
+    refused one are there, the refused one is the link the test made or is
+    absent, and `settings.json` is not written, though `~/projects/xFactory`
+    answers `guard`, so that a run that got as far as the hook pair would have
+    merged it. Before #321 the sentences said no skill and no command file was
+    placed, which no refusal at a later file of either loop could make true."""
+    root = tmp_path.resolve()
+    home = root / "home"
+    link_xfactory(home)
+    order = list(placed_files(home))
+    first = len(INSTALLED) + (0 if loop == "skill"
+                              else 2 * len(SKILL_NAMES))
+    cut = first + index
+    target = Path(order[cut])
+    far = root / "someones-own-file.md"
+    far.write_text("somebody's own file\n", encoding="utf-8")
+    if how == "late-link":
+        fake, acted = mid_run(
+            root, "chmod",
+            shlex.quote(f"{target.parent}/.{target.name}.openrepotools.") + "*",
+            f"{real_tool('ln')} -s {shlex.quote(str(far))} "
+            f"{shlex.quote(str(target))}")
+    else:
+        nth = 1 + sum(1 for d in order[first:cut]
+                      if Path(d).parent == target.parent)
+        fake, acted = refusing_mkdir(root, target.parent, nth)
+
+    result = install_as("checkout", root, home,
+                        pipx_env(home, extra=first_on_path(fake)))
+    assert acted.exists(), f"nothing was refused mid-run:\n{transcript(result)}"
+    assert result.returncode == 2, transcript(result)
+    assert result.stderr.count("REFUSED:") == 1, transcript(result)
+    rest = (REST_AT_A_SKILL if loop == "skill" else REST_AT_A_COMMAND).format(
+        placed=len(INSTALLED))
+    assert f"    {rest}" in result.stderr.splitlines(), (
+        f"the refusal does not end with the sentence:\n{transcript(result)}")
+    if how == "late-link":
+        assert target.is_symlink() and os.readlink(target) == str(far), (
+            f"the link was replaced:\n{transcript(result)}")
+    else:
+        assert not os.path.lexists(target), transcript(result)
+    # THE SENTENCE AGAINST THE DISK: what it says is placed is there, as a
+    # regular file, and everything else it names is not.
+    there = [d for d in order if os.path.lexists(d) and d != str(target)]
+    assert there == order[:cut], (
+        f"the files on disk are not the ones the sentence says are placed:\n"
+        f"{transcript(result)}")
+    assert not any(os.path.islink(d) for d in there), transcript(result)
+    assert not (home / ".claude" / "settings.json").exists(), (
+        f"the hook was placed by a run that refused:\n{transcript(result)}")
+    assert placement_temporaries(home) == []
+    assert far.read_text(encoding="utf-8") == "somebody's own file\n"
 
 
 #: A LINK MADE WHERE THE BYTES ARE ALREADY RIGHT (#257, the review's SHOULD-1).
