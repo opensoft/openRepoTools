@@ -91,9 +91,20 @@ STAGED=""
 # name (Copilot round 2 on #172). Knowing the name was not the whole of it: the
 # cleanup could stop before its `rm`, and a SIGINT could be lost outright
 # (#250). `workdir` and `place_by_rename` each say how theirs is closed.
-# `hook_write_settings`' temporary beside `settings.json` is the other one this
-# names, from its `mktemp` to its `mv` (#332); the two never overlap, so one
-# variable carries both.
+# `hook_write_settings`' temporary beside `settings.json` (#332) and
+# `receipt_replace`'s beside the receipt (#342) are the other two this names,
+# each from its `mktemp` to its `mv`.
+#
+# THE THREE NEVER OVERLAP, SO ONE VARIABLE CARRIES ALL THREE (#342). Each writer
+# sets it only between its own `mktemp` and its own `mv`, calls neither of the
+# other two in between, and clears it on every way out that returns; every
+# other way out is a `die`. One shell runs them one after another:
+# `place_by_rename` in the placement loops, `hook_write_settings` from
+# `place_hook_pair`, the last placement, and `receipt_replace` from
+# `receipt_record` and from `retire_commands`' `receipt_forget`, both of which
+# `install_commands` reaches only once `place_skill_and_hook` has returned.
+# `wip init` reaches `hook_write_settings` alone, in a subshell, with a
+# `$PLACING` of its own (`wip_hook_pair`), and never the receipt.
 PLACING=""
 
 say() { printf '%s\n' "$*"; }
@@ -1766,8 +1777,24 @@ receipt_rows_except() {   # <receipt> <destinations file> <staged file>
 # why `receipt_record` refuses one BEFORE reaching this: silently swapping a
 # person's link for a regular file is the same act `cp` through one is, in the
 # other direction.
+#
+# THE TEMPORARY IS WITHIN THE CLEANUP'S REACH FROM `mktemp` TO THE `mv` (#342),
+# as the settings temporary is (#332) and a placement's is (#167): `$PLACING`
+# holds its PREFIX — `installed.tsv.<this pid>.` beside the receipt — before
+# `mktemp` runs, and `remove_workdir`, which the `EXIT` and `INT` traps run,
+# removes whatever starts with it. The two arms below remove the temporary
+# where the shell goes on; a signal is the failure neither of them sees, and
+# it left `installed.tsv.XXXXXX` beside the receipt, which no later run looked
+# for. Cleared once the `mv` has happened, and in each arm that removes the
+# temporary, so the traps never glob after a file that is no longer this
+# write's. `mktemp`'s answer comes back through the workdir, as the settings
+# write's does, so the shell waits for `mktemp` as a plain command and a SIGINT
+# in that wait runs the `INT` trap. So this needs the workdir, which both
+# callers make first; without one it makes nothing and answers 1, which each
+# caller turns into its note, never a file at `/placing`.
 receipt_replace() {   # <staged file> — 0, or 1 having changed nothing
 	local file="" dir="" tmp=""
+	[ -n "$WORKDIR" ] && [ -d "$WORKDIR" ] || return 1
 	file="$(receipt_file)"
 	dir="$(dirname -- "$file")"
 	mkdir -p -- "$dir" 2>/dev/null || return 1
@@ -1776,9 +1803,13 @@ receipt_replace() {   # <staged file> — 0, or 1 having changed nothing
 	# the configured spelling.
 	file="$(receipt_file)"
 	dir="$(dirname -- "$file")"
-	tmp="$(mktemp -- "$dir/installed.tsv.XXXXXX" 2>/dev/null)" || return 1
-	cp -- "$1" "$tmp" 2>/dev/null || { rm -f -- "$tmp"; return 1; }
-	mv -f -- "$tmp" "$file" 2>/dev/null || { rm -f -- "$tmp"; return 1; }
+	PLACING="$dir/installed.tsv.$$."
+	mktemp -- "${PLACING}XXXXXX" 2>/dev/null >"$WORKDIR/placing" ||
+		{ rm -f -- "$PLACING"*; PLACING=""; return 1; }
+	read_answer tmp "$WORKDIR/placing"
+	cp -- "$1" "$tmp" 2>/dev/null || { rm -f -- "$tmp"; PLACING=""; return 1; }
+	mv -f -- "$tmp" "$file" 2>/dev/null || { rm -f -- "$tmp"; PLACING=""; return 1; }
+	PLACING=""
 	return 0
 }
 

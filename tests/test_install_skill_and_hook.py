@@ -1856,3 +1856,232 @@ def test_the_settings_write_with_no_workdir_is_refused_and_makes_nothing(
     assert sorted(p.name for p in claude.iterdir()) == ["settings.json"]
     assert placing_seen(result.stderr)[1] == {"EXIT": ""}, (
         "nothing was made, so `$PLACING` never named anything")
+
+
+# --- the temporary the receipt write makes (#342) -----------------------------
+
+#: A TOOL THAT HOLDS THE RUN WHERE `receipt_replace`'s TEMPORARY EXISTS. The
+#: `mktemp` makes it with the real one and sleeps before it answers, so the
+#: shell is still waiting for its answer; the `cp` sleeps before it copies into
+#: it. Every other call goes to the real tool, so nothing before the receipt
+#: is slowed.
+SLOW_RECEIPT_TOOLS = {
+    "mktemp": ('case "$*" in\n'
+               '*/installed.tsv.*)\n'
+               '\tmade=$({real} "$@") || exit $?\n'
+               '\tsleep 3\n'
+               "\tprintf '%s\\n' \"$made\"\n"
+               '\texit 0 ;;\n'
+               'esac\n'
+               'exec {real} "$@"\n'),
+    "cp": ('for arg in "$@"; do\n'
+           '\tcase "$arg" in */installed.tsv.*) sleep 3 ;; esac\n'
+           'done\n'
+           'exec {real} "$@"\n'),
+}
+
+
+def receipt_temporaries(home: Path) -> list[str]:
+    """Every `installed.tsv.*` beside the receipt: a temporary
+    `receipt_replace` made and never moved or removed. `placement_temporaries`
+    does not look in the data directory, so it cannot see one."""
+    data = home / ".local" / "share" / "openRepoTools"
+    return sorted(p.name for p in data.iterdir()
+                  if p.name.startswith("installed.tsv.")
+                  ) if data.is_dir() else []
+
+
+@NEEDS_JQ
+@pytest.mark.parametrize("tool, signame, to_group", [
+    ("mktemp", "SIGINT", True),
+    ("cp", "SIGINT", True),
+    ("cp", "SIGTERM", False),
+], ids=["SIGINT-in-the-wait-for-mktemp", "SIGINT-in-the-cp",
+        "SIGTERM-in-the-cp"])
+def test_a_run_killed_while_the_receipt_temporary_exists_leaves_none(
+        tmp_path, tool, signame, to_group):
+    """THE RECEIPT'S TEMPORARY IS WITHIN THE CLEANUP'S REACH FOR ITS WHOLE LIFE
+    (#342), as the settings temporary is (#332). `receipt_replace` writes
+    `installed.tsv` through an `installed.tsv.XXXXXX` beside it, made with a
+    bare `$(mktemp …)` whose name no trap knew, and removed it only on a
+    failure it saw: a signal between the `mktemp` and the `mv` left it in the
+    data directory, where no later run looked for it. Now `$PLACING` holds its
+    prefix from before the `mktemp` until after the `mv`, and the `EXIT` trap
+    and the `INT` trap remove whatever starts with it.
+
+    `SLOW_RECEIPT_TOOLS` holds each run where the temporary exists: in the
+    `mktemp` once it has made the file and before it answers, and in the `cp`
+    into it. The signal lands there: a Ctrl-C to the group, or a `kill` of the
+    shell alone for SIGTERM, which bash does not trap and which runs the
+    `EXIT` trap as the shell dies. Each run dies of the signal and leaves no
+    `installed.tsv.*` beside the receipt, and no temporary beside a target.
+    THE CHILD STARTS WITH ALL THREE SIGNALS AT THEIR DEFAULT, for the reason
+    `run_signalled_at_the_settings_temporary` gives.
+    """
+    real = shutil.which(tool)
+    if real is None:
+        pytest.skip(f"no real `{tool}` on PATH for the slow one to defer to")
+    shim = tmp_path / f"slow-receipt-{tool}"
+    shim.mkdir()
+    (shim / tool).write_text(
+        "#!/bin/sh\n" + SLOW_RECEIPT_TOOLS[tool].format(real=shlex.quote(real)),
+        encoding="utf-8")
+    (shim / tool).chmod(0o755)
+    sig = getattr(signal, signame)
+
+    def default_signals() -> None:
+        for each in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(each, signal.SIG_DFL)
+
+    run = subprocess.Popen(
+        ["bash", str(COMMAND), "--install"], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=command_env(tmp_path, {
+            "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}"}),
+        start_new_session=True, preexec_fn=default_signals)
+    try:
+        deadline = time.monotonic() + 60
+        while (time.monotonic() < deadline and run.poll() is None
+               and not receipt_temporaries(tmp_path)):
+            time.sleep(0.05)
+        seen = receipt_temporaries(tmp_path)
+        if seen and to_group:
+            os.killpg(run.pid, sig)
+        elif seen:
+            run.send_signal(sig)
+        out, err = run.communicate(timeout=60)
+    finally:
+        if run.poll() is None:
+            os.killpg(run.pid, signal.SIGKILL)
+            run.communicate()
+    assert seen, (f"the receipt write never made a temporary for the signal "
+                  f"to land beside: exit {run.returncode}\n{out}{err}")
+    assert run.returncode == -sig, (
+        f"the run did not die of {signame}: exit {run.returncode}\n{out}{err}")
+    assert receipt_temporaries(tmp_path) == [], (
+        f"a receipt temporary outlived the run: {seen}\n{out}{err}")
+    assert placement_temporaries(tmp_path) == []
+
+
+def receipt_write_harness(tmp_path: Path, workdir: str, data: Path,
+                          fail: str = "") -> Path:
+    """`receipt_replace` cut out of the command and run on its own, as
+    `write_settings_harness` runs the settings write: with `read_answer`, a
+    `receipt_file` that answers `<data>/installed.tsv`, the `$PLACING` it
+    names — exported, so a stand-in can read it — and a `$WORKDIR` as given.
+    It is called inside an `if`, as both its callers call it. A stand-in
+    first on `$PATH` for each of the three commands that touch the temporary
+    (`mktemp`, `cp`, `mv`) says what `$PLACING` holds as it is called, on fd 3,
+    which the harness opens on its stderr because the function sends each
+    command's own stderr to `/dev/null`, and then refuses if it is `fail` or
+    runs the real one. The shell's pid is printed first, the function's answer
+    after it returns, and `$PLACING` again as the shell exits."""
+    shim = tmp_path / "shim"
+    shim.mkdir(exist_ok=True)
+    for tool in ("mktemp", "cp", "mv"):
+        (shim / tool).write_text(
+            "#!/bin/sh\n"
+            f"printf 'PLACING-AT-{tool}=[%s]\\n' \"$PLACING\" >&3\n"
+            f'[ "{fail}" != {tool} ] || exit 1\n'
+            f'exec {shlex.quote(shutil.which(tool) or tool)} "$@"\n',
+            encoding="utf-8")
+        (shim / tool).chmod(0o755)
+    receipt = shlex.quote(str(data / "installed.tsv"))
+    harness = tmp_path / "receipt-harness.sh"
+    harness.write_text(
+        "set -euo pipefail\n"
+        "exec 3>&2\n"
+        'export PLACING=""\n'
+        f"WORKDIR={shlex.quote(workdir)}\n"
+        f'PATH={shlex.quote(str(shim))}:"$PATH"\n'
+        f"receipt_file() {{ printf '%s\\n' {receipt}; }}\n"
+        "printf 'PID=%s\\n' \"$$\" >&2\n"
+        "trap 'printf \"PLACING-AT-EXIT=[%s]\\n\" \"$PLACING\" >&2' EXIT\n"
+        + helper_source("read_answer")
+        + helper_source("receipt_replace")
+        + 'if receipt_replace "$1"; then answer=0; else answer=$?; fi\n'
+        + "printf 'ANSWER=%s\\n' \"$answer\" >&2\n", encoding="utf-8")
+    return harness
+
+
+def receipt_answer(stderr: str) -> str:
+    """What `receipt_replace` answered in the harness."""
+    found = re.search(r"^ANSWER=(\d+)$", stderr, re.MULTILINE)
+    assert found, stderr
+    return found.group(1)
+
+
+@pytest.mark.parametrize("fail, reached", [
+    ("", ["mktemp", "cp", "mv"]),
+    ("mktemp", ["mktemp"]),
+    ("cp", ["mktemp", "cp"]),
+    ("mv", ["mktemp", "cp", "mv"]),
+], ids=["written", "mktemp-fails", "cp-fails", "mv-fails"])
+def test_the_receipt_temporary_is_named_until_the_mv_and_cleared_after(
+        tmp_path, fail, reached):
+    """`$PLACING` IS THE RECEIPT TEMPORARY'S PREFIX FROM BEFORE `mktemp` UNTIL
+    THE `mv`, AND EMPTY WHEN THE FUNCTION IS OVER (#342), as #332 holds the
+    settings write to it. The prefix is `<the receipt's directory>/
+    installed.tsv.<this pid>.`, already set when `mktemp` is called, so no
+    instant exists in which the file is there and the trap does not know its
+    name, and still set at the `cp` and the `mv`. It is empty again after the
+    `mv`, and after each arm that removes the temporary and answers 1, so the
+    traps never glob after a file that is no longer this write's, and a later
+    writer of `$PLACING` never meets it set. Nothing named `installed.tsv.*` is
+    left beside the receipt, whichever step failed, and the receipt keeps its
+    bytes unless the `mv` happened.
+
+    The directory has a space in its name, which the prefix's glob and the
+    name read back from the workdir must not split."""
+    work = tmp_path / "work"
+    work.mkdir()
+    data = tmp_path / "data dir"
+    data.mkdir()
+    receipt = data / "installed.tsv"
+    receipt.write_text("old\n", encoding="utf-8")
+    staged = tmp_path / "staged"
+    staged.write_text("new\n", encoding="utf-8")
+    harness = receipt_write_harness(tmp_path, str(work), data, fail)
+    result = subprocess.run(["bash", str(harness), str(staged)],
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    pid, seen = placing_seen(result.stderr)
+    prefix = f"{data}/installed.tsv.{pid}."
+    assert seen == {**{tool: prefix for tool in reached}, "EXIT": ""}, (
+        f"$PLACING was not the prefix at every call it reached, and empty "
+        f"at the exit:\n{result.stderr}")
+    assert sorted(p.name for p in data.iterdir()) == ["installed.tsv"]
+    if not fail:
+        assert receipt_answer(result.stderr) == "0", result.stderr
+        assert receipt.read_text(encoding="utf-8") == "new\n"
+    else:
+        assert receipt_answer(result.stderr) == "1", result.stderr
+        assert receipt.read_text(encoding="utf-8") == "old\n"
+
+
+@pytest.mark.parametrize("workdir", ["", "gone"],
+                         ids=["empty", "not-a-directory"])
+def test_the_receipt_write_with_no_workdir_makes_nothing_and_answers_1(
+        tmp_path, workdir):
+    """THE RECEIPT WRITE TAKES `mktemp`'s ANSWER THROUGH `$WORKDIR`, SO WITHOUT
+    ONE IT MAKES NOTHING AND ANSWERS 1 (#342), the answer each caller turns
+    into its note: a receipt is never a refusal (#57). With `$WORKDIR` empty,
+    `"$WORKDIR/placing"` is `/placing`, at the root of the filesystem, which a
+    root run would have written. Both callers make the workdir first, so this
+    is the answer for one that does not. It comes before anything is made:
+    the data directory, which did not exist, still does not, and `$PLACING`
+    never named anything."""
+    data = tmp_path / "data"
+    staged = tmp_path / "staged"
+    staged.write_text("new\n", encoding="utf-8")
+    if workdir:
+        workdir = str(tmp_path / workdir)
+    harness = receipt_write_harness(tmp_path, workdir, data)
+    result = subprocess.run(["bash", str(harness), str(staged)],
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert receipt_answer(result.stderr) == "1", result.stderr
+    assert not data.exists(), (
+        f"the write made {data} with no workdir to take answers through")
+    assert placing_seen(result.stderr)[1] == {"EXIT": ""}, (
+        "nothing was made, so `$PLACING` never named anything")
