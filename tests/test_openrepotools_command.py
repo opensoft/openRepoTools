@@ -24,6 +24,7 @@ verb, no `--doctor` and no `setup.sh`.
 
 from __future__ import annotations
 
+import bisect
 import hashlib
 import os
 import re
@@ -1612,6 +1613,294 @@ def test_the_placement_takes_no_answer_with_a_command_substitution_that_can_lose
         + "\n  ".join(found))
 
 
+def two_substitution_commands(text: str) -> list[int]:
+    """The first line of each simple command, at the shell's own level, that
+    holds two or more `$(…)` (#342): in its words, its assignments, its
+    redirections and the `${…}` in them, and in a `for`'s list. A `$(…)`
+    inside another is that substitution's child's, and is not counted; nor is
+    a `$((…))`, a backtick, a `<(…)` or a heredoc's body. A newline, `;`, `&`,
+    `|`, `(` and `)` end a command, except the `(` that opens an array
+    assignment, whose elements are words of the same one. Comments are
+    skipped. It reads text, so a command inside a `( … )` counts as well: a
+    conservative reading, and this file has none."""
+    n = len(text)
+    newlines = [k for k, ch in enumerate(text) if ch == "\n"]
+    found: list[int] = []
+    state = {"count": 0, "start": None}
+
+    def begin(k: int) -> None:
+        if state["start"] is None:
+            state["start"] = k
+
+    def flush() -> None:
+        if state["start"] is not None and state["count"] >= 2:
+            found.append(bisect.bisect_left(newlines, state["start"]) + 1)
+        state["count"], state["start"] = 0, None
+
+    def skip_single(k: int) -> int:          # after the opening '
+        end = text.find("'", k)
+        return n if end < 0 else end + 1
+
+    def skip_escaped(k: int, close: str) -> int:   # after $' or `
+        while k < n:
+            if text[k] == "\\":
+                k += 2
+            elif text[k] == close:
+                return k + 1
+            else:
+                k += 1
+        return n
+
+    def skip_arith(k: int) -> int:           # after $(( or ((
+        depth = 2
+        while k < n and depth:
+            depth += {"(": 1, ")": -1}.get(text[k], 0)
+            k += 1
+        return k
+
+    def skip_dollar(k: int, counting: bool) -> int:   # at a $: one expansion
+        if text.startswith("$((", k):
+            return skip_arith(k + 3)
+        if text.startswith("$(", k):
+            if counting:
+                begin(k)
+                state["count"] += 1
+            return skip_body(k + 2)
+        if text.startswith("${", k):
+            return skip_brace(k + 2, counting)
+        if text.startswith("$'", k):
+            return skip_escaped(k + 2, "'")
+        if text.startswith('$"', k):
+            return skip_double(k + 2, counting)
+        return k + 1
+
+    def skip_double(k: int, counting: bool) -> int:   # after the opening "
+        while k < n:
+            ch = text[k]
+            if ch == "\\":
+                k += 2
+            elif ch == '"':
+                return k + 1
+            elif ch == "$":
+                k = skip_dollar(k, counting)
+            elif ch == "`":
+                k = skip_escaped(k + 1, "`")
+            else:
+                k += 1
+        return n
+
+    def skip_brace(k: int, counting: bool) -> int:    # after ${
+        depth = 1
+        while k < n:
+            ch = text[k]
+            if ch == "\\":
+                k += 2
+            elif ch == "'":
+                k = skip_single(k + 1)
+            elif ch == '"':
+                k = skip_double(k + 1, counting)
+            elif ch == "$":
+                k = skip_dollar(k, counting)
+            elif ch == "`":
+                k = skip_escaped(k + 1, "`")
+            else:
+                depth += {"{": 1, "}": -1}.get(ch, 0)
+                k += 1
+                if depth == 0:
+                    return k
+        return n
+
+    def skip_body(k: int) -> int:            # after $( or <( : past its )
+        depth, at_word = 1, True
+        while k < n:
+            ch = text[k]
+            if ch == "#" and at_word:
+                end = text.find("\n", k)
+                k = n if end < 0 else end
+                continue
+            at_word = ch in " \t\n;&|()"
+            if ch == "\\":
+                k += 2
+            elif ch == "'":
+                k = skip_single(k + 1)
+            elif ch == '"':
+                k = skip_double(k + 1, False)
+            elif ch == "`":
+                k = skip_escaped(k + 1, "`")
+            elif ch == "$":
+                k = skip_dollar(k, False)
+            else:
+                depth += {"(": 1, ")": -1}.get(ch, 0)
+                k += 1
+                if depth == 0:
+                    return k
+        return n
+
+    heredocs: list[tuple[str, bool]] = []
+    i, at_word = 0, True
+    while i < n:
+        ch = text[i]
+        if ch == "\n":
+            flush()
+            i += 1
+            while heredocs:
+                delimiter, tabs = heredocs.pop(0)
+                while i < n:
+                    end = text.find("\n", i)
+                    end = n if end < 0 else end
+                    body = text[i:end]
+                    i = end + 1
+                    if (body.lstrip("\t") if tabs else body) == delimiter:
+                        break
+            at_word = True
+            continue
+        if ch == "#" and at_word:
+            end = text.find("\n", i)
+            i = n if end < 0 else end
+            continue
+        at_word = ch in " \t;&|()"
+        if ch in " \t":
+            i += 1
+        elif ch == "\\" and text.startswith("\\\n", i):
+            i += 2
+        elif ch in ";&|":
+            flush()
+            while i < n and text[i] in ";&|":
+                i += 1
+        elif ch == "(" and state["start"] is None and text.startswith("((", i):
+            i = skip_arith(i + 2)
+        elif ch == "(" and state["start"] is not None and text[i - 1] == "=":
+            i += 1                           # x=( and x+=( : an array's words
+        elif ch in "()":
+            flush()
+            i += 1
+        else:
+            begin(i)
+            if ch == "\\":
+                i += 2
+            elif ch == "'":
+                i = skip_single(i + 1)
+            elif ch == '"':
+                i = skip_double(i + 1, True)
+            elif ch == "`":
+                i = skip_escaped(i + 1, "`")
+            elif ch == "$":
+                i = skip_dollar(i, True)
+            elif ch in "<>" and text.startswith("(", i + 1):
+                i = skip_body(i + 2)         # a process substitution's child
+            elif text.startswith("<<", i) and not text.startswith("<<<", i):
+                opened = re.match(r"<<(-?)[ \t]*(['\"]?)\\?([A-Za-z_]\w*)\2",
+                                  text[i:])
+                if opened:
+                    heredocs.append((opened.group(3), bool(opened.group(1))))
+                    i += opened.end()
+                else:
+                    i += 2
+            else:
+                i += 1
+    flush()
+    return found
+
+
+def function_spans(text: str) -> list[tuple[int, int, str]]:
+    """`(first line, last line, name)` of each `name() {` … `}` in `text`:
+    closed on its own line, as `say() { …; }` is, or by the `}` in the first
+    column, as `placement_code` reads the others."""
+    spans = []
+    for opened in re.finditer(r"^([A-Za-z_]\w*)\(\) \{(.*)$", text,
+                              re.MULTILINE):
+        first = text.count("\n", 0, opened.start()) + 1
+        if re.search(r"\}\s*(#.*)?$", opened.group(2)):
+            spans.append((first, first, opened.group(1)))
+            continue
+        closed = text.find("\n}\n", opened.start())
+        spans.append((first, text.count("\n", 0, closed) + 2 if closed >= 0
+                      else len(text), opened.group(1)))
+    return spans
+
+
+def enclosing_function(spans: list[tuple[int, int, str]], line: int) -> str:
+    """The function of `function_spans` that holds `line`, or `(top level)`."""
+    for first, last, name in spans:
+        if first <= line <= last:
+            return name
+    return "(top level)"
+
+
+#: THE FUNCTIONS WHOSE COMMANDS MAY HOLD TWO `$(…)`, AND WHY (#342): no line of
+#: theirs runs in a shell whose `INT` trap is set. The test below checks each
+#: reason against the file's text as well as the lines.
+TWO_SUBSTITUTIONS_ALLOWED = {
+    "stamp_read": "run by `package_init`, at the top level before any "
+                  "argument is read, so before `workdir` can set a trap, and "
+                  "by `pipx_release` only inside a `( … )` subshell, where a "
+                  "trap is reset",
+    "hook_strip_refusal": "run only as `$(hook_strip_refusal …)`, in that "
+                          "substitution's subshell, where a trap is reset",
+}
+
+
+def test_a_sigint_cannot_meet_a_command_holding_two_command_substitutions():
+    """NO SIMPLE COMMAND THAT CAN RUN ONCE THE `INT` TRAP IS SET HOLDS TWO
+    `$(…)` (#342), read from the installer's text, as
+    `test_the_placement_takes_no_answer_with_a_command_substitution_that_can_lose_a_sigint`
+    reads it. A SIGINT that bash took while it waited for the first `$(…)` was
+    run as bash parsed the second, and parsed the trap's string as the rest of
+    that `$(…)`: `interrupt trap: line 2: unexpected EOF while looking for
+    matching `)'`, and exit 2 under `set -e`, the refusal's code, instead of
+    death by the signal. Fourteen commands at the merge of #318's and #332's
+    branches held two: the `for` lists and `dirs+=(…)` of the two homes in
+    `receipt_record` and `plan_skill_targets`, `venv_note`'s `say`,
+    `payload_local_feature`'s `[`, `receipt_record`'s note on a relative data
+    directory, and five refusals in `plan_hook_merge`.
+
+    `TWO_SUBSTITUTIONS_ALLOWED` names the functions that are not exposed, and
+    their reasons hold: every call of `stamp_read` is in `package_init`, which
+    runs once at the top level before the arguments are read and does not
+    reach `workdir`, or opens a `( … )`; every call of `hook_strip_refusal` is
+    a `$(…)`."""
+    text = COMMAND.read_text(encoding="utf-8")
+    lines = text.split("\n")
+    spans = function_spans(text)
+    exposed = [f"openRepoTools:{line} ({enclosing_function(spans, line)}): "
+               f"{lines[line - 1].strip()}"
+               for line in two_substitution_commands(text)
+               if enclosing_function(spans, line) not in TWO_SUBSTITUTIONS_ALLOWED]
+    assert exposed == [], (
+        "a command that can run once the INT trap is set holds two `$(…)`, so "
+        "a SIGINT in the first ends the run with a false parse error and exit "
+        "2 (search \"HOLDS TWO\" in openRepoTools):\n  " + "\n  ".join(exposed))
+
+    def calls(name: str) -> list[tuple[int, str]]:
+        """Each line that runs `name`: the word, unquoted and outside a
+        comment, and not followed by the `()` of its definition."""
+        found = []
+        for number, code in enumerate(lines, 1):
+            code = re.sub(r"(^|\s)#.*", "", code)
+            code = re.sub(r"`[^`]*`|'[^']*'", "", code)
+            if re.search(rf"(?<![\w-]){name}(?![\w(-])", code):
+                found.append((number, code))
+        return found
+
+    for number, code in calls("stamp_read"):
+        assert (enclosing_function(spans, number) == "package_init"
+                or re.search(r"\(\s*stamp_read\b", code)), (
+            f"`stamp_read` is called at openRepoTools:{number} outside "
+            f"`package_init` and outside a `( … )`: {code.strip()}")
+    for number, code in calls("package_init"):
+        assert enclosing_function(spans, number) == "(top level)", (
+            f"`package_init` is called from a function at openRepoTools:{number}")
+    for name in ("package_init", "stamp_read"):
+        body = re.search(rf"^{name}\(\) \{{.*?^\}}$", text,
+                         re.MULTILINE | re.DOTALL)
+        assert body and not re.search(r"\bworkdir\b", body.group(0)), (
+            f"`{name}` reaches `workdir`, which sets the INT trap")
+    for number, code in calls("hook_strip_refusal"):
+        assert re.search(r"\$\(hook_strip_refusal\b", code), (
+            f"`hook_strip_refusal` is called at openRepoTools:{number} other "
+            f"than inside a `$(…)`: {code.strip()}")
+
+
 @pytest.mark.parametrize("setup", ["a-pipx-link-at-the-target",
                                    "a-link-into-a-venv-with-no-pyvenv-cfg",
                                    "a-clean-home"])
@@ -1676,6 +1965,199 @@ def test_a_failed_mktemp_for_the_workdir_ends_the_install_with_exit_1_whatever_a
     if link is not None:
         assert link.is_symlink() and os.readlink(link) == value, (
             f"the link at {link} was not left as it was:\n{said}")
+
+
+#: A `mktemp` THAT HOLDS THE MAKING OF THE WORKDIR (#342). Every call but the
+#: workdir's goes to the real one. For `-d` it makes the directory with the
+#: real `mktemp`, and then, by `WORKDIR_MKTEMP_THEN`: `holds` gives the answer,
+#: leaves a `.openrepotools.` name in `$ORT_HOOK_DIR` and stays, its output
+#: still open, while the shell that called it is alive (ten seconds at most),
+#: so a shell taking the answer through `$(…)` is still reading it; `exits`
+#: gives the answer, closes its output, leaves that name and exits, so the
+#: shell has all of it and is waiting for the child or past it;
+#: `makes-a-second` makes another directory from the same template before it
+#: answers, as somebody racing the run for its name would.
+WORKDIR_MKTEMP = ('case " $* " in\n'
+                  '*" -d "*) ;;\n'
+                  '*) exec {real} "$@" ;;\n'
+                  'esac\n'
+                  'made=$({real} "$@") || exit $?\n')
+WORKDIR_MKTEMP_THEN = {
+    "holds": ("printf '%s\\n' \"$made\"\n"
+              ': >"$ORT_HOOK_DIR/.made.openrepotools.$$"\n'
+              'i=0\n'
+              'while kill -0 "$PPID" 2>/dev/null && [ "$i" -lt 200 ]; do\n'
+              '\tsleep 0.05\n'
+              '\ti=$((i + 1))\n'
+              'done\n'),
+    "exits": ("printf '%s\\n' \"$made\"\n"
+              'exec >&-\n'
+              ': >"$ORT_HOOK_DIR/.made.openrepotools.$$"\n'),
+    "makes-a-second": ('{real} "$@" >/dev/null || exit $?\n'
+                       "printf '%s\\n' \"$made\"\n"),
+}
+
+
+def workdirs_left(tmpdir: Path) -> list[str]:
+    """Every directory in the run's `$TMPDIR`: a workdir nothing removed."""
+    return sorted(p.name for p in tmpdir.iterdir() if p.is_dir())
+
+
+@pytest.mark.parametrize("signame, to_group", [
+    ("SIGINT", True),     # Ctrl-C: the whole foreground process group
+    ("SIGTERM", False),   # a `kill` from another shell
+], ids=["SIGINT-to-the-group", "SIGTERM-to-the-shell"])
+@NEEDS_JQ
+def test_a_signal_while_mktemp_makes_the_workdir_ends_the_run_and_leaves_no_directory(
+        tmp_path, signame, to_group):
+    """A SIGNAL WHILE THE WORKDIR IS MADE ENDS THE RUN AND LEAVES NO DIRECTORY
+    (#342). `workdir` made it with `WORKDIR="$(mktemp -d)"` and set the `EXIT`
+    and `INT` traps after, so a signal while bash waited for that `$(…)` ended
+    the run with neither trap set, and the directory stayed in `$TMPDIR` with
+    nothing on stderr: for a Ctrl-C to the group and for a `kill` of the shell
+    alike. Now the name's prefix is known and both traps are set before
+    `mktemp -d` runs, as a plain command, and `remove_workdir` takes what
+    starts with that prefix until `$WORKDIR` holds the name.
+
+    `WORKDIR_MKTEMP`, first on `$PATH`, makes the directory and holds there,
+    its output open. Once the directory exists the signal lands: the run dies
+    of it, and no directory is left in `$TMPDIR`. THE CHILD STARTS WITH ALL
+    THREE SIGNALS AT THEIR DEFAULT, for the reason the test of a run killed
+    mid-placement gives.
+    """
+    shim = tmp_path / "held-mktemp"
+    stand_in(shim, "mktemp", WORKDIR_MKTEMP + WORKDIR_MKTEMP_THEN["holds"])
+    tmpdir, made = tmp_path / "tmp", tmp_path / "made"
+    tmpdir.mkdir()
+    made.mkdir()
+    sig = getattr(signal, signame)
+
+    def default_signals() -> None:
+        for each in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(each, signal.SIG_DFL)
+
+    run = subprocess.Popen(
+        ["bash", str(COMMAND), "--install"], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=command_env(tmp_path, {
+            "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
+            "TMPDIR": str(tmpdir), "ORT_HOOK_DIR": str(made)}),
+        start_new_session=True, preexec_fn=default_signals)
+    try:
+        deadline = time.monotonic() + 60
+        while (time.monotonic() < deadline and run.poll() is None
+               and not any(made.iterdir())):
+            time.sleep(0.05)
+        held = workdirs_left(tmpdir)
+        if any(made.iterdir()) and to_group:
+            os.killpg(run.pid, sig)
+        elif any(made.iterdir()):
+            run.send_signal(sig)
+        out, err = run.communicate(timeout=60)
+    finally:
+        if run.poll() is None:
+            os.killpg(run.pid, signal.SIGKILL)
+            run.communicate()
+    assert held, (f"`mktemp -d` never made the workdir for the signal to land "
+                  f"beside: exit {run.returncode}\n{out}{err}")
+    assert run.returncode == -sig, (
+        f"the run did not die of {signame}: exit {run.returncode}\n{out}{err}")
+    assert workdirs_left(tmpdir) == [], (
+        f"the workdir outlived the run: {held}\n{out}{err}")
+
+
+@pytest.mark.parametrize("signame", ["SIGINT", "SIGTERM"])
+@NEEDS_JQ
+def test_a_signal_in_the_wait_for_the_workdir_mktemp_ends_the_run_and_leaves_no_directory(
+        tmp_path, signal_hook, signame):
+    """A SIGNAL IN THE SHELL'S WAIT FOR THE WORKDIR'S `mktemp`, ONCE IT HAS MADE
+    THE DIRECTORY AND CLOSED ITS OUTPUT, ENDS THE RUN AND LEAVES NO DIRECTORY
+    (#342). Taken through `$(…)`, that wait was outside bash's job table and
+    before either trap: a SIGINT that reached the shell alone there was lost,
+    the install went on to exit 0, and only a later `EXIT` trap took the
+    directory; a SIGTERM ended the run with the directory left in `$TMPDIR`.
+    Now the wait is a plain command's, after both traps are set: the SIGINT
+    runs the `INT` trap once `mktemp` is done and the SIGTERM the `EXIT` trap,
+    and each takes the directory by its prefix.
+
+    `WORKDIR_MKTEMP`'s `exits` makes the directory, answers, closes its output
+    and leaves its name in `$ORT_HOOK_DIR`; `SIGNAL_HOOK_C`, at `waitpid`,
+    sends the signal to the shell in its wait for that child. The hook's mark
+    proves it fired. THE CHILD STARTS WITH ALL THREE SIGNALS AT THEIR DEFAULT.
+    """
+    shim = tmp_path / "exiting-mktemp"
+    stand_in(shim, "mktemp", WORKDIR_MKTEMP + WORKDIR_MKTEMP_THEN["exits"])
+    tmpdir, made, mark = tmp_path / "tmp", tmp_path / "made", tmp_path / "fired"
+    tmpdir.mkdir()
+    made.mkdir()
+    sig = getattr(signal, signame)
+    preload = os.environ.get("LD_PRELOAD")
+
+    def default_signals() -> None:
+        for each in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(each, signal.SIG_DFL)
+
+    run = subprocess.Popen(
+        ["bash", str(COMMAND), "--install"], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=command_env(tmp_path, {
+            "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
+            "TMPDIR": str(tmpdir),
+            "LD_PRELOAD": f"{signal_hook}:{preload}" if preload
+                          else str(signal_hook),
+            "ORT_HOOK_DIR": str(made), "ORT_HOOK_AT": "waitpid",
+            "ORT_HOOK_SIG": str(int(sig)), "ORT_HOOK_MARK": str(mark)}),
+        start_new_session=True, preexec_fn=default_signals)
+    try:
+        out, err = run.communicate(timeout=60)
+    finally:
+        if run.poll() is None:
+            os.killpg(run.pid, signal.SIGKILL)
+            run.communicate()
+    assert mark.exists(), (
+        f"the hook never fired, so no signal landed: exit {run.returncode}"
+        f"\n{out}{err}")
+    assert run.returncode == -sig, (
+        f"the run did not die of {signame}: exit {run.returncode}\n{out}{err}")
+    assert workdirs_left(tmpdir) == [], (
+        f"the workdir outlived the run:\n{out}{err}")
+
+
+@NEEDS_JQ
+def test_a_workdir_prefix_naming_more_than_the_directory_mktemp_made_ends_the_run_and_removes_nothing(
+        tmp_path):
+    """THE WORKDIR IS TAKEN ONLY WHEN ITS PREFIX NAMES EXACTLY THE ONE DIRECTORY
+    `mktemp -d` MADE (#342). `workdir` reads the name back by the prefix's
+    glob, so a second directory under the same prefix — somebody racing the
+    run for its name — would leave it two candidates, and a `$WORKDIR` it did
+    not make would be somebody else's to fill. `WORKDIR_MKTEMP`'s
+    `makes-a-second` makes that second one. The run ends with exit 1 and one
+    line, as a workdir that cannot be made does (#318), places nothing and
+    REMOVES NOTHING: it cannot tell its own directory from the other one.
+    Taken through `$(…)`, the run took the name `mktemp` printed and went on.
+    """
+    shim = tmp_path / "racing-mktemp"
+    stand_in(shim, "mktemp",
+             WORKDIR_MKTEMP + WORKDIR_MKTEMP_THEN["makes-a-second"])
+    tmpdir = tmp_path / "tmp"
+    tmpdir.mkdir()
+
+    result = run_cmd("--install", home=tmp_path, env={
+        "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
+        "TMPDIR": str(tmpdir)})
+
+    said = result.stdout + result.stderr
+    assert result.returncode == 1, said
+    assert "REFUSED" not in said, said
+    lines = result.stderr.splitlines()
+    assert len(lines) == 1 and "cannot tell which is its own" in lines[0], (
+        f"the run did not end with the one line naming the prefix:\n{said}")
+    assert len(workdirs_left(tmpdir)) == 2, (
+        f"the run removed a directory it could not tell was its own: "
+        f"{workdirs_left(tmpdir)}\n{said}")
+    bin_dir = tmp_path / ".local" / "bin"
+    assert not bin_dir.is_dir() or not any(bin_dir.iterdir()), (
+        f"the install placed something in {bin_dir}:\n{said}")
 
 
 #: THE WORDS THIS INSTALLER USED TO PLACE AND DOES NOT ANY MORE. `restart` left
