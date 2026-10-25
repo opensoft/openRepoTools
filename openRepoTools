@@ -304,32 +304,43 @@ USAGE
 # for at all. A `$(…)` inside such a subshell is that subshell's wait; the
 # shell's own is the plain one. `mode_is` takes `find`'s answer through a pipe
 # instead, and `pipx_link_match` takes its answer through the workdir where
-# planning asks it too. What still waits in a `$(…)` can still lose a SIGINT:
-# `hook_write_settings`' `dirname` and `mktemp`; `hook_target_answers`'
-# `hook_target` and, for a link that does not resolve, its `readlink`, which
-# `wip init` asks too, before it has made a workdir and in a dry run that makes
-# none; `hook_pair_defer`'s refusal, which `hook_strip_refusal` builds; and
-# every `$(…)` before the first placement (planning, the source, the fetch) and
-# after the last (the receipt, the retirement, the notes). None of them waits
-# while a temporary of `place_by_rename`'s exists. A SIGINT lost in the refusal
-# would end the run with its exit 2, not by the signal; one lost in any other
-# would do nothing at that instant: the run would go on to the next. Both are
-# inferred from how bash waits, and no case measures either.
+# planning asks it too. `hook_write_settings` takes its `dirname` and `mktemp`
+# through the workdir as well (#332), and `receipt_replace` its `mktemp`
+# (#342). What still waits in a `$(…)` can still lose a SIGINT:
+# `hook_target_answers`' `hook_target` and, for a link that does not resolve,
+# its `readlink`, which `wip init` asks too, before it has made a workdir and
+# in a dry run that makes none; `hook_pair_defer`'s refusal, which
+# `hook_strip_refusal` builds; and every `$(…)` before the first placement
+# (planning, the source, the fetch) and after the last (the receipt, the
+# retirement, the notes). None of them waits while a temporary that `$PLACING`
+# names exists. A SIGINT lost in the refusal would end the run with its
+# exit 2, not by the signal; one lost in any other would do nothing at that
+# instant: the run would go on to the next. Both are inferred from how bash
+# waits, and no case measures either.
 # TERM is not trapped: bash runs a trap only once the command it is waiting
 # for has finished, so a TERM trap would let a hung fetch hold off a `kill`.
 #
-# AND NO SIMPLE COMMAND THAT CAN RUN ONCE THE `INT` TRAP IS SET HOLDS TWO
-# `$(…)` (#342), in its words, its assignments, its redirections or a `for`'s
-# list. A SIGINT that bash took while it waited for the first was run as bash
+# AND NO COMMAND THAT CAN RUN ONCE THE `INT` TRAP IS SET HOLDS TWO
+# SUBSTITUTIONS (#342): `$(…)`, backticks, `<(…)` or `>(…)`, wherever they
+# stand in it: in its words, its assignments, its redirections or a `for`'s
+# list, inside `$((…))` or `((…))`, and in an unquoted here-document's body.
+# A `[[ … ]]` is taken whole, and a `case` word with its patterns.
+# A SIGINT that bash took while it waited for the first was run as bash
 # parsed the second, and bash parsed the trap's string as the rest of that
 # `$(…)`: it printed `interrupt trap: line 2: unexpected EOF while looking for
 # matching `)'`, and `set -e` ended the run with exit 2, the refusal's code,
 # instead of by the signal (10 of 500 random SIGINTs at #318's `ca3c1f5`). So
 # each such command takes one `$(…)` into a variable first, or uses `printf
-# -v` where the answer is `printf`'s. A trap is reset in a `( … )` or `$(…)`
-# subshell, so a command that runs only in one, or only before `workdir` is
-# first called, cannot meet it: `tests/test_openrepotools_command.py` reads
-# this file for any other, and names the two that are such.
+# -v` where the answer is `printf`'s. That closes the wait in which nearly all
+# the false parse errors came, not the instant before bash parses any one
+# `$(…)`: a SIGINT landing there meets the same error, so it is rarer, not
+# gone (bash 5.2.21, a SIGINT to the shell at a random instant: 6 of 300 runs
+# of 3,000 one-`$(…)` assignments and 8 of 300 of a loop of them, against 143
+# of 300 of a loop of two-`$(…)` commands). A trap is reset in a `( … )` or
+# `$(…)` subshell, so a command that runs only in one, or only before
+# `workdir` is first called, cannot meet it:
+# `tests/test_openrepotools_command.py` reads this file for any other, and
+# names the two that are such.
 #
 # THE WORKDIR ITSELF IS IN REACH WHILE IT IS MADE (#342): until `$WORKDIR` holds
 # its name, `$WORKDIR_PREFIX` does, and this removes what starts with it. It
@@ -353,9 +364,16 @@ workdir() {
 		# and two `$RANDOM`s, in `$TMPDIR` — both traps are set, and `mktemp -d`
 		# makes the directory under it as a plain command, which bash waits for
 		# in its job table: a SIGINT there runs the `INT` trap once `mktemp` is
-		# done, and a SIGTERM runs the `EXIT` trap. `remove_workdir` takes what
-		# starts with the prefix until `$WORKDIR` holds the name, so at every
-		# instant one of the two names it.
+		# done, and a SIGTERM the `EXIT` trap at once. `remove_workdir` takes
+		# what starts with the prefix until `$WORKDIR` holds the name, so a trap
+		# that runs once the directory exists finds it by one of the two.
+		#
+		# One instant is left, as for the `cp` above `remove_workdir`: a SIGTERM
+		# or SIGHUP that reaches this shell alone after it forks `mktemp` and
+		# before `mktemp` makes the directory runs the `EXIT` trap at once,
+		# which finds nothing under the prefix, and the shell dies while
+		# `mktemp` goes on to make it: about a millisecond, once a run, for a
+		# signal to the shell alone, and what it leaves is one empty directory.
 		#
 		# THE NAME IS READ BACK BY THE GLOB, NOT FROM `mktemp`'s ANSWER, which
 		# only a `$(…)` or a file in the directory being made could carry. It is
