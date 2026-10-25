@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""`.github/workflows/tests.yml`: its triggers, its four jobs and the `package` job (#228).
+"""`.github/workflows/tests.yml`: its triggers, its jobs and the `package` job (#228).
 
 OFFLINE, LIKE THE REST OF THIS SUITE. What these tests hold is
 contracts/workflows.md's "Held by `tests/test_tests_workflow.py`" list, with
@@ -72,7 +72,7 @@ WORKFLOW = REPO / ".github" / "workflows" / "tests.yml"
 BUILD_LOCK = REPO / ".github" / "release-build-requirements.txt"
 PINNED_READER = UPSTREAM / "scripts" / "repo_shape.py"
 
-#: THE RELEASE GATE'S FOUR JOB IDS (FR-046), in the file's order. The gate
+#: THE RELEASE GATE'S JOB IDS (FR-046), in the file's order. The gate
 #: reads them by name, so a fifth job, a renamed one or a `name:` on one is
 #: a gate that finds nothing.
 JOB_IDS = ("guard-launch-mode", "tests", "tests-no-submodule", "package")
@@ -833,10 +833,10 @@ def test_tests_yml_its_other_triggers_are_unchanged(workflow):
 
 
 @NEEDS_UPSTREAM
-def test_tests_yml_has_exactly_the_four_gate_jobs(workflow):
-    """The release gate's four ids (FR-046) and no fifth. None has a
+def test_tests_yml_has_exactly_the_gate_jobs(workflow):
+    """The release gate's ids (FR-046) and no fifth. None has a
     `name:`, so each check run is named by its id, and none has an `if:`,
-    so every trigger runs all four."""
+    so every trigger runs them all."""
     jobs = jobs_of(workflow)
     assert sorted(jobs) == sorted(JOB_IDS), (
         f"the jobs are {list(jobs)}, not {list(JOB_IDS)}")
@@ -868,7 +868,7 @@ def test_tests_yml_existing_job_keeps_todays_runner_checkout_python_and_runs(
 
 def test_tests_yml_header_comment_names_both_push_branches_and_four_jobs():
     """FR-025: the comment above `on:` says that `push` covers `main` and
-    every `release/v*` branch, and names the four jobs every trigger runs.
+    every `release/v*` branch, and names the jobs every trigger runs.
     It no longer says "(main only)" or "those same three jobs". Read as
     text, since a comment is not data, and with each job id in backticks,
     as the file writes every one."""

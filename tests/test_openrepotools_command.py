@@ -71,7 +71,7 @@ COMMAND = REPO / "openRepoTools"
 #: than bash, which made the list SIXTEEN. `lane-worktrees` joined it for
 #: opensoft/openRepoTools#162 (Brett Heap's word of 2026-10-05, "build 162"),
 #: at the END for the same reason, and Python like `lanes-index`: the list is
-#: SEVENTEEN.
+#: what follows.
 INSTALLED = ("openRepoTools", "park", "resume", "status", "lane", "lanes",
              "lane-handoff", "lane-rename", "lanes-edit.sh", "lane-start",
              "lane-end", "link-estates", "repos.tsv", "claude-current",
@@ -97,14 +97,15 @@ SKILL_PATH = SKILL_PATHS[0]
 COMMAND_NAMES = ("handoff", "ctx", "swap")
 COMMAND_PATHS = tuple(f"commands/{n}.md" for n in COMMAND_NAMES)
 
-#: Everything a stdin install has to fetch: the seventeen files, the three skills
-#: and the three command files.
+#: Everything a stdin install has to fetch: the files, the skills and the
+#: command files.
 FETCHED = INSTALLED + SKILL_PATHS + COMMAND_PATHS
 
-#: THIRTY-ONE ARTIFACTS, AND THE COUNT IS THE INVARIANT: seventeen files in the
-#: bin directory, three skills in the shared skills directory, their three
-#: bare-run copies, three command files at that same pair of destinations, and
-#: TWO merged entries in `~/.claude/settings.json`. Derived from the three
+#: THIRTY-ONE ARTIFACTS, AND THE COUNT IS THE INVARIANT: one file per `INSTALLED`
+#: name in the bin directory, one skill per `SKILL_NAMES` name in the shared
+#: skills directory, its bare-run copy, one command file per `COMMAND_NAMES`
+#: name at that same pair of destinations, and TWO merged entries in
+#: `~/.claude/settings.json`. Derived from the three
 #: lists rather than restated, so adding a skill or a command moves it.
 #:
 #: THE `HOOK_ENTRIES` IS THE ONE TERM THAT IS NOT A LIST, and it moved from 1
@@ -255,10 +256,10 @@ def test_help_prints_every_usage_line():
 
 
 def test_help_names_every_command_it_places_and_the_standards_front_door():
-    """`--install` places seventeen files, and sixteen of them are commands this one
-    knows nothing about — so `--help` has to say what they are and where the
-    rest is written down. A command a person has on PATH and cannot find
-    written down is a command they will not use.
+    """`--install` places everything `INSTALLED` lists, and most of it is commands
+    this one knows nothing about — so `--help` has to say what they are and
+    where the rest is written down. A command a person has on PATH and cannot
+    find written down is a command they will not use.
 
     It also has to say what this command is NOT: `openRepoShape` is the
     standard's front door, and somebody who typed `openRepoTools Atlas`
@@ -449,7 +450,7 @@ def test_installing_twice_changes_nothing(tmp_path):
     assert second.returncode == 0, second.stderr
     for name in INSTALLED:
         assert f"{name}: already installed at" in second.stdout, name
-    # THIRTY-ONE, not seventeen: the six skill copies, the six command-file copies
+    # EVERY ARTIFACT, not only `INSTALLED`: the skill and command-file copies
     # and BOTH hook entries each report `unchanged` too, and the count is the
     # invariant Amendment 9(b) names — derived from the three lists, never
     # restated, so a new skill or command moves it. It was eighteen until
@@ -463,8 +464,8 @@ def test_installing_twice_changes_nothing(tmp_path):
 @pytest.mark.parametrize("name", INSTALLED)
 @NEEDS_JQ
 def test_install_replaces_a_copy_that_has_drifted(tmp_path, name):
-    """Per file, and only the one that drifted: an install that rewrote all
-    seventeen every time would have nothing to say about which one was stale."""
+    """Per file, and only the one that drifted: an install that rewrote all of
+    `INSTALLED` every time would have nothing to say about which one was stale."""
     assert run_cmd("--install", home=tmp_path).returncode == 0
     target = tmp_path / ".local" / "bin" / name
     target.write_text(target.read_text(encoding="utf-8") + "# drift\n",
