@@ -75,13 +75,36 @@ SELF="${BASH_SOURCE[0]:-$0}"
 
 MODE=""
 WORKDIR=""
+# THE PREFIX OF THE WORKDIR WHILE `workdir` MAKES IT (#342), named for
+# `remove_workdir` as `$PLACING` below is named for a placement's temporary:
+# set before `mktemp -d` runs and cleared once `$WORKDIR` holds the name, so
+# no instant exists in which the directory is there and neither trap knows it.
+# `workdir` says how.
+WORKDIR_PREFIX=""
 STAGED=""
-# THE PREFIX OF THE TEMPORARY A PLACEMENT IS MAKING (#167), named here for the
-# `EXIT` trap `workdir` sets, which removes `"$PLACING"*`: `place_by_rename`
-# removes its temporary on every failure it sees, and this is what removes it
-# on the ones it cannot see — a signal, or an `errexit`. A PREFIX, set before
-# `mktemp` runs, so no instant exists in which the file is there and the trap
-# does not know its name (Copilot round 2 on #172).
+# THE PREFIX OF THE TEMPORARY A PLACEMENT IS MAKING (#167), named here for
+# `remove_workdir`, which the `EXIT` and `INT` traps `workdir` sets both run,
+# and which removes `"$PLACING"*`: `place_by_rename` removes its temporary on
+# every failure it sees, and this is what removes it on the ones it cannot see
+# — a signal, or an `errexit`. A PREFIX, set before `mktemp` runs, so no
+# instant exists in which the file is there and the trap does not know its
+# name (Copilot round 2 on #172). Knowing the name was not the whole of it: the
+# cleanup could stop before its `rm`, and a SIGINT could be lost outright
+# (#250). `workdir` and `place_by_rename` each say how theirs is closed.
+# `hook_write_settings`' temporary beside `settings.json` (#332) and
+# `receipt_replace`'s beside the receipt (#342) are the other two this names,
+# each from its `mktemp` to its `mv`.
+#
+# THE THREE NEVER OVERLAP, SO ONE VARIABLE CARRIES ALL THREE (#342). Each writer
+# sets it only between its own `mktemp` and its own `mv`, calls neither of the
+# other two in between, and clears it on every way out that returns; every
+# other way out is a `die`. One shell runs them one after another:
+# `place_by_rename` in the placement loops, `hook_write_settings` from
+# `place_hook_pair`, the last placement, and `receipt_replace` from
+# `receipt_record` and from `retire_commands`' `receipt_forget`, both of which
+# `install_commands` reaches only once `place_skill_and_hook` has returned.
+# `wip init` reaches `hook_write_settings` alone, in a subshell, with a
+# `$PLACING` of its own (`wip_hook_pair`), and never the receipt.
 PLACING=""
 
 say() { printf '%s\n' "$*"; }
@@ -245,11 +268,145 @@ USAGE
 # substitution closes, so `rm -rf` would run before a single fetched byte had
 # landed and $WORKDIR out here would still be empty (openRepoShape #74). A trap
 # only ever fires in the shell that set it. Callers read $WORKDIR.
+#
+# EVERY STEP OF THE CLEANUP IS `|| :`, SO NO STEP OF IT CAN END IT (#250). A
+# SIGTERM — or a SIGINT, before it was trapped — that bash takes between
+# forking a command and closing that command's pipeline runs the `EXIT` trap
+# right there, and bash does not set that open pipeline aside for the trap, so
+# the trap's first `rm` JOINED it. Placing, that command is the `cp` into the
+# temporary: under `pipefail` the joined status was the `cp`'s, which failed
+# because the same `rm` had taken its source, so `errexit` ended the trap and
+# the `rm` of `"$PLACING"*` never ran. The run died of the signal and left the
+# temporary. The workdir still goes first, on purpose: a joined `rm` waits for
+# the `cp` as well, so nothing can write the temporary after it is removed.
+# Only a joined `rm` waits for the `cp`. A SIGTERM that reaches the shell
+# alone, once the `cp`'s pipeline is closed, ends the shell at once while the
+# `cp` runs on, and a `cp` that has not yet reached its destination could make
+# the temporary again. That window is tiny, and older than #250.
+#
+# AND SIGINT IS TRAPPED, SO A SIGINT ENDS THE RUN WHEREVER BASH WAITS FOR A
+# PLAIN COMMAND (#250). Untrapped, bash forgets a SIGINT that arrives while it
+# waits for a command that then exits 0 — it takes it the command handled it —
+# and the install went on; a SIGINT trap is run all the same. This one, which
+# `workdir` sets on its first call, cleans up, puts SIGINT back to its default
+# and sends it again, so the run still dies of it, as from a Ctrl-C.
+# A `$(…)` IS NOT A PLAIN COMMAND: bash waits for its child outside its job
+# table, once it has read the child's output to its end, and a SIGINT it takes
+# in that wait, that the child does not die of too, is lost, trapped or not:
+# the install goes on. One it takes while it is still reading, or that the
+# child dies of as well, is run after the wait as for a plain command (#318).
+#
+# SO THE PLACEMENT TAKES NO ANSWER WITH `$(…)` (#250, #318), from the `mkdir`
+# of the bin directory to the hook pair. Each answer is written to a file in
+# the workdir, and `read_answer` below takes it back as `$(…)` would: written by
+# a plain command or a `( … )` subshell, which bash waits for in its job table,
+# or by a function of builtins this shell runs itself, which it does not wait
+# for at all. A `$(…)` inside such a subshell is that subshell's wait; the
+# shell's own is the plain one. `mode_is` takes `find`'s answer through a pipe
+# instead, and `pipx_link_match` takes its answer through the workdir where
+# planning asks it too. What still waits in a `$(…)` can still lose a SIGINT:
+# `hook_write_settings`' `dirname` and `mktemp`; `hook_target_answers`'
+# `hook_target` and, for a link that does not resolve, its `readlink`, which
+# `wip init` asks too, before it has made a workdir and in a dry run that makes
+# none; `hook_pair_defer`'s refusal, which `hook_strip_refusal` builds; and
+# every `$(…)` before the first placement (planning, the source, the fetch) and
+# after the last (the receipt, the retirement, the notes). None of them waits
+# while a temporary of `place_by_rename`'s exists. A SIGINT lost in the refusal
+# would end the run with its exit 2, not by the signal; one lost in any other
+# would do nothing at that instant: the run would go on to the next. Both are
+# inferred from how bash waits, and no case measures either.
+# TERM is not trapped: bash runs a trap only once the command it is waiting
+# for has finished, so a TERM trap would let a hung fetch hold off a `kill`.
+#
+# AND NO SIMPLE COMMAND THAT CAN RUN ONCE THE `INT` TRAP IS SET HOLDS TWO
+# `$(…)` (#342), in its words, its assignments, its redirections or a `for`'s
+# list. A SIGINT that bash took while it waited for the first was run as bash
+# parsed the second, and bash parsed the trap's string as the rest of that
+# `$(…)`: it printed `interrupt trap: line 2: unexpected EOF while looking for
+# matching `)'`, and `set -e` ended the run with exit 2, the refusal's code,
+# instead of by the signal (10 of 500 random SIGINTs at #318's `ca3c1f5`). So
+# each such command takes one `$(…)` into a variable first, or uses `printf
+# -v` where the answer is `printf`'s. A trap is reset in a `( … )` or `$(…)`
+# subshell, so a command that runs only in one, or only before `workdir` is
+# first called, cannot meet it: `tests/test_openrepotools_command.py` reads
+# this file for any other, and names the two that are such.
+#
+# THE WORKDIR ITSELF IS IN REACH WHILE IT IS MADE (#342): until `$WORKDIR` holds
+# its name, `$WORKDIR_PREFIX` does, and this removes what starts with it. It
+# uses `rmdir`, which removes only an empty directory: what `mktemp -d` made is
+# empty until `workdir` returns, so a name that merely starts with the prefix
+# can never cost anybody a file.
+# shellcheck disable=SC2317  # run by the two traps below, which it cannot see
+remove_workdir() {
+	[ -z "$WORKDIR" ] || rm -rf -- "$WORKDIR" || :
+	[ -z "$WORKDIR_PREFIX" ] || rmdir -- "$WORKDIR_PREFIX"* 2>/dev/null || :
+	[ -z "$PLACING" ] || rm -f -- "$PLACING"* || :
+}
 workdir() {
 	if [ -z "$WORKDIR" ]; then
-		WORKDIR="$(mktemp -d)"
-		trap 'rm -rf -- "$WORKDIR"; [ -z "$PLACING" ] || rm -f -- "$PLACING"*' EXIT
+		# THE NAME IS KNOWN BEFORE THE DIRECTORY EXISTS, AND BOTH TRAPS ARE SET
+		# BEFORE IT IS MADE (#342). `WORKDIR="$(mktemp -d)"` set them after: a
+		# SIGINT or a SIGTERM taken while bash waited for that `$(…)`, or after
+		# it and before the first `trap`, ended the run with no trap set and
+		# left the directory in `$TMPDIR`, and a SIGINT in the wait itself could
+		# be lost. So the prefix is named first — `openRepoTools.<this pid>.`
+		# and two `$RANDOM`s, in `$TMPDIR` — both traps are set, and `mktemp -d`
+		# makes the directory under it as a plain command, which bash waits for
+		# in its job table: a SIGINT there runs the `INT` trap once `mktemp` is
+		# done, and a SIGTERM runs the `EXIT` trap. `remove_workdir` takes what
+		# starts with the prefix until `$WORKDIR` holds the name, so at every
+		# instant one of the two names it.
+		#
+		# THE NAME IS READ BACK BY THE GLOB, NOT FROM `mktemp`'s ANSWER, which
+		# only a `$(…)` or a file in the directory being made could carry. It is
+		# taken only when exactly one directory, not a link, starts with the
+		# prefix — the one `mktemp` just made — because a `$WORKDIR` somebody
+		# else made would be theirs to fill. Anything else ends the run with
+		# exit 1 and one line, having removed nothing: whoever made a second
+		# such name, this run cannot tell its own from theirs.
+		#
+		# A DIRECTORY THAT CANNOT BE MADE ENDS THE RUN HERE, ON ITS OWN (#318),
+		# for a caller that runs in the shell: `set -e` cannot be what ends it,
+		# because `pipx_link_match`, which calls this, is itself asked inside an
+		# `if`, where `-e` is off. There a failed `mktemp` went on with
+		# `$WORKDIR` empty, wrote `/answer`, and refused a link that was pipx's.
+		# Called in the shell, the `exit` ends the run (a `return` would be
+		# swallowed by that `if`), with `mktemp`'s message as its one message:
+		# the traps are set by then, and the one thing they could remove is a
+		# directory under the prefix, which a failed `mktemp` did not make. In
+		# a `$(…)` or `( … )` caller the `exit` ends only that subshell:
+		# `wip_shape_ref`'s caller passes its status on
+		# (`ref="$(wip_shape_ref)" || exit "$?"`), and `venv_shaped_link`'s
+		# nested `( pipx_link_match … )` relies on planning's own call, which
+		# runs in the shell, having made the workdir first.
+		WORKDIR_PREFIX="${TMPDIR:-/tmp}/openRepoTools.$$.$RANDOM$RANDOM."
+		trap remove_workdir EXIT
+		trap 'remove_workdir; trap - INT; kill -INT $$; exit 130' INT
+		mktemp -d -- "${WORKDIR_PREFIX}XXXXXX" >/dev/null || exit 1
+		set -- "$WORKDIR_PREFIX"*
+		if [ "$#" -ne 1 ] || [ -L "$1" ] || [ ! -d "$1" ]; then
+			set -- "$WORKDIR_PREFIX"
+			WORKDIR_PREFIX=""
+			printf '%s\n' "openRepoTools: \`mktemp -d\` made this run's working directory under the prefix $1, and that prefix now names something other than that one directory, so this run cannot tell which is its own. It stops here and removes nothing." >&2
+			exit 1
+		fi
+		WORKDIR="$1"
+		WORKDIR_PREFIX=""
 	fi
+}
+
+# AN ANSWER TAKEN AS `$(…)` TAKES ONE, FROM A FILE (#318), for the reason above:
+# <name> is set to <file>'s text up to its first NUL, which no path or line
+# here holds, less every newline it ends with. That is the value `$(…)` would
+# have given, and the command that wrote the file was waited for as a plain
+# one, or not at all.
+read_answer() {   # <name> <file>
+	local answer_text=""
+	IFS= read -r -d '' answer_text <"$2" || :
+	while [ "${answer_text%$'\n'}" != "$answer_text" ]; do
+		answer_text="${answer_text%$'\n'}"
+	done
+	printf -v "$1" '%s' "$answer_text"
 }
 
 # THE API FIRST, the raw URL second. `gh api` is authenticated, so it still
@@ -1167,7 +1324,7 @@ payload_local_adopted() {   # <assembly root> <the directory this file runs from
 }
 
 payload_local_feature() {   # <assembly root> <checkout>
-	local root="$1" here="$2" name missing="" top="" head="" dirty=""
+	local root="$1" here="$2" name missing="" top="" head="" dirty="" top_real="" here_real=""
 	for name in $(payload_names); do
 		[ -f "$here/$name" ] || missing="${missing:+$missing }$name"
 	done
@@ -1177,7 +1334,14 @@ payload_local_feature() {   # <assembly root> <checkout>
     installed was replaced. Restore them in $here, or install the code $root pins
     with $root/openRepoTools --install."
 	top="$(git -C "$here" rev-parse --show-toplevel 2>/dev/null)" || top=""
-	if [ -n "$top" ] && [ "$(cd -- "$top" && pwd -P)" = "$(cd -- "$here" && pwd -P)" ]; then
+	# ONE `$(…)` TO A COMMAND (#342), for the reason above `remove_workdir`:
+	# `|| :` keeps the value each `$(…)` gave where its `cd` fails, which is
+	# what the test compared when both were its words.
+	if [ -n "$top" ]; then
+		top_real="$(cd -- "$top" && pwd -P)" || :
+		here_real="$(cd -- "$here" && pwd -P)" || :
+	fi
+	if [ -n "$top" ] && [ "$top_real" = "$here_real" ]; then
 		head="$(git -C "$here" rev-parse --verify --quiet HEAD 2>/dev/null)" || head=""
 		# shellcheck disable=SC2046
 		[ -z "$(git -C "$here" status --porcelain -- $(payload_names) 2>/dev/null)" ] ||
@@ -1633,8 +1797,24 @@ receipt_rows_except() {   # <receipt> <destinations file> <staged file>
 # why `receipt_record` refuses one BEFORE reaching this: silently swapping a
 # person's link for a regular file is the same act `cp` through one is, in the
 # other direction.
+#
+# THE TEMPORARY IS WITHIN THE CLEANUP'S REACH FROM `mktemp` TO THE `mv` (#342),
+# as the settings temporary is (#332) and a placement's is (#167): `$PLACING`
+# holds its PREFIX — `installed.tsv.<this pid>.` beside the receipt — before
+# `mktemp` runs, and `remove_workdir`, which the `EXIT` and `INT` traps run,
+# removes whatever starts with it. The two arms below remove the temporary
+# where the shell goes on; a signal is the failure neither of them sees, and
+# it left `installed.tsv.XXXXXX` beside the receipt, which no later run looked
+# for. Cleared once the `mv` has happened, and in each arm that removes the
+# temporary, so the traps never glob after a file that is no longer this
+# write's. `mktemp`'s answer comes back through the workdir, as the settings
+# write's does, so the shell waits for `mktemp` as a plain command and a SIGINT
+# in that wait runs the `INT` trap. So this needs the workdir, which both
+# callers make first; without one it makes nothing and answers 1, which each
+# caller turns into its note, never a file at `/placing`.
 receipt_replace() {   # <staged file> — 0, or 1 having changed nothing
 	local file="" dir="" tmp=""
+	[ -n "$WORKDIR" ] && [ -d "$WORKDIR" ] || return 1
 	file="$(receipt_file)"
 	dir="$(dirname -- "$file")"
 	mkdir -p -- "$dir" 2>/dev/null || return 1
@@ -1643,9 +1823,13 @@ receipt_replace() {   # <staged file> — 0, or 1 having changed nothing
 	# the configured spelling.
 	file="$(receipt_file)"
 	dir="$(dirname -- "$file")"
-	tmp="$(mktemp -- "$dir/installed.tsv.XXXXXX" 2>/dev/null)" || return 1
-	cp -- "$1" "$tmp" 2>/dev/null || { rm -f -- "$tmp"; return 1; }
-	mv -f -- "$tmp" "$file" 2>/dev/null || { rm -f -- "$tmp"; return 1; }
+	PLACING="$dir/installed.tsv.$$."
+	mktemp -- "${PLACING}XXXXXX" 2>/dev/null >"$WORKDIR/placing" ||
+		{ rm -f -- "$PLACING"*; PLACING=""; return 1; }
+	read_answer tmp "$WORKDIR/placing"
+	cp -- "$1" "$tmp" 2>/dev/null || { rm -f -- "$tmp"; PLACING=""; return 1; }
+	mv -f -- "$tmp" "$file" 2>/dev/null || { rm -f -- "$tmp"; PLACING=""; return 1; }
+	PLACING=""
 	return 0
 }
 
@@ -1653,7 +1837,7 @@ receipt_replace() {   # <staged file> — 0, or 1 having changed nothing
 # from. Called once, after the last placement and before the one removal.
 receipt_record() {
 	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
-	local file="" kind="" name="" target="" why=""
+	local file="" kind="" name="" target="" why="" profiles="" claude_dir="" data_dir=""
 	file="$(receipt_file)"
 	# WHAT IS AT THAT PATH, BEFORE A BYTE OF IT IS READ OR WRITTEN — the same
 	# question `plan_install_targets` and `plan_skill_targets` put to every
@@ -1687,14 +1871,18 @@ receipt_record() {
 	# with: they are regular files this run placed, at paths it chose, and a
 	# record of what was placed that left them out — every one a path a
 	# retirement could one day meet — would answer only part of the question
-	# anybody asks it.
+	# anybody asks it. The two homes are taken once, each by a `$(…)` of its
+	# own, so no `for` list below holds two (#342, the reason is above
+	# `remove_workdir`).
+	profiles="$(skills_home)"
+	claude_dir="$(claude_home)"
 	for name in "${SKILLS[@]}"; do
-		for target in "$(skills_home)/shared/skills/$name/SKILL.md" "$(claude_home)/skills/$name/SKILL.md"; do
+		for target in "$profiles/shared/skills/$name/SKILL.md" "$claude_dir/skills/$name/SKILL.md"; do
 			receipt_add "$name" "$target" || { receipt_note "$file" "$RECEIPT_WHY"; return 0; }
 		done
 	done
 	for name in "${COMMANDS[@]}"; do
-		for target in "$(skills_home)/shared/commands/$name.md" "$(claude_home)/commands/$name.md"; do
+		for target in "$profiles/shared/commands/$name.md" "$claude_dir/commands/$name.md"; do
 			receipt_add "/$name" "$target" || { receipt_note "$file" "$RECEIPT_WHY"; return 0; }
 		done
 	done
@@ -1704,10 +1892,11 @@ receipt_record() {
 	if receipt_replace "$RECEIPT_ROWS"; then
 		file="$(receipt_file)"
 		say "receipt: $RECEIPT_COUNT placed files recorded in $file"
-		case "$(receipt_data_dir)" in
+		data_dir="$(receipt_data_dir)"
+		case "$data_dir" in
 		/*) ;;
 		*)
-			say "  the data directory $(receipt_data_dir) is a RELATIVE path, which names a different directory from every working directory — this run resolved it to $(dirname -- "$file"). Name an absolute one with \$OPENREPOTOOLS_DATA_DIR so a later \`--install\` from anywhere reads this receipt."
+			say "  the data directory $data_dir is a RELATIVE path, which names a different directory from every working directory — this run resolved it to $(dirname -- "$file"). Name an absolute one with \$OPENREPOTOOLS_DATA_DIR so a later \`--install\` from anywhere reads this receipt."
 			;;
 		esac
 	else
@@ -1957,8 +2146,16 @@ collect_commands() {
 # the documented mode on every artifact whether or not the bytes changed
 # (#40, findings 2 and 3), and a run that repaired a mode and reported
 # `unchanged` is a run that told a person there was nothing to look at.
+#
+# `find`'S ANSWER COMES THROUGH A PIPE INTO `read`, NEVER A `$(…)` (#318): a
+# pipeline is a plain command, which bash waits for in its job table, so a
+# SIGINT in that wait runs the `INT` trap once it is over (search "A `$(…)` IS
+# NOT A PLAIN COMMAND"). `read` succeeds only where `find` printed a line, and
+# `find` prints one only for a path at exactly that mode: the same yes the
+# `[ -n "$(…)" ]` it replaces gave. Nothing is written to a file, so it needs
+# no workdir and is still asked alone by the suite.
 mode_is() {   # <octal> <path>
-	[ -n "$(find "$2" -maxdepth 0 -perm "$1" -print 2>/dev/null)" ]
+	find "$2" -maxdepth 0 -perm "$1" -print 2>/dev/null | read -r _
 }
 
 # WHO OWNS A PATH, as `<uid>:<gid>`, and nothing where it cannot be read —
@@ -1992,13 +2189,37 @@ owner_of() {   # <path>
 # EVERY FAILURE REMOVES THE TEMPORARY, then refuses naming the target, and a
 # run killed while one exists leaves nothing behind either: `$PLACING` holds
 # its PREFIX — `.<name>.openrepotools.<this pid>.` — from BEFORE `mktemp` runs
-# until after the `mv`, and the `EXIT` trap removes whatever starts with it. A
-# name the trap learnt only from `mktemp`'s answer had a window, between the
-# file being made and the answer being assigned, in which a signal left it
-# behind (Copilot round 2 on #172); the pid keeps the prefix this run's own.
-# The leading dot keeps it out of a listing, and the suffix after the name
-# keeps it out of every glob a reader of these directories takes (`*.md` in
-# `commands/`).
+# until after the `mv`, and `remove_workdir`, which the `EXIT` and `INT` traps
+# run, removes whatever starts with it. A name the trap learnt only from
+# `mktemp`'s answer had a window, between the file being made and the answer
+# being assigned, in which a signal left it behind (Copilot round 2 on #172);
+# the pid keeps the prefix this run's own. The leading dot keeps it out of a
+# listing, and the suffix after the name keeps it out of every glob a reader of
+# these directories takes (`*.md` in `commands/`).
+#
+# NO ANSWER HERE IS TAKEN WITH `$(…)` (#250). Bash waits for a command
+# substitution's child outside its job table, and a SIGINT that arrives in
+# that wait is lost, trapped or not: a Ctrl-C as `mktemp`'s answer came back
+# did nothing, and the install went on. So `dirname`, `mktemp` and `owner_of`
+# are plain commands writing to a file in the workdir — a wait the `INT` trap
+# is run after — and `read` takes each answer back: a path up to a NUL, which
+# no path holds, so a directory with a newline in its name comes back whole,
+# less the one newline the command ends it with. `parent` holds the directory,
+# never `$PLACING`, which the traps glob. The `readlink` that names a link
+# refused before the rename writes there too (#318), and `read_answer` takes
+# its answer as the `$(…)` it replaces did. Had a SIGINT been lost in that
+# wait, the run would have gone on to the refusal and its exit 2 instead of
+# dying of the signal. That is inferred from how bash waits, not measured: at
+# the merge of #250's and #257's branches the late-link case (a link made after
+# planning) died of SIGINT after its hold.
+#
+# SO A PLACEMENT NEEDS THE WORKDIR, AND REFUSES WITHOUT ONE (#250). With
+# `$WORKDIR` empty, each answer above would be written to `/placing`, at the
+# root of the filesystem, which a root run can create. No caller reaches this
+# without one today: all three are reached from `install_commands` after
+# `collect_commands` has run `workdir`, and each stages its source in the
+# workdir. The refusal is for a caller that one day does not, and it comes
+# before anything is made.
 #
 # THE OWNER STAYS WHO IT WAS (Copilot on #172). A rename puts the TEMPORARY's
 # inode at the path, and the temporary belongs to whoever runs this — so a root
@@ -2023,19 +2244,29 @@ owner_of() {   # <path>
 # and the planners are a phase earlier. Two installs that race (#106) each
 # still place whole files; serializing them is #106's lock, not this.
 place_by_rename() {   # <staged source> <target> <mode> <what a refusal adds>
-	local source="$1" target="$2" mode="$3" rest="$4" tmp="" was="" now=""
-	PLACING="$(dirname -- "$target")/.${target##*/}.openrepotools.$$."
-	tmp="$(mktemp -- "${PLACING}XXXXXX")" ||
+	local source="$1" target="$2" mode="$3" rest="$4" parent="" tmp="" was="" now="" value=""
+	if [ -z "$WORKDIR" ] || [ ! -d "$WORKDIR" ]; then
+		die "\$WORKDIR is ${WORKDIR:-empty}${WORKDIR:+, which is not a directory}, and a placement passes each command's answer through a file in it, so $target was not placed and what was there is untouched.
+    $rest"
+	fi
+	dirname -- "$target" >"$WORKDIR/placing"
+	IFS= read -r -d '' parent <"$WORKDIR/placing" || :
+	PLACING="${parent%$'\n'}/.${target##*/}.openrepotools.$$."
+	mktemp -- "${PLACING}XXXXXX" >"$WORKDIR/placing" ||
 		{ rm -f -- "$PLACING"*; PLACING=""; die "could not create a temporary file beside $target, so it was not placed.
     $rest"; }
+	IFS= read -r -d '' tmp <"$WORKDIR/placing" || :
+	tmp="${tmp%$'\n'}"
 	cp -- "$source" "$tmp" ||
 		{ rm -f -- "$tmp"; PLACING=""; die "could not write $target, so it was not placed and what was there is untouched.
     $rest"; }
 	chmod "$mode" "$tmp" ||
 		{ rm -f -- "$tmp"; PLACING=""; die "could not set mode $mode on $target, so it was not placed and what was there is untouched.
     $rest"; }
-	was="$(owner_of "$target")"
-	now="$(owner_of "$tmp")"
+	owner_of "$target" >"$WORKDIR/placing"
+	IFS= read -r was <"$WORKDIR/placing" || :
+	owner_of "$tmp" >"$WORKDIR/placing"
+	IFS= read -r now <"$WORKDIR/placing" || :
 	if [ -z "$was" ] && { [ -e "$target" ] || [ -L "$target" ]; }; then
 		rm -f -- "$tmp"
 		PLACING=""
@@ -2056,6 +2287,25 @@ place_by_rename() {   # <staged source> <target> <mode> <what a refusal adds>
 		die "$target is a directory, so nothing was placed there: \`mv\` would have put the file inside it.
     $rest"
 	fi
+	# A LINK AT THE TARGET IS REFUSED HERE TOO, AS THE LAST QUESTION BEFORE THE
+	# RENAME (#257). Every planner refuses a link at every target, so a link
+	# here appeared after planning — a `pipx install` that finished mid-run puts
+	# one at `<dir>/openRepoTools` — and `mv` would replace it with a regular
+	# file: pipx's command gone until the next `pipx install` or `pipx upgrade`.
+	# It is asked with a builtin, so nothing runs between this test and the
+	# rename but `mv` starting. A link made in that instant is still replaced:
+	# a rename takes whatever is at its destination, and no `mv` this file can
+	# count on refuses a link there. The refusal names the link and prints no
+	# `rm`, because it may be pipx's and the only `openRepoTools` that can run
+	# `--install` (ADV3); the run it asks for asks about it afresh.
+	if [ -L "$target" ]; then
+		rm -f -- "$tmp"
+		PLACING=""
+		{ readlink -- "$target" 2>/dev/null || printf '<unreadable>'; } >"$WORKDIR/placing"
+		read_answer value "$WORKDIR/placing"
+		die "$target is a symlink to $value now, and was not one when this run planned, so nothing was placed there and the link is left as it was: \`mv\` would have replaced it with a regular file. Run \`openRepoTools --install\` again, and it asks about $target afresh.
+    $rest"
+	fi
 	mv -f -- "$tmp" "$target" ||
 		{ rm -f -- "$tmp"; PLACING=""; die "could not move the new $target into place, so what was there is untouched.
     $rest"; }
@@ -2064,7 +2314,7 @@ place_by_rename() {   # <staged source> <target> <mode> <what a refusal adds>
 
 install_commands() {
 	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
-	local name target source verb placed=0
+	local name target source verb placed=0 from="" beside=""
 	# ALL THIRTY-ONE IN HAND BEFORE ANY IS PLACED. The seventeen files, the
 	# three skills, the three command files, and the TWO artifacts that are not
 	# whole files — the two hook entries merged into one `settings.json` —
@@ -2100,14 +2350,41 @@ install_commands() {
 	for name in "${INSTALLABLES[@]}"; do
 		source="$STAGED/$name"
 		target="$dir/$name"
-		# PIPX'S LINK IS LEFT TO PIPX (#228, FR-016), as `plan_install_targets`
-		# decided: nothing is placed over it or through it, it is not counted,
-		# and its line says what updates it.
-		if [ -n "$PIPX_LINK" ] && [ "$target" = "$PIPX_LINK" ]; then
-			say "openRepoTools: left to pipx at $PIPX_LINK (a link into pipx's openrepotools environment); update it with \`pipx upgrade openrepotools\`, then run \`openRepoTools --install\` again"
-			continue
+		# PIPX'S LINK IS LEFT TO PIPX (#228, FR-016): nothing is placed over it
+		# or through it, it is not counted, and its line says what updates it.
+		#
+		# IT IS ASKED AGAIN AT ITS OWN TURN (#257), not taken from what
+		# `plan_install_targets` found. A `pipx install` that finishes between
+		# the two puts its link at a target this run planned to place, and the
+		# rename would replace it with a regular file. So the target is left to
+		# pipx when it is pipx's link NOW, and the match sets what the count line
+		# reads; and a target planning left to pipx that is not pipx's link now
+		# has changed since planning, which refuses, touching nothing at it. Any
+		# other link is refused by `place_by_rename`, at the last instant before
+		# the rename that would replace it.
+		if [ "$name" = openRepoTools ]; then
+			if pipx_link_match "$target"; then
+				say "openRepoTools: left to pipx at $PIPX_LINK (a link into pipx's openrepotools environment); update it with \`pipx upgrade openrepotools\`, then run \`openRepoTools --install\` again"
+				continue
+			fi
+			if [ -n "$PIPX_LINK" ]; then
+				die "$target was pipx's link when this run planned, and is not now, so nothing was placed there and what is there now is left as it was. Run \`openRepoTools --install\` again, and it asks about $target afresh.
+    Whatever the lines above report is placed; the skills, the command files and the
+    hook entries are not placed at all."
+			fi
 		fi
-		if [ -e "$target" ] && cmp -s "$source" "$target"; then
+		# A LINK IS NOT "THE BYTES ARE RIGHT" (#257). `[ -e ]` and `cmp` read
+		# THROUGH a link, so one made since planning to a file that holds
+		# exactly these bytes passes both, and the `chmod` below would stamp its
+		# far end: somebody's own file, moded by a run that says "already
+		# installed". Every planner refuses a link at every target it places
+		# over, so a link here appeared after planning, and it takes the other
+		# arm, where `place_by_rename` refuses it, naming it and leaving it as
+		# it was. The question is asked LAST, after `cmp`, so only `mode_is`'s
+		# `find` stands between it and `chmod`. A link made in that instant is
+		# still followed: no `chmod` this file can count on stops at one (GNU's
+		# has no `-h`).
+		if [ -e "$target" ] && cmp -s "$source" "$target" && [ ! -L "$target" ]; then
 			# THE BYTES WERE RIGHT, WHICH IS NOT THE SAME AS NOTHING TO DO
 			# (#40, finding 2). The `chmod` below has always run on this arm
 			# too — the eleven are the one set this installer never got wrong —
@@ -2166,7 +2443,13 @@ install_commands() {
 		# package outside pipx's venv — also says where the other sixteen now
 		# come from and which release is beside the link (research R5,
 		# FR-019): `install_source` and `pipx_release` say why each is spelt so.
-		say "openRepoTools: $placed of ${#INSTALLABLES[@]} placed in $dir, and 1 left to pipx; the other $placed now come from $(install_source), not from $(pipx_release)"
+		# Their answers come back through the workdir, never a `$(…)`, because
+		# this line is between two placements (#318).
+		install_source >"$WORKDIR/answer"
+		read_answer from "$WORKDIR/answer"
+		pipx_release >"$WORKDIR/answer"
+		read_answer beside "$WORKDIR/answer"
+		say "openRepoTools: $placed of ${#INSTALLABLES[@]} placed in $dir, and 1 left to pipx; the other $placed now come from $from, not from $beside"
 	fi
 	# THE RETIREMENT IS THE LAST ACT OF THE INSTALL, AFTER EVERY PLACEMENT
 	# (Copilot round 7 on #45, `openRepoTools:369`). It is the one DESTRUCTIVE
@@ -2208,13 +2491,18 @@ install_commands() {
 # the suite from it once it is there and has pytest.
 venv_note() {
 	local venv="${XDG_CACHE_HOME:-$HOME/.cache}/openRepoTools/venvs/openRepoTools"
+	local quoted_venv="" quoted_python=""
 	if [ -x "$venv/bin/python3" ]; then
 		say "openRepoTools: this repository's virtual environment is $venv (present; tests/run.sh runs from it when it has pytest)"
 	else
 		say "openRepoTools: this repository's virtual environment is $venv (not created; one per repository, outside the estate):"
 		# QUOTED FOR THE SHELL IT IS PASTED INTO: `$XDG_CACHE_HOME` is the
-		# person's to choose, spaces and all.
-		say "    python3 -m venv $(printf '%q' "$venv") && $(printf '%q' "$venv/bin/python3") -m pip install pytest"
+		# person's to choose, spaces and all. By `printf -v`, which this shell
+		# runs itself, not two `$(…)` in one `say` (#342, the reason is above
+		# `remove_workdir`): the same bytes.
+		printf -v quoted_venv '%q' "$venv"
+		printf -v quoted_python '%q' "$venv/bin/python3"
+		say "    python3 -m venv $quoted_venv && $quoted_python -m pip install pytest"
 	fi
 }
 
@@ -2524,17 +2812,21 @@ HOOK_STRIP_WHY="" # why that entry could not be taken out, or ""
 # these directories (#44 round 1, Sourcery's
 # `tests/test_install_skill_and_hook.py:658`).
 plan_skill_targets() {
-	local d name dirs=() target kind bad="" paths=""
+	local d name dirs=() target kind bad="" paths="" profiles="" claude_dir=""
+	# THE TWO HOMES ARE TAKEN ONCE, each by a `$(…)` of its own, so no list
+	# below holds two (#342, the reason is above `remove_workdir`).
+	profiles="$(skills_home)"
+	claude_dir="$(claude_home)"
 	for name in "${SKILLS[@]}"; do
-		dirs+=("$(skills_home)/shared/skills/$name" "$(claude_home)/skills/$name")
+		dirs+=("$profiles/shared/skills/$name" "$claude_dir/skills/$name")
 	done
 	# A COMMAND FILE HAS NO DIRECTORY OF ITS OWN — it is a file in the commands
 	# directory, where a skill is a `SKILL.md` in a directory named for it — so
 	# the two command destinations are added once rather than once per name.
 	if [ "${#COMMANDS[@]}" -gt 0 ]; then
-		dirs+=("$(skills_home)/shared/commands" "$(claude_home)/commands")
+		dirs+=("$profiles/shared/commands" "$claude_dir/commands")
 	fi
-	dirs+=("$(claude_home)")
+	dirs+=("$claude_dir")
 	for d in "${dirs[@]}"; do
 		if kind="$(unusable_dir_kind "$d")"; then
 			die "\`--install\` places a skill, a command file or the SessionStart entry in
@@ -2568,7 +2860,7 @@ plan_skill_targets() {
 	# direction (the receipt's own rule, `receipt_replace`); a read-only file
 	# is somebody saying "not this one". The refusal is the same refusal.
 	for name in "${SKILLS[@]}"; do
-		for target in "$(skills_home)/shared/skills/$name/SKILL.md" "$(claude_home)/skills/$name/SKILL.md"; do
+		for target in "$profiles/shared/skills/$name/SKILL.md" "$claude_dir/skills/$name/SKILL.md"; do
 			kind="$(unplaceable_kind "$target")" || continue
 			bad="${bad:+$bad
 }    $target — $kind"
@@ -2576,7 +2868,7 @@ plan_skill_targets() {
 		done
 	done
 	for name in "${COMMANDS[@]}"; do
-		for target in "$(skills_home)/shared/commands/$name.md" "$(claude_home)/commands/$name.md"; do
+		for target in "$profiles/shared/commands/$name.md" "$claude_dir/commands/$name.md"; do
 			kind="$(unplaceable_kind "$target")" || continue
 			bad="${bad:+$bad
 }    $target — $kind"
@@ -2866,14 +3158,34 @@ link_venv() {   # <target> — the venv it links into, or 1
 #: `lib/python*/site-packages/openrepotools/payload` under it. The glob is looped
 #: over with a `-f` test, because bash leaves a glob that matches nothing as its
 #: own text. A match records the three values the run reads, and nothing else.
+#:
+#: THE RULE IS ASKED IN A `( … )` SUBSHELL, AND ITS ANSWER COMES BACK THROUGH THE
+#: WORKDIR (#318). `link_venv` and the payload's canonical spelling are answers
+#: taken with `$(…)`, and a SIGINT the shell takes while it waits for a `$(…)`
+#: can be lost (search "A `$(…)` IS NOT A PLAIN COMMAND"); the placement loop
+#: asks this on every `--install`, at `openRepoTools`' own turn. Asked by
+#: `pipx_link_paths` inside the subshell, every one of those waits is the
+#: subshell's, and the shell waits for the subshell as for a plain command. It
+#: prints the venv and the payload, each ended by a NUL, which no path holds,
+#: so both come back exactly as their `$(…)` gave them. Planning asks this
+#: before anything else has made the workdir, so this makes it.
 pipx_link_match() {   # <dir>/openRepoTools — 0 with PIPX_LINK, PIPX_VENV and PIPX_PAYLOAD set, else 1
+	local venv="" canonical=""
+	workdir
+	( pipx_link_paths "$1" ) >"$WORKDIR/answer" || return 1
+	{ IFS= read -r -d '' venv && IFS= read -r -d '' canonical; } <"$WORKDIR/answer" ||
+		return 1
+	PIPX_LINK="$1" PIPX_VENV="$venv" PIPX_PAYLOAD="$canonical"
+	return 0
+}
+pipx_link_paths() {   # <dir>/openRepoTools — its venv and payload, each ended by a NUL, else 1
 	local venv="" payload="" canonical=""
 	venv="$(link_venv "$1")" || return 1
 	[ -f "${venv%/}/pipx_metadata.json" ] || return 1
 	for payload in "${venv%/}"/lib/python*/site-packages/openrepotools/payload; do
 		[ -f "$payload/openRepoTools" ] || continue
 		canonical="$(CDPATH= cd -P -- "$payload" 2>/dev/null && pwd -P)" || continue
-		PIPX_LINK="$1" PIPX_VENV="$venv" PIPX_PAYLOAD="$canonical"
+		printf '%s\0%s\0' "$venv" "$canonical"
 		return 0
 	done
 	return 1
@@ -2926,10 +3238,13 @@ install_source() {
 #: a SUBSHELL, because `stamp_read` sets the STAMP_* values and this run's own
 #: are the ones `install_source` names. A stamp there that fails the reader is
 #: another install's, not this one's, so it refuses nothing: the clause says it
-#: cannot be read, and the install goes on.
+#: cannot be read, and the install goes on. The subshell is a `( … )` whose
+#: answer comes back through the workdir, not a `$(…)`, because the count line
+#: that asks is between two placements (#318).
 pipx_release() {
 	local version=""
-	if version="$(stamp_read "${PIPX_PAYLOAD%/*}/_release.py" && printf '%s' "$STAMP_VERSION")"; then
+	if ( stamp_read "${PIPX_PAYLOAD%/*}/_release.py" && printf '%s' "$STAMP_VERSION" ) >"$WORKDIR/release"; then
+		read_answer version "$WORKDIR/release"
 		printf 'openrepotools %s\n' "$version"
 	else
 		printf '%s\n' "the openrepotools beside pipx's link, whose stamp cannot be read"
@@ -3070,8 +3385,11 @@ plan_install_targets() {
 		target="$dir/$name"
 		# PIPX'S LINK IS ASKED ABOUT BEFORE ANY LINK IS REFUSED (FR-015), at the
 		# one command pipx places. It is no bad target: the placement loop skips
-		# it. A venv-shaped link IS one, listed for what it is, with the
-		# paragraph that says to leave it, and kept out of the `rm -f` line.
+		# it, once it has asked again at that target's own turn and found it
+		# still pipx's (#257); a link that has gone or changed by then is
+		# refused there. A venv-shaped link IS a bad target, listed for what it
+		# is, with the paragraph that says to leave it, and kept out of the
+		# `rm -f` line.
 		if [ "$name" = openRepoTools ]; then
 			if pipx_link_match "$target"; then
 				continue
@@ -3148,16 +3466,21 @@ hook_rivals() {   # <settings> <event> <our command> <verb pattern>
 }
 
 plan_hook_merge() {
-	local settings existing kind
+	local settings existing kind rivals=""
 	settings="$(claude_home)/settings.json"
+	# EACH REFUSAL HERE HOLDS ONE `$(…)` (#342, the reason is above
+	# `remove_workdir`): where both entries are printed they come from one
+	# `$(hook_block_text; guard_block_text)`, whose first block ends in the
+	# newline that joined the two `$(…)` it replaces, so the bytes are the
+	# same; and where a rival is named, `hook_rivals` answers into `$rivals`
+	# first.
 	command -v jq >/dev/null 2>&1 || die "\`--install\` needs \`jq\` to merge its TWO hook entries into
     $settings, and there is no \`jq\` on this PATH. It refuses rather than
     rewriting a JSON file by hand, and NOTHING was installed. Install jq, then
     re-run. The entries it would have merged — the \`SessionStart\` one and
     Amendment 12's \`UserPromptSubmit\` name guard, which are ONE all-or-nothing
     merge:
-$(hook_block_text)
-$(guard_block_text)"
+$(hook_block_text; guard_block_text)"
 
 	# WHAT IS AT THAT PATH, BEFORE A BYTE OF IT IS READ (#44 round 1,
 	# `openRepoTools:878`). This file carries the LAST TWO artifacts — the
@@ -3209,14 +3532,12 @@ $(guard_block_text)"
 	jq -e . "$settings" >/dev/null 2>&1 || die "$settings is not valid JSON, so \`--install\` cannot merge its two entries into
     it and will not rewrite it. NOTHING was installed and nothing already installed was
     replaced. Fix that file, then re-run. The entries it would have merged:
-$(hook_block_text)
-$(guard_block_text)"
+$(hook_block_text; guard_block_text)"
 
 	jq -e '(has("hooks") | not) or (.hooks | type == "object")' "$settings" >/dev/null 2>&1 ||
 		die "$settings has a \`hooks\` that is not an object, so there is nothing to merge
     either entry into. NOTHING was installed. The entries it would have merged:
-$(hook_block_text)
-$(guard_block_text)"
+$(hook_block_text; guard_block_text)"
 
 	# THE THREE ANSWERS, in one read: our exact command already there; some
 	# OTHER SessionStart entry that runs `session-start` (a second writer of
@@ -3295,9 +3616,10 @@ $(guard_block_text)"
 
 	case "$existing" in
 	conflict)
+		rivals="$(hook_rivals "$settings" SessionStart "$HOOK_COMMAND" "$hook_verb")"
 		die "$settings already carries a SessionStart entry that runs \`session-start\` with a
     DIFFERENT command string:
-$(hook_rivals "$settings" SessionStart "$HOOK_COMMAND" "$hook_verb")
+$rivals
     Exact-string match is the only idempotence this entry has, so merging would fire
     the hook twice — and repairing a setting a person meant is not an installer's to
     do. A SECOND WRITER REFUSES WHETHER OR NOT OUR OWN ENTRY IS BESIDE IT: two writers
@@ -3316,9 +3638,10 @@ $(hook_block_text)
 
 	case "$existing_guard" in
 	conflict)
+		rivals="$(hook_rivals "$settings" UserPromptSubmit "$GUARD_COMMAND" "$guard_verb")"
 		die "$settings already carries a UserPromptSubmit entry that runs \`guard\` with a
     DIFFERENT command string:
-$(hook_rivals "$settings" UserPromptSubmit "$GUARD_COMMAND" "$guard_verb")
+$rivals
     Exact-string match is the only idempotence this entry has, so merging would fire
     the name guard twice — two refusals for one prompt. Repairing a setting a person
     meant is not an installer's to do, and A SECOND WRITER REFUSES WHETHER OR NOT OUR
@@ -3429,21 +3752,37 @@ $(guard_block_text)"
 # (the two hook entries go into settings.json in one), AFTER the seventeen files
 # and the merge are all in hand. The last two only once their target answers
 # (#237): `place_hook_pair` asks, and says which.
+#
+# NO ANSWER HERE IS TAKEN WITH `$(…)` (#318), for the reason above
+# `remove_workdir`: where the two homes are, and the directory each target's
+# `mkdir -p` makes, come back through the workdir. `skills_home` and
+# `claude_home` are functions of builtins, which this shell runs itself, and
+# `read_answer` takes the value `$(…)` took, the one planning checked; `dirname`
+# is a plain command.
 place_skill_and_hook() {
-	local shared_dir bare_dir target verb name
+	local shared_dir bare_dir target verb name profiles="" claude_dir="" parent=""
+	skills_home >"$WORKDIR/answer"
+	read_answer profiles "$WORKDIR/answer"
+	claude_home >"$WORKDIR/answer"
+	read_answer claude_dir "$WORKDIR/answer"
 	for name in "${SKILLS[@]}"; do
-	shared_dir="$(skills_home)/shared/skills/$name"
-	bare_dir="$(claude_home)/skills/$name"
+	shared_dir="$profiles/shared/skills/$name"
+	bare_dir="$claude_dir/skills/$name"
 
 	# EVERY FAILURE HERE IS A `die`, never the shell's own 1. `--install`'s
 	# codes are this toolset's — 0 done, 1 findings printed, 2 a refusal — and
 	# an unguarded `mkdir` or `cp` under `set -e` exits 1, which reads as a
 	# report of findings from a command that placed seventeen of thirty-one artifacts.
 	for target in "$shared_dir/SKILL.md" "$bare_dir/SKILL.md"; do
-		mkdir -p -- "$(dirname -- "$target")" ||
-			die "could not create $(dirname -- "$target") for the $name skill.
+		dirname -- "$target" >"$WORKDIR/answer"
+		read_answer parent "$WORKDIR/answer"
+		mkdir -p -- "$parent" ||
+			die "could not create $parent for the $name skill.
     The $placed commands above are placed; the skills and the hook are not."
-		if [ -e "$target" ] && cmp -s "$WORKDIR/skill-$name.md" "$target"; then
+		# A LINK TAKES THE OTHER ARM, AS IT DOES IN `install_commands` (#257):
+		# one made since planning is no "bytes already right", and its far end
+		# is not this installer's to `chmod`. `place_by_rename` refuses it.
+		if [ -e "$target" ] && cmp -s "$WORKDIR/skill-$name.md" "$target" && [ ! -L "$target" ]; then
 			# THE MODE IS STAMPED WHETHER OR NOT THE BYTES MOVED (#40, finding
 			# 2). This arm reported the file unchanged and then SKIPPED the
 			# `chmod` below, which sat inside the `else` — so a `SKILL.md` that
@@ -3491,11 +3830,14 @@ place_skill_and_hook() {
 	# session READS. The 755 argument belongs to the seventeen in the bin
 	# directory, where a copy that is not executable is not a command.
 	for name in "${COMMANDS[@]}"; do
-		for target in "$(skills_home)/shared/commands/$name.md" "$(claude_home)/commands/$name.md"; do
-			mkdir -p -- "$(dirname -- "$target")" ||
-				die "could not create $(dirname -- "$target") for the /$name command.
+		for target in "$profiles/shared/commands/$name.md" "$claude_dir/commands/$name.md"; do
+			dirname -- "$target" >"$WORKDIR/answer"
+			read_answer parent "$WORKDIR/answer"
+			mkdir -p -- "$parent" ||
+				die "could not create $parent for the /$name command.
     The $placed commands above are placed; the skills, the command files and the hook are not."
-			if [ -e "$target" ] && cmp -s "$WORKDIR/command-$name.md" "$target"; then
+			# A LINK TAKES THE OTHER ARM HERE TOO (#257), as a skill's does.
+			if [ -e "$target" ] && cmp -s "$WORKDIR/command-$name.md" "$target" && [ ! -L "$target" ]; then
 				# The same stamp on the same arm, for the same reason a skill's
 				# is (#40, finding 2): the mode is this installer's to set on
 				# every artifact it places, and a mode it repaired is a line
@@ -3526,9 +3868,13 @@ place_skill_and_hook() {
 #
 # `wip init` places the pair through this same function (`wip_hook_pair`), after
 # `link-estates`, so the two writers of this file cannot come to two rules.
+# Where `settings.json` is comes back through the workdir, as in
+# `place_skill_and_hook` (#318); both callers have made one by now.
 place_hook_pair() {
-	local settings
-	settings="$(claude_home)/settings.json"
+	local settings=""
+	claude_home >"$WORKDIR/answer"
+	read_answer settings "$WORKDIR/answer"
+	settings="$settings/settings.json"
 	if hook_target_answers; then
 		hook_pair_merge "$settings"
 	else
@@ -3545,18 +3891,52 @@ place_hook_pair() {
 # file uses: an installer that widened it would be silently undone, or would widen
 # it behind that script's back. Stamped on the TEMPORARY, so the file never
 # exists at a wider mode for even an instant. One writer for both outcomes.
+#
+# THE TEMPORARY IS WITHIN THE CLEANUP'S REACH FROM `mktemp` TO THE `mv` (#332),
+# as a placement's is (#167): `$PLACING` holds its PREFIX —
+# `settings.json.openrepotools.<this pid>.` — before `mktemp` runs, and
+# `remove_workdir`, which the `EXIT` and `INT` traps run, removes whatever
+# starts with it. The three failure arms below remove the temporary where the
+# shell goes on; a signal is the failure none of them sees, and it left
+# `settings.json.openrepotools.XXXXXX` in `~/.claude`, one per interrupted run,
+# which no later run looked for — empty or, where the signal landed after the
+# `cp`, a full copy of the person's merged settings. Cleared once the `mv` has
+# happened, and in each arm that removes the temporary, so the traps never
+# glob after a file that is no longer this write's. A SIGTERM or a SIGHUP is not
+# trapped, and does not need to be: bash runs the `EXIT` trap as it dies of
+# either, so `remove_workdir` takes the temporary then; `wip init` runs this in
+# a subshell and `wip_hook_pair` says how that is closed.
+#
+# NO ANSWER HERE IS TAKEN WITH `$(…)` (#250, #318): bash waits for a command
+# substitution's child outside its job table, and a SIGINT that arrives in that
+# wait can be lost, trapped or not. The `dirname` of the settings and the
+# `mktemp` each write to a file in the workdir, as `place_by_rename`'s do — a
+# wait the `INT` trap is run after — and `read` takes the answer back: a path up
+# to a NUL, which no path holds, so a directory with a newline in its name comes
+# back whole, less the one newline the command ends it with. So this write needs
+# the workdir and refuses without one, before anything is made.
 hook_write_settings() {   # <the staged whole file> <settings>
-	local staged="$1" settings="$2" hook_tmp
-	mkdir -p -- "$(dirname -- "$settings")" ||
-		die "could not create $(dirname -- "$settings") for the hook entries."
-	hook_tmp="$(mktemp -- "$(dirname -- "$settings")/settings.json.openrepotools.XXXXXX")" ||
-		die "could not create a temporary file beside $settings."
+	local staged="$1" settings="$2" parent="" hook_tmp=""
+	if [ -z "$WORKDIR" ] || [ ! -d "$WORKDIR" ]; then
+		die "\$WORKDIR is ${WORKDIR:-empty}${WORKDIR:+, which is not a directory}, and writing the hook entries passes each command's answer through a file in it, so $settings was not written and what was there is untouched."
+	fi
+	dirname -- "$settings" >"$WORKDIR/placing"
+	IFS= read -r -d '' parent <"$WORKDIR/placing" || :
+	parent="${parent%$'\n'}"
+	mkdir -p -- "$parent" ||
+		die "could not create $parent for the hook entries."
+	PLACING="$parent/settings.json.openrepotools.$$."
+	mktemp -- "${PLACING}XXXXXX" >"$WORKDIR/placing" ||
+		{ rm -f -- "$PLACING"*; PLACING=""; die "could not create a temporary file beside $settings."; }
+	IFS= read -r -d '' hook_tmp <"$WORKDIR/placing" || :
+	hook_tmp="${hook_tmp%$'\n'}"
 	cp -- "$staged" "$hook_tmp" ||
-		{ rm -f -- "$hook_tmp"; die "could not stage the merged $settings."; }
+		{ rm -f -- "$hook_tmp"; PLACING=""; die "could not stage the merged $settings."; }
 	chmod 600 "$hook_tmp" ||
-		{ rm -f -- "$hook_tmp"; die "could not set mode 600 on the merged $settings."; }
+		{ rm -f -- "$hook_tmp"; PLACING=""; die "could not set mode 600 on the merged $settings."; }
 	mv -f -- "$hook_tmp" "$settings" ||
-		{ rm -f -- "$hook_tmp"; die "could not move the merged settings into $settings."; }
+		{ rm -f -- "$hook_tmp"; PLACING=""; die "could not move the merged settings into $settings."; }
+	PLACING=""
 }
 
 # THE TARGET ANSWERS: the pair, merged exactly as it was before #237.
@@ -4214,13 +4594,27 @@ wip_run_link_estates() {
 # `set +e` that lets this read the subshell's status would otherwise reach
 # everything the two functions run, and they are written for `--install`'s
 # `set -e`.
+#
+# THE SUBSHELL CLEANS UP AFTER ITSELF (#332). A subshell does not keep the traps
+# `workdir` set — bash resets the ones a shell caught — and the `$PLACING` that
+# `hook_write_settings` sets in it is the subshell's own, so the `EXIT` and
+# `INT` traps of this shell would run with it empty and never name the
+# temporary: a Ctrl-C, or a `kill` of the group, left
+# `settings.json.openrepotools.<pid>.XXXXXX` behind, as it did for `--install`
+# before. So the subshell sets an `EXIT` trap of its own, which removes only the
+# temporary — never the workdir, which this shell goes on using. Bash runs an
+# `EXIT` trap as it dies of a SIGINT, a SIGTERM or a SIGHUP too, and the
+# subshell is where the signal of a group lands first.
 wip_hook_pair() {
 	local rc
 	say ""
 	say "  hook entries in $(claude_home)/settings.json:"
 	workdir
 	set +e
-	( set -e; plan_hook_merge; place_hook_pair )
+	( set -e
+	  trap '[ -z "$PLACING" ] || rm -f -- "$PLACING"* || :' EXIT
+	  plan_hook_merge
+	  place_hook_pair )
 	rc=$?
 	set -e
 	if [ "$rc" -ne 0 ]; then
