@@ -39,10 +39,12 @@ is how a test reads a file from the root that owns it. Two modes:
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Tuple
 
@@ -521,15 +523,111 @@ def pytest_report_header(config):
     return ROOTS.describe()
 
 
+#: THE SHELL SUITE IS ONE TEST, AND IT IS MOST OF A RUN'S WALL (#77): 20 to 30
+#: minutes beside Python files that add up to about as much again. It lives in
+#: this module, and under `pytest -n 3 --dist loadfile` (CI's two test jobs)
+#: it has to be the group a worker takes FIRST. A worker that took it last
+#: would run its Python files and then wait out the suite alone, which is the
+#: serial wall again.
+SHELL_SUITE_WRAPPER = "test_lane_helpers_suite.py"
+
+#: The `user_properties` entry the wrapper leaves on its passing test: the
+#: suite's own clock, as one block of text (`show_timings` there).
+SHELL_SUITE_TIMINGS = "shell-suite-timings"
+
+
+def shell_suite_first(items):
+    """`items` with the shell suite wrapper's tests first. A stable partition:
+    the wrapper's tests keep their order, and so does everything else."""
+    ours = [item for item in items if item.path.name == SHELL_SUITE_WRAPPER]
+    rest = [item for item in items if item.path.name != SHELL_SUITE_WRAPPER]
+    return ours + rest
+
+
+def pytest_collection_modifyitems(config, items):
+    """START THE SHELL SUITE FIRST, in an xdist worker and nowhere else.
+
+    WHAT xdist 3.8.0 DOES WITH THE ORDER (read from its source, not assumed):
+    the controller never collects. Each worker does, and this hook runs in
+    each, so every worker agrees on the order. `LoadScopeScheduling.schedule`
+    (`xdist/scheduler/loadscope.py`) then cuts the first worker's collection
+    into one work unit per scope, in collection order, `LoadFileScheduling`
+    (`loadfile.py`) making the scope the file; and `_assign_work_unit` takes
+    `workqueue.popitem(last=False)`, the OLDEST unit. So the unit this hook
+    puts first is the first one handed to a worker.
+
+    BUT `schedule` ALSO RE-SORTS THE UNITS BY SIZE, biggest first, unless the
+    run says `--no-loadscope-reorder`: `if self.config.option.loadscopereorder:`
+    is the branch that sorts by `-len(item[1])`, and that option DEFAULTS TO
+    TRUE (`plugin.py`, `--loadscope-reorder`, `default=True`). The wrapper
+    module is not the biggest, so it is not first under that sort: the hook
+    puts it first in the collection, and the flag turns the sort off so that
+    the collection's order stands. `.github/workflows/tests.yml` passes the
+    flag, and `tests/test_tests_workflow.py` fails the workflow without it.
+
+    ONLY IN A WORKER: `workerinput` is the attribute xdist's own
+    `is_xdist_worker` reads, and it is there only in a worker. With xdist
+    absent, or installed and not asked for (`tests/run.sh` is serial), the
+    collection order is exactly what it was."""
+    if hasattr(config, "workerinput"):
+        items[:] = shell_suite_first(items)
+
+
+def shell_suite_timings(reports) -> List[str]:
+    """The blocks the shell suite wrapper left on the CALL reports among
+    `reports`, in the order they came. Pure, so a test can hand it a fake."""
+    blocks: List[str] = []
+    for report in reports:
+        if getattr(report, "when", None) != "call":
+            continue
+        for name, value in getattr(report, "user_properties", None) or ():
+            if name == SHELL_SUITE_TIMINGS:
+                blocks.append(str(value))
+    return blocks
+
+
+def show_shell_suite_timings(terminalreporter) -> None:
+    """Print the shell suite's clock at the foot of the run, from THE PROCESS
+    THAT OWNS THE LOG (#77, step 2).
+
+    THE WRAPPER CANNOT PRINT IT ITSELF ANY MORE. Under `pytest -n`, a worker's
+    stdout never reaches the log: `capsys.disabled()` there writes into a
+    worker that nobody reads, and a green CI job would lose the one account of
+    where the suite's time went. So the wrapper leaves the block on its
+    report (`user_properties`, which xdist carries from the worker to the
+    controller with the report) and THIS prints it, in the controller, with
+    xdist and without.
+
+    A BLOCK THAT CANNOT BE PRINTED IS LOST AND THE RUN IS NOT. The suite's
+    headings carry em dashes, and a stdout that cannot spell one
+    (`PYTHONIOENCODING=ascii`, a stray `LANG`) would raise `UnicodeEncodeError`
+    from here, at the end of a green run. So the block is cut down to what the
+    stream's own encoding can say, with a backslash escape (`\\uXXXX`) for the
+    rest, and a stream that cannot be written to at all (an `OSError`) is let
+    go."""
+    blocks = shell_suite_timings(terminalreporter.stats.get("passed", ()))
+    if not blocks:
+        return
+    encoding = getattr(sys.stdout, "encoding", None) or "ascii"
+    with contextlib.suppress(OSError):
+        terminalreporter.write_sep("-", "the shell suite's own clock")
+        for block in blocks:
+            text = block.encode(encoding, "backslashreplace").decode(encoding)
+            for line in text.splitlines():
+                terminalreporter.write_line(line)
+
+
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
-    """THE ROOTS A RUN USED, WHERE `-q` CANNOT HIDE THEM (#193 item 6).
+    """THE ROOTS A RUN USED, WHERE `-q` CANNOT HIDE THEM (#193 item 6), and the
+    shell suite's clock (`show_shell_suite_timings`).
 
     `OPENREPOTOOLS_CODE_ROOT` re-points `REPO` and `UPSTREAM`, and
     `OPENREPOTOOLS_ASSEMBLY_ROOT` decides which README, AGENTS.md and length
     caps are held. The report header says so, but `-q` drops the header, and
     every CI job and `tests/run.sh` run `-q`. So a run whose roots are not
     today's one tree says them again at its foot, which `-q` keeps. Today's
-    layout with no variable prints nothing here: its output is unchanged."""
+    layout with no variable prints no roots here: its output is unchanged."""
+    show_shell_suite_timings(terminalreporter)
     if ROOTS.redirected():
         terminalreporter.write_sep("-", "openRepoTools test roots")
         for line in ROOTS.describe():
