@@ -102,6 +102,10 @@ fake venv layouts, with no pipx and no wheel.
    it refuses, naming `bash`, and nothing else runs.
 9. **Given** the package, **When** `wip init` runs from it, **Then** it reads
    the openRepoShape pin packaged with the release.
+10. **Given** a `bash` on `PATH` that cannot be run, such as a file with no
+    execute bit, and no `bash` there that can be run, **When** the console
+    script runs, **Then** it refuses with exit 2, naming `bash` and the reason
+    the system gave, and nothing else runs.
 
 ---
 
@@ -325,6 +329,13 @@ passages, and the absence of the pipx route.
 
 ### Edge Cases
 
+- **A `bash` that is there and cannot be started.** A `bash` whose `#!`
+  interpreter or ELF loader is missing, or a dangling link named `bash`, makes
+  `execvp` raise `FileNotFoundError`, as no `bash` at all does. The console
+  script gives it the no-bash refusal, which says there is none where one is.
+  Telling these apart takes a check of `PATH` that the console script does not
+  make, so a separate refusal for them is a follow-up (design.md Decision 3,
+  amended 2026-10-21).
 - **A chain of links or a cycle.** A chain longer than the design's hop limit
   (40), or a cycle, is not pipx's link. It is refused as any other link is.
 - **A future pipx layout.** A link into a directory that looks like a venv
@@ -390,8 +401,9 @@ passages, and the absence of the pipx route.
   C or POSIX locale bash also sees `LC_CTYPE=C.UTF-8`, which
   `PYTHONCOERCECLOCALE=0` avoids (design.md Decision 3, amended
   2026-10-18).
-- **FR-004**: With no `bash` on `PATH`, the console script MUST refuse with
-  exit 2 and a message naming `bash`, and MUST run nothing.
+- **FR-004**: With no `bash` on `PATH`, or none there that can be run, the
+  console script MUST refuse with exit 2 and a message naming `bash`, and MUST
+  run nothing.
 - **FR-005**: The package's Python modules MUST import only the standard
   library. A hygiene test MUST fail when one imports anything else. The
   existing compile test MUST compile them too.
