@@ -3789,15 +3789,17 @@ def package_modules() -> list:
 #: entry module needs, which design.md Decision 3 spells out — `cli.main()` is
 #: `os.execvp("bash", ["bash", <payload>/openRepoTools, *sys.argv[1:]])`, with
 #: SIGPIPE and SIGXFSZ set back to `SIG_DFL` first (the lead's amendment of
-#: 2026-10-18), and, on `FileNotFoundError` or `NotADirectoryError`, a refusal
-#: on stderr and exit 2. `__init__.py` holds a docstring and `_release.py` the
-#: five stamp lines, so neither imports anything. Nothing else is here on
-#: purpose: `pathlib`, `subprocess`, `importlib` and the package's own name
-#: are all absent, because the entry module reads no stamp, runs no child and
-#: passes bash nothing but the person's arguments; `__future__` is absent
-#: because nothing in Decision 3's module needs an annotation postponed on
-#: Python 3.9. A module that needs another name takes an edit here, with its
-#: reason beside it.
+#: 2026-10-18), and, where the exec fails, one of two refusals on stderr, each
+#: with exit 2: the no-bash line for `FileNotFoundError` or
+#: `NotADirectoryError`, and the line for a PATH where no `bash` can be run
+#: (#256) for any other `OSError`. `__init__.py` holds a docstring and
+#: `_release.py` the five stamp lines, so neither imports anything. Nothing
+#: else is here on purpose: `pathlib`, `subprocess`, `importlib` and the
+#: package's own name are all absent, because the entry module reads no stamp,
+#: runs no child and passes bash nothing but the person's arguments;
+#: `__future__` is absent because nothing in Decision 3's module needs an
+#: annotation postponed on Python 3.9. A module that needs another name takes
+#: an edit here, with its reason beside it.
 PACKAGE_IMPORT_ALLOWLIST = {
     "os": ("os.execvp replaces the process with the first bash on PATH, so "
            "signals, the EXIT trap and the exit status pass through; the "
@@ -3810,8 +3812,9 @@ PACKAGE_IMPORT_ALLOWLIST = {
                "restore_signals does (design.md Decision 3, amended "
                "2026-10-18; FR-003)"),
     "sys": ("sys.argv[1:] is the person's arguments, passed on unchanged; "
-            "sys.stderr carries the no-bash refusal that precedes its "
-            "exit 2"),
+            "sys.stderr carries the entry module's two refusals, no bash on "
+            "PATH and no bash on PATH that can be run (#256), each before "
+            "its exit 2"),
 }
 
 
