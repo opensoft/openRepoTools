@@ -75,6 +75,12 @@ SELF="${BASH_SOURCE[0]:-$0}"
 
 MODE=""
 WORKDIR=""
+# THE PREFIX OF THE WORKDIR WHILE `workdir` MAKES IT (#342), named for
+# `remove_workdir` as `$PLACING` below is named for a placement's temporary:
+# set before `mktemp -d` runs and cleared once `$WORKDIR` holds the name, so
+# no instant exists in which the directory is there and neither trap knows it.
+# `workdir` says how.
+WORKDIR_PREFIX=""
 STAGED=""
 # THE PREFIX OF THE TEMPORARY A PLACEMENT IS MAKING (#167), named here for
 # `remove_workdir`, which the `EXIT` and `INT` traps `workdir` sets both run,
@@ -300,28 +306,68 @@ USAGE
 # inferred from how bash waits, and no case measures either.
 # TERM is not trapped: bash runs a trap only once the command it is waiting
 # for has finished, so a TERM trap would let a hung fetch hold off a `kill`.
+#
+# THE WORKDIR ITSELF IS IN REACH WHILE IT IS MADE (#342): until `$WORKDIR` holds
+# its name, `$WORKDIR_PREFIX` does, and this removes what starts with it. It
+# uses `rmdir`, which removes only an empty directory: what `mktemp -d` made is
+# empty until `workdir` returns, so a name that merely starts with the prefix
+# can never cost anybody a file.
 # shellcheck disable=SC2317  # run by the two traps below, which it cannot see
 remove_workdir() {
-	rm -rf -- "$WORKDIR" || :
+	[ -z "$WORKDIR" ] || rm -rf -- "$WORKDIR" || :
+	[ -z "$WORKDIR_PREFIX" ] || rmdir -- "$WORKDIR_PREFIX"* 2>/dev/null || :
 	[ -z "$PLACING" ] || rm -f -- "$PLACING"* || :
 }
 workdir() {
 	if [ -z "$WORKDIR" ]; then
+		# THE NAME IS KNOWN BEFORE THE DIRECTORY EXISTS, AND BOTH TRAPS ARE SET
+		# BEFORE IT IS MADE (#342). `WORKDIR="$(mktemp -d)"` set them after: a
+		# SIGINT or a SIGTERM taken while bash waited for that `$(…)`, or after
+		# it and before the first `trap`, ended the run with no trap set and
+		# left the directory in `$TMPDIR`, and a SIGINT in the wait itself could
+		# be lost. So the prefix is named first — `openRepoTools.<this pid>.`
+		# and two `$RANDOM`s, in `$TMPDIR` — both traps are set, and `mktemp -d`
+		# makes the directory under it as a plain command, which bash waits for
+		# in its job table: a SIGINT there runs the `INT` trap once `mktemp` is
+		# done, and a SIGTERM runs the `EXIT` trap. `remove_workdir` takes what
+		# starts with the prefix until `$WORKDIR` holds the name, so at every
+		# instant one of the two names it.
+		#
+		# THE NAME IS READ BACK BY THE GLOB, NOT FROM `mktemp`'s ANSWER, which
+		# only a `$(…)` or a file in the directory being made could carry. It is
+		# taken only when exactly one directory, not a link, starts with the
+		# prefix — the one `mktemp` just made — because a `$WORKDIR` somebody
+		# else made would be theirs to fill. Anything else ends the run with
+		# exit 1 and one line, having removed nothing: whoever made a second
+		# such name, this run cannot tell its own from theirs.
+		#
 		# A DIRECTORY THAT CANNOT BE MADE ENDS THE RUN HERE, ON ITS OWN (#318),
 		# for a caller that runs in the shell: `set -e` cannot be what ends it,
 		# because `pipx_link_match`, which calls this, is itself asked inside an
 		# `if`, where `-e` is off. There a failed `mktemp` went on with
 		# `$WORKDIR` empty, wrote `/answer`, and refused a link that was pipx's.
 		# Called in the shell, the `exit` ends the run (a `return` would be
-		# swallowed by that `if`), and neither trap is set yet, so nothing is
-		# removed. In a `$(…)` or `( … )` caller the `exit` ends only that
-		# subshell: `wip_shape_ref`'s caller passes its status on
+		# swallowed by that `if`), with `mktemp`'s message as its one message:
+		# the traps are set by then, and the one thing they could remove is a
+		# directory under the prefix, which a failed `mktemp` did not make. In
+		# a `$(…)` or `( … )` caller the `exit` ends only that subshell:
+		# `wip_shape_ref`'s caller passes its status on
 		# (`ref="$(wip_shape_ref)" || exit "$?"`), and `venv_shaped_link`'s
 		# nested `( pipx_link_match … )` relies on planning's own call, which
 		# runs in the shell, having made the workdir first.
-		WORKDIR="$(mktemp -d)" || exit 1
+		WORKDIR_PREFIX="${TMPDIR:-/tmp}/openRepoTools.$$.$RANDOM$RANDOM."
 		trap remove_workdir EXIT
 		trap 'remove_workdir; trap - INT; kill -INT $$; exit 130' INT
+		mktemp -d -- "${WORKDIR_PREFIX}XXXXXX" >/dev/null || exit 1
+		set -- "$WORKDIR_PREFIX"*
+		if [ "$#" -ne 1 ] || [ -L "$1" ] || [ ! -d "$1" ]; then
+			set -- "$WORKDIR_PREFIX"
+			WORKDIR_PREFIX=""
+			printf '%s\n' "openRepoTools: \`mktemp -d\` made this run's working directory under the prefix $1, and that prefix now names something other than that one directory, so this run cannot tell which is its own. It stops here and removes nothing." >&2
+			exit 1
+		fi
+		WORKDIR="$1"
+		WORKDIR_PREFIX=""
 	fi
 }
 

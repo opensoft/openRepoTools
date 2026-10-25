@@ -1678,6 +1678,199 @@ def test_a_failed_mktemp_for_the_workdir_ends_the_install_with_exit_1_whatever_a
             f"the link at {link} was not left as it was:\n{said}")
 
 
+#: A `mktemp` THAT HOLDS THE MAKING OF THE WORKDIR (#342). Every call but the
+#: workdir's goes to the real one. For `-d` it makes the directory with the
+#: real `mktemp`, and then, by `WORKDIR_MKTEMP_THEN`: `holds` gives the answer,
+#: leaves a `.openrepotools.` name in `$ORT_HOOK_DIR` and stays, its output
+#: still open, while the shell that called it is alive (ten seconds at most),
+#: so a shell taking the answer through `$(…)` is still reading it; `exits`
+#: gives the answer, closes its output, leaves that name and exits, so the
+#: shell has all of it and is waiting for the child or past it;
+#: `makes-a-second` makes another directory from the same template before it
+#: answers, as somebody racing the run for its name would.
+WORKDIR_MKTEMP = ('case " $* " in\n'
+                  '*" -d "*) ;;\n'
+                  '*) exec {real} "$@" ;;\n'
+                  'esac\n'
+                  'made=$({real} "$@") || exit $?\n')
+WORKDIR_MKTEMP_THEN = {
+    "holds": ("printf '%s\\n' \"$made\"\n"
+              ': >"$ORT_HOOK_DIR/.made.openrepotools.$$"\n'
+              'i=0\n'
+              'while kill -0 "$PPID" 2>/dev/null && [ "$i" -lt 200 ]; do\n'
+              '\tsleep 0.05\n'
+              '\ti=$((i + 1))\n'
+              'done\n'),
+    "exits": ("printf '%s\\n' \"$made\"\n"
+              'exec >&-\n'
+              ': >"$ORT_HOOK_DIR/.made.openrepotools.$$"\n'),
+    "makes-a-second": ('{real} "$@" >/dev/null || exit $?\n'
+                       "printf '%s\\n' \"$made\"\n"),
+}
+
+
+def workdirs_left(tmpdir: Path) -> list[str]:
+    """Every directory in the run's `$TMPDIR`: a workdir nothing removed."""
+    return sorted(p.name for p in tmpdir.iterdir() if p.is_dir())
+
+
+@pytest.mark.parametrize("signame, to_group", [
+    ("SIGINT", True),     # Ctrl-C: the whole foreground process group
+    ("SIGTERM", False),   # a `kill` from another shell
+], ids=["SIGINT-to-the-group", "SIGTERM-to-the-shell"])
+@NEEDS_JQ
+def test_a_signal_while_mktemp_makes_the_workdir_ends_the_run_and_leaves_no_directory(
+        tmp_path, signame, to_group):
+    """A SIGNAL WHILE THE WORKDIR IS MADE ENDS THE RUN AND LEAVES NO DIRECTORY
+    (#342). `workdir` made it with `WORKDIR="$(mktemp -d)"` and set the `EXIT`
+    and `INT` traps after, so a signal while bash waited for that `$(…)` ended
+    the run with neither trap set, and the directory stayed in `$TMPDIR` with
+    nothing on stderr: for a Ctrl-C to the group and for a `kill` of the shell
+    alike. Now the name's prefix is known and both traps are set before
+    `mktemp -d` runs, as a plain command, and `remove_workdir` takes what
+    starts with that prefix until `$WORKDIR` holds the name.
+
+    `WORKDIR_MKTEMP`, first on `$PATH`, makes the directory and holds there,
+    its output open. Once the directory exists the signal lands: the run dies
+    of it, and no directory is left in `$TMPDIR`. THE CHILD STARTS WITH ALL
+    THREE SIGNALS AT THEIR DEFAULT, for the reason the test of a run killed
+    mid-placement gives.
+    """
+    shim = tmp_path / "held-mktemp"
+    stand_in(shim, "mktemp", WORKDIR_MKTEMP + WORKDIR_MKTEMP_THEN["holds"])
+    tmpdir, made = tmp_path / "tmp", tmp_path / "made"
+    tmpdir.mkdir()
+    made.mkdir()
+    sig = getattr(signal, signame)
+
+    def default_signals() -> None:
+        for each in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(each, signal.SIG_DFL)
+
+    run = subprocess.Popen(
+        ["bash", str(COMMAND), "--install"], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=command_env(tmp_path, {
+            "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
+            "TMPDIR": str(tmpdir), "ORT_HOOK_DIR": str(made)}),
+        start_new_session=True, preexec_fn=default_signals)
+    try:
+        deadline = time.monotonic() + 60
+        while (time.monotonic() < deadline and run.poll() is None
+               and not any(made.iterdir())):
+            time.sleep(0.05)
+        held = workdirs_left(tmpdir)
+        if any(made.iterdir()) and to_group:
+            os.killpg(run.pid, sig)
+        elif any(made.iterdir()):
+            run.send_signal(sig)
+        out, err = run.communicate(timeout=60)
+    finally:
+        if run.poll() is None:
+            os.killpg(run.pid, signal.SIGKILL)
+            run.communicate()
+    assert held, (f"`mktemp -d` never made the workdir for the signal to land "
+                  f"beside: exit {run.returncode}\n{out}{err}")
+    assert run.returncode == -sig, (
+        f"the run did not die of {signame}: exit {run.returncode}\n{out}{err}")
+    assert workdirs_left(tmpdir) == [], (
+        f"the workdir outlived the run: {held}\n{out}{err}")
+
+
+@pytest.mark.parametrize("signame", ["SIGINT", "SIGTERM"])
+@NEEDS_JQ
+def test_a_signal_in_the_wait_for_the_workdir_mktemp_ends_the_run_and_leaves_no_directory(
+        tmp_path, signal_hook, signame):
+    """A SIGNAL IN THE SHELL'S WAIT FOR THE WORKDIR'S `mktemp`, ONCE IT HAS MADE
+    THE DIRECTORY AND CLOSED ITS OUTPUT, ENDS THE RUN AND LEAVES NO DIRECTORY
+    (#342). Taken through `$(…)`, that wait was outside bash's job table and
+    before either trap: a SIGINT that reached the shell alone there was lost,
+    the install went on to exit 0, and only a later `EXIT` trap took the
+    directory; a SIGTERM ended the run with the directory left in `$TMPDIR`.
+    Now the wait is a plain command's, after both traps are set: the SIGINT
+    runs the `INT` trap once `mktemp` is done and the SIGTERM the `EXIT` trap,
+    and each takes the directory by its prefix.
+
+    `WORKDIR_MKTEMP`'s `exits` makes the directory, answers, closes its output
+    and leaves its name in `$ORT_HOOK_DIR`; `SIGNAL_HOOK_C`, at `waitpid`,
+    sends the signal to the shell in its wait for that child. The hook's mark
+    proves it fired. THE CHILD STARTS WITH ALL THREE SIGNALS AT THEIR DEFAULT.
+    """
+    shim = tmp_path / "exiting-mktemp"
+    stand_in(shim, "mktemp", WORKDIR_MKTEMP + WORKDIR_MKTEMP_THEN["exits"])
+    tmpdir, made, mark = tmp_path / "tmp", tmp_path / "made", tmp_path / "fired"
+    tmpdir.mkdir()
+    made.mkdir()
+    sig = getattr(signal, signame)
+    preload = os.environ.get("LD_PRELOAD")
+
+    def default_signals() -> None:
+        for each in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(each, signal.SIG_DFL)
+
+    run = subprocess.Popen(
+        ["bash", str(COMMAND), "--install"], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=command_env(tmp_path, {
+            "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
+            "TMPDIR": str(tmpdir),
+            "LD_PRELOAD": f"{signal_hook}:{preload}" if preload
+                          else str(signal_hook),
+            "ORT_HOOK_DIR": str(made), "ORT_HOOK_AT": "waitpid",
+            "ORT_HOOK_SIG": str(int(sig)), "ORT_HOOK_MARK": str(mark)}),
+        start_new_session=True, preexec_fn=default_signals)
+    try:
+        out, err = run.communicate(timeout=60)
+    finally:
+        if run.poll() is None:
+            os.killpg(run.pid, signal.SIGKILL)
+            run.communicate()
+    assert mark.exists(), (
+        f"the hook never fired, so no signal landed: exit {run.returncode}"
+        f"\n{out}{err}")
+    assert run.returncode == -sig, (
+        f"the run did not die of {signame}: exit {run.returncode}\n{out}{err}")
+    assert workdirs_left(tmpdir) == [], (
+        f"the workdir outlived the run:\n{out}{err}")
+
+
+@NEEDS_JQ
+def test_a_workdir_prefix_naming_more_than_the_directory_mktemp_made_ends_the_run_and_removes_nothing(
+        tmp_path):
+    """THE WORKDIR IS TAKEN ONLY WHEN ITS PREFIX NAMES EXACTLY THE ONE DIRECTORY
+    `mktemp -d` MADE (#342). `workdir` reads the name back by the prefix's
+    glob, so a second directory under the same prefix — somebody racing the
+    run for its name — would leave it two candidates, and a `$WORKDIR` it did
+    not make would be somebody else's to fill. `WORKDIR_MKTEMP`'s
+    `makes-a-second` makes that second one. The run ends with exit 1 and one
+    line, as a workdir that cannot be made does (#318), places nothing and
+    REMOVES NOTHING: it cannot tell its own directory from the other one.
+    Taken through `$(…)`, the run took the name `mktemp` printed and went on.
+    """
+    shim = tmp_path / "racing-mktemp"
+    stand_in(shim, "mktemp",
+             WORKDIR_MKTEMP + WORKDIR_MKTEMP_THEN["makes-a-second"])
+    tmpdir = tmp_path / "tmp"
+    tmpdir.mkdir()
+
+    result = run_cmd("--install", home=tmp_path, env={
+        "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
+        "TMPDIR": str(tmpdir)})
+
+    said = result.stdout + result.stderr
+    assert result.returncode == 1, said
+    assert "REFUSED" not in said, said
+    lines = result.stderr.splitlines()
+    assert len(lines) == 1 and "cannot tell which is its own" in lines[0], (
+        f"the run did not end with the one line naming the prefix:\n{said}")
+    assert len(workdirs_left(tmpdir)) == 2, (
+        f"the run removed a directory it could not tell was its own: "
+        f"{workdirs_left(tmpdir)}\n{said}")
+    bin_dir = tmp_path / ".local" / "bin"
+    assert not bin_dir.is_dir() or not any(bin_dir.iterdir()), (
+        f"the install placed something in {bin_dir}:\n{said}")
+
+
 #: THE WORDS THIS INSTALLER USED TO PLACE AND DOES NOT ANY MORE. `restart` left
 #: under lane-collision-protocol Amendment 18 Addendum 2 (ratified
 #: 2026-09-14T16:50:32Z, verbatim "ratify"): `lane <name>` is that act, and the
