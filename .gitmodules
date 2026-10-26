@@ -1,3 +1,6 @@
-[submodule "upstream/openRepoShape"]
-	path = upstream/openRepoShape
-	url = https://github.com/opensoft/openRepoShape.git
+[submodule "spec"]
+	path = spec
+	url = https://github.com/opensoft/openRepoTools-spec.git
+[submodule "code"]
+	path = code
+	url = https://github.com/opensoft/openRepoTools-code.git

@@ -30,3 +30,13 @@
 # retold for the repository that ships the two commands.
 
 * text=auto eol=lf
+# openRepoShape (#471): the pinned shape copies below check out with LF everywhere, as contracts/shape-pin.yaml records their bytes
+/scripts/validate-pins.py text eol=lf
+/scripts/validate-manifest.py text eol=lf
+/scripts/bootstrap.py text eol=lf
+/Makefile text eol=lf
+/.github/workflows/validate.yml text eol=lf
+/AGENTS-shape.md text eol=lf
+/scripts/repo_shape.py text eol=lf
+/scripts/validate-repository-naming.py text eol=lf
+/contracts/repository-naming.yaml text eol=lf
