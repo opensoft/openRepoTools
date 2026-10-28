@@ -258,7 +258,7 @@ gh api repos/opensoft/openRepoTools/contents/openRepoTools \
 
 Both lines are unchanged by the split: the `openRepoTools` they fetch is this
 root's entry point, which hands over to the installer `code/openRepoTools` at
-the commit this root pins.
+the commit this root pins. Since the split the `curl` line also needs `api.github.com` and `jq`, and makes 6 GitHub API calls per install.
 
 A workstation uses ONE install route or the other, never both — pipx's `openrepotools`
 or workBenches' `./setup.sh` — until opensoft/workBenches#165 lets its

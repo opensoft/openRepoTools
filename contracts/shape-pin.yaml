@@ -48,8 +48,6 @@ files:
     sha256: "d2bd1cfc8515088980df66c8adda3fdaea908e7e2eba6f94062c1b9e65610995"
   - path: Makefile
     sha256: "6d65dd06e12564a7c018a72a5a2e3c80b999d7026ce5643e77ca8dd6e9254dfa"
-  - path: shape/.gitignore
-    sha256: "00256b4fddd74373bd31f7726469936deee31f171515a2e0e1b2364a5c543223"
   - path: shape/.gitattributes
     sha256: "e2b88cf25928c5a58bb2acaae1779d934c262273db708d0aa6dfb01591b15baa"
   - path: .github/workflows/validate.yml
