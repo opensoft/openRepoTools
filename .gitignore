@@ -1,7 +1,7 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
-# Merged from the shape's copy, `shape/.gitignore` (pinned, left in place).
+# Merged from the shape's copy, `shape/.gitignore`, removed once merged.
 .venv/
 .DS_Store
 # Paired feature worktrees, `worktrees/<NNN-feature>/{spec,code}/`: linked
