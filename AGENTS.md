@@ -1,3 +1,27 @@
+Read AGENTS-shape.md first — the rules of this repository's shape.
+
+This is the assembly root of a three-repository project. The text after
+this list is what this repository said before the split, each path re-pointed
+at the leg that now holds it; a path beginning `spec/` or `code/` is relative
+to this root.
+
+- **`spec/`**, `opensoft/openRepoTools-spec`: `openspec/`, `specs/`, `docs/`
+  (the manuals) and `ideation/`; `openspec` runs there.
+- **`code/`**, `opensoft/openRepoTools-code`: every command
+  `openRepoTools --install` places, `repos.tsv`, `commands/`, `skills/`,
+  `tests/`, its CI, and the pinned standard at `code/upstream/openRepoShape`.
+- **This root**: the front door, `project.yaml`, the leg pins and the gate
+  (`make validate`); no product code.
+- **Tests**: `code/tests/run.sh` from here, or `tests/run.sh` inside `code/`.
+- **The lane tooling**: its code is in `code/`; its manual is
+  `spec/docs/README-lanes.md` (`docs/README-lanes.md` in the spec leg).
+- **Feature work**: paired worktrees `worktrees/<NNN-feature>/{spec,code}/`,
+  never committed here; full proposals and Speckit files in `spec`, a genuine
+  bounded amendment only in `code`'s `features/<NNN-feature>/openspec/`.
+- **A local rehearsal** whose `.gitmodules` names bare repositories on disk
+  needs `git -c protocol.file.allow=always submodule update --init
+  --recursive`; the real legs are https and need no flag.
+
 # Working in openRepoTools
 
 Three estate commands, `park`, `resume` and `status`; the lane tooling
@@ -19,7 +43,7 @@ person is driving the two INSTALLED commands.
 
 The lane tooling answers to a different document — the lane collision protocol
 at `$AGENT_PROTOCOL_ROOT/protocols/lane-collision-protocol.md` and its
-amendments — and `docs/README-lanes.md` is its manual. **The code is here; the
+amendments — and `spec/docs/README-lanes.md` is its manual. **The code is here; the
 data is not.**
 
 **A LANE HAS ONE BINDING** (Amendment 18, in force 2026-09-14): the `host`,
@@ -41,7 +65,7 @@ handoffs through `$AGENT_PROTOCOL_ROOT/workspace.yaml`'s `repository:` and
 unreadable workspace with **2**: only 2 blocks a prompt; 1 would let it through.
 Profile-only guard calls carrying exact `CLAUDE_NO_LANE=1` return 0 before input
 or identity probes, even with unreadable configuration; other values enforce.
-Brett Heap directed this exception in `openspec/changes/skip-no-lane-guard/`;
+Brett Heap directed this exception in `spec/openspec/changes/skip-no-lane-guard/`;
 Shared hooks stay installed while `~/projects/xFactory/lanes-edit.sh` answers `guard`; until then they are deferred and our guard entry taken out (#237):
 29 artifacts always, plus those two. Exit 1 means *registry not found* in lane tooling, and *findings were printed* in estate status; identify the command before interpreting it.
 
@@ -206,13 +230,13 @@ which is where `make siblings` moves a holder; `status` names both as a finding.
    reads them all WITHOUT asking, because a read — fetched or not — moves
    nothing of yours; `status --all` from anywhere says the same thing.
 
-## The pinned standard at `upstream/openRepoShape`
+## The pinned standard at `code/upstream/openRepoShape`
 
 The suite builds real estates out of eight of openRepoShape's own files, and it
-reads them out of a submodule pinned by `contracts/openreposhape-pin.yaml`.
+reads them out of a submodule pinned by `code/contracts/openreposhape-pin.yaml`.
 Three rules, and none of them is negotiable:
 
-1. **Never edit anything under `upstream/openRepoShape` in place.** It is
+1. **Never edit anything under `code/upstream/openRepoShape` in place.** It is
    somebody else's repository, checked out detached at a commit. A change the
    standard needs is a pull request THERE, then a pin bump here.
 2. **Never pin a commit that is not on that repository's `main`.**
@@ -220,17 +244,17 @@ Three rules, and none of them is negotiable:
    pull request lands and the next person's fetch of it 404s. Check with
    `gh api repos/opensoft/openRepoShape/compare/main...<sha>` — `identical` or
    `behind`.
-3. **The digest is RECOMPUTED, never adjusted.** `contracts/openreposhape-pin.yaml`
+3. **The digest is RECOMPUTED, never adjusted.** `code/contracts/openreposhape-pin.yaml`
    carries the bump command. A `tree_sha256` edited to make
-   `tests/test_upstream_pin.py` pass records this checkout as the upstream,
+   `code/tests/test_upstream_pin.py` pass records this checkout as the upstream,
    which is the one thing the row exists to prevent. The pin file and the
    gitlink move in ONE commit.
 
 ## Testing your changes to this repository
 
 ```sh
-git submodule update --init upstream/openRepoShape
-tests/run.sh                      # the suite, serialized — pass any pytest argument
+git -C code submodule update --init upstream/openRepoShape
+code/tests/run.sh                 # the suite, serialized — pass any pytest argument
 ```
 
 Brett Heap's RULING of 2026-09-16 ("do all three", on the coordinator's three
@@ -241,7 +265,7 @@ suite queuing up to 1h20 behind the workstation lock described below):
 1. **`TESTS-MACOS` LEFT THE PER-PUSH GATE, AND THEN LEFT CI.** This ruling moved
    `tests-macos` behind the `ready` label; Brett Heap's decision of 2026-10-15,
    for the whole estate, to run the suite on Linux only, removed `tests-macos`,
-   `tests-windows` and `parse-macos`. `.github/workflows/tests.yml` runs
+   `tests-windows` and `parse-macos`. `code/.github/workflows/tests.yml` runs
    `guard-launch-mode`, `tests`, `tests-no-submodule` and `package`, all on
    ubuntu — on `pull_request`, push to `main` and `release/v*`, nightly at
    04:17Z and `workflow_dispatch`. From PR 3 (#228) on, the release workflow's
@@ -251,10 +275,10 @@ suite queuing up to 1h20 behind the workstation lock described below):
    and two are taken; a finding after that is filed as an issue and the PR
    lands regardless.
 3. **CI IS THE SUITE OF RECORD.** A writer runs the shell-suite section they
-   touched locally — `bash tests/test_lane_helpers.sh` in full is fine when
-   the box is quiet — and the full local `tests/run.sh` behind the
+   touched locally — `bash code/tests/test_lane_helpers.sh` in full is fine when
+   the box is quiet — and the full local `code/tests/run.sh` behind the
    workstation lock is no longer required before a push: CI's `tests` job is
-   the footer of record. `tests/run.sh` stays exactly as it is above: how to
+   the footer of record. `code/tests/run.sh` stays exactly as it is above: how to
    run the whole suite locally, serialized, whenever a person wants that answer
    anyway, and `python3 -m pytest tests -q` by hand — unserialized against every
    other lane on the same workstation — is still the thing it exists to stop.
@@ -288,14 +312,14 @@ while [ "$(pgrep -f "$pat" | awk 'END { print NR + 0 }')" -gt 0 ]; do sleep 20; 
 PYTHONPYCACHEPREFIX="${XDG_CACHE_HOME:-$HOME/.cache}/openRepoTools/pycache" flock "${TMPDIR:-/tmp}/openrepotools-pytest.lock" python3 -m pytest tests -q -p no:cacheprovider
 ```
 
-`awk` AND NOT `pgrep -fc`, which is what `tests/run.sh` does and for the reason
+`awk` AND NOT `pgrep -fc`, which is what `code/tests/run.sh` does and for the reason
 it gives: `-c` is not in every `pgrep` this repository runs under, and the
 count — never `pgrep`'s exit status — is what decides. The wrapper is the
 canonical implementation of this guard; the lines above are it in one place for
 a person with no checkout in front of them.
 
-`tests/test_lane_helpers.sh` is 122 KB of bash that arrived with the move;
-`tests/test_lane_helpers_suite.py` is what makes `pytest` run it, so it is one
+`code/tests/test_lane_helpers.sh` is 122 KB of bash that arrived with the move;
+`code/tests/test_lane_helpers_suite.py` is what makes `pytest` run it, so it is one
 slow test rather than no test at all. Everything shipped here is written for
 macOS **bash 3.2**, where `${x,,}`, `mapfile`, `declare -A` and `local -n` are
 syntax errors — write `tr '[:upper:]' '[:lower:]'` and a loop. No `tests.yml`

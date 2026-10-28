@@ -1,0 +1,507 @@
+schema_version: 1
+kind: repository-naming-policy
+
+# ===========================================================================
+# repository-naming.yaml — the six live naming families, as DATA.
+#
+# WHY DATA AND NOT PROSE. A convention written only in a README is checked by
+# whoever remembers it. This file is read by `scripts/validate-repository-naming.py`,
+# which the scaffold runs BEFORE it creates anything and which a scaffolded
+# project's own pull-request gate runs over its manifest, so the convention is
+# refused rather than regretted.
+#
+# THE FAMILIES CONFER NOTHING. A name is a name. Nothing in this file grants
+# review authority, clearance eligibility, gate standing or lifecycle state
+# over the repository it classifies — that is the ratified doctrine of
+# `add-wallet-carried-review-authority` ("electing the schema changes no gate,
+# no floor, no grant, and no clearance eligibility") and this file is bound by
+# it. A consumer deriving a permission from a family id is defective.
+#
+# PRECEDENCE IS SEMANTIC, NOT COSMETIC — AND TWO KINDS OF FORM LIVE HERE.
+#
+# `neutral-product`, `install` and `workspace` are UNAMBIGUOUS BY
+# CONSTRUCTION: `open` in front, `-Install` behind, `-wip` behind. Nothing
+# else spells them, so they win outright and need nothing declared. Their
+# precedence is unchanged.
+#
+# THAT STAYS TRUE OF THE CLASSIFICATION, AND A NEUTRAL PRODUCT MAY STILL ELECT
+# THE SHAPE. Ruled by Brett Heap on 2026-09-05:
+#
+#     "elect the shape for both, follow the pin chain, no family yet"
+#
+# recorded on opensoft/openxFactory#656, for `openDox` and `openXdox`. The form
+# still WINS — `openDox` classifies as `neutral-product` and no declaration
+# moves it — and it ADDITIONALLY answers the `assembly` role the project
+# declares, where the name also satisfies the `project-leg/assembly` form
+# (`admits_declared_role:` in that family below). Electing confers nothing, so
+# `openDox` mounting `openDox-spec` and `openDox-code` is a fact about LAYOUT,
+# not a claim about neutrality — exactly the reasoning that already lets a
+# DECLARED domain descendant be an assembly root, further down. `install` is
+# admitted into no role and could not be: `<X>-Install` carries a hyphen, so it
+# satisfies no leg form to begin with, and stays refused as any leg.
+#
+# `domain-descendant` is not like that. `<Domainx><Product>` is a CLAIM OF
+# DESCENT, and a claim needs a REFERENT. Ruled by Brett Heap on 2026-09-02:
+#
+#     "Descendant only if it pins open<Product>."
+#
+# A name is classified as a domain descendant ONLY when the project declares a
+# pin on the matching `open<Product>` (see `referent:` in that family below).
+# Without that pin the project's DECLARED ROLE wins: the name is a valid
+# assembly root, and the fact that it ALSO matches the descendant form is
+# RECORDED in the manifest's `naming.also_matches` rather than thrown away.
+# With no declared role at all the name is reported as `project-leg/assembly`
+# with `also_matches: [domain-descendant]`.
+#
+# WHY. Every project in a `<Domainx>` family organisation hits the overlap.
+# `MedxSoft` holds `MedxEHR`, `MedxGlass`, `MedxScribe`; on the first real
+# pilot the scaffold refused `MedxScribe` as "domain-descendant, not the
+# assembly form of a project leg" — for a name that descends from nothing,
+# because no `opensoft/openScribe` exists. Reading a claim as a fact made an
+# ordinary project unscaffoldable in the one organisation shaped to have many.
+#
+# THE CHECK STAYS OFFLINE. The referent is a PIN THE PROJECT DECLARES, which is
+# a fact in its own tree; classification never asks GitHub whether
+# `open<Product>` exists. A rule that needed the network would be unrunnable
+# in the fork-and-run case this whole standard is built for.
+#
+# THE REFERENT MAY BE REACHED THROUGH A CHAIN OF PINS. Ruled by Brett Heap on
+# 2026-09-05: "elect the shape for both, follow the pin chain, no family yet".
+# A product split into two layers is pinned by its descendants at the LAYER —
+# `codexDox` pins `openXdox`, `openXdox` pins `openDox` — so the referent is
+# reached through the chain rather than directly. The chain is RECORDED in the
+# descendant's own manifest (`naming.referent_chain:`), never inferred; a
+# DIRECT pin stays sufficient and is unchanged; and a link whose tree cannot
+# be read is reported as `declared-unverified`, never as a failure, because
+# the check stays offline. The rule is data, in `referent.chain:` below.
+#
+# `matches()` and `--explain` still report every form a name satisfies, so an
+# overlap stays visible instead of being silently resolved.
+#
+# A DESCENDANT MAY CARRY LEGS. Ruled by Brett Heap on 2026-09-02, in the same
+# breath as the referent rule: being a descendant and being a three-repository
+# project are INDEPENDENT facts. `MedxGlass` descends from `openGlass` AND is
+# the assembly root that mounts `MedxGlass-spec` and `MedxGlass-code`. The
+# descendant family therefore declares no roles of its own but ADMITS the
+# declared `assembly` role (`admits_declared_role:` below), so
+# `form: domain-descendant, role: assembly, referent_declared: true` is a
+# VALID classification for an assembly root. Reading the two rulings as
+# exclusive would have forced every declared descendant into a one-repository
+# project, which neither ruling says.
+#
+# A FIFTH FORM ARRIVED THE SAME WAY, ON 2026-09-04: `family`, a HOLDER that
+# pins other projects' assembly roots. It is spelled exactly like an assembly
+# root and is therefore DECLARED-ONLY (`declared_only: true`): the classifier
+# reports it only when the reader says which question is being asked, so
+# adding it changed no existing name's answer and no existing manifest's
+# `also_matches`. See that family's own block for the ruling.
+#
+# A SIXTH FORM ARRIVED ON 2026-09-10, AND IT IS NOT A REPOSITORY OF A PROJECT
+# AT ALL: `workspace`, `<user>-wip`, the PRIVATE repository one person owns to
+# index their own unfinished work. Ruled by Brett Heap on 2026-09-09
+# (openRepoShape#81): "if we have brett and scott as engineers, then we need
+# something like brett-wip and scott-wip right?" It is UNAMBIGUOUS BY
+# CONSTRUCTION rather than declared-only — the literal `-wip` suffix is
+# spelled by no other form here — so it needs no `--role`, and it changed no
+# existing name's answer for a different reason than `family` did: no form
+# above admits a `-wip` suffix at all, so the names it classifies are names
+# that matched NOTHING before. See that family's own block for where such a
+# repository lives, and for the fact that nothing in this standard creates
+# one.
+#
+# THE ASSEMBLY-ROOT FORM IS THE RESIDUAL CLASS, deliberately. A bare CamelCase
+# token is the widest form here and sits last on purpose: the staged fragment
+# records that two live repositories (`xFactory-Installer`, `AgentTower`) fit
+# no suffix rule at all, so this is a FORWARD rule and the residual class is
+# where an unsuffixed name lands. What it does NOT admit is a name with a
+# hyphen, an underscore, a dot or a space — those match nothing and are
+# refused, which is the check that actually earns its keep.
+# ===========================================================================
+
+families:
+  - id: neutral-product
+    precedence: 1
+    title: Neutral product
+    pattern: "^open(?:[A-Z]|x[A-Z])[A-Za-z0-9]*$"
+    description: >-
+      A domain-neutral product repository: `open` followed by the product
+      name. The character after `open` is uppercase, or the lowercase `x` of
+      an x-stem followed by an uppercase letter — which is what keeps the
+      organisation login `opensoft` from reading as a product.
+    # The roles a neutral product may ADDITIONALLY answer in. The family has
+    # no `roles:` of its own — `openDox` and `openDox-spec` are not the same
+    # form — but a neutral product that has ELECTED the three-repository shape
+    # is the repository an engineer clones, and answers as its own assembly
+    # root. Ruled by Brett Heap on 2026-09-05, "elect the shape for both,
+    # follow the pin chain, no family yet" (opensoft/openxFactory#656), for
+    # `openDox` and `openXdox`.
+    #
+    # WHY THIS TAKES NOTHING AWAY. Electing confers nothing — the doctrine's
+    # first sentence, and the first paragraph of this file — so `openDox`
+    # mounting `openDox-spec` and `openDox-code` is a fact about LAYOUT and
+    # not a claim about neutrality. The form still wins the classification:
+    # `form: neutral-product` with `also_matches: [project-leg/assembly]`, so
+    # the overlap is RECORDED rather than resolved into a leg. It is the same
+    # move `domain-descendant` already makes below, for the same reason: being
+    # a neutral product and being a three-repository project are INDEPENDENT
+    # facts, and reading them as exclusive made `openDox` unscaffoldable.
+    #
+    # `spec` and `code` are absent on purpose, exactly as they are for the
+    # descendant family: `openDox-spec` carries the lowercase suffix, matches
+    # this family's pattern not at all, and is an ordinary project leg.
+    #
+    # ELECTING ALSO MAKES THE NAME AN ID SOURCE, for the first time. The
+    # project id and topic are both derived by LOWERCASING the assembly
+    # root's name (`--id`'s default), so `openXdox` and `openxDox` — two
+    # admitted spellings — derive the SAME id `openxdox` and the same topic
+    # `xf-project-openxdox`. Before 2026-09-05 no id was ever derived from a
+    # neutral-product name at all, so this collision is newly reachable, not
+    # a pre-existing one: pass an explicit `--id` when two such products must
+    # coexist. Where the three agreeing layers of grouping (names, topics,
+    # register) disagree, the register wins and the others are reported as
+    # drift, because the register is the only one of the three that is
+    # reviewed.
+    admits_declared_role:
+      - assembly
+    examples:
+      - openxFactory
+      - openXwallet
+      - openChart
+      # Elected the shape on 2026-09-05 and are their own assembly roots. The
+      # names classify here whether or not a role is declared; what the
+      # election adds is the role, never the form.
+      - openDox
+      - openXdox
+    counter_examples:
+      - opensoft
+      - OpenChart
+
+  - id: install
+    precedence: 2
+    title: Install
+    pattern: "^[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*-Install$"
+    description: >-
+      A deployable install or runtime repository, ending in the CamelCase
+      suffix `-Install`. The stem may itself be hyphenated, which is how one
+      product's install is qualified by the layer that owns it.
+    # NO `admits_declared_role:`, and it is not an oversight. `<X>-Install`
+    # carries a hyphen, so it satisfies no `project-leg` form at all — there is
+    # no role for it to be admitted into, and it stays refused as an assembly,
+    # spec or code leg exactly as it was before 2026-09-05.
+    examples:
+      - xFactory-Hermes-Install
+      - Hermes-Install
+      - Keycloak-Install
+    counter_examples:
+      - hermes-install
+      - Keycloak-Installer
+
+  - id: domain-descendant
+    precedence: 3
+    title: Domain descendant
+    pattern: "^[A-Za-z][A-Za-z0-9]*x[A-Z][A-Za-z0-9]*$"
+    # THE FORM IS A CLAIM; THE PIN IS THE REFERENT. Matching the pattern is
+    # necessary and NOT sufficient: the classifier returns this family only
+    # when the project declares a pin on the neutral product below. This is
+    # the one family here whose membership is not decided by the characters
+    # alone, which is why it is the one family that carries `referent:`.
+    requires_referent: true
+    # The roles a DECLARED descendant may additionally answer in. The family
+    # has no `roles:` of its own — `MedxGlass` and `MedxGlass-spec` are not
+    # the same form — but a descendant that IS the repository an engineer
+    # clones answers as the assembly root, which is what lets a descendant
+    # carry legs. `spec` and `code` are absent on purpose: those names carry
+    # the lowercase suffix and are ordinary project legs, descendants of
+    # nothing.
+    admits_declared_role:
+      - assembly
+    referent:
+      # `MedxChart` -> product `Chart` -> `openChart`. The stem is greedy, so
+      # a name with two `x<Upper>` splits is read at the rightmost one.
+      split_pattern: "^(?P<stem>[A-Za-z][A-Za-z0-9]*)x(?P<product>[A-Z][A-Za-z0-9]*)$"
+      canonical_template: "open{product}"
+      # The neutral family admits an x-stem of its own (`openxFactory`), and
+      # `codexFactory` descends from exactly that, so the x-stem spelling of
+      # the referent counts too. Refusing it would be a spelling rule wearing
+      # the costume of a semantic one.
+      also_accepted:
+        - "openx{product}"
+      declared_by: >-
+        A pin the project declares on the neutral product — in a scaffolded
+        project, `contracts/<referent lowercased>-pin.yaml`, listed in
+        `project.yaml`'s `neutral_product_pins:`. It is a fact in the
+        project's own tree, so the check needs no network.
+      # THE REFERENT MAY BE REACHED THROUGH A CHAIN OF PINS. Ruled by Brett
+      # Heap on 2026-09-05:
+      #
+      #     "elect the shape for both, follow the pin chain, no family yet"
+      #
+      # recorded on opensoft/openxFactory#656. A neutral product split into
+      # two layers splits the referent with it: `openDox` is the core product
+      # and `openXdox` is the openxFactory-tuned layer, and the descendants
+      # pin `openXdox` ALONE — one pin chain, no direct `openDox` pin inside
+      # the family. Read as a DIRECT pin only, `codexDox`'s route to `openDox`
+      # is declared nowhere: the referent is derived from the NAME, `openXdox`
+      # is a neutral product in its own right, and `--explain codexDox` says
+      # so — *a CLAIM: needs a declared pin on openDox or openxDox*. What
+      # saves the answer today is a CASE-FOLDING COINCIDENCE and nothing else:
+      # `openXdox` casefolds onto the accepted x-stem spelling `openxDox`, so
+      # the classifier accepts a pin on the layer as if it were a pin on a
+      # product nobody has ever named. It holds for this family's spelling and
+      # for no other — a third link, or a layer named anything else, reaches
+      # nothing at all — and an accident is not a rule. `LedgerxWallet ->
+      # openXwallet -> openWallet` is the same shape, and `openWallet` has no
+      # repository at all yet.
+      #
+      # THE CHAIN IS RECORDED, NOT INFERRED. The descendant's own manifest
+      # carries the chain it relies on. Its FIRST entry is what this project
+      # actually pins and must be in its `neutral_product_pins:`; its LAST
+      # must be one of the referents above; each link beyond the first is a
+      # declaration in ANOTHER tree — `openXdox`'s own manifest declaring
+      # `neutral_product_pins: [openDox]`. Inferring the chain would mean
+      # walking repositories nobody named, which is a lookup, not a fact.
+      #
+      # A DIRECT PIN IS STILL SUFFICIENT. This is an ADDITION: `MedxChart`
+      # pinning `openChart` answers exactly as it did on 2026-09-02, and a
+      # project that records no chain is classified exactly as before.
+      #
+      # THE CHECK STAYS OFFLINE (2026-09-02, unchanged). A recorded chain is a
+      # fact in the descendant's own tree, so classification still never asks
+      # a host whether `openDox` — or `openWallet`, which need not exist at
+      # all — is there. A link whose tree IS reachable (a sibling checkout,
+      # `SHAPE_PIN_SOURCE_<PRODUCT>`, or an explicit `--link-source`) is
+      # VERIFIED against that tree's own declaration; a link whose tree is not
+      # reachable is reported as `declared-unverified` and the name STILL
+      # classifies as a descendant. Failing there would make the answer depend
+      # on which trees happen to be on the disk, which is the network
+      # dependency wearing a different coat. A link that is reachable and
+      # declares something else is BROKEN: the residual assembly-root reading
+      # wins, the overlap is recorded, and the message names the link.
+      chain:
+        # Where the chain is recorded, in the descendant's own manifest.
+        record_field: naming.referent_chain
+        # The key read in a LINK's manifest to verify that link.
+        link_declared_by: neutral_product_pins
+        # A recorded chain longer than this is refused as broken rather than
+        # walked: a chain nobody can hold in their head is not a declaration.
+        max_length: 8
+        # What a link whose tree could not be read is reported as. It is a
+        # WARNING, never a finding, and never changes the classification.
+        unverified_status: declared-unverified
+      # The worked cases, as `<descendant>: [<the pin it holds>, …, <the
+      # referent it reaches>]`. Neither row asserts that anything exists: the
+      # chain is a declaration, and `openWallet` has no repository yet.
+      example_chains:
+        codexDox: [openXdox, openDox]
+        LedgerxWallet: [openXwallet, openWallet]
+    description: >-
+      A domain's descendant of a live product: an `x`-terminated domain stem
+      immediately in front of the product name, AND a declared pin on that
+      product. The stem's own first letter may be lowercase, which
+      `codexFactory` already spends.
+    # Each example is a descendant BECAUSE of the referent beside it, not
+    # because of how it is spelled. `MedxChart` is a descendant because
+    # MedxChart pins `openChart`; strip that pin and the same name is an
+    # ordinary assembly root that also matches this form. An example with no
+    # row here has one in `example_chains:` instead — it reaches its referent
+    # through a chain rather than directly, which is the 2026-09-05 addition.
+    example_referents:
+      MedxChart: openChart
+      LedgerxWallet: openWallet
+      codexFactory: openxFactory
+      # A descendant that is ALSO an assembly root with two legs. Both facts
+      # at once is the case `admits_declared_role:` above exists for.
+      MedxGlass: openGlass
+    examples:
+      - MedxChart
+      - LedgerxWallet
+      - codexFactory
+      - MedxGlass
+      # Reached through a chain, not a direct pin: `codexDox` pins `openXdox`
+      # and `openXdox` pins `openDox` (2026-09-05).
+      - codexDox
+    # These do not even reach the referent question: they fail the pattern.
+    counter_examples:
+      - MedChart
+      - Medx
+    # And this one passes the pattern and is still NOT a descendant, because
+    # nothing named `openScribe` is pinned. It is the pilot case, kept in the
+    # data so the rule is testable from the contract rather than from memory.
+    claim_without_referent_examples:
+      - MedxScribe
+
+  - id: project-leg
+    precedence: 4
+    title: Project leg
+    pattern: "^[A-Za-z][A-Za-z0-9]*(?:-spec|-code)?$"
+    description: >-
+      One repository of a project that has elected the three-repository shape.
+      The suffixes are fixed LOWERCASE and hyphenated precisely so they sit in
+      a different visual class from every family above, all of which are
+      CamelCase words; the assembly root is bare, following the precedent the
+      aggregation root already sets — the thing you clone has no suffix.
+    roles:
+      - id: assembly
+        pattern: "^[A-Za-z][A-Za-z0-9]*$"
+        description: >-
+          The per-project ROOT repository, the one an engineer clones. It
+          carries `project.yaml`, the two legs as submodules, and the pins.
+        examples:
+          - Atlas
+          - Northwind
+      - id: spec
+        pattern: "^[A-Za-z][A-Za-z0-9]*-spec$"
+        description: The project's specification leg, mounted at `spec/`.
+        examples:
+          - Atlas-spec
+          - Northwind-spec
+      - id: code
+        pattern: "^[A-Za-z][A-Za-z0-9]*-code$"
+        description: The project's implementation leg, mounted at `code/`.
+        examples:
+          - Atlas-code
+          - Northwind-code
+    examples:
+      - Atlas
+      - Atlas-spec
+      - Atlas-code
+    counter_examples:
+      - Atlas-SPEC
+      - Atlas_spec
+      - Atlas-tests
+
+  - id: family
+    precedence: 5
+    title: Family holder
+    pattern: "^[A-Za-z][A-Za-z0-9]*$"
+    # DECLARED-ONLY, and for the same reason the descendant form is: the
+    # characters cannot tell you. `InkRouter` is spelled exactly like an
+    # assembly root, because it IS one CamelCase token — what makes it a
+    # family is `family.yaml` in its own tree, which is a fact, not a
+    # spelling. So this form is reported only when the reader DECLARES it
+    # (`--role family`, or `validate-family.py`, which reads the manifest that
+    # settles it). Left undeclared, `InkRouter` classifies as the assembly
+    # root it also looks like, and nothing about any existing project's
+    # `also_matches` changes — which is the property that let this form be
+    # added to a policy two live projects already carry a copy of.
+    declared_only: true
+    declared_by: >-
+      `family.yaml` at the root of the repository — `kind: family-manifest`,
+      naming the members it pins. A holder with no manifest is not a family.
+    description: >-
+      A HOLDER, not a project: a repository that pins other projects' assembly
+      roots as submodules under `members/` and carries the utilities to fetch
+      and bootstrap them together. Ruled by Brett Heap on 2026-09-04, for
+      InkRouter: "InkRouter is only something that can download all the others
+      easily? like a holder folder and some utilities for the family of
+      services." It has no spec or code leg of its own and confers nothing —
+      membership is navigation, exactly as the three legs are.
+    # Below the leg forms on purpose. A bare CamelCase token is an assembly
+    # root unless something says otherwise, because that is the overwhelmingly
+    # commoner case and the residual class should be the common one.
+    examples:
+      - InkRouter
+      - Northwind
+    counter_examples:
+      - InkRouter-spec
+      - ink-router
+
+  - id: workspace
+    precedence: 6
+    title: Workspace
+    pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*-wip$"
+    # UNAMBIGUOUS BY CONSTRUCTION, exactly as `<X>-Install` is, and therefore
+    # NOT declared-only. The literal lowercase suffix `-wip` is spelled by no
+    # other form in this file: the leg suffixes are `-spec` and `-code`, the
+    # install suffix is the CamelCase `-Install`, and every other family is one
+    # unhyphenated token. So this form needs NOTHING DECLARED — no `--role`,
+    # no pin, no manifest — and that is also what let it be added to a policy
+    # several live projects already carry a copy of: no name that classified
+    # before this form existed classifies differently now, and no manifest's
+    # `also_matches` widened, because no form above admits a `-wip` suffix at
+    # all. `brett-wip` matched NOTHING before; a name of that spelling is the
+    # only kind whose answer this addition changes.
+    #
+    # `<user>` IS THE GITHUB LOGIN, LOWERCASED — what `gh api user -q .login`
+    # returns and what a `Lane:` header already carries (openRepoShape#81,
+    # open decision 2, taken as its own recommendation on 2026-09-10). The
+    # pattern is lowercase-only and admits a single hyphen INSIDE the login,
+    # because a login may carry one and may not double it, begin with one or
+    # end with one; the login's length bound is GitHub's and is not restated
+    # here.
+    description: >-
+      The PRIVATE repository one person owns and only that person writes:
+      their index of unfinished work. It holds the workspace manifests
+      `speckit park` writes and `resume` reads
+      (`workspaces/<org>/<Family|Project>.yaml`) and the handoff documents a
+      LATER session picks the work up from (`handoffs/<estate>/…`), which is
+      the home the lane-collision protocol's Amendment 4 gives them. It is
+      NOT a project, not a leg and not a family: it holds no code, elects
+      nothing, is membership of nothing, and — like every other name in this
+      file — confers nothing.
+    # WHERE IT LIVES, AND WHY THERE. Ruled by Brett Heap on 2026-09-09
+    # (openRepoShape#81, rulings 1 to 3): ONE repository per person, private,
+    # org-owned rather than personal-account so the index survives
+    # offboarding and a later lane can read the handoffs — the same placement
+    # Amendment 3 already gave the lane registry. By DEFAULT it sits in that
+    # person's HOME organisation and indexes work in every organisation, a
+    # folder per org inside it; an organisation whose work must not be indexed
+    # outside it, even by name, is pointed at its own `<org>/<user>-wip` by
+    # the opt-in `orgs:` map in `~/.agents/workspace.yaml`. Which repository
+    # holds somebody's unfinished work is THEIRS to name, so the path is
+    # declared there and in no project's tree.
+    #
+    # NOTHING IN THIS STANDARD CREATES ONE (openRepoShape#81, open decision 1,
+    # taken as its own recommendation on 2026-09-10). This form is CLASSIFIED
+    # and DOCUMENTED here and scaffolded by nothing: no tool in this
+    # repository makes a `<user>-wip` repository, and the form is admitted
+    # into no role, so a `<user>-wip` name offered as an assembly root is
+    # refused exactly as it was before — with the name's own form in the
+    # refusal now, rather than "matches no family". A person creates their
+    # own, by hand, and names it once.
+    examples:
+      - brett-wip
+      - scott-wip
+      - a1-wip
+    counter_examples:
+      - Brett-wip
+      - brett-WIP
+      - brett_wip
+      - brett--wip
+      - brett-wip-2
+      - wip
+
+# The GitHub topic every repository of a project carries, so the organisation's
+# own search surfaces the group without a checkout. It is the SECOND of the
+# three agreeing layers of grouping (names, topics, register); where they
+# disagree the register wins and the others are reported as drift, because the
+# register is the only one of the three that is reviewed.
+topic:
+  template: "xf-project-{id}"
+  pattern: "^xf-project-[a-z0-9][a-z0-9-]*$"
+  id_pattern: "^[a-z0-9][a-z0-9-]*$"
+  description: >-
+    `xf-project-<id>` where `<id>` is the project's lowercase id, which is the
+    same id an aggregation's `project-register.yaml` row uses.
+  examples:
+    - xf-project-atlas
+    - xf-project-northwind
+
+# The NEGATIVE half of the policy, as data rather than as an assumption.
+# `counter_examples` above say "not THIS family" — several of them still land
+# in the residual assembly-root class, which is the honest reading. These names
+# match NO family at all and are what `validate-repository-naming.py` exits
+# non-zero on.
+unclassified_examples:
+  - Atlas_spec
+  - Atlas-tests
+  - hermes-install
+  - Keycloak-Installer
+  - xFactory-Installer
+  - 9Lives
+  - "Atlas spec"
+  # The `<user>-wip` near-misses (2026-09-10). A doubled hyphen is not a
+  # login, and `-wip` is a SUFFIX rather than an infix, so neither of these
+  # is a workspace — and neither is anything else either.
+  - brett--wip
+  - brett-wip-2

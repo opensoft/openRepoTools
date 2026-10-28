@@ -1,0 +1,277 @@
+schema_version: 1
+kind: project-manifest
+
+# ===========================================================================
+# project.yaml — this project's SELF-DESCRIBING MANIFEST, and the SOURCE.
+#
+# Where an aggregation exists, its `project-register.yaml` row is DERIVED from
+# this file; this file is never derived from the register. That direction is
+# what lets an organisation with no aggregation, no register and no
+# openxFactory still be conformant — a file inside the project is readable by
+# anyone who cloned it, which is exactly the population that needs it.
+#
+# IT CONFERS NOTHING. `schema`, `legs[].role` and `topic` are descriptive
+# navigation. No field here grants review authority, clearance eligibility,
+# gate standing or lifecycle state over any repository it names. A project
+# that declines this schema is reviewed identically to this one, because the
+# authority travels in the grants rather than in the layout. A consumer
+# deriving a permission from `role:` is defective.
+#
+# THE TRIAD IS THE PREFERRED SHAPE, AND THAT CHANGES NONE OF THE ABOVE. This
+# file is how a Triad — an assembly root with a spec leg and a code leg, also
+# called a three-leg or three-repository project — is declared, and the Triad
+# is the recommended default for a new project and the recommended target for
+# an existing single repository: ruled by Brett Heap on 2026-10-06, "ratify
+# 1249 as recommended" (openxFactory `prefer-triad-project-shape`). Preferred
+# is not required. Electing it is still a human's act per project, it
+# confers nothing, and a project kept in one repository is reviewed
+# identically and owes no declaration.
+# ===========================================================================
+
+id: "openrepotools"
+name: "openRepoTools"
+
+# The elected schema, and the document the election followed. For a project
+# elected on or after 2026-09-02 this is openxFactory's ratified
+# `docs/project-repo-schema.md`; a project elected earlier recorded the staged
+# fragment's path and keeps it. The default the scaffold writes FOLLOWS
+# `elected_on` below, for that reason, and `--reference` overrides it.
+# Recording it is what makes a project started ahead of ratification legible
+# rather than undeclared.
+schema: project-repo-schema
+reference: "openxFactory docs/project-repo-schema.md"
+
+# Electing the shape is a human's act (a `PA` decision, `CA`-constrained and
+# `PM`-sequenced), so the manifest records whose act it was and when.
+elected_by: "Brett Heap"
+elected_on: "2026-10-04"
+
+# The GitHub topic every one of this project's repositories carries. Names
+# carry the human eye, topics carry the organisation's search, and the
+# register — where one exists — is the only one of the three that is reviewed.
+topic: xf-project-openrepotools
+
+# `private`, `public` or `internal` (an enterprise org-internal repository).
+# NOT ENFORCED HERE — GitHub is the source of truth for what a repository's
+# visibility actually is — but recording it is what lets a reader tell,
+# without three `gh repo view` calls, why the legs are internal. For a
+# scaffolded project this is all three repositories' visibility; for an
+# in-place adoption it is the value the two NEW legs were created with — the
+# assembly root IS the adopted source and keeps whatever visibility it
+# already had on GitHub, unchanged by this tool.
+visibility: "public"
+
+# The branch `scripts/bootstrap.py` places each leg on, AT its pinned commit.
+# The pin stays exact: `.gitmodules` carries no `branch=`, so there is exactly
+# one authoritative answer to "what commit is this project".
+tracking_branch: "main"
+
+# The openRepoShape revision this project was scaffolded from, pinned by
+# commit and digest under the same rule the family's neutral products use: a
+# tag can be moved and a commit cannot. `contracts/shape-pin.yaml` carries the
+# same commit plus a per-file sha256 for every file the scaffold COPIED out of
+# openRepoShape, which is how an edit to a copied validator is detected.
+shape:
+  repository: opensoft/openRepoShape
+  revision_kind: commit
+  commit: "190133d5e704e380c430f87ca9c4e31746de0012"
+  digest_algorithm: sha256
+  digest_definition: sorted-ls-tree-r-v1
+  digests:
+    tree_sha256: "7a66972c7de193c050f77f97bffa13d8543c28d74f61ea210644e65aa3f37912"
+
+# The neutral products this project declares a pin on, by name. OPTIONAL, and
+# empty in a fresh scaffold. It is what makes a `<Domainx><Product>` name a
+# domain DESCENDANT rather than merely a name shaped like one: ruled by Brett
+# Heap on 2026-09-02, "descendant only if it pins open<Product>". Add the name
+# here and the matching `contracts/<name lowercased>-pin.yaml` beside it, in
+# one commit, and the classification changes with the pin — never before it.
+# The check is OFFLINE: this list is a fact in this tree, so no lookup of any
+# organisation's repositories is involved.
+#
+# A project may pin a LAYER of the product rather than the product itself —
+# `codexDox` pins `openXdox`, which pins `openDox` — and then the referent is
+# reached through the chain the leg's `naming.referent_chain:` records, below.
+# The first entry of that chain is one of the names in THIS list, because it
+# is the pin this project actually holds.
+neutral_product_pins: []
+
+# The three legs. `assembly` is THIS repository — the one an engineer clones —
+# and its path is `.`; `spec` and `code` are submodules mounted at the paths
+# below. Roles are exactly {assembly, spec, code}, once each.
+#
+# Each leg carries an OPTIONAL `naming:` record: the form the name classified
+# as, the role it was declared in, and `also_matches` — every OTHER form the
+# name satisfies. `MedxScribe` is an ordinary assembly root that also matches
+# the descendant form; recording that is how the next reader sees an overlap
+# that was RESOLVED rather than one nobody noticed. It confers nothing, like
+# every other field here; `scripts/validate-manifest.py` checks it agrees with
+# the name, and refuses `referent_declared: true` with no pin file beside it.
+#
+# THE ASSEMBLY LEG NEED NOT BE A BARE CamelCase TOKEN. Two other forms may be
+# the root, and both RECORD the overlap here rather than losing it:
+#
+#   - a DECLARED domain descendant (Brett Heap, 2026-09-02) — `MedxGlass` pins
+#     `openGlass` AND mounts `MedxGlass-spec` and `MedxGlass-code`;
+#   - a NEUTRAL PRODUCT that has elected the shape (Brett Heap, 2026-09-05,
+#     "elect the shape for both, follow the pin chain, no family yet") —
+#     `openDox` mounts `openDox-spec` and `openDox-code` and records
+#
+#         naming:
+#           form: neutral-product
+#           role: assembly
+#           also_matches: [project-leg/assembly]
+#
+# In both cases the FORM won the classification and the declared role was
+# ADDED to it; electing confers nothing, so a neutral product that is its own
+# root is a fact about LAYOUT and not a claim about its neutrality. The legs
+# are unaffected either way: `openDox-spec` carries the lowercase suffix and
+# is an ordinary project leg, a descendant of nothing and a neutral product of
+# nothing. An `<X>-Install` is admitted into no role at all.
+#
+# A descendant that reaches its referent through a CHAIN records that chain
+# too (ruled by Brett Heap on 2026-09-05, "follow the pin chain"):
+#
+#     naming:
+#       form: domain-descendant
+#       role: assembly
+#       also_matches: [project-leg/assembly]
+#       descendant_referent: openDox        # what the NAME claims
+#       referent_declared: true
+#       referent_chain: [openXdox, openDox] # how it is REACHED
+#
+# The FIRST entry is what `neutral_product_pins:` above declares and what
+# `contracts/<it>-pin.yaml` holds; the LAST is the referent the name claims;
+# each link between them is a declaration in THAT link's own `project.yaml`
+# (`openXdox` declaring `neutral_product_pins: [openDox]`). The validator
+# verifies a link when that repository is checked out beside this one — or
+# named by `SHAPE_PIN_SOURCE_<PRODUCT>` — and otherwise reports it as
+# `declared-unverified`, which is a warning and not a finding: the check is
+# offline, and a recorded declaration is the fact it reads. A chain that does
+# NOT hold is a finding, and it names the link that broke.
+legs:
+  - role: assembly
+    repository: opensoft/openRepoTools
+    path: "."
+    naming:
+      form: neutral-product
+      role: assembly
+      also_matches: [project-leg/assembly]
+  - role: spec
+    repository: opensoft/openRepoTools-spec
+    path: "spec"
+    naming:
+      form: project-leg
+      role: spec
+      also_matches: []
+  - role: code
+    repository: opensoft/openRepoTools-code
+    path: "code"
+    naming:
+      form: project-leg
+      role: code
+      also_matches: []
+
+# THE SOURCE'S OWN SUBMODULES, and the leg each one was ANSWERED into
+# when this repository was adopted (#189). Written once, by
+# `adopt-project.py execute`, from the adoption plan: one row per
+# submodule the split kept in a leg, its path inside that leg, the
+# `resolution:` the plan gave the entry that covered it, and the source
+# commit the plan was answered at. `shape-doctor.py` checks each
+# submodule a leg holds against it. Like every field here, it confers
+# nothing.
+submodules:
+  - path: "upstream/openRepoShape"
+    leg: code
+    resolution: "Mounted openRepoShape is the implementation/test dependency; preserve its exact gitlink with the original .gitmodules and dependency pin."
+    source_commit: "33ce26dffc5286e68f1d29ab5c6458edef0330c0"
+
+# THE PATHS THE ADOPTION'S POLICY ASKED ABOUT OR PUT IN ANOTHER LEG,
+# and the leg each was ANSWERED into (#525, #655). Written once, by
+# `adopt-project.py execute`, from the adoption plan: one row per entry
+# kept in a leg that covers a path `contracts/path-classification.yaml`
+# could not call, or called for the other leg or the root, its path
+# inside that leg (a directory's with its `/`: without it, a row names
+# a file), the `resolution:` the plan gave it, and the source commit the
+# plan was answered at. `shape-doctor.py` takes each row as the answer
+# for that path in that leg: not asked again, and not misplaced. A
+# directory's row answers for every file under it, one added after the
+# adoption too: the doctor does not hold a file to `source_commit:`.
+# Like every field here, it confers nothing.
+answered_paths:
+  - path: "claude-current"
+    leg: code
+    resolution: "Executable installer payload added by merged PR #134; keep resolver/checker with commands and their implementation tests in code."
+    source_commit: "33ce26dffc5286e68f1d29ab5c6458edef0330c0"
+  - path: "claude-restart-check"
+    leg: code
+    resolution: "Executable installer payload added by merged PR #134; keep resolver/checker with commands and their implementation tests in code."
+    source_commit: "33ce26dffc5286e68f1d29ab5c6458edef0330c0"
+  - path: "commands/"
+    leg: code
+    resolution: "These Markdown command files are shipped runtime installer payloads with implementation tests, not OpenSpec or Speckit decisions."
+    source_commit: "33ce26dffc5286e68f1d29ab5c6458edef0330c0"
+  - path: "contracts/"
+    leg: code
+    resolution: "At this baseline the only contract is openreposhape-pin.yaml, a dependency lock coupled to the code gitlink and installer; future product governance contracts belong in spec and assembly pins are generated at root."
+    source_commit: "33ce26dffc5286e68f1d29ab5c6458edef0330c0"
+  - path: "lane"
+    leg: code
+    resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
+    source_commit: "33ce26dffc5286e68f1d29ab5c6458edef0330c0"
+  - path: "lane-end"
+    leg: code
+    resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
+    source_commit: "33ce26dffc5286e68f1d29ab5c6458edef0330c0"
+  - path: "lane-handoff"
+    leg: code
+    resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
+    source_commit: "33ce26dffc5286e68f1d29ab5c6458edef0330c0"
+  - path: "lane-rename"
+    leg: code
+    resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
+    source_commit: "33ce26dffc5286e68f1d29ab5c6458edef0330c0"
+  - path: "lane-start"
+    leg: code
+    resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
+    source_commit: "33ce26dffc5286e68f1d29ab5c6458edef0330c0"
+  - path: "lane-worktrees"
+    leg: code
+    resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
+    source_commit: "33ce26dffc5286e68f1d29ab5c6458edef0330c0"
+  - path: "lanes"
+    leg: code
+    resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
+    source_commit: "33ce26dffc5286e68f1d29ab5c6458edef0330c0"
+  - path: "lanes-index"
+    leg: code
+    resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
+    source_commit: "33ce26dffc5286e68f1d29ab5c6458edef0330c0"
+  - path: "link-estates"
+    leg: code
+    resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
+    source_commit: "33ce26dffc5286e68f1d29ab5c6458edef0330c0"
+  - path: "openRepoTools"
+    leg: code
+    resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
+    source_commit: "33ce26dffc5286e68f1d29ab5c6458edef0330c0"
+  - path: "park"
+    leg: code
+    resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
+    source_commit: "33ce26dffc5286e68f1d29ab5c6458edef0330c0"
+  - path: "repos.tsv"
+    leg: code
+    resolution: "Runtime alias data installed beside the lane commands."
+    source_commit: "33ce26dffc5286e68f1d29ab5c6458edef0330c0"
+  - path: "resume"
+    leg: code
+    resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
+    source_commit: "33ce26dffc5286e68f1d29ab5c6458edef0330c0"
+  - path: "skills/"
+    leg: code
+    resolution: "These three skills are installed product payloads; project workflow skills remain local root bootstrap artifacts."
+    source_commit: "33ce26dffc5286e68f1d29ab5c6458edef0330c0"
+  - path: "status"
+    leg: code
+    resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
+    source_commit: "33ce26dffc5286e68f1d29ab5c6458edef0330c0"

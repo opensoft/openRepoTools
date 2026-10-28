@@ -1,32 +1,32 @@
-# THIS REPOSITORY'S OWN INSTALLER COMPARES ITS BYTES, so the bytes have to be
-# the same bytes on every platform.
+# THE BYTES A CLONE SEES ARE THE BYTES THIS ROOT'S CHECKS DESCRIBE.
 #
-# `openRepoTools --install` decides between `installed at`, `updated at` and
-# `already installed … (unchanged)` with `cmp -s`, and
-# `tests/test_openrepotools_command.py` compares an installed copy to this
-# checkout's file BYTE FOR BYTE. Git for Windows' installer default is
-# `core.autocrlf=true`; a checkout of THIS repository made under it turns every
-# `\n` in `openRepoTools`, `park`, `resume` and `status` into `\r\n`, and every one
-# of those comparisons is about line endings rather than about content — a
-# second `--install` reporting three files `updated at` on a machine where
-# nothing changed, and a colleague whose only sin was cloning on a stock
-# Windows laptop watching the suite fail on lines nobody touched. CI never sees
-# it: the Linux and macOS jobs check out LF by default and the Windows job pins
-# `core.autocrlf=false`.
+# `contracts/shape-pin.yaml` records a sha256 of every shape file copied here,
+# and `scripts/validate-pins.py` recomputes each one from the bytes on disk.
+# Git for Windows' installer default is `core.autocrlf=true`; a clone made under
+# it writes CRLF into the worktree, and `make validate` then goes red on every
+# pinned file for a colleague who did nothing but clone this repository
+# (openRepoShape #51, ruled by Brett Heap on 2026-09-05; the shape's own
+# statement of the rule is `shape/.gitattributes`, pinned and left in place).
 #
-# The same rule for a second reason. `tests/test_park_resume_commands.py`
-# asserts that `park`, `resume` and `status` carry the shared estate resolver
-# BYTE FOR BYTE — that is what makes the deliberate duplication safe — and a CRLF
-# checkout would either break the claim or hide a real drift behind it.
+# Before the split into three repositories this file carried the same rule for
+# a second reason: `openRepoTools --install` and its tests compare installed
+# copies with the checkout BYTE FOR BYTE. Those files are the code leg's now,
+# and a superproject's attributes never reach into a submodule's worktree, so
+# that statement moved with them, word for word, to `code/.gitattributes`; the
+# documents in `spec/` carry their own copy of the rule too.
 #
-# NO PATH IS LISTED BY NAME. Every file this repository ships is text — bash,
-# Python, YAML, Markdown, a workflow — so there is nothing for git's binary
-# heuristic to misjudge, and `text=auto` leaves that detection where it
-# belongs: with git. The pinned `upstream/openRepoShape` is a gitlink and
-# carries its own copy of this rule.
-#
-# openRepoShape #63 wrote this rule for the standard's own root, and its #51
-# (2026-09-05) wrote it for every scaffolded project; this is the same rule
-# retold for the repository that ships the two commands.
+# NO PATH IS LISTED BY NAME in the rule below: every file here is text, so
+# `text=auto` leaves binary detection with git. The block after the rule is
+# the split's (openRepoShape #471), and it stays last: the later line wins.
 
 * text=auto eol=lf
+# openRepoShape (#471): the pinned shape copies below check out with LF everywhere, as contracts/shape-pin.yaml records their bytes
+/scripts/validate-pins.py text eol=lf
+/scripts/validate-manifest.py text eol=lf
+/scripts/bootstrap.py text eol=lf
+/Makefile text eol=lf
+/.github/workflows/validate.yml text eol=lf
+/AGENTS-shape.md text eol=lf
+/scripts/repo_shape.py text eol=lf
+/scripts/validate-repository-naming.py text eol=lf
+/contracts/repository-naming.yaml text eol=lf
