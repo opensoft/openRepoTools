@@ -74,11 +74,11 @@ tracking_branch: "main"
 shape:
   repository: opensoft/openRepoShape
   revision_kind: commit
-  commit: "190133d5e704e380c430f87ca9c4e31746de0012"
+  commit: "50178305e4229275d18e71c2152403b4e9d3004e"
   digest_algorithm: sha256
   digest_definition: sorted-ls-tree-r-v1
   digests:
-    tree_sha256: "7a66972c7de193c050f77f97bffa13d8543c28d74f61ea210644e65aa3f37912"
+    tree_sha256: "204d73aabf2379554600234d4b36dc08d3c3a1da422395dec44637b5ca7a5184"
 
 # The neutral products this project declares a pin on, by name. OPTIONAL, and
 # empty in a fresh scaffold. It is what makes a `<Domainx><Product>` name a

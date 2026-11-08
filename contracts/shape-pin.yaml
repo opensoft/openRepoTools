@@ -27,13 +27,13 @@ pin_role: shape
 source_repository: opensoft/openRepoShape
 materialization: copied
 
-commit: "190133d5e704e380c430f87ca9c4e31746de0012"
+commit: "50178305e4229275d18e71c2152403b4e9d3004e"
 revision_kind: commit
 
 digest_algorithm: sha256
 digest_definition: sorted-ls-tree-r-v1
 digests:
-  tree_sha256: "7a66972c7de193c050f77f97bffa13d8543c28d74f61ea210644e65aa3f37912"
+  tree_sha256: "204d73aabf2379554600234d4b36dc08d3c3a1da422395dec44637b5ca7a5184"
 
 verify_pin: scripts/validate-pins.py
 
@@ -41,22 +41,22 @@ verify_pin: scripts/validate-pins.py
 # as written by the scaffold. Written by `scaffold-project.py`; do not hand-edit.
 files:
   - path: scripts/validate-pins.py
-    sha256: "09820c5dd29355bdbbd3c82bb6197f31e7a0a234e8beaaa5940862d09c32597f"
+    sha256: "7acc22fc632a046aec692dd34550ab65fef6eaf4b89278f1bb5e6b73b860e2e7"
   - path: scripts/validate-manifest.py
-    sha256: "7f36200f55562ab3e9588c00aaaefb0763b74f979b07d4688b70be38b1236adc"
+    sha256: "bc60bd26fc6f3104bf499f80ba694afc102458e32ab57092d127aa59980dfdda"
   - path: scripts/bootstrap.py
-    sha256: "d2bd1cfc8515088980df66c8adda3fdaea908e7e2eba6f94062c1b9e65610995"
+    sha256: "89ff92e5e469003fb5a1f13a5adbe5be2f9c2913ad152eb3f49e8545f0a8c3cc"
   - path: Makefile
     sha256: "6d65dd06e12564a7c018a72a5a2e3c80b999d7026ce5643e77ca8dd6e9254dfa"
   - path: shape/.gitattributes
     sha256: "e2b88cf25928c5a58bb2acaae1779d934c262273db708d0aa6dfb01591b15baa"
   - path: .github/workflows/validate.yml
-    sha256: "fb8c0360863ad953af7825f3be01ed27f8cf1269e5cab19dc0d6c5423161b487"
+    sha256: "58726aabbec255f79ce629a5f60529efa28c64c5d0d24384a2f676ff70b06a92"
   - path: AGENTS-shape.md
     sha256: "84f8bf1afb83d7cd5bd556f81a3bfc01319f00ff87c33a95e98cf5d1fada5fee"
   - path: scripts/repo_shape.py
-    sha256: "be5358aad1384f723e321bb089e1c04bfb552157f922554e9f872fae9372a904"
+    sha256: "2ae28ea2af0fbf508cea28c1f8136afdf7737588de0130e510e1ad6ef14c108e"
   - path: scripts/validate-repository-naming.py
-    sha256: "527273cf0b8ada97166c7d60e2247c2a44e16983bf643843936ce92b19bb0f68"
+    sha256: "39a57203e2a142335e7b89ea2d69a9979092e70099e954d10e31f3fb9a7a8cec"
   - path: contracts/repository-naming.yaml
     sha256: "a4eebad21541cbfe9a3e94a0ee667a2d5a7866c3567eea2a000d8339f6f096a4"
