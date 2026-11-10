@@ -82,6 +82,16 @@ WHAT IT HOLDS, by task:
       the writer exits with the verb's own code while the stand-in holds the
       `render` call on a FIFO, so no fork waits, and the flipped copy's
       answer to it, "git half not installed", is never read.
+  * T277 (L2-G6), test 14 kept after group C:
+    `test_the_refusal_constant_is_true_exactly_when_render_checkout_exists`
+    reads `RENDER_GIT_HALF` from the checkout's source, and asks the same
+    copy whether it knows `render --checkout`: a build that lacks a verb
+    answers it 64, before it reads an argument (lane 1's T105: "the 64 is
+    what F8 reads from a `lanes-index` too old to have a verb"). It fails
+    between T321 and T328, while `render --checkout` exists and the constant
+    is still False, and T328's `verify:` runs it. T203's `flipped_copy` takes
+    the constant either way, so the refusing state still builds once T328
+    sets it, and T277 adds no helper code (R1's N5).
   * T282 (lane 2's, with lane 1's T124 and in its pull request), T124's cached
     module (tasks:2850-2878; AT-14, TP:2660; FR-064): a start of the refusing
     copy's `lanes-index mode` runs `lanes_index_main.py`'s checked-hash cached
@@ -180,9 +190,10 @@ L1-A11 and L5-A5 land: lane 1's T105 (the constant and `mode`), T113
 on a build that never asks the mode. T256's real-engine cases fail until L4-B1
 and L4-B13 land, and on an engine they also need T227's template and lane 1's
 T107 functions. `[replay-keeps-pid]` fails until lane 4's T409 follow-up for
-its item 9, and needs Amendment 23's S4 replay and `NET_GIT`. T282's four
-cases fail until lane 1's T124 lands, whose launcher and module they start,
-and T124's verify selects them (tasks:2850, :2878).
+its item 9, and needs Amendment 23's S4 replay and `NET_GIT`. T277's test
+needs T105's constant, and fails between T321 and T328. T282's four cases fail
+until lane 1's T124 lands, whose launcher and module they start, and T124's
+verify selects them (tasks:2850, :2878).
 """
 
 from __future__ import annotations
@@ -1217,6 +1228,47 @@ def test_a_primary_write_forks_render_checkout_on_the_lane_checkout_detached(est
     assert released, "no render call was held on the FIFO to let go"
     ended = within(FORK_SECONDS, lambda: (world.bin / ENDS_LOG).exists())
     assert ended, "the render call did not end once it was let go"
+
+
+# ------------------------------------- T277: test 14 kept after group C
+def test_the_refusal_constant_is_true_exactly_when_render_checkout_exists(tmp_path):
+    """The constant (AT-14; the phase plan's "D3's refusal" and "Phase 3"):
+    `RENDER_GIT_HALF` sits beside `SCHEMA_VERSION` in the checkout's
+    `lanes-index`, and phase 3's last pull request, lane 3's T328, lifts it.
+    It is True exactly when `lanes-index render --checkout` exists. The test
+    reads the constant from the source, and asks the same copy whether it
+    knows that command: a build without a verb answers it with `EXIT_USAGE`,
+    64, before it reads an argument (lane 1's T105; the 64 F8 reads from a
+    `lanes-index` too old to have a verb). The copy runs with no
+    configuration, on a scratch checkout, so it writes nothing in any
+    phase."""
+    usage = exit_code("EXIT_USAGE")
+    found = constant_lines()
+    assert len(found) == 1, (
+        f"the checkout's lanes-index holds {len(found)} `RENDER_GIT_HALF = ` lines, not one: "
+        f"Q6(c)'s constant lands with lane 1's T105 (L1-A3)")
+    constant = found[0] == b"True"
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    subprocess.run(["git", "init", "-q", str(checkout)], check=True, capture_output=True)
+    home = tmp_path / "home"
+    for directory in (home, tmp_path / "config", tmp_path / "state", tmp_path / "tmp"):
+        directory.mkdir(parents=True, exist_ok=True)
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(("LANES_", "PG", "XDG_", "AGENT_PROTOCOL_ROOT"))}
+    env.update(HOME=str(home), XDG_CONFIG_HOME=str(tmp_path / "config"),
+               XDG_STATE_HOME=str(tmp_path / "state"), TMPDIR=str(tmp_path / "tmp"),
+               AGENT_PROTOCOL_ROOT=str(home / ".agents"), LANES_INDEX="off",
+               LANES_EDIT=str(LANES_EDIT))
+    proc = subprocess.run([sys.executable, str(helpers.LANES_INDEX), "render", "--checkout",
+                           str(checkout)], capture_output=True, text=True, env=env,
+                          cwd=str(tmp_path), stdin=subprocess.DEVNULL, timeout=60, check=False)
+    knows = proc.returncode != usage
+    assert constant == knows, (
+        f"RENDER_GIT_HALF = {constant}, but this lanes-index "
+        f"{'knows' if knows else 'does not know'} `render --checkout`: the constant is True "
+        f"exactly when the renderer's git half is installed (T321 adds the command, T328 sets "
+        f"the constant)", shown(proc))
 
 
 # ------------------------------------- T282: T124's cached module (AT-14)
