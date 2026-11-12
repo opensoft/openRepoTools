@@ -72,7 +72,8 @@ jobs:
           COVERAGE_PROCESS_START: ''
         run: python3 code/.github/ci/sonar_coverage.py report --root "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/sonar"
 
-      - name: retain successful exact-commit test evidence
+      - name: retain exact-commit measurement evidence and diagnostics
+        if: ${{ always() }}
         id: evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
@@ -117,7 +118,8 @@ jobs:
           COVERAGE_PROCESS_START: ''
         run: python3 code/.github/ci/sonar_coverage.py report --root "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/sonar"
 
-      - name: retain successful exact-commit test evidence
+      - name: retain exact-commit measurement evidence and diagnostics
+        if: ${{ always() }}
         id: evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
