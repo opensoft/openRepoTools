@@ -184,4 +184,5 @@ jobs:
             ${{ runner.temp }}/sonar/inventory.json
             ${{ runner.temp }}/sonar/coverage.xml
             ${{ runner.temp }}/sonar/coverage-summary.json
+            ${{ runner.temp }}/sonar/provenance-probe.json
             ${{ runner.temp }}/sonar/acceptance.json
