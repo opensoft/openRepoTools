@@ -20,13 +20,20 @@ THE ESTATE, `LaneDay` (the test plan's AT-11, "Fixture"):
   the cases hand off (`handoffs/<lane>.md`), pushed after C. A handoff
   commit on the tip never aborts the cutover (T272's own case).
 - ONE WORKSTATION, `Eagle`: the register's `$HOME`, its `mode=primary`
-  configuration (`primary_conf`), the read-only W (`ro/wip`, a view of the
-  clone), and `<W>-lanes/<lane>/` for every lane a case writes for, a clone
-  of origin where `lanes-edit.sh`'s `lane_checkout_path` puts it (Amendment
-  23 S1; T241e's `make_lane_checkout`; lane 3, #165 6813027223). The lane
-  acts run with `LANES_REPO` unset and `LANES_ROUTE_WRITES=1`, Amendment
-  23's routing, opt-in in `lanes-edit.sh` until its slice 1b (T275c): so
-  each write goes through its own lane's checkout, never W. The installed-tools directory is T203's flipped copy's
+  configuration (`primary_conf`), the read-only W, and `<W>-lanes/<lane>/`
+  for every lane a case writes for, a clone of origin where `lanes-edit.sh`'s
+  `lane_checkout_path` puts it (Amendment 23 S1; T241e's
+  `make_lane_checkout`; lane 3, #165 6813027223). W is the estate's own
+  clone of origin (`w/wip`), which its own `workspace.yaml` names, so that
+  only `refresh-workspace` moves it (Amendment 23 S5), as a workstation's W
+  (T275d). The import module's W, a view of its clone (`ro/wip`, a `.git`
+  file and a `lanes` link), is not one here: with the writes routed,
+  `lane-start` fast-forwards W, git refuses to merge over the untracked
+  `lanes` link, and every launch took the "only a person repairs it" path,
+  naming each tracked file as a stray. The lane acts run with `LANES_REPO`
+  unset and `LANES_ROUTE_WRITES=1`, Amendment 23's routing, opt-in in
+  `lanes-edit.sh` until its slice 1b (T275c): so each write goes through its
+  own lane's checkout, never W. The installed-tools directory is T203's flipped copy's
   (`RENDER_GIT_HALF = True`, standing for lane 3's T328), with
   `lanes-edit.sh`, `lanes`, `lane`, `lane-start`, `lane-handoff`,
   `lane-end`, `lane-worktrees` and `repos.tsv` beside it.
@@ -325,6 +332,16 @@ class LaneDay:
         reg.commit({f"handoffs/{lane}.md": f"# {lane}'s handoff\n\nThe fixture's first block.\n"
                     for lane in (OUTAGE_LANE, RESUME_LANE, DAY_LANE)},
                    "the fixture's handoffs (T275)")
+        # W (T275d): a clone of origin of the estate's own, which its own
+        # `workspace.yaml` names, so that `refresh-workspace` can fast-forward it.
+        self.w = root / "w" / "wip"
+        self.w.parent.mkdir(parents=True, exist_ok=True)
+        proc = reg.run("git", "clone", "-q", str(reg.origin), str(self.w))
+        assert proc.returncode == 0, f"W's clone of origin:\n{_said(proc)}"
+        self.agents = root / "agents"
+        self.agents.mkdir(parents=True, exist_ok=True)
+        (self.agents / "workspace.yaml").write_text(
+            f"repository: {reg.origin}\npath: {self.w}\n", encoding="utf-8")
         # THE LANES' DIRECTORIES, each a git repository naming its home.
         self.lane_dirs = {}
         for repo in (DAY_REPO, RESUME_REPO):
@@ -345,7 +362,8 @@ class LaneDay:
             OPENREPOTOOLS_BIN_DIR=str(self.tools), PCLAUDE=str(launcher),
             FAKE_TMUX_LOG=str(self.tmux_log), FAKE_CLAUDE_LOG=str(self.claude_log),
             FAKE_CC_LOG=str(self.cc_log), FAKE_CC_PATH=str(self.resolved),
-            PROJECTS_ROOT=str(reg.home / "projects"), LANES_ROUTE_WRITES="1")
+            PROJECTS_ROOT=str(reg.home / "projects"), LANES_ROUTE_WRITES="1",
+            AGENT_PROTOCOL_ROOT=str(self.agents))
         self.env = env
         for lane in (OUTAGE_LANE, RESUME_LANE, DAY_LANE):
             self.make_lane_checkout(lane)
@@ -377,8 +395,8 @@ class LaneDay:
     # ------------------------------------------------------------ the checkouts
     def lane_checkout(self, lane: str) -> Path:
         """`<c>`, `<W>-lanes/<lane>`, W being the real path of
-        `workspace.yaml`'s `path:` (T241e)."""
-        real = Path(os.path.realpath(self.reg.ws))
+        `workspace.yaml`'s `path:` (T241e), the estate's own W (T275d)."""
+        real = Path(os.path.realpath(self.w))
         return real.parent / f"{real.name}-lanes" / lane
 
     def make_lane_checkout(self, lane: str) -> Path:
@@ -459,8 +477,9 @@ class LaneDay:
             f"after the cutover the switch reads {switch['mode']} with the marker "
             f"{switch['marker_state']}: the marker's push, read-back and record_marker are lane "
             f"3's T327, so AT-11's estate fails until it lands")
-        for lane in (OUTAGE_LANE, RESUME_LANE, DAY_LANE):
-            subprocess.run(["git", "-C", str(self.lane_checkout(lane)), "pull", "-q", "--ff-only"],
+        for where in [self.w] + [self.lane_checkout(lane)
+                                 for lane in (OUTAGE_LANE, RESUME_LANE, DAY_LANE)]:
+            subprocess.run(["git", "-C", str(where), "pull", "-q", "--ff-only"],
                            env=self.reg.env, capture_output=True, stdin=subprocess.DEVNULL)
         self.prepared = True
 
@@ -475,7 +494,7 @@ class LaneDay:
             else:
                 child[key] = value
         return subprocess.run([str(a) for a in argv], capture_output=True, text=True,
-                              env=child, cwd=str(cwd or self.reg.ws), timeout=timeout,
+                              env=child, cwd=str(cwd or self.w), timeout=timeout,
                               stdin=subprocess.DEVNULL)
 
     def edit(self, *args, lane: str | None = None, env: dict | None = None,
