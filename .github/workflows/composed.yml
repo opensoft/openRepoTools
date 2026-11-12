@@ -52,7 +52,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
-          python-version: '3.12'
+          python-version: '3.x'
 
       - name: every context the composed run claims is here
         run: |
@@ -89,7 +89,7 @@ jobs:
       # wheel cases. With zsh installed the 60 run, and the 6 skips left are the
       # byte-count case and the five wheel cases, as in rehearsal D's composed
       # run on a bench that has zsh; `-rs` below still lists every skip. Not
-      # pinned, as `python-version: '3.12'` above is not: the step prints the
+      # pinned, as `python-version: '3.x'` above is not: the step prints the
       # zsh it installed.
       - name: install zsh, so the suite's zsh cases run
         run: |
@@ -101,7 +101,7 @@ jobs:
           zsh --version
 
       - name: install the test runner
-        run: 'python3 -m pip install --disable-pip-version-check --only-binary=:all: pytest==8.3.4 coverage==7.10.7 PyYAML==6.0.2 git-filter-repo==2.47.0'
+        run: 'python3 -m pip install --disable-pip-version-check --only-binary=:all: pytest==8.3.4 coverage==7.17.3 git-filter-repo==2.47.0'
 
       # Coverage tools and reports live outside the checkout. No installed
       # workstation command, lane record, session or shared bench is changed.
