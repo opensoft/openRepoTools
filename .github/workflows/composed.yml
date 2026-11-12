@@ -37,16 +37,19 @@ on:
   workflow_dispatch:
 
 jobs:
-  exact-pins:
+  composed-tests:
     # THIS UBUNTU RUNNER IS ON 24.04: `ubuntu-latest` became Ubuntu 26.04 on
     # 2026-10-21. There the `[host]` case of the TERM-ignoring kill test, which
     # this job's suite runs, fails. Pinned until 26.04 support is decided.
     runs-on: ubuntu-24.04
+    outputs:
+      evidence-id: ${{ steps.evidence.outputs.artifact-id }}
     steps:
       # PINNED BY COMMIT, the same two actions the code leg pins. RECURSIVE:
       # the legs, and the dependency nested in the code leg.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
+          ref: ${{ github.sha }}
           submodules: recursive
           fetch-depth: 0
           persist-credentials: false
@@ -155,6 +158,42 @@ jobs:
           COVERAGE_PROCESS_START: ''
         run: python3 code/.github/ci/sonar_coverage.py report --root "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/sonar"
 
+      - name: retain successful exact-commit test evidence
+        id: evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: sonar-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/sonar/inventory.json
+            ${{ runner.temp }}/sonar/coverage.xml
+            ${{ runner.temp }}/sonar/coverage-summary.json
+            ${{ runner.temp }}/sonar/provenance-probe.json
+
+  sonar:
+    needs: composed-tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          ref: ${{ github.sha }}
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: '3.x'
+      # Download by the successful predecessor's immutable artifact ID,
+      # never by a branch, latest-run lookup, name alone or cross-commit cache.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          artifact-ids: ${{ needs.composed-tests.outputs.evidence-id }}
+          path: ${{ runner.temp }}/sonar
+          merge-multiple: true
+      - name: bind measured evidence to this exact checkout
+        run: python3 code/.github/ci/sonar_assurance.py rebind --root "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/sonar"
+
       # Token exists only in these analysis/readback steps, after all tests.
       # Never use pull_request_target to grant it to an untrusted checkout.
       - name: analyze complete sources and wait for the quality gate
@@ -181,7 +220,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          name: sonar-assurance-${{ github.run_id }}-${{ github.run_attempt }}
+          name: sonar-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
           retention-days: 90
           if-no-files-found: error
           path: |
@@ -190,3 +229,19 @@ jobs:
             ${{ runner.temp }}/sonar/coverage-summary.json
             ${{ runner.temp }}/sonar/provenance-probe.json
             ${{ runner.temp }}/sonar/acceptance.json
+
+
+  # Preserve the existing required context. A skipped, cancelled or failed
+  # predecessor is never a successful exact-pins acceptance.
+  exact-pins:
+    if: ${{ always() }}
+    needs: [composed-tests, sonar]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: require successful full tests and verified Sonar analysis
+        env:
+          TEST_RESULT: ${{ needs.composed-tests.result }}
+          SONAR_RESULT: ${{ needs.sonar.result }}
+        run: |
+          test "$TEST_RESULT" = success
+          test "$SONAR_RESULT" = success
