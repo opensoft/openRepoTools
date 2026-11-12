@@ -24,8 +24,9 @@ THE ESTATE, `LaneDay` (the test plan's AT-11, "Fixture"):
   clone), and `<W>-lanes/<lane>/` for every lane a case writes for, a clone
   of origin where `lanes-edit.sh`'s `lane_checkout_path` puts it (Amendment
   23 S1; T241e's `make_lane_checkout`; lane 3, #165 6813027223). The lane
-  acts run with `LANES_REPO` unset, so each write resolves its own lane's
-  checkout. The installed-tools directory is T203's flipped copy's
+  acts run with `LANES_REPO` unset and `LANES_ROUTE_WRITES=1`, Amendment
+  23's routing, opt-in in `lanes-edit.sh` until its slice 1b (T275c): so
+  each write goes through its own lane's checkout, never W. The installed-tools directory is T203's flipped copy's
   (`RENDER_GIT_HALF = True`, standing for lane 3's T328), with
   `lanes-edit.sh`, `lanes`, `lane`, `lane-start`, `lane-handoff`,
   `lane-end`, `lane-worktrees` and `repos.tsv` beside it.
@@ -344,7 +345,7 @@ class LaneDay:
             OPENREPOTOOLS_BIN_DIR=str(self.tools), PCLAUDE=str(launcher),
             FAKE_TMUX_LOG=str(self.tmux_log), FAKE_CLAUDE_LOG=str(self.claude_log),
             FAKE_CC_LOG=str(self.cc_log), FAKE_CC_PATH=str(self.resolved),
-            PROJECTS_ROOT=str(reg.home / "projects"))
+            PROJECTS_ROOT=str(reg.home / "projects"), LANES_ROUTE_WRITES="1")
         self.env = env
         for lane in (OUTAGE_LANE, RESUME_LANE, DAY_LANE):
             self.make_lane_checkout(lane)
