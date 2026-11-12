@@ -13,10 +13,10 @@ name: composed
 # this project's own, and it references no leg by `<org>/<leg>@<sha>`, so the
 # lockstep rule has nothing in it to move.
 #
-# LINUX ONLY, on purpose. The platform matrix — macOS's bash 3.2 parse and its
-# `ready`-label suite, Windows and the no-submodule skip path — is the code
-# leg's own `tests` workflow, and it stays there. What only this root can run
-# is the COMPOSED suite: `OPENREPOTOOLS_COMPOSED=1` turns every absent root
+# LINUX ONLY, following the code leg's current Linux test policy. The code
+# leg owns its full source/no-submodule suites, package and parity checks; the
+# provider retains its own platform checks. What only this root can run is the
+# COMPOSED suite: `OPENREPOTOOLS_COMPOSED=1` turns every absent root
 # into a refusal and every check that would have skipped for want of one into
 # a failure, so a green run here is a claim about all three legs at once.
 #
