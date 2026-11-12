@@ -12,7 +12,7 @@ to this root.
   `tests/`, its CI, and the pinned standard at `code/upstream/openRepoShape`.
 - **This root**: the front door, `project.yaml`, the leg pins and the gate
   (`make validate`); no product code.
-- **Tests**: `code/tests/run.sh` from here, or `tests/run.sh` inside `code/`.
+- **Tests**: `code/tests/run.sh` from here, or `tests/run.sh` inside `code/`. Before task-set planning or landing, read [the shared Claude/Codex workflow](code/.github/ci/task-set-delivery.md) and [batching procedure](code/.github/ci/batching-pilot.md).
 - **The lane tooling**: its code is in `code/`; its manual is
   `spec/docs/README-lanes.md` (`docs/README-lanes.md` in the spec leg).
 - **Feature work**: paired worktrees `worktrees/<NNN-feature>/{spec,code}/`,
