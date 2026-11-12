@@ -101,7 +101,7 @@ jobs:
           zsh --version
 
       - name: install the test runner
-        run: 'python3 -m pip install --disable-pip-version-check --only-binary=:all: pytest==8.3.4 coverage==7.10.7 git-filter-repo==2.47.0'
+        run: 'python3 -m pip install --disable-pip-version-check --only-binary=:all: pytest==8.3.4 coverage==7.10.7 PyYAML==6.0.2 git-filter-repo==2.47.0'
 
       # Coverage tools and reports live outside the checkout. No installed
       # workstation command, lane record, session or shared bench is changed.
@@ -172,3 +172,16 @@ jobs:
           if [ -n "$SONAR_PR" ]; then args+=(--pull-request "$SONAR_PR"); fi
           python3 code/.github/ci/sonar_assurance.py verify-analysis \
             --root "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/sonar" "${args[@]}"
+
+      - name: retain analysis inventory and acceptance evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: sonar-assurance-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/sonar/inventory.json
+            ${{ runner.temp }}/sonar/coverage.xml
+            ${{ runner.temp }}/sonar/coverage-summary.json
+            ${{ runner.temp }}/sonar/acceptance.json
