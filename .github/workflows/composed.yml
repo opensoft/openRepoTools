@@ -151,6 +151,8 @@ jobs:
         run: python3 -m pytest tests -q -rs -p no:cacheprovider
 
       - name: verify measured coverage before analysis
+        env:
+          COVERAGE_PROCESS_START: ''
         run: python3 code/.github/ci/sonar_coverage.py report --root "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/sonar"
 
       # Token exists only in these analysis/readback steps, after all tests.
@@ -158,12 +160,14 @@ jobs:
       - name: analyze complete sources and wait for the quality gate
         uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65  # v8.4.1
         env:
+          COVERAGE_PROCESS_START: ''
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
           args: -Dproject.settings=${{ runner.temp }}/sonar/scanner.properties
 
       - name: verify gate thresholds, indexed commands and imported coverage
         env:
+          COVERAGE_PROCESS_START: ''
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_PR: ${{ github.event.pull_request.number }}
         run: |
