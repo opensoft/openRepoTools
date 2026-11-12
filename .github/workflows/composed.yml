@@ -101,7 +101,7 @@ jobs:
           zsh --version
 
       - name: install the test runner
-        run: python3 -m pip install --disable-pip-version-check --only-binary=:all: pytest==8.3.4 coverage==7.10.7
+        run: 'python3 -m pip install --disable-pip-version-check --only-binary=:all: pytest==8.3.4 coverage==7.10.7'
 
       # Coverage tools and reports live outside the checkout. No installed
       # workstation command, lane record, session or shared bench is changed.
@@ -136,6 +136,7 @@ jobs:
       # (a platform one; none for want of a root can reach this far).
       - name: the code leg's suite, composed, at the exact pins
         env:
+          BASH_ENV: ${{ github.workspace }}/code/.github/ci/sonar_coverage/bash-env.sh
           OPENREPOTOOLS_COMPOSED: '1'
           OPENREPOTOOLS_ASSEMBLY_ROOT: ${{ github.workspace }}
           OPENREPOTOOLS_SPEC_ROOT: ${{ github.workspace }}/spec
