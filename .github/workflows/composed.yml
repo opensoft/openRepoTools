@@ -101,7 +101,7 @@ jobs:
           zsh --version
 
       - name: install the test runner
-        run: 'python3 -m pip install --disable-pip-version-check --only-binary=:all: pytest==8.3.4 coverage==7.10.7'
+        run: 'python3 -m pip install --disable-pip-version-check --only-binary=:all: pytest==8.3.4 coverage==7.10.7 git-filter-repo==2.47.0'
 
       # Coverage tools and reports live outside the checkout. No installed
       # workstation command, lane record, session or shared bench is changed.
@@ -110,8 +110,8 @@ jobs:
           set -euo pipefail
           git init "$RUNNER_TEMP/kcov-source"
           git -C "$RUNNER_TEMP/kcov-source" remote add origin https://github.com/SimonKagstrom/kcov.git
-          git -C "$RUNNER_TEMP/kcov-source" fetch --depth 1 origin a39874f938ce13f7a65f253120d1ec946b349ffe
-          git -C "$RUNNER_TEMP/kcov-source" checkout --detach FETCH_HEAD
+          git -C "$RUNNER_TEMP/kcov-source" fetch --depth 1 origin refs/tags/v43:refs/tags/v43
+          git -C "$RUNNER_TEMP/kcov-source" checkout --detach a39874f938ce13f7a65f253120d1ec946b349ffe
           test "$(git -C "$RUNNER_TEMP/kcov-source" rev-parse HEAD)" = a39874f938ce13f7a65f253120d1ec946b349ffe
           cmake -S "$RUNNER_TEMP/kcov-source" -B "$RUNNER_TEMP/kcov-build" -DCMAKE_BUILD_TYPE=Release
           cmake --build "$RUNNER_TEMP/kcov-build" --parallel 2
@@ -120,7 +120,7 @@ jobs:
       - name: inventory every exact source and prepare Python and shell measurement
         run: |
           python3 code/.github/ci/sonar_assurance.py prepare --root "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/sonar"
-          python3 code/.github/ci/sonar_coverage.py prepare --root "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/sonar" --kcov "$RUNNER_TEMP/kcov-build/src/kcov"
+          python3 code/.github/ci/sonar_coverage.py prepare --root "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/sonar"
 
       - name: git identity for the fixture commits (env, not global config)
         run: |
@@ -141,6 +141,14 @@ jobs:
           OPENREPOTOOLS_ASSEMBLY_ROOT: ${{ github.workspace }}
           OPENREPOTOOLS_SPEC_ROOT: ${{ github.workspace }}/spec
         run: bash code/tests/run.sh -rs
+
+      # The recursive source scope includes the pinned provider. Measure its
+      # own complete Linux suite too; consumer tests alone cannot cover it.
+      - name: the pinned provider's complete suite
+        working-directory: code/upstream/openRepoShape
+        env:
+          BASH_ENV: ${{ github.workspace }}/code/.github/ci/sonar_coverage/bash-env.sh
+        run: python3 -m pytest tests -q -rs -p no:cacheprovider
 
       - name: verify measured coverage before analysis
         run: python3 code/.github/ci/sonar_coverage.py report --root "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/sonar"
@@ -163,4 +171,4 @@ jobs:
           args=()
           if [ -n "$SONAR_PR" ]; then args+=(--pull-request "$SONAR_PR"); fi
           python3 code/.github/ci/sonar_assurance.py verify-analysis \
-            --out "$RUNNER_TEMP/sonar" --scanner-task .scannerwork/report-task.txt "${args[@]}"
+            --root "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/sonar" "${args[@]}"
