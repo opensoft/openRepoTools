@@ -86,14 +86,12 @@ jobs:
           python3 scripts/validate-manifest.py
           python3 scripts/validate-pins.py
 
-      # ZSH, SO THE SUITE'S ZSH CASES RUN (opensoft/openRepoTools#186, T014 of
-      # `specs/004-migrate-to-triad/tasks.md`). On this runner a composed run
-      # skips 66 conditional cases: 60 that need zsh, 1 byte-count case and 5
-      # wheel cases. With zsh installed the 60 run, and the 6 skips left are the
-      # byte-count case and the five wheel cases, as in rehearsal D's composed
-      # run on a bench that has zsh; `-rs` below still lists every skip. Not
-      # pinned, as `python-version: '3.x'` above is not: the step prints the
-      # zsh it installed.
+      # Install zsh so conditional command and skill cases actually run.
+      # The code leg's standalone CI intentionally lacks assembly/spec context;
+      # this composed job supplies both and refuses absent pinned dependencies.
+      # The remaining platform/wheel skips are printed by -rs. The code leg's
+      # package job separately requires its built-wheel suite to pass with no
+      # skips. Test counts evolve; do not turn an old comment into a skip budget.
       - name: install zsh, so the suite's zsh cases run
         run: |
           sudo apt-get update
