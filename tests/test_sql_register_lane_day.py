@@ -162,8 +162,10 @@ RESUME_REPO, RESUME_N = "repoA", "1"
 RESUME_LANE = f"{RESUME_REPO}-{RESUME_N}"
 #: THE LANE THE OUTAGE CASES ACT AS: the operator lane, `LIVE` here.
 OUTAGE_LANE = "repoA-2"
-#: The object `claim` names, held by no lane at C.
-CLAIMED = "opensoft/repoQ#11"
+#: The object `claim` names, held by no lane at C: the day's ONE object
+#: (T275f), PR #11 into opensoft/repoN main, which acts 6 and 7 land with
+#: `log LANDING` and `log LANDED`, so its own log closes it before `lane-end`.
+CLAIMED = "opensoft/repoN#11"
 #: Each poll's ceiling.
 SETTLE_S = 60.0
 #: The deadline the stamp shim's 75 and 3 cases set (AT-11; lane 4's corrected
@@ -672,17 +674,17 @@ def _day_acts(estate: LaneDay) -> list:
         place_transcript(estate.env, day_dir, session)
         return estate.lane_start(DAY_REPO, DAY_N)
 
-    def append(kind: str):
-        session = estate.row_session(DAY_LANE) or "unknown"
-        text = {
-            "HOLD": f"HOLD {EM} lane {DAY_LANE} ({WS}), window w, {_utc()}: opensoft/repoN main "
-                    f"{estate.imp.TIP_A} for test 11",
-            "LANDING": f"LANDING {EM} lane {DAY_LANE}, session {session}@{WS}, {_utc()}, PR #11 "
-                       f"into opensoft/repoN main",
-            "LANDED": f"LANDED {EM} lane {DAY_LANE}, session {session}@{WS}, {_utc()}, PR #11 into "
-                      f"opensoft/repoN main {ARROW} 1111111",
-        }[kind]
+    def hold():
+        text = (f"HOLD {EM} lane {DAY_LANE} ({WS}), window w, {_utc()}: opensoft/repoN main "
+                f"{estate.imp.TIP_A} for test 11")
         return estate.edit("append-line", text, lane=DAY_LANE, cwd=day_dir)
+
+    def landing(kind: str):
+        """`log LANDING|LANDED <CLAIMED>` (T275f): one write that logs the
+        event on the claimed object in the lane's own log, which `lane-end`
+        reads, and renders Rule 6's line in LANES.md (`write_event`)."""
+        more = (ARROW, "1111111") if kind == "LANDED" else ()
+        return estate.edit("log", kind, CLAIMED, *more, lane=DAY_LANE, cwd=day_dir)
 
     return [
         ("act 1, lane-start for the new lane", lambda: estate.lane_start(DAY_REPO, DAY_N)),
@@ -690,9 +692,9 @@ def _day_acts(estate: LaneDay) -> list:
         ("act 3, lane-start resuming the lane", resume),
         ("act 4, claim", lambda: estate.edit("claim", CLAIMED, "--no-github", lane=DAY_LANE,
                                               cwd=day_dir)),
-        ("act 5, HOLD", lambda: append("HOLD")),
-        ("act 6, LANDING", lambda: append("LANDING")),
-        ("act 7, LANDED", lambda: append("LANDED")),
+        ("act 5, HOLD", hold),
+        ("act 6, LANDING", lambda: landing("LANDING")),
+        ("act 7, LANDED", lambda: landing("LANDED")),
         ("act 8, lane-handoff", lambda: estate.lane_handoff(DAY_LANE, "test 11: act 8")),
         ("act 9, lane-end", lambda: estate.lane_end(DAY_LANE)),
     ]
