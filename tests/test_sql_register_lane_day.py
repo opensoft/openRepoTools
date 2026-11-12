@@ -83,6 +83,21 @@ READINGS, NOT FOUND IN A CONTRACT:
 - THE LR010 ANSWER (AT-11, "Any other 2") is the front's own: exit 3 and
   `ERROR:  LR010: key: ... which is not a scope (...)`, for the first call
   under `start-record` that carries `commit_write`.
+- THE READ-MIRROR IDS run on the fixture register imported at C with no
+  cutover (`prepare=False`) and the cluster stopped: the database's state
+  does not reach a read that cannot connect, and files mode on the same
+  checkout is then the control, which F17 refuses once `lanes/STORE` is on
+  origin. "READS THE MIRROR" is files mode's exit and stdout, with the
+  label on stderr.
+- "T405 (T406) SETS THE VARIABLE ON" A CALL: the call site, found by its
+  words in the tree's own `lane-handoff` (or `SKILL.md`), carries
+  `LANES_READ_MIRROR=1` on its own logical line. Each read-mirror id checks
+  its sites after its verb, so on a base with T504 and without T405 or T406
+  it fails at that label. `[window-lane]` and `[swapped]` check both
+  scripts' calls (TP:2202-2205).
+- `[set-lane-state]`'s `--expect` is the lane's state as files mode's
+  `lane-state` reads it, and its other values `lane-handoff`'s (`--owner`,
+  `--agent claude`, `--profile none`, `--kind respawn`).
 
 HELPERS COPIED, NEVER SHARED: `_said`, `_script`, `_jsonl` and the
 `_assert_rendered` oracle from T273b's rollback module (line RB, this
@@ -106,6 +121,7 @@ PostgreSQL 16 it skips with T205's banner.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -997,3 +1013,230 @@ def test_lane_end_refuses_69_with_the_database_down(request, tmp_path):
                                    f"T403):\n{_said(proc)}")
     assert estate.origin_tip() == tip, "origin's main moved"
     assert estate.head() == head, f"the journal's head moved from {head} to {estate.head()}"
+
+
+# ------------------------------------------------------------------ LANES_READ_MIRROR=1
+LANE_HANDOFF, SKILL = "lane-handoff", "skills/handoff/SKILL.md"
+#: Who sets the variable at each script's call sites (B15 tasks:900, :912).
+SITE_TASK = {LANE_HANDOFF: "lane 4's T405", SKILL: "lane 4's T406"}
+#: EACH CALL SITE, by its words at merge20 (`4353eb08`), found again by its
+#: words at every base: lane 3's numbers (`ddc972d`) and merge20's are in the
+#: notes above `MIRROR_IDS`.
+SITES = {
+    "lh-window-lane": (LANE_HANDOFF, r'\bsread candidate "[^"]*" window-lane "\$ws" "\$wl_ref"'),
+    "lh-swapped": (LANE_HANDOFF, r'\bsread rows "[^"]*" swapped "\$ws"'),
+    "lh-register-row-window": (LANE_HANDOFF,
+                               r'\bsread row_probe "[^"]*" register-row "\$window_name"'),
+    "lh-register-row-lane": (LANE_HANDOFF, r'\bsread row "[^"]*" register-row "\$lane"'),
+    "lh-canon-lane": (LANE_HANDOFF, r'\bsread lane_canon "[^"]*" canon-lane "\$lane"'),
+    "lh-last-session": (LANE_HANDOFF, r'\bsread row_uuid "[^"]*" last-session "\$lane"'),
+    "lh-lane-state": (LANE_HANDOFF, r'\blcb_(?:old_)?raw="\$\(.*"\$LANES_EDIT" lane-state "\$lane"'),
+    "lh-set-lane-state": (LANE_HANDOFF, r'"\$LANES_EDIT" set-lane-state "\$lane" SWAPPING\b'),
+    "lh-handoff-path": (LANE_HANDOFF, r'"\$LANES_EDIT" handoff-path "\$lane" --create\b'),
+    "lh-write-handoff": (LANE_HANDOFF, r'"\$LANES_EDIT" "\$\{hs_args\[@\]\}"'),
+    "skill-window-lane": (SKILL, r'\bsread candidate "[^"]*" window-lane "\$ws" "\$wl_ref"'),
+    "skill-swapped": (SKILL, r'\bsread rows "[^"]*" swapped "\$ws"'),
+    "skill-handoff-path-create": (SKILL, r'"\$L" handoff-path "\$lane" --create\b'),
+    "skill-write-handoff-prepend": (SKILL, r'"\$L" write-handoff "\$lane" --prepend\b'),
+    "skill-register-row-sread": (SKILL, r'\bsread row_probe "[^"]*" register-row "\$lane"'),
+    "skill-canon-lane-sread": (SKILL, r'\bsread lane_canon "[^"]*" canon-lane "\$lane"'),
+    "skill-register-row-direct": (SKILL, r'"\$L" register-row "\$lane"'),
+}
+
+#: THE READ-MIRROR IDS (B15 tasks:2523; R-L4Q1; R-Q22-1 to R-Q22-4; R-F9-1,
+#: R-F9-2, R-F9-8; R-F10-14): each id's verb, called directly with the
+#: arguments its call site gives it (R-Q22-2), its kind, and its call sites.
+#: The sites, lane 3's number (`ddc972d`) beside merge20's:
+#:   `[window-lane]` lane-handoff :1662, merge20 :1682; the skill's :210/:211;
+#:   `[swapped]` lane-handoff :1673, merge20 :1693; the skill's :218/:219;
+#:   `[register-row-window]` lane-handoff :1656, merge20 :1676;
+#:   `[register-row-lane]` lane-handoff :2521, merge20 :2593;
+#:   `[canon-lane]` lane-handoff :1711, merge20 :1731;
+#:   `[last-session]` lane-handoff :1822, merge20 :1893;
+#:   `[lane-state]` lane-handoff :1507 and :1524, merge20 :1527 and :1544;
+#:   `[set-lane-state]` lane-handoff :1529, merge20 :1549 (SWAPPING);
+#:   `[handoff-path]` lane-handoff :2539, merge20 :2611;
+#:   `[write-handoff]` lane-handoff :2721, merge20 :2793 (`hs_args`);
+#:   `[skill-register-row-sread]` SKILL.md :196, merge20 :147;
+#:   `[skill-canon-lane-sread]` :295, merge20 :240;
+#:   `[skill-register-row-direct]` :348, merge20 :293;
+#:   `[skill-handoff-path-create]` :424, merge20 :369;
+#:   `[skill-write-handoff-prepend]` :596, merge20 :541.
+MIRROR_IDS = {
+    "window-lane": (("window-lane", WS, "@1"), "read", ("lh-window-lane", "skill-window-lane")),
+    "swapped": (("swapped", WS), "read", ("lh-swapped", "skill-swapped")),
+    "register-row-window": (("register-row", OUTAGE_LANE), "read", ("lh-register-row-window",)),
+    "register-row-lane": (("register-row", OUTAGE_LANE), "read", ("lh-register-row-lane",)),
+    "canon-lane": (("canon-lane", OUTAGE_LANE), "read", ("lh-canon-lane",)),
+    "last-session": (("last-session", OUTAGE_LANE), "read", ("lh-last-session",)),
+    "lane-state": (("lane-state", OUTAGE_LANE), "read", ("lh-lane-state",)),
+    "set-lane-state": ((), "set-lane-state", ("lh-set-lane-state",)),
+    "handoff-path": (("handoff-path", OUTAGE_LANE, "--create"), "read", ("lh-handoff-path",)),
+    "write-handoff": ((), "write-handoff", ("lh-write-handoff",)),
+    "skill-handoff-path-create": (("handoff-path", OUTAGE_LANE, "--create"), "read",
+                                  ("skill-handoff-path-create",)),
+    "skill-write-handoff-prepend": ((), "write-handoff", ("skill-write-handoff-prepend",)),
+    "skill-register-row-sread": (("register-row", OUTAGE_LANE), "read",
+                                 ("skill-register-row-sread",)),
+    "skill-canon-lane-sread": (("canon-lane", OUTAGE_LANE), "read", ("skill-canon-lane-sread",)),
+    "skill-register-row-direct": (("register-row", OUTAGE_LANE), "read",
+                                  ("skill-register-row-direct",)),
+    "other-arms": ((), "other-arms", ()),
+}
+MIRROR_ID_ORDER = ["window-lane", "swapped", "register-row-window", "register-row-lane",
+                   "canon-lane", "last-session", "lane-state", "set-lane-state", "handoff-path",
+                   "write-handoff", "skill-handoff-path-create", "skill-write-handoff-prepend",
+                   "skill-register-row-sread", "skill-canon-lane-sread",
+                   "skill-register-row-direct", "other-arms"]
+#: `[other-arms]`'s two verbs (B15 tasks:2523: "`who` and `lane-last` at 69
+#: under the variable"), `who` with an object the fixture names.
+OTHER_ARMS = (("who", "opensoft/repoA#7"), ("lane-last", OUTAGE_LANE))
+#: The block the seam ids write (R-F10-14).
+BLOCK = "## test 11's block, written under LANES_READ_MIRROR=1\n\nThe database is down.\n"
+WRITE_LINE = re.compile(r"^(\S[^\t]*)\t([0-9a-f]{64})$")
+
+
+def _logical_lines(text: str) -> list:
+    """`text`'s shell lines with each backslash continuation joined, as
+    (the first line's number, the joined text)."""
+    found, held, start = [], [], 0
+    for number, line in enumerate(text.splitlines(), start=1):
+        if not held:
+            start = number
+        if line.endswith("\\"):
+            held.append(line[:-1])
+            continue
+        held.append(line)
+        found.append((start, " ".join(held)))
+        held = []
+    if held:
+        found.append((start, " ".join(held)))
+    return found
+
+
+def _assert_sites_set_the_variable(case: str, sites: tuple) -> None:
+    """Each call site, found by its words in the tree's own script, sets
+    `LANES_READ_MIRROR=1` on its own call: the assignment is on the call's
+    logical line (T405 for `lane-handoff`, T406 for the skill; lane 2's
+    reading of "sets it on" the call)."""
+    for site in sites:
+        script, words = SITES[site]
+        text = (REPO / script).read_text(encoding="utf-8")
+        calls = [(n, line) for n, line in _logical_lines(text)
+                 if re.search(words, line) and not line.lstrip().startswith("#")]
+        assert calls, (f"[{case}]: {script} holds no call site matching {words!r}: find it again "
+                       f"by its words")
+        bare = [(n, line.strip()[:160]) for n, line in calls if "LANES_READ_MIRROR=1" not in line]
+        assert not bare, (f"[{case}]: {script}'s call does not set LANES_READ_MIRROR=1 "
+                          f"({SITE_TASK[script]}): {bare}")
+
+
+def _assert_mirror_read(case: str, proc, files) -> None:
+    """The read-mirror oracle (R-Q22-4; YS:626): the label on stderr, never
+    on stdout, and files mode's answer, its exit and its stdout."""
+    assert MIRROR_LINE.search(proc.stderr), (
+        f"[{case}]: with the variable set and the database down, stderr carries no `read: "
+        f"mirror at <sha12>, ... (sql unreachable: ...)` label (lane 5's T504):\n{_said(proc)}")
+    assert not MIRROR_LINE.search(proc.stdout), f"[{case}]: the label is on stdout:\n{_said(proc)}"
+    assert (proc.returncode, proc.stdout) == (files.returncode, files.stdout), (
+        f"[{case}]: the mirror read's answer is not files mode's on the same checkout (T504):\n"
+        f"{_said(proc)}\n--- files mode\n{_said(files)}")
+
+
+def _assert_refused_69(case: str, proc, what: str) -> None:
+    assert proc.returncode == 69 and not proc.stdout.strip(), (
+        f"[{case}]: {what} did not exit 69 with nothing on stdout (the door's decide row, "
+        f"T504):\n{_said(proc)}")
+    assert not MIRROR_LINE.search(proc.stderr), (
+        f"[{case}]: {what} read the mirror:\n{_said(proc)}")
+
+
+def _state_word(proc) -> str:
+    for line in proc.stdout.splitlines():
+        key, _, value = line.partition("\t")
+        if key == "state":
+            return value.strip()
+    return ""
+
+
+@pytest.mark.parametrize("case", MIRROR_ID_ORDER)
+def test_the_read_mirror_variable_makes_each_read_that_names_the_lane_read_the_mirror(
+        request, tmp_path, case):
+    """AT-11 and R-L4Q1 (B15 tasks:2523): with `LANES_READ_MIRROR=1` set and
+    the database down, every read that names the lane before the handoff
+    file is published reads the mirror and labels the read, where it exited
+    69. Each id calls its verb directly, with its call site's arguments
+    (R-Q22-2), on the fixture register imported at C with the cluster
+    stopped: the same read without the variable exits 69 with nothing on
+    stdout; with it, the label (YS:626) and files mode's answer on the same
+    checkout. `[set-lane-state]` exits 0 and records `SWAPPING`, and writes
+    no register line (R-Q22-1). `[write-handoff]` and
+    `[skill-write-handoff-prepend]` (R-F10-14): at least one label, the one
+    `<file>TAB<sha256>` stdout line, exit 0, the block, `---` and a blank
+    line at the file's head, and no register row or log line. Then each
+    call site sets the variable on its call: lane 4's T405 in
+    `lane-handoff`, T406 in the skill. `[other-arms]`: `who` and `lane-last`
+    still exit 69 under it. Fails until lane 4's T405 and T406 and lane 5's
+    T504; the skill's four seam-free ids until T406."""
+    argv, kind, sites = MIRROR_IDS[case]
+    estate = _estate(request, tmp_path, prepare=False)
+    lane = OUTAGE_LANE
+    mirror = {"LANES_READ_MIRROR": "1"}
+    if kind == "read":
+        files = estate.files_edit(*argv, lane=lane)
+        estate.down()
+        _assert_refused_69(case, estate.edit(*argv, lane=lane), "the read without the variable")
+        _assert_mirror_read(case, estate.edit(*argv, lane=lane, env=mirror), files)
+    elif kind == "set-lane-state":
+        now = _state_word(estate.files_edit("lane-state", lane, lane=lane)) or "none"
+        tip = estate.origin_tip()
+        head = estate.head()
+        sets = ("set-lane-state", lane, "SWAPPING", "--expect", now, "--owner",
+                estate.imp.UUID_A2, "--agent", "claude", "--profile", "none", "--kind", "respawn")
+        estate.down()
+        _assert_refused_69(case, estate.edit(*sets, lane=lane), "set-lane-state without the variable")
+        proc = estate.edit(*sets, lane=lane, env=mirror)
+        assert MIRROR_LINE.search(proc.stderr), (
+            f"[{case}]: set-lane-state under the variable carries no label (T504):\n{_said(proc)}")
+        assert proc.returncode == 0, (f"[{case}]: set-lane-state under the variable did not exit 0 "
+                                      f"(R-Q22-1; T504):\n{_said(proc)}")
+        state = estate.edit("lane-state", lane, lane=lane, env=mirror)
+        assert _state_word(state) == "SWAPPING", (
+            f"[{case}]: the lane does not read SWAPPING after it (R-Q22-1):\n{_said(state)}")
+        assert estate.origin_tip() == tip, f"[{case}]: origin's main moved: a register line"
+        estate.up()
+        assert estate.head() == head, f"[{case}]: the journal's head moved"
+    elif kind == "write-handoff":
+        target = estate.lane_checkout(lane) / "handoffs" / f"{lane}.md"
+        old = target.read_bytes()
+        block = tmp_path / "block.md"
+        block.write_text(BLOCK, encoding="utf-8")
+        lanes_tree = estate.reg.origin_git("rev-parse", "refs/heads/main:lanes").strip()
+        head = estate.head()
+        estate.down()
+        proc = estate.edit("write-handoff", lane, "--prepend", block, "--subject",
+                           f"test 11: [{case}]", lane=lane, env=mirror)
+        assert MIRROR_LINE.search(proc.stderr), (
+            f"[{case}]: write-handoff under the variable carries no label (T504; R-F10-14):\n"
+            f"{_said(proc)}")
+        assert proc.returncode == 0, (f"[{case}]: write-handoff did not exit files mode's 0 "
+                                      f"(R-F10-14; T504):\n{_said(proc)}")
+        lines = proc.stdout.splitlines()
+        assert len(lines) == 1 and WRITE_LINE.match(lines[0]), (
+            f"[{case}]: stdout is not the one `<file>TAB<sha256>` line (R-F10-14):\n{_said(proc)}")
+        path, digest = WRITE_LINE.match(lines[0]).groups()
+        written = Path(path).read_bytes()
+        assert written == BLOCK.encode() + b"---\n\n" + old, (
+            f"[{case}]: {path} does not hold the block, `---` and a blank line, then the old "
+            f"file whole")
+        assert hashlib.sha256(written).hexdigest() == digest, f"[{case}]: the digest is not the file's"
+        assert estate.reg.origin_git("rev-parse", "refs/heads/main:lanes").strip() == lanes_tree, (
+            f"[{case}]: origin's lanes/ changed: a register row or a log line was written")
+        estate.up()
+        assert estate.head() == head, f"[{case}]: the journal's head moved"
+    else:
+        estate.down()
+        for verb in OTHER_ARMS:
+            _assert_refused_69(case, estate.edit(*verb, lane=lane, env=mirror),
+                               f"`{verb[0]}` under the variable")
+    _assert_sites_set_the_variable(case, sites)
