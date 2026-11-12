@@ -48,11 +48,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           submodules: recursive
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
-          python-version: '3.x'
+          python-version: '3.12'
 
       - name: every context the composed run claims is here
         run: |
@@ -89,17 +89,38 @@ jobs:
       # wheel cases. With zsh installed the 60 run, and the 6 skips left are the
       # byte-count case and the five wheel cases, as in rehearsal D's composed
       # run on a bench that has zsh; `-rs` below still lists every skip. Not
-      # pinned, as `python-version: '3.x'` above is not: the step prints the
+      # pinned, as `python-version: '3.12'` above is not: the step prints the
       # zsh it installed.
       - name: install zsh, so the suite's zsh cases run
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends zsh
+          sudo apt-get install -y --no-install-recommends zsh jq cmake g++ make pkg-config \
+            libcurl4-openssl-dev libdw-dev libelf-dev zlib1g-dev \
+            binutils-dev libiberty-dev libssl-dev
           command -v zsh
           zsh --version
 
       - name: install the test runner
-        run: python3 -m pip install --disable-pip-version-check pytest==8.3.4
+        run: python3 -m pip install --disable-pip-version-check --only-binary=:all: pytest==8.3.4 coverage==7.10.7
+
+      # Coverage tools and reports live outside the checkout. No installed
+      # workstation command, lane record, session or shared bench is changed.
+      - name: build the pinned shell denominator parser
+        run: |
+          set -euo pipefail
+          git init "$RUNNER_TEMP/kcov-source"
+          git -C "$RUNNER_TEMP/kcov-source" remote add origin https://github.com/SimonKagstrom/kcov.git
+          git -C "$RUNNER_TEMP/kcov-source" fetch --depth 1 origin a39874f938ce13f7a65f253120d1ec946b349ffe
+          git -C "$RUNNER_TEMP/kcov-source" checkout --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/kcov-source" rev-parse HEAD)" = a39874f938ce13f7a65f253120d1ec946b349ffe
+          cmake -S "$RUNNER_TEMP/kcov-source" -B "$RUNNER_TEMP/kcov-build" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/kcov-build" --parallel 2
+          "$RUNNER_TEMP/kcov-build/src/kcov" --version
+
+      - name: inventory every exact source and prepare Python and shell measurement
+        run: |
+          python3 code/.github/ci/sonar_assurance.py prepare --root "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/sonar"
+          python3 code/.github/ci/sonar_coverage.py prepare --root "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/sonar" --kcov "$RUNNER_TEMP/kcov-build/src/kcov"
 
       - name: git identity for the fixture commits (env, not global config)
         run: |
@@ -119,3 +140,26 @@ jobs:
           OPENREPOTOOLS_ASSEMBLY_ROOT: ${{ github.workspace }}
           OPENREPOTOOLS_SPEC_ROOT: ${{ github.workspace }}/spec
         run: bash code/tests/run.sh -rs
+
+      - name: verify measured coverage before analysis
+        run: python3 code/.github/ci/sonar_coverage.py report --root "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/sonar"
+
+      # Token exists only in these analysis/readback steps, after all tests.
+      # Never use pull_request_target to grant it to an untrusted checkout.
+      - name: analyze complete sources and wait for the quality gate
+        uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65  # v8.4.1
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: -Dproject.settings=${{ runner.temp }}/sonar/scanner.properties
+
+      - name: verify gate thresholds, indexed commands and imported coverage
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ -n "$SONAR_PR" ]; then args+=(--pull-request "$SONAR_PR"); fi
+          python3 code/.github/ci/sonar_assurance.py verify-analysis \
+            --out "$RUNNER_TEMP/sonar" --scanner-task .scannerwork/report-task.txt "${args[@]}"
