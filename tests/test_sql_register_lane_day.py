@@ -533,10 +533,29 @@ class LaneDay:
         return {"LANES_EDIT": str(wrapper), "LOGGED_EDIT_LOG": str(log),
                 "LOGGED_EDIT_REAL": str(self.edit_path)}, log
 
+    def fetch_status_w(self) -> None:
+        """THE READER'S FETCH OF W (lane 3's ruling (a), #165 6833830078;
+        T275e): `status` reads `m` on `origin/main` as last fetched in the W
+        the register's own `workspace.yaml` names (`self.reg.ws`), never
+        fetches (tasks:545), and no write on primary fetches W (D12), so each
+        poll follows `git -C <that W> fetch -q origin main`, with plain git
+        and the register's environment. This is W3a's `fetch_w`
+        (`a1395613`), inline because this tree does not carry it. It is the
+        case's own act, not a write's; the lane acts' W (T275d) is not the
+        one `status` reads."""
+        proc = subprocess.run(["git", "-C", str(self.reg.ws), "fetch", "-q", "origin", "main"],
+                              capture_output=True, env=self.reg.env, check=False,
+                              stdin=subprocess.DEVNULL, timeout=120)
+        assert proc.returncode == 0, (
+            f"the harness's fetch of W, git -C {self.reg.ws} fetch -q origin main: "
+            f"{proc.stderr.decode(errors='replace')}")
+
     def settle(self, what: str) -> None:
-        """Open point 8's bounded poll: `status` until the lag is 0."""
+        """Open point 8's bounded poll: `status` until the lag is 0, each
+        poll after the harness's fetch of the W `status` reads (T275e)."""
         deadline = time.monotonic() + SETTLE_S
         while True:
+            self.fetch_status_w()
             proc = self.reg.index("status", conf=self.reg.primary_conf, timeout=60)
             if proc.returncode == 0 and self.imp.LAG_0.search(proc.stdout):
                 return
