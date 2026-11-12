@@ -12,7 +12,7 @@ to this root.
   `tests/`, its CI, and the pinned standard at `code/upstream/openRepoShape`.
 - **This root**: the front door, `project.yaml`, the leg pins and the gate
   (`make validate`); no product code.
-- **Tests**: `code/tests/run.sh` from here, or `tests/run.sh` inside `code/`.
+- **Tests**: `code/tests/run.sh` from here, or `tests/run.sh` inside `code/`. Before task-set planning or landing, read [the shared Claude/Codex workflow](code/.github/ci/task-set-delivery.md) and [batching procedure](code/.github/ci/batching-pilot.md).
 - **The lane tooling**: its code is in `code/`; its manual is
   `spec/docs/README-lanes.md` (`docs/README-lanes.md` in the spec leg).
 - **Feature work**: paired worktrees `worktrees/<NNN-feature>/{spec,code}/`,
@@ -21,37 +21,6 @@ to this root.
 - **A local rehearsal** whose `.gitmodules` names bare repositories on disk
   needs `git -c protocol.file.allow=always submodule update --init
   --recursive`; the real legs are https and need no flag.
-
-## Shared Claude/Codex delivery workflow
-
-Before planning task sets or landing PRs, read
-[the shared workflow](code/.github/ci/task-set-delivery.md) and
-[the manual batching procedure](code/.github/ci/batching-pilot.md) from the
-pinned code leg. Claude and Codex use the same instructions, not separate copies.
-Work in the paired feature code/spec worktrees; do not implement in a detached
-pinned leg or revive the pre-triad layout to get around a refusal.
-
-Keep one small task set per PR. Independent PRs remain independent; gh-stack
-may author real dependencies where installed, but never flatten or register
-native stacks implicitly. The main-only `openrepotools-code` queue is manual:
-the repository writer verifies user merge authority, exact-head Codex review,
-threads, paths, base and all four full checks before the named queue command.
-Eligibility, classifier output and profile launches never auto-enqueue work.
-The classifier is advisory; fast-only member CI is not active here.
-
-`verify.yml` in the code repository supplies targeted GitHub feedback; it does
-not replace full original/candidate CI or composed exact-pin acceptance. Control,
-release and unknown paths stay outside the general code queue. Preserve lanes
-1–5, their claims, worktrees, bindings and running benches. No bypass, app access,
-paid upgrade, release/tag or tool/session replacement is inferred from this
-workflow. Fresh sessions read these pointers; existing sessions can read the
-shared reference at a safe checkpoint without a restart.
-
-Landing leg PRs does not update this assembly. Advance only merged code/spec
-commits with openRepoShape's bump-leg.py, keeping each gitlink, pin/digest and
-matching workflow SHA references together; run make validate and composed CI.
-Refresh only the authorized clean assembly mounts afterward, without changing
-active lane branches. See feature 009 in the spec leg for dated rollout evidence.
 
 # Working in openRepoTools
 
