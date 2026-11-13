@@ -805,12 +805,25 @@ def test_lane_start_for_a_new_lane_refuses_69_before_anything_is_written(request
 # ------------------------------------------------------------------ the stamp shim
 #: Each stamp shim case's arms, keyed on the statement, never on timing
 #: (AT-11, "Flakiness"), and whether it sets the deadline.
+#:
+#: `[69-at-the-commit]` BREAKS A CHECK IN THE COMMIT CALL'S ENTRY (TP:2153-2156,
+#: "so the database refuses it with 23514, nothing is in doubt"): the shim
+#: removes the entry's `journal.args_sha256`, so `commit_write`'s step 5, the
+#: journal row's insert, after step 4 moved the head inside the transaction,
+#: breaks the journal's CHECK `kind <> 'write' OR args_sha256 IS NOT NULL`
+#: (`f9e1449c:lanes-index:9516`, `:9986-9994`), the 23514 the test plan names
+#: for a write entry with no `args_sha256` (TP:4535-4536, :4582). It set
+#: `journal.kind` to an unknown kind before, which `commit_write` refuses with
+#: its own LR004 before any insert (`:9868-9872`), so round 6h's run met LR004,
+#: not 23514 (lane 3's reading, #165 6859307928, id 55). Test 2's form, the
+#: entry's last structured row (TP:686-690), names a list's element, which
+#: only T203d's shim can (line H), so this arm keeps to the `journal` object.
 STAMP_ARMS = {
     "75": ([{"mode": "fail-match", "match": COMMIT_TEXT}], True),
     "3": ([{"mode": "fail-match", "match": COMMIT_TEXT},
            {"mode": "fail-match", "match": LOOKUP_TEXT}], True),
     "69-at-the-commit": ([{"mode": "edit-entry", "match": COMMIT_TEXT, "call": 1,
-                           "field": "journal.kind", "value": "t275-no-such-kind"}], False),
+                           "field": "journal.args_sha256"}], False),
     "69-at-the-snapshot": ([{"mode": "fail-match", "match": SNAPSHOT_TEXT, "call": 1}], False),
     "69-at-the-snapshot-with-an-id": ([{"mode": "fail-match", "match": SNAPSHOT_TEXT,
                                         "call": 1}], False),
