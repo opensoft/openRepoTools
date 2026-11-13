@@ -276,7 +276,7 @@ fetch_at() {   # <owner/name> <commit> <path> <dest>
 		WHY="gh: not installed"
 	fi
 	if command -v curl >/dev/null 2>&1; then
-		if curl -fsSL "https://raw.githubusercontent.com/$1/$2/$3" >"$4" 2>"$TMP/err" &&
+		if curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 "https://raw.githubusercontent.com/$1/$2/$3" >"$4" 2>"$TMP/err" &&
 			[ -s "$4" ]; then
 			return 0
 		fi
@@ -308,7 +308,7 @@ gitlink_at() {   # <commit> <path>
 		WHY="$WHY; curl: not installed"
 	elif ! command -v jq >/dev/null 2>&1; then
 		WHY="$WHY; curl: not asked, because reading api.github.com's JSON needs \`jq\` and there is none"
-	elif ! curl -fsSL "https://api.github.com/repos/$REPO/git/trees/$1" >"$TMP/tree.json" 2>"$TMP/err"; then
+	elif ! curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 "https://api.github.com/repos/$REPO/git/trees/$1" >"$TMP/tree.json" 2>"$TMP/err"; then
 		WHY="$WHY; $(said curl "$TMP/err")"
 	elif jq -er '.tree | arrays | length >= 0' "$TMP/tree.json" >/dev/null 2>&1 &&
 		jq -r "$filter" "$TMP/tree.json" >"$TMP/link" 2>/dev/null; then
@@ -341,7 +341,7 @@ delegate_remote() {   # <args…>
 	fi
 	if [ -z "$sha" ]; then
 		if command -v curl >/dev/null 2>&1 &&
-			curl -fsSL -H 'Accept: application/vnd.github.sha' \
+			curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 -H 'Accept: application/vnd.github.sha' \
 				"https://api.github.com/repos/$REPO/commits/$ref" >"$TMP/sha" 2>"$TMP/err"; then
 			IFS= read -r sha <"$TMP/sha" || :
 			is_lower_hex 40 "$sha" || { sha=""; WHY="$WHY; curl: an answer that is not a commit"; }
