@@ -1011,8 +1011,10 @@ def test_lane_handoff_writes_the_handoff_from_a_labelled_mirror_read_and_leaves_
     writes are not sent, the fake `lanes-edit.sh`'s log holding no `PAUSED`
     write, and the 69 note names how the record is completed later (P15;
     `lane-handoff --late --at`); after a restart the lane still reads
-    `SWAPPING`. Fails until lane 4's T405, T406 and T429 (L4-B14), and
-    T328."""
+    `SWAPPING`. Fails until lane 4's T405, T406 and T429 (L4-B14), lane 5's
+    T504 (`3f838677`: without it `lane-last` and `restart-intent`, the two
+    reads `lane-handoff` makes before its handoff file, end 69 in the outage
+    whatever the variable says), and T328."""
     estate = _estate(request, tmp_path)
     proc, log, tip, head, before = _outage_handoff(estate)
     assert MIRROR_LINE.search(proc.stderr), (
