@@ -1142,9 +1142,12 @@ MIRROR_ID_ORDER = ["window-lane", "swapped", "register-row-window", "register-ro
                    "write-handoff", "skill-handoff-path-create", "skill-write-handoff-prepend",
                    "skill-register-row-sread", "skill-canon-lane-sread",
                    "skill-register-row-direct", "other-arms"]
-#: `[other-arms]`'s two verbs (B15 tasks:2523: "`who` and `lane-last` at 69
-#: under the variable"), `who` with an object the fixture names.
-OTHER_ARMS = (("who", "opensoft/repoA#7"), ("lane-last", OUTAGE_LANE))
+#: `[other-arms]`'s one verb (tasks:2525 at `f4591a08`: "`[other-arms]` holds
+#: `who` at 69 under the variable"), `who` with an object the fixture names.
+#: `lane-last` and `restart-intent` read the mirror under the variable since
+#: ERR-30's widening (lane 3's ruling on round 6h's #56; lane 5's T504,
+#: `3f838677`), so neither is an arm here.
+OTHER_ARMS = (("who", "opensoft/repoA#7"),)
 #: The block the seam ids write (R-F10-14).
 BLOCK = "## test 11's block, written under LANES_READ_MIRROR=1\n\nThe database is down.\n"
 WRITE_LINE = re.compile(r"^(\S[^\t]*)\t([0-9a-f]{64})$")
@@ -1229,9 +1232,10 @@ def test_the_read_mirror_variable_makes_each_read_that_names_the_lane_read_the_m
     `<file>TAB<sha256>` stdout line, exit 0, the block, `---` and a blank
     line at the file's head, and no register row or log line. Then each
     call site sets the variable on its call: lane 4's T405 in
-    `lane-handoff`, T406 in the skill. `[other-arms]`: `who` and `lane-last`
-    still exit 69 under it. Fails until lane 4's T405 and T406 and lane 5's
-    T504; the skill's four seam-free ids until T406."""
+    `lane-handoff`, T406 in the skill. `[other-arms]`: `who` still exits 69
+    under it; `lane-last` and `restart-intent` read the mirror under it
+    since ERR-30's widening (T504). Fails until lane 4's T405 and T406 and
+    lane 5's T504; the skill's four seam-free ids until T406."""
     argv, kind, sites = MIRROR_IDS[case]
     estate = _estate(request, tmp_path, prepare=False)
     lane = OUTAGE_LANE
