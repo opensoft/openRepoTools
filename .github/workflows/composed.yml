@@ -13,10 +13,10 @@ name: composed
 # this project's own, and it references no leg by `<org>/<leg>@<sha>`, so the
 # lockstep rule has nothing in it to move.
 #
-# LINUX ONLY, on purpose. The platform matrix — macOS's bash 3.2 parse and its
-# `ready`-label suite, Windows and the no-submodule skip path — is the code
-# leg's own `tests` workflow, and it stays there. What only this root can run
-# is the COMPOSED suite: `OPENREPOTOOLS_COMPOSED=1` turns every absent root
+# LINUX ONLY, following the code leg's current Linux test policy. The code
+# leg owns its full source/no-submodule suites, package and parity checks; the
+# provider retains its own platform checks. What only this root can run is the
+# COMPOSED suite: `OPENREPOTOOLS_COMPOSED=1` turns every absent root
 # into a refusal and every check that would have skipped for want of one into
 # a failure, so a green run here is a claim about all three legs at once.
 #
@@ -37,85 +37,181 @@ on:
   workflow_dispatch:
 
 jobs:
-  exact-pins:
+  composed-tests:
     # THIS UBUNTU RUNNER IS ON 24.04: `ubuntu-latest` became Ubuntu 26.04 on
     # 2026-10-21. There the `[host]` case of the TERM-ignoring kill test, which
     # this job's suite runs, fails. Pinned until 26.04 support is decided.
     runs-on: ubuntu-24.04
+    outputs:
+      evidence-id: ${{ steps.evidence.outputs.artifact-id }}
     steps:
       # PINNED BY COMMIT, the same two actions the code leg pins. RECURSIVE:
       # the legs, and the dependency nested in the code leg.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
+          ref: ${{ github.sha }}
           submodules: recursive
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
-        with:
-          python-version: '3.x'
-
-      - name: every context the composed run claims is here
-        run: |
-          set -euo pipefail
-          missing=0
-          for need in project.yaml contracts/code-pin.yaml contracts/spec-pin.yaml \
-                      code/openRepoTools code/tests/run.sh code/tests/conftest.py \
-                      code/contracts/openreposhape-pin.yaml \
-                      code/upstream/openRepoShape/scripts/repo_shape.py \
-                      code/upstream/openRepoShape/templates/workspace-root/README.md; do
-            if [ ! -f "$need" ]; then
-              echo "::error::the composed run needs $need, and this checkout has none"
-              missing=1
-            fi
-          done
-          if [ ! -d spec/openspec ] && [ ! -d spec/specs ] && [ ! -d spec/docs ]; then
-            echo "::error::the spec leg is not checked out at spec/"
-            missing=1
-          fi
-          git submodule status --recursive
-          exit "$missing"
-
-      # The same two the `validate` workflow runs, here as the gate's FIRST
-      # half: a suite that passes at a gitlink the pin does not name passes
-      # at the wrong commit.
-      - name: the manifest and the lockstep pins
-        run: |
-          python3 scripts/validate-manifest.py
-          python3 scripts/validate-pins.py
-
-      # ZSH, SO THE SUITE'S ZSH CASES RUN (opensoft/openRepoTools#186, T014 of
-      # `specs/004-migrate-to-triad/tasks.md`). On this runner a composed run
-      # skips 66 conditional cases: 60 that need zsh, 1 byte-count case and 5
-      # wheel cases. With zsh installed the 60 run, and the 6 skips left are the
-      # byte-count case and the five wheel cases, as in rehearsal D's composed
-      # run on a bench that has zsh; `-rs` below still lists every skip. Not
-      # pinned, as `python-version: '3.x'` above is not: the step prints the
-      # zsh it installed.
-      - name: install zsh, so the suite's zsh cases run
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends zsh
-          command -v zsh
-          zsh --version
-
-      - name: install the test runner
-        run: python3 -m pip install --disable-pip-version-check pytest==8.3.4
-
-      - name: git identity for the fixture commits (env, not global config)
-        run: |
-          {
-            echo "GIT_AUTHOR_NAME=openRepoTools CI"
-            echo "GIT_AUTHOR_EMAIL=ci@openrepotools.invalid"
-            echo "GIT_COMMITTER_NAME=openRepoTools CI"
-            echo "GIT_COMMITTER_EMAIL=ci@openrepotools.invalid"
-          } >> "$GITHUB_ENV"
+      - name: prepare exact-source measurement
+        uses: ./.github/actions/prepare-sonar
 
       # THE CODE LEG'S OWN ENTRY POINT, serialized as it is everywhere: the
       # roots are named, not inferred, and `-rs` prints any skip that remains
       # (a platform one; none for want of a root can reach this far).
       - name: the code leg's suite, composed, at the exact pins
         env:
+          BASH_ENV: ${{ github.workspace }}/code/.github/ci/sonar_coverage/bash-env.sh
           OPENREPOTOOLS_COMPOSED: '1'
           OPENREPOTOOLS_ASSEMBLY_ROOT: ${{ github.workspace }}
           OPENREPOTOOLS_SPEC_ROOT: ${{ github.workspace }}/spec
         run: bash code/tests/run.sh -rs
+
+      - name: verify measured coverage before analysis
+        env:
+          COVERAGE_PROCESS_START: ''
+        run: python3 code/.github/ci/sonar_coverage.py report --root "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/sonar"
+
+      - name: retain exact-commit measurement evidence and diagnostics
+        if: ${{ always() }}
+        id: evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: sonar-composed-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/sonar/inventory.json
+            ${{ runner.temp }}/sonar/coverage.xml
+            ${{ runner.temp }}/sonar/coverage-summary.json
+            ${{ runner.temp }}/sonar/provenance-probe.json
+
+  provider-tests:
+    # THIS UBUNTU RUNNER IS ON 24.04: `ubuntu-latest` became Ubuntu 26.04 on
+    # 2026-10-21. There the `[host]` case of the TERM-ignoring kill test, which
+    # this job's suite runs, fails. Pinned until 26.04 support is decided.
+    runs-on: ubuntu-24.04
+    outputs:
+      evidence-id: ${{ steps.evidence.outputs.artifact-id }}
+    steps:
+      # PINNED BY COMMIT, the same two actions the code leg pins. RECURSIVE:
+      # the legs, and the dependency nested in the code leg.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          ref: ${{ github.sha }}
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+      - name: prepare exact-source measurement
+        uses: ./.github/actions/prepare-sonar
+
+      # The recursive source scope includes the pinned provider. Measure its
+      # own complete Linux suite too; consumer tests alone cannot cover it.
+      - name: the pinned provider's complete suite
+        working-directory: code/upstream/openRepoShape
+        env:
+          BASH_ENV: ${{ github.workspace }}/code/.github/ci/sonar_coverage/bash-env.sh
+        run: python3 -m pytest tests -q -rs -p no:cacheprovider
+
+      - name: verify measured coverage before analysis
+        env:
+          COVERAGE_PROCESS_START: ''
+        run: python3 code/.github/ci/sonar_coverage.py report --root "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/sonar"
+
+      - name: retain exact-commit measurement evidence and diagnostics
+        if: ${{ always() }}
+        id: evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: sonar-provider-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/sonar/inventory.json
+            ${{ runner.temp }}/sonar/coverage.xml
+            ${{ runner.temp }}/sonar/coverage-summary.json
+            ${{ runner.temp }}/sonar/provenance-probe.json
+
+  sonar:
+    needs: [composed-tests, provider-tests]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          ref: ${{ github.sha }}
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: '3.x'
+      # Both complete suites must pass. Download each immutable artifact ID
+      # from this exact run, then independently verify its full source/report
+      # inventory before unioning observed hits. No cross-commit reuse.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          artifact-ids: ${{ needs.composed-tests.outputs.evidence-id }}
+          path: ${{ runner.temp }}/sonar-composed
+          merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          artifact-ids: ${{ needs.provider-tests.outputs.evidence-id }}
+          path: ${{ runner.temp }}/sonar-provider
+          merge-multiple: true
+      - name: bind both complete suites and combine their measured coverage
+        run: python3 code/.github/ci/sonar_assurance.py combine --root "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/sonar"
+
+      # Token exists only in these analysis/readback steps, after all tests.
+      # Never use pull_request_target to grant it to an untrusted checkout.
+      - name: analyze complete sources and wait for the quality gate
+        uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65  # v8.4.1
+        env:
+          COVERAGE_PROCESS_START: ''
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: -Dproject.settings=${{ runner.temp }}/sonar/scanner.properties
+
+      - name: verify gate thresholds, indexed commands and imported coverage
+        env:
+          COVERAGE_PROCESS_START: ''
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ -n "$SONAR_PR" ]; then args+=(--pull-request "$SONAR_PR"); fi
+          python3 code/.github/ci/sonar_assurance.py verify-analysis \
+            --root "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/sonar" "${args[@]}"
+
+      - name: retain analysis inventory and acceptance evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: sonar-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/sonar/inventory.json
+            ${{ runner.temp }}/sonar/coverage.xml
+            ${{ runner.temp }}/sonar/coverage-summary.json
+            ${{ runner.temp }}/sonar/provenance-probe.json
+            ${{ runner.temp }}/sonar/evidence-inputs.json
+            ${{ runner.temp }}/sonar/acceptance.json
+
+
+  # Preserve the existing required context. A skipped, cancelled or failed
+  # predecessor is never a successful exact-pins acceptance.
+  exact-pins:
+    if: ${{ always() }}
+    needs: [composed-tests, provider-tests, sonar]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: require successful full tests and verified Sonar analysis
+        env:
+          TEST_RESULT: ${{ needs.composed-tests.result }}
+          PROVIDER_RESULT: ${{ needs.provider-tests.result }}
+          SONAR_RESULT: ${{ needs.sonar.result }}
+        run: |
+          test "$TEST_RESULT" = success
+          test "$PROVIDER_RESULT" = success
+          test "$SONAR_RESULT" = success
