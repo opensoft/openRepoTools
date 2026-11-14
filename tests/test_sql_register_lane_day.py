@@ -84,7 +84,9 @@ READINGS, NOT FOUND IN A CONTRACT:
   `lanes/LANES.md` after the restart, and origin's.
 - "THE FAKE `lanes-edit.sh`'s LOG" (R-F13-2) is `LoggedEdit`, a `LANES_EDIT`
   that logs each call's argv and then runs the flipped copy's
-  `lanes-edit.sh`; a `PAUSED` write is any call whose argv holds `PAUSED`.
+  `lanes-edit.sh`; a `PAUSED` write is any call whose argv holds `PAUSED`,
+  but `write-handoff`, the handoff file's own write, whose subject carries
+  the word (`lane-handoff`'s `hs_subject`) and which AT-11 requires.
 - THE 69 NOTE (P15; T429's "The 69 note", B15 tasks:1375) names `lane-handoff
   --late --at`; THE LATE `PAUSED` PATH is that command, run from a shell once
   the database is back.
@@ -988,7 +990,12 @@ def test_request_handoff_and_claim_refuse_69_with_the_database_down(request, tmp
 
 
 def _paused_writes(log: Path) -> list:
-    return [line for line in log.read_text(encoding="utf-8").splitlines() if "PAUSED" in line]
+    """The register's `PAUSED` writes in `LoggedEdit`'s log: each call whose
+    argv holds `PAUSED`, but the handoff file's own `write-handoff`, whose
+    subject is `handoff(<lane>@<ws>): PAUSED, ...` (`lane-handoff`'s
+    `hs_subject`) and which AT-11 requires (lane 4, #165 6869806372)."""
+    return [line for line in log.read_text(encoding="utf-8").splitlines()
+            if "PAUSED" in line and not line.startswith("write-handoff ")]
 
 
 def _outage_handoff(estate: LaneDay) -> tuple:
