@@ -364,6 +364,78 @@ def rmtree(path: str) -> None:
     shutil.rmtree(path, onerror=clear)
 
 
+#: EVERY PATH A READ SKIPPED AS NO REGULAR FILE, {path: why} (`open_regular`):
+#: the estate report names each one, so a skip is a finding and never silence.
+SKIPPED: dict = {}
+
+
+class NotRegular(OSError):
+    """A FIFO, socket or device where a file was to be opened: an OSError,
+    so every reader here takes it as the read that failed it is - never as
+    a file that is not there."""
+
+
+def _refuse_special(path: str, mode: int) -> None:
+    for test, what in ((stat.S_ISFIFO, "a FIFO"), (stat.S_ISSOCK, "a socket"),
+                       (stat.S_ISCHR, "a character device"), (stat.S_ISBLK, "a block device")):
+        if test(mode):
+            why = f"{what}, not a regular file: skipped, never read"
+            SKIPPED.setdefault(path, why)
+            raise NotRegular(why)
+
+
+def _opener(path: str, flags: int) -> int:
+    fd = os.open(path, flags | os.O_NONBLOCK, 0o666)
+    try:
+        _refuse_special(path, os.fstat(fd).st_mode)
+        os.set_blocking(fd, True)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def open_regular(path: str, mode: str = "r", **kwargs):
+    """`open(path, mode, ...)` that never reads, writes or waits on a FIFO, a
+    socket or a device.
+
+    A FIFO BLOCKS open() UNTIL ITS OTHER END OPENS, AND NOTHING TIMES THAT OUT
+    (lane 3, 2026-11-12): two daily reports, started from two lanes' starts four
+    hours apart, sat in `wait_for_partner` for most of a day in a plain `open()`
+    of an estate path, with no child to time out and no answer to give. So
+    what `stat` says is not a regular file is refused before any open, and
+    what is opened is opened O_NONBLOCK and asked again by `fstat`, so one
+    swapped in between cannot hold the read either. THAT ONE IS OPENED - for
+    the `fstat` alone, and closed unread - so a skip says "never read", not
+    "never opened" (the review of opensoft/openRepoTools-code#70, NIT). A
+    directory, and a path `stat` cannot answer, go to `open()` itself, which
+    refuses them at once, exactly as before."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        st = None
+    if st is not None:
+        _refuse_special(path, st.st_mode)
+    return open(path, mode, opener=_opener, **kwargs)
+
+
+#: Why a record whose contents name a path with a NUL byte in it is unreadable.
+NUL_WHY = "names a path holding a NUL byte, which no path can: unreadable, never followed"
+
+
+def _nul_record(record: str, unread: list | None = None) -> None:
+    """A PATH READ OUT OF A FILE THAT HOLDS A NUL BYTE (lane 3, 2026-11-12):
+    the OS refuses it with a ValueError - no OSError, so no reader here caught
+    it - and one such `.git` pointer in an estate turned the whole daily
+    report into "INTERNAL ERROR", exit 2, no report. The record that named it
+    is one that could not be read: in `SKIPPED`, and in `unread` where one is
+    kept, so a leaning it may hide is unknown, never none."""
+    SKIPPED.setdefault(record, NUL_WHY)
+    line = f"{record} ({NUL_WHY})"
+    if unread is not None and line not in unread:
+        unread.append(line)
+
+
 def sha256_of(path: str) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as fh:
@@ -427,7 +499,7 @@ def load_conf() -> dict:
     conf = dict(DEFAULT_CONF)
     path = conf_path()
     try:
-        with open(path, encoding="utf-8", errors="surrogateescape") as fh:
+        with open_regular(path, encoding="utf-8", errors="surrogateescape") as fh:
             lines = fh.read().splitlines()
     except OSError:
         return conf
@@ -488,6 +560,7 @@ class Helper:
     def __init__(self):
         self.path = lanes_edit_path()
         self._fetched = False
+        self._wroot = None
 
     def call(self, *args: str, env_extra: dict | None = None, fetch: bool = False,
              write: bool = False, timeout: int = 300):
@@ -631,8 +704,24 @@ class Helper:
             facts.managed = "unknown"
 
     def workspace_root(self) -> str:
-        proc = self.call("workspace-root")
-        return proc.stdout.strip() if proc.returncode == 0 else ""
+        """`lanes-edit.sh workspace-root`: ASKED ONCE, AND NEVER A PATH HOLDING A
+        NUL BYTE (the review of opensoft/openRepoTools-code#70, BLOCKING). Its
+        answer went straight to `real()` and `git -C`, where the OS refuses a
+        NUL with a ValueError no reader caught, so one such answer ended the
+        estate report "INTERNAL ERROR", exit 2. It is checked here, before any
+        caller makes a path of it: its raw value is dropped, the root is '' -
+        the workspace not found, which every caller already reads - and the
+        answer is a record that could not be read (`_nul_record`), a row the
+        report names. One answer per helper, so every section of one report
+        reads the same root."""
+        if self._wroot is None:
+            proc = self.call("workspace-root")
+            root = proc.stdout.strip() if proc.returncode == 0 else ""
+            if "\0" in root:
+                _nul_record("lanes-edit.sh workspace-root")
+                root = ""
+            self._wroot = root
+        return self._wroot
 
     def fetch_register(self) -> str:
         """`--yes` ACTS ON A REGISTER READ NOW, or not at all (#170 A1): '' once
@@ -1210,7 +1299,7 @@ def git_common_dir(repo: str) -> str:
     if os.path.isdir(dotgit):
         return dotgit
     try:
-        with open(dotgit, encoding="utf-8", errors="surrogateescape") as fh:
+        with open_regular(dotgit, encoding="utf-8", errors="surrogateescape") as fh:
             first = fh.readline().strip()
     except OSError:
         return ""
@@ -1220,13 +1309,19 @@ def git_common_dir(repo: str) -> str:
     if not os.path.isabs(gitdir):
         gitdir = os.path.normpath(os.path.join(repo, gitdir))
     try:
-        with open(os.path.join(gitdir, "commondir"), encoding="utf-8", errors="surrogateescape") as fh:
+        with open_regular(os.path.join(gitdir, "commondir"), encoding="utf-8",
+                          errors="surrogateescape") as fh:
             common = fh.readline().strip()
         if not os.path.isabs(common):
             common = os.path.normpath(os.path.join(gitdir, common))
         return common
     except OSError:
         return gitdir
+    except ValueError:
+        # THE `gitdir:` LINE NAMES A PATH WITH A NUL BYTE: no git directory can
+        # be found from it, so it is no pointer here - and an unreadable record.
+        _nul_record(dotgit)
+        return ""
 
 
 def local_remote_urls(common: str, unread: list | None = None) -> list:
@@ -1234,7 +1329,7 @@ def local_remote_urls(common: str, unread: list | None = None) -> list:
     A config that exists and cannot be read is named in `unread`."""
     out = []
     try:
-        with open(os.path.join(common, "config"), encoding="utf-8", errors="replace") as fh:
+        with open_regular(os.path.join(common, "config"), encoding="utf-8", errors="replace") as fh:
             text = fh.read()
     except FileNotFoundError:
         return out
@@ -1273,15 +1368,19 @@ def dependents_map(repos: list, unread: list | None = None) -> dict:
             # one in its cache to stop git looking upward. Only one that cannot
             # be read leaves the leaning unknown.
             try:
-                with open(os.path.join(repo, ".git"), "rb") as fh:
+                with open_regular(os.path.join(repo, ".git"), "rb") as fh:
                     fh.read(1)
             except OSError as exc:
                 if unread is not None:
                     unread.append(f"{repo}/.git ({exc.strerror or exc})")
+            else:
+                # ...and one READ that names a NUL-byte path (`git_common_dir`).
+                if SKIPPED.get(os.path.join(repo, ".git")) == NUL_WHY:
+                    _nul_record(os.path.join(repo, ".git"), unread)
             continue
         try:
-            with open(os.path.join(common, "objects", "info", "alternates"),
-                      encoding="utf-8", errors="surrogateescape") as fh:
+            with open_regular(os.path.join(common, "objects", "info", "alternates"),
+                              encoding="utf-8", errors="surrogateescape") as fh:
                 for raw in fh.read().splitlines():
                     alt = raw.strip()
                     if not alt or alt.startswith("#"):
@@ -1295,12 +1394,20 @@ def dependents_map(repos: list, unread: list | None = None) -> dict:
         except OSError as exc:
             if unread is not None:
                 unread.append(f"{common}/objects/info/alternates ({exc.strerror or exc})")
-        for name, url in local_remote_urls(common, unread):
-            path = url[len("file://"):] if url.startswith("file://") else url
-            path = os.path.expanduser(path)
-            if not os.path.isabs(path):
-                path = os.path.normpath(os.path.join(repo, path))
-            deps.setdefault(real(path), []).append((repo, f"remote {name} -> {url}"))
+        except ValueError:
+            # A NUL BYTE in the git directory `commondir` names, or in an
+            # alternates line: the repository's leaning is unknown.
+            _nul_record(os.path.join(repo, ".git"), unread)
+        try:
+            for name, url in local_remote_urls(common, unread):
+                path = url[len("file://"):] if url.startswith("file://") else url
+                path = os.path.expanduser(path)
+                if not os.path.isabs(path):
+                    path = os.path.normpath(os.path.join(repo, path))
+                deps.setdefault(real(path), []).append((repo, f"remote {name} -> {url}"))
+        except ValueError:
+            # ...or in a remote's URL, or in that git directory, met again here.
+            _nul_record(os.path.join(repo, ".git"), unread)
     return deps
 
 
@@ -2029,6 +2136,12 @@ def project_legs(helper, checkout: str) -> tuple:
     if proc.returncode != 0:
         return [], (f"`lanes-edit.sh project-legs {checkout}` exited {proc.returncode}: "
                     + _first_line(proc.stderr))
+    if "\0" in proc.stdout:
+        # A NUL BYTE IN THE ANSWER (the review of opensoft/openRepoTools-code#70):
+        # `Leg` takes `real()` of each path it names, where the OS refuses one
+        # with a ValueError no reader caught - the estate report's INTERNAL
+        # ERROR. A leg named so is no path: the manifest is one not read.
+        return [], f"`lanes-edit.sh project-legs {checkout}` " + NUL_WHY
     rows = []
     for line in proc.stdout.splitlines():
         cols = line.split("\t")
@@ -4979,7 +5092,7 @@ def sandbox_items(procs: ProcScan, conf: dict) -> list:
 
 def _lock_pid(path: str) -> int:
     try:
-        with open(path, encoding="utf-8", errors="surrogateescape") as fh:
+        with open_regular(path, encoding="utf-8", errors="surrogateescape") as fh:
             text = fh.read().strip()
         return int(text) if text.isdigit() else 0
     except (OSError, ValueError):
@@ -5160,13 +5273,17 @@ def archive_ledger(adir: str):
     manifest = os.path.join(adir, "MANIFEST.sha256")
     listed: dict = {}
     try:
-        with open(manifest, encoding="utf-8", errors="surrogateescape") as fh:
+        with open_regular(manifest, encoding="utf-8", errors="surrogateescape") as fh:
             for line in fh:
                 if not line.strip():
                     continue
                 digest, sep, rel = line.rstrip("\n").partition("  ")
                 if not sep or not re.match(r"^[0-9a-f]{64}$", digest):
                     return None, "its MANIFEST.sha256 is malformed"
+                if "\0" in rel:
+                    # A NUL BYTE NAMES NO FILE (`_nul_record`): `isfile` answers False,
+                    # and the name went into the report's row with its raw NUL.
+                    return None, "its MANIFEST.sha256 " + NUL_WHY
                 listed[rel] = digest
     except OSError:
         return None, "it has no readable MANIFEST.sha256 (the sweep that made it did not finish)"
@@ -5182,7 +5299,7 @@ def archive_ledger(adir: str):
             if rel not in listed:
                 return None, f"{rel} is in it and not in its MANIFEST.sha256"
             try:
-                with open(full, "rb") as fh:
+                with open_regular(full, "rb") as fh:
                     if hashlib.sha256(fh.read()).hexdigest() != listed[rel]:
                         return None, f"{rel} does not match its MANIFEST.sha256"
             except OSError:
@@ -5191,12 +5308,16 @@ def archive_ledger(adir: str):
         return None, "it has no rescues.tsv"
     out = []
     try:
-        with open(os.path.join(adir, "rescues.tsv"), encoding="utf-8", errors="surrogateescape") as fh:
+        with open_regular(os.path.join(adir, "rescues.tsv"), encoding="utf-8",
+                          errors="surrogateescape") as fh:
             for line in fh:
                 if line.startswith("#") or not line.strip():
                     continue
                 cols = line.rstrip("\n").split("\t")
-                if len(cols) < 3 or not cols[0] or not cols[1] or not SHA_RE.match(cols[2]):
+                # A NUL BYTE IS NO ORIGIN OR BRANCH: `git ls-remote` would be handed it,
+                # and the OS refuses that argument with a ValueError (`_nul_record`).
+                if len(cols) < 3 or not cols[0] or not cols[1] or not SHA_RE.match(cols[2]) \
+                        or "\0" in line:
                     return None, "its rescues.tsv has a row that is not origin, branch, sha"
                 out.append((cols[0], cols[1], cols[2]))
     except OSError:
@@ -5342,7 +5463,13 @@ class Report:
             dirs, why = register_lane_dirs(self.helper)
             if why:
                 self._unread("the register's lane logs", why)
-            for d in dirs.values():
+            for lane, d in dirs.items():
+                if "\0" in d:
+                    # A NUL BYTE IN A RECORDED `dir` (`_nul_record`; git prints a
+                    # log's lines past its first 8000 bytes as text): `isdir`
+                    # answers False, and that lane's records went unread in silence.
+                    self._unread(f"lane {lane}'s recorded dir in the register", NUL_WHY)
+                    continue
                 out.append(os.path.dirname(d.rstrip(os.sep)))
         return [p for i, p in enumerate(out) if p and p not in out[:i]]
 
@@ -5371,6 +5498,11 @@ class Report:
         self._archives()
         self._workspace_hygiene()
         self._status_all()
+        # A FIFO, SOCKET OR DEVICE A READ SKIPPED (`open_regular`) IS NAMED: what
+        # it stood in for - a `.git` pointer, a git config, a lock, a record - was
+        # not read. A lane record's own row, from `_record`, is the one kept.
+        for path, why in sorted(SKIPPED.items()):
+            self._unread(path, why, record=False)
         self.add("Records the report could not read", [[p, w] for p, w in
                                                       sorted(self.unreadable.items())], "none",
                  "UNKNOWN IS NEVER ABSENT: a lane snapshot, inventory or tree the report "
@@ -5389,7 +5521,7 @@ class Report:
 
     def _record(self, path: str, need_path: bool = False) -> dict:
         try:
-            with open(path, encoding="utf-8") as fh:
+            with open_regular(path, encoding="utf-8") as fh:
                 text = fh.read()
         except FileNotFoundError:
             return {}
@@ -5404,6 +5536,10 @@ class Report:
                 out[key.strip()] = value.strip()
         if need_path and not out.get("path"):
             self._unread(path, "an inventory record that names no path")
+        elif "\0" in out.get("path", ""):
+            # A NUL BYTE (`_nul_record`): `os.path.isdir` answers False for that
+            # path, which read as a tree that is gone - never a record not read.
+            self._unread(path, "an inventory record that " + NUL_WHY)
         return out
 
     def _tree_records(self, tdir: str) -> list:
@@ -5528,6 +5664,7 @@ class Report:
         # review of opensoft/openRepoTools#282, SHOULD 5). `<W>-lanes/<lane>/` is
         # a clone of the register's origin beside W, made on purpose and holding
         # that lane's writes; listing it here told a person to dispose of it.
+        # The root is asked once and holds no NUL byte (`Helper.workspace_root`).
         wroot = self.helper.workspace_root() if self.helper.path else ""
         lanes_home = real(wroot) + "-lanes" if wroot else ""
         # AND A W THAT IS ITSELF A LANE CHECKOUT (the re-review of #282, SHOULD
@@ -5604,6 +5741,15 @@ class Report:
                              f"git grep exited {proc.returncode}: " + _first_line(proc.stderr))
             last: dict = {}
             for line in proc.stdout.splitlines():
+                if line.startswith("Binary file ") and line.endswith(" matches"):
+                    # A LANE LOG HOLDING A NUL BYTE in its first 8000 bytes (the
+                    # review of opensoft/openRepoTools-code#70): git grep prints
+                    # none of its lines, so its ENDED line was missed in silence.
+                    self._unread(line[len("Binary file "):-len(" matches")],
+                                 "a lane log git grep reads as binary (a NUL byte in it, or a "
+                                 "binary attribute), so none of its lines is read: whether its "
+                                 "lane ended is unknown")
+                    continue
                 _ref, _, rest = line.partition(":")
                 fname, _, text = rest.partition(":")
                 last[os.path.basename(fname)[:-3]] = text.split(" ", 1)[0]
@@ -5837,14 +5983,21 @@ class Report:
             # SURROGATEESCAPE, as every other reader here (#170 G10): one byte that
             # is not UTF-8 in the workspace's `.gitignore` aborted the report.
             try:
-                with open(os.path.join(wroot, ".gitignore"), encoding="utf-8",
-                          errors="surrogateescape") as fh:
+                with open_regular(os.path.join(wroot, ".gitignore"), encoding="utf-8",
+                                  errors="surrogateescape") as fh:
                     have = set(fh.read().splitlines())
+            except NotRegular as exc:
+                # NO REPAIR IS OFFERED FOR WHAT IS NOT A FILE: `printf ... >>` onto a
+                # FIFO waits for a reader, so the command this row offered would hang
+                # whoever pasted it. The row says what the path is instead.
+                have = None
+                rows.append([os.path.join(wroot, ".gitignore"), f"is {exc}",
+                             "a person's to look at: no line is appended to what is not a file"])
             except OSError:
                 have = set()
             want = ["__pycache__/", "*.pyc", "*.pyo", ".pytest_cache/", ".mypy_cache/",
                     ".ruff_cache/", "node_modules/", ".venv/", "venv/", "site-packages/"]
-            missing = [w for w in want if w not in have]
+            missing = [w for w in want if have is not None and w not in have]
             if missing:
                 # THE PATH IS QUOTED (#170 item 10): the command is offered to be
                 # pasted, and a workspace path with a space in it split the redirect.
@@ -5950,7 +6103,7 @@ def report_all(opts) -> int:
         return 0
     try:
         os.makedirs(os.path.dirname(os.path.abspath(post)), exist_ok=True)
-        with open(post, "w", encoding="utf-8", errors="surrogateescape") as fh:
+        with open_regular(post, "w", encoding="utf-8", errors="surrogateescape") as fh:
             fh.write(text)
     except OSError as exc:
         note(f"the report could not be written to {post}: {exc}")

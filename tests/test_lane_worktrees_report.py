@@ -25,9 +25,12 @@ sandbox: a real `lane-start` against a register in `tmp_path`.
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import os
 import re
 import shutil
+import socket
+import stat
 import subprocess
 import sys
 import time
@@ -744,3 +747,552 @@ def test_a_W_that_is_a_lane_checkout_lists_its_siblings_as_register_checkouts(tm
     registers = section(proc.stdout, "Register checkouts (Amendment 23 S1)")
     assert f"{mine} · lane repoA-1 ·" in registers, registers
     assert f"{other} · lane repoB-1 ·" in registers, registers
+
+
+# ================================================= a FIFO where a file is read
+
+def test_a_fifo_where_the_report_reads_a_file_is_skipped_and_named_never_waited_on(tmp_path):
+    """Lane 3, 2026-11-12: two daily reports, from two lanes' starts four hours
+    apart, sat for most of a day in `wait_for_partner` - a plain `open()` of a
+    FIFO blocks until its other end opens, and nothing timed it out. Here every
+    file the report itself opens is a FIFO: a lane's snapshot and inventory
+    record, a `.git` that is no directory, a sandbox's `.lock`, an archive's
+    MANIFEST.sha256, `sweep.conf`, the workspace's `.gitignore` and the
+    `--post` target. (A git config, `commondir` or `alternates` is git's own
+    read too, where a FIFO costs git's timeout, so none is here.) The report
+    ends, names each one as skipped, and changes nothing."""
+    e = LW.Estate(tmp_path)
+    (e.fakebin / "status").write_text(FAKE_STATUS)
+    (e.fakebin / "status").chmod(0o755)
+    e.env["LANE_WORKTREES_STATUS"] = str(e.fakebin / "status")
+    lanes = e.projects / ".lane-state"
+    fifos = {
+        "snapshot": lanes / "repoA-7" / "lane-state.yaml",
+        "record": lanes / LW.LANE / "trees" / "c1.yaml",
+        "dotgit": e.projects / "stray" / ".git",
+        "lock": e.sandboxes / "tmp.fifo1" / ".lock",
+        "manifest": (e.state / "openRepoTools" / "sweeps" / LW.LANE / "20200101T000000Z"
+                     / "MANIFEST.sha256"),
+        "conf": e.root / "sweep.conf",
+        "gitignore": Path(e.workspace) / ".gitignore",
+        "post": e.root / "posted.md",
+    }
+    for path in fifos.values():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        os.mkfifo(path)
+    e.env["LANE_WORKTREES_CONF"] = str(fifos["conf"])
+    e.write_spec()
+    skip = ("helper.log", "helper-spec.json", "prs.json")
+    before = LW.snapshot(e.root, skip=skip)
+    try:
+        proc = subprocess.run([sys.executable, str(LW.LW), "sweep", "--all", "--dry-run",
+                               "--report", "--estate", str(e.projects),
+                               "--post", str(fifos["post"])],
+                              capture_output=True, text=True, env=e.env, timeout=120,
+                              cwd=str(e.root), stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        pytest.fail("the report blocked in the open() of a FIFO")
+    after = LW.snapshot(e.root, skip=skip)
+    # A `--post` it cannot write is the documented exit 1, the report printed.
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert f"could not be written to {fifos['post']}: a FIFO, not a regular file" in proc.stderr
+    assert proc.stdout.startswith("# Estate report")
+    rows = section(proc.stdout, "Records the report could not read").splitlines()
+    for name, path in fifos.items():
+        if name == "post":
+            continue
+        hit = [r for r in rows if r.startswith(f"- {path} · ")]
+        assert hit and "a FIFO, not a regular file: skipped, never read" in hit[0], (name, rows)
+    # NO `printf ... >> .gitignore` TO PASTE ONTO A FIFO: it would wait for a reader.
+    hygiene = section(proc.stdout, "Workspace repository hygiene")
+    assert f"{fifos['gitignore']} · is a FIFO, not a regular file" in hygiene, hygiene
+    assert "printf" not in hygiene and ">>" not in hygiene, hygiene
+    assert before == after, sorted(set(before.items()) ^ set(after.items()))[:10]
+
+
+def test_a_git_pointer_naming_a_nul_byte_path_is_unreadable_never_an_internal_error(tmp_path):
+    """Lane 3, 2026-11-12: past its FIFOs, the report on the real estate
+    stopped at a `.git` whose `gitdir:` line holds a NUL byte. The OS refuses
+    such a path with a ValueError, which no reader caught, so the daily report
+    was "INTERNAL ERROR", exit 2, and no report at all. Here one pointer's
+    `gitdir:` line holds a NUL, and so does the `commondir` another pointer
+    leads to: each is a row of "Records the report could not read", the report
+    exits 0, and it changes nothing."""
+    e = LW.Estate(tmp_path)
+    (e.fakebin / "status").write_text(FAKE_STATUS)
+    (e.fakebin / "status").chmod(0o755)
+    e.env["LANE_WORKTREES_STATUS"] = str(e.fakebin / "status")
+    in_gitdir = e.projects / "nul-gitdir"
+    in_gitdir.mkdir()
+    (in_gitdir / ".git").write_bytes(b"gitdir: ../m\0x\n")
+    admin = e.root / "admin" / "wt"
+    admin.mkdir(parents=True)
+    (admin / "commondir").write_bytes(b"../..\0junk\n")
+    in_common = e.projects / "nul-commondir"
+    in_common.mkdir()
+    (in_common / ".git").write_text(f"gitdir: {admin}\n")
+    e.write_spec()
+    skip = ("helper.log", "helper-spec.json", "prs.json")
+    before = LW.snapshot(e.root, skip=skip)
+    proc = subprocess.run([sys.executable, str(LW.LW), "sweep", "--all", "--dry-run",
+                           "--report", "--estate", str(e.projects)],
+                          capture_output=True, text=True, env=e.env, timeout=120,
+                          cwd=str(e.root), stdin=subprocess.DEVNULL)
+    after = LW.snapshot(e.root, skip=skip)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "INTERNAL ERROR" not in proc.stderr, proc.stderr
+    rows = section(proc.stdout, "Records the report could not read").splitlines()
+    for repo in (in_gitdir, in_common):
+        hit = [r for r in rows if r.startswith(f"- {repo / '.git'} · ")]
+        assert hit and "names a path holding a NUL byte" in hit[0], (repo, rows)
+    assert "\0" not in proc.stdout
+    assert before == after, sorted(set(before.items()) ^ set(after.items()))[:10]
+
+
+# ========= the review of code#70: the race, sockets and devices, regular-file
+# ========= parity, and every record the report reads that holds a NUL byte
+
+#: THE REPORT RUN AS A MODULE, for what no one outside its process can make
+#: happen (the review of opensoft/openRepoTools-code#70, SHOULD):
+#:   * `plain_open` gives every `open_regular` back the plain `open()` its
+#:     reader called before #70, so a report over regular files is compared;
+#:   * `race` swaps a FIFO in for one regular file BETWEEN `open_regular`'s
+#:     `stat` and its `open()`: a hook on the `os.stat` call `open_regular`
+#:     itself makes for that path. Deterministic - no timing loop.
+REPORT_SEAM = r'''
+import importlib.util, json, os, stat, sys
+from importlib.machinery import SourceFileLoader
+cfg = json.loads(os.environ["REPORT_SEAM"])
+sys.dont_write_bytecode = True
+loader = SourceFileLoader("lane_worktrees_seam", cfg["lw"])
+lw = importlib.util.module_from_spec(importlib.util.spec_from_loader("lane_worktrees_seam", loader))
+loader.exec_module(lw)
+if cfg.get("plain_open"):
+    lw.open_regular = lambda path, mode="r", **kwargs: open(path, mode, **kwargs)
+race = cfg.get("race")
+if race:
+    real_stat = os.stat
+    def stat_then_swap(path, *args, **kwargs):
+        st = real_stat(path, *args, **kwargs)
+        if (path == race["target"] and not race.get("swapped") and stat.S_ISREG(st.st_mode)
+                and sys._getframe(1).f_code.co_name == "open_regular"):
+            os.replace(race["fifo"], path)
+            race["swapped"] = True
+            sys.stderr.write("REPORT_SEAM: a FIFO replaced a regular file after its stat\n")
+        return st
+    os.stat = stat_then_swap
+sys.exit(lw.main(cfg["argv"]))
+'''
+
+
+def _seam_report(e, *args, plain_open=False, race=None, timeout=300):
+    e.write_spec()
+    child = dict(e.env)
+    child["REPORT_SEAM"] = json.dumps({
+        "lw": str(LW.LW), "plain_open": plain_open, "race": race,
+        "argv": ["sweep", "--all", "--dry-run", "--report", "--estate", str(e.projects),
+                 *[str(a) for a in args]]})
+    return subprocess.run([sys.executable, "-c", REPORT_SEAM], capture_output=True,
+                          encoding="utf-8", errors="surrogateescape", env=child,
+                          timeout=timeout, cwd=str(e.root), stdin=subprocess.DEVNULL)
+
+
+def _fake_status(e) -> None:
+    (e.fakebin / "status").write_text(FAKE_STATUS)
+    (e.fakebin / "status").chmod(0o755)
+    e.env["LANE_WORKTREES_STATUS"] = str(e.fakebin / "status")
+
+
+def test_a_file_swapped_for_a_fifo_between_its_check_and_its_open_is_skipped_unread(tmp_path):
+    """The review of opensoft/openRepoTools-code#70, SHOULD: nothing held the
+    interval between `open_regular`'s `stat` and its `open()`. Here a lane's
+    snapshot is a regular file when `stat` asks and a FIFO with no writer
+    when `open()` runs. The open is O_NONBLOCK, so it does not wait for a
+    writer, and `fstat` refuses the FIFO before a byte is read: the report
+    ends, names it skipped and never read, and exits 0. Without O_NONBLOCK
+    the open waits for ever; without the `fstat` check the FIFO reads as an
+    empty snapshot and no row names it."""
+    e = LW.Estate(tmp_path)
+    _fake_status(e)
+    snap = e.projects / ".lane-state" / "repoA-7" / "lane-state.yaml"
+    snap.parent.mkdir(parents=True)
+    snap.write_text("schema: 1\nstate: CLOSED\n")
+    fifo = e.root / "swapped-in.fifo"
+    os.mkfifo(fifo)
+    try:
+        proc = _seam_report(e, race={"target": str(snap), "fifo": str(fifo)}, timeout=60)
+    except subprocess.TimeoutExpired:
+        pytest.fail("the report waited in the open() of a FIFO swapped in after its stat")
+    assert "REPORT_SEAM: a FIFO replaced a regular file after its stat" in proc.stderr, \
+        proc.stderr
+    assert stat.S_ISFIFO(os.lstat(snap).st_mode)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "INTERNAL ERROR" not in proc.stderr, proc.stderr
+    rows = section(proc.stdout, "Records the report could not read").splitlines()
+    hit = [r for r in rows if r.startswith(f"- {snap} · ")]
+    assert hit and "a FIFO, not a regular file: skipped, never read" in hit[0], rows
+
+
+SPECIAL_KINDS = {"socket": "a socket", "character device": "a character device",
+                 "block device": "a block device", "FIFO holding data": "a FIFO"}
+
+
+def _make_special(kind: str, path: Path, monkeypatch, held: list) -> None:
+    """`path` as a socket, a link to a character or block device, or a FIFO
+    this test holds open with bytes in it - or the test is skipped, named."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if kind == "socket":
+        # AF_UNIX takes about 104 bytes of path and the suite's run root is
+        # deeper, so the socket is bound by its name, from its own directory.
+        monkeypatch.chdir(path.parent)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.bind(path.name)
+        return
+    if kind == "FIFO holding data":
+        os.mkfifo(path)
+        try:
+            # O_RDWR: a writer that never waits for a reader, so the FIFO
+            # holds bytes no one has read when the report runs.
+            fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
+        except OSError as exc:
+            pytest.skip(f"this host will not hold a FIFO open to write to it: {exc}")
+        held.append((fd, path))
+        os.write(fd, b"unread:" + path.name.encode() + b"\n")
+        return
+    # A LINK TO A DEVICE NODE: making one needs CAP_MKNOD, which a test host
+    # seldom grants, and `stat` - as every open the report makes - follows it.
+    # Only /dev/null of the character devices: never a source without an end.
+    if kind == "character device":
+        node = "/dev/null"
+        if not (os.path.exists(node) and stat.S_ISCHR(os.stat(node).st_mode)):
+            pytest.skip("this host has no character device /dev/null to point a record at")
+    else:
+        found = []
+        try:
+            for entry in sorted(os.scandir("/dev"), key=lambda d: d.name):
+                try:
+                    if stat.S_ISBLK(entry.stat(follow_symlinks=False).st_mode):
+                        found.append(entry.path)
+                except OSError:
+                    continue
+        except OSError:
+            pass
+        if not found:
+            pytest.skip("this host has no block device under /dev to point a record at")
+        node = found[0]
+    os.symlink(node, path)
+
+
+def _drain(fd: int) -> bytes:
+    try:
+        return os.read(fd, 4096)
+    except BlockingIOError:
+        return b""
+
+
+@pytest.mark.parametrize("kind", sorted(SPECIAL_KINDS))
+def test_a_socket_device_or_fifo_with_data_where_the_report_reads_a_file_is_never_read(
+        tmp_path, monkeypatch, kind):
+    """The review of opensoft/openRepoTools-code#70, SHOULD: only a FIFO with
+    no writer was tried, so dropping the socket or device checks left every
+    test green. Here a socket, a link to /dev/null, a link to a block device
+    (where the host has one) and a FIFO this test holds open with bytes in it
+    each stand at four files the report reads - `sweep.conf`, a lane's
+    snapshot, a `.git` that is no directory, the workspace's `.gitignore`.
+    The report ends, names each skipped and never read, offers no
+    `>> .gitignore`, changes nothing, and the FIFOs still hold every byte."""
+    label = SPECIAL_KINDS[kind]
+    e = LW.Estate(tmp_path)
+    _fake_status(e)
+    paths = {
+        "conf": e.root / "sweep.conf",
+        "snapshot": e.projects / ".lane-state" / "repoA-7" / "lane-state.yaml",
+        "dotgit": e.projects / "stray" / ".git",
+        "gitignore": Path(e.workspace) / ".gitignore",
+    }
+    held: list = []
+    skip = ("helper.log", "helper-spec.json", "prs.json")
+    try:
+        for path in paths.values():
+            _make_special(kind, path, monkeypatch, held)
+        e.env["LANE_WORKTREES_CONF"] = str(paths["conf"])
+        e.write_spec()
+        before = LW.snapshot(e.root, skip=skip)
+        try:
+            proc = _seam_report(e, timeout=120)
+        except subprocess.TimeoutExpired:
+            pytest.fail(f"the report waited on {label}")
+        after = LW.snapshot(e.root, skip=skip)
+        left = [_drain(fd) for fd, _path in held]
+    finally:
+        for fd, _path in held:
+            os.close(fd)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "INTERNAL ERROR" not in proc.stderr, proc.stderr
+    rows = section(proc.stdout, "Records the report could not read").splitlines()
+    for name, path in paths.items():
+        hit = [r for r in rows if r.startswith(f"- {path} · ")]
+        assert hit and f"{label}, not a regular file: skipped, never read" in hit[0], (name, rows)
+    hygiene = section(proc.stdout, "Workspace repository hygiene")
+    assert f"{paths['gitignore']} · is {label}, not a regular file" in hygiene, hygiene
+    assert "printf" not in hygiene and ">>" not in hygiene, hygiene
+    assert left == [b"unread:" + path.name.encode() + b"\n" for _fd, path in held], left
+    assert before == after, sorted(set(before.items()) ^ set(after.items()))[:10]
+
+
+def _outcome(use) -> tuple:
+    """What one open did: what it returned, or its exception's type, errno,
+    strerror, filename and text."""
+    try:
+        return ("returned",) + tuple(use())
+    except Exception as exc:  # pylint: disable=broad-except
+        return ("raised", type(exc).__name__, getattr(exc, "errno", None),
+                getattr(exc, "strerror", None), getattr(exc, "filename", None), str(exc))
+
+
+def test_open_regular_opens_reads_and_writes_a_regular_file_exactly_as_open_does(tmp_path):
+    """The review of opensoft/openRepoTools-code#70, SHOULD: nothing held
+    `open_regular` to the plain `open()` it replaced. Here every mode the
+    report reads in, on every kind of path it meets - UTF-8, Latin-1, NUL
+    bytes in the content, empty, large, a directory, a file it may not read,
+    a missing path - and `--post`'s write over a new file and an old one,
+    give through each the same data, the same exception (type, errno,
+    strerror, filename), the same file left behind with the same mode, and a
+    descriptor in the same state: blocking (it was opened O_NONBLOCK, and is
+    set back) and not inherited. Nothing is recorded as skipped."""
+    lw = LW._lane_worktrees_module()
+    files = {"utf-8": b"schema: 1\npath: /x/tree\n", "latin-1": b"*.swp\n# caf\xe9\n",
+             "nul-bytes": b"a\0b\n\0\n", "empty": b"", "large": bytes(range(256)) * 512}
+    for name, data in files.items():
+        (tmp_path / name).write_bytes(data)
+    (tmp_path / "a-directory").mkdir()
+    sealed = tmp_path / "sealed"
+    sealed.write_bytes(b"sealed\n")
+    sealed.chmod(0)
+    reads = [("r", {"encoding": "utf-8"}),
+             ("r", {"encoding": "utf-8", "errors": "surrogateescape"}),
+             ("r", {"encoding": "utf-8", "errors": "replace"}), ("rb", {})]
+    compared = 0
+    try:
+        for name in [*files, "a-directory", "sealed", "missing"]:
+            path = str(tmp_path / name)
+            for mode, kwargs in reads:
+                for how in ("read", "readline"):
+                    def use(opener, path=path, mode=mode, kwargs=kwargs, how=how):
+                        with opener(path, mode, **kwargs) as fh:
+                            fd = fh.fileno()
+                            return (getattr(fh, how)(), os.get_blocking(fd),
+                                    os.get_inheritable(fd))
+                    plain = _outcome(lambda: use(open))
+                    assert _outcome(lambda: use(lw.open_regular)) == plain, \
+                        (name, mode, kwargs, how, plain)
+                    compared += 1
+    finally:
+        sealed.chmod(0o644)
+    for old in (None, b"an older report\n" * 64):
+        left = []
+        for i, opener in enumerate((open, lw.open_regular)):
+            target = tmp_path / f"post-{i}-{'old' if old else 'new'}.md"
+            if old is not None:
+                target.write_bytes(old)
+
+            def write(opener=opener, target=target):
+                with opener(str(target), "w", encoding="utf-8", errors="surrogateescape") as fh:
+                    fd = fh.fileno()
+                    return (fh.write("# Estate report\n- caf\udce9\n"), os.get_blocking(fd),
+                            os.get_inheritable(fd))
+            left.append((_outcome(write), target.read_bytes(),
+                         stat.S_IMODE(target.stat().st_mode)))
+        assert left[0] == left[1], left
+    folder = str(tmp_path / "a-directory")
+
+    def onto(opener):
+        return lambda: opener(folder, "w", encoding="utf-8").close() or ()
+    assert _outcome(onto(lw.open_regular)) == _outcome(onto(open))
+    assert compared == 8 * 4 * 2 and lw.SKIPPED == {}, (compared, lw.SKIPPED)
+
+
+def test_the_report_over_regular_files_is_the_report_plain_open_gave(tmp_path):
+    """The review of opensoft/openRepoTools-code#70, SHOULD: no test compared
+    a report over regular files with the one before #70. One estate is
+    reported twice and `--post`ed, once as it is and once with every
+    `open_regular` given back the plain `open()` its reader called
+    (`REPORT_SEAM`'s `plain_open`). Its regular files go every way a read
+    can: read whole, a byte that is not UTF-8 read through surrogateescape
+    and one refused by strict UTF-8, an empty `.git`, a record that names no
+    path, a directory where a record is read, a snapshot it may not read,
+    and an older report the post writes over. The exit, the stderr, the
+    stdout and the posted report are the same, every line but the first,
+    which carries the time."""
+    e = LW.Estate(tmp_path)
+    f = build_estate(e)
+    (f["wip"] / ".gitignore").write_bytes(b"*.swp\n# caf\xe9\n")
+    trees = e.projects / ".lane-state" / "repoA-5" / "trees"
+    trees.mkdir(parents=True)
+    (trees / "latin1.yaml").write_bytes(b"schema: 1\npath: /x/caf\xe9\n")
+    (trees / "nopath.yaml").write_text("schema: 1\n")
+    (trees / "folder.yaml").mkdir()
+    (e.projects / "uv-cache").mkdir()
+    (e.projects / "uv-cache" / ".git").write_bytes(b"")
+    sealed = e.projects / ".lane-state" / "repoA-6" / "lane-state.yaml"
+    sealed.parent.mkdir(parents=True)
+    sealed.write_text("schema: 1\nstate: CLOSED\n")
+    posts = {how: e.root / f"posted-{how}.md" for how in ("plain", "regular")}
+    for post in posts.values():
+        post.write_text("an older report\n" * 64)
+    sealed.chmod(0)
+    try:
+        plain = _seam_report(e, "--post", posts["plain"], plain_open=True)
+        regular = _seam_report(e, "--post", posts["regular"])
+    finally:
+        sealed.chmod(0o644)
+    assert plain.returncode == 0, plain.stdout + plain.stderr
+    assert (regular.returncode, regular.stderr) == (plain.returncode, plain.stderr)
+    assert regular.stdout == plain.stdout.replace(str(posts["plain"]), str(posts["regular"]))
+    head = {how: post.read_bytes().split(b"\n", 1) for how, post in posts.items()}
+    assert head["regular"][0].startswith(b"# Estate report"), head["regular"][0]
+    assert head["regular"][1] == head["plain"][1]
+    unread = section(head["regular"][1].decode("utf-8", "surrogateescape"),
+                     "Records the report could not read")
+    for row in (f"{trees / 'latin1.yaml'} · could not be read",
+                f"{trees / 'nopath.yaml'} · an inventory record that names no path",
+                f"{trees / 'folder.yaml'} · could not be read"):
+        assert row in unread, (row, unread)
+    assert "lacks __pycache__/" in section(head["regular"][1].decode("utf-8", "surrogateescape"),
+                                           "Workspace repository hygiene")
+
+
+def test_a_workspace_root_holding_a_nul_byte_is_named_asked_once_never_an_internal_error(
+        tmp_path):
+    """The review of opensoft/openRepoTools-code#70, BLOCKING: `lanes-edit.sh
+    workspace-root`'s answer went straight to `real()` and `git -C`, and one
+    holding a NUL byte still ended the report "INTERNAL ERROR", exit 2. The
+    answer is asked for once and checked before any path is made of it: the
+    report exits 0, names the answer as a record it could not read, prints
+    no NUL, reads no workspace through it, and changes nothing."""
+    e = LW.Estate(tmp_path)
+    _fake_status(e)
+    e.extra_spec["workspace-root"] = {"rc": 0, "out": e.workspace + "\0junk\n"}
+    e.write_spec()
+    skip = ("helper.log", "helper-spec.json", "prs.json")
+    before = LW.snapshot(e.root, skip=skip)
+    proc = report(e)
+    after = LW.snapshot(e.root, skip=skip)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "INTERNAL ERROR" not in proc.stderr, proc.stderr
+    assert "\0" not in proc.stdout and "\0" not in proc.stderr
+    unread = section(proc.stdout, "Records the report could not read")
+    assert "- lanes-edit.sh workspace-root · names a path holding a NUL byte, which no path " \
+        "can: unreadable, never followed" in unread, unread
+    assert "- the register's lane logs · the workspace repository could not be found" \
+        in unread, unread
+    assert "_none_" in section(proc.stdout, "Workspace repository hygiene")
+    asked = [json.loads(line)["argv"] for line in e.helper_log.read_text().splitlines() if line]
+    assert [a for a in asked if a[:1] == ["workspace-root"]] == [["workspace-root"]], asked
+    assert before == after, sorted(set(before.items()) ^ set(after.items()))[:10]
+
+
+NUL_ROW = "names a path holding a NUL byte, which no path can: unreadable, never followed"
+UNREAD = "Records the report could not read"
+
+
+def _nul_alternates(e) -> list:
+    repo = e.projects / "nul-alternates"
+    e.git("init", "-q", "-b", "main", repo, cwd=e.root)
+    (repo / ".git" / "objects" / "info").mkdir(parents=True, exist_ok=True)
+    (repo / ".git" / "objects" / "info" / "alternates").write_bytes(b"/x/alter\0nates\n")
+    return [(UNREAD, f"- {repo / '.git'} · ", NUL_ROW)]
+
+
+def _nul_remote_url(e) -> list:
+    repo = e.projects / "nul-remote"
+    e.git("init", "-q", "-b", "main", repo, cwd=e.root)
+    with open(repo / ".git" / "config", "ab") as fh:
+        fh.write(b'[remote "nul"]\n\turl = /x/re\0mote\n')
+    return [(UNREAD, f"- {repo / '.git'} · ", NUL_ROW)]
+
+
+def _nul_inventory_path(e) -> list:
+    rec = e.projects / ".lane-state" / LW.LANE / "trees" / "nul.yaml"
+    rec.parent.mkdir(parents=True)
+    rec.write_bytes(b"schema: 1\npath: /x/tr\0ee\n")
+    return [(UNREAD, f"- {rec} · ", "an inventory record that " + NUL_ROW)]
+
+
+def _nul_rescues_row(e) -> list:
+    adir = LW._archive(e, 120, "rescue/repoA-1/x\0y")
+    return [("Sweep archives past retention", f"- {adir} · 120 d · ",
+             "kept past retention: its rescues.tsv has a row that is not origin, branch, sha")]
+
+
+def _nul_manifest_row(e) -> list:
+    adir = LW._archive(e, 120, None)
+    with open(adir / "MANIFEST.sha256", "a") as fh:
+        fh.write(f"{'0' * 64}  lo\0st.bundle\n")
+    return [("Sweep archives past retention", f"- {adir} · 120 d · ",
+             "kept past retention: its MANIFEST.sha256 " + NUL_ROW)]
+
+
+def _nul_project_legs(e) -> list:
+    (e.checkout / "project.yaml").write_text("legs: [code]\n")
+    e.extra_spec["project-legs"] = {"rc": 0, "out": f"opensoft/x\tcode\t{e.checkout}/co\0de\n"}
+    return [(UNREAD, f"- {e.checkout} · ", "its legs could not be read: `lanes-edit.sh "
+             f"project-legs {e.checkout}` " + NUL_ROW)]
+
+
+def _nul_register_dir(e) -> list:
+    pad = "".join(f"NOTED — lane repoA-8, session {LW.ME}@Eagle, 2026-09-01T00:00:00Z, "
+                  f"padding {i:03d}\n" for i in range(120))
+    e.register_line("repoA-8", pad + f"STARTED — lane repoA-8, session {LW.ME}@Eagle, "
+                    "2026-09-01T00:00:00Z, lane:repoA-8; dir /x/re\0poA")
+    log = (Path(e.workspace) / "lanes" / "log" / "repoA-8.md").read_bytes()
+    # PAST THE FIRST 8000 BYTES, where git grep sniffs for binary: the line is
+    # printed, NUL and all.
+    assert log.index(b"\0") > 8000
+    return [(UNREAD, "- lane repoA-8's recorded dir in the register · ", NUL_ROW)]
+
+
+def _nul_register_binary_log(e) -> list:
+    e.register_line("repoA-9", f"ENDED — lane repoA-9, session {LW.ME}@Eagle, "
+                    "2026-09-02T00:00:00Z, lane:repoA-9; dir /x/re\0po")
+    (e.projects / ".lane-worktrees" / "repoA-9" / "left").mkdir(parents=True)
+    return [(UNREAD, "- origin/main:lanes/log/repoA-9.md · ",
+             "a lane log git grep reads as binary"),
+            ("Orphaned worktrees of ENDED lanes", "_none found in what could be read;", "")]
+
+
+NUL_SOURCES = {"alternates": _nul_alternates, "remote-url": _nul_remote_url,
+               "inventory-path": _nul_inventory_path, "rescues-row": _nul_rescues_row,
+               "manifest-row": _nul_manifest_row, "project-legs": _nul_project_legs,
+               "register-dir": _nul_register_dir,
+               "register-binary-log": _nul_register_binary_log}
+
+
+@pytest.mark.parametrize("source", sorted(NUL_SOURCES))
+def test_each_record_holding_a_nul_byte_is_named_never_an_internal_error(tmp_path, source):
+    """The review of opensoft/openRepoTools-code#70, SHOULD: of the records
+    the report reads that can name a path holding a NUL byte, only a `gitdir:`
+    line and `commondir` were tried (the test above). Here, one at a time: an
+    alternates line, a local remote URL, an inventory record's path, a
+    rescues.tsv row, a MANIFEST.sha256 row, `lanes-edit.sh project-legs`'
+    answer, a lane's recorded `dir` past the 8000 bytes git sniffs, and a
+    lane log git reads as binary. Each is named where the report says what
+    it could not read or keep, the report exits 0 with no INTERNAL ERROR and
+    no NUL printed, and it changes nothing. (`workspace-root`'s answer has a
+    test of its own, above.)"""
+    e = LW.Estate(tmp_path)
+    _fake_status(e)
+    expect = NUL_SOURCES[source](e)
+    e.write_spec()
+    skip = ("helper.log", "helper-spec.json", "prs.json")
+    before = LW.snapshot(e.root, skip=skip)
+    proc = report(e)
+    after = LW.snapshot(e.root, skip=skip)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "INTERNAL ERROR" not in proc.stderr, proc.stderr
+    assert "\0" not in proc.stdout and "\0" not in proc.stderr
+    for title, start, fragment in expect:
+        rows = section(proc.stdout, title).splitlines()
+        hit = [r for r in rows if r.startswith(start)]
+        assert hit and fragment in hit[0], (source, title, start, rows)
+    assert before == after, sorted(set(before.items()) ^ set(after.items()))[:10]
