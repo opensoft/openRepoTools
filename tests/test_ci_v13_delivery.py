@@ -10,7 +10,8 @@ import subprocess
 
 import pytest
 
-from conftest import REPO
+from conftest import NEEDS_UPSTREAM, REPO
+from test_ci_pilot_queue import reader as yaml_reader, matches
 from test_ci_delivery import (batch, base_changes, commit, delivery, git, request_for,
                               threads, verify)
 from test_ci_cutover import (cutover, duplicate_fixture, enable_fixture, install_artifact,
@@ -51,12 +52,21 @@ def v13_batch(batch, cutover, v13, request):
         for task in profile["tasks"]:
             write(root, projection.MARKERS + task, "")
         head = commit(root, name)
+        lineage = [head]
+        if type(getattr(request, "param", None)) is int:
+            for index in range(request.param - 1):
+                write(root, profile["files"][0], f"# {name} reviewed fix {index}\n")
+                head = commit(root, f"{name} reviewed fix {index}")
+                lineage.append(head)
         heads.append(head)
         profile["source"] = {"number": number, "head": head, "branch": "feature/" + str(number)}
+        if len(lineage) > 1:
+            profile["source"]["commits"] = lineage
     git(root, "checkout", "-q", "--detach", foundation)
     write(root, projection.CONFIG, json.dumps(policy))
     write(root, v13.CONFIG, json.dumps({"schema_version": 1, "scope": v13.SCOPE,
-                                       "enabled": getattr(request, "param", True)}))
+                                       "enabled": request.param if hasattr(request, "param")
+                                       and type(request.param) is bool else True}))
     write(root, ".github/ci/delivery-policy.json", '{"schema_version":1,"enabled":true}')
     write(root, "unrelated-later-main", "preserve later main\n")
     base = commit(root, "later trusted main")
@@ -122,12 +132,119 @@ def test_ci_v13_delivery_committed_policy_disabled_and_legacy_unchanged(v13, cut
     assert v13.projection.read_policy(REPO, "HEAD")["efficiency_enabled"] is False
 
 
+@NEEDS_UPSTREAM
+def test_ci_v13_delivery_manual_queue_is_heavy_held_and_preserves_existing_queues(yaml_reader):
+    import hashlib
+    config = yaml_reader(REPO / ".mergify.yml")
+    assert set(config) == {"merge_queue", "commands_restrictions", "queue_rules"}
+    assert config["commands_restrictions"]["queue"]["conditions"] == ["sender-permission>=write"]
+    assert hashlib.sha256(json.dumps(config["queue_rules"][:4], sort_keys=True,
+        separators=(",", ":")).encode()).hexdigest() == "7b9279424e5552fdee67d1a943adbc95af30c8c7a28889fd5d4f9be6e38097f3"
+    queue = config["queue_rules"][4]
+    assert queue["name"] == "openrepotools-sql-register-v13"
+    assert queue["branch_protection_injection_mode"] == "queue"
+    assert queue["batch_size"] == 2 and queue["batch_max_wait_time"] == "60 seconds"
+    assert queue["batch_max_failure_resolution_attempts"] == queue["max_checks_retries"] == 0
+    assert queue["checks_timeout"] == "90 minutes" and queue["merge_method"] == "merge"
+    assert not queue.get("allow_queue_branch_edit", False)
+    assert queue["merge_conditions"] == ["check-success=@github-actions/openrepotools-batch-heavy"]
+
+
+@pytest.fixture
+def v13_queue_source():
+    return {"draft": False, "closed": False, "from-fork": False,
+            "head": "007-p03-import-cutover-operator-tools", "base": "main",
+            "body": "CI-Shadow: sql-register-v13\nCI-Delivery: sql-register-v13\nCI-Task-Set: P03",
+            "files": ["tests/test_sql_register_import.py", "tests/sql_register_landed/T211"],
+            "check-success": ["@github-actions/openrepotools-pr-fast", "@github-actions/openrepotools-delivery"]}
+
+
+@NEEDS_UPSTREAM
+@pytest.mark.parametrize("failure", [None, "foundation", "control", "product", "missing-fast", "other-app",
+    "missing-delivery", "no-heavy", "wrong-heavy-app", "fork", "draft", "closed", "dependency", "base",
+    "reserved-branch", "unknown-task", "wrong-scope", "too-many-files", "empty"])
+def test_ci_v13_delivery_manual_queue_refusal_vectors(yaml_reader, v13_queue_source, failure):
+    context = v13_queue_source
+    queue = yaml_reader(REPO / ".mergify.yml")["queue_rules"][4]
+    if failure in {"foundation", "control", "product"}:
+        context["files"].append({"foundation": "tests/pgcluster.py", "control": ".mergify.yml",
+                                 "product": "lanes-index"}[failure])
+    elif failure in {"missing-fast", "missing-delivery"}:
+        context["check-success"].remove("@github-actions/openrepotools-" + (
+            "pr-fast" if failure == "missing-fast" else "delivery"))
+    elif failure == "other-app": context["check-success"] = ["@other/pr-fast", "@other/delivery"]
+    elif failure in {"fork", "draft", "closed"}:
+        context["from-fork" if failure == "fork" else failure] = True
+    elif failure == "dependency": context["body"] += "\n depends-on: #88"
+    elif failure == "base": context["base"] = "p01"
+    elif failure == "reserved-branch": context["head"] = "verify/preview"
+    elif failure == "unknown-task": context["body"] = context["body"].replace("P03", "P02")
+    elif failure == "wrong-scope": context["body"] = context["body"].replace("sql-register-v13", "claude-current")
+    elif failure == "too-many-files": context["files"] *= 4
+    elif failure == "empty": context["files"] = []
+    eligible = all(matches(condition, context) for condition in queue["queue_conditions"])
+    assert eligible is (failure in {None, "no-heavy", "wrong-heavy-app"})
+    if failure in {"no-heavy", "wrong-heavy-app"}:
+        if failure == "wrong-heavy-app": context["check-success"].append("@other/openrepotools-batch-heavy")
+        assert not all(matches(condition, context) for condition in queue["merge_conditions"])
+    elif failure is None:
+        context["check-success"].append("@github-actions/openrepotools-batch-heavy")
+        assert all(matches(condition, context) for condition in queue["merge_conditions"])
+
+
 def test_ci_v13_delivery_fixture_source_uses_test_merge_without_rewriting_owner_head(cutover, v13_batch):
     batch = v13_batch
     assert git(batch["root"], "merge-base", batch["base"], batch["heads"][0]) == batch["foundation"]
     result = route_source(cutover, batch)
     assert result["omit_full"] is True and result["mode"] == "source"
     assert "queue_admission" not in result
+
+
+@pytest.mark.parametrize("v13_batch", [2, 3], indirect=True)
+def test_ci_v13_delivery_reviewed_linear_fixes_keep_all_proof_gates(cutover, delivery, v13_batch, v13):
+    assert route_source(cutover, v13_batch)["omit_full"] is True
+    proof = verify(delivery, v13_batch)
+    assert [row["head"] for row in proof["members"]] == v13_batch["heads"]
+    assert v13.projection.known_child(v13_batch["root"], v13_batch["base"], v13_batch["policy"],
+        "P03", v13_batch["prs"][7], v13_batch["data"]["pulls/88"]) is True
+
+
+@pytest.mark.parametrize("v13_batch", [3], indirect=True)
+@pytest.mark.parametrize("failure", ["empty", "not-list", "duplicate", "reordered", "wrong-last",
+    "overlong", "abbreviated", "merge", "intermediate-control", "unpinned-fix"])
+def test_ci_v13_delivery_unreviewed_or_unsafe_lineage_refuses(v13, v13_batch, failure):
+    batch, root = v13_batch, v13_batch["root"]
+    policy = copy.deepcopy(batch["policy"])
+    source = policy["profiles"]["P03"]["source"]
+    chain = source["commits"]
+    if failure == "empty": source["commits"] = []
+    elif failure == "not-list": source["commits"] = source["head"]
+    elif failure == "duplicate": source["commits"] = [chain[0], chain[0], chain[-1]]
+    elif failure == "reordered": source["commits"] = [chain[1], chain[0], chain[-1]]
+    elif failure == "wrong-last": source["commits"] = chain[:-1]
+    elif failure == "overlong": source["commits"] = ["a" * 40, *chain]
+    elif failure == "abbreviated": source["commits"][0] = chain[0][:7]
+    elif failure == "unpinned-fix": source.pop("commits")
+    else:
+        git(root, "checkout", "-q", "--detach", chain[0])
+        if failure == "merge":
+            head = git(root, "commit-tree", git(root, "rev-parse", chain[-1] + "^{tree}"),
+                       "-p", chain[0], "-p", batch["foundation"], "-m", "merge fix")
+            source["commits"] = [chain[0], head]
+        else:
+            write(root, ".github/workflows/extra.yml", "# temporary control\n")
+            middle = commit(root, "temporary out-of-scope change")
+            git(root, "rm", ".github/workflows/extra.yml")
+            write(root, "tests/test_sql_register_import.py", "# corrected source\n")
+            head = commit(root, "restore final narrow diff")
+            source["commits"] = [chain[0], middle, head]
+            assert v13.projection.scoped_diff(root, batch["foundation"], head, policy["profiles"]["P03"])
+        source["head"] = head
+    git(root, "checkout", "-q", "--detach", batch["base"])
+    write(root, v13.projection.CONFIG, json.dumps(policy))
+    base = commit(root, "trusted lineage fixture")
+    with pytest.raises((ValueError, subprocess.SubprocessError)):
+        v13.cut(root, base, source["head"])
 
 
 @pytest.mark.parametrize("v13_batch", [False], indirect=True)

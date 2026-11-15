@@ -632,11 +632,17 @@ def test_v13_shadow_controls_trigger_existing_full_reuse_without_selectors(yaml_
 def test_v13_shadow_is_disabled_and_not_consumed_by_live_delivery():
     policy = json.loads((REPO / ".github/ci/v13-shadow-profiles.json").read_text())
     assert policy["efficiency_enabled"] is False
-    for path in (".github/workflows/tests.yml", ".mergify.yml", ".github/ci/delivery-policy.json",
+    for path in (".github/workflows/tests.yml", ".github/ci/delivery-policy.json",
                  ".github/ci/delivery_route.py", ".github/ci/delivery_verify.py",
                  ".github/ci/delivery_evidence.py"):
         text = (REPO / path).read_text()
         assert "v13_shadow" not in text and "sql-register-v13" not in text
+    # The staged named queue declares delivery intent, never observation output.
+    # Its separate false flag and heavy-held merge gate are covered by delivery
+    # tests; banning its scope name here would forbid even disabled staging.
+    queue_text = (REPO / ".mergify.yml").read_text()
+    assert "v13_shadow" not in queue_text and "v13-shadow" not in queue_text
+    assert "queue_admission" not in queue_text and "skip_ci" not in queue_text
 
 
 def test_v13_shadow_cli_bad_payload_stays_safe_without_network(tmp_path):
