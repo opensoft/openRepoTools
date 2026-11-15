@@ -737,6 +737,13 @@ D7_S, TWICE_D7_S = 30, 60
 MEASURE_DEADLINE_S, D7_PER_P95 = 120, 10
 UUID_RE = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 SEQ_SAID = re.compile(r"register seq ([0-9]+)")
+#: A WRITE THAT RAN IN FILES MODE (T243x): `lanes-edit.sh`'s one warning where
+#: its mode question failed, `lanes-index mode` under its own 2 s timer
+#: (`reg_mode_query`, `R-merge158:lanes-edit.sh:6360`, then `reg_mode_files`),
+#: with the failure in group 1. These estates hold no `lanes/STORE` on origin,
+#: so T419's marker check lets that write through to git: it exits 0, and the
+#: journal never sees it (merge153's c5, `verify/l1/m153-c5`; lane 2's TW-27).
+FILES_MODE_SAID = re.compile(r"WARNING: `lanes-index mode` (.*?), so `[^`]*` runs in files mode")
 
 
 def session_of(lane: str) -> str:
@@ -1405,7 +1412,15 @@ def burst(e: Estate, objects: Sequence[str], window_ms: int, extra: dict = None,
     so the case's own drain assertion decides a slow burst (T243u). The
     record ends with each writer's exit code, `codes`, so it shows how the
     burst ended, the measuring burst's among them (lane 2's RV26, NIT 7;
-    T243w)."""
+    T243w).
+
+    A WRITER THAT NEVER REACHED THE REGISTER FAILS THE BURST HERE, after the
+    record and before its caller asserts anything, by name (T243x; lane 2's
+    TW-27): one whose stderr holds `FILES_MODE_SAID`, its mode question
+    failed and its claim written to git instead, or one that exited 0 with no
+    call in its shim's log. Neither is a burst's end, and without this the
+    case meets it only as a journal one row short (merge153's c5). The record
+    names them too, as `files_mode`."""
     barrier = Barrier(e.root, len(objects))
     arms = [dict(WINDOW, ms=window_ms)]
     writers = [e.launch(lane, claim(obj, "--no-github"), arms=arms, barrier=barrier, extra=extra)
@@ -1418,6 +1433,13 @@ def burst(e: Estate, objects: Sequence[str], window_ms: int, extra: dict = None,
     drain = max(w.ended for w in writers) - released
     read = {w.lane: burst_calls(w) for w in writers}
     kinds = {lane: [call[0] for call in r[0].split()] for lane, r in read.items()}
+    fell = {}
+    for w in writers:
+        said = FILES_MODE_SAID.search(w.err)
+        if said:
+            fell[w.lane] = said.group(1)
+        elif w.code == 0 and not w.calls():
+            fell[w.lane] = "no warning, and it exited 0 with no call in its shim's log"
     record(name, node, drain_s=round(drain, 2), margin_vs_30s=round(D7_S / max(drain, 0.01), 2),
            attempts={lane: k.count("s") for lane, k in kinds.items()},
            reads={lane: k.count("r") + k.count("m") for lane, k in kinds.items()},
@@ -1425,7 +1447,12 @@ def burst(e: Estate, objects: Sequence[str], window_ms: int, extra: dict = None,
            calls={lane: r[0] for lane, r in read.items()}, losses={lane: r[1] for lane, r in read.items()},
            commit_s={lane: r[2] for lane, r in read.items()},
            longest_commit_s=max((x for r in read.values() for x in r[2]), default=None),
-           codes={w.lane: w.code for w in writers})
+           files_mode=fell, codes={w.lane: w.code for w in writers})
+    assert not fell, (
+        f"{len(fell)} burst writer(s) never reached the register: `lanes-index mode`, asked under "
+        f"lanes-edit.sh's 2 s timer (`reg_mode_query`), failed, so each wrote its claim in files mode, to "
+        f"git, and nothing to the journal; this estate holds no lanes/STORE on origin to refuse it: {fell}. "
+        f"Their stderr: {[(w.lane, w.code, w.err[-400:]) for w in writers if w.lane in fell]}")
     return writers, drain
 
 
