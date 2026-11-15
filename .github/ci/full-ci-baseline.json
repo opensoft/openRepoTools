@@ -24,7 +24,8 @@
   },
   "environment": {
     "OPENREPOTOOLS_CODE_ROOT": "${{ github.workspace }}",
-    "OPENREPOTOOLS_COMPOSED": "0"
+    "OPENREPOTOOLS_COMPOSED": "0",
+    "OPENREPOTOOLS_REQUIRE_PG": "1"
   },
   "job_sha256": {
     "guard-launch-mode": "8373bf9a986071903e92b950aa64103a135d994a21365af98d18014d452316bb",
@@ -43,6 +44,11 @@
         "tests-shard",
         "tests-no-submodule-shard"
       ]
+    },
+    {
+      "reason": "007-sql-register T206: environment only, workflow-level OPENREPOTOOLS_REQUIRE_PG '1', so a run without PostgreSQL 16 fails instead of skipping its real-engine tests; no job/event/test-selection change",
+      "source_commit": "a15a6b54f4b8b6ebb9e7ced8aa9d2b8cdd4e078d",
+      "jobs": []
     }
   ]
 }

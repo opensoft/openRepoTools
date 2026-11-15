@@ -4626,3 +4626,52 @@ def test_the_suite_wrapper_takes_one_lock_and_names_it_where_agents_read_it():
     by_hand = [ln for ln in agents.splitlines() if lock in ln and "python3 -m pytest" in ln]
     assert by_hand and all("-p no:cacheprovider" in ln and "PYTHONPYCACHEPREFIX=" in ln
                            for ln in by_hand), by_hand
+
+
+def test_no_workflow_sets_the_landing_gates_switch():
+    """T280'S LANDING GATE DECIDES BY THE RUN, NOT BY A WORKFLOW (Brett's
+    "Temporary landing gate (Recommended)", 2026-11-13; lane 3's ruling on
+    when it is active). `tests/conftest.py` skips each 007 test whose tasks
+    have not all landed, but only in a GitHub Actions run whose workflow is
+    not `verify` and whose ref is not a `verify/` branch. It reads that from
+    `GITHUB_ACTIONS`, `GITHUB_WORKFLOW` and the run's ref.
+    `SQL_REGISTER_GATE=on` or `=off` is a person's override.
+
+    A workflow that set the variable would decide for every run of that
+    workflow, whatever its ref. Set to `off`, a pull request's CI would run
+    007 tests whose code has not landed. Set to `on`, a `verify/` branch, cut
+    from line R with no markers, would pass by the gate's skip. So no
+    workflow file names it, and none changes for the gate.
+
+    A workflow file is not the only place that could set it for CI (lane 2's
+    review RV26, NIT 2). So the row reads every file under `.github/` but its
+    Markdown prose and bytecode: the workflows, any composite action, and the
+    launchers in `.github/ci/`, where `ci_shards.py` builds each shard's
+    environment, `sonar_coverage/sitecustomize.py` runs inside each Python
+    process of a coverage run and `sonar_coverage/bash-env.sh` is sourced by
+    its bash. It also reads `tests/run.sh`, which `tests.yml`'s
+    `guard-launch-mode` job runs and the tasks' verify commands call: set
+    there, the variable would decide every run of the wrapper, and a verify
+    could pass by the gate's skip. A comment line, whose first character other
+    than a blank is `#`, does not count, so a file may say why it never sets
+    the switch. T281 removes this row with the gate, in the last set."""
+    github = REPO / ".github"
+    workflows = github / "workflows"
+    wrapper = REPO / "tests" / "run.sh"
+    files = sorted(path for path in github.rglob("*")
+                   if path.is_file() and path.suffix != ".md"
+                   and "__pycache__" not in path.relative_to(github).parts)
+    assert any(path.parent == workflows and path.suffix in (".yml", ".yaml")
+               for path in files), (
+        f"no workflow file under {workflows}: this rule would hold of nothing")
+    assert wrapper.is_file(), f"no {wrapper}: this rule reads the suite's wrapper"
+    found = [f"{path.relative_to(REPO).as_posix()}:{number}"
+             for path in [*files, wrapper]
+             for number, line in enumerate(
+                 path.read_text(encoding="utf-8", errors="replace").splitlines(), 1)
+             if "SQL_REGISTER_GATE" in line and not line.lstrip().startswith("#")]
+    assert not found, (
+        "a file CI reads names SQL_REGISTER_GATE, which only a person sets: "
+        "the landing gate is active in an Actions run whose workflow is not "
+        "verify and whose ref is not a verify/ branch, and a file that set it "
+        "would gate or ungate every run that reads it (T280): " + ", ".join(found))
