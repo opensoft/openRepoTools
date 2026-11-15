@@ -4,7 +4,11 @@ This is not an efficiency activation. Ordinary full CI remains required on
 every existing event. The parameterless full-CI qualification caller still runs
 every original job when these control files change. No delivery router, verifier,
 queue or required check consumes the observer's output. Existing claude-current
-behavior is unchanged. There is no new queue or permission to omit work.
+behavior is unchanged. The observer itself adds no queue or permission to omit
+work. A [separate manual v1.3 queue](delivery-v13.md#staged-manual-queue) is now
+staged; it does not consume observer output or turn the false delivery flag on.
+Its preliminary entry filters and operator-consent boundary are separate from
+the trusted heavy qualification required before that queue can merge.
 
 The canonical proposal, design, requirements and implementation checklist live
 in the spec leg at `openspec/changes/qualify-v13-taskset-ci/`. This projection is
@@ -46,6 +50,10 @@ The disabled projections additionally bind the observed real cuts:
 
 Both source heads have exactly one parent: P01's pinned source head. Their
 owners' real branches, bases and metadata are not rewritten by this observer.
+An explicitly reviewed future `source.commits` binding may pin one to three
+linear commits as described in the delivery runbook; every exact parent and
+cumulative cut is checked. Missing lineage keeps the original single-child
+rule. A new owner commit is never followed automatically.
 Coordination for this follow-up is assembly issue165 comment6889436296. These
 bindings record provenance, not review acceptance or approved task-set authority.
 

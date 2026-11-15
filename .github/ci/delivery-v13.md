@@ -63,6 +63,11 @@ verifier still independently checks the registered head, lineage, full cut,
 prerequisite, review, fast evidence, live rereads and complete heavy artifacts.
 The queue cannot merge without app-qualified `openrepotools-batch-heavy` success.
 While the actual delivery flag is false, v1.3 candidate proof refuses.
+The false flag blocks qualification and merge through this heavy-held queue,
+not a repository writer's ability to request preliminary manual queue entry.
+Such a request remains unauthorized during staging. The queue is not claimed
+to be mechanically inert; no automatic entry or independent admission-consent
+status is introduced or inferred from its coarse filters.
 
 No queue command is authorized by this staged source. Under subsequent reviewed
 enablement, the operator must verify fresh owner consent for the exact two
