@@ -1454,10 +1454,17 @@ def burst(e: Estate, objects: Sequence[str], window_ms: int, extra: dict = None,
            longest_commit_s=max((x for r in read.values() for x in r[2]), default=None),
            files_mode=fell, codes={w.lane: w.code for w in writers})
     assert not fell, (
-        f"{len(fell)} burst writer(s) never reached the register: `lanes-index mode`, asked under "
-        f"lanes-edit.sh's 2 s timer (`reg_mode_query`), failed, so each wrote its claim in files mode, to "
-        f"git, and nothing to the journal; this estate holds no lanes/STORE on origin to refuse it: {fell}. "
-        f"Their stderr: {[(w.lane, w.code, w.err[-400:]) for w in writers if w.lane in fell]}")
+        f"{len(fell)} burst writer(s) never reached the register." + "".join(
+            " " + words.format(caught) for words, caught in (
+                ("The mode-question check caught {}: `lanes-index mode`, asked under lanes-edit.sh's 2 s "
+                 "timer (`reg_mode_query`), failed, so each wrote its claim in files mode, to git, and "
+                 "nothing to the journal; this estate holds no lanes/STORE on origin to refuse it.",
+                 {w.lane: fell[w.lane] for w in writers if w.lane in fell and FILES_MODE_SAID.search(w.err)}),
+                ("The exit-0-with-no-call check caught {}: with no files-mode warning on stderr, each "
+                 "exited 0 with no call in its shim's log, so its claim never reached the register.",
+                 [w.lane for w in writers if w.lane in fell and not FILES_MODE_SAID.search(w.err)]))
+            if caught)
+        + f" Their stderr: {[(w.lane, w.code, w.err[-400:]) for w in writers if w.lane in fell]}")
     return writers, drain
 
 
