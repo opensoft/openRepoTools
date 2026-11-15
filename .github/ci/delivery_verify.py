@@ -9,6 +9,7 @@ Successful verification still requires the entire heavy suite and a final rechec
 from __future__ import annotations
 
 import argparse
+import ast
 from datetime import datetime
 import hashlib
 import json
@@ -18,6 +19,7 @@ import re
 import subprocess
 
 import shadow_scope as policy
+import delivery_v13 as v13
 
 REPOSITORY = policy.REPOSITORY
 FAST = "openrepotools-pr-fast"
@@ -30,6 +32,8 @@ LOCAL_SKILLS = {"pre-pr-review", "pr-review", "branch-or-pr-review"}
 
 
 def delivery_intended(text):
+    if v13.intended(text):
+        return True
     if not policy.intended(text):
         return False
     lines = re.findall(r"(?m)^CI-Delivery:[^\n]*", text)
@@ -292,12 +296,16 @@ def source_pr(head, main, root, request, threads, base_changes):
             "Member is not open and ready")
     actual_head, branch = policy.side(pr, "head")
     base, base_ref = policy.side(pr, "base")
+    is_v13 = v13.intended(pr.get("body"))
     require(actual_head == head and policy.source_branch(branch) and base_ref == "main"
-            and base == main and policy.intended(pr["body"])
+            and base == main and (is_v13 or policy.intended(pr["body"]))
             and not re.search(r"(?m)^Depends-On:", pr["body"]),
             "Member scope/identity/topology is not the independent pilot")
-    policy.git(root, "merge-base", "--is-ancestor", main, head)
-    require(policy.regular_scope(root, main, head), "Member changes unsupported paths or modes")
+    if is_v13:
+        v13.source(root, main, pr, request)
+    else:
+        policy.git(root, "merge-base", "--is-ancestor", main, head)
+        require(policy.regular_scope(root, main, head), "Member changes unsupported paths or modes")
     evidence = (fast_receipt(pr, head, request, base_changes),
                 clean_review(number, head, request, threads, base=base))
     return pr, evidence
@@ -316,6 +324,12 @@ def verify_fast(env, event, root):
     pair = policy.git(root, "show", "-s", "--format=%P", tested).decode().split()
     require(pair == [base, head], "Fast test-merge parents differ from event identities")
     policy.git(root, "diff", "--check", base, tested, "--")
+    paths = policy.git(root, "diff", "--name-only", "--diff-filter=AM", "-z", base, tested, "--")
+    for path in paths.decode("utf-8").split("\0"):
+        if re.fullmatch(r"tests/test_sql_register_[a-z_]+[.]py", path):
+            # Parse immutable test-merge blobs, never import/execute a SQL test
+            # or follow a worktree path. Required-engine execution stays heavy.
+            ast.parse(policy.git(root, "show", f"{tested}:{path}"), filename=path)
     return {"tested": tested, "base": base, "head": head, "full_ci_required": True}
 
 
@@ -349,20 +363,25 @@ def verify_candidate(env, event, root, request=policy.github, threads=read_threa
         chain.append((previous, head, current))
         current = previous
     require(current == main and 1 <= len(chain) <= 2, "Candidate is not rooted at current main")
-    require(policy.regular_scope(root, main, candidate), "Combined candidate is outside scope")
-    members, snapshots, seen_heads = [], [], set()
+    members, snapshots, seen_heads, scope = [], [], set(), None
     for previous, head, prefix in reversed(chain):
         require(head not in seen_heads, "Duplicate source head")
+        pr, evidence = source_pr(head, main, root, request, threads, base_changes)
+        member_scope = v13.SCOPE if v13.intended(pr.get("body")) else "claude-current"
+        require(scope is None or scope == member_scope, "Candidate mixes delivery scopes")
+        scope = member_scope
+        anchor = v13.configuration(root, main)["prerequisite"]["head"] if scope == v13.SCOPE else main
         for other in seen_heads:
-            require(policy.git(root, "merge-base", "--all", other, head).decode().split() == [main],
+            require(policy.git(root, "merge-base", "--all", other, head).decode().split() == [anchor],
                     "Source members share non-main history")
         seen_heads.add(head)
-        pr, evidence = source_pr(head, main, root, request, threads, base_changes)
         require(pr["number"] not in [row["number"] for row in members], "Duplicate source member")
         expected = policy.sha(policy.git(
             root, "merge-tree", "--write-tree", previous, head).decode().strip())
         tree = policy.sha(policy.git(root, "rev-parse", prefix + "^{tree}").decode().strip())
-        require(expected == tree and policy.regular_scope(root, previous, prefix),
+        scoped = (v13.prefix(root, main, head, previous, prefix) if scope == v13.SCOPE
+                  else policy.regular_scope(root, previous, prefix))
+        require(expected == tree and scoped,
                 "Candidate prefix is not the expected clean scoped merge")
         members.append({"number": pr["number"], "head": head, "prefix": prefix, "tree": tree,
                         "delivery": delivery_intended(pr["body"])})
@@ -370,6 +389,8 @@ def verify_candidate(env, event, root, request=policy.github, threads=read_threa
     for pr, evidence in snapshots:
         require(policy.snapshot(pr) == policy.snapshot(
             request(REPOSITORY, f"pulls/{pr['number']}")), "Source changed during verification")
+        if scope == v13.SCOPE:
+            v13.source(root, main, pr, request)
         require(evidence == (fast_receipt(pr, pr["head"]["sha"], request, base_changes),
                              clean_review(pr["number"], pr["head"]["sha"], request, threads,
                                           base=pr["base"]["sha"])),
@@ -379,8 +400,11 @@ def verify_candidate(env, event, root, request=policy.github, threads=read_threa
     require(policy.sha(request(REPOSITORY, endpoint)["object"]["sha"]) == candidate
             and policy.sha(request(REPOSITORY, "git/ref/heads/main")["object"]["sha"]) == main,
             "Candidate/main changed during verification")
+    if scope != v13.SCOPE:
+        require(policy.regular_scope(root, main, candidate), "Combined candidate is outside scope")
     return {"verified": True, "full_ci_required": True, "base": main, "candidate": candidate,
-            "tree": members[-1]["tree"], "members": members}
+            "tree": members[-1]["tree"], "members": members,
+            **({"scope": v13.SCOPE} if scope == v13.SCOPE else {})}
 
 
 def write_record(record, env):
