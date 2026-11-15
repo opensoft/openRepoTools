@@ -1,12 +1,13 @@
 # v1.3 qualification and disabled shadow
 
-This is not an efficiency activation. Ordinary full CI remains required on
-every existing event. The parameterless full-CI qualification caller still runs
+This observer is not an efficiency activation. Ordinary full CI remains the
+fallback except for the separately qualified exact delivery scope. The
+parameterless full-CI qualification caller still runs
 every original job when these control files change. No delivery router, verifier,
 queue or required check consumes the observer's output. Existing claude-current
 behavior is unchanged. The observer itself adds no queue or permission to omit
-work. A [separate manual v1.3 queue](delivery-v13.md#staged-manual-queue) is now
-staged; it does not consume observer output or turn the false delivery flag on.
+work. A [separate manual v1.3 queue](delivery-v13.md#manual-heavy-held-queue)
+does not consume observer output or itself turn the independent delivery flag on.
 Its preliminary entry filters and operator-consent boundary are separate from
 the trusted heavy qualification required before that queue can merge.
 
@@ -17,9 +18,10 @@ not a replacement for feature007's task ledger or owner-approved task cuts.
 ## Observation contract
 
 `v13-shadow-profiles.json` explicitly sets `efficiency_enabled: false`. Its
-P03/P05 projection is based on the v12f planning draft at spec revision
-`c304e387cf9b5a1ccd3337e926a5d726132b1547`; owners must reconcile current task
-sets before any future activation. Exact named regular added/modified tests and
+P05/P06 projection is bound to reviewed spec revision
+`a3366afcc059b4686c990f4715c36dac9b1db05b` and the exact owner-reviewed cuts
+described in the delivery runbook. This registry update does not enable the
+observer or make its observations a grant. Exact named regular added/modified tests and
 the exact cut's empty added markers can be observed. Mixed/control files,
 deletions, renames, executable/symlink changes, missing/extra/nonempty markers,
 marker-only edits and arbitrary dependent stacks cannot. The exact known-P01
@@ -31,7 +33,7 @@ observation with exactly one of each line, for example:
 
 ```text
 CI-Shadow: sql-register-v13
-CI-Task-Set: P03
+CI-Task-Set: P05
 ```
 
 These lines request **no skips, queue admission or qualification**. CRLF and
@@ -45,16 +47,16 @@ The disabled projections additionally bind the observed real cuts:
 
 | Cut | Source PR | Immutable head | Source branch |
 | --- | --- | --- | --- |
-| P03 | #93 | `81483ab50d1c75b7be3c8932e00efea3d284d102` | `007-p03-import-cutover-operator-tools` |
-| P05 | #92 | `3b71c7c532f0da0b6ebbe5aee1c7cc0213a0cd56` | `007-p05-readers-table-and-default-arms` |
+| P05 | #92 | `2a02cd9eba113329870ed7eba6efd470375b8739` | `007-p05-readers-table-and-default-arms` |
+| P06 | #94 | `bcc8858bf587fbe86b00264b41caca1b39ccfc72` | `007-p06-refusing-flipped-wip-init-marker` |
 
-Both source heads have exactly one parent: P01's pinned source head. Their
-owners' real branches, bases and metadata are not rewritten by this observer.
-An explicitly reviewed future `source.commits` binding may pin one to three
+Both first commits are P01 children; each has one exact reviewed linear fix.
+Their owners' real branches, bases and metadata are not rewritten by this observer.
+An explicitly reviewed `source.commits` binding pins one to three
 linear commits as described in the delivery runbook; every exact parent and
 cumulative cut is checked. Missing lineage keeps the original single-child
 rule. A new owner commit is never followed automatically.
-Coordination for this follow-up is assembly issue165 comment6889436296. These
+Current owner coordination is issue165 comments6898422904 and6898740891. These
 bindings record provenance, not review acceptance or approved task-set authority.
 
 After the existing exact P01 merged-contract check succeeds, the observer can
@@ -100,9 +102,15 @@ The immutable context anchor is source head
 `7f1141be15ac9c0d20c25c802ba9533c2fec811c`, with workflow blob
 `e46aca51d4a7a59991c319ee809d46dc61a53d93` and baseline blob
 `1fd9698a4e5be71b92fa4d9abc7ee6b39f60fcb0`. This does not pin a deployed
-provider or adopt the unmerged source. Pending, changed, inaccessible or missing
+provider or authorize delivery. Pending, changed, inaccessible or missing
 prerequisite evidence cannot produce a cut observation. Source/control drift
 requires a reviewed projection update, not following a mutable PR head.
+
+The optional explicit foundation epoch retains P01 ancestry, frozen controls and
+markers, and exact four-file regular modes/blobs with no later drift. Absence
+retains the original strict freeze. It never auto-discovers an epoch from main;
+matching blobs alone are not a real-engine receipt. Canonical epoch/enablement
+requirements live in `openspec/changes/enable-reviewed-v13-test-cuts/` in the spec leg.
 
 `merged-contract-observed` means only that the exact same-repo/main PR source
 and merge are ancestors of main, the control blobs match and required-engine

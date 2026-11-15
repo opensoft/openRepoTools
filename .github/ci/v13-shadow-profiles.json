@@ -2,8 +2,8 @@
   "schema_version": 1,
   "efficiency_enabled": false,
   "scope": "sql-register-v13",
-  "spec_revision": "c304e387cf9b5a1ccd3337e926a5d726132b1547",
-  "planning_status": "v12f draft; owner reconciliation required before activation",
+  "spec_revision": "a3366afcc059b4686c990f4715c36dac9b1db05b",
+  "planning_status": "Reviewed initial P05/P06 test-only pair; owner review records 6898716602 and 6898717748; separate admission gates remain",
   "prerequisite": {
     "number": 88,
     "head": "7f1141be15ac9c0d20c25c802ba9533c2fec811c",
@@ -12,16 +12,35 @@
       ".github/ci/full-ci-baseline.json": "1fd9698a4e5be71b92fa4d9abc7ee6b39f60fcb0"
     }
   },
+  "foundation": {
+    "head": "f0070e009bc6f183904549b69c710ef3982ca6e6",
+    "blobs": {
+      "tests/conftest.py": "5c4e3d182094bd149e9a68f826ae427dc9739b5d",
+      "tests/pgcluster.py": "97871b78a222b1b3d7cc05ef1bc4bbbeeaa4419d",
+      "tests/sql_register_gate.py": "0d0a30d3df586222b4b84a4e91cfb97260781d87",
+      "tests/sql_register_helpers.py": "cc357350d3438fd59b232c9610273a71f4969bfb"
+    }
+  },
   "profiles": {
-    "P03": {
-      "source": {"number": 93, "head": "81483ab50d1c75b7be3c8932e00efea3d284d102", "branch": "007-p03-import-cutover-operator-tools"},
-      "tasks": ["T211", "T218", "T272"],
-      "files": ["tests/test_sql_register_import.py", "tests/test_sql_register_operator_tools.py", "tests/test_sql_register_cutover.py"]
-    },
     "P05": {
-      "source": {"number": 92, "head": "3b71c7c532f0da0b6ebbe5aee1c7cc0213a0cd56", "branch": "007-p05-readers-table-and-default-arms"},
+      "source": {
+        "number": 92,
+        "head": "2a02cd9eba113329870ed7eba6efd470375b8739",
+        "branch": "007-p05-readers-table-and-default-arms",
+        "commits": ["3b71c7c532f0da0b6ebbe5aee1c7cc0213a0cd56", "2a02cd9eba113329870ed7eba6efd470375b8739"]
+      },
       "tasks": ["T217", "T235", "T259"],
       "files": ["tests/test_sql_register_readers.py"]
+    },
+    "P06": {
+      "source": {
+        "number": 94,
+        "head": "bcc8858bf587fbe86b00264b41caca1b39ccfc72",
+        "branch": "007-p06-refusing-flipped-wip-init-marker",
+        "commits": ["b65d836b4ea939a43f89cf4e582055bb9e80f890", "bcc8858bf587fbe86b00264b41caca1b39ccfc72"]
+      },
+      "tasks": ["T212", "T256", "T225", "T242"],
+      "files": ["tests/test_sql_register_build_flip.py", "tests/test_sql_register_marker.py"]
     }
   }
 }

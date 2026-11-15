@@ -130,9 +130,9 @@ def v13_artifact(cutover, v13_batch, delivery):
     return {"run": run, "record": record, "env": env}
 
 
-def test_ci_v13_delivery_committed_policy_disabled_and_legacy_unchanged(v13, cutover):
+def test_ci_v13_delivery_committed_policy_enabled_with_observer_and_legacy_unchanged(v13, cutover):
     assert json.loads((REPO / v13.CONFIG).read_text()) == {
-        "schema_version": 1, "scope": v13.SCOPE, "enabled": False}
+        "schema_version": 1, "scope": v13.SCOPE, "enabled": True}
     assert cutover.enabled(REPO) is True
     assert v13.projection.read_policy(REPO, "HEAD")["efficiency_enabled"] is False
 

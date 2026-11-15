@@ -141,8 +141,8 @@ queue_rules:
     merge_conditions:
       - check-success=@github-actions/openrepotools-batch-heavy
 
-  # Staged manual test-only scope. The independent delivery flag remains false;
-  # no automatic entry or owner opt-in follows from adding this queue.
+  # Reviewed initial test-only scope. Entry is manual, exact-head consent is
+  # separate, and the queue cannot merge without complete trusted heavy proof.
   - name: openrepotools-sql-register-v13
     branch_protection_injection_mode: queue
     batch_size: 2
@@ -159,7 +159,7 @@ queue_rules:
       - 'head~=^(?!main\Z|release/|verify/|mergify/)[A-Za-z0-9][A-Za-z0-9._/-]*\Z'
       - 'body~=(?m)^CI-Shadow: sql-register-v13[ \t\r]*$'
       - 'body~=(?m)^CI-Delivery: sql-register-v13[ \t\r]*$'
-      - 'body~=(?m)^CI-Task-Set: P(?:03|05)[ \t\r]*$'
+      - 'body~=(?m)^CI-Task-Set: P(?:05|06)[ \t\r]*$'
       - '-body~=(?im)^[ \t]*Depends-On:'
       - '#files>=2'
       - '#files<=6'
