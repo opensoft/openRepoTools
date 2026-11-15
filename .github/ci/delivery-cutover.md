@@ -62,6 +62,15 @@ Authenticated current run.path distinguishes ordinary tests.yml from reuse.
 Reusable calls force full even though GitHub retains the caller's original event.
 Release branches, nightly and manual runs force full. No release workflow changes.
 
+Repeated canonical events on one unchanged head can leave several named fast
+checks. A complete bounded configured-workflow catalogue identifies the unique
+newest run by its per-workflow run_number; check array order and any older green
+are not authority. All named check identities/suites must match that catalogue,
+and exactly one current selected check must retain the complete run/job/source/
+base-history proof. Recheck newest selection before proof. Missing current jobs,
+unknown/truncated/ambiguous history and newest failures retain full; only existing
+complete authenticated pending evidence may wait. No retry mechanism is added.
+
 ## Candidate, held queue and historical landing
 
 The queue-push caller writes immutable admission and qualified JSON artifacts

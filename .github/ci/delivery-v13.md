@@ -124,6 +124,13 @@ not ignore a stale base, changed source or later live reread. Unknown/malformed
 objects retain full. A full-fallback preparation event is not fast-only evidence
 and must not be reported as an accepted efficiency canary.
 
+The same unchanged head may also have historical fast-workflow checks. Only the
+unique newest canonical run from the complete bounded configured-workflow
+catalogue can supply fast proof, with its own matching check/run/job and source/
+base-history evidence. Historical successes cannot cover a failed, pending,
+missing, ambiguous or unrecognized newest receipt. A missing current job remains
+immediate full fallback; no extra waiting or queue authority is introduced.
+
 Only after all gates above pass under the approved owner-consented canary, a
 repository writer may request the named queue on both independent members:
 
