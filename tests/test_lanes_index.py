@@ -933,8 +933,13 @@ def test_offline_no_read_every_act_is_byte_identical_against_an_unreachable_inde
     fake = indexed.root / "pgfake"
     fake.mkdir()
     psql_log = indexed.root / "psql.log"
+    # THE STORE IT REACHED FOR, rebuilt from the `PG*` variables as FAKE_PSQL
+    # rebuilds it (Question 11; L2-0c), so `lanes_writer` below can only have
+    # come from `PGUSER`, never from an argument.
     (fake / "psql").write_text(
-        f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> {psql_log}\n"
+        "#!/bin/sh\n"
+        "printf 'postgresql://%s@%s%s/%s\\n' \"$PGUSER\" \"$PGHOST\" \"${PGPORT:+:$PGPORT}\" "
+        f"\"$PGDATABASE\" >> {psql_log}\n"
         "echo 'psql: error: connection to server at \"lanes-index.invalid\" failed' >&2\nexit 2\n")
     (fake / "psql").chmod(0o755)
     pw = indexed.config / "pgpass"
@@ -1072,7 +1077,19 @@ log = os.environ["FAKE_PSQL_LOG"]
 vfile = os.environ.get("FAKE_PSQL_VERSION_FILE", "")
 version = open(vfile).read().strip() if vfile else "1"
 args = sys.argv[1:]
-url = args[args.index("-d") + 1] if "-d" in args else ""
+# THE CONNECTION IN `PG*` VARIABLES ALONE (Question 11; L2-0c): an argument
+# that is `-d` or `--dbname`, or that carries a URL, is refused with psql's own
+# fatal-error 1 before anything is recorded, since `/proc` shows a process's
+# arguments for its life. The URL recorded is rebuilt from `PGUSER`, `PGHOST`,
+# `PGPORT` and `PGDATABASE`, with no port where `PGPORT` is unset, so each URL
+# a test configures reads back unchanged.
+if any(a.startswith(("-d", "--dbname")) or "://" in a for a in args):
+    sys.stderr.write("FAKE psql: an argument carries the connection (-d, --dbname or a URL);"
+                     " psql takes it from PG* variables only (Question 11)\n")
+    sys.exit(1)
+port = os.environ.get("PGPORT", "")
+url = ("postgresql://" + os.environ.get("PGUSER", "") + "@" + os.environ.get("PGHOST", "")
+       + (":" + port if port else "") + "/" + os.environ.get("PGDATABASE", ""))
 stdin = sys.stdin.read()
 with open(log, "a") as handle:
     handle.write(json.dumps({"url": url, "passfile": os.environ.get("PGPASSFILE", ""),
@@ -1143,9 +1160,10 @@ def test_the_fake_psql_decodes_echo_as_psql_does(tmp_path):
         "\\echo 'a\\tb\\x41\\101\\q'",
         "\\echo plain",
         ""])
-    res = subprocess.run([sys.executable, str(fake), "-d", "postgresql://x@db.invalid/qa"],
+    res = subprocess.run([sys.executable, str(fake)],
                          input=script, capture_output=True, text=True, check=False,
-                         env=dict(os.environ, FAKE_PSQL_LOG=str(tmp_path / "log")))
+                         env=dict(os.environ, FAKE_PSQL_LOG=str(tmp_path / "log"),
+                                  PGHOST="db.invalid", PGDATABASE="qa", PGUSER="x"))
     assert res.returncode == 0, res.stderr
     assert res.stdout.split("\n") == ["\x1eLANES-INDEX-NEXT", "it's two words", "a\tbAAq",
                                       "plain", ""], res.stdout
@@ -2148,8 +2166,12 @@ def test_offline_no_read_the_inventory_acts_are_byte_identical_against_an_unreac
         fake = indexed.root / "pgfake"
         fake.mkdir()
         psql_log = indexed.root / "psql.log"
+        # THE STORE IT REACHED FOR, from the `PG*` variables alone, as in the
+        # acts' offline test above (Question 11; L2-0c).
         (fake / "psql").write_text(
-            f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> {psql_log}\n"
+            "#!/bin/sh\n"
+            "printf 'postgresql://%s@%s%s/%s\\n' \"$PGUSER\" \"$PGHOST\" \"${PGPORT:+:$PGPORT}\" "
+            f"\"$PGDATABASE\" >> {psql_log}\n"
             "echo 'psql: error: connection to server at \"lanes-index.invalid\" failed' >&2\nexit 2\n")
         (fake / "psql").chmod(0o755)
         pw = indexed.e.config / "pgpass"
