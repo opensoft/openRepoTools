@@ -130,11 +130,15 @@ SQL_REGISTER_GATE_TABLE = {
     "test_rotate_dump_job_changes_only_the_dump_logins_password":
         ("T109", "T110", "T119", "T120", "T229"),
     # T230: `tls_at_load` until L1-A3 (T104); its `[for-guard]` also until
-    # T113, which builds the `register read` it needs (tasks:2219).
+    # T113, which builds the `register read` it needs (tasks:2219), and its
+    # `[journal-write-id]` until T114 (L1-A12), which builds the `journal` it
+    # runs (lane 1, opensoft/openRepoTools#165 6899134636; T224i).
     "test_tls_at_load_refuses_a_url_off_loopback_without_verify_full_and_a_root_file":
         ("T104",),
     "test_tls_at_load_refuses_a_url_off_loopback_without_verify_full_and_a_root_file[for-guard]":
         ("T104", "T113"),
+    "test_tls_at_load_refuses_a_url_off_loopback_without_verify_full_and_a_root_file[journal-write-id]":
+        ("T104", "T114"),
     # T258: until L1-A8 (T110), L4-B3 (T413, T414, T415) and L4-B5 (T417).
     "test_two_writer_logins_write_alike_and_the_log_names_each":
         ("T110", "T413", "T414", "T415", "T417"),
