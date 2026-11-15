@@ -54,9 +54,10 @@ server's own clock.
 Each refused call writes nothing: the head, the journal and the switch equal
 their values before.
 
-Every case FAILS UNTIL lane 1's T107 (L1-A6: `commit_write` and
-`find_write`) and T114 (L1-A12) land, with lane 2's T227 (`tmpl` holding the
-register) and T228 (`lanes_w_fx`). A clone of `tmpl` with no register is
+Every case FAILS UNTIL lane 1's T107 and T108 (L1-A6: `commit_write` and
+`find_write`, and §1.4's roles and GRANTs) and T114 (L1-A12) land, with
+lane 2's T227 (`tmpl` holding the register) and T228 (`lanes_w_fx`), as
+T222's Order and the gate table say. A clone of `tmpl` with no register is
 refused by the fixture's own assertion. Without PostgreSQL 16 each skips.
 
 THE MODULE ALSO HOLDS, each at its own section below: T244's test 12 (AT-12)
