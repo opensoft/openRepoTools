@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "efficiency_enabled": false,
+  "scope": "sql-register-v13",
+  "spec_revision": "c304e387cf9b5a1ccd3337e926a5d726132b1547",
+  "planning_status": "Initial disabled projection retained only for legacy contract fixtures",
+  "prerequisite": {
+    "number": 88,
+    "head": "7f1141be15ac9c0d20c25c802ba9533c2fec811c",
+    "blobs": {
+      ".github/workflows/tests.yml": "e46aca51d4a7a59991c319ee809d46dc61a53d93",
+      ".github/ci/full-ci-baseline.json": "1fd9698a4e5be71b92fa4d9abc7ee6b39f60fcb0"
+    }
+  },
+  "profiles": {
+    "P03": {
+      "source": {"number": 93, "head": "81483ab50d1c75b7be3c8932e00efea3d284d102", "branch": "007-p03-import-cutover-operator-tools"},
+      "tasks": ["T211", "T218", "T272"],
+      "files": ["tests/test_sql_register_import.py", "tests/test_sql_register_operator_tools.py", "tests/test_sql_register_cutover.py"]
+    },
+    "P05": {
+      "source": {"number": 92, "head": "3b71c7c532f0da0b6ebbe5aee1c7cc0213a0cd56", "branch": "007-p05-readers-table-and-default-arms"},
+      "tasks": ["T217", "T235", "T259"],
+      "files": ["tests/test_sql_register_readers.py"]
+    }
+  }
+}

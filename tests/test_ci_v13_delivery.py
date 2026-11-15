@@ -41,7 +41,12 @@ def v13_batch(batch, cutover, v13, request):
     for task in projection.P01_TASKS:
         write(root, projection.MARKERS + task, "")
     foundation = commit(root, "P01")
-    policy = json.loads((REPO / projection.CONFIG).read_text())
+    policy = json.loads((REPO / "tests/fixtures/ci/v13-initial-profiles.json").read_text())
+    mode = getattr(request, "param", True)
+    if mode == "reviewed-pair":
+        policy["profiles"] = {"P05": policy["profiles"]["P05"], "P06": {
+            "tasks": ["T212", "T256", "T225", "T242"],
+            "files": ["tests/test_sql_register_build_flip.py", "tests/test_sql_register_marker.py"]}}
     policy["prerequisite"]["head"] = foundation
     policy["prerequisite"]["blobs"] = {
         path: git(root, "rev-parse", foundation + ":" + path) for path in projection.CONTROL_PATHS}
@@ -53,11 +58,11 @@ def v13_batch(batch, cutover, v13, request):
             write(root, projection.MARKERS + task, "")
         head = commit(root, name)
         lineage = [head]
-        if type(getattr(request, "param", None)) is int:
-            for index in range(request.param - 1):
-                write(root, profile["files"][0], f"# {name} reviewed fix {index}\n")
-                head = commit(root, f"{name} reviewed fix {index}")
-                lineage.append(head)
+        count = 2 if mode == "reviewed-pair" else mode if type(mode) is int else 1
+        for index in range(count - 1):
+            write(root, profile["files"][0], f"# {name} reviewed fix {index}\n")
+            head = commit(root, f"{name} reviewed fix {index}")
+            lineage.append(head)
         heads.append(head)
         profile["source"] = {"number": number, "head": head, "branch": "feature/" + str(number)}
         if len(lineage) > 1:
@@ -65,8 +70,7 @@ def v13_batch(batch, cutover, v13, request):
     git(root, "checkout", "-q", "--detach", foundation)
     write(root, projection.CONFIG, json.dumps(policy))
     write(root, v13.CONFIG, json.dumps({"schema_version": 1, "scope": v13.SCOPE,
-                                       "enabled": request.param if hasattr(request, "param")
-                                       and type(request.param) is bool else True}))
+                                       "enabled": mode if type(mode) is bool else True}))
     write(root, ".github/ci/delivery-policy.json", '{"schema_version":1,"enabled":true}')
     write(root, "unrelated-later-main", "preserve later main\n")
     base = commit(root, "later trusted main")
@@ -85,7 +89,7 @@ def v13_batch(batch, cutover, v13, request):
     batch.update(base=base, heads=heads, candidate=previous, prefixes=prefixes,
                  foundation=foundation, policy=policy)
     batch["prs"] = {number: batch["data"][f"pulls/{number}"] for number in (7, 8)}
-    for number, name in zip((7, 8), ("P03", "P05")):
+    for number, name in zip((7, 8), policy["profiles"]):
         batch["prs"][number]["body"] = (
             f"CI-Shadow: {v13.SCOPE}\nCI-Delivery: {v13.SCOPE}\nCI-Task-Set: {name}")
         batch["data"][f"commits/{heads[number - 7]}/pulls?per_page=100"] = [batch["prs"][number]]

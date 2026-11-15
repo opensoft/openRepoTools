@@ -32,11 +32,7 @@ def configuration(root, base):
         raise ValueError("V1.3 delivery is not enabled")
     # Reuse the reviewed immutable projection, NOT classify() or its output.
     policy = projection.read_policy(root, base)
-    parent = policy["prerequisite"]["head"]
-    common.git(root, "merge-base", "--is-ancestor", parent, base)
-    paths = list(policy["prerequisite"]["blobs"]) + list(projection.P01_FILES)
-    paths += [projection.MARKERS + task for task in projection.P01_TASKS]
-    common.git(root, "diff", "--quiet", "--no-ext-diff", parent, base, "--", *paths)
+    projection.require_foundation(root, base, policy)
     return policy
 
 
