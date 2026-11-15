@@ -94,6 +94,7 @@ def batch(tmp_path):
             "total_count": 1, "check_runs": [check]}
         data[f"actions/runs/{run_id}"] = {
             "id": run_id, "event": "pull_request", "path": ".github/workflows/task-set-fast.yml",
+            "run_number": number, "workflow_id": 301,
             "head_sha": head, "head_branch": pr["head"]["ref"],
             "head_repository": {"full_name": REPOSITORY}, "check_suite_id": run_id,
             "status": "completed", "conclusion": "success", "run_attempt": 1,
@@ -103,6 +104,8 @@ def batch(tmp_path):
                          "repo": {"url": f"https://api.github.com/repos/{REPOSITORY}"}},
                 "base": {"sha": base, "ref": "main",
                          "repo": {"url": f"https://api.github.com/repos/{REPOSITORY}"}}}]}
+        data[f"actions/workflows/task-set-fast.yml/runs?head_sha={head}&event=pull_request&per_page=100&page=1"] = {
+            "total_count": 1, "workflow_runs": [data[f"actions/runs/{run_id}"]]}
         data[f"actions/jobs/{job_id}"] = {
             "id": job_id, "run_id": run_id, "run_attempt": 1, "head_sha": head,
             "name": FAST, "status": "completed", "conclusion": "success"}

@@ -62,6 +62,15 @@ Authenticated current run.path distinguishes ordinary tests.yml from reuse.
 Reusable calls force full even though GitHub retains the caller's original event.
 Release branches, nightly and manual runs force full. No release workflow changes.
 
+Repeated canonical events on one unchanged head can leave several named fast
+checks. A complete bounded configured-workflow catalogue identifies the unique
+newest run by its per-workflow run_number; check array order and any older green
+are not authority. All named check identities/suites must match that catalogue,
+and exactly one current selected check must retain the complete run/job/source/
+base-history proof. Recheck newest selection before proof. Missing current jobs,
+unknown/truncated/ambiguous history and newest failures retain full; only existing
+complete authenticated pending evidence may wait. No retry mechanism is added.
+
 ## Candidate, held queue and historical landing
 
 The queue-push caller writes immutable admission and qualified JSON artifacts
@@ -194,8 +203,12 @@ trust an editing actor, grant queue authority or widen eligible files/actions.
 
 At the initial source or genuine candidate PR comparison only, generated
 `merge_commit_sha` hints may be missing/null or equal the trusted workflow
-`GITHUB_SHA`. Both hints must qualify; unknown or malformed non-null hints retain
-full even when both snapshots agree. These hints never identify the tested
+`GITHUB_SHA`. A different full-SHA hint qualifies only when an authenticated
+immutable Git-commit read proves its returned identity, exact two ordered parents
+and tree equal the actual tested merge. At most two distinct object lookups are
+needed for the initial pair of hints, with no new permission, ref write or retry.
+Both hints must qualify; unavailable, unknown, malformed or semantically different
+objects retain full even when both snapshots agree. These hints never identify the tested
 commit: the actual commit and ordered current-main/head parents are still
 independently verified. At only the initial candidate comparison, descriptions
 may differ when both are strings or null. Candidate prose grants no member,

@@ -216,31 +216,70 @@ def receipt_pending(value, allow_pending):
     return pending
 
 
+def fast_run_scope(run, pr, head):
+    return (run["event"] == "pull_request" and run["path"] == FAST_WORKFLOW
+            and run["head_sha"] == head and run["head_branch"] == pr["head"]["ref"]
+            and run["head_repository"]["full_name"] == REPOSITORY
+            and type(run["run_attempt"]) is int and run["run_attempt"] >= 1)
+
+
+def same_fast_attempt(run, observed):
+    return all(type(run[key]) is int and run[key] == observed[key]
+               for key in ("id", "run_number", "workflow_id", "check_suite_id", "run_attempt"))
+
+
+def fast_runs(pr, head, request):
+    """A complete, bounded catalogue; workflow sequence is not check array order."""
+    path = ("actions/workflows/task-set-fast.yml/runs?head_sha=" + policy.sha(head)
+            + "&event=pull_request&per_page=100&page=1")
+    response = request(REPOSITORY, path)
+    rows = response["workflow_runs"]
+    require(isinstance(rows, list) and type(response["total_count"]) is int
+            and response["total_count"] == len(rows) and 0 < len(rows) <= 100,
+            "Missing or ambiguous fast check")
+    for row in rows:
+        require(fast_run_scope(row, pr, head)
+                and all(type(row[key]) is int and row[key] > 0
+                        for key in ("id", "run_number", "workflow_id", "check_suite_id")),
+                "Fast run belongs to another workflow/head or is incomplete")
+    require(len({row["id"] for row in rows}) == len(rows)
+            and len({row["run_number"] for row in rows}) == len(rows)
+            and len({row["workflow_id"] for row in rows}) == 1,
+            "Missing or ambiguous fast check")
+    # GitHub's per-workflow run_number is increasing and unchanged on rerun.
+    return {row["id"]: row for row in rows}, max(rows, key=lambda row: row["run_number"])
+
+
 def fast_receipt(pr, head, request, base_changes, *, allow_pending=False):
     endpoint = f"commits/{head}/check-runs?check_name={FAST}&filter=latest&per_page=100"
     response = request(REPOSITORY, endpoint)
     checks = response["check_runs"]
-    require(type(response["total_count"]) is int and response["total_count"] == len(checks) == 1,
+    require(isinstance(checks, list) and type(response["total_count"]) is int
+            and response["total_count"] == len(checks) and len(checks) <= 100,
             "Missing or ambiguous fast check")
-    check = checks[0]
-    require(check["name"] == FAST and check["head_sha"] == head
-            and check["app"]["slug"] == "github-actions",
-            "Fast check is not successful exact-head Actions evidence")
-    pending = receipt_pending(check, allow_pending)
-    link = re.fullmatch(
-        r"https://github[.]com/opensoft/openRepoTools-code/actions/runs/([1-9]\d*)/job/([1-9]\d*)",
-        check["details_url"], flags=re.ASCII)
-    require(link is not None, "Unrecognized fast workflow identity")
-    run_id, job_id = (int(value) for value in link.groups())
-    require(type(check["id"]) is int and check["id"] == job_id, "Fast job identity differs")
+    catalog, latest = fast_runs(pr, head, request)
+    matches, seen = [], set()
+    for check in checks:
+        require(check["name"] == FAST and check["head_sha"] == head
+                and check["app"]["slug"] == "github-actions",
+                "Fast check is not successful exact-head Actions evidence")
+        link = re.fullmatch(
+            r"https://github[.]com/opensoft/openRepoTools-code/actions/runs/([1-9]\d*)/job/([1-9]\d*)",
+            check["details_url"], flags=re.ASCII)
+        require(link is not None, "Unrecognized fast workflow identity")
+        run_id, job_id = (int(value) for value in link.groups())
+        require(type(check["id"]) is int and check["id"] == job_id, "Fast job identity differs")
+        require(run_id in catalog and run_id not in seen
+                and check["check_suite"]["id"] == catalog[run_id]["check_suite_id"],
+                "Missing or ambiguous fast check")
+        seen.add(run_id)
+        if run_id == latest["id"]:
+            matches.append((check, job_id))
+    run_id = latest["id"]
     run = request(REPOSITORY, f"actions/runs/{run_id}")
-    require(type(run["id"]) is int and run["id"] == run_id and run["event"] == "pull_request"
-            and run["path"] == FAST_WORKFLOW and run["head_sha"] == head
-            and run["head_branch"] == pr["head"]["ref"]
-            and run["head_repository"]["full_name"] == REPOSITORY
-            and run["check_suite_id"] == check["check_suite"]["id"]
-            and type(run["run_attempt"]) is int and run["run_attempt"] >= 1,
+    require(fast_run_scope(run, pr, head) and same_fast_attempt(run, latest),
             "Fast run belongs to another workflow/head or is incomplete")
+    pending = receipt_pending(latest, allow_pending)
     pending = receipt_pending(run, allow_pending) or pending
     associated = run["pull_requests"]
     require(isinstance(associated, list) and len(associated) == 1,
@@ -265,6 +304,9 @@ def fast_receipt(pr, head, request, base_changes, *, allow_pending=False):
     created = datetime.strptime(run["created_at"], "%Y-%m-%dT%H:%M:%SZ")
     require(all(datetime.strptime(row["createdAt"], "%Y-%m-%dT%H:%M:%SZ") < created
                 for row in history["nodes"]), "Fast run predates a base change")
+    require(len(matches) == 1, "Missing or ambiguous fast check")
+    check, job_id = matches[0]
+    pending = receipt_pending(check, allow_pending) or pending
     job = request(REPOSITORY, f"actions/jobs/{job_id}")
     require(type(job["id"]) is int and job["id"] == job_id
             and type(job["run_id"]) is int and job["run_id"] == run_id and job["head_sha"] == head
@@ -277,6 +319,10 @@ def fast_receipt(pr, head, request, base_changes, *, allow_pending=False):
         raise PendingEvidence("Authenticated fast workflow is pending")
     require(run == request(REPOSITORY, f"actions/runs/{run_id}")
             and response == request(REPOSITORY, endpoint),
+            "Fast run/check changed during verification")
+    final = fast_runs(pr, head, request)[1]
+    require(same_fast_attempt(run, final)
+            and final["status"] == run["status"] and final["conclusion"] == run["conclusion"],
             "Fast run/check changed during verification")
     return response, run, job, history
 
