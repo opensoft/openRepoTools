@@ -2848,15 +2848,17 @@ def test_a_read_site_with_no_prefetched_file_makes_one_more_register_read_and_ne
 def test_the_flush_helper_drops_the_whole_read_family(tmp_path):
     """T505 (C6): `reg_flush`, taken from `lanes-edit.sh` by its text (the
     script cannot be sourced), drops `.register`, `.aliases`, `.archive`,
-    `.paths`, every `.log.*` and `.logpath.*`, and empties
-    `LANES_REGISTER_CACHE`."""
+    `.paths`, `.head`, `.outage`, every `.log.*` and `.logpath.*`, keeps
+    `.direct`, and empties `LANES_REGISTER_CACHE` (tasks:763; lane 5's NIT,
+    #165 6888923188)."""
     found = re.search(r"^reg_flush\(\) *\{.*?^\}[ \t]*$", LANES_EDIT.read_text(encoding="utf-8"),
                       re.M | re.S)
     assert found, "lanes-edit.sh has no reg_flush"
     cache = tmp_path / "se"
-    members = [".register", ".aliases", ".archive", ".paths", ".log.repoA-1", ".logpath.repoA-1",
-               ".log.%2c", ".logpath.%2c"]
-    for member in members:
+    members = [".register", ".aliases", ".archive", ".paths", ".head", ".outage", ".log.repoA-1",
+               ".logpath.repoA-1", ".log.%2c", ".logpath.%2c"]
+    kept = [".direct"]
+    for member in members + kept:
         (tmp_path / f"se{member}").write_text("cached\n", encoding="utf-8")
     script = (found.group(0) + '\nSE_CACHE_FILE="$1"; LANES_REGISTER_CACHE="$1.register"\n'
               'reg_flush\nprintf "[%s]" "$LANES_REGISTER_CACHE"\n')
@@ -2866,6 +2868,8 @@ def test_the_flush_helper_drops_the_whole_read_family(tmp_path):
     assert result.stdout == "[]", result.stdout
     left = [m for m in members if (tmp_path / f"se{m}").exists()]
     assert not left, ("the family is not all dropped", left)
+    gone = [m for m in kept if not (tmp_path / f"se{m}").exists()]
+    assert not gone, ("the flush dropped what it keeps", gone)
 
 
 def test_swapped_ranks_through_journal_last_on_primary(primary):
