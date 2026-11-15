@@ -24,7 +24,9 @@ T225 (L2-N7; A8): `wip init`'s two cases, AT-3's three reader cases and lane
 T242 (L2-W1, L2-W5; FR-002, FR-004, FR-059) adds test 3's unit form and
 AT-F8, phase W, FM, with no database: the writers' marker check, and every
 failure of the mode query. They fail until lane 4's L4-B1 (T409) and L4-B12
-(T419) and lane 5's L5-A5 land. See "phase W: T242" below.
+(T419) land, as T242's Order and the gate table say. None waits for lane 5's
+L5-A5, the readers' marker check, which T225's reader cases wait for. See
+"phase W: T242" below.
 
 The estate is T215's and T220's, as T203c's helper test builds it: a bare
 origin, the lane's checkout under `$HOME/projects`, `$HOME/.agents/
@@ -561,9 +563,10 @@ def test_a_mode_index_guard_refuses_2_under_the_marker(tmp_path):
 # origin, with the start state three verbs need (T241's `PREPS`), the
 # workspace `workspace.yaml` names, and a `tmux` that answers nothing.
 #
-# They fail until L4-B1, L4-B12 and L5-A5 land, each by its own assertion:
-# today's `lanes-edit.sh` asks no mode and checks no marker, so every write
-# lands and exits 0.
+# They fail until L4-B1 and L4-B12 (T409 and T419) land, each by its own
+# assertion: today's `lanes-edit.sh` asks no mode and checks no marker, so
+# every write lands and exits 0. That is T242's Order and the gate table;
+# none of them waits for L5-A5, the readers' marker check (T225's).
 
 EM, ARROW = chr(0x2014), chr(0x2192)
 WRITER_WS = "Eagle"
