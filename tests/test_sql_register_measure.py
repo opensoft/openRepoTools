@@ -118,8 +118,10 @@ pytestmark = [WINDOWS_SKIP, pytest.mark.skipif(
 #: tasks each id waits for, from the Orders of T226, T237, T254 and T255
 #: (tasks:2177, :2302, :2412, :2419 and :2428 at 204145ae). In a gated run an
 #: id is skipped while any of its tasks has no marker in
-#: `tests/sql_register_landed/`; M9's `[files]` waits for none. T281 removes
-#: it with the gate.
+#: `tests/sql_register_landed/`. M9's `[files]` waits for T107, T108, T109 and
+#: T110, since it takes `pg`, whose session template needs them (T221's and
+#: T231's Orders, tasks:2127 and :2231 at 204145ae; lane 3, #165 6897276895).
+#: T281 removes it with the gate.
 SQL_REGISTER_GATE_TABLE = {
     "test_a_tls_and_scram_connect_on_loopback_is_timed_and_verified": ("T111", "T112", "T229"),  # T226; tasks:2177
     "test_each_paths_connections_and_queries_are_counted": ("T302", "T413", "T414", "T415", "T421", "T422"),  # T255; tasks:2428
@@ -131,7 +133,7 @@ SQL_REGISTER_GATE_TABLE = {
     "test_the_bind_and_the_guards_set_row_state_are_timed_in_both_modes": ("T427", "T428", "T502", "T510"),  # T254; tasks:2419
     "test_the_image_cache_check_and_a_miss_are_timed_per_attempt": ("T302", "T413", "T414", "T415", "T421", "T422"),  # T255; tasks:2428
     "test_each_paths_connections_and_queries_are_counted[m5]": ("T229", "T512", "T513"),  # T237; tasks:2302
-    "test_the_bind_and_the_guards_set_row_state_are_timed_in_both_modes[files]": (),  # T254; tasks:2412
+    "test_the_bind_and_the_guards_set_row_state_are_timed_in_both_modes[files]": ("T107", "T108", "T109", "T110"),  # T254; tasks:2412
     "test_one_write_cost_is_recorded_and_every_write_commits[design-durable]": ("T105", "T107", "T111", "T112", "T227"),  # T226; tasks:2177
     "test_one_write_cost_is_recorded_and_every_write_commits[design-fixture]": ("T105", "T107", "T111", "T112", "T227"),  # T226; tasks:2177
 }
@@ -1745,9 +1747,9 @@ def test_the_bind_and_the_guards_set_row_state_are_timed_in_both_modes(pg_engine
     is one `start-record` write and `set-row-state` one more, so the journal
     grows by exactly two and their write ids are distinct (AT-F6: one
     journal entry for the bind, two for answer 2); in files mode the
-    origin's `main` grows by at least those two commits. `[files]` passes
-    today, and `[primary]` fails until lane 4's L4-B9 and lane 5's L5-A1 and
-    L5-B1 land (tasks:2412; lane 3, #165 6808937880, batch e L2-5)."""
+    origin's `main` grows by at least those two commits. `[files]` waits for
+    T107 to T110, and `[primary]` fails until lane 4's L4-B9 and lane 5's
+    L5-A1 and L5-B1 land (tasks:2412; lane 3, #165 6808937880, batch e L2-5)."""
     binds, rows_set = [], []
     for k in range(1 + N_WARM):
         if mode == "primary":
