@@ -3159,3 +3159,49 @@ def test_the_round_cap_hands_back_a_mark_it_took(estate, monkeypatch):
     assert os.path.exists(lock.rerun_path("register")), \
         "the register's mark was taken at the cap and never handed back"
     assert os.path.exists(lock.rerun_path("inventory"))
+
+
+# ======================================================= the bootstrap's arguments
+#
+# T109's follow-up, on Codex's exact-head review of P10 (opensoft/openRepoTools#165
+# 6889426463): `bootstrap` refused a connection string only in its four flags' values,
+# after its usage, so a positional argument or an unknown option that carried one
+# ended 64 with the whole argument echoed on stderr. Its usage texts now echo no
+# argument's value, as `login`'s never do, so a bare secret that no rule can tell
+# from a word is not echoed either.
+
+
+@pytest.mark.parametrize("where", ["positional", "unknown-option", "bare-positional",
+                                   "bare-unknown-option"])
+def test_the_bootstrap_refuses_a_secret_in_any_argument_and_never_echoes_it(estate, where):
+    """NO ARGUMENT ECHOES A SECRET (operations.md section 2.4's refusals; T109):
+    an argument that carries a connection string or a password is refused with 2
+    wherever it stands, before the usage is read, as `login`'s are; and a bare
+    secret, positional or as an unknown option's value, is usage (64), named by
+    no more than `login` names it: an unknown option by its name alone, and a
+    positional argument not at all. Every other flag is in order, so only the
+    refusal keeps `psql` from running. The value reaches neither stdout nor
+    stderr, and no `psql` is run."""
+    secret = f"t109-FAKE-{where}-not-a-secret"
+    argument, code, words = {
+        "positional": (f"postgresql://lanes_register_admin:{secret}@db.invalid:5432/register",
+                       2, "carries a connection string or a password"),
+        "unknown-option": (f"--dsn=host=db.invalid user=lanes_register_admin password={secret}",
+                           2, "carries a connection string or a password"),
+        "bare-positional": (secret, 64, "bootstrap takes no positional argument"),
+        "bare-unknown-option": (f"--dsn={secret}", 64, "bootstrap: unknown option --dsn"),
+    }[where]
+    fake = estate.root / "pgfake"
+    fake.mkdir()
+    ran = estate.root / "psql-ran.txt"
+    (fake / "psql").write_text(f"#!/bin/sh\necho ran >> {shlex.quote(str(ran))}\nexit 1\n")
+    (fake / "psql").chmod(0o755)
+    res = estate.index("bootstrap", "--admin-service", "t109admin", "--label", "t109-label",
+                       "--repository", "opensoft/t109-workspace", "--lane", "t109-operator",
+                       "--no-passwords", argument, env={"PATH": estate.path_with(fake)})
+    said = f"stdout:\n{res.stdout}\nstderr:\n{res.stderr}".replace(secret, "<the secret>")
+    assert res.returncode == code, f"[{where}] exit {res.returncode}, not {code}:\n{said}"
+    assert secret not in res.stdout and secret not in res.stderr, (
+        f"[{where}] the secret was echoed:\n{said}")
+    assert words in res.stderr, said
+    assert not ran.exists(), f"[{where}] psql was run:\n{said}"

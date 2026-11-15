@@ -4530,7 +4530,16 @@ def _register_workstation() -> str:
 
 
 def _bootstrap_args(args: list[str]) -> dict | None:
-    """The bootstrap's flags; None for `--help`."""
+    """The bootstrap's flags; None for `--help`. First, as `login`'s, no
+    argument may carry a connection string or a password, wherever it
+    stands, a positional one or an unknown option's value among them (2,
+    never echoed); then its usage (64). `_bootstrap` refuses its values.
+    No usage text echoes an argument's value, as none of `login`'s does: an
+    unknown option is named by its name alone, the text before any '=',
+    and a positional argument is not shown."""
+    for arg in args:
+        value = arg.partition("=")[2] if arg.startswith("--") and "=" in arg else arg
+        _register_refuse_argument("an argument", value)
     opts: dict = {"--admin-service": None, "--label": None, "--repository": None,
                   "--lane": None, "--roles-only": False, "--no-passwords": False}
     i = 0
@@ -4550,8 +4559,10 @@ def _bootstrap_args(args: list[str]) -> dict | None:
             opts[name] = value
         elif arg in ("--roles-only", "--no-passwords"):
             opts[arg] = True
+        elif arg.startswith("-"):
+            raise _RegisterUsage(f"bootstrap: unknown option {name}")
         else:
-            raise _RegisterUsage(f"bootstrap: unknown argument '{arg}'")
+            raise _RegisterUsage("bootstrap takes no positional argument")
         i += 1
     if opts["--admin-service"] is None:
         raise _RegisterUsage("bootstrap needs --admin-service <service>")
@@ -4574,6 +4585,9 @@ def cmd_bootstrap(args: list[str]) -> int:
     except _RegisterUsage as exc:
         note(f"{exc} - see {PROG} bootstrap --help")
         return EXIT_USAGE
+    except Refusal as exc:
+        note(f"REFUSED: {exc}")
+        return EXIT_REFUSED
     if opts is None:
         say(_BOOTSTRAP_USAGE)
         return EXIT_OK
