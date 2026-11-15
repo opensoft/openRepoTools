@@ -370,6 +370,197 @@ def test_v13_shadow_unsupported_events_fall_back(shadow, fixture, event):
     assert observe(shadow, fixture)["proposed_cut"] is None
 
 
+@pytest.fixture(params=["P03", "P05"])
+def stack_fixture(tmp_path, shadow, request):
+    """Real shape: source child of P01; main advances and normally merges P01."""
+    root, cut = tmp_path / "stack", request.param
+    root.mkdir()
+    git(root, "init", "-q")
+    for key, value in (("user.name", "CI Fixture"), ("user.email", "ci@example.invalid"),
+                       ("core.autocrlf", "false"), ("core.filemode", "true")):
+        git(root, "config", key, value)
+    write(root, ".github/workflows/tests.yml", "# before P01\n")
+    write(root, shadow.BASELINE, json.dumps({"environment": {}, "expanded_jobs": 13}))
+    old_main = commit(root, "old main")
+    write(root, ".github/workflows/tests.yml", "# P01 required-engine contract\n")
+    write(root, shadow.BASELINE, json.dumps({
+        "environment": {"OPENREPOTOOLS_REQUIRE_PG": "1"}, "expanded_jobs": 13}))
+    for path in shadow.P01_FILES:
+        write(root, path, "# foundation\n")
+    for task in shadow.P01_TASKS:
+        write(root, shadow.MARKERS + task, "")
+    foundation = commit(root, "P01 source")
+    policy = json.loads((REPO / shadow.CONFIG).read_text())
+    profile = policy["profiles"][cut]
+    policy["prerequisite"]["head"] = foundation
+    policy["prerequisite"]["blobs"] = {
+        path: git(root, "rev-parse", "HEAD:" + path) for path in shadow.CONTROL_PATHS}
+    for path in profile["files"]:
+        write(root, path, "# exact source test\n")
+    for task in profile["tasks"]:
+        write(root, shadow.MARKERS + task, "")
+    head = commit(root, "actual owner cut without shadow trailers")
+    profile["source"] = {"number": 7, "head": head, "branch": "feature/small"}
+    git(root, "checkout", "-q", "--detach", old_main)
+    write(root, shadow.CONFIG, json.dumps(policy))
+    commit(root, "independent observer change on main")
+    git(root, "merge", "--no-ff", "-qm", "normal P01 landing", foundation)
+    merge = git(root, "rev-parse", "HEAD")
+    write(root, ".github/ci/unrelated-observer", "keep this main change\n")
+    main = commit(root, "later unrelated main change")
+    source = pr(7, head, foundation, "feature/small")
+    source["base"]["ref"] = "p01"
+    source["body"] = INTENT.replace("P03", cut) + "\nDepends-On: #88"
+    prerequisite = pr(88, foundation, main, "p01")
+    prerequisite.update(state="closed", merged=True, merge_commit_sha=merge)
+    return dict(root=root, main=main, head=head, pr=source, prerequisite=prerequisite,
+                policy=policy, cut=cut,
+                event={"number": 7, "action": "synchronize", "pull_request": copy.deepcopy(source)},
+                env={"GITHUB_REPOSITORY": REPOSITORY, "GITHUB_EVENT_NAME": "pull_request",
+                     "GITHUB_SHA": head, "GITHUB_REF": "refs/pull/7/merge"})
+
+
+@pytest.mark.parametrize("base", ["prerequisite", "main", "main-without-dependency"])
+def test_v13_shadow_known_child_preserves_owner_topology(shadow, stack_fixture, base):
+    fixture = stack_fixture
+    if base != "prerequisite":
+        fixture["pr"]["base"] = side(fixture["main"], "main")
+    if base == "main-without-dependency":
+        fixture["pr"]["body"] = INTENT.replace("P03", fixture["cut"])
+    fixture["event"]["pull_request"] = copy.deepcopy(fixture["pr"])
+    result = observe(shadow, fixture)
+    assert result["proposed_cut"] == fixture["cut"]
+    assert result["p01_status"] == "merged-contract-observed"
+    assert git(fixture["root"], "show", "-s", "--format=%P", fixture["head"]) == (
+        fixture["policy"]["prerequisite"]["head"])
+
+
+def test_v13_shadow_fixture_normal_merge_keeps_main_files_and_exact_source(shadow, stack_fixture):
+    fixture, root = stack_fixture, stack_fixture["root"]
+    assert observe(shadow, fixture)["proposed_cut"] == fixture["cut"]
+    git(root, "merge", "--no-ff", "-qm", "fixture only, not live qualification", fixture["head"])
+    assert git(root, "show", "HEAD:.github/ci/unrelated-observer") == "keep this main change"
+    assert git(root, "show", "-s", "--format=%P", "HEAD").split() == [fixture["main"], fixture["head"]]
+    profile = fixture["policy"]["profiles"][fixture["cut"]]
+    for path in profile["files"]:
+        assert git(root, "rev-parse", "HEAD:" + path) == git(root, "rev-parse", fixture["head"] + ":" + path)
+    for task in profile["tasks"]:
+        assert git(root, "show", "HEAD:" + shadow.MARKERS + task) == ""
+
+
+@pytest.mark.parametrize("mutation", [
+    "pending", "dependency", "duplicate-dependency", "missing-dependency", "base-ref",
+    "base-sha", "head", "branch", "number", "draft", "closed", "no-intent", "fork"])
+def test_v13_shadow_known_child_uncertainty_stays_full(shadow, stack_fixture, mutation):
+    fixture, source = stack_fixture, stack_fixture["pr"]
+    if mutation == "pending":
+        fixture["prerequisite"].update(state="open", merged=False, merge_commit_sha=None)
+    elif mutation == "dependency":
+        source["body"] = source["body"].replace("#88", "#89")
+    elif mutation == "duplicate-dependency":
+        source["body"] += "\nDepends-On: #88"
+    elif mutation == "missing-dependency":
+        source["body"] = INTENT.replace("P03", fixture["cut"])
+    elif mutation == "base-ref":
+        source["base"]["ref"] = "unknown-predecessor"
+    elif mutation == "base-sha":
+        source["base"]["sha"] = fixture["main"]
+    elif mutation == "head":
+        source["head"]["sha"] = "a" * 40
+    elif mutation == "branch":
+        source["head"]["ref"] = "different-source"
+    elif mutation == "number":
+        source["number"] = 8
+    elif mutation == "draft":
+        source["draft"] = True
+    elif mutation == "closed":
+        source["state"] = "closed"
+    elif mutation == "no-intent":
+        source["body"] = "Depends-On: #88"
+    else:
+        source["head"]["repo"]["full_name"] = "fork/elsewhere"
+    fixture["event"]["pull_request"] = copy.deepcopy(source)
+    assert observe(shadow, fixture)["proposed_cut"] is None
+
+
+@pytest.mark.parametrize("collision", ["file", "marker"])
+def test_v13_shadow_known_child_main_cut_path_drift_stays_full(shadow, stack_fixture, collision):
+    fixture = stack_fixture
+    profile = fixture["policy"]["profiles"][fixture["cut"]]
+    path = profile["files"][0] if collision == "file" else shadow.MARKERS + profile["tasks"][0]
+    write(fixture["root"], path, "" if collision == "marker" else "# different main content\n")
+    fixture["main"] = commit(fixture["root"], "intervening cut content")
+    assert observe(shadow, fixture)["proposed_cut"] is None
+
+
+def test_v13_shadow_known_child_rejects_extra_parent_hop_even_with_updated_binding(shadow, stack_fixture):
+    fixture = stack_fixture
+    extra = git(fixture["root"], "commit-tree", fixture["head"] + "^{tree}",
+                "-p", fixture["head"], "-m", "arbitrary extra hop")
+    fixture["policy"]["profiles"][fixture["cut"]]["source"]["head"] = extra
+    write(fixture["root"], shadow.CONFIG, json.dumps(fixture["policy"]))
+    fixture["main"] = commit(fixture["root"], "updated anchor cannot excuse ancestry")
+    fixture["pr"]["head"]["sha"] = extra
+    fixture["event"]["pull_request"] = copy.deepcopy(fixture["pr"])
+    assert observe(shadow, fixture)["proposed_cut"] is None
+
+
+def test_v13_shadow_known_child_push_uses_live_pr_intent_without_rewriting_commit(shadow, stack_fixture):
+    fixture = stack_fixture
+    assert "CI-Shadow:" not in git(fixture["root"], "show", "-s", "--format=%B", fixture["head"])
+    push(fixture)
+    assert observe(shadow, fixture)["proposed_cut"] == fixture["cut"]
+
+
+@pytest.mark.parametrize("mutation", ["closed", "draft", "no-intent", "wrong-cut", "body-after", "head-after", "api"])
+def test_v13_shadow_known_push_needs_current_open_source_proof(shadow, stack_fixture, mutation):
+    fixture = stack_fixture
+    push(fixture)
+    if mutation == "closed":
+        fixture["pr"]["state"] = "closed"
+    elif mutation == "draft":
+        fixture["pr"]["draft"] = True
+    elif mutation == "no-intent":
+        fixture["pr"]["body"] = "Depends-On: #88"
+    elif mutation == "wrong-cut":
+        fixture["pr"]["body"] = fixture["pr"]["body"].replace(
+            fixture["cut"], "P05" if fixture["cut"] == "P03" else "P03")
+    original, reads = api(fixture), 0
+    def request(repo, endpoint):
+        nonlocal reads
+        if endpoint == "pulls/7":
+            reads += 1
+            if mutation == "api":
+                raise subprocess.TimeoutExpired("gh", 15)
+        result = original(repo, endpoint)
+        if endpoint == "pulls/7" and reads > 1:
+            if mutation == "body-after":
+                result["body"] += "\nchanged"
+            elif mutation == "head-after":
+                result["head"]["sha"] = "a" * 40
+        return result
+    assert observe(shadow, fixture, request)["proposed_cut"] is None
+
+
+@pytest.mark.parametrize("mutation", ["bool-number", "prerequisite-number", "bad-head", "reserved-branch", "duplicate-source"])
+def test_v13_shadow_invalid_source_bindings_fall_back(shadow, fixture, mutation):
+    policy = fixture["policy"]
+    source = policy["profiles"]["P03"]["source"]
+    if mutation == "bool-number":
+        source["number"] = True
+    elif mutation == "prerequisite-number":
+        source["number"] = 88
+    elif mutation == "bad-head":
+        source["head"] = "--output=bad"
+    elif mutation == "reserved-branch":
+        source["branch"] = "verify/forged"
+    else:
+        policy["profiles"]["P05"]["source"] = copy.deepcopy(source)
+    write(fixture["root"], shadow.CONFIG, json.dumps(policy))
+    fixture["main"] = commit(fixture["root"], "malformed binding")
+    assert observe(shadow, fixture)["proposed_cut"] is None
+
+
 @pytest.fixture
 def yaml_reader():
     spec = importlib.util.spec_from_file_location("v13_shadow_yaml", UPSTREAM / "scripts/repo_shape.py")

@@ -14,10 +14,12 @@
   },
   "profiles": {
     "P03": {
+      "source": {"number": 93, "head": "81483ab50d1c75b7be3c8932e00efea3d284d102", "branch": "007-p03-import-cutover-operator-tools"},
       "tasks": ["T211", "T218", "T272"],
       "files": ["tests/test_sql_register_import.py", "tests/test_sql_register_operator_tools.py", "tests/test_sql_register_cutover.py"]
     },
     "P05": {
+      "source": {"number": 92, "head": "3b71c7c532f0da0b6ebbe5aee1c7cc0213a0cd56", "branch": "007-p05-readers-table-and-default-arms"},
       "tasks": ["T217", "T235", "T259"],
       "files": ["tests/test_sql_register_readers.py"]
     }
