@@ -51,6 +51,25 @@ import pytest
 
 from conftest import REPO
 
+#: THE LANDING GATE'S TABLE (T280's reader, `tests/sql_register_gate.py`), TEMPORARY:
+#: T281 removes it in the last set. Where the gate is active, an id is skipped until
+#: every task its row names has landed, and the skip names them. Two ids start a
+#: cluster on the session's template, T227's `Bootstrap()` with T228's logins:
+#: `[tls-untouched]`, by T229's `tls_cluster`, and `[psql-on-the-socket]`, by `pg` on
+#: `pg_cluster`. That template is built by `lanes-index bootstrap --admin-service`,
+#: L1-A7 (T109), which applies L1-A6's migration 1 and role block (T107 and T108),
+#: then by `lanes-index login add --admin-service`, L1-A8 (T110). So each waits for
+#: T107, T108, T109 and T110, as T221's and T231's Orders read a case on `pg`
+#: (tasks:2127 and :2231 at lane 3's commit 17, 204145ae): it takes "the logins step
+#: of the session template", and fails until L1-A6, L1-A7 and L1-A8 (lane 1,
+#: opensoft/openRepoTools#165 6897250155; lane 3's ruling, 6897276895). Each row is
+#: its id's own, since no other id of either function starts a cluster. The module's
+#: other 22 ids have no row, so they always run, and there is no `"*"` row.
+SQL_REGISTER_GATE_TABLE = {
+    "test_the_delayed_loopback_relay_delays_each_direction_and_passes_tls_through[tls-untouched]": ("T107", "T108", "T109", "T110"),  # T229; tasks:2127, :2231
+    "test_the_silent_after_startup_relay_forwards_the_startup_then_nothing_and_holds_both_sockets[psql-on-the-socket]": ("T107", "T108", "T109", "T110"),  # T229 (T229c); tasks:2127, :2231
+}
+
 #: The variable, as `tests/pgcluster.py` and `tests.yml` spell it.
 SWITCH = "OPENREPOTOOLS_REQUIRE_PG"
 
