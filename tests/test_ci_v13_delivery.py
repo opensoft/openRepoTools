@@ -95,6 +95,7 @@ def v13_batch(batch, cutover, v13, request):
         batch["data"][f"commits/{heads[number - 7]}/pulls?per_page=100"] = [batch["prs"][number]]
     batch["data"]["pulls/88"] = {
         "number": 88, "state": "closed", "merged": True, "draft": False,
+        "user": {"login": "writer"},
         "merge_commit_sha": foundation,
         "head": {"sha": foundation, "ref": "p01", "repo": {"full_name": cutover.REPOSITORY}},
         "base": {"sha": base, "ref": "main", "repo": {"full_name": cutover.REPOSITORY}}}

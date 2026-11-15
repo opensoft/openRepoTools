@@ -9,7 +9,7 @@ import subprocess
 
 import pytest
 
-from test_ci_delivery import batch, commit, delivery, git, verify
+from test_ci_delivery import batch, commit, delivery, git, request_for, verify
 from test_ci_cutover import cutover
 from test_ci_v13_delivery import route_source, v13, v13_batch, write
 
@@ -30,6 +30,18 @@ def advance_fixture(batch, base):
         batch[key] = json.loads(text)
     batch.update(base=base, prefixes=prefixes, candidate=previous)
     batch["prs"] = {number: batch["data"][f"pulls/{number}"] for number in (7, 8)}
+
+
+def observe_foundation(v13, batch):
+    """The same foundation facts never turn observer output into authority."""
+    env = dict(batch["env"], GITHUB_EVENT_NAME="pull_request")
+    event = {"action": "synchronize", "number": 7,
+             "pull_request": copy.deepcopy(batch["prs"][7])}
+    result = v13.projection.classify(env, event, batch["root"], request_for(batch))
+    assert result["mode"] == "shadow" and result["required_ci"] == "full"
+    assert result["efficiency_enabled"] is False and result["skip_ci"] is False
+    assert result["queue_admission"] is False and result["qualification"] == "not-qualified"
+    return result
 
 
 @pytest.fixture
@@ -54,6 +66,9 @@ def test_ci_v13_foundation_explicit_reviewed_epoch_keeps_source_and_heavy_proof(
     proof = verify(delivery, batch)
     assert proof["full_ci_required"] is True and proof["scope"] == v13.SCOPE
     assert [row["head"] for row in proof["members"]] == batch["heads"]
+    observed = observe_foundation(v13, batch)
+    assert observed["p01_status"] == "merged-contract-observed"
+    assert observed["proposed_cut"] == "P03"
 
 
 @pytest.mark.parametrize("failure", ["absent", "null", "extra-key", "short-head", "extra-blob",
@@ -102,6 +117,7 @@ def test_ci_v13_foundation_uncertain_or_drifted_epoch_refuses(v13, cutover, epoc
     with pytest.raises((ValueError, subprocess.SubprocessError)):
         v13.configuration(root, base)
     assert route_source(cutover, batch) == cutover.FULL
+    assert observe_foundation(v13, batch)["proposed_cut"] is None
 
 
 @pytest.mark.parametrize("v13_batch", ["reviewed-pair"], indirect=True)
@@ -113,6 +129,9 @@ def test_ci_v13_foundation_reviewed_pair_uses_unchanged_narrow_proof(v13, cutove
     proof = verify(delivery, batch)
     assert proof["scope"] == v13.SCOPE and proof["full_ci_required"] is True
     assert [row["head"] for row in proof["members"]] == batch["heads"]
+    observed = observe_foundation(v13, batch)
+    assert observed["p01_status"] == "merged-contract-observed"
+    assert observed["proposed_cut"] == "P05"
 
 
 @pytest.mark.parametrize("v13_batch", ["reviewed-pair"], indirect=True)
