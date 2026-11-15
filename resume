@@ -381,11 +381,85 @@ estate_walk_up() {
     return 1
 }
 
+# BEGIN GROUPED PROJECT DISCOVERY
+# Self-contained installed commands share this block; a regression test checks
+# byte equality. Rows carry name, logical path and physical deduplication key.
+# Keep logical paths for estate recognition; never enter a repo, estate or
+# supporting checkout collection while looking for grouping folders.
+project_directory_walk() {
+    local base="$1" depth="$2" mode="$3" families="${4-}" child name physical boundary family_container
+    [ -d "$base" ] || return 0
+    for child in "$base"/*; do
+        [ -d "$child" ] || continue
+        name="${child##*/}"
+        # Per-lane register clones live beside any workspace as <workspace>-lanes.
+        case "$name" in workTrees|worktrees|laneWorkspaces|*-lanes|*-lane-registers) continue ;; esac
+        case "$child" in *$'\t'*|*$'\n'*) continue ;; esac
+        physical="$(cd -- "$child" 2>/dev/null && pwd -P)" || continue
+        case "${physical##*/}" in workTrees|worktrees|laneWorkspaces|*-lanes|*-lane-registers) continue ;; esac
+        case "$physical" in *$'\t'*|*$'\n'*) continue ;; esac
+        boundary=0; family_container=0
+        if [ -e "$child/$name/family.yaml" ] || [ -e "$physical/${physical##*/}/family.yaml" ]; then
+            family_container=1
+        fi
+        case $'\n'"$families"$'\n' in *$'\n'"$physical"$'\n'*) boundary=1 ;; esac
+        if [ -e "$child/.git" ] || [ -e "$child/project.yaml" ] ||
+           [ -e "$child/family.yaml" ] || [ "$family_container" -eq 1 ] ||
+           { [ -f "$child/HEAD" ] && [ -d "$child/objects" ]; }; then
+            boundary=1
+        fi
+        if [ "$mode" = families ]; then
+            [ "$family_container" -eq 0 ] || printf '%s\n' "$physical"
+        elif [ "$depth" -eq 0 ] || [ "$boundary" -eq 1 ]; then
+            printf '%s\t%s\t%s\n' "$name" "$child" "$physical"
+        fi
+        if [ "$boundary" -eq 0 ] && [ "$depth" -lt 2 ]; then
+            project_directory_walk "$child" "$((depth + 1))" "$mode" "$families"
+        fi
+    done
+}
+
+project_directory_rows() {
+    local base="$1" families root
+    shift
+    [ "$#" -gt 0 ] || set -- "$base"
+    # Resolve boundaries across every configured root before emitting rows.
+    # A family alias in another root must also hide this container's members.
+    families="$(for root in "$@"; do project_directory_walk "$root" 0 families; done)"
+    project_directory_walk "$base" 0 rows "$families"
+}
+# END GROUPED PROJECT DISCOVERY
+
+estate_directory_rows() {
+    local dir
+    for dir in "${PROJECTS_DIRS[@]}"; do
+        project_directory_rows "$dir" "${PROJECTS_DIRS[@]}"
+    done
+}
+
+# Validate logical family names before deduplicating their physical containers.
+recognized_estate_rows() {
+    local name child physical
+    while IFS=$'\t' read -r name child physical; do
+        estate_here "$child" || continue
+        printf '%s\t%s\t%s\n' "$name" "$child" "$physical"
+    done < <(estate_directory_rows) | awk -F '\t' '!seen[$3]++'
+}
+
 estate_by_name() {
-    local want="$1" dir
+    local want="$1" dir name child physical hits candidate
     is_safe_folder_name "$want" || return 1
     for dir in "${PROJECTS_DIRS[@]}"; do
-        estate_here "$dir/$want" && return 0
+        hits="$(while IFS=$'\t' read -r name child physical; do
+            [ "$name" = "$want" ] || continue
+            if estate_here "$child"; then printf '%s\t%s\n' "$child" "$physical"; fi
+        done < <(project_directory_rows "$dir" "${PROJECTS_DIRS[@]}") | awk -F '\t' '!seen[$2]++ {print $1}')"
+        [ -n "$hits" ] || continue
+        if [ "$(printf '%s\n' "$hits" | wc -l | tr -d ' ')" -gt 1 ]; then
+            die "multiple estates named '$want' under $dir; stand in the intended estate and run $SELF_NAME without <Name>: $hits"
+        fi
+        candidate="$hits"
+        estate_here "$candidate" && return 0
     done
     return 1
 }
@@ -394,18 +468,15 @@ estate_by_name() {
 # a refusal to print: a person who typed the command in the wrong folder needs
 # the names, not an instruction to go and look for them.
 list_estates() {
-    local dir child
-    for dir in "${PROJECTS_DIRS[@]}"; do
-        [ -d "$dir" ] || continue
-        for child in "$dir"/*; do
+    local _grouped_name child _physical
+    while IFS=$'\t' read -r _grouped_name child _physical; do
             [ -d "$child" ] || continue
             if is_family_folder "$child"; then
                 printf '  family   %-20s %s\n' "${child##*/}" "$child"
             elif is_project_root "$child"; then
                 printf '  project  %-20s %s\n' "${child##*/}" "$child"
             fi
-        done
-    done
+    done < <(recognized_estate_rows)
 }
 
 estates_or_none() {
@@ -438,12 +509,12 @@ estates_or_none() {
 # shellcheck disable=SC2329  # `park` never asks: it files the record, and
 # never looks a holder up by it. The block is byte-identical by design.
 family_folders_with_id() {
-    local want="$1" dir child prior dup
+    local want="$1" dir child prior dup _grouped_name _physical
     local -a found=()
     [ -n "$want" ] || return 0
     for dir in "${PROJECTS_DIRS[@]}"; do
         [ -d "$dir" ] || continue
-        for child in "$dir"/*; do
+        while IFS=$'\t' read -r _grouped_name child _physical; do
             [ -d "$child" ] || continue
             is_family_folder "$child" || continue
             yaml_scalar "$child/${child##*/}/family.yaml" id || continue
@@ -455,7 +526,7 @@ family_folders_with_id() {
             [ "$dup" -eq 0 ] || continue
             found+=("$child")
             printf '%s\n' "$child"
-        done
+        done < <(project_directory_rows "$dir" "${PROJECTS_DIRS[@]}")
     done
 }
 
@@ -506,28 +577,42 @@ repo_slug_of() {
     printf '%s/%s\n' "$owner" "$name"
 }
 
-# The clone under the projects directory whose `origin` IS that repository -
-# ruling 1. Two levels deep, because the estates this standard places are
-# `<projects>/<Project>` and `<projects>/<Family>/<Project>`.
+# Match origins only in discovered development checkouts, including a
+# family's direct sibling checkouts. Never descend into pinned Git members.
 clone_with_origin() {
-    local want dir candidate origin found
+    local want candidate origin found hits child name physical git_dir common_dir git_physical rank
     want="$(lower "$1")"
-    for dir in "${PROJECTS_DIRS[@]}"; do
-        [ -d "$dir" ] || continue
-        for candidate in "$dir"/*/ "$dir"/*/*/; do
-            candidate="${candidate%/}"
+    hits="$(while IFS=$'\t' read -r name child physical; do
+        for candidate in "$child" "$child"/*; do
+            if [ "$candidate" != "$child" ]; then
+                is_family_folder "$child" || continue
+            fi
+            case "$candidate" in *$'\t'*|*$'\n'*) continue ;; esac
             [ -e "$candidate/.git" ] || continue
+            git_dir="$(git -C "$candidate" rev-parse --git-dir 2>/dev/null)" || continue
+            common_dir="$(git -C "$candidate" rev-parse --git-common-dir 2>/dev/null)" || continue
+            [ "$git_dir" = "$common_dir" ] || continue
+            [ -z "$(git -C "$candidate" rev-parse --show-superproject-working-tree 2>/dev/null)" ] || continue
             origin="$(git -C "$candidate" remote get-url origin 2>/dev/null || true)"
             [ -n "$origin" ] || continue
             found="$(repo_slug_of "$origin" || true)"
             [ -n "$found" ] || continue
             if [ "$(lower "$found")" = "$want" ]; then
-                printf '%s\n' "$candidate"
-                return 0
+                git_physical="$(cd -- "$candidate" && pwd -P)" || continue
+                rank=1
+                estate_walk_up "$candidate" && rank=0
+                printf '%s\t%s\t%s\n' "$git_physical" "$rank" "$candidate"
             fi
         done
-    done
-    return 1
+    done < <(estate_directory_rows) |
+        LC_ALL=C sort -s -t $'\t' -k1,1 -k2,2n |
+        awk -F '\t' '!seen[$1]++ {print $3}')"
+    [ -n "$hits" ] || return 1
+    if [ "$(printf '%s\n' "$hits" | wc -l | tr -d ' ')" -gt 1 ]; then
+        printf 'multiple development checkouts have origin %s; stand in the intended checkout: %s\n' "$1" "$hits" >&2
+        return 2
+    fi
+    printf '%s\n' "$hits"
 }
 
 # The family's members, by the same `  - project: <Project>` row `family.py`
@@ -1126,7 +1211,9 @@ if [ -n "$REPO_SLUG" ]; then
     url spelling of one (https://…/<owner>/<name>.git, git@host:<owner>/<name>).
     A family's members may live in another organisation, so there is no owner
     to assume, and a path on disk has none to read."
-    MATCH="$(clone_with_origin "$REPO_SLUG" || true)"
+    LOOKUP_RC=0
+    MATCH="$(clone_with_origin "$REPO_SLUG")" || LOOKUP_RC=$?
+    [ "$LOOKUP_RC" -ne 2 ] || die "ambiguous repository lookup; no checkout was selected"
     [ -n "$MATCH" ] || die "no clone under your projects directory has origin $REPO_SLUG.
     \`--repo\` names a clone you ALREADY HAVE (RULING 2026-09-09 ruling 1). To
     bring an estate back that is not here yet, name it as your workspace
