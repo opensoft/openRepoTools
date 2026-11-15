@@ -820,6 +820,11 @@ def test_a_render_stops_before_an_operator_seq_not_yet_on_origin(pg, tmp_path, c
             ran = [c for c in f2.calls() if c["sub"] == "push" and c["outcome"] != "held"]
             assert ran == [], f"the render pushed: {ran}; {render.stderr}"
             assert reg.origin_tip() == reg.c, "the render pushed a commit for seq 1"
+            # ITS CLEAN END (lane 3's exact-head review of P03, its SHOULD, code PR
+            # 93's comment 6894283536): `render --checkout` exits 0 where an operator
+            # entry is next (`contracts/exit-codes.md` section 3.5), so a render that
+            # ends early, on its usage or its configuration, fails the case.
+            assert render.returncode == 0, render.stderr
         finally:
             if writer is not None:
                 os.close(writer)
