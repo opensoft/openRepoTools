@@ -434,7 +434,7 @@ def test_v13_shadow_controls_trigger_existing_full_reuse_without_selectors(yaml_
     reuse = caller["jobs"]["full-ci"]
     assert reuse["uses"] == "./.github/workflows/tests.yml" and "with" not in reuse
     paths = caller["on"]["pull_request"]["paths"]
-    assert {WORKFLOW, ".github/ci/v13_shadow.py", ".github/ci/v13-shadow-profiles.json",
+    assert {WORKFLOW, ".github/ci/v13_shadow.py", ".github/ci/shadow_scope.py", ".github/ci/v13-shadow-profiles.json",
             ".github/ci/v13-shadow.md", "tests/test_v13_shadow.py"} <= set(paths)
 
 
