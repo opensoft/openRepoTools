@@ -39,9 +39,11 @@ and the head, the journal, its edits, the files, `doc_lines`,
 `register_lines` and the switch equal their values before, with the write id
 absent.
 
-Every case FAILS UNTIL lane 1's T107 (L1-A6, `commit_write` and its step 7)
-and T118 (L1-A16, the kinds' slots), and lane 2's T227 (`tmpl_imported`) and
-T228 (`lanes_w_fx`) land. Without PostgreSQL 16 each skips.
+Every case FAILS UNTIL lane 1's T107 and T108 (L1-A6, `commit_write` and its
+step 7, and §1.4's roles and GRANTs), T115 (L1-A13, the `import --at` that
+builds `tmpl_imported`) and T118 (L1-A16, the kinds' slots), and lane 2's
+T227 (`tmpl_imported`) and T228 (`lanes_w_fx`) land, as T223's Order and the
+gate table say. Without PostgreSQL 16 each skips.
 
 THE MODULE ALSO HOLDS, each at its own section below, in this order: T243's
 test 4, C10, D19 and section 4.1 (phase W, the client's writers on a real
