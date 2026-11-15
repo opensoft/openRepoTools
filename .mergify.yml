@@ -140,3 +140,31 @@ queue_rules:
       - check-success=@github-actions/openrepotools-delivery
     merge_conditions:
       - check-success=@github-actions/openrepotools-batch-heavy
+
+  # Staged manual test-only scope. The independent delivery flag remains false;
+  # no automatic entry or owner opt-in follows from adding this queue.
+  - name: openrepotools-sql-register-v13
+    branch_protection_injection_mode: queue
+    batch_size: 2
+    batch_max_wait_time: 60 seconds
+    batch_max_failure_resolution_attempts: 0
+    max_checks_retries: 0
+    checks_timeout: 90 minutes
+    merge_method: merge
+    queue_conditions:
+      - -draft
+      - -closed
+      - -from-fork
+      - base=main
+      - 'head~=^(?!main\Z|release/|verify/|mergify/)[A-Za-z0-9][A-Za-z0-9._/-]*\Z'
+      - 'body~=(?m)^CI-Shadow: sql-register-v13[ \t\r]*$'
+      - 'body~=(?m)^CI-Delivery: sql-register-v13[ \t\r]*$'
+      - 'body~=(?m)^CI-Task-Set: P(?:03|05)[ \t\r]*$'
+      - '-body~=(?im)^[ \t]*Depends-On:'
+      - '#files>=2'
+      - '#files<=6'
+      - '-files~=^(?!(?:tests/test_sql_register_[a-z_]+[.]py|tests/sql_register_landed/T[0-9]{3})\Z)'
+      - check-success=@github-actions/openrepotools-pr-fast
+      - check-success=@github-actions/openrepotools-delivery
+    merge_conditions:
+      - check-success=@github-actions/openrepotools-batch-heavy

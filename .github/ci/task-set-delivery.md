@@ -10,6 +10,9 @@ separate evidence/authority gates. All other work retains full CI.
 
 The [prepared v1.3 delivery path](delivery-v13.md) is independently **disabled**.
 Its source publication grants no v1.3 omission, queue admission or owner-PR edit.
+The staged `openrepotools-sql-register-v13` queue holds complete heavy proof;
+its existence does not turn on the independent false flag. Exact reviewed
+linear fix history may be pinned, never inferred from an owner's moving head.
 P01 and owner dependency resolution, reviewed enablement/queue configuration and
 separately approved live qualification must precede adoption. Preserve lanes 1–5.
 

@@ -48,12 +48,10 @@ def cut(root, base, head):
         raise ValueError("Unrecognized v1.3 source head")
     name, profile = matches[0]
     parent = policy["prerequisite"]["head"]
-    if common.git(root, "show", "-s", "--format=%P", head).decode().split() != [parent]:
-        raise ValueError("V1.3 source parent differs")
+    if not projection.source_lineage(root, parent, profile):
+        raise ValueError("V1.3 source lineage differs")
     paths = profile["files"] + [projection.MARKERS + task for task in profile["tasks"]]
     common.git(root, "diff", "--quiet", "--no-ext-diff", parent, base, "--", *paths)
-    if not projection.scoped_diff(root, parent, head, profile):
-        raise ValueError("V1.3 source diff differs")
     return policy, name, profile
 
 

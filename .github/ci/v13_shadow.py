@@ -48,13 +48,20 @@ def read_policy(root, main):
         raise ValueError("Unexpected proposed cuts")
     for profile in policy["profiles"].values():
         source = profile["source"]
-        if (set(source) != {"number", "head", "branch"}
+        if (set(source) not in ({"number", "head", "branch"}, {"number", "head", "branch", "commits"})
                 or type(source["number"]) is not int or source["number"] < 1
                 or source["number"] == prerequisite["number"]
                 or not common.valid_branch(source["branch"])
                 or not common.source_branch(source["branch"])):
             raise ValueError("Invalid source binding")
         common.sha(source["head"])
+        commits = source.get("commits", [source["head"]])
+        if (not isinstance(commits, list) or not 1 <= len(commits) <= 3
+                or any(not isinstance(commit, str) for commit in commits)
+                or len(set(commits)) != len(commits) or commits[-1] != source["head"]):
+            raise ValueError("Invalid source lineage")
+        for commit in commits:
+            common.sha(commit)
         for key, pattern in (("tasks", r"T[0-9]{3}"),
                              ("files", r"tests/test_sql_register_[a-z_]+[.]py")):
             values = profile[key]
@@ -135,8 +142,19 @@ def p01_status(root, main, policy, pr):
     return "merged-contract-observed"
 
 
+def source_lineage(root, parent, profile):
+    """Only the trusted, bounded exact history; check every cumulative cut."""
+    previous = parent
+    for commit in profile["source"].get("commits", [profile["source"]["head"]]):
+        if (common.git(root, "show", "-s", "--format=%P", commit).decode().split() != [previous]
+                or not scoped_diff(root, parent, commit, profile)):
+            return False
+        previous = commit
+    return True
+
+
 def known_child(root, main, policy, cut, pr, prerequisite):
-    """One immutable P01 child only; this is not a merge or qualification proof."""
+    """One immutable P01 cut only; this is not a merge or qualification proof."""
     profile = policy["profiles"][cut]
     source = profile["source"]
     if (type(pr["number"]) is not int or pr["number"] != source["number"]
@@ -151,11 +169,9 @@ def known_child(root, main, policy, cut, pr, prerequisite):
         r"(?im)^[ \t]*Depends-On:[ \t]*([^\n]*)", pr.get("body") or "")]
     if dependencies != ["#88"] and not (base == (main, "main") and not dependencies):
         return False
-    if common.git(root, "show", "-s", "--format=%P", source["head"]).decode().split() != [parent]:
-        return False
     paths = profile["files"] + [MARKERS + task for task in profile["tasks"]]
     common.git(root, "diff", "--quiet", "--no-ext-diff", parent, main, "--", *paths)
-    return scoped_diff(root, parent, source["head"], profile)
+    return source_lineage(root, parent, profile)
 
 
 def observe_pr(env, event, root, main, policy, request, prerequisite):
