@@ -199,7 +199,7 @@ pytestmark = [WINDOWS_SKIP, pytest.mark.skipif(
 
 SQL_REGISTER_GATE_TABLE = {
     "test_a_primary_write_forks_render_checkout_on_the_lane_checkout_detached": ("T409", "T415", "T416"),  # T256; tasks:2436
-    "test_lanes_edit_asks_lanes_index_mode_only_where_a_configuration_exists": ("T104", "T105", "T113", "T504", "T505", "T506"),  # T212; tasks:1974
+    "test_lanes_edit_asks_lanes_index_mode_only_where_a_configuration_exists": (),  # T212; tasks:1974
     "test_mode_primary_is_refused_until_the_git_half_and_goes_to_sql_once_flipped": ("T104", "T105", "T113", "T504", "T505", "T506"),  # T212; tasks:1974
     "test_mode_primary_with_sqlite_is_refused": ("T104", "T105", "T113", "T504", "T505", "T506"),  # T212; tasks:1974
     "test_readers_under_the_refusal_answer_the_78_as_a_failed_read": ("T104", "T105", "T113", "T504", "T505", "T506"),  # T212; tasks:1974
