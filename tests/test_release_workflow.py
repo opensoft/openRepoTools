@@ -5171,21 +5171,41 @@ FORGE_TEXT_CASES = {
 #: one line, never a traceback. They are held apart from ASSET_CASES too.
 NOT_A_RELEASE = ("::error::the forge's list of releases holds an entry that is not a release, "
                  "so nothing is published")
+#: The refusal of a releases line nested deeper than the step's `json.loads`
+#: reads, where it raises `RecursionError`.
+NESTS_DEEPER = ("::error::the forge's list of releases nests deeper than it can be read, so "
+                "nothing is published")
 FORGE_SHAPE_CASES = {
     "a-release-whose-assets-is-a-number": (
         [("v1.3.0", True, {})], {"list-assets": 7}, None, False, NOT_A_RELEASE, ()),
     "a-release-whose-assets-is-a-boolean": (
         [("v1.3.0", True, {})], {"list-assets": True}, None, False, NOT_A_RELEASE, ()),
+    # The forge's `list-deep` line is NESTED's, 100,000 deep, so its line is
+    # what the step's own python3 makes of it (`NESTED` says why): NESTS_DEEPER
+    # where `json.loads` raises `RecursionError` (3.12 here), and NOT_A_RELEASE
+    # where it decodes the line (CI's 3.15.2), whose one entry is then a list.
+    # `OF_NESTED` asks the interpreter (`releases_refusal`).
     "the-forge-answers-json-nested-past-what-python-reads": (
-        [], {"list-deep": ""}, None, False,
-        "::error::the forge's list of releases nests deeper than it can be read, so nothing is "
-        "published", ()),
+        [], {"list-deep": ""}, None, False, OF_NESTED, ()),
     "the-upload-is-refused-in-bytes-that-are-not-utf-8": (
         [("v1.3.0", True, {})], {"upload": "HTTP 422: \udcff bad byte"}, None, False,
         f"::error::{LISTED} could not be uploaded to the draft release v1.3.0: "
         "HTTP 422: \\xff bad byte", ("upload",)),
 }
 ASSET_RUNS = {**ASSET_CASES, **LATE_READ_BACK_CASES, **FORGE_TEXT_CASES, **FORGE_SHAPE_CASES}
+
+
+def releases_refusal(said: str) -> str:
+    """`said`, or for `OF_NESTED` the last step's one line for the forge's
+    `list-deep` line under the step's own `python3`, as `nested_refusal`
+    finds it: NESTS_DEEPER where its `json.loads` raises `RecursionError`, and
+    NOT_A_RELEASE where it decodes the line. Any other answer is given as the
+    probe's own words, which no line of the step is, so the case fails."""
+    if said != OF_NESTED:
+        return said
+    made = named_refusal(OF_NESTED)
+    return {"(RecursionError:": NESTS_DEEPER, "is not its JSON API's": NOT_A_RELEASE}.get(
+        made, made)
 
 
 @NEEDS_UPSTREAM
@@ -5215,6 +5235,7 @@ def test_release_asset_the_release_holds_the_list_at_the_recorded_sha256(tmp_pat
     command's data (feature 006's contract: each `asset` refusal is one
     `::error::` line)."""
     before, faults, serve, passes, said, expected = ASSET_RUNS[which]
+    said = releases_refusal(said)
     workflow = release()
     store = tmp_path / "before"
     store.mkdir()
