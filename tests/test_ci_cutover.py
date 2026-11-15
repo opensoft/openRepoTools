@@ -504,6 +504,92 @@ def hint_route(cutover, batch, case, request=None):
                          lambda _id: data, lambda number: threads(number, batch), base_changes)
 
 
+def regenerated_hint(batch, case, label):
+    """A different immutable commit ID for identical tested parents and tree."""
+    tested = case[0]["GITHUB_SHA"]
+    parents = git(batch["root"], "show", "-s", "--format=%P", tested).split()
+    tree = git(batch["root"], "rev-parse", tested + "^{tree}")
+    hint = git(batch["root"], "commit-tree", tree, "-p", parents[0],
+               "-p", parents[1], "-m", "regenerated test merge " + label)
+    assert hint != tested
+    batch["data"]["git/commits/" + hint] = {
+        "sha": hint, "tree": {"sha": tree},
+        "parents": [{"sha": parent} for parent in parents],
+    }
+    return hint
+
+
+@pytest.mark.parametrize("side", ["event", "live", "both", "same"])
+def test_ci_cutover_regenerated_hint_same_parents_and_tree_preserves_proof(
+        cutover, batch, merge_hint_case, side):
+    env, event, _data, live = merge_hint_case
+    expected = hint_route(cutover, batch, merge_hint_case)
+    env_hint = regenerated_hint(batch, merge_hint_case, "event")
+    live_hint = regenerated_hint(batch, merge_hint_case, "live")
+    event["action"] = "reopened"
+    event["pull_request"]["merge_commit_sha"] = env_hint if side != "live" else env["GITHUB_SHA"]
+    live["merge_commit_sha"] = live_hint if side != "event" else env["GITHUB_SHA"]
+    if side == "same":
+        live["merge_commit_sha"] = env_hint
+    reader, lookups = request_for(batch), []
+
+    def request(repo, endpoint):
+        if endpoint.startswith("git/commits/"):
+            lookups.append(endpoint)
+        return reader(repo, endpoint)
+
+    assert hint_route(cutover, batch, merge_hint_case, request) == expected
+    assert len(lookups) == (2 if side == "both" else 1)
+
+
+@pytest.mark.parametrize("failure", [
+    "returned-sha", "tree", "reversed-parents", "base", "head", "one-parent",
+    "missing-tree", "malformed-parents",
+])
+def test_ci_cutover_regenerated_hint_unproven_identity_retains_full(
+        cutover, batch, merge_hint_case, failure):
+    env, event, _data, live = merge_hint_case
+    hint = regenerated_hint(batch, merge_hint_case, "unproven")
+    row = batch["data"]["git/commits/" + hint]
+    if failure == "returned-sha": row["sha"] = "f" * 40
+    elif failure == "tree": row["tree"]["sha"] = "f" * 40
+    elif failure == "reversed-parents": row["parents"].reverse()
+    elif failure in {"base", "head"}: row["parents"][1 if failure == "head" else 0]["sha"] = "f" * 40
+    elif failure == "one-parent": row["parents"].pop()
+    elif failure == "missing-tree": row.pop("tree")
+    elif failure == "malformed-parents": row["parents"] = {}
+    event["pull_request"]["merge_commit_sha"] = hint
+    live["merge_commit_sha"] = env["GITHUB_SHA"]
+    assert hint_route(cutover, batch, merge_hint_case) == cutover.FULL
+
+
+def test_ci_cutover_regenerated_hint_does_not_mask_base_drift(cutover, batch, merge_hint_case):
+    _env, event, _data, _live = merge_hint_case
+    event["pull_request"]["merge_commit_sha"] = regenerated_hint(batch, merge_hint_case, "base-drift")
+    event["pull_request"]["base"]["sha"] = "f" * 40
+    assert hint_route(cutover, batch, merge_hint_case) == cutover.FULL
+
+
+def test_ci_cutover_regenerated_hint_live_reread_remains_exact(cutover, batch, merge_hint_case):
+    _env, event, _data, live = merge_hint_case
+    event["pull_request"]["merge_commit_sha"] = regenerated_hint(batch, merge_hint_case, "before")
+    replacement = regenerated_hint(batch, merge_hint_case, "after")
+    reader, reads = request_for(batch), 0
+
+    def request(repo, endpoint):
+        nonlocal reads
+        if endpoint == f"pulls/{event['number']}":
+            reads += 1
+            if reads == 2:
+                live["merge_commit_sha"] = replacement
+        return reader(repo, endpoint)
+
+    observed = hint_route(cutover, batch, merge_hint_case, request)
+    expected = {**cutover.FULL, "retryable": True} if event["number"] == 9 else cutover.FULL
+    assert observed == expected and "proof" not in observed
+    assert reads == 2
+
+
 @pytest.mark.parametrize("action", ["opened", "synchronize", "reopened"])
 @pytest.mark.parametrize("event_hint,live_hint", [
     ("missing", "current"), ("null", "current"), ("current", "missing"),

@@ -194,8 +194,12 @@ trust an editing actor, grant queue authority or widen eligible files/actions.
 
 At the initial source or genuine candidate PR comparison only, generated
 `merge_commit_sha` hints may be missing/null or equal the trusted workflow
-`GITHUB_SHA`. Both hints must qualify; unknown or malformed non-null hints retain
-full even when both snapshots agree. These hints never identify the tested
+`GITHUB_SHA`. A different full-SHA hint qualifies only when an authenticated
+immutable Git-commit read proves its returned identity, exact two ordered parents
+and tree equal the actual tested merge. At most two distinct object lookups are
+needed for the initial pair of hints, with no new permission, ref write or retry.
+Both hints must qualify; unavailable, unknown, malformed or semantically different
+objects retain full even when both snapshots agree. These hints never identify the tested
 commit: the actual commit and ordered current-main/head parents are still
 independently verified. At only the initial candidate comparison, descriptions
 may differ when both are strings or null. Candidate prose grants no member,

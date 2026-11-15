@@ -120,10 +120,28 @@ def current_run(env, request):
     return run
 
 
-def current_merge_hints(env, pr, expected):
+def current_merge_hints(env, pr, expected, root, request):
+    """Accept regenerated metadata only with immutable parent/tree equivalence."""
     tested = policy.sha(env["GITHUB_SHA"])
-    return all(hint is None or isinstance(hint, str) and hint == tested
-               for hint in (pr.get("merge_commit_sha"), expected.get("merge_commit_sha")))
+    hints = (pr.get("merge_commit_sha"), expected.get("merge_commit_sha"))
+    if all(hint is None or hint == tested for hint in hints):
+        return True
+    try:
+        distinct = {policy.sha(hint) for hint in hints if hint is not None}
+        evidence.ensure_commit(root, tested)
+        parents = policy.git(root, "show", "-s", PARENTS, tested).decode().split()
+        tree = policy.git(root, "rev-parse", tested + "^{tree}").decode().strip()
+        if len(parents) != 2:
+            return False
+        for hint in distinct - {tested}:
+            commit = request(REPOSITORY, "git/commits/" + hint)
+            if (commit["sha"] != hint or commit["tree"]["sha"] != tree
+                    or not isinstance(commit["parents"], list)
+                    or [parent["sha"] for parent in commit["parents"]] != parents):
+                return False
+        return True
+    except policy.ERRORS:
+        return False
 
 
 def source(env, event, root, main, request, base_changes):
@@ -131,7 +149,7 @@ def source(env, event, root, main, request, base_changes):
     number = evidence.positive(event["number"])
     pr = request(REPOSITORY, f"pulls/{number}")
     expected = event["pull_request"]
-    hints_current = current_merge_hints(env, pr, expected)
+    hints_current = current_merge_hints(env, pr, expected, root, request)
     comparison = dict(pr, body=expected.get("body"))
     if hints_current:
         comparison["merge_commit_sha"] = expected.get("merge_commit_sha")
@@ -180,7 +198,8 @@ def duplicate(env, event, root, main, request, fetch, threads, base_changes):
     pr = request(REPOSITORY, f"pulls/{number}")
     head, branch = policy.side(pr, "head")
     expected = event["pull_request"]
-    require(current_merge_hints(env, pr, expected), "Event merge hint is neither absent nor current")
+    require(current_merge_hints(env, pr, expected, root, request),
+            "Event merge hint is neither absent nor current")
     require(all(body is None or isinstance(body, str)
                 for body in (pr.get("body"), expected.get("body"))),
             "Candidate description is not string or null")
@@ -225,7 +244,9 @@ def duplicate(env, event, root, main, request, fetch, threads, base_changes):
             and current_pr["user"]["login"] == "mergify[bot]", "Candidate evidence moved")
     require(current_pr.get("body") is None or isinstance(current_pr.get("body"), str),
             "Candidate description is not string or null")
-    require(current_merge_hints(env, pr, current_pr), "Event merge hint is neither absent nor current")
+    require(current_pr.get("merge_commit_sha") == pr.get("merge_commit_sha")
+            or current_merge_hints(env, pr, current_pr, root, request),
+            "Event merge hint is neither absent nor current")
     require(request(REPOSITORY, "git/ref/heads/" + branch)["object"]["sha"] == head,
             "Candidate evidence moved")
     current_run = evidence.run_identity(request(REPOSITORY, f"actions/runs/{run['id']}"), head, branch)
