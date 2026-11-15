@@ -3118,6 +3118,11 @@ exec "$T235_REAL_GIT" "$@"
 #: The log directory `known_lanes`, `remote_log_events` and `worktree_rows`'
 #: pin read by git off primary (P2's `lanes-edit.sh`, `LANES_LOG_PREFIX`).
 LOG_DIR = "lanes/log"
+#: The archive `archive_text` reads by git off primary (`LANES_ARCH_PATH`):
+#: `register_published`'s `ls-tree`, then a `show` where it is published. On
+#: primary it reads `.archive` (T505 Q6); `lanes_rows` and `worktree_rows`
+#: read it on every listing (lane 5's NIT, #165 6888923188).
+ARCH_PATH = "lanes/archive/LANES-retired.md"
 
 #: T235's ids (F13c's block, T235): four the text writes whole, and three run
 #: through the module's door (`DOOR_WRAPPER`), whose oracles are lane 3's
@@ -3157,11 +3162,12 @@ T235_READ_FAILED = re.compile(r"^lanes-edit: the register could not be read", re
 
 
 def git_log_reads(log: Path, upto: re.Pattern | None = None) -> list:
-    """The calls in the fake `git`'s argv log that read `lanes/log` by git:
-    an `ls-tree` naming it, or a `show` of a path under it. Each call's line
-    holds US. Where the log is also the run's stderr (`[failed-second-read]`),
-    every other line is stderr's, and `upto`, where given, ends the scan at
-    the first of those it matches."""
+    """The calls in the fake `git`'s argv log that read `lanes/log` or the
+    archive by git: an `ls-tree` naming either, or a `show` of a path under
+    `lanes/log` or of the archive. Each call's line holds US. Where the log
+    is also the run's stderr (`[failed-second-read]`), every other line is
+    stderr's, and `upto`, where given, ends the scan at the first of those it
+    matches."""
     if not log.exists():
         return []
     found = []
@@ -3186,9 +3192,10 @@ def git_log_reads(log: Path, upto: re.Pattern | None = None) -> list:
         if not rest:
             continue
         verb, args = rest[0], rest[1:]
-        if verb == "ls-tree" and any(LOG_DIR in a for a in args):
+        if verb == "ls-tree" and any(read in a for a in args for read in (LOG_DIR, ARCH_PATH)):
             found.append(argv)
-        elif verb == "show" and any(a.startswith(LOG_DIR) or f":{LOG_DIR}" in a for a in args):
+        elif verb == "show" and any(a.startswith(read) or f":{read}" in a
+                                    for a in args for read in (LOG_DIR, ARCH_PATH)):
             found.append(argv)
     return found
 
@@ -3237,7 +3244,9 @@ def test_on_primary_known_lanes_remote_log_events_and_worktree_rows_read_the_sto
     primary, `known_lanes`, `remote_log_events` and `worktree_rows` read the
     store and never git. Each id asserts the store's answer, and that no `git
     ls-tree` and no `git show` of `lanes/log` ran, by the fake `git`'s argv
-    log (`LOGGING_GIT`):
+    log (`LOGGING_GIT`), nor of the archive, which `archive_text` reads from
+    `.archive` on primary for `lanes_rows` and `worktree_rows` (T505 Q6; lane
+    5's NIT, #165 6888923188):
 
       * `[known-lanes]`: a lane's log with no register row, only in the store,
         which `known_lanes` lists from the family (`lanes --all --closed`);
@@ -3344,19 +3353,21 @@ def test_on_primary_known_lanes_remote_log_events_and_worktree_rows_read_the_sto
                 "PATH": str(shim) + os.pathsep + estate.env["PATH"],
                 "T235_GIT_LOG": str(log), "T235_REAL_GIT": real_git}
 
-    # THE CONTROL: the fake `git` is the one on PATH, and its log shows the read the sites
-    # make off primary, so a run that logs none made none (a T505 run may log no call at all).
+    # THE CONTROL: the fake `git` is the one on PATH, and its log shows the reads the sites
+    # make off primary, of `lanes/log` and of the archive, so a run that logs none made none
+    # (a T505 run may log no call at all).
     control = tmp_path / "t235-git-control.log"
-    listed = estate.run("git", "-C", estate.wip, "ls-tree", "--name-only", "origin/main", "--",
-                        f"{LOG_DIR}/", env=git_env(control))
-    assert listed.returncode == 0 and git_log_reads(control), (
-        "the control: the fake git logged no ls-tree of lanes/log", listed.stderr)
+    for count, path in enumerate((f"{LOG_DIR}/", ARCH_PATH), 1):
+        listed = estate.run("git", "-C", estate.wip, "ls-tree", "--name-only", "origin/main", "--",
+                            path, env=git_env(control))
+        assert listed.returncode == 0 and len(git_log_reads(control)) == count, (
+            "the control: the fake git logged no ls-tree of", path, listed.stderr)
 
     def run(*argv: str) -> subprocess.CompletedProcess:
         log = tmp_path / f"t235-git-{'-'.join(argv)}.log"
         result = estate.run("bash", edit, *argv, env=git_env(log))
-        assert not git_log_reads(log), (case, argv, "git read lanes/log", git_log_reads(log),
-                                        result.stderr[-1500:])
+        assert not git_log_reads(log), (case, argv, "git read lanes/log or the archive",
+                                        git_log_reads(log), result.stderr[-1500:])
         return result
 
     def run_in_order(*argv: str) -> tuple:
@@ -3454,8 +3465,8 @@ def test_on_primary_known_lanes_remote_log_events_and_worktree_rows_read_the_sto
             mirror = estate.edit(*argv)                      # the mirror's answer: files mode's
             result, stderr, both = run_in_order(*argv)
             reads = git_log_reads(both, upto=MIRROR_LINE)
-            assert not reads, (case, argv, "git read lanes/log before the mirror's label", reads,
-                               stderr[-1500:])
+            assert not reads, (case, argv, "git read lanes/log or the archive before the mirror's "
+                               "label", reads, stderr[-1500:])
             assert MIRROR_LINE.search(stderr), (case, argv, "no `read: mirror at` line",
                                                 stderr[-1500:])
             # SAID ONCE (lane 3's review of T505, SHOULD-1, #165 6783977065): the mirror line
