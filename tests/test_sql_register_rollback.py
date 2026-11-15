@@ -1340,6 +1340,16 @@ def test_rollback_from_a_partitioned_clone_is_refused_and_removes_no_marker(requ
         assert wrote.returncode == 0, f"ws2's {verb} on the still-primary estate:\n{_said(wrote)}"
 
 
+def _assert_partitioned_refusal(refused) -> None:
+    """Section 4.2's first rollback, from the empty socket directory, exits 69
+    (TP:7579-7584). A helper, as `_assert_rolled_back` is, so that no `assert`
+    stands in `partitioned_estate`'s `try`, whose `except AssertionError`
+    turns a failure into each case's (python:S5779). pytest rewrites this
+    `assert` as it rewrote the fixture's, so each case's message is unchanged;
+    a raised exception of the module's own would lose pytest's explanation."""
+    assert refused.returncode == 69, f"the partitioned rollback:\n{_said(refused)}"
+
+
 @pytest.fixture(scope="module")
 def partitioned_estate(pg_cluster, tmp_path_factory):
     """Section 4.2's estate after the partitioned rollback and the whole one:
@@ -1353,7 +1363,7 @@ def partitioned_estate(pg_cluster, tmp_path_factory):
         ws2 = {fetch: MissedWorkstation(estate, f"ws2-{fetch}")
                for fetch in ("fetched", "not-fetched")}
         refused = estate.rollback(conf=_partitioned_conf(estate))
-        assert refused.returncode == 69, f"the partitioned rollback:\n{_said(refused)}"
+        _assert_partitioned_refusal(refused)
         proc = estate.rollback()
         _assert_rolled_back(estate, proc)
         ws2["fetched"].fetch()
