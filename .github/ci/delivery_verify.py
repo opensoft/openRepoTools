@@ -223,6 +223,11 @@ def fast_run_scope(run, pr, head):
             and type(run["run_attempt"]) is int and run["run_attempt"] >= 1)
 
 
+def same_fast_attempt(run, observed):
+    return all(type(run[key]) is int and run[key] == observed[key]
+               for key in ("id", "run_number", "workflow_id", "check_suite_id", "run_attempt"))
+
+
 def fast_runs(pr, head, request):
     """A complete, bounded catalogue; workflow sequence is not check array order."""
     path = ("actions/workflows/task-set-fast.yml/runs?head_sha=" + policy.sha(head)
@@ -272,11 +277,10 @@ def fast_receipt(pr, head, request, base_changes, *, allow_pending=False):
             matches.append((check, job_id))
     run_id = latest["id"]
     run = request(REPOSITORY, f"actions/runs/{run_id}")
-    require(fast_run_scope(run, pr, head)
-            and all(type(run[key]) is int and run[key] == latest[key]
-                    for key in ("id", "run_number", "workflow_id", "check_suite_id")),
+    require(fast_run_scope(run, pr, head) and same_fast_attempt(run, latest),
             "Fast run belongs to another workflow/head or is incomplete")
-    pending = receipt_pending(run, allow_pending)
+    pending = receipt_pending(latest, allow_pending)
+    pending = receipt_pending(run, allow_pending) or pending
     associated = run["pull_requests"]
     require(isinstance(associated, list) and len(associated) == 1,
             "Fast run has no unique source PR")
@@ -314,8 +318,11 @@ def fast_receipt(pr, head, request, base_changes, *, allow_pending=False):
     if pending:
         raise PendingEvidence("Authenticated fast workflow is pending")
     require(run == request(REPOSITORY, f"actions/runs/{run_id}")
-            and response == request(REPOSITORY, endpoint)
-            and fast_runs(pr, head, request)[1]["id"] == run_id,
+            and response == request(REPOSITORY, endpoint),
+            "Fast run/check changed during verification")
+    final = fast_runs(pr, head, request)[1]
+    require(same_fast_attempt(run, final)
+            and final["status"] == run["status"] and final["conclusion"] == run["conclusion"],
             "Fast run/check changed during verification")
     return response, run, job, history
 

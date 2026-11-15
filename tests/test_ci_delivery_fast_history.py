@@ -115,3 +115,28 @@ def test_ci_delivery_fast_history_newer_event_during_reads_refuses(delivery, bat
     with pytest.raises(delivery.Refused):
         receipt(delivery, batch, request)
     assert reads == 2
+
+
+@pytest.mark.parametrize("observation", [1, 2], ids=["initial", "final"])
+@pytest.mark.parametrize("state", ["queued", "failure", "success", "same-attempt-failure"])
+def test_ci_delivery_fast_history_catalogue_attempt_and_state_cannot_be_ignored(
+        delivery, batch, observation, state):
+    _checks, _catalog, path = cohort(batch)
+    reader, reads = request_for(batch), 0
+
+    def request(repo, endpoint):
+        nonlocal reads
+        result = reader(repo, endpoint)
+        if endpoint == path:
+            reads += 1
+            if reads == observation:
+                row = result["workflow_runs"][0]
+                if state != "same-attempt-failure":
+                    row["run_attempt"] += 1
+                row.update(status="queued" if state == "queued" else "completed",
+                           conclusion=None if state == "queued" else
+                           "failure" if state == "same-attempt-failure" else state)
+        return result
+
+    with pytest.raises(delivery.Refused):
+        receipt(delivery, batch, request, allow_pending=True)
