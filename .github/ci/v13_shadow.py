@@ -47,6 +47,14 @@ def read_policy(root, main):
     if set(policy["profiles"]) != {"P03", "P05"}:
         raise ValueError("Unexpected proposed cuts")
     for profile in policy["profiles"].values():
+        source = profile["source"]
+        if (set(source) != {"number", "head", "branch"}
+                or type(source["number"]) is not int or source["number"] < 1
+                or source["number"] == prerequisite["number"]
+                or not common.valid_branch(source["branch"])
+                or not common.source_branch(source["branch"])):
+            raise ValueError("Invalid source binding")
+        common.sha(source["head"])
         for key, pattern in (("tasks", r"T[0-9]{3}"),
                              ("files", r"tests/test_sql_register_[a-z_]+[.]py")):
             values = profile[key]
@@ -54,6 +62,9 @@ def read_policy(root, main):
                     or any(not isinstance(value, str) or not re.fullmatch(pattern, value)
                            for value in values) or len(set(values)) != len(values)):
                 raise ValueError("Invalid profile projection")
+    if any(len({profile["source"][key] for profile in policy["profiles"].values()}) != 2
+           for key in ("number", "head", "branch")):
+        raise ValueError("Duplicate source binding")
     return policy
 
 
@@ -124,7 +135,30 @@ def p01_status(root, main, policy, pr):
     return "merged-contract-observed"
 
 
-def observe_pr(env, event, root, main, policy, request):
+def known_child(root, main, policy, cut, pr, prerequisite):
+    """One immutable P01 child only; this is not a merge or qualification proof."""
+    profile = policy["profiles"][cut]
+    source = profile["source"]
+    if (type(pr["number"]) is not int or pr["number"] != source["number"]
+            or common.side(pr, "head") != (source["head"], source["branch"])
+            or pr["state"] != "open" or pr["draft"] is not False):
+        return False
+    parent, parent_ref = common.side(prerequisite, "head")
+    base = common.side(pr, "base")
+    if base not in {(parent, parent_ref), (main, "main")}:
+        return False
+    dependencies = [line.strip(" \t\r") for line in re.findall(
+        r"(?im)^[ \t]*Depends-On:[ \t]*([^\n]*)", pr.get("body") or "")]
+    if dependencies != ["#88"] and not (base == (main, "main") and not dependencies):
+        return False
+    if common.git(root, "show", "-s", "--format=%P", source["head"]).decode().split() != [parent]:
+        return False
+    paths = profile["files"] + [MARKERS + task for task in profile["tasks"]]
+    common.git(root, "diff", "--quiet", "--no-ext-diff", parent, main, "--", *paths)
+    return scoped_diff(root, parent, source["head"], profile)
+
+
+def observe_pr(env, event, root, main, policy, request, prerequisite):
     number = event["number"]
     if type(number) is not int or number < 1:
         raise ValueError("Invalid PR number")
@@ -142,19 +176,39 @@ def observe_pr(env, event, root, main, policy, request):
     supported = (event["action"] in common.OPEN_ACTIONS
                  and pr["state"] == expected["state"] == "open"
                  and pr["draft"] is False and expected["draft"] is False
-                 and base_ref == "main" and base == main and common.source_branch(branch)
-                 and not re.search(r"(?im)^\s*Depends-On:", pr.get("body") or ""))
+                 and common.source_branch(branch))
     observation = None
     if supported and cut:
-        common.git(root, "merge-base", "--is-ancestor", main, head)
-        if scoped_diff(root, base, head, policy["profiles"][cut]):
+        if known_child(root, main, policy, cut, pr, prerequisite):
             observation = cut
+        elif (base_ref == "main" and base == main
+              and not re.search(r"(?im)^\s*Depends-On:", pr.get("body") or "")):
+            common.git(root, "merge-base", "--is-ancestor", main, head)
+            if scoped_diff(root, base, head, policy["profiles"][cut]):
+                observation = cut
     if common.snapshot(pr) != common.snapshot(request(common.REPOSITORY, f"pulls/{number}")):
         raise ValueError("PR changed during observation")
     return observation
 
 
-def observe_push(env, event, root, main, policy, request):
+def known_push(root, main, policy, branch, head, request, prerequisite):
+    for cut, profile in policy["profiles"].items():
+        source = profile["source"]
+        if (source["branch"], source["head"]) != (branch, head):
+            continue
+        endpoint = f"pulls/{source['number']}"
+        pr = request(common.REPOSITORY, endpoint)
+        observation = None
+        if proposed_cut(pr.get("body"), policy) == cut and known_child(
+                root, main, policy, cut, pr, prerequisite):
+            observation = cut
+        if common.snapshot(pr) != common.snapshot(request(common.REPOSITORY, endpoint)):
+            raise ValueError("Source PR changed during push observation")
+        return observation
+    return None
+
+
+def observe_push(env, event, root, main, policy, request, prerequisite):
     head, ref = common.sha(event["after"]), event["ref"]
     if (event["repository"]["full_name"] != common.REPOSITORY
             or event["deleted"] is not False or event["forced"] is not False
@@ -167,9 +221,14 @@ def observe_push(env, event, root, main, policy, request):
     endpoint = "git/ref/heads/" + branch
     if common.sha(request(common.REPOSITORY, endpoint)["object"]["sha"]) != head:
         raise ValueError("Branch changed")
-    common.git(root, "merge-base", "--is-ancestor", main, head)
-    cut = proposed_cut(common.git(root, "show", "-s", "--format=%B", head).decode().strip(), policy)
-    observation = cut if cut and scoped_diff(root, main, head, policy["profiles"][cut]) else None
+    bound = any((profile["source"]["branch"], profile["source"]["head"]) == (branch, head)
+                for profile in policy["profiles"].values())
+    if bound:
+        observation = known_push(root, main, policy, branch, head, request, prerequisite)
+    else:
+        common.git(root, "merge-base", "--is-ancestor", main, head)
+        cut = proposed_cut(common.git(root, "show", "-s", "--format=%B", head).decode().strip(), policy)
+        observation = cut if cut and scoped_diff(root, main, head, policy["profiles"][cut]) else None
     if common.sha(request(common.REPOSITORY, endpoint)["object"]["sha"]) != head:
         raise ValueError("Branch changed during observation")
     return observation
@@ -194,9 +253,9 @@ def classify(env, event, root, request=common.github):
         cut = None
         if status == "merged-contract-observed":
             if env.get("GITHUB_EVENT_NAME") == "pull_request":
-                cut = observe_pr(env, event, root, main, policy, request)
+                cut = observe_pr(env, event, root, main, policy, request, prerequisite)
             elif env.get("GITHUB_EVENT_NAME") == "push":
-                cut = observe_push(env, event, root, main, policy, request)
+                cut = observe_push(env, event, root, main, policy, request, prerequisite)
         if (common.snapshot(prerequisite) != common.snapshot(request(common.REPOSITORY, "pulls/88"))
                 or common.sha(request(common.REPOSITORY, "git/ref/heads/main")["object"]["sha"]) != main):
             raise ValueError("Prerequisite or main changed")
