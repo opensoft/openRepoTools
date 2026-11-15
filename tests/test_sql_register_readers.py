@@ -1101,11 +1101,6 @@ class PrimaryWorld(ArmWorld):
                 self.env[key] = value
 
 
-@pytest.fixture
-def arms(tmp_path: Path) -> ArmWorld:
-    return ArmWorld(tmp_path / "arms")
-
-
 # ----------------------------------------------------- the arms' table
 class Arm:
     """One arm of lane 4's table ("The callers' default arms (Q9)"): the
