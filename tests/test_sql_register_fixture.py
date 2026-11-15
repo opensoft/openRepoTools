@@ -41,6 +41,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
 import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 
@@ -314,3 +316,73 @@ def test_the_stale_sweep_signals_and_removes_only_what_it_proves_is_a_dead_sessi
     assert sent == want_sent, f"[{case}] the sweep signalled {sent}, not {want_sent}"
     assert root.is_dir() == kept, f"[{case}] the sweep {'removed' if kept else 'kept'} {root}"
     assert swept == ([] if kept else [str(root)]), f"[{case}] the sweep reports {swept}"
+
+
+class _HeldChild:
+    """A stand-in for `lanes-index login` (T228b's case): it never opens the
+    pty, so the pty ends at once, and it holds its stderr open until it is
+    killed. No real process: its kill closes a pipe, and signals nothing."""
+
+    def __init__(self, argv, **_kw) -> None:
+        read_end, self._write_end = os.pipe()
+        self.stderr = os.fdopen(read_end, "rb")
+        self.returncode = None
+        self.killed = threading.Event()
+
+    def poll(self):
+        return self.returncode
+
+    def kill(self) -> None:
+        if self.returncode is None:
+            self.returncode = -9
+            os.close(self._write_end)
+            self.killed.set()
+
+    def wait(self, timeout=None):
+        if not self.killed.wait(timeout):
+            raise subprocess.TimeoutExpired("lanes-index", timeout)
+        return self.returncode
+
+
+def test_the_fixtures_pty_run_holds_its_deadline_when_the_child_closes_the_pty_and_lives_on(
+        monkeypatch, tmp_path):
+    """T228b (Codex's SHOULD 6 on f060619c): `lanes_index_tty`'s deadline
+    bounds the whole call, not only its pty read. A child that ends the pty
+    at once and holds stderr open is killed at the deadline, here 0.5 s, and
+    the call returns its kill's status; it does not block on stderr. The
+    case's own guard is 10 s; the child is a stand-in, so nothing is
+    signalled."""
+    import pgcluster
+    held = []
+
+    def launch(argv, **kw):
+        held.append(_HeldChild(argv, **kw))
+        return held[-1]
+
+    monkeypatch.setattr(pgcluster, "_tty_popen", launch)
+    monkeypatch.setattr(pgcluster, "TTY_DEADLINE", 0.5)
+
+    class Admin:
+        root = tmp_path
+
+        @staticmethod
+        def admin_env():
+            return {}
+
+    said = {}
+
+    def call():
+        t0 = time.monotonic()
+        said["result"] = pgcluster.Cluster.lanes_index_tty(Admin(), ["login", "add"])
+        said["took"] = time.monotonic() - t0
+
+    caller = threading.Thread(target=call, daemon=True)
+    caller.start()
+    caller.join(10)
+    blocked = caller.is_alive()
+    if blocked:                           # the old code: free its read, so the thread ends
+        held[0].kill()
+        caller.join(10)
+    assert not blocked, "lanes_index_tty blocked past its deadline on a child that holds stderr open"
+    assert said["result"] == (-9, "", ""), said
+    assert said["took"] < 5, f"lanes_index_tty took {said['took']:.1f} s on a 0.5 s deadline"
