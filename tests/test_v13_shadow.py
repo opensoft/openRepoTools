@@ -73,7 +73,7 @@ def fixture(tmp_path, shadow):
         write(root, shadow.MARKERS + task, "")
     write(root, "tests/test_sql_register_import.py", "# initial test\n")
     foundation = commit(root, "P01 foundation")
-    policy = json.loads((REPO / shadow.CONFIG).read_text())
+    policy = json.loads((REPO / "tests/fixtures/ci/v13-initial-profiles.json").read_text())
     policy["prerequisite"]["head"] = foundation
     policy["prerequisite"]["blobs"] = {
         path: git(root, "rev-parse", "HEAD:" + path) for path in shadow.CONTROL_PATHS}
@@ -390,7 +390,7 @@ def stack_fixture(tmp_path, shadow, request):
     for task in shadow.P01_TASKS:
         write(root, shadow.MARKERS + task, "")
     foundation = commit(root, "P01 source")
-    policy = json.loads((REPO / shadow.CONFIG).read_text())
+    policy = json.loads((REPO / "tests/fixtures/ci/v13-initial-profiles.json").read_text())
     profile = policy["profiles"][cut]
     policy["prerequisite"]["head"] = foundation
     policy["prerequisite"]["blobs"] = {

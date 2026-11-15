@@ -1,19 +1,26 @@
-# Staged v1.3 delivery: disabled
+# Reviewed initial v1.3 test-only delivery
 
-`delivery-v13-policy.json` is **false**. The existing claude-current scope is
-unchanged. v1.3 ordinary PR/main CI remains full. The separate manual queue is
-configured but no member is admitted by this source change. The shadow observer still cannot grant skips,
-qualification, admission or merge authority.
+This source sets `delivery-v13-policy.json` to **true** for the exact registered
+P05/P06 pair only. Check the actual default-branch policy after the separately
+reviewed code PR merges; a private branch, spec merge or enabled flag alone is
+not omission/admission authority or a live acceptance receipt. Existing
+claude-current behavior is unchanged. All other v1.3 work retains full CI.
+The shadow observer still cannot grant skips, qualification, admission or merge
+authority, and its own `efficiency_enabled` remains false.
 
-## Prepared proof boundary
+## Trusted proof boundary
 
-The new delivery-specific validator reads the immutable P03/P05 projection but
-does not consume shadow observations. Under a separately approved future
-enablement it requires all of:
+The delivery-specific validator reads the immutable P05/P06 registry data,
+never shadow observations. Under the approved staged rollout it requires all of:
 
 - P01 #88 at its exact projected head, actually merged into main, with the
-  frozen required-PostgreSQL workflow/baseline and unchanged foundation files
-  and empty P01 markers. The original 13 integration jobs are not replaced.
+  frozen required-PostgreSQL workflow/baseline and empty P01 markers. The original
+  13 integration jobs are not replaced. An optional explicit `foundation` binds
+  an independently qualified actual-main ancestor descended from P01 and all
+  four regular-file helper blobs. Helpers/modes must remain unchanged from that
+  exact epoch; controls/markers remain frozen from original P01. Missing epochs
+  retain the original P01-only freeze. No moving-main discovery, rehash or later
+  helper drift is implicitly approved.
 - The exact projected source PR/head/branch and complete regular-file/empty-marker
   cut. The default is one P01 child. An optional trusted `source.commits` list
   pins one to three unique full SHAs ending at `source.head`; every commit must
@@ -24,7 +31,7 @@ enablement it requires all of:
   dependency independently resolved by the owner. The preparer does not edit,
   rebase, retarget or merge lane-owned PRs.
 - Unique matching `CI-Shadow: sql-register-v13`,
-  `CI-Delivery: sql-register-v13` and `CI-Task-Set: P03` (or `P05`) body lines.
+  `CI-Delivery: sql-register-v13` and `CI-Task-Set: P05` (or `P06`) body lines.
   These are intent, never review or permission.
 - Existing authenticated exact-head fast-run/base-history evidence; complete
   clean hosted Codex or explicit local-review receipt and resolved threads for
@@ -46,17 +53,36 @@ admission. Policy/foundation changes after qualification retain full main CI.
 
 ## Publication versus activation
 
-This is checked **disabled source preparation**, not a live acceptance receipt.
-The full-CI parity caller additionally watches the new validator, policy,
+Source publication, including the enabled flag, is not a live acceptance receipt
+or a queue command. The full-CI parity caller watches the validator, policy,
 runbook and tests; its jobs and the parameterless complete suite are unchanged.
 No release workflow is touched. The four existing queues are unchanged.
 
-## Staged manual queue
+The registry points to merged spec revision
+`a3366afcc059b4686c990f4715c36dac9b1db05b` and qualified immutable epoch
+`f0070e009bc6f183904549b69c710ef3982ca6e6`. Main full run43735780675 and
+same-tree run43734991157 passed15/15; matching real-engine smoke43733481662
+verified session clone/query and SIGINT stop/restart/query. Later helper changes
+require renewed matching qualification, not automatic advancement of this epoch.
+
+| Profile | Source | Task set and tasks | Maximum files including markers |
+| --- | --- | --- | --- |
+| P05 | #92, `2a02cd9eba113329870ed7eba6efd470375b8739` | S007-07: T217, T235, T259 | 4 |
+| P06 | #94, `bcc8858bf587fbe86b00264b41caca1b39ccfc72` | S007-09: T212, T256, T225, T242 | 6 |
+
+Each source has its exact two-commit history pinned in the registry. P05/P06
+owner READY reviews are records6898716602/6898717748, accepted together in
+issue165 record6898740891. Their full runs43726550505/43729068826 passed15/15.
+Lane2 consent6898422904 applies only to these exact heads with the required
+reviews/full CI and lapses on a head change. These receipts do not waive the
+fresh source-event, actual enabled-policy, queue and live-acceptance gates.
+
+## Manual heavy-held queue
 
 `openrepotools-sql-register-v13` is manual-only, writer-requested, serial and
 limited to at most two members, with no failure splitting or automatic retries.
 It uses queue protection injection, not `none` or `merge`. Entry filters require
-main-targeted same-repository ready sources, supported P03/P05 v1.3 headers,
+main-targeted same-repository ready sources, supported P05/P06 v1.3 headers,
 test-module/marker paths and app-qualified fast/delivery success. These coarse
 filters are NOT exact-head profile acceptance. The trusted source/candidate
 verifier still independently checks the registered head, lineage, full cut,
@@ -65,30 +91,50 @@ The queue cannot merge without app-qualified `openrepotools-batch-heavy` success
 While the actual delivery flag is false, v1.3 candidate proof refuses.
 The false flag blocks qualification and merge through this heavy-held queue,
 not a repository writer's ability to request preliminary manual queue entry.
-Such a request remains unauthorized during staging. The queue is not claimed
+Such a request remains unauthorized before enabled-policy and owner-consent
+gates pass. The queue is not claimed
 to be mechanically inert; no automatic entry or independent admission-consent
 status is introduced or inferred from its coarse filters.
 
-No queue command is authorized by this staged source. Under subsequent reviewed
-enablement, the operator must verify fresh owner consent for the exact two
+This source alone authorizes no queue command. The operator must verify fresh
+owner consent for the exact two
 heads, use only this named queue for fast-only sources and keep both members
 stable through qualification. The service's batch size/wait alone does not
 guarantee an exact two-member selection; live proof must show the actual members
 and one accepted heavy run. A fast/delivery check is never direct-merge authority.
 
-Before any future activation: reconcile current owner cuts/plan and P01, require
-actual required-engine qualification, review the narrow enablement/manual-queue
-configuration, confirm effective protection and service readiness, and obtain
-fresh exact-head owner consent under the approved staged rollout. A manual queue must hold complete heavy
-qualification; a fast-only source must never be direct-merged on delivery success.
-No queue command is supplied or authorized at this stage. Owner full-CI product
-batches are not the efficiency canary and must not be held for it. If such a
-batch changes the frozen foundation, efficiency remains full until a separate
-reviewed foundation revision and real required-engine qualification; never
-silently relax or rehash the freeze to follow main.
+Before admission, verify actual required-engine qualification, current exact
+owner heads/reviews/consent, actual enabled main and its registry, effective
+app-qualified protection and Mergify readiness. Coordinate an idle merge/admission
+window without resetting an active owner candidate or imposing a repository freeze.
+Owner full-CI product batches are not the efficiency canary. If a batch changes
+the frozen foundation, efficiency falls back to full until a separate reviewed
+revision and matching real-engine qualification; never silently follow main.
+
+Lane1 alone adds the three matching intent lines to each owner PR and triggers
+a fresh canonical source event without rewriting the head. A body edit alone
+does not trigger the opened/synchronize/reopened CI workflows. Do not edit bodies
+while any candidate is active. Recheck the current main/base-history snapshot
+and verify actual fast-only CI on both exact sources, not old full/fast statuses.
+
+Only after all gates above pass under the approved owner-consented canary, a
+repository writer may request the named queue on both independent members:
+
+```sh
+gh pr comment 92 --repo opensoft/openRepoTools-code \
+  --body '@mergifyio queue openrepotools-sql-register-v13'
+gh pr comment 94 --repo opensoft/openRepoTools-code \
+  --body '@mergifyio queue openrepotools-sql-register-v13'
+```
+
+Neither this example nor an old consent is reusable admission authority. Verify
+the actual candidate contains exactly both registered heads in its recorded
+order; a singleton, retry or partial landing is not a clean two-member result.
 
 Live acceptance must show fast-only source and candidate PR CI, exactly one
 complete heavy caller per accepted batch, no duplicate full main run, and matching
 tested/landed prefix and final trees. Local fixture enablement is not that test.
 Rollback is a normal reviewed false policy. Assembly pins, composed acceptance,
 SAFE-gated shared-checkout adoption, tools, sessions and releases remain separate.
+Passing this first pair is initial test-only acceptance, not blanket v1.3
+adoption. Wider task-set profiles require the next reviewed stage and its proof.

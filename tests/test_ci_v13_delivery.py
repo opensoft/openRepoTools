@@ -41,7 +41,12 @@ def v13_batch(batch, cutover, v13, request):
     for task in projection.P01_TASKS:
         write(root, projection.MARKERS + task, "")
     foundation = commit(root, "P01")
-    policy = json.loads((REPO / projection.CONFIG).read_text())
+    policy = json.loads((REPO / "tests/fixtures/ci/v13-initial-profiles.json").read_text())
+    mode = getattr(request, "param", True)
+    if mode == "reviewed-pair":
+        policy["profiles"] = {"P05": policy["profiles"]["P05"], "P06": {
+            "tasks": ["T212", "T256", "T225", "T242"],
+            "files": ["tests/test_sql_register_build_flip.py", "tests/test_sql_register_marker.py"]}}
     policy["prerequisite"]["head"] = foundation
     policy["prerequisite"]["blobs"] = {
         path: git(root, "rev-parse", foundation + ":" + path) for path in projection.CONTROL_PATHS}
@@ -53,11 +58,11 @@ def v13_batch(batch, cutover, v13, request):
             write(root, projection.MARKERS + task, "")
         head = commit(root, name)
         lineage = [head]
-        if type(getattr(request, "param", None)) is int:
-            for index in range(request.param - 1):
-                write(root, profile["files"][0], f"# {name} reviewed fix {index}\n")
-                head = commit(root, f"{name} reviewed fix {index}")
-                lineage.append(head)
+        count = 2 if mode == "reviewed-pair" else mode if type(mode) is int else 1
+        for index in range(count - 1):
+            write(root, profile["files"][0], f"# {name} reviewed fix {index}\n")
+            head = commit(root, f"{name} reviewed fix {index}")
+            lineage.append(head)
         heads.append(head)
         profile["source"] = {"number": number, "head": head, "branch": "feature/" + str(number)}
         if len(lineage) > 1:
@@ -65,8 +70,7 @@ def v13_batch(batch, cutover, v13, request):
     git(root, "checkout", "-q", "--detach", foundation)
     write(root, projection.CONFIG, json.dumps(policy))
     write(root, v13.CONFIG, json.dumps({"schema_version": 1, "scope": v13.SCOPE,
-                                       "enabled": request.param if hasattr(request, "param")
-                                       and type(request.param) is bool else True}))
+                                       "enabled": mode if type(mode) is bool else True}))
     write(root, ".github/ci/delivery-policy.json", '{"schema_version":1,"enabled":true}')
     write(root, "unrelated-later-main", "preserve later main\n")
     base = commit(root, "later trusted main")
@@ -85,12 +89,13 @@ def v13_batch(batch, cutover, v13, request):
     batch.update(base=base, heads=heads, candidate=previous, prefixes=prefixes,
                  foundation=foundation, policy=policy)
     batch["prs"] = {number: batch["data"][f"pulls/{number}"] for number in (7, 8)}
-    for number, name in zip((7, 8), ("P03", "P05")):
+    for number, name in zip((7, 8), policy["profiles"]):
         batch["prs"][number]["body"] = (
             f"CI-Shadow: {v13.SCOPE}\nCI-Delivery: {v13.SCOPE}\nCI-Task-Set: {name}")
         batch["data"][f"commits/{heads[number - 7]}/pulls?per_page=100"] = [batch["prs"][number]]
     batch["data"]["pulls/88"] = {
         "number": 88, "state": "closed", "merged": True, "draft": False,
+        "user": {"login": "writer"},
         "merge_commit_sha": foundation,
         "head": {"sha": foundation, "ref": "p01", "repo": {"full_name": cutover.REPOSITORY}},
         "base": {"sha": base, "ref": "main", "repo": {"full_name": cutover.REPOSITORY}}}
@@ -125,11 +130,37 @@ def v13_artifact(cutover, v13_batch, delivery):
     return {"run": run, "record": record, "env": env}
 
 
-def test_ci_v13_delivery_committed_policy_disabled_and_legacy_unchanged(v13, cutover):
+def test_ci_v13_delivery_committed_policy_enabled_with_observer_and_legacy_unchanged(v13, cutover):
     assert json.loads((REPO / v13.CONFIG).read_text()) == {
-        "schema_version": 1, "scope": v13.SCOPE, "enabled": False}
+        "schema_version": 1, "scope": v13.SCOPE, "enabled": True}
     assert cutover.enabled(REPO) is True
     assert v13.projection.read_policy(REPO, "HEAD")["efficiency_enabled"] is False
+
+
+def test_ci_v13_delivery_committed_reviewed_pair_has_exact_qualified_provenance(v13):
+    policy = v13.projection.read_policy(REPO, "HEAD")
+    assert policy["spec_revision"] == "a3366afcc059b4686c990f4715c36dac9b1db05b"
+    assert policy["prerequisite"]["head"] == "7f1141be15ac9c0d20c25c802ba9533c2fec811c"
+    assert policy["foundation"] == {"head": "f0070e009bc6f183904549b69c710ef3982ca6e6", "blobs": {
+        "tests/conftest.py": "5c4e3d182094bd149e9a68f826ae427dc9739b5d",
+        "tests/pgcluster.py": "97871b78a222b1b3d7cc05ef1bc4bbbeeaa4419d",
+        "tests/sql_register_gate.py": "0d0a30d3df586222b4b84a4e91cfb97260781d87",
+        "tests/sql_register_helpers.py": "cc357350d3438fd59b232c9610273a71f4969bfb"}}
+    assert policy["profiles"] == {
+        "P05": {"source": {"number": 92,
+            "head": "2a02cd9eba113329870ed7eba6efd470375b8739",
+            "branch": "007-p05-readers-table-and-default-arms",
+            "commits": ["3b71c7c532f0da0b6ebbe5aee1c7cc0213a0cd56",
+                        "2a02cd9eba113329870ed7eba6efd470375b8739"]},
+            "tasks": ["T217", "T235", "T259"],
+            "files": ["tests/test_sql_register_readers.py"]},
+        "P06": {"source": {"number": 94,
+            "head": "bcc8858bf587fbe86b00264b41caca1b39ccfc72",
+            "branch": "007-p06-refusing-flipped-wip-init-marker",
+            "commits": ["b65d836b4ea939a43f89cf4e582055bb9e80f890",
+                        "bcc8858bf587fbe86b00264b41caca1b39ccfc72"]},
+            "tasks": ["T212", "T256", "T225", "T242"],
+            "files": ["tests/test_sql_register_build_flip.py", "tests/test_sql_register_marker.py"]}}
 
 
 @NEEDS_UPSTREAM
@@ -153,10 +184,29 @@ def test_ci_v13_delivery_manual_queue_is_heavy_held_and_preserves_existing_queue
 @pytest.fixture
 def v13_queue_source():
     return {"draft": False, "closed": False, "from-fork": False,
-            "head": "007-p03-import-cutover-operator-tools", "base": "main",
-            "body": "CI-Shadow: sql-register-v13\nCI-Delivery: sql-register-v13\nCI-Task-Set: P03",
-            "files": ["tests/test_sql_register_import.py", "tests/sql_register_landed/T211"],
+            "head": "007-p05-readers-table-and-default-arms", "base": "main",
+            "body": "CI-Shadow: sql-register-v13\nCI-Delivery: sql-register-v13\nCI-Task-Set: P05",
+            "files": ["tests/test_sql_register_readers.py", "tests/sql_register_landed/T217",
+                      "tests/sql_register_landed/T235", "tests/sql_register_landed/T259"],
             "check-success": ["@github-actions/openrepotools-pr-fast", "@github-actions/openrepotools-delivery"]}
+
+
+@NEEDS_UPSTREAM
+@pytest.mark.parametrize("cut, eligible", [("P05", True), ("P06", True), ("P03", False)])
+def test_ci_v13_delivery_reviewed_manual_queue_accepts_only_current_pair(
+        yaml_reader, v13_queue_source, cut, eligible):
+    context = v13_queue_source
+    context["body"] = ("CI-Shadow: sql-register-v13\nCI-Delivery: sql-register-v13\n"
+                       "CI-Task-Set: " + cut)
+    if cut == "P06":
+        context["head"] = "007-p06-refusing-flipped-wip-init-marker"
+        context["files"] = ["tests/test_sql_register_build_flip.py", "tests/test_sql_register_marker.py",
+                            *["tests/sql_register_landed/" + task for task in ("T212", "T256", "T225", "T242")]]
+    elif cut == "P03":
+        context["head"] = "007-p03-import-cutover-operator-tools"
+        context["files"] = ["tests/test_sql_register_import.py", "tests/sql_register_landed/T211"]
+    queue = yaml_reader(REPO / ".mergify.yml")["queue_rules"][4]
+    assert all(matches(condition, context) for condition in queue["queue_conditions"]) is eligible
 
 
 @NEEDS_UPSTREAM
@@ -178,7 +228,7 @@ def test_ci_v13_delivery_manual_queue_refusal_vectors(yaml_reader, v13_queue_sou
     elif failure == "dependency": context["body"] += "\n depends-on: #88"
     elif failure == "base": context["base"] = "p01"
     elif failure == "reserved-branch": context["head"] = "verify/preview"
-    elif failure == "unknown-task": context["body"] = context["body"].replace("P03", "P02")
+    elif failure == "unknown-task": context["body"] = context["body"].replace("P05", "P02")
     elif failure == "wrong-scope": context["body"] = context["body"].replace("sql-register-v13", "claude-current")
     elif failure == "too-many-files": context["files"] *= 4
     elif failure == "empty": context["files"] = []
