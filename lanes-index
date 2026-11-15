@@ -4206,6 +4206,16 @@ def _register_schema_query(schema: str) -> str:
             f"FROM pg_catalog.pg_namespace n WHERE n.nspname = {_pg_quote(schema)}")
 
 
+def _register_indexer_login_query() -> str:
+    """Whether `lanes_indexer`, where it exists, can log in: one row,
+    `rolcanlogin`, or none where the role is absent. `url=` logs in as it
+    (design.md §1.4), so an existing indexer that cannot log in is refused
+    before any write (lane 3's ruling, opensoft/openRepoTools#165
+    6894116246)."""
+    return ("SELECT rolcanlogin FROM pg_catalog.pg_roles "
+            f"WHERE rolname = {_pg_quote(_REGISTER_INDEXER)}")
+
+
 def _register_states_query() -> str:
     """THE STATES §1.4'S STATEMENTS LEAVE, each true where it already stands:
     PUBLIC holds no privilege on the database; the two groups and the indexer
@@ -4418,7 +4428,8 @@ def _register_probe(service: str, schema: str) -> dict:
                register_roles_query().rstrip().rstrip(";"),
                _register_schema_query(schema),
                _register_states_query(),
-               _register_fingerprint_query(schema)] + _register_scope_queries(schema)
+               _register_fingerprint_query(schema),
+               _register_indexer_login_query()] + _register_scope_queries(schema)
     res = _register_reads(service, "probe", queries)
     admin = _register_one_row(res[0], 6, "the admin")
     schema_rows = res[2]
@@ -4432,7 +4443,9 @@ def _register_probe(service: str, schema: str) -> dict:
         "schema": None if not schema_rows else [_register_flag(v) for v in schema_rows[0][1:]],
         "states": _register_states(res[3]),
         "fingerprint": _register_one_row(res[4], 1, "the privileges' digest")[0],
-        "scope": [row for rows in res[5:] for row in rows],
+        "indexer_login": None if not res[5] else _register_flag(
+            _register_one_row(res[5], 1, "the indexer's LOGIN")[0]),
+        "scope": [row for rows in res[6:] for row in rows],
     }
 
 
@@ -4534,9 +4547,10 @@ def _bootstrap_args(args: list[str]) -> dict | None:
     argument may carry a connection string or a password, wherever it
     stands, a positional one or an unknown option's value among them (2,
     never echoed); then its usage (64). `_bootstrap` refuses its values.
-    No usage text echoes an argument's value, as none of `login`'s does: an
-    unknown option is named by its name alone, the text before any '=',
-    and a positional argument is not shown."""
+    An unknown argument, positional or not, is named in `ready`'s form (lane
+    3's ruling, opensoft/openRepoTools#165 6894208108): quoted only where all
+    of it matches `--?[A-Za-z][A-Za-z-]{0,30}`, and otherwise "unknown
+    argument that is not one of its flags", so no value is echoed."""
     for arg in args:
         value = arg.partition("=")[2] if arg.startswith("--") and "=" in arg else arg
         _register_refuse_argument("an argument", value)
@@ -4559,10 +4573,10 @@ def _bootstrap_args(args: list[str]) -> dict | None:
             opts[name] = value
         elif arg in ("--roles-only", "--no-passwords"):
             opts[arg] = True
-        elif arg.startswith("-"):
-            raise _RegisterUsage(f"bootstrap: unknown option {name}")
         else:
-            raise _RegisterUsage("bootstrap takes no positional argument")
+            shown = (f"'{arg}'" if re.fullmatch(r"--?[A-Za-z][A-Za-z-]{0,30}", arg)
+                     else "that is not one of its flags")
+            raise _RegisterUsage(f"bootstrap: unknown argument {shown}")
         i += 1
     if opts["--admin-service"] is None:
         raise _RegisterUsage("bootstrap needs --admin-service <service>")
@@ -4643,6 +4657,11 @@ def _bootstrap(opts: dict) -> int:
                       f"database-level REVOKE and GRANT would only warn (design.md §1.4). Run "
                       f"it through a service that names a database its admin owns")
     _register_refuse_scope(_register_scope_faults(probe["scope"], "before"))
+    if probe["indexer_login"] is False:
+        raise Refusal(f"bootstrap: the role {_REGISTER_INDEXER} exists and cannot log in "
+                      f"(NOLOGIN), and url= logs in as it (design.md section 1.4). The "
+                      f"bootstrap changes no existing role's attributes: give it LOGIN by "
+                      f"hand, then run it again")
     if not isinstance(database, str) or not database.strip() or any(
             ord(ch) < 0x20 or ord(ch) == 0x7F for ch in database):
         raise Refusal("bootstrap: the database's name is empty or holds a control character")
@@ -5084,7 +5103,10 @@ def register_login_url(login: str, host: str, port: str, database: str,
 def _register_login_args(args: list[str]) -> dict | None:
     """`login`'s command line; None for `--help`. First, no argument may carry
     a connection string or a password, wherever it stands (2, never echoed);
-    then its usage (64); then its values (2)."""
+    then its usage (64); then its values (2). An unknown argument is named in
+    `ready`'s form (opensoft/openRepoTools#165 6894208108): quoted only where
+    all of it matches `--?[A-Za-z][A-Za-z-]{0,30}`. A word that does not
+    start with '-' is the action or the engineer, never unknown."""
     for arg in args:
         value = arg.partition("=")[2] if arg.startswith("--") and "=" in arg else arg
         _register_refuse_argument("an argument", value, command="login")
@@ -5110,7 +5132,9 @@ def _register_login_args(args: list[str]) -> dict | None:
                 raise _RegisterUsage("login: --dump-job is given twice")
             opts["--dump-job"] = True
         elif arg.startswith("-"):
-            raise _RegisterUsage(f"login: unknown option {name}")
+            shown = (f"'{arg}'" if re.fullmatch(r"--?[A-Za-z][A-Za-z-]{0,30}", arg)
+                     else "that is not one of its flags")
+            raise _RegisterUsage(f"login: unknown argument {shown}")
         else:
             words.append(arg)
         i += 1
