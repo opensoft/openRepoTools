@@ -34,6 +34,11 @@ THE TWO LAYOUTS:
 A test whose name carries `composed` needs THIS checkout mounted as an
 assembly's code leg with the assembly's root entry point beside it; standalone
 code skips it, naming why, and T015 runs it at the real assembled head.
+
+ROW 16 is not the matrix's: it is WHAT `--install` PLACES BESIDE `lanes-index`
+in the one mode whose payload is a release's, a stamped package (007 T346):
+check 1's digest list, `openRepoTools-<version>.sha256`, written offline from
+the payload it placed, and nothing at all in every other mode.
 """
 
 from __future__ import annotations
@@ -53,6 +58,7 @@ from pathlib import Path
 
 import pytest
 
+import package_layout as layout
 from conftest import REPO, WINDOWS_SKIP
 
 COMMAND = REPO / "openRepoTools"
@@ -2026,3 +2032,339 @@ def test_r15_composed_the_root_entry_point_parses_and_uses_nothing_bash_3_2_lack
     root = ASSEMBLY / "openRepoTools"
     assert bash4_constructs(root.read_text(encoding="utf-8")) == []
     assert subprocess.run(["bash", "-n", str(root)]).returncode == 0
+
+
+# =========================================================================
+# ROW 16 — check 1's digest list beside lanes-index (007 T346)
+# =========================================================================
+
+#: A RELEASE'S STAMP, as `release.yml` writes one: the package that carries
+#: it is a release's, and `--install` writes that release's list.
+RELEASE_STAMP = {"VERSION": "1.3.0", "TAG": "v1.3.0",
+                 "COMMIT": "0123456789abcdef0123456789abcdef01234567",
+                 "DIGEST": "89abcdef" * 8, "REPOSITORY": "opensoft/openRepoTools-code"}
+LISTED = "openRepoTools-1.3.0.sha256"
+#: Check 1's own reading of a line (`lanes-index`'s `_READY_DIGEST_LINE_RE`,
+#: lane 1's T119), and the two names a list must carry or fail
+#: (FR-055; section 10 of the SQL register's contract).
+CHECK_1_LINE = re.compile(r"([0-9a-f]{64}) [ *]([A-Za-z0-9_+-][A-Za-z0-9._+-]*)")
+CHECK_1_NAMES = ("lanes-index", "lanes-edit.sh")
+#: THE NAMES THE LIST CARRIES, in order: every one `--install` places beside
+#: `lanes-index` but `openRepoTools`, whose place in a pipx install is
+#: pipx's link to pip's console script.
+LISTED_NAMES = [name for name in INSTALLABLES if name != "openRepoTools"]
+
+
+def stamped_package(root: Path, stamp: dict | None = RELEASE_STAMP) -> Path:
+    """A package as pip lays one out, built from this checkout's payload,
+    with a release's stamp (or the committed, unstamped one). Returns its
+    `payload/`, whose `openRepoTools` is the package's own command."""
+    return layout.package_tree(root / "venv", "python3.12",
+                               None if stamp is None else layout.stamp_text(**stamp))
+
+
+def the_rule(bin_dir: Path) -> str:
+    """The list by its rule, from what is now in `bin_dir`: `<sha256>  <name>`
+    for each of `LISTED_NAMES`, `sha256sum`'s own form."""
+    return "".join(f"{hashlib.sha256((bin_dir / name).read_bytes()).hexdigest()}  {name}\n"
+                   for name in LISTED_NAMES)
+
+
+def check_1(bin_dir: Path, listed: str = LISTED) -> list[str]:
+    """What `lanes-index ready`'s check 1 would say of `bin_dir`, by its own
+    reading: every line `<sha256>  <name>`, both of its names there, and
+    each named file, read through any link as `open` reads it, at its
+    digest. An empty answer is check 1's `ok`."""
+    problems = []
+    entries = []
+    for number, line in enumerate((bin_dir / listed).read_text(encoding="utf-8")
+                                  .splitlines(), 1):
+        found = CHECK_1_LINE.fullmatch(line)
+        if not found or found.group(2) in (".", ".."):
+            problems.append(f"line {number} is not `<sha256>  <file name>`: {line!r}")
+            continue
+        entries.append(found.groups())
+    named = {name for _, name in entries}
+    problems += [f"it does not name {name}" for name in CHECK_1_NAMES if name not in named]
+    for digest, name in entries:
+        actual = hashlib.sha256((bin_dir / name).read_bytes()).hexdigest()
+        if actual != digest:
+            problems.append(f"{name} is at {actual}, and the list says {digest}")
+    return problems
+
+
+def list_line(verb: str, bin_dir: Path) -> str:
+    """The one line a placed list gets, `placed` or `updated`."""
+    return (f"openRepoTools: release 1.3.0's digest list {verb} at {bin_dir / LISTED}, "
+            "beside lanes-index, for `lanes-index ready`'s check 1")
+
+
+def receipt_rows(home: Path) -> list[list[str]]:
+    receipt = home / ".local" / "share" / "openRepoTools" / "installed.tsv"
+    return [line.split("\t") for line in receipt.read_text(encoding="utf-8").splitlines()]
+
+
+@NEEDS_JQ
+def test_r16_a_release_s_package_places_check_1_s_list_beside_the_launcher_offline(tmp_path):
+    """A STAMPED PACKAGE'S `--install` WRITES ITS RELEASE'S LIST (007 T346):
+    `openRepoTools-1.3.0.sha256`, at 0644, in the directory it placed
+    `lanes-index` in, one `sha256sum` line for every command it placed there
+    but `openRepoTools`, in `INSTALLABLES`' order, each at the digest of the
+    bytes placed, so check 1 passes on it. One line says so, after the count
+    line; the receipt carries no row for it; and nothing asks a network."""
+    world = World(tmp_path)
+    payload = stamped_package(tmp_path)
+    home = tmp_path / "home"
+    result = run_file(payload / "openRepoTools", home, network(world), "--install",
+                      OPENREPOTOOLS_REPO="offline.invalid/sentinel")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert_installed(home, None, result)
+    bin_dir = home / ".local" / "bin"
+    listed = bin_dir / LISTED
+    assert listed.is_file() and not listed.is_symlink(), result.stdout
+    assert stat.S_IMODE(listed.stat().st_mode) == 0o644, oct(listed.stat().st_mode)
+    assert listed.read_text(encoding="utf-8") == the_rule(bin_dir)
+    assert [line.split("  ", 1)[1] for line in
+            listed.read_text(encoding="utf-8").splitlines()] == LISTED_NAMES
+    assert check_1(bin_dir) == []
+    lines = result.stdout.splitlines()
+    assert lines.count(list_line("placed", bin_dir)) == 1, result.stdout
+    count = f"openRepoTools: {len(INSTALLABLES)} of {len(INSTALLABLES)} placed in {bin_dir}"
+    assert lines.index(list_line("placed", bin_dir)) == lines.index(count) + 1, result.stdout
+    assert str(listed) not in {row[1] for row in receipt_rows(home)}
+    assert len(receipt_rows(home)) == len(destinations(home))
+    assert world.requests() == []
+
+
+@NEEDS_JQ
+def test_r16_beside_pipxs_link_the_list_names_the_sixteen_and_check_1_passes(tmp_path):
+    """IN pipx's OWN RUN, beside the link `--install` leaves to pipx, the list
+    is placed with the sixteen it placed and does not name `openRepoTools`,
+    whose file there is pip's console script: check 1 passes in that very
+    directory, and the count line is the one it always was."""
+    world = World(tmp_path)
+    venv = layout.pipx_venv(tmp_path / "pipx", "1.17.8",
+                            stamp=layout.stamp_text(**RELEASE_STAMP))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "openRepoTools").symlink_to(venv / "bin" / "openRepoTools")
+    payload = venv / "lib" / "python3.12" / "site-packages" / "openrepotools" / "payload"
+    home = tmp_path / "home"
+    result = run_file(payload / "openRepoTools", home, network(world), "--install",
+                      OPENREPOTOOLS_BIN_DIR=str(bin_dir),
+                      OPENREPOTOOLS_REPO="offline.invalid/sentinel")
+    assert result.returncode == 0, result.stdout + result.stderr
+    count = (f"openRepoTools: {len(INSTALLABLES) - 1} of {len(INSTALLABLES)} placed in "
+             f"{bin_dir}, and 1 left to pipx")
+    assert result.stdout.splitlines().count(count) == 1, result.stdout
+    assert result.stdout.splitlines().count(list_line("placed", bin_dir)) == 1, result.stdout
+    assert (bin_dir / "openRepoTools").is_symlink()
+    assert (bin_dir / LISTED).read_text(encoding="utf-8") == the_rule(bin_dir)
+    assert "openRepoTools" not in [line.split("  ", 1)[1] for line in
+                                   (bin_dir / LISTED).read_text(encoding="utf-8").splitlines()]
+    assert check_1(bin_dir) == []
+    assert world.requests() == []
+
+
+@NEEDS_JQ
+def test_r16_a_second_install_changes_nothing_and_a_changed_list_is_put_right(tmp_path):
+    """THE LIST IS PLACED AS EVERY COMMAND IS: a second `--install` finds it
+    with its bytes at 0644 and says it is unchanged; one edited and made 0600
+    is written again by rename, `updated`, back to its bytes at 0644."""
+    world = World(tmp_path)
+    payload = stamped_package(tmp_path)
+    home = tmp_path / "home"
+    bin_dir = home / ".local" / "bin"
+    path = network(world)
+    first = run_file(payload / "openRepoTools", home, path, "--install")
+    assert first.returncode == 0, first.stdout + first.stderr
+    written = (bin_dir / LISTED).read_bytes()
+    again = run_file(payload / "openRepoTools", home, path, "--install")
+    assert again.returncode == 0, again.stdout + again.stderr
+    unchanged = f"openRepoTools: release 1.3.0's digest list already at {bin_dir / LISTED} (unchanged)"
+    assert again.stdout.splitlines().count(unchanged) == 1, again.stdout
+    (bin_dir / LISTED).write_bytes(written + b"00" * 32 + b"  lanes-index\n")
+    (bin_dir / LISTED).chmod(0o600)
+    mended = run_file(payload / "openRepoTools", home, path, "--install")
+    assert mended.returncode == 0, mended.stdout + mended.stderr
+    assert mended.stdout.splitlines().count(list_line("updated", bin_dir)) == 1, mended.stdout
+    assert (bin_dir / LISTED).read_bytes() == written
+    assert stat.S_IMODE((bin_dir / LISTED).stat().st_mode) == 0o644
+    assert not [p for p in bin_dir.iterdir() if p.name.startswith(f".{LISTED}.")]
+
+
+#: THE INSTALLS THAT NAME NO RELEASE: a checkout's, the one-line install's,
+#: the code leg mounted in an assembly checkout (the adopted mode) and an
+#: unstamped package's (0.0.0, a build from a checkout).
+NO_RELEASE = ("a-checkout", "the-one-line-install", "an-adopted-checkout",
+              "an-unstamped-package")
+
+
+@NEEDS_JQ
+@pytest.mark.parametrize("how", NO_RELEASE)
+def test_r16_no_release_writes_no_list_says_nothing_and_leaves_one_there(tmp_path, how):
+    """NO RELEASE, NO LIST, AND NOT A WORD: an install that names no release
+    writes no list, prints no line about one, and leaves a list an earlier
+    install placed exactly as it was, so its output is today's to the line."""
+    world = World(tmp_path)
+    home = tmp_path / "home"
+    bin_dir = home / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    earlier = b"an earlier release's list, which this install must not touch\n"
+    (bin_dir / LISTED).write_bytes(earlier)
+    tag = None
+    if how == "a-checkout":
+        result = run_file(local_tree(tmp_path / "tree", None) / "openRepoTools", home,
+                          network(world), "--install")
+    elif how == "the-one-line-install":
+        world.single(tag=None)
+        result = run_stdin(world, home, network(world), "--install")
+    elif how == "an-adopted-checkout":
+        _, code, _ = local_assembly(world)
+        tag = "local"
+        result = run_file(code / "openRepoTools", home, network(world), "--install")
+        assert "openRepoTools: source: the code mounted at " in result.stdout, result.stdout
+    else:
+        result = run_file(stamped_package(tmp_path, None) / "openRepoTools", home,
+                          network(world), "--install")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert_installed(home, tag, result)
+    assert "digest list" not in result.stdout + result.stderr, result.stdout
+    assert sorted(p.name for p in bin_dir.glob("*.sha256")) == [LISTED]
+    assert (bin_dir / LISTED).read_bytes() == earlier
+
+
+@NEEDS_JQ
+@pytest.mark.parametrize("what", ["a-directory", "a-symlink"])
+def test_r16_a_target_that_is_not_a_file_is_a_note_and_never_a_refusal(tmp_path, what):
+    """LIKE THE RECEIPT, A LIST THAT CANNOT BE WRITTEN IS A NOTE: with a
+    directory or a link at its name, the install still places everything
+    else and exits 0, one line names the target and says the list was NOT
+    written, and what is there is left as it was."""
+    world = World(tmp_path)
+    payload = stamped_package(tmp_path)
+    home = tmp_path / "home"
+    bin_dir = home / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    pointed = tmp_path / "somebody-else-s.sha256"
+    pointed.write_text("theirs\n", encoding="utf-8")
+    if what == "a-directory":
+        (bin_dir / LISTED).mkdir()
+    else:
+        (bin_dir / LISTED).symlink_to(pointed)
+    result = run_file(payload / "openRepoTools", home, network(world), "--install")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert_installed(home, None, result)
+    note = (f"openRepoTools: release 1.3.0's digest list NOT written to {bin_dir / LISTED} — "
+            "something that is not a regular file is there, and it is left as it is.")
+    assert [line for line in result.stdout.splitlines() if line.startswith(note)], result.stdout
+    assert "REFUSED" not in result.stderr, result.stderr
+    if what == "a-directory":
+        assert (bin_dir / LISTED).is_dir() and not any((bin_dir / LISTED).iterdir())
+    else:
+        assert (bin_dir / LISTED).is_symlink() and os.readlink(bin_dir / LISTED) == str(pointed)
+        assert pointed.read_text(encoding="utf-8") == "theirs\n"
+
+
+def failing_shim(name: str, when: str) -> str:
+    """A `name` first on PATH that exits 1 when `when`, a `sh` command,
+    succeeds, and is otherwise the real `name` with its arguments."""
+    real = shutil.which(name)
+    assert real, f"this machine has no {name}"
+    return f"#!/bin/sh\nif {when}; then exit 1; fi\nexec '{real}' \"$@\"\n"
+
+
+def work_directory_shim(plant: str) -> str:
+    """A `mktemp` first on PATH whose `mktemp -d`, the installer's work
+    directory, comes back with `plant` (a `sh` command) already run on its
+    `digest-list`; every other call is the real `mktemp`."""
+    real = shutil.which("mktemp")
+    assert real, "this machine has no mktemp"
+    return (f"#!/bin/sh\nif [ \"$*\" = -d ]; then\n\td=\"$('{real}' -d)\" || exit 1\n"
+            f"\t{plant} \"$d/digest-list\" || exit 1\n\tprintf '%s\\n' \"$d\"\n"
+            f"\texit 0\nfi\nexec '{real}' \"$@\"\n")
+
+
+#: THE OTHER SIX NOTES `digest_list_place` CAN GIVE, each `(what makes it
+#: so, the reason the note gives)`. Every one is a note and never a refusal.
+LIST_NOTES = {
+    "a-payload-not-the-package-s-own": (
+        "the payload placed is not this package's own, so it is not release 1.3.0's"),
+    "a-work-directory-that-takes-no-file": "this run's work directory took no file",
+    "no-sha256sum-and-no-shasum": (
+        f"the sha256 of {LISTED_NAMES[0]} could not be taken: this machine has neither "
+        "sha256sum nor shasum, or the copy cannot be read"),
+    "a-work-directory-that-takes-no-line": "this run's work directory took no line",
+    "no-temporary-beside-it": "no temporary file could be made beside it",
+    "a-rename-that-fails": (
+        "it could not be written there, and what was there is untouched"),
+}
+
+
+@NEEDS_JQ
+@pytest.mark.parametrize("which", LIST_NOTES)
+def test_r16_a_list_that_cannot_be_written_is_each_of_its_notes_and_never_a_refusal(
+        tmp_path, which):
+    """EACH WAY THE LIST CAN FAIL IS A NOTE: a stamped package's `--install`
+    whose payload was topped up from a fetch (so its bytes are not the
+    release's), whose work directory takes no file or no line, on a machine
+    with no digest tool, with no temporary beside the target, or whose
+    rename fails, still places everything else and exits 0. One line names
+    the target and the reason, nothing says REFUSED, no temporary is left
+    beside it, and the list already there is untouched."""
+    world = World(tmp_path)
+    payload = stamped_package(tmp_path)
+    home = tmp_path / "home"
+    bin_dir = home / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    earlier = b"a list this install could not write over\n"
+    (bin_dir / LISTED).write_bytes(earlier)
+    path = network(world)
+    if which == "a-payload-not-the-package-s-own":
+        world.single(tag=None)
+        (payload / "park").unlink()
+    elif which == "a-work-directory-that-takes-no-file":
+        path = network(world, extra_shims={"mktemp": work_directory_shim("mkdir")})
+    elif which == "no-sha256sum-and-no-shasum":
+        (world.root / "farm-without-digests").mkdir()
+        farm = path_farm(world.root / "farm-without-digests",
+                         ("gh", "curl", "sha256sum", "shasum"))
+        path = f"{path.split(os.pathsep)[0]}{os.pathsep}{farm}"
+    elif which == "a-work-directory-that-takes-no-line":
+        if not Path("/dev/full").exists():
+            pytest.skip("this machine has no /dev/full, a file every write to fails")
+        path = network(world, extra_shims={"mktemp": work_directory_shim("ln -s /dev/full")})
+    elif which == "no-temporary-beside-it":
+        path = network(world, extra_shims={"mktemp": failing_shim(
+            "mktemp", f'case "$*" in *".{LISTED}.openrepotools."*) true ;; *) false ;; esac')})
+    else:
+        path = network(world, extra_shims={"mv": failing_shim(
+            "mv", 'for last; do :; done; case "$last" in *.sha256) true ;; *) false ;; esac')})
+    result = run_file(payload / "openRepoTools", home, path, "--install")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert_installed(home, None, result)
+    note = (f"openRepoTools: release 1.3.0's digest list NOT written to {bin_dir / LISTED} — "
+            f"{LIST_NOTES[which]}. Everything above is installed; ")
+    assert [line for line in result.stdout.splitlines() if line.startswith(note)], result.stdout
+    assert result.stdout.count("digest list") == 1, result.stdout
+    assert "REFUSED" not in result.stderr, result.stderr
+    assert (bin_dir / LISTED).read_bytes() == earlier
+    assert not [p for p in bin_dir.iterdir() if p.name.startswith(f".{LISTED}.")]
+
+
+@NEEDS_JQ
+def test_r16_a_list_of_another_release_is_left_alone(tmp_path):
+    """A RELEASE'S LIST NAMES THAT RELEASE, and check 1 asks for one by name:
+    installing 1.3.0 writes `openRepoTools-1.3.0.sha256` and leaves 1.2.0's
+    list beside it byte for byte."""
+    world = World(tmp_path)
+    payload = stamped_package(tmp_path)
+    home = tmp_path / "home"
+    bin_dir = home / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    older = b"0" * 64 + b"  lanes-index\n" + b"1" * 64 + b"  lanes-edit.sh\n"
+    (bin_dir / "openRepoTools-1.2.0.sha256").write_bytes(older)
+    result = run_file(payload / "openRepoTools", home, network(world), "--install")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (bin_dir / "openRepoTools-1.2.0.sha256").read_bytes() == older
+    assert check_1(bin_dir) == []

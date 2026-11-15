@@ -29,13 +29,15 @@ name: release
 # full history with the submodule, and the ref step fetches the tag again
 # without `--depth`.
 #
-# FOUR JOBS, EACH GATED ON THE ONE BEFORE IT:
+# FIVE JOBS, EACH GATED ON THE ONE BEFORE IT:
 #   build     the version and the repository guard; the tag, the branch, the
 #             clean checkout, both environments, `tests.yml`'s four jobs on
 #             this commit, and the digest; then the wheel, built twice from
 #             two `git archive` extractions of the commit, stamped, compared
 #             byte for byte, checked against the commit's own files, and its
-#             sha256 recorded.
+#             sha256 recorded; then check 1's digest list,
+#             `openRepoTools-<version>.sha256`, written from the wheel's own
+#             payload, and its sha256 recorded.
 #   testpypi  the guard again; uploads those bytes to TestPyPI, in the
 #             `testpypi` environment, then requires TestPyPI to serve
 #             exactly that digest.
@@ -46,6 +48,13 @@ name: release
 #             environment, which waits for Brett Heap's approval after the
 #             install check, then requires PyPI to serve exactly the
 #             recorded digest.
+#   asset     the guard again; once PyPI serves the version, puts check 1's
+#             digest list on the GitHub Release v<version> as a release
+#             asset, by the sha256 the build recorded: on a DRAFT it makes
+#             where there is no release yet, which the release owner
+#             publishes (step 5 below), and never in place of another file
+#             of that name (007 T346; FR-055; section 10 of the SQL
+#             register's contract).
 #
 # DISPATCH ONLY. Nothing here runs on a push, a tag or a pull request: an
 # upload is an act Brett Heap approves. The version is the tag's: `v1.1.0`
@@ -63,13 +72,17 @@ name: release
 # went through uploads nothing new. A second dispatch builds again, and its
 # wheel is the same file only while the locks, the runner's Python and the
 # commit all stay the same; the index keeps the first file under its name
-# for good, and the upload jobs refuse any other.
+# for good, and the upload jobs refuse any other. The `asset` job likewise
+# finds its list already on the release after an upload that went through,
+# at the recorded sha256, and adds nothing; another file under that name is
+# refused, never replaced.
 #
 # NO PyPI TOKEN AND NO STORED SECRET, ANYWHERE. Both uploads use trusted
 # publishing (OIDC): `id-token: write` is granted to the two upload jobs and
 # to no other job. The one other credential is GitHub's automatic
-# GITHUB_TOKEN, read-only in every job, which `gh` uses to read this
-# repository's own API.
+# GITHUB_TOKEN, which `gh` uses for this repository's own API: read-only in
+# every job but `asset`, which holds `contents: write` and nothing else, to
+# make the draft release and attach its one file.
 #
 # EVERY ACTION IS PINNED BY COMMIT, with its release tag beside it, as
 # `tests.yml` pins them: checkout and setup-python at that file's own
@@ -82,8 +95,8 @@ name: release
 # RELEASING: THE PROCEDURE (FR-034 to FR-040). Brett Heap decides every
 # tag, every release-branch cut and every upload, and approves each
 # deployment. The release owner, lane openRepoTools-3, carries them out on
-# his word: it tags, dispatches and creates the GitHub Release, and no other
-# lane does. For each release:
+# his word: it tags, dispatches and publishes the GitHub Release, and no
+# other lane does. For each release:
 #   1. THE COMMIT'S CI FIRST. A tag waits for its commit's `tests.yml` runs:
 #      all of them finished, and the newest green, in a push or dispatch run
 #      (the build's gate counts no `pull_request` run). On `main` the push
@@ -113,9 +126,14 @@ name: release
 #      its three legs; approve `pypi` once it has passed.
 #   5. ONLY AFTER PyPI SERVES THE VERSION, the GitHub Release, from a
 #      checkout that has the spec leg, so the notes never name a version
-#      PyPI lacks:
-#        gh release create v<version> --repo <repository> --verify-tag \
-#            --notes-file <spec>/docs/release-notes/v<version>.md
+#      PyPI lacks. The `asset` job has made it a DRAFT, which nobody but
+#      the repository's writers sees, holding check 1's digest list,
+#      `openRepoTools-<version>.sha256`, as its one asset. On Brett Heap's
+#      word the release owner publishes that draft with the notes:
+#        gh release edit v<version> --repo <repository> --draft=false \
+#            --verify-tag --notes-file <spec>/docs/release-notes/v<version>.md
+#      If `asset` failed, re-run it before publishing; never publish without
+#      the list.
 #   6. FOR vX.Y.0, THEN CUT `release/vX.Y` AT THE TAG, on his word:
 #        git push origin 'vX.Y.0^{commit}:refs/heads/release/vX.Y'
 #
@@ -236,7 +254,8 @@ name: release
 # `specs/`, `README.md`, `AGENTS.md` and `CLAUDE.md`, so no step names one.
 # `LICENSE` is the one root file the build reads, because the code leg's
 # first commit gives it a byte-identical copy. The release notes are read
-# by the person who creates the GitHub Release (step 5), never by a step.
+# by the person who publishes the GitHub Release (step 5), never by a step:
+# the `asset` job's draft carries a line of its own in their place.
 # ---------------------------------------------------------------------------
 
 on:
@@ -289,6 +308,10 @@ jobs:
       # upload job's `if:` reads its own, and its first step checks again.
       to-testpypi: ${{ steps.guard.outputs.to-testpypi }}
       to-pypi: ${{ steps.guard.outputs.to-pypi }}
+      # CHECK 1'S DIGEST LIST (007 T346): its name and its sha256, which the
+      # `asset` job checks its artifact against and then the release's copy.
+      digest-list: ${{ steps.digest-list.outputs.digest-list }}
+      digest-list-sha256: ${{ steps.digest-list.outputs.digest-list-sha256 }}
     steps:
       # The commit, WITH ITS SUBMODULE, because the digest code exists here
       # only in the pinned openRepoShape (`upstream/openRepoShape`), and with
@@ -1286,6 +1309,103 @@ jobs:
           path: ${{ runner.temp }}/dist-a/
           if-no-files-found: error
 
+      # CHECK 1'S DIGEST LIST, FROM THE WHEEL'S OWN PAYLOAD (007 T346;
+      # FR-055; section 10 of the SQL register's contract).
+      # `lanes-index ready`'s check 1 reads `openRepoTools-<release>.sha256`
+      # beside the `lanes-index` that PATH names, in `sha256sum`'s own form,
+      # and fails a list that does not name `lanes-index` and
+      # `lanes-edit.sh`. This
+      # writes the release's: one `<sha256>  <name>` line for each file
+      # `openRepoTools --install` places beside `lanes-index` from the
+      # payload, which is every name of the one-line `INSTALLABLES` array in
+      # the wheel's own `payload/openRepoTools`, in its order, but
+      # `openRepoTools` itself, whose place in a pipx install is pipx's link
+      # to pip's console script, not the payload's file. Each digest is of
+      # the verified wheel's own member, the bytes pip installs and
+      # `--install` copies, so `--install` in this release's package writes
+      # the same file, byte for byte (`digest_list_place` in
+      # `openRepoTools`). A list that would not name both of check 1's two,
+      # a name that is not one file name, and a member the wheel lacks each
+      # refuse, naming it. The list is kept as an artifact and its sha256
+      # recorded, for the `asset` job.
+      - name: write check 1's digest list from the wheel's own payload
+        id: digest-list
+        run: |
+          mkdir "$RUNNER_TEMP/digest-list"
+          python3 -I - "$RUNNER_TEMP/dist-a/openrepotools-$VERSION-py3-none-any.whl" \
+              "$RUNNER_TEMP/digest-list" <<'PY'
+          import hashlib, os, re, sys, zipfile
+
+          version = os.environ.get("VERSION", "")
+          number = r"(0|[1-9][0-9]*)"
+          if not re.fullmatch(rf"{number}\.{number}\.{number}(rc{number})?", version):
+              sys.exit(f"::error::the version {version!r} is not X.Y.Z or X.Y.ZrcN, so no list is named")
+          if len(sys.argv) != 3:
+              sys.exit(f"::error::the list is written from one wheel into one directory, and "
+                       f"this run names {sys.argv[1:]}")
+          wheel_path, out = sys.argv[1], sys.argv[2]
+          payload = "openrepotools/payload/"
+          listed = f"openRepoTools-{version}.sha256"
+          # check 1's own reading of a name (`_READY_DIGEST_LINE_RE`), and the
+          # two names it requires
+          one_name = re.compile(r"[A-Za-z0-9_+-][A-Za-z0-9._+-]*")
+          required = ("lanes-index", "lanes-edit.sh")
+          try:
+              wheel = zipfile.ZipFile(wheel_path)
+          except (OSError, zipfile.BadZipFile) as error:
+              sys.exit(f"::error::{wheel_path} cannot be read as a wheel: {error}")
+          with wheel:
+              members = set(wheel.namelist())
+
+
+              def member(name):
+                  if payload + name not in members:
+                      sys.exit(f"::error::the wheel holds no {payload}{name}, so no list is written")
+                  return wheel.read(payload + name)
+
+
+              text = member("openRepoTools").decode("utf-8", "replace")
+              arrays = [line for line in text.split("\n") if line.startswith("INSTALLABLES=(")]
+              if (len(arrays) != 1 or not arrays[0].endswith(")")
+                      or arrays[0].count("(") != 1 or arrays[0].count(")") != 1):
+                  opening = "1 line opens" if len(arrays) == 1 else f"{len(arrays)} lines open"
+                  sys.exit(f"::error::{payload}openRepoTools does not declare INSTALLABLES as one "
+                           f"one-line array: {opening} INSTALLABLES=(")
+              names = [name for name in arrays[0][len("INSTALLABLES=("):-1].split()
+                       if name != "openRepoTools"]
+              problems = [f"{name!r} is not one file name, as check 1 reads one"
+                          for name in names if not one_name.fullmatch(name) or name in (".", "..")]
+              problems += [f"{name} is named twice" for name in sorted(set(names))
+                           if names.count(name) > 1]
+              problems += [f"the list would not name {name}, which check 1 requires"
+                           for name in required if name not in names]
+              for problem in problems:
+                  print(f"::error::{problem}")
+              if problems:
+                  sys.exit(1)
+              lines = "".join(f"{hashlib.sha256(member(name)).hexdigest()}  {name}\n"
+                              for name in names)
+          path = os.path.join(out, listed)
+          with open(path, "w", encoding="utf-8", newline="") as handle:
+              handle.write(lines)
+          with open(path, "rb") as handle:
+              digest = hashlib.sha256(handle.read()).hexdigest()
+          if digest != hashlib.sha256(lines.encode("utf-8")).hexdigest():
+              sys.exit(f"::error::{path} reads back as other bytes than were written")
+          record = f"digest-list={listed}\ndigest-list-sha256={digest}\n"
+          for name in ("GITHUB_OUTPUT", "GITHUB_STEP_SUMMARY"):
+              with open(os.environ[name], "a", encoding="utf-8") as output:
+                  output.write(record)
+          print(lines, end="")
+          print(f"{listed}: {len(names)} files, sha256 {digest}")
+          PY
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: digest-list
+          path: ${{ runner.temp }}/digest-list/
+          if-no-files-found: error
+
   testpypi:
     name: publish to TestPyPI
     needs: build
@@ -1405,17 +1525,52 @@ jobs:
 
       # THE TAG, AGAIN, RIGHT BEFORE THE UPLOAD. The run may have waited on
       # an approval, and a tag can be moved or deleted meanwhile; an upload
-      # cannot be taken back.
+      # cannot be taken back. A read the forge refuses is named on the
+      # refusal's one `::error::` line, with gh's first line of it written
+      # as a workflow command's data (any NUL dropped, and each `%`, CR and
+      # LF as `%25`, `%0D` and `%0A`), and gh's own report of it is kept off
+      # the log, in $RUNNER_TEMP. Each answer must be an object id or
+      # nothing: any other is refused in a line of its own, never printed,
+      # and a NUL in it is read as `?`, so it can never pass as one.
       - name: the tag v<version> still names this commit
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          object="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" \
-              --jq 'select(.object.type == "tag") | .object.sha')" || object=
+          read_tag() {   # <path> <jq>: the answer in $answer, or why the read failed in $why
+            if gh api "$1" --jq "$2" >"$RUNNER_TEMP/tag-again.out" 2>"$RUNNER_TEMP/tag-again.err"; then
+              answer="$(tr '\000' '?' <"$RUNNER_TEMP/tag-again.out")"
+              return 0
+            fi
+            why="$(head -n 1 "$RUNNER_TEMP/tag-again.err" | tr -d '\000')"
+            why="${why:-gh api exited non-zero, and said nothing}"
+            why=${why//%/%25}
+            why=${why//$'\r'/%0D}
+            why=${why//$'\n'/%0A}
+            return 1
+          }
+          oid='^[0123456789abcdef]{40}$'   # an object id, as git spells it: each answer is one, or nothing
           commit=
-          if [ -n "$object" ]; then
-            commit="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$object" \
-                --jq 'select(.object.type == "commit") | .object.sha')" || commit=
+          if ! read_tag "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" \
+              'select(.object.type == "tag") | .object.sha'; then
+            echo "::error::the tag v$VERSION cannot be read ($why), so whether it still names $GITHUB_SHA is not known, and nothing is uploaded"
+            exit 1
+          fi
+          if [ -n "$answer" ] && ! [[ "$answer" =~ $oid ]]; then
+            echo "::error::the forge's answer for the tag v$VERSION is not an object id, so whether it still names $GITHUB_SHA is not known, and nothing is uploaded"
+            exit 1
+          fi
+          if [ -n "$answer" ]; then
+            object="$answer"
+            if ! read_tag "repos/$GITHUB_REPOSITORY/git/tags/$object" \
+                'select(.object.type == "commit") | .object.sha'; then
+              echo "::error::the tag object $object of v$VERSION cannot be read ($why), so whether it still names $GITHUB_SHA is not known, and nothing is uploaded"
+              exit 1
+            fi
+            if [ -n "$answer" ] && ! [[ "$answer" =~ $oid ]]; then
+              echo "::error::the forge's answer for the tag object $object of v$VERSION is not an object id, so whether it still names $GITHUB_SHA is not known, and nothing is uploaded"
+              exit 1
+            fi
+            commit="$answer"
           fi
           if [ "$commit" != "$GITHUB_SHA" ]; then
             echo "::error::the annotated tag v$VERSION no longer names $GITHUB_SHA (it names '$commit'), so nothing is uploaded"
@@ -1937,13 +2092,15 @@ jobs:
       # tag v<version>, and nothing else, ever. So in opensoft/openRepoTools
       # this step refuses outright, in case the job's condition is ever
       # loosened; that repository's missing pypi.org publisher is the second
-      # line of defence.
+      # line of defence. A refusal is one `::error::` line, with a refused
+      # version quoted on it (`printf %q`, each `%` written `%25`, as a
+      # workflow command's message needs), never on a second line.
       - name: the repository guard (FR-048) again, before anything else, and v<version> is a final from opensoft/openRepoTools-code
         run: |
           final='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
           if ! [[ "$VERSION" =~ $final ]] || [ "$VERSION" = 0.0.0 ]; then
-            echo "::error::PyPI takes a final release X.Y.Z alone, never a pre-release, so nothing is uploaded"
-            printf 'the input, quoted: %q\n' "$VERSION"
+            quoted="$(printf '%q' "$VERSION")"
+            echo "::error::PyPI takes a final release X.Y.Z alone, never a pre-release, so nothing is uploaded (the input, quoted: ${quoted//%/%25})"
             exit 1
           fi
           if [ "$GITHUB_REF" != "refs/tags/v$VERSION" ]; then
@@ -2013,12 +2170,41 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          object="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" \
-              --jq 'select(.object.type == "tag") | .object.sha')" || object=
+          read_tag() {   # <path> <jq>: the answer in $answer, or why the read failed in $why
+            if gh api "$1" --jq "$2" >"$RUNNER_TEMP/tag-again.out" 2>"$RUNNER_TEMP/tag-again.err"; then
+              answer="$(tr '\000' '?' <"$RUNNER_TEMP/tag-again.out")"
+              return 0
+            fi
+            why="$(head -n 1 "$RUNNER_TEMP/tag-again.err" | tr -d '\000')"
+            why="${why:-gh api exited non-zero, and said nothing}"
+            why=${why//%/%25}
+            why=${why//$'\r'/%0D}
+            why=${why//$'\n'/%0A}
+            return 1
+          }
+          oid='^[0123456789abcdef]{40}$'   # an object id, as git spells it: each answer is one, or nothing
           commit=
-          if [ -n "$object" ]; then
-            commit="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$object" \
-                --jq 'select(.object.type == "commit") | .object.sha')" || commit=
+          if ! read_tag "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" \
+              'select(.object.type == "tag") | .object.sha'; then
+            echo "::error::the tag v$VERSION cannot be read ($why), so whether it still names $GITHUB_SHA is not known, and nothing is uploaded"
+            exit 1
+          fi
+          if [ -n "$answer" ] && ! [[ "$answer" =~ $oid ]]; then
+            echo "::error::the forge's answer for the tag v$VERSION is not an object id, so whether it still names $GITHUB_SHA is not known, and nothing is uploaded"
+            exit 1
+          fi
+          if [ -n "$answer" ]; then
+            object="$answer"
+            if ! read_tag "repos/$GITHUB_REPOSITORY/git/tags/$object" \
+                'select(.object.type == "commit") | .object.sha'; then
+              echo "::error::the tag object $object of v$VERSION cannot be read ($why), so whether it still names $GITHUB_SHA is not known, and nothing is uploaded"
+              exit 1
+            fi
+            if [ -n "$answer" ] && ! [[ "$answer" =~ $oid ]]; then
+              echo "::error::the forge's answer for the tag object $object of v$VERSION is not an object id, so whether it still names $GITHUB_SHA is not known, and nothing is uploaded"
+              exit 1
+            fi
+            commit="$answer"
           fi
           if [ "$commit" != "$GITHUB_SHA" ]; then
             echo "::error::the annotated tag v$VERSION no longer names $GITHUB_SHA (it names '$commit'), so nothing is uploaded"
@@ -2108,4 +2294,274 @@ jobs:
               sys.exit(f"::error::after 20 reads {index} serves {served}, and the build job "
                        f"verified {wanted}")
           print(f"{index} serves exactly the verified wheel: {served}")
+          PY
+
+  asset:
+    name: publish check 1's digest list as a release asset
+    needs: [build, pypi]
+    # ONLY AFTER PyPI SERVES THE VERSION (the procedure's step 5): with no
+    # status function in it, `if:` also requires `build` and `pypi` to have
+    # succeeded, and `pypi` ends with PyPI serving exactly the verified
+    # wheel. So it runs where `pypi` runs, a final X.Y.Z on its tag in
+    # opensoft/openRepoTools-code (FR-048), and never in a rehearsal: an rc
+    # tag gets no GitHub Release, and a branch has no tag to hold one.
+    if: startsWith(github.ref, 'refs/tags/v') && needs.build.outputs.to-pypi == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write  # the draft release and its one asset, and the tag, read again
+    env:
+      DIGEST_LIST: ${{ needs.build.outputs.digest-list }}
+      DIGEST_LIST_SHA256: ${{ needs.build.outputs.digest-list-sha256 }}
+    steps:
+      # THE REPOSITORY GUARD AGAIN, ON ITS OWN, FIRST (FR-048): `pypi`'s own
+      # first step, line for line. A release's GitHub Release, like its file
+      # on PyPI, is a final X.Y.Z from opensoft/openRepoTools-code, made from
+      # its own tag v<version>, and nothing else, ever. A refusal is one
+      # `::error::` line, with a refused version quoted on it (`printf %q`,
+      # each `%` written `%25`), never on a second line.
+      - name: the repository guard (FR-048) again, before anything else, and v<version> is a final from opensoft/openRepoTools-code
+        run: |
+          final='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          if ! [[ "$VERSION" =~ $final ]] || [ "$VERSION" = 0.0.0 ]; then
+            quoted="$(printf '%q' "$VERSION")"
+            echo "::error::PyPI takes a final release X.Y.Z alone, never a pre-release, so nothing is uploaded (the input, quoted: ${quoted//%/%25})"
+            exit 1
+          fi
+          if [ "$GITHUB_REF" != "refs/tags/v$VERSION" ]; then
+            echo "::error::an upload is made from the tag v$VERSION alone, and this run names '$GITHUB_REF', so nothing is uploaded"
+            exit 1
+          fi
+          if [ "$GITHUB_REPOSITORY" != opensoft/openRepoTools-code ]; then
+            echo "::error::a release reaches PyPI from opensoft/openRepoTools-code alone, as GitHub spells it, and this run is in '$GITHUB_REPOSITORY', so nothing is uploaded"
+            exit 1
+          fi
+          echo "opensoft/openRepoTools-code sends the final $VERSION to PyPI"
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: digest-list
+          path: list
+
+      # THE ARTIFACT AGAINST THE BUILD'S RECORD: `list` holds the one file the
+      # build named, at the sha256 it recorded. Each refusal is one
+      # `::error::` line that names its cause, and the step prints nothing
+      # else: the names found are put on that one line, each `%` and CR in
+      # them written `%25` and `%0D`, as a workflow command's data, and each
+      # new line a space; and the sha256 is read here and compared, since
+      # `sha256sum -c` reports a mismatch in two lines of its own and no
+      # `::error::`. A file that cannot be read gives no digest, and no
+      # digest is ever the recorded one.
+      - name: list holds check 1's digest list the build job wrote, and nothing else
+        run: |
+          found="$(ls -A list)"
+          if [ "$found" != "$DIGEST_LIST" ]; then
+            found=${found//%/%25}
+            found=${found//$'\r'/%0D}
+            found=${found//$'\n'/ }
+            echo "::error::list holds '$found', and the build job wrote $DIGEST_LIST"
+            exit 1
+          fi
+          digest="$(sha256sum 2>/dev/null < "list/$DIGEST_LIST")" || digest=
+          digest="${digest%% *}"
+          if [ -z "$digest" ]; then
+            echo "::error::list/$DIGEST_LIST cannot be read, so whether it is the list the build job wrote is not known, and nothing is published"
+            exit 1
+          fi
+          if [ "$digest" != "$DIGEST_LIST_SHA256" ]; then
+            echo "::error::list/$DIGEST_LIST is at sha256 $digest, and the build job recorded $DIGEST_LIST_SHA256, so nothing is published"
+            exit 1
+          fi
+          echo "list holds $DIGEST_LIST at sha256 $digest, the build job's"
+
+      # THE TAG, AGAIN, as each upload job reads it right before its upload:
+      # a release names its tag, and the tag must still name this commit. A
+      # read the forge refuses is named on the refusal's one `::error::`
+      # line, gh's first line of it written as a workflow command's data
+      # (any NUL dropped, and each `%`, CR and LF as `%25`, `%0D` and `%0A`),
+      # and gh's own report of it is kept off the log. Each answer must be
+      # an object id or nothing: any other is refused in a line of its own,
+      # never printed, and a NUL in it is read as `?`, so it can never pass
+      # as one.
+      - name: the tag v<version> still names this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          read_tag() {   # <path> <jq>: the answer in $answer, or why the read failed in $why
+            if gh api "$1" --jq "$2" >"$RUNNER_TEMP/tag-again.out" 2>"$RUNNER_TEMP/tag-again.err"; then
+              answer="$(tr '\000' '?' <"$RUNNER_TEMP/tag-again.out")"
+              return 0
+            fi
+            why="$(head -n 1 "$RUNNER_TEMP/tag-again.err" | tr -d '\000')"
+            why="${why:-gh api exited non-zero, and said nothing}"
+            why=${why//%/%25}
+            why=${why//$'\r'/%0D}
+            why=${why//$'\n'/%0A}
+            return 1
+          }
+          oid='^[0123456789abcdef]{40}$'   # an object id, as git spells it: each answer is one, or nothing
+          commit=
+          if ! read_tag "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" \
+              'select(.object.type == "tag") | .object.sha'; then
+            echo "::error::the tag v$VERSION cannot be read ($why), so whether it still names $GITHUB_SHA is not known, and nothing is uploaded"
+            exit 1
+          fi
+          if [ -n "$answer" ] && ! [[ "$answer" =~ $oid ]]; then
+            echo "::error::the forge's answer for the tag v$VERSION is not an object id, so whether it still names $GITHUB_SHA is not known, and nothing is uploaded"
+            exit 1
+          fi
+          if [ -n "$answer" ]; then
+            object="$answer"
+            if ! read_tag "repos/$GITHUB_REPOSITORY/git/tags/$object" \
+                'select(.object.type == "commit") | .object.sha'; then
+              echo "::error::the tag object $object of v$VERSION cannot be read ($why), so whether it still names $GITHUB_SHA is not known, and nothing is uploaded"
+              exit 1
+            fi
+            if [ -n "$answer" ] && ! [[ "$answer" =~ $oid ]]; then
+              echo "::error::the forge's answer for the tag object $object of v$VERSION is not an object id, so whether it still names $GITHUB_SHA is not known, and nothing is uploaded"
+              exit 1
+            fi
+            commit="$answer"
+          fi
+          if [ "$commit" != "$GITHUB_SHA" ]; then
+            echo "::error::the annotated tag v$VERSION no longer names $GITHUB_SHA (it names '$commit'), so nothing is uploaded"
+            exit 1
+          fi
+          echo "v$VERSION still names $GITHUB_SHA"
+
+      # THE LIST, AS AN ASSET OF THE GITHUB RELEASE v<version>, BESIDE THE
+      # ASSETS IT HAS (007 T346). The releases are read from the forge,
+      # drafts among them, and exactly one may name the tag:
+      #   - none yet, as the procedure leaves it: a DRAFT is made on the tag
+      #     that exists (`--verify-tag`), titled as v1.2.0's was and holding
+      #     the list, and its notes are a line of this job's own. Only the
+      #     repository's writers see a draft, so the release owner publishes
+      #     it, with the release notes, on Brett Heap's word (step 5);
+      #   - one without the list: the list is uploaded to it, draft or not;
+      #   - one already holding a file of that name: it must be the list at
+      #     the recorded sha256, a re-run after an upload that went through,
+      #     and nothing is uploaded; any other file under that name is
+      #     refused, and never replaced (no `--clobber`).
+      # Then the release's own copy is downloaded, and its sha256 must be
+      # the one the build recorded. Each refusal is one `::error::` line
+      # that names its cause, never a traceback, and it is the step's whole
+      # output: what went through before it (a draft made, an upload, a
+      # re-run) is said only once the release's copy is read back as the
+      # build's. gh's output is read as UTF-8, a byte that is not as `\xNN`,
+      # and its first line goes on the refusal with each `%` written `%25`,
+      # as a workflow command's data needs: read as text, a CR ends a line
+      # as an LF does, so that line holds neither. A releases list outside
+      # the forge's schema (an entry that is not a release, `assets` that is
+      # not a list, JSON nested past what Python reads) is refused too.
+      - name: the GitHub Release v<version> holds check 1's digest list, at the recorded sha256
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 -I - <<'PY'
+          import hashlib, json, os, subprocess, sys, tempfile
+
+          repo, version = os.environ["GITHUB_REPOSITORY"], os.environ["VERSION"]
+          tag, name = f"v{version}", os.environ["DIGEST_LIST"]
+          want = os.environ["DIGEST_LIST_SHA256"]
+          local = os.path.join("list", name)
+          notes = (f"A draft that release.yml's asset job made in run "
+                   f"{os.environ.get('GITHUB_RUN_ID', '(unknown)')}, holding check 1's digest "
+                   f"list, {name}. The release owner writes its notes and publishes it on "
+                   "Brett Heap's word.")
+
+
+          def gh(*args):
+              return subprocess.run(["gh", *args], capture_output=True, text=True,
+                                    encoding="utf-8", errors="backslashreplace")
+
+
+          def said(done):
+              """gh's first line, each `%` written `%25`, as a workflow command's data
+              needs. Read as text, a CR ends a line as an LF does, so the first line
+              holds neither, and the CR and LF replacements below are a guard alone."""
+              text = done.stderr.strip() or done.stdout.strip() or f"exit {done.returncode}"
+              line = text.splitlines()[0]
+              return line.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+          def releases():
+              """Every release of the repository, drafts among them."""
+              done = gh("api", "--paginate", f"repos/{repo}/releases?per_page=100", "--jq", ".[]")
+              if done.returncode != 0:
+                  sys.exit(f"::error::`gh api repos/{repo}/releases` failed, so whether {tag} has "
+                           f"a release is not known, and nothing is published: {said(done)}")
+              try:
+                  found = [json.loads(line) for line in done.stdout.splitlines() if line.strip()]
+              except RecursionError:
+                  sys.exit("::error::the forge's list of releases nests deeper than it can be read, "
+                           "so nothing is published")
+              except ValueError as error:
+                  sys.exit(f"::error::the forge's list of releases is not its JSON ({error}), so "
+                           "nothing is published")
+              if not all(isinstance(entry, dict)
+                         and isinstance(entry.get("assets"), (list, type(None)))
+                         for entry in found):
+                  sys.exit("::error::the forge's list of releases holds an entry that is not a "
+                           "release, so nothing is published")
+              return found
+
+
+          def held():
+              """The sha256 of the release's own copy of the list, or None and why."""
+              with tempfile.TemporaryDirectory() as there:
+                  done = gh("release", "download", tag, "--repo", repo, "--pattern", name,
+                            "--dir", there)
+                  path = os.path.join(there, name)
+                  if done.returncode != 0 or not os.path.isfile(path):
+                      return None, said(done)
+                  with open(path, "rb") as handle:
+                      return hashlib.sha256(handle.read()).hexdigest(), ""
+
+
+          with open(local, "rb") as handle:
+              if hashlib.sha256(handle.read()).hexdigest() != want:
+                  sys.exit(f"::error::{local} is not the list the build job wrote, at sha256 "
+                           f"{want}, so nothing is published")
+          ours = [entry for entry in releases() if entry.get("tag_name") == tag]
+          if len(ours) > 1:
+              sys.exit(f"::error::{len(ours)} releases name the tag {tag}, so which one is its "
+                       "release is not known, and nothing is published")
+          went = []   # what went through, said once the release's copy is read back
+          if not ours:
+              done = gh("release", "create", tag, "--repo", repo, "--draft", "--verify-tag",
+                        "--title", f"openRepoTools {tag}", "--notes", notes, local)
+              if done.returncode != 0:
+                  sys.exit(f"::error::the draft release {tag} could not be made, so {name} is "
+                           f"not published: {said(done)}")
+              went.append(f"{tag} had no release, so a draft is made, holding {name}")
+          else:
+              kind = "draft" if ours[0].get("draft") else "published"
+              assets = [entry.get("name") for entry in ours[0].get("assets") or []
+                        if isinstance(entry, dict)]
+              if name in assets:
+                  digest, why = held()
+                  if digest is None:
+                      sys.exit(f"::error::the {kind} release {tag} holds a {name} that cannot be "
+                               f"read ({why}), so whether it is the build's is not known")
+                  if digest != want:
+                      sys.exit(f"::error::the {kind} release {tag} already holds {name} at sha256 "
+                               f"{digest}, and the build wrote {want}: an asset is never "
+                               "replaced, so nothing is published")
+                  went.append(f"the {kind} release {tag} already holds {name} at the build's "
+                              "sha256: a re-run, and nothing new is published")
+              else:
+                  done = gh("release", "upload", tag, local, "--repo", repo)
+                  if done.returncode != 0:
+                      sys.exit(f"::error::{name} could not be uploaded to the {kind} release "
+                               f"{tag}: {said(done)}")
+                  went.append(f"{name} uploaded to the {kind} release {tag}, beside its "
+                              f"{len(assets)} other assets")
+          digest, why = held()
+          if digest != want:
+              shown = f"sha256 {digest}" if digest else f"nothing that can be read ({why})"
+              sys.exit(f"::error::the release {tag} serves {name} as {shown}, and the build "
+                       f"wrote {want}")
+          for line in went:
+              print(line)
+          print(f"the release {tag} holds {name} at sha256 {want}, the build's")
           PY

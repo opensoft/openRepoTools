@@ -55,7 +55,10 @@
 # act 3, the `UserPromptSubmit` NAME GUARD beside it — both of them only once
 # `~/projects/xFactory/lanes-edit.sh`, the path they call, answers `guard`
 # (opensoft/openRepoTools#237): TWENTY-NINE artifacts always, plus the two hook
-# entries once that path answers, and the count is the invariant.
+# entries once that path answers, and the count is the invariant. A release's
+# stamped package also writes that release's digest list beside `lanes-index`
+# for `lanes-index ready`'s check 1 (007 T346), which is no artifact of the
+# count: search "CHECK 1'S DIGEST LIST".
 #
 # One install line for the whole toolset, so a second engineer gets the estate
 # commands from the README's one line and nothing depends on anyone's dotfiles.
@@ -197,6 +200,13 @@ same header: a digest that still matches is removed, one that has moved — or a
 row it cannot check, for want of a digest tool — is named and left for you. A
 receipt it cannot write is one line on this terminal and never a refused
 install.
+
+In a release's package (`pipx install openrepotools`), `--install` also
+writes that release's digest list, `openRepoTools-<version>.sha256`, beside
+`lanes-index`: one `sha256sum` line for each file it placed there but
+`openRepoTools`, the list `lanes-index ready` checks the installed tools
+against. It is the release asset `release.yml` publishes, byte for byte. A
+checkout or the one-line install names no release, and writes none.
 
 `/restart` is the INSIDE half and has to be a skill: a running session cannot
 `exec` a launcher over itself, so it binds the window, stamps the record
@@ -2062,6 +2072,103 @@ place_by_rename() {   # <staged source> <target> <mode> <what a refusal adds>
 	PLACING=""
 }
 
+# ------------------------------------------ CHECK 1'S DIGEST LIST (007 T346)
+#
+# `lanes-index ready`'s check 1 asks whether the installed tools' digests
+# equal the release's. It reads `openRepoTools-<release>.sha256`, in
+# `sha256sum`'s own form, in the directory of the `lanes-index` that PATH
+# names, and fails a list that does not name `lanes-index` and
+# `lanes-edit.sh` (FR-055; section 10 of the SQL register's contract, in the
+# spec leg's 007). Brett Heap chose who makes it, "Release + installer
+# (Recommended)": `release.yml` publishes it as a release asset, and
+# `--install` places it next to `lanes-index` (as lane openRepoTools-3
+# relays it, opensoft/openRepoTools#165 6773444302).
+#
+# IT IS WRITTEN FROM THE PAYLOAD THIS RUN PLACED, in the one mode whose
+# payload IS a release's: a STAMPED PACKAGE (`pipx install openrepotools`,
+# or the package in any other environment) whose own complete payload was
+# copied. Those bytes are the wheel's, which `release.yml`'s build checked
+# against the tag's commit, and this writes them by the build's own rule:
+# one `<sha256>  <name>` line for each name in `INSTALLABLES`, in its
+# order, but `openRepoTools` — pipx's link holds that name in a pipx
+# install, and check 1 would hash pip's console script there. So the file
+# here and the release's asset are one file, byte for byte, and a
+# package's `--install` still asks no network for anything. The digests are
+# of the STAGED copies, which are what was just placed.
+#
+# NO RELEASE, NO LIST, AND NOT A WORD: a checkout, the one-line install, an
+# assembly's mounted code and an unstamped package (0.0.0, built from a
+# checkout) name no release, so none is written, no line is printed, and a
+# list already there is left as it is: such an install's output is
+# today's, to the line. A release before this one (v1.2.0 and older) has an
+# installer with none of this and published no asset, so check 1 names the
+# missing list there, which is its job. A list of another release is never
+# touched: it names that release, and check 1 asks for one by name.
+#
+# IT IS NOT AN ARTIFACT OF THE COUNT AND IT HAS NO RECEIPT ROW: it is no
+# command, nothing retires it, and the receipt is the evidence a retirement
+# reads. And LIKE THE RECEIPT, A LIST THAT CANNOT BE WRITTEN IS A NOTE AND
+# NEVER A REFUSAL: the commands are what a person asked for, and check 1
+# says that the list is missing. It is data, at 0644, written beside
+# itself and renamed over itself as every command is (#167), and a run that
+# finds the same bytes at that mode changes nothing.
+digest_list_note() {   # <target> <why>
+	say "openRepoTools: release ${STAMP_VERSION}'s digest list NOT written to $1 — $2. Everything above is installed; \`lanes-index ready\`'s check 1 fails until a later \`--install\` writes it."
+}
+
+digest_list_place() {   # <bin directory>
+	local dir="$1" name="" target="" list="" entry="" digest="" verb="" here="" tmp=""
+	[ -n "$PACKAGE_DIR" ] && [ "$STAMP_STATE" = stamped ] || return 0
+	name="openRepoTools-${STAMP_VERSION}.sha256"
+	target="$dir/$name"
+	here="$(CDPATH= cd -P -- "${PAYLOAD_DIR:-.}" 2>/dev/null && pwd -P)" || here=""
+	if [ "$PAYLOAD_MODE" != local ] || [ -z "$PAYLOAD_DIR" ] || [ "$here" != "$PACKAGE_DIR" ]; then
+		digest_list_note "$target" "the payload placed is not this package's own, so it is not release ${STAMP_VERSION}'s"
+		return 0
+	fi
+	list="$WORKDIR/digest-list"
+	if ! : >"$list" 2>/dev/null; then
+		digest_list_note "$target" "this run's work directory took no file"
+		return 0
+	fi
+	for entry in "${INSTALLABLES[@]}"; do
+		[ "$entry" != openRepoTools ] || continue
+		if ! digest="$(sha256_of "$STAGED/$entry")"; then
+			digest_list_note "$target" "the sha256 of ${entry} could not be taken: this machine has neither sha256sum nor shasum, or the copy cannot be read"
+			return 0
+		fi
+		if ! printf '%s  %s\n' "$digest" "$entry" >>"$list" 2>/dev/null; then
+			digest_list_note "$target" "this run's work directory took no line"
+			return 0
+		fi
+	done
+	if [ -L "$target" ] || { [ -e "$target" ] && [ ! -f "$target" ]; }; then
+		digest_list_note "$target" "something that is not a regular file is there, and it is left as it is"
+		return 0
+	fi
+	if [ -f "$target" ] && cmp -s "$list" "$target" && mode_is 644 "$target"; then
+		say "openRepoTools: release ${STAMP_VERSION}'s digest list already at $target (unchanged)"
+		return 0
+	fi
+	if [ -e "$target" ]; then verb=updated; else verb=placed; fi
+	PLACING="$dir/.${name}.openrepotools.$$."
+	if ! tmp="$(mktemp -- "${PLACING}XXXXXX" 2>/dev/null)"; then
+		rm -f -- "$PLACING"*
+		PLACING=""
+		digest_list_note "$target" "no temporary file could be made beside it"
+		return 0
+	fi
+	if cp -- "$list" "$tmp" 2>/dev/null && chmod 644 "$tmp" 2>/dev/null &&
+		mv -f -- "$tmp" "$target" 2>/dev/null; then
+		PLACING=""
+		say "openRepoTools: release ${STAMP_VERSION}'s digest list ${verb} at $target, beside lanes-index, for \`lanes-index ready\`'s check 1"
+		return 0
+	fi
+	rm -f -- "$tmp"
+	PLACING=""
+	digest_list_note "$target" "it could not be written there, and what was there is untouched"
+}
+
 install_commands() {
 	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
 	local name target source verb placed=0
@@ -2168,6 +2275,11 @@ install_commands() {
 		# FR-019): `install_source` and `pipx_release` say why each is spelt so.
 		say "openRepoTools: $placed of ${#INSTALLABLES[@]} placed in $dir, and 1 left to pipx; the other $placed now come from $(install_source), not from $(pipx_release)"
 	fi
+	# CHECK 1'S DIGEST LIST, beside the `lanes-index` just placed, from the
+	# bytes just placed, and in a stamped package's own run alone (007 T346).
+	# After the count, which stays the commands' own line, and before the
+	# skills: it describes the bin directory, which is now whole.
+	digest_list_place "$dir"
 	# THE RETIREMENT IS THE LAST ACT OF THE INSTALL, AFTER EVERY PLACEMENT
 	# (Copilot round 7 on #45, `openRepoTools:369`). It is the one DESTRUCTIVE
 	# step here, and it ran before `place_skill_and_hook` — so a skill directory
@@ -3910,6 +4022,17 @@ wip_quietly() {   # <command> [args…] — 0 or 1, stderr in $WIP_LAST_ERR, std
 	return 1
 }
 
+# Step 6b's one reading of a listing (`git ls-tree -r --name-only`) for the SQL
+# register's marker: 0 where it names `lanes/STORE` as a file, a link or a
+# gitlink, or as a DIRECTORY, whose listing under -r is its children
+# (`lanes/STORE/…`, which git prints inside quotes when a child's name needs
+# C-quoting). Both of step 6b's reads, HEAD's tree and a fetched origin `main`'s,
+# ask it, so neither can take a directory for something else than the marker.
+wip_listing_names_marker() {   # <listing file> — 0 only where the marker is listed
+	awk '$0 == "lanes/STORE" || index($0, "lanes/STORE/") == 1 || index($0, "\"lanes/STORE/") == 1 { found = 1; exit }
+		END { exit !found }' "$1"
+}
+
 wip_admin_block() {
 	local target="$1" org="$2" team="$3"
 	say ""
@@ -4594,6 +4717,167 @@ $(printf '%s\n' "$ahead_log" | sed -e 's/^/    /')
 		1) say "  one seed an earlier run committed is not on $target main yet; the push below carries it" ;;
 		*) say "  $seeds_ahead seeds earlier runs committed are not on $target main yet; the push below carries them" ;;
 		esac
+	fi
+
+	# ---- step 6b: A SEED COMMIT IS NEVER MADE UNDER THE SQL REGISTER'S MARKER,
+	# NOR INTO A LANE REGISTER SOMEBODY ALREADY KEEPS, IN EVERY MODE (feature
+	# 007's FR-005; Q14(a), Brett Heap's answer on opensoft/openRepoTools#165,
+	# comment 6710653292, as narrowed by his answer "Narrow it (Recommended)",
+	# given in lane openRepoTools-3's session on 2026-11-10 and relayed on #165
+	# in comment 6773442813).
+	#
+	# TWO RULES, and the refusal names the one that fired:
+	#
+	# - `lanes/STORE` ALWAYS REFUSES. It marks an estate whose register is SQL,
+	#   and a seed commit under it is a stray one that stops the renderer,
+	#   whatever else the tree carries.
+	# - ANY OTHER FILE UNDER `lanes/` REFUSES ONLY WHERE THE SEED WOULD WRITE
+	#   UNDER `lanes/`. Those paths are step 7's own seed list,
+	#   `$WIP_TEMPLATE_FILES`, which the check below reads rather than repeats
+	#   (today `lanes/LANES.md` and `lanes/log/README.md`), and step 7 writes
+	#   one only where the tree it builds on does not carry it (`HEAD:$rel`).
+	#   So a tree that carries another file under `lanes/` and lacks one of
+	#   them is refused: its seed would be a commit into a register somebody
+	#   already keeps. A tree that carries all of them and no marker, a
+	#   workspace an earlier run seeded and this workstation now joins, passes,
+	#   because its seed writes nothing under `lanes/`; so does a tree with
+	#   nothing under `lanes/`, a new workspace whose register the seed starts.
+	#
+	# Neither rule reads a `lanes-index.conf`, a `mode=` or a `LANES_*` value,
+	# so each answers the same in every mode, files mode included.
+	#
+	# ASKED OF THE TREE THE SEED COMMIT WOULD BUILD ON, after step 6a's last
+	# question and before step 7 writes a byte, so a refusal costs nothing.
+	# That tree is HEAD's, less the seeds step 6a let through: this command's
+	# own commits ahead of origin's `main`, which a refused push left for a
+	# re-run to push (step 8: "a re-run after that has only to push"). They
+	# carry the template paths the tree beneath them lacked and nothing else,
+	# so that tree is the one asked, and it answers both rules: what the seed
+	# builds on, and whether the seed writes under `lanes/`. A seed already on
+	# origin's `main` is not set aside, and neither is any commit where origin
+	# could not be asked: nothing then says which seed is still this command's
+	# to push.
+	#
+	# THE MARKER IS ALSO ASKED OF ORIGIN'S `main`, where this checkout holds the
+	# commit step 6a asked `ls-remote` for (`remote_head`): a checkout BEHIND a
+	# `main` it has fetched, and that `main` carries `lanes/STORE`. Step 6a lets
+	# it through, because nothing is ahead of `main`, and HEAD's tree carries no
+	# marker yet, so the seed would be committed locally and its push refused as
+	# a non-fast-forward, with the text that sends a person to an administrator.
+	# That one read asks the marker's rule only, never the seed's, since a seed
+	# built on HEAD's tree is not the one that would land on `main`'s. A
+	# `remote_head` this checkout does not hold is not asked here, and neither is
+	# one step 6a could not get: step 6a's own `rev-list` refuses the one, and
+	# the push is the probe for the other.
+	#
+	# A TREE THAT CANNOT BE READ IS A REFUSAL, NEVER AN EMPTY ONE (#49's lesson).
+	# A HEAD with no commit yet, a new repository's, is the one tree read as
+	# empty, because there is no tree.
+	#
+	# `GIT_ICASE_PATHSPECS` is cleared for each listing: with it set, `ls-tree`
+	# dies on its `lanes/` pathspec ("pathspec magic not supported by this
+	# command: 'icase'"), which would refuse every run of a person whose shell
+	# sets it, where origin's command joins.
+	local register_base="" register_parents register_found="" register_label=""
+	local register_left=0 register_seed="" register_lacks="" remote_marker=""
+	if register_base="$(git -C "$checkout" rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)"; then
+		register_label="HEAD, $(printf '%.7s' "$register_base")"
+		# ONE PARENT OR NONE: `wip_is_own_seed` refuses a merge, so the seeds
+		# step 6a counted are HEAD and the commits straight beneath it.
+		while [ "$register_left" -lt "$seeds_ahead" ] && [ -n "$register_base" ]; do
+			register_parents="$(git -C "$checkout" log -1 --no-show-signature --format=%P \
+				"$register_base" 2>/dev/null)" ||
+				die "could not read the parent of $register_base in $checkout, so this run cannot
+    tell what tree its seed commit would build on, nor whether that tree carries a lane
+    register. NOTHING was committed or pushed, nothing was written into that checkout on
+    this run, and nothing was staged."
+			register_base="$register_parents"
+			register_left=$((register_left + 1))
+		done
+		if [ "$seeds_ahead" -gt 0 ] && [ -n "$register_base" ]; then
+			register_label="$(printf '%.7s' "$register_base"), beneath the seed an earlier run left unpushed"
+		fi
+	elif git -C "$checkout" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+		die "$checkout's HEAD names a commit this run cannot read, so it cannot tell what tree
+    its seed commit would build on, nor whether that tree carries a lane register. NOTHING
+    was committed or pushed, nothing was written into that checkout on this run, and nothing
+    was staged.
+    Check that checkout (\`git status\`, \`git fsck\`), then re-run:
+        openRepoTools wip init"
+	fi
+	if [ -n "$register_base" ]; then
+		wip_quietly env -u GIT_ICASE_PATHSPECS git -C "$checkout" ls-tree -r --name-only --full-tree "$register_base" -- lanes/ ||
+			die "could not list what $checkout carries under lanes/ at $register_label, so this
+    run cannot tell whether that tree carries a lane register — and a tree this command could
+    not read is never an empty one. NOTHING was committed or pushed, nothing was written into
+    that checkout on this run, and nothing was staged.
+    What it said:
+$WIP_LAST_ERR"
+		# `lanes/STORE` is named before any other path, because it is the one
+		# that says the register is SQL, and a directory there counts as the
+		# marker (`wip_listing_names_marker`). A path git had to C-quote is
+		# printed quoted.
+		if wip_listing_names_marker "$WIP_LAST_OUT"; then
+			register_found="lanes/STORE"
+		else
+			register_found="$(awk 'NR == 1 { print; exit }' "$WIP_LAST_OUT")"
+		fi
+		# AND WHICH OF THE SEED'S OWN `lanes/` PATHS THAT TREE LACKS, asked of
+		# the same listing, so the second rule reads nothing the first did not.
+		# A path the tree carries as a directory counts as carried, as it does
+		# for step 7's `HEAD:$rel`; a listing awk could not read counts as
+		# lacking, so a failed answer refuses rather than passes.
+		for rel in "${WIP_TEMPLATE_FILES[@]}"; do
+			case "$rel" in lanes/*) ;; *) continue ;; esac
+			register_seed="${register_seed:+$register_seed and }$rel"
+			awk -v p="$rel" '$0 == p || index($0, p "/") == 1 { found = 1; exit }
+				END { exit !found }' "$WIP_LAST_OUT" ||
+				register_lacks="${register_lacks:+$register_lacks and }$rel"
+		done
+	fi
+	# THE SECOND READ, ORIGIN'S `main`: asked where HEAD's tree carries no
+	# marker, this checkout holds the commit step 6a asked for, and that commit
+	# is not the tree already read (a HEAD at `main`, or a seed on it). Only the
+	# marker's rule is asked of it.
+	if [ "$register_found" != "lanes/STORE" ] && [ -n "$remote_head" ] &&
+		[ "$remote_head" != "$register_base" ] &&
+		git -C "$checkout" rev-parse -q --verify "$remote_head^{commit}" >/dev/null 2>&1; then
+		wip_quietly env -u GIT_ICASE_PATHSPECS git -C "$checkout" ls-tree -r --name-only --full-tree "$remote_head" -- lanes/ ||
+			die "could not list what $checkout carries under lanes/ at $target's main
+    ($(printf '%.7s' "$remote_head")), a commit it holds, so this run cannot tell whether the
+    main its seed commit would be pushed to carries lanes/STORE — and a tree this command
+    could not read is never an empty one. NOTHING was committed or pushed, nothing was
+    written into that checkout on this run, and nothing was staged.
+    What it said:
+$WIP_LAST_ERR"
+		if wip_listing_names_marker "$WIP_LAST_OUT"; then
+			remote_marker="$(printf '%.7s' "$remote_head")"
+		fi
+	fi
+	if [ "$register_found" = "lanes/STORE" ]; then
+		die "$checkout carries lanes/STORE in the tree a seed commit would build on
+    ($register_label). lanes/STORE marks an estate whose register is SQL, and a seed commit
+    under it would be a stray commit that stops the renderer. The rule that refused is the
+    marker's: \`wip init\` refuses wherever lanes/STORE exists, in every mode.
+    NOTHING was committed or pushed, nothing was written into that checkout on this run, and
+    nothing was staged."
+	elif [ -n "$remote_marker" ]; then
+		die "$target's main ($remote_marker) carries lanes/STORE, in a commit $checkout
+    holds, and a seed commit made now would be pushed to that main, whatever this checkout's
+    own HEAD carries. lanes/STORE marks an estate whose register is SQL, and a seed commit
+    under it would be a stray commit that stops the renderer. The rule that refused is the
+    marker's: \`wip init\` refuses wherever lanes/STORE exists, in every mode.
+    NOTHING was committed or pushed, nothing was written into that checkout on this run, and
+    nothing was staged."
+	elif [ -n "$register_found" ] && [ -n "$register_lacks" ]; then
+		die "$checkout carries $register_found in the tree a seed commit would build on
+    ($register_label), and that tree lacks $register_lacks, so the seed would write under
+    lanes/: into a lane register $target already keeps, as a stray commit inside it. The rule
+    that refused is the seed's: \`wip init\` refuses a seed that would write under lanes/
+    wherever another file under lanes/ exists, in every mode. A tree that carries
+    $register_seed, and no lanes/STORE, is not refused here.
+    NOTHING was committed or pushed, nothing was written into that checkout on this run, and
+    nothing was staged."
 	fi
 
 	# ---- step 7: SEED IT FROM THE TEMPLATE, additively. A repository that
