@@ -17,6 +17,7 @@ import tempfile
 import zipfile
 
 import shadow_scope as policy
+import delivery_v13 as v13
 from delivery_verify import PendingEvidence, require
 
 REPOSITORY = policy.REPOSITORY
@@ -101,7 +102,10 @@ def record_valid(record, run, phase):
             and type(record["run_attempt"]) is int and record["run_attempt"] == 1
             and record["branch"] == run["head_branch"], "Receipt provenance differs")
     proof = record["proof"]
-    require(set(proof) == {"verified", "full_ci_required", "base", "candidate", "tree", "members"}
+    fields = {"verified", "full_ci_required", "base", "candidate", "tree", "members"}
+    scoped = "scope" in proof
+    require(set(proof) == fields | ({"scope"} if scoped else set())
+            and (not scoped or proof["scope"] == v13.SCOPE)
             and proof["verified"] is True and proof["full_ci_required"] is True
             and proof["candidate"] == run["head_sha"], "Receipt proof differs")
     for key in ("base", "candidate", "tree"):
@@ -230,20 +234,28 @@ def ensure_commit(root, value):
 
 def candidate_chain(record, root):
     proof = record["proof"]
+    is_v13 = proof.get("scope") == v13.SCOPE
     # Queue branches may already be deleted at main-push time.
     ensure_commit(root, proof["candidate"])
     previous, heads = proof["base"], []
     for row in proof["members"]:
         head, prefix = row["head"], row["prefix"]
         require(row["delivery"] is True, "Member did not opt into delivery")
-        policy.git(root, "merge-base", "--is-ancestor", proof["base"], head)
+        if is_v13:
+            projection, _cut, _profile = v13.cut(root, proof["base"], head)
+            anchor = projection["prerequisite"]["head"]
+        else:
+            anchor = proof["base"]
+            policy.git(root, "merge-base", "--is-ancestor", anchor, head)
         for other in heads:
             require(policy.git(root, "merge-base", "--all", other, head).decode().split()
-                    == [proof["base"]], "Member histories are not independent")
+                    == [anchor], "Member histories are not independent")
         heads.append(head)
+        scoped = (v13.prefix(root, proof["base"], head, previous, prefix) if is_v13 else
+                  policy.regular_scope(root, proof["base"], head)
+                  and policy.regular_scope(root, previous, prefix))
         require(policy.git(root, "show", "-s", "--format=%P", prefix).decode().split()
-                == [previous, head] and policy.regular_scope(root, proof["base"], head)
-                and policy.regular_scope(root, previous, prefix), "Candidate chain differs")
+                == [previous, head] and scoped, "Candidate chain differs")
         tree = policy.git(root, "rev-parse", prefix + "^{tree}").decode().strip()
         require(tree == row["tree"] == policy.git(
             root, "merge-tree", "--write-tree", previous, head).decode().strip(),
@@ -277,8 +289,12 @@ def landing(record, run, env, event, root, request=policy.github):
             "Trusted main moved")
     policy.git(root, "merge-base", "--is-ancestor", after, main)
     proof = candidate_chain(record_valid(record, run, "qualified"), root)
-    changed = policy.git(root, "diff", "--name-only", proof["base"], main, "--").decode().splitlines()
-    require(all(path in policy.SCOPE for path in changed), "Policy/commands changed since qualification")
+    if proof.get("scope") == v13.SCOPE:
+        stable = v13.unchanged_policy(root, proof["base"], main)
+    else:
+        changed = policy.git(root, "diff", "--name-only", proof["base"], main, "--").decode().splitlines()
+        stable = all(path in policy.SCOPE for path in changed)
+    require(stable, "Policy/commands changed since qualification")
     finished = completed_jobs(run, request)
     # Reconstruct the prefix ending at this event, not any lookalike final tree.
     chain, current = [], after

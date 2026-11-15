@@ -15,6 +15,15 @@ on:
       - .github/ci/delivery_route.py
       - .github/ci/delivery_evidence.py
       - .github/ci/delivery_verify.py
+      - .github/ci/delivery_v13.py
+      - .github/ci/delivery-v13-policy.json
+      - .github/ci/delivery-v13.md
+      - tests/test_ci_v13_delivery.py
+      - .github/ci/v13_shadow.py
+      - .github/ci/shadow_scope.py
+      - .github/ci/v13-shadow-profiles.json
+      - .github/ci/v13-shadow.md
+      - .github/workflows/v13-shadow.yml
       - .github/workflows/task-set-candidate.yml
       - .github/workflows/task-set-candidate-shadow.yml
       - .mergify.yml
@@ -23,6 +32,7 @@ on:
       - tests/test_tests_workflow.py
       - tests/test_ci_shards.py
       - tests/test_full_ci_coverage_parity.py
+      - tests/test_v13_shadow.py
 
 permissions:
   contents: read

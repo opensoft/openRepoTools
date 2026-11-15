@@ -90,7 +90,7 @@ def test_manual_mergify_queue_is_bounded_and_has_no_automatic_admission(config):
         "reset_on_external_merge": "always", "skip_intermediate_results": False}
     assert [q["name"] for q in config["queue_rules"]] == [
         "openrepotools-docs-pilot", "openrepotools-real-code-35-36", "openrepotools-code",
-        "openrepotools-claude-current"]
+        "openrepotools-claude-current", "openrepotools-sql-register-v13"]
     queue = config["queue_rules"][0]
     assert queue["name"] == "openrepotools-docs-pilot"
     assert queue["batch_size"] == 2

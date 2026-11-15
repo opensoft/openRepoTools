@@ -15,6 +15,7 @@ import zipfile
 import delivery_evidence as evidence
 import delivery_verify as verifier
 import shadow_scope as policy
+import delivery_v13 as v13
 
 REPOSITORY = policy.REPOSITORY
 FULL = {"mode": "full", "omit_full": False}
@@ -154,9 +155,14 @@ def source(env, event, root, main, request, base_changes):
             and not re.search(r"(?m)^Depends-On:", pr["body"]), "Source is not opted-in/current")
     head, branch = policy.side(pr, "head")
     base, base_ref = policy.side(pr, "base")
-    require(base == main and base_ref == "main" and policy.source_branch(branch)
-            and policy.regular_scope(root, main, head), "Source is outside fixed scope")
-    policy.git(root, "merge-base", "--is-ancestor", main, head)
+    require(base == main and base_ref == "main" and policy.source_branch(branch),
+            "Source is outside fixed scope")
+    if v13.intended(pr.get("body")):
+        v13.source(root, main, pr, request)
+        v13.source(root, main, dict(pr, body=expected.get("body")), request)
+    else:
+        require(policy.regular_scope(root, main, head), "Source is outside fixed scope")
+        policy.git(root, "merge-base", "--is-ancestor", main, head)
     require(env["GITHUB_REF"] == f"refs/pull/{number}/merge", "Source event ref differs")
     tested = evidence.ensure_commit(root, env["GITHUB_SHA"])
     require(policy.git(root, "show", "-s", PARENTS, tested).decode().split() == [main, head],
@@ -193,8 +199,7 @@ def duplicate(env, event, root, main, request, fetch, threads, base_changes):
             and pr["number"] == number and pr["state"] == "open" and pr["draft"] is True
             and pr["user"]["login"] == "mergify[bot]"
             and policy.side(pr, "base") == (main, "main")
-            and policy.QUEUE.fullmatch(branch) is not None
-            and policy.regular_scope(root, main, head), "Not a current scoped draft candidate")
+            and policy.QUEUE.fullmatch(branch) is not None, "Not a current scoped draft candidate")
     require(env["GITHUB_REF"] == f"refs/pull/{number}/merge", "Candidate event ref differs")
     tested = evidence.ensure_commit(root, env["GITHUB_SHA"])
     require(policy.git(root, "show", "-s", PARENTS, tested).decode().split()

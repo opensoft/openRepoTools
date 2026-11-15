@@ -1,0 +1,55 @@
+name: v1.3 disabled CI shadow
+
+# Read-only observations. No routing, admission, status or output grants.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited, labeled, unlabeled, ready_for_review, converted_to_draft, enqueued, dequeued, closed]
+  push:
+    branches-ignore: ['release/**']
+
+permissions: {}
+
+jobs:
+  observe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Observe only trusted main with efficiency disabled
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -f .github/ci/v13_shadow.py ]; then
+            python3 .github/ci/v13_shadow.py
+          else
+            # Main does not yet carry this policy. Never execute PR policy.
+            printf '%s\n' '{"mode":"shadow","required_ci":"full","efficiency_enabled":false,"skip_ci":false,"queue_admission":false,"qualification":"not-qualified","proposed_cut":null,"p01_status":"unavailable","reason":"policy-unavailable","policy_sha":null}'
+            printf '%s\n' 'v1.3 efficiency disabled; full CI required. No skips, admission or qualification.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  contract:
+    if: ${{ github.event_name == 'pull_request' && contains(fromJSON('["opened","reopened","synchronize"]'), github.event.action) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.x'
+      - name: Install the existing test-runner pin
+        run: 'python3 -m pip install --disable-pip-version-check --only-binary=:all: pytest==8.3.4'
+      - name: Offline source contracts (no API token)
+        run: bash tests/run.sh -k v13_shadow

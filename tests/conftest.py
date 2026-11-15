@@ -35,18 +35,30 @@ is how a test reads a file from the root that owns it. Two modes:
     assembly pins — REFUSES the session before a test runs, and a test that
     reaches an absent root FAILS. Nothing skips its way into composed
     acceptance (FR-008).
+
+THE REAL ENGINE (opensoft/openRepoTools#165, L2-0a and L2-0b). The tests
+that need a real PostgreSQL 16 take it from `tests/pgcluster.py`, a plugin
+`pytest_configure` registers below. Where no engine is found they SKIP,
+loudly, naming `PG_BIN` and the package; under `OPENREPOTOOLS_REQUIRE_PG=1`,
+as CI sets it, the run is REFUSED before a test runs, as a composed run
+missing a root is.
 """
 
 from __future__ import annotations
 
+import atexit
 import os
 import shutil
 import stat
 import subprocess
+import tempfile
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Tuple
+from typing import Dict, List, Mapping, Optional, Set, Tuple
 
 import pytest
+
+import pgcluster
+import sql_register_gate
 
 #: THE TREE THIS SUITE WAS LOADED FROM, which is the code root unless
 #: `OPENREPOTOOLS_CODE_ROOT` names another one.
@@ -511,10 +523,17 @@ def pytest_configure(config):
 
     A `UsageError` is pytest's own refusal (exit 4, `ERROR: <why>`), which is
     what a composed run that cannot be the claim it makes should be: not a
-    session of skips that exits 0."""
+    session of skips that exits 0.
+
+    THEN THE REAL ENGINE'S PLUGIN, `tests/pgcluster.py` (#165, L2-0a): its
+    fixtures, its loud skip, and `OPENREPOTOOLS_REQUIRE_PG`'s refusal, the
+    same `UsageError`. This hook is historic, so the plugin's own
+    `pytest_configure` runs the moment it is registered, before any test."""
     refusal = ROOTS.refusal()
     if refusal:
         raise pytest.UsageError(refusal)
+    if not config.pluginmanager.has_plugin(pgcluster.PLUGIN_NAME):
+        config.pluginmanager.register(pgcluster, pgcluster.PLUGIN_NAME)
 
 
 def pytest_report_header(config):
@@ -542,6 +561,24 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 #: writes would start one each. Off for the whole run; `tests/test_lanes_index.py`
 #: builds every environment it runs from scratch and decides for itself.
 os.environ["LANES_INDEX"] = "off"
+
+#: opensoft/openRepoTools#165, batch e Q91 (lane 3, 6808937880) — AND NO WRITER
+#: UNDER TEST ASKS `lanes-index mode` OF THE WORKSTATION'S CONFIGURATION. A
+#: writer asks wherever `LANES_INDEX_CONFIG` is set and non-empty, or a file is
+#: at `${XDG_CONFIG_HOME:-$HOME/.config}/openRepoTools/lanes-index.conf`
+#: (`lanes-edit.sh`'s `reg_config_present`, `lanes-index`'s `config_path`), and
+#: a case that moves `HOME` but copies `os.environ` still carries the person's
+#: `XDG_CONFIG_HOME`. So the run drops the one and points the other at an empty
+#: directory of its own, made here in `TMPDIR` (under `tests/run.sh`, the run
+#: root its trap removes) and removed at exit; an empty value would not do, as
+#: both read it as unset. A case that needs a configuration names its own, by
+#: `LANES_INDEX_CONFIG` or an `XDG_CONFIG_HOME` in its sandbox. The same
+#: variable keeps the workstation's `sweep.conf` from `lane-worktrees`, and its
+#: `git/config` from git.
+os.environ.pop("LANES_INDEX_CONFIG", None)
+EMPTY_CONFIG_HOME = Path(tempfile.mkdtemp(prefix="orpt-config-"))
+atexit.register(shutil.rmtree, str(EMPTY_CONFIG_HOME), True)
+os.environ["XDG_CONFIG_HOME"] = str(EMPTY_CONFIG_HOME)
 
 #: opensoft/openRepoTools#162 — and no `lane-start` a test runs starts the
 #: estate's daily report: it is detached, it reads the whole estate, and the
@@ -626,3 +663,68 @@ def git(*args: str, cwd: Path, check: bool = True) -> subprocess.CompletedProces
         raise AssertionError(f"git {' '.join(args)} in {cwd} failed:\n"
                              f"{proc.stderr}{proc.stdout}")
     return proc
+
+
+#: THE LANDING GATE (T280; Brett's "Temporary landing gate (Recommended)",
+#: 2026-11-13; FR-059), TEMPORARY: T281 removes this block in the last set,
+#: with `tests/sql_register_gate.py`, which says what the gate reads. In a
+#: GitHub Actions run whose workflow is not `verify` and whose ref is not a
+#: `verify/` branch, or wherever `SQL_REGISTER_GATE=on`, each 007 test whose
+#: tasks have not all landed is SKIPPED, and the skip names them. Every run
+#: checks the tables and the markers, so a bad row fails a local run too.
+#: Nothing else changes in a run where the gate is not active, so a local run
+#: is otherwise ungated. The skips are marked after `-k` has deselected
+#: (`trylast`), so no fixture of a gated id runs, and no cluster starts for
+#: one.
+SQL_REGISTER_LANDED = Path(__file__).resolve().parent / sql_register_gate.LANDED
+
+#: Every module the run collected, by `id()`, before `-k` deselects: each one's
+#: table is checked whether or not its ids are selected.
+_GATE_MODULES: Dict[int, object] = {}
+
+
+#: Every id and function each module's collection holds, by the module's
+#: `id()`, read from its collect report and its classes' before any `-k`,
+#: `-m`, `--deselect` or node-id selection: a table key outside them fails the
+#: run (Codex's review of E `d58f3b82`, BLOCKING 1). A class the run did not
+#: collect, under a node id elsewhere in its module, leaves the module
+#: unchecked (`None`).
+_GATE_NAMES: Dict[int, Set[str]] = {}
+_GATE_CLASSES: Dict[int, Set[str]] = {}
+
+
+def pytest_itemcollected(item):
+    module = getattr(item, "module", None)
+    if module is not None:
+        _GATE_MODULES.setdefault(id(module), module)
+
+
+@pytest.hookimpl(wrapper=True, trylast=True)
+def pytest_make_collect_report(collector):
+    report = yield
+    if isinstance(collector, (pytest.Module, pytest.Class)) and report.passed:
+        key = id(collector.module)
+        names = _GATE_NAMES.setdefault(key, set())
+        pending = _GATE_CLASSES.setdefault(key, set())
+        pending.discard(collector.nodeid)
+        for node in report.result or ():
+            if isinstance(node, pytest.Function):
+                names.update((node.name, node.originalname))
+            elif isinstance(node, pytest.Class):
+                pending.add(node.nodeid)
+    return report
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config, items):
+    """THE GATE: pytest's own `UsageError`, exit 4, for a table or a marker it
+    cannot read, and a skip naming the tasks each gated id still waits for."""
+    try:
+        names = {key: (None if _GATE_CLASSES.get(key) else found)
+                 for key, found in _GATE_NAMES.items()}
+        skips = sql_register_gate.gate(items, list(_GATE_MODULES.values()),
+                                       os.environ, SQL_REGISTER_LANDED, names)
+    except sql_register_gate.GateError as exc:
+        raise pytest.UsageError(f"the landing gate (T280): {exc}") from None
+    for item, why in skips:
+        item.add_marker(pytest.mark.skip(reason=why))
