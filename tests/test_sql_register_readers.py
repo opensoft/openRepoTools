@@ -185,6 +185,7 @@ SQL_REGISTER_GATE_TABLE = {
     "test_a_carry_on_act_relays_the_writers_printed_rerun_on_a_3[lane-start-4181]": ("T401", "T402", "T403", "T404", "T405", "T406", "T407", "T408", "T428", "T504", "T505", "T506", "T508"),  # T217; tasks:2055
     "test_each_reader_follows_the_table_when_the_store_is_unreachable[guard]": ("T401", "T402", "T403", "T404", "T405", "T406", "T407", "T408", "T504", "T505", "T506", "T507", "T508", "T509"),  # T217; tasks:2055; lane 2's per-id rows (AN11a, AN13a), lane 3's 6877365776
     "test_one_failed_call_anywhere_in_a_callers_read_sequence_never_fails_open[lane-rename]": ("T401", "T402", "T403", "T404", "T405", "T406", "T407", "T408", "T415", "T422", "T504", "T505", "T506", "T508", "T509"),  # T217; tasks:2055
+    "test_retired_rows_key_trims_leading_zeros_as_text_on_primary[files]": (),  # T259; [files] passes at the base; lane 3's 6894592205
     "test_the_other_callers_arms_pass_the_code_or_refuse_as_lane_4s_table_gives[lane-1144-3]": ("T401", "T402", "T403", "T404", "T405", "T406", "T407", "T408", "T432", "T504", "T505", "T506", "T508"),  # T217; tasks:2055
     "test_the_other_callers_arms_pass_the_code_or_refuse_as_lane_4s_table_gives[lane-1144-69]": ("T401", "T402", "T403", "T404", "T405", "T406", "T407", "T408", "T432", "T504", "T505", "T506", "T508"),  # T217; tasks:2055
     "test_the_other_callers_arms_pass_the_code_or_refuse_as_lane_4s_table_gives[lane-1144-75]": ("T401", "T402", "T403", "T404", "T405", "T406", "T407", "T408", "T432", "T504", "T505", "T506", "T508"),  # T217; tasks:2055
