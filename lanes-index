@@ -16838,6 +16838,512 @@ def cutover_abort(store, seq: int, *, lane: str, workstation: str, why: str) -> 
     return EXIT_CUTOVER_ABORTED
 
 
+# ============================================ the rollback (feature 007, T304)
+#
+# `LANES-INDEX ROLLBACK`, STEPS 0 AND 1 (design.md S5's "Rollback, under
+# Q4(b)(iii)", Y:3222-3264, and §1.3's kinds table and divergence gate,
+# Y:1542-1550; operations.md §2.3's step 2, ops:329-336; FR-051, FR-052; D24).
+# The operator lane runs it on Brett's word, with `LANES_LANE=` its name, from
+# a shell or a `CLAUDE_NO_LANE=1` session, in its own checkout (D24). Lane 3's
+# T326 adds the git half: step 0's fresh fetch, at `rollback_step_0_git_half`,
+# and steps 2 to 4 with `--hold-marker`, at `rollback_steps_2_to_4`.
+#
+# EACH TRY, as one loop (ops:331; Y:1550):
+#   - ONE READ (`_ROLLBACK_READS`), one REPEATABLE READ snapshot as the
+#     REGISTER-WRITER under D9's `rollback` row (Y:3529): the version window,
+#     the switch, the head `k`, the kind and write id of the entry at the head,
+#     `mirror_state`'s divergence, and the database's clock, for `not_after`.
+#   - STEP 0'S DATABASE HALF: while `mirror_state.diverged_sha` is set it
+#     refuses, 2, with `diverged at <sha>` and S2's two ways out, nothing
+#     written (F1). Then T326's git half, right before step 1.
+#   - STEP 1, ONE SHORT TRANSACTION, one commit call in the commit's form
+#     (register-cli §2.3): `commit_write(k, <new write id>, ...)` with a
+#     `rollback` entry, whose one edit removes `lanes/STORE` (D24). Under the
+#     head row's lock lane 1's function refuses it with LR012 while a
+#     divergence is recorded (read `FOR SHARE`), moves the head from `k` to
+#     `k+1`, and sets the switch to `files` with the marker `removing`,
+#     `set_seq` and `marker_seq` its own seq. Nothing here adds SQL.
+#   - A LOST TURN, 40001, 40P01, 55P03 or LR001, sends it back to the read,
+#     with the head read afresh as its `k`, until D7's deadline
+#     (`rollback_deadline_s`), where it exits 75 with nothing written and the
+#     switch still `primary` (V3's NIT 2). No read starts after the deadline.
+#
+# ITS START DECLARES THE OUTAGE (D20; ops:334), once step 1 has committed, since
+# T121's `--rollback` form needs the switch at `files`: through T121's own
+# `outage declare --rollback --mirror-seq <k>`, `_outage_declare`, where the
+# configuration's directory can be written, and otherwise, as from a bench's
+# read-only mount, by printing that line for Brett to run on each host.
+#
+# A RERUN that finds the switch at `files`, the marker `removing` and the
+# rollback's own entry last, at `set_seq` = `marker_seq` = the head, declares
+# first, with `k = set_seq - 1`, and goes on from step 2 (Y:3264; ops:336).
+#
+# WHILE `RENDER_GIT_HALF` IS FALSE (Y:4872) it runs only against a scratch
+# schema, a `register_schema=` other than `lanes_register`, and exits 2 on
+# `lanes_register`, unset included, before anything connects.
+#
+# ITS ENDS (contracts/exit-codes.md §3.2): 0 once step 1 has committed, or a
+# rerun found it standing, and the outage is declared or its line printed:
+# steps 2 to 4 are T326's, so nothing is rendered or pushed and the marker
+# stays `removing`; 2 for each refusal, LR012 among them; 69 where the register
+# cannot be read or refuses, the switch and the marker unchanged, and where
+# step 1's call ends with no answer, after one re-read of the switch; 75 at
+# D7's deadline; 64 for usage.
+
+#: D7'S DEADLINE across step 1's tries, in seconds (Y:455-456; ops:331).
+ROLLBACK_DEADLINE_S = 30
+
+#: THE LOST TURNS (Y:1550; ops:331): each sends the rollback back to step 0,
+#: with the head read afresh as its `k`.
+ROLLBACK_LOST_TURNS = frozenset({"40001", "40P01", "55P03", "LR001"})
+
+#: THE ONE READ of each try, in one REPEATABLE READ snapshot, as
+#: REGISTER-WRITER under D9's rollback row.
+_ROLLBACK_READS = (
+    "SELECT version, writers_from, readers_from FROM schema_version WHERE id = 1",
+    "SELECT mode, marker_state, marker_seq, generation, set_seq FROM register_switch "
+    "WHERE id = 1",
+    "SELECT seq FROM register_head WHERE id = 1",
+    "SELECT j.kind, j.write_id FROM journal j JOIN register_head h ON h.id = 1 AND j.seq = h.seq",
+    "SELECT diverged_sha, found_utc, found_by_ws FROM mirror_state WHERE id = 1",
+    "SELECT extract(epoch FROM clock_timestamp())",
+)
+
+_ROLLBACK_USAGE = f"""\
+{PROG} rollback        steps 0 and 1 of the rollback to files mode
+
+Refuses while a divergence is recorded (step 0), then, in one short
+transaction, sets the SQL register's switch to files with the marker removing
+and writes the operator entry that removes lanes/STORE (step 1; operations.md
+section 2.3). A lost turn goes back to step 0 with the head read afresh, until
+D7's deadline. Its start declares the outage through `outage declare --rollback
+--mirror-seq <k>`, or prints that line where the configuration's directory
+cannot be written. Run it as the operator lane, with LANES_LANE=<lane>, from a
+shell or a CLAUDE_NO_LANE=1 session, in that lane's checkout (D24). While this
+build refuses mode=primary, it runs only against a scratch schema
+(register_schema=). Step 0's fresh fetch, the render, --hold-marker and the
+marker's push are lane 3's T326, which this build does not have.
+
+Exit: 0 step 1 committed, or found standing · 2 refused, nothing written ·
+64 usage · 69 the register cannot be read or refused, or a call's timer expired ·
+75 register busy at D7's deadline, nothing written."""
+
+
+class _RollbackUsage(Exception):
+    """A `rollback` command line that is not its usage: 64, before anything is
+    read."""
+
+
+class _RollbackEnd(Exception):
+    """An end of `rollback` but 0 that is not a refusal of its own: its code,
+    its own line, and psql's lines, which go first, verbatim (register-cli
+    §2.6)."""
+
+    def __init__(self, code: int, message: str, psql_lines: tuple = ()):
+        super().__init__(message)
+        self.code = code
+        self.psql_lines = psql_lines
+
+
+class _RollbackLostTurn(Exception):
+    """Step 1's call ended in a lost turn (`ROLLBACK_LOST_TURNS`), with nothing
+    written: back to step 0."""
+
+    def __init__(self, sqlstate: str, psql_lines: tuple):
+        super().__init__(sqlstate)
+        self.sqlstate = sqlstate
+        self.psql_lines = psql_lines
+
+
+def rollback_deadline_s() -> int:
+    """D7's deadline for this run, in whole seconds: `LANES_REGISTER_DEADLINE_S`
+    where it is a positive whole number of at most 18 digits, else 30 (Q73):
+    1 to 18 ASCII digits read in base 10, above 0, as lane 4's T415 reads it.
+    It is the seam that sets D7's deadline for tests (design.md S1; the test
+    plan's AT-D9 `rollback` row sets it to 6). Any other value, `0` included,
+    is ignored, and `ROLLBACK_DEADLINE_S`, 30, kept."""
+    raw = os.environ.get("LANES_REGISTER_DEADLINE_S", "")
+    if re.fullmatch(r"[0-9]{1,18}", raw) and int(raw) > 0:
+        return int(raw)
+    return ROLLBACK_DEADLINE_S
+
+
+def _rollback_args(args: list[str]) -> dict | None:
+    """The rollback's flags; None for `--help`. `--hold-marker`, step 3's stop
+    for the ruleset, is T326's, and not in this build: T326 parses it here, and
+    `rollback_steps_2_to_4` reads it from the options this returns."""
+    for arg in args:
+        if arg in ("-h", "--help"):
+            return None
+    for arg in args:
+        if arg == "--hold-marker":
+            raise _RollbackUsage("rollback: --hold-marker, step 3's stop for the ruleset, is "
+                                 "lane 3's T326, and not in this build")
+        raise _RollbackUsage(f"rollback: unknown argument '{arg}'")
+    return {}
+
+
+def cmd_rollback(args: list[str]) -> int:
+    """`lanes-index rollback` (above): its exits, by the contract's constants."""
+    try:
+        opts = _rollback_args(args)
+    except _RollbackUsage as exc:
+        note(f"{exc} - see {PROG} rollback --help")
+        return EXIT_USAGE
+    if opts is None:
+        say(_ROLLBACK_USAGE)
+        return EXIT_OK
+    try:
+        return _rollback(opts)
+    except Refusal as exc:
+        note(f"REFUSED: {exc}")
+        return EXIT_REFUSED
+    except _RollbackEnd as exc:
+        for line in exc.psql_lines:
+            sys.stderr.write(line + "\n")
+        note(str(exc))
+        return exc.code
+    except StoreUnusable as exc:
+        note(f"rollback: {exc.kind}: {exc.detail}; the call was not sent")
+        return EXIT_UNAVAILABLE
+
+
+def _rollback(opts: dict) -> int:
+    # BEFORE ANYTHING CONNECTS: the configuration, Q6(c)'s refusal among its
+    # refusals (exit-codes.md §2), and the schema (Y:4872).
+    cfg = load_config()
+    if not RENDER_GIT_HALF and cfg["register_schema"] == REGISTER_TEMPLATE_SCHEMA:
+        raise Refusal(
+            f"rollback: register_schema={REGISTER_TEMPLATE_SCHEMA} is the register itself, and "
+            f"while the renderer's git half is not installed (RENDER_GIT_HALF is False) "
+            f"this build rolls back only a scratch schema (Y:4872): name one with "
+            f"register_schema=; nothing was written")
+    from uuid import uuid4
+    store = PostgresStore(cfg, "register_writer")
+    limit = rollback_deadline_s()
+    deadline = time.monotonic() + limit
+    ident: dict = {}
+    tries = 0
+    while True:
+        st = _rollback_read(store, "nothing was written, and the switch and the marker are "
+                                   "unchanged")
+        # WHOSE ENTRY IT IS (F12; Rule 10; D15), read once, after the first read and
+        # before the rerun path, so that T326's writes on a rerun have it too.
+        if not ident:
+            ident = {"lane": _rollback_lane(), "workstation": _rollback_workstation(),
+                     "author": _rollback_author()}
+        pair = (st["mode"], st["marker"])
+        if pair == ("files", "removing"):
+            if _rollback_own_entry(st):
+                say(f"rollback: seq {st['head']}, this rollback's entry, stands: the switch "
+                    f"reads files with the marker removing, so this rerun declares first and "
+                    f"goes on from step 2 (operations.md §2.3)")
+                return _rollback_after_step_1(cfg, store, opts, ident, st["head"] - 1,
+                                              st["head"])
+            raise _RollbackEnd(EXIT_UNAVAILABLE, f"rollback: the switch reads files with the "
+                               f"marker removing at set_seq {st['set_seq']}, but the head "
+                               f"{st['head']} is not a rollback's entry at that seq, which "
+                               f"this build does not know; nothing was written")
+        if pair == ("primary", "adding"):
+            raise Refusal(f"rollback: a cutover's entry stands unconfirmed at seq "
+                          f"{st['marker_seq']}, the marker adding: its push and read-back "
+                          f"(T327), or its abort, come first; nothing was written")
+        if pair == ("files", "absent"):
+            raise Refusal("rollback: the switch reads files with the marker absent: the "
+                          "register's store is files already, and there is nothing to roll "
+                          "back; nothing was written")
+        if pair != ("primary", "present"):
+            raise _RollbackEnd(EXIT_UNAVAILABLE, f"rollback: the switch reads {st['mode']} with "
+                               f"the marker {st['marker']}, which this build does not know; "
+                               f"nothing was written")
+        k = st["head"]
+        # STEP 0, ITS DATABASE HALF (F1; Y:3227-3228).
+        if st["diverged_sha"]:
+            raise Refusal(
+                f"rollback: diverged at {st['diverged_sha']}, found {st['found_utc']} by "
+                f"{st['found_by_ws']} (mirror_state): a diverged mirror can never be proved "
+                f"current, so the rollback does not start (F1; S5's step 0). Resolve it first "
+                f"by one of S2's two ways out, `{PROG} import --single <sha>` or `{PROG} render "
+                f"--revert <sha>`, while the switch reads primary; nothing was written")
+        # STEP 0, ITS GIT HALF: T326's.
+        rollback_step_0_git_half(cfg, store, k, ident["lane"])
+        # STEP 1.
+        tries += 1
+        write_id = str(uuid4())
+        timer = store.bounds("rollback")[1]
+        # T326: not_after counts from this read, before the git half; a slow fetch ends LR008, 69.
+        not_after = _dt.datetime.fromtimestamp(st["clock"] + timer + 2,
+                                               _dt.timezone.utc).isoformat()
+        entry = rollback_entry(k, not_after=not_after, **ident)
+        try:
+            seq = _rollback_step_1(store, k, st["generation"], write_id, entry)
+        except _RollbackLostTurn as lost:
+            if time.monotonic() >= deadline:
+                raise _RollbackEnd(
+                    EXIT_BUSY, f"rollback: register busy: {tries} tries in "
+                    f"{limit} s, each a lost turn, the last {lost.sqlstate} on "
+                    f"head {k} (D7); nothing was written, and the switch still reads primary; "
+                    f"a rerun starts again at step 0", lost.psql_lines)
+            for line in lost.psql_lines:
+                sys.stderr.write(line + "\n")
+            note(f"rollback: step 1 on head {k} lost its turn ({lost.sqlstate}), with nothing "
+                 f"written: back to step 0, with the head read afresh")
+            continue
+        if seq is None:
+            # NO ANSWER: the switch is unknown, so it is read again before step 2.
+            again = _rollback_read(store, "whether step 1 committed is not known, and a rerun "
+                                          "reads the switch first (D9, Y:3529)")
+            if (again["mode"], again["marker"]) == ("files", "removing") and \
+                    _rollback_own_entry(again) and again["head_write_id"] == write_id:
+                seq = again["head"]
+                note(f"rollback: step 1's call ended with no answer, and the switch read again "
+                     f"finds its entry at seq {seq}")
+            else:
+                raise _RollbackEnd(
+                    EXIT_UNAVAILABLE, f"rollback: step 1's call ended with no answer, and the "
+                    f"switch read again is {again['mode']} with the marker {again['marker']} at "
+                    f"head {again['head']}, not this rollback's entry, so whether its "
+                    f"transaction commits is not known: it may still run on the server. A "
+                    f"rerun reads the switch first, and goes on from this rollback's entry "
+                    f"where it finds one (D9, Y:3529)")
+        else:
+            say(f"rollback: seq {seq} committed: the switch reads files with the marker "
+                f"removing, the head moved from {k} to {seq}, and the operator entry removes "
+                f"{CUTOVER_STORE_PATH} (S5's step 1; D24)")
+        return _rollback_after_step_1(cfg, store, opts, ident, k, seq)
+
+
+def _rollback_read(store, failed: str) -> dict:
+    """One try's read (`_ROLLBACK_READS`), parsed, with the writers' version
+    window checked (§1.5). Every failure is 69, and `failed` says what it
+    leaves: a database that cannot be reached or refuses, a window this
+    client is outside, or an answer this build cannot read."""
+    try:
+        res = store._query_many(list(_ROLLBACK_READS), snapshot=True, row="rollback")
+    except PsqlFailed as exc:
+        err = register_definitive_error(exc)
+        lines = (err.error_line,) + ((err.detail_line,) if err.detail_line else ()) if err else ()
+        raise _RollbackEnd(EXIT_UNAVAILABLE, f"rollback: the register in schema {store.schema} "
+                           f"could not be read (its call {register_psql_end(exc)}); {failed}",
+                           lines)
+    try:
+        if len(res) != len(_ROLLBACK_READS):
+            raise ValueError(len(res))
+        (version,), (switch,), (head,), at_head, (mirror,), (clock,) = res
+        if len(at_head) > 1:
+            raise ValueError("more than one row")
+        st = {"version": int(version[0]), "writers_from": int(version[1]),
+              "readers_from": int(version[2]), "mode": switch[0], "marker": switch[1],
+              "marker_seq": None if switch[2] is None else int(switch[2]),
+              "generation": switch[3], "set_seq": int(switch[4]), "head": int(head[0]),
+              "head_kind": at_head[0][0] if at_head else None,
+              "head_write_id": at_head[0][1] if at_head else None,
+              "diverged_sha": mirror[0], "found_utc": mirror[1], "found_by_ws": mirror[2],
+              "clock": float(clock[0])}
+        if not UUID_FULL_RE.match(st["generation"] or ""):
+            raise ValueError("the switch's generation")
+    except (ValueError, TypeError, IndexError):
+        raise _RollbackEnd(EXIT_UNAVAILABLE, f"rollback: the register's answer to its read is "
+                           f"not in the shape this build reads; {failed}")
+    why = register_version_refusal(st["version"], st["writers_from"], st["readers_from"],
+                                   write=True)
+    if why:
+        raise _RollbackEnd(EXIT_UNAVAILABLE, f"rollback: {why}; {failed}")
+    return st
+
+
+def _rollback_own_entry(st: dict) -> bool:
+    """Whether the head is the rollback's own entry, as step 1 leaves it: a
+    `rollback` entry at the head, which is the switch's `set_seq` and its
+    `marker_seq` (§1.3's kinds table)."""
+    return (st["head_kind"] == "rollback" and st["set_seq"] == st["head"]
+            and st["marker_seq"] == st["head"])
+
+
+def _rollback_lane() -> str:
+    """The operator lane, `LANES_LANE` (D24; F12; Amendment 23's S2, "no
+    lane, no write"): the entry's `lane` and the switch's `set_by_lane`.
+    Unset, or not a lane's name, is refused (2)."""
+    lane = os.environ.get("LANES_LANE", "").strip()
+    if not lane:
+        raise Refusal("rollback: LANES_LANE is not set: the rollback writes for the operator "
+                      "lane, so it runs with LANES_LANE=<operator lane>, in that lane's "
+                      "checkout (D24; Amendment 23's S2, \"no lane, no write\"); nothing was "
+                      "written")
+    if re.search(r"[\s<>@]", lane) or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in lane):
+        raise Refusal("rollback: LANES_LANE is not a lane's name: it holds a space, a control "
+                      "character, '<', '>' or '@'; nothing was written")
+    return lane
+
+
+def _rollback_workstation() -> str:
+    """This workstation's name (Rule 10), the entry's `workstation` and the
+    switch's `set_by_ws`, as the cutover reads it: `$LANES_WORKSTATION`, else
+    `lanes-edit.sh workstation`. A container with no name, or a name that
+    cannot be read, is refused (2) (R-A11-14)."""
+    name = os.environ.get("LANES_WORKSTATION", "")
+    if not name:
+        try:
+            name, how = this_workstation()
+        except StoreUnusable as exc:
+            raise Refusal(f"rollback: this workstation's name cannot be read ({exc.detail}); "
+                          f"nothing was written")
+        if how == "container-unset":
+            raise Refusal("rollback: this is a container and LANES_WORKSTATION is not set, so "
+                          "the switch and the rollback's entry would be stamped with the "
+                          "container's own id (Amendment 11, R-A11-14). Run it with "
+                          "LANES_WORKSTATION set; nothing was written")
+    if not name.strip() or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in name):
+        raise Refusal("rollback: this workstation's name is empty or holds a control "
+                      "character; nothing was written")
+    return name
+
+
+def _rollback_author() -> str:
+    """The entry's `author`, `Name <email>`, which T326's commit removing
+    `lanes/STORE` is made with (D15): `git var GIT_AUTHOR_IDENT` here, less its
+    date, as the cutover reads its own. Where git names none, it is refused
+    (2), since the journal holds no entry without one."""
+    try:
+        proc = subprocess.run(["git", "var", "GIT_AUTHOR_IDENT"], capture_output=True,
+                              encoding="utf-8", errors="replace", check=False,
+                              stdin=subprocess.DEVNULL, timeout=30, env=git_location_free_env())
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise Refusal(f"rollback: git could not name the author of the entry ({exc}); nothing "
+                      f"was written")
+    match = re.fullmatch(r"([^<>\n]+ <[^<>\n]*>) [0-9]+ [+-][0-9]{4}", proc.stdout.strip())
+    if proc.returncode != 0 or not match:
+        raise Refusal("rollback: git names no author here (D15): run it in the operator lane's "
+                      "checkout, with user.name and user.email set; nothing was written")
+    return match.group(1)
+
+
+def rollback_entry(k: int, *, lane: str, workstation: str, author: str, not_after: str) -> dict:
+    """THE ROLLBACK'S ENTRY, as `commit_write` takes it (design.md §1.3's entry
+    object and kinds table; D24): `journal` with kind and verb `rollback`; one
+    edit, the `remove` of `lanes/STORE`; its one `files` row, not present;
+    `not_after` (F3). `k` is the head the try read, for its message."""
+    what = (f"rollback — the register's store is files again: {CUTOVER_STORE_PATH} removed "
+            f"after seq {k}")
+    return {"journal": {"kind": "rollback", "verb": "rollback", "lane": lane,
+                        "workstation": workstation, "author": author,
+                        "message": f"LANES({lane}@{workstation}): {what} (D24, S5)"},
+            "not_after": not_after,
+            "edits": [{"ord": 1, "op": "remove", "path": CUTOVER_STORE_PATH}],
+            "files": [{"path": CUTOVER_STORE_PATH, "present": False}]}
+
+
+def _rollback_step_1(store, k: int, generation: str, write_id: str, entry: dict) -> int | None:
+    """STEP 1: one commit call, `commit_write(k, write_id, REGISTER_SCHEMA_VERSION,
+    generation, entry)` in one SERIALIZABLE transaction, as one request under
+    D9's rollback row (Y:3529). Returns the entry's seq, or None where the call
+    was sent and ended with no answer, so whether it committed is not known.
+
+    A lost turn (`ROLLBACK_LOST_TURNS`) is `_RollbackLostTurn`. An LR012 is 2:
+    a divergence recorded meanwhile. Any other SQLSTATE is 69, and so is a call
+    never sent, each with nothing written."""
+    payload = json.dumps(entry, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    call = (f"SELECT {store.schema}.commit_write({int(k)}, {_pg_quote(write_id)}, "
+            f"{REGISTER_SCHEMA_VERSION}, {_pg_quote(generation)}, {_pg_quote(payload)}::jsonb)")
+    try:
+        out = store.request(["BEGIN ISOLATION LEVEL SERIALIZABLE", call, "COMMIT"], "rollback")
+    except PsqlFailed as exc:
+        if not exc.ran:
+            raise _RollbackEnd(EXIT_UNAVAILABLE, f"rollback: step 1's call was not sent "
+                               f"({exc.detail}); nothing was written, and the switch and the "
+                               f"marker are unchanged")
+        err = register_definitive_error(exc)
+        if err is None:
+            note(f"rollback: step 1's call on head {k} {register_psql_end(exc)}")
+            return None
+        lines = (err.error_line,) + ((err.detail_line,) if err.detail_line else ())
+        if err.sqlstate in ROLLBACK_LOST_TURNS:
+            raise _RollbackLostTurn(err.sqlstate, lines)
+        if err.sqlstate == "LR012":
+            raise _RollbackEnd(EXIT_REFUSED, "rollback: REFUSED: the transaction refused the "
+                               "rollback's entry (LR012, above): a divergence was recorded "
+                               "meanwhile, so the rollback does not go on (F1; S5). Resolve it "
+                               f"first by `{PROG} import --single <sha>` or `{PROG} render "
+                               "--revert <sha>`; nothing was written", lines)
+        raise _RollbackEnd(EXIT_UNAVAILABLE, f"rollback: the database refused step 1's "
+                           f"transaction ({err.sqlstate}, above); nothing was written, and the "
+                           f"switch and the marker are unchanged", lines)
+    answer = [line.strip() for line in out.splitlines() if line.strip()]
+    if len(answer) != 1 or not answer[0].isdigit():
+        return None
+    return int(answer[0])
+
+
+def rollback_step_0_git_half(cfg: dict, store, k: int, lane: str) -> None:
+    """THE SEAM FOR T326: STEP 0'S GIT HALF, right before step 1, on every try
+    (Y:3229-3232; ops:331). T326 fetches `origin main` again in the operator
+    lane's checkout and checks it as T322 recognises a divergence, a last
+    `Register-Seq` above the head `k` included; it records one it finds with
+    `record_mirror_state` and refuses with 2, a `Refusal`, nothing written.
+
+    This build has no git half. While `RENDER_GIT_HALF` is False, so on a
+    scratch schema, which no mirror renders, it checks nothing; with the
+    constant set it refuses (2), so that no rollback of the register itself
+    skips its fresh fetch."""
+    if RENDER_GIT_HALF:
+        raise Refusal(f"rollback: step 0's git half, the fresh fetch of origin {branch()} and "
+                      f"its divergence check against head {k}, is lane 3's T326, which this "
+                      f"build does not have; nothing was written")
+
+
+def _rollback_declare(cfg: dict, k: int) -> None:
+    """ITS START DECLARES THE OUTAGE (D20; ops:334, :336): T121's `outage
+    declare --rollback --mirror-seq <k>`, run in this process, which probes
+    the switch at `files` with this rollback's entry at `set_seq` = `k+1`, and
+    writes `register-outage` beside the configuration. Where that directory
+    cannot be written, as on a bench's read-only mount, or the declaration is
+    refused, it prints the line for Brett to run on each host instead; a rerun
+    declares again first."""
+    line = f"{PROG} outage declare --rollback --mirror-seq {k}"
+    directory = os.path.dirname(register_outage_path(cfg))
+    if not os.access(directory, os.W_OK | os.X_OK):
+        note(f"rollback: {directory} cannot be written from here, as on a bench's read-only "
+             f"mount, so the outage is not declared here. Run on each configured "
+             f"workstation, from the host (operations.md §2.3):")
+        say(line)
+        return
+    try:
+        _outage_declare(_outage_args(["declare", "--rollback", "--mirror-seq", str(k)]))
+    except (Refusal, StoreUnusable, _OutageUsage) as exc:
+        note(f"rollback: the outage was not declared here ({exc}). Run on each configured "
+             f"workstation, from the host, or run the rollback again, which declares first "
+             f"(operations.md §2.3):")
+        say(line)
+
+
+def _rollback_after_step_1(cfg: dict, store, opts: dict, ident: dict, k: int, seq: int) -> int:
+    """After step 1, or a rerun that found it standing: the declaration, then
+    steps 2 to 4."""
+    _rollback_declare(cfg, k)
+    return rollback_steps_2_to_4(cfg, store, opts, ident, k, seq)
+
+
+def rollback_steps_2_to_4(cfg: dict, store, opts: dict, ident: dict, k: int, seq: int) -> int:
+    """THE SEAM FOR T326: STEPS 2 TO 4 (Y:3245-3256; ops:337-340), from the
+    first run once step 1 and the declaration are done, and from a rerun that
+    found step 1 standing. `opts` is the parsed command line, where T326's
+    `--hold-marker` belongs (`_rollback_args`), and `ident` the operator
+    lane's `lane`, `workstation` and `author`, read before the rerun path. T326
+    renders to `k` in the operator lane's checkout, stops there under
+    `--hold-marker`, and otherwise pushes seq `seq` (`k+1`) with its read-back
+    and `record_marker`, holding no database transaction across a git act
+    (F23; FR-052).
+
+    This build has neither: it says so and returns 0, as the cutover's T116
+    returns 0 before T327's push. The marker stays `removing`, so every SQL
+    write refuses until a read-back is recorded."""
+    note(f"rollback: step 0's fresh fetch and steps 2 to 4 (the render to seq {k}, "
+         f"--hold-marker's stop for the ruleset, and the push of seq {seq} with its read-back "
+         f"and record_marker) are lane 3's T326, which this build does not have: nothing was "
+         f"rendered or pushed, and the marker stays removing")
+    return EXIT_OK
+
+
 USAGE = f"""\
 {PROG} sync      [--source <s>]              index what LANDED, behind the source
 {PROG} reconcile [--source <s>] [--dry-run]  read the source whole; put the index right
@@ -16989,6 +17495,8 @@ def main(argv: list[str]) -> int:
     # ahead of #160's argument loop, to the subcommand's own parser.
     if verb == "cutover":
         return cmd_cutover(args)
+    if verb == "rollback":
+        return cmd_rollback(args)
     if verb == "import":
         return cmd_import(args)
     if verb == "mode":
