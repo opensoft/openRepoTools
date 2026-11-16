@@ -197,9 +197,18 @@ def artifact_record(run, phase, request=policy.github, fetch=download, *, allow_
                 and not infos[0].is_dir() and 0 < infos[0].file_size <= JSON_LIMIT
                 and not infos[0].flag_bits & 1, "Unsupported artifact contents")
         record = record_valid(read_json(archive.read(infos[0])), run, phase)
-    require(item == request(REPOSITORY, f"actions/artifacts/{artifact_id}")
-            and run == request(REPOSITORY, f"actions/runs/{run['id']}"),
-            "Artifact/run changed while reading")
+    require(item == request(REPOSITORY, f"actions/artifacts/{artifact_id}"),
+            "Artifact changed while reading")
+    current = request(REPOSITORY, f"actions/runs/{run['id']}")
+    if allow_pending and phase == "admission" and run != current:
+        run_identity(current, run["head_sha"], run["head_branch"])
+        require(current["id"] == run["id"]
+                and (current["status"] == "completed" or current["conclusion"] is None),
+                "Admission caller identity/state changed")
+        # A moving caller supplies no record. The existing bounded observer
+        # must reacquire the real archive and every independent source proof.
+        raise PendingEvidence("Authenticated admission caller changed while reading")
+    require(run == current, "Artifact/run changed while reading")
     return record
 
 

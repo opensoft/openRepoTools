@@ -50,6 +50,8 @@ REFUSALS = {
     "Fast run predates a base change": "fast-retarget",
     "Fast job does not match the current successful run": "fast-job-identity",
     "Fast run/check changed during verification": "fast-reread",
+    "Artifact changed while reading": "artifact-reread",
+    "Artifact/run changed while reading": "artifact-caller-reread",
 }
 
 
@@ -332,7 +334,9 @@ def route(env, event, root, request=policy.github, fetch=evidence.download,
                 and request(REPOSITORY, "git/ref/heads/main")["object"]["sha"] == main
                 and run == request(REPOSITORY, f"actions/runs/{run['id']}"), "Routing evidence changed")
         return {"mode": mode, "omit_full": True, "proof": evidence.digest(proof)}
-    except verifier.PendingEvidence:
+    except verifier.PendingEvidence as exc:
+        if str(exc) == "Authenticated admission caller changed while reading":
+            diagnostic(stage, "admission-caller-reread-pending")
         return {**FULL, "retryable": True}
     except ERRORS as exc:
         diagnostic(stage, REFUSALS.get(str(exc), "incomplete-evidence"))
