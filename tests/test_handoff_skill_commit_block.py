@@ -76,7 +76,7 @@ SKILL = REPO / "skills/handoff/SKILL.md"
 HELPER = REPO / "lanes-edit.sh"
 
 #: Each carried by exactly one shell block of the skill: how the blocks are found.
-B1 = 'handoff_file="$("$L" handoff-path "$lane" --create)"'
+B1 = 'handoff_file="$(LANES_READ_MIRROR=1 "$L" handoff-path "$lane" --create)"'
 B2 = '--prepend "$block_file"'
 STEP4 = "# (c) the row: ONE WRITE"
 
@@ -139,6 +139,13 @@ def _code_lines(blocks: list[str]) -> list[str]:
 # --- a stub helper that logs what it is asked, and answers what a case says ---
 
 #: The interpreter that is running pytest, so the stub needs nothing on PATH.
+#: Since feature 007's T431, step 4 opens with its own base and reads the
+#: identity again, so two verbs answer what a lane's own window would get (R-Q23;
+#: lane 2 reviews these stub hunks): `register-row` the lane's row for the
+#: window's name, `$STUB_WINDOW`, and nothing for any other name; and
+#: `canon-lane` the name it was given. `window-lane` and `swapped` keep the
+#: stub's 2: the ladder asks them only where the window's name has NO row, and
+#: `register-row` answers for `$STUB_WINDOW`, the name `tmux` gives, so no case asks.
 STUB = f"""#!{sys.executable}
 import json, os, sys
 argv = sys.argv[1:]
@@ -163,9 +170,26 @@ if verb == "write-handoff":
     if os.environ.get("STUB_WH_OUT"):
         print(os.environ["STUB_WH_OUT"])
     sys.exit(int(os.environ.get("STUB_WH_RC", "0")))
+if verb == "register-row":
+    if argv[1:2] == [os.environ.get("STUB_WINDOW", "")]:
+        print("| `" + argv[1] + "` | row |")
+    sys.exit(0)
+if verb == "canon-lane":
+    print(argv[1] if len(argv) > 1 else "")
+    sys.exit(0)
 if verb in ("log", "append-line", "set-row-state"):
     sys.exit(0)
 sys.exit(8 if verb == "lane-dir" else 2)
+"""
+
+#: A `tmux` that answers only the window's name, which is the lane's own, as a
+#: lane window's is (Amendment 8(b)); every other question gets nothing, so the
+#: host's own server is never read.
+TMUX = """#!/bin/sh
+case "$*" in
+  *'#W'*) printf '%s\\n' "$STUB_WINDOW" ;;
+  *) exit 1 ;;
+esac
 """
 
 
@@ -185,8 +209,9 @@ class Estate:
         self.log.write_text("", encoding="utf-8")
         self.helper = self.bin / "lanes-edit.sh"
         self.helper.write_text(STUB, encoding="utf-8")
-        # A `tmux` that answers nothing, so the host's own server is never read.
-        (self.bin / "tmux").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        # A `tmux` that answers the window's name and nothing else, so the host's
+        # own server is never read.
+        (self.bin / "tmux").write_text(TMUX, encoding="utf-8")
         for tool in (self.helper, self.bin / "tmux"):
             tool.chmod(tool.stat().st_mode | stat.S_IXUSR)
         self.handoff = root / "checkout" / "handoffs" / "estate" / f"{LANE}.md"
@@ -196,7 +221,7 @@ class Estate:
     def run(self, shell: str, script: str, **extra: str) -> subprocess.CompletedProcess:
         env = {"HOME": str(self.home), "TMPDIR": str(self.tmp), "STUB_LOG": str(self.log),
                "PATH": os.pathsep.join([str(self.bin), "/usr/bin", "/bin"]),
-               "STUB_HP_OUT": str(self.handoff), **extra}
+               "STUB_HP_OUT": str(self.handoff), "STUB_WINDOW": LANE, **extra}
         argv = ["bash", "-c", script] if shell == "bash" else \
             [shutil.which("zsh") or "zsh", "-f", "-c", script]
         return subprocess.run(argv, env=env, cwd=str(self.home), capture_output=True,
@@ -405,6 +430,41 @@ def test_every_register_write_and_the_handoff_write_names_its_lane_in_the_text()
     assert len(calls) == 4, calls
     for call in calls:
         assert 'LANES_LANE="$lane"' in call, f"this call does not name its lane: {call}"
+
+
+# --- step 4 reads the identity again and refuses a lane it did not bind ------
+
+#: The verbs that write: the swap's three register writes (step 4) and the
+#: handoff's one (step 2). Anything else the stub logs is a read.
+WRITE_VERBS = ("log", "append-line", "set-row-state", "write-handoff")
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_step4_refuses_2_and_writes_nothing_where_the_window_names_another_lane(estate, shell):
+    """Pins step 4's identity refusal (`skills/handoff/SKILL.md`: `REFUSED: step 1
+    bound this window to lane ...`, T431's `7c74b907`), which no case reached:
+    every other case that runs step 4 ends 0, and the refusal was only ever hit
+    as a failure (W36-SKF's 23 cases, before the stub answered the reads).
+    `step4()` binds `lane=repoHS-1` as step 1 did, the window's own name answers
+    `repoHS-2` (a row and a `canon-lane` name of its own), and the same reads,
+    run again after the base, name another lane. So the block ends 2 with that
+    text on stderr, has asked the reads and sends no write: no `log`,
+    `append-line`, `set-row-state` or `write-handoff`, and the line step 4
+    prints last is never printed. Lane 2's SHOULD on `d0bbaeb0` (6867788229:
+    "One case with `STUB_WINDOW="repoHS-2"` would pin it") and lane 3's word
+    (6867841072: a case "that expects 2, the refusal text and no writes, in
+    bash and in its zsh twin")."""
+    other = "repoHS-2"
+    proc = estate.run(shell, estate.step4(), STUB_WINDOW=other)
+    assert proc.returncode == 2, (proc.returncode, proc.stdout, proc.stderr)
+    assert (f'REFUSED: step 1 bound this window to lane "{LANE}", and the same reads, run again '
+            f'after this block took its base, answer "{other}".') in proc.stderr, proc.stderr
+    assert "Nothing of step 4 was written" in proc.stderr, proc.stderr
+    asked = [c["argv"] for c in estate.calls()]
+    assert ["register-row", other] in asked and ["canon-lane", other] in asked, asked
+    assert [v for v in estate.verbs() if v in WRITE_VERBS] == [], estate.calls()
+    assert "row_write_refused" not in proc.stdout, "the block ended before its last line"
+    assert estate.handoff.read_text(encoding="utf-8") == OLD, "nothing wrote the handoff"
 
 
 # --- the words: what each exit says, and that the swap goes on ---------------

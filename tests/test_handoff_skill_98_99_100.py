@@ -58,15 +58,35 @@ OLDER_UUID = "11111111-2222-4333-8444-555555555555"
 #: What a session records the helper's calls as: verb, the `LANES_SESSION` it
 #: was handed, then every argument. `lane-dir` answers 8 (no answer) and
 #: `register-row` prints `$STUB_ROW` and exits `$STUB_REGISTER_RC`, which are the
-#: only two reads these blocks make of it that matter here.
+#: only two reads these blocks make of it that matter here. Since feature 007's
+#: T431, step 4 opens with its own base and reads the identity again (R-Q23;
+#: lane 2 reviews these stub hunks), so `act-begin` answers a files-mode base,
+#: which asks for no walk, and `canon-lane` answers the name it was given; the
+#: identity's `register-row` read is answered by `$STUB_ROW` like step 2's.
 STUB = """#!/usr/bin/env bash
 printf '%s\\tsession=[%s]\\t%s\\n' "$1" "${LANES_SESSION-<unset>}" "$*" >> "$STUB_LOG"
 case "$1" in
   lane-dir) exit 8 ;;
   register-row) [ -z "${STUB_ROW:-}" ] || printf '%s\\n' "$STUB_ROW"; exit "${STUB_REGISTER_RC:-0}" ;;
+  act-begin) printf '%s\\n' "${STUB_ACT_BASE-}" ;;
+  canon-lane) printf '%s\\n' "$2" ;;
 esac
 exit 0
 """
+
+#: A `tmux` that answers only the window's name, which is the lane's own, as a
+#: lane window's is (Amendment 8(b)); every other question gets nothing, so the
+#: host's own server is never read.
+TMUX = """#!/bin/sh
+case "$*" in
+  *'#W'*) printf '%s\\n' "$STUB_WINDOW" ;;
+  *) exit 1 ;;
+esac
+"""
+
+#: What `act-begin` prints: an act id and then `files`, the base of a register
+#: kept as files.
+ACT_BASE = "0123456789abcdef0123456789abcdef@files"
 
 
 def _text() -> str:
@@ -112,8 +132,7 @@ class Estate:
         self.log.write_text("")
         self.helper = self.bin / "lanes-edit.sh"
         self.helper.write_text(STUB)
-        # A `tmux` that answers nothing, so the host's own server is never read.
-        (self.bin / "tmux").write_text("#!/bin/sh\nexit 1\n")
+        (self.bin / "tmux").write_text(TMUX)
         for tool in (self.helper, self.bin / "tmux"):
             tool.chmod(tool.stat().st_mode | stat.S_IXUSR)
         self.home = root / "home"
@@ -123,6 +142,7 @@ class Estate:
             shell: str = "bash") -> subprocess.CompletedProcess:
         env = {"HOME": str(self.home), "PATH": f"{self.bin}:/usr/bin:/bin",
                "STUB_LOG": str(self.log), "STUB_ROW": row,
+               "STUB_WINDOW": "repoHS-1", "STUB_ACT_BASE": ACT_BASE,
                "TMPDIR": str(self.home), **(extra or {})}
         argv = [BASH, "-c", script] if shell == "bash" else [ZSH, "-f", "-c", script]
         return subprocess.run(argv, env=env, cwd=str(self.home),
@@ -218,7 +238,7 @@ def _step4(estate: Estate, *, uuid: str, ws_missing: str = "",
         f'uuid="{uuid}"', f'ws_missing="{ws_missing}"',
         f'uuid_missing="{uuid_missing}"', block,
         'printf "row_write_refused=[%s]\\n" "$row_write_refused"'])
-    proc = estate.run(script)
+    proc = estate.run(script, row=_row("none"))
     assert proc.returncode == 0, proc.stderr
     return proc
 
@@ -226,10 +246,12 @@ def _step4(estate: Estate, *, uuid: str, ws_missing: str = "",
 def test_with_a_workstation_and_a_session_all_three_writes_are_made(estate):
     """THE CONTROL: the harness records what step 4 really calls."""
     proc = _step4(estate, uuid=UUID)
-    assert estate.verbs() == ["lane-dir", "log", "append-line", "set-row-state"]
-    (_, session, args) = estate.calls()[1]
+    assert estate.verbs() == ["act-begin", "register-row", "canon-lane", "lane-dir",
+                              "log", "append-line", "set-row-state"]
+    calls = {verb: (session, args) for verb, session, args in estate.calls()}
+    (session, args) = calls["log"]
     assert session == f"session=[{UUID}]" and args.startswith("log PAUSED lane:repoHS-1")
-    assert f"session {UUID}@Eagle" in estate.calls()[2][2]
+    assert f"session {UUID}@Eagle" in calls["append-line"][1]
     assert "row_write_refused=[]" in proc.stdout
 
 
@@ -299,12 +321,13 @@ def test_a_row_that_records_a_session_is_not_flagged_and_says_nothing(estate, ce
 
 def test_a_missing_session_stops_the_two_session_keyed_writes_and_keeps_the_row(estate):
     proc = _step4(estate, uuid="", uuid_missing="1")
-    assert estate.verbs() == ["lane-dir", "set-row-state"], (
+    assert estate.verbs() == ["act-begin", "register-row", "canon-lane", "lane-dir",
+                              "set-row-state"], (
         "with no transcript uuid the writer refuses `log PAUSED` and the "
         "register line would read `session @Eagle`, so neither is attempted, "
         f"while the row's state cell, which keys on no session, is: {estate.calls()}")
     assert not any("session @" in args for _, _, args in estate.calls())
-    (_, _, args) = estate.calls()[1]
+    (_, _, args) = estate.calls()[-1]
     assert "PAUSED · swap" in args and "transcript none" in args, args
     assert "row_write_refused=[]" in proc.stdout
 
@@ -344,7 +367,8 @@ def test_the_sessions_own_id_answers_where_the_row_records_none(estate):
     proc = _swap(estate, _row("none"), extra={"CLAUDE_CODE_SESSION_ID": UUID})
     assert f"uuid={UUID}" in proc.stdout and "uuid_missing=[]" in proc.stdout, proc.stdout
     assert "NO SESSION" not in proc.stdout, proc.stdout
-    assert estate.verbs() == ["register-row", "lane-dir", "log", "append-line",
+    assert estate.verbs() == ["register-row", "act-begin", "register-row", "canon-lane",
+                              "lane-dir", "log", "append-line",
                               "set-row-state"], estate.calls()
     calls = {verb: (session, args) for verb, session, args in estate.calls()}
     assert calls["log"][0] == f"session=[{UUID}]"
@@ -370,7 +394,8 @@ def test_neither_id_answering_skips_the_two_writes_and_keeps_the_row(estate):
     row that records none."""
     proc = _swap(estate, _row("none"))
     assert "uuid_missing=[1]" in proc.stdout and "NO SESSION RECORDED" in proc.stdout
-    assert estate.verbs() == ["register-row", "lane-dir", "set-row-state"], estate.calls()
+    assert estate.verbs() == ["register-row", "act-begin", "register-row", "canon-lane",
+                              "lane-dir", "set-row-state"], estate.calls()
 
 
 def test_a_failed_row_read_is_not_a_lane_that_never_had_a_session(estate):

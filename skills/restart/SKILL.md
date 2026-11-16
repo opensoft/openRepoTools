@@ -42,9 +42,11 @@ WS="$("$L" workstation 2>/dev/null | cut -f1)"    # decision 8(d): configuration
 # EVERY READ BELOW GOES THROUGH THIS ONE FENCE, and Amendment 7(d) is the whole
 # of it: `0` an answer · `8` NO ANSWER · `2` a helper predating the read — both
 # of those fall to the next rung — and ANYTHING ELSE is a read that FAILED,
-# which is a REFUSAL naming the read and never a rung. It sets a VARIABLE rather
-# than printing, because a refusal inside `$( )` would only kill the
-# substitution's subshell and the skill would carry on with an empty answer.
+# which is a REFUSAL naming the read and never a rung. `69` is one of those, and
+# the one the register itself sends: it has an arm of its own below, and it is
+# neither of the two that fall through. The fence sets a VARIABLE rather than
+# printing, because a refusal inside `$( )` would only kill the substitution's
+# subshell and the skill would carry on with an empty answer.
 lread() {                      # lread <var> "<what the failure is NOT>" <verb> [args…]
   ln_var="$1"; ln_not="$2"; shift 2
   ln_out=""; ln_rc=0
@@ -67,6 +69,18 @@ lread() {                      # lread <var> "<what the failure is NOT>" <verb> 
   case "$ln_rc" in
     0)   : ;;
     8|2) ln_out="" ;;
+    # AND `69` IS NAMED, THOUGH THE `*)` BELOW WOULD REFUSE IT TOO (feature 007's
+    # FR-036, the register's S3). It is the register's own "I cannot answer": the
+    # store is unreachable, or it refused the read. The verb printed NO ANSWER on
+    # stdout and its own words on stderr, and those words are ABOVE already, kept
+    # by the filter at the top of this function. It is never `8`, which is the
+    # register saying "I looked and there is none": read as an 8 it would be "no
+    # lane" — at a rung, a step on to the next one; at the last, a listing printed
+    # as though the checkout had none. So it STOPS here, at whichever call it
+    # came from, and no rung after it is tried.
+    69)  printf 'REFUSED: `%s %s` failed (exit 69) — the register could not answer it: the store is unreachable, or it refused the read. Whatever the read printed is the lines above. That is NOT %s — a read that could not answer is never an answer (Amendment 7(d)), so this skill will not take the next rung, bind a window, write a stamp or print a resume command on it.\n' \
+           "$L" "$1" "$ln_not" >&2
+         exit 1 ;;
     *)   printf 'REFUSED: `%s %s` failed (exit %s). That is NOT %s — a read that failed is never an answer (Amendment 7(d)), and this skill will not bind a window, write a stamp or print a resume command on one. Run it by hand to see what it says.\n' \
            "$L" "$1" "$ln_rc" "$ln_not" >&2
          exit 1 ;;
@@ -173,6 +187,18 @@ pre-Amendment-8 one did for `swapped` — **a helper predating the amendment tha
 silent**, told from a caller's bug by the helper's own words rather than by its status. Until the tooling is
 installed everywhere, **2 is the answer every workstation gives**, and a `/restart` that refused there would
 refuse everywhere (`R-A11-8`, on RV-T3).
+
+**AN EXIT `69` FROM ANY READ STOPS THE SKILL, AND IT IS NEVER "NO LANE" AND NEVER THE NEXT RUNG.** `69` is the
+register's own *cannot answer* — the store is unreachable, or it refused the read — where `8` is its *I looked
+and there is none*, and the two are not the same answer: an 8 on a rung is a lane that is not there, a 69 is a
+register that was not asked. `lread` has an arm for it, and the arm lets the read's own words through, prints
+the one `REFUSED` line and stops, so no rung after it is tried, the listing is not printed as though the
+checkout had no lane, and nothing is bound, stamped or resumed. That holds for every read in this file — the
+`<lane>` argument's check, the three rungs, the listing, the directory and step 4's two — because they go
+through the one fence. A read that never exits 69, which is every read in files mode and every one that
+predates the register's store, never reaches the arm, and the skill reads as it did. A files-mode *write* can
+exit 69, on the writers' marker check; for step 5's (`lane-start`), the last row of the table below, "any other
+non-zero from any helper, a `69` among them", covers it.
 
 **Outcome where every rung answered 8 or 2: `NO LANE FOR THIS WINDOW` [8]**, with the listing above and
 `lane-start --no-launch <repo> <n>` filled in from the window's own name where it parses as `<repo>-<n>`.
@@ -369,7 +395,7 @@ code a caller cannot act on.
 | `RESTARTED <lane>, CELL STALE` **[8]** | step 5 at 0, but step 6 was refused **or** the row records no uuid to anchor to | everything the `RESTARTED` row prints, plus the exact `append-session-id` act verbatim and which of the two cases it is. **8**, not 0: the bind happened and one fact is still missing |
 | `NO LANE FOR THIS WINDOW` **[8]** | **every** rung of step 2 answered **8** or **2** | the per-repo listing, and `lane-start --no-launch <repo> <n>` filled in from the window's own name where it parses |
 | `REFUSED: <reason>` **[2]** | no tmux, no directory, a `<lane>` the register does not carry, or step 5 exited 2 | the reason, and the helper's own stderr verbatim |
-| `REFUSED: <reason>` **[1]** | any other non-zero from any helper, step 4's read included | which read failed, and its stderr |
+| `REFUSED: <reason>` **[1]** | any other non-zero from any helper, a `69` among them, step 4's read included | which read failed, and its stderr |
 
 **Step 3b's fence is TWO VETOES and no permission, and `/restart` never trips either.** When step 5 runs
 `lane-start --no-launch`, that script decides whether to learn the uuid live in this window. Its fence is the
