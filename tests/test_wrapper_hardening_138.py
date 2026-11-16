@@ -288,6 +288,7 @@ case "$sub" in
     [ -z "${FAKE_READY:-}" ] || { : > "$FAKE_READY"; sleep 2; }
     printf 'repoD-1\tNO LOG\tEagle\tnone\tnone\tnone\tnone\tnone\t9d\tnone\tnone\t0\there\tdormant\t2026-09-02\told cell\tnone\n' ;;
   retire-rows) printf 'retire-rows %s\n' "$*" >> "$FAKE_LOG" ;;
+  act-begin) printf '%032d@files\n' 0 ;;
   *) printf 'fake lanes-edit: unexpected subcommand %s\n' "$sub" >&2; exit 99 ;;
 esac
 '''

@@ -139,16 +139,37 @@ def lane_handoff_register_line() -> str:
 #: Each call is one file holding the `LANES_SESSION` it was made under, then
 #: every argument, NUL-separated, so an argument carrying a line break is
 #: recorded as the one argument it is. `lane-dir` answers 8, no answer, and
-#: every other verb succeeds.
+#: every other verb succeeds. Since feature 007's T431, step 4 opens with its own
+#: base and reads the identity again, so three verbs answer what a lane's own
+#: window would get (R-Q23; lane 2 reviews these stub hunks): `act-begin` a
+#: files-mode base, which asks for no walk; `register-row` the lane's row for
+#: the lane's own name, and nothing for any other; and `canon-lane` the name it
+#: was given.
 STUB = """#!/usr/bin/env bash
 n=$(ls "$STUB_CALLS" | wc -l)
 n=$((n + 1))
 printf '%s\\0' "${LANES_SESSION-<unset>}" "$@" > "$STUB_CALLS/$(printf '%04d' "$n")"
 case "$1" in
   lane-dir) exit 8 ;;
+  act-begin) printf '%s\\n' "${STUB_ACT_BASE-}" ;;
+  register-row) [ "${2-}" != "$STUB_WINDOW" ] || printf '| `%s` | row |\\n' "$2" ;;
+  canon-lane) printf '%s\\n' "$2" ;;
 esac
 exit 0
 """
+
+#: A `tmux` that answers only the window's name, which is the lane's own, as a
+#: lane window's is (Amendment 8(b)); every other question gets nothing.
+TMUX = """#!/bin/sh
+case "$*" in
+  *'#W'*) printf '%s\\n' "$STUB_WINDOW" ;;
+  *) exit 1 ;;
+esac
+"""
+
+#: What `act-begin` prints: an act id and then `files`, the base of a register
+#: kept as files, which step 4 takes as it is and asks no walk of.
+ACT_BASE = "0123456789abcdef0123456789abcdef@files"
 
 
 class Call(NamedTuple):
@@ -159,20 +180,22 @@ class Call(NamedTuple):
 class Sandbox(SkillSandbox):
     """`tests/test_handoff_skill_72_80.py`'s sandbox: its private `PATH`, its
     explicit environment and its `run` under `bash` or `zsh -f`. On top of it
-    go a helper stub that records every argument, a `tmux` that answers
-    nothing and a `date` that answers `NOW`."""
+    go a helper stub that records every argument, a `tmux` that answers the
+    window's name and nothing else, and a `date` that answers `NOW`."""
 
     def __init__(self, root: Path) -> None:
         super().__init__(root)
         self.calls_dir = root / "calls"
         self.calls_dir.mkdir()
         for name, body in (("lanes-edit.sh", STUB),
-                           ("tmux", "#!/bin/sh\nexit 1\n"),
+                           ("tmux", TMUX),
                            ("date", f"#!/bin/sh\nprintf '%s\\n' '{NOW}'\n")):
             tool = self.bin / name
             tool.write_text(body, encoding="utf-8")
             tool.chmod(tool.stat().st_mode | stat.S_IXUSR)
         self.env["STUB_CALLS"] = str(self.calls_dir)
+        self.env["STUB_WINDOW"] = LANE
+        self.env["STUB_ACT_BASE"] = ACT_BASE
 
     def recorded(self) -> List[Call]:
         out = []
