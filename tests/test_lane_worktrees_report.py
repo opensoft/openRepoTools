@@ -343,11 +343,17 @@ def test_a_register_grep_that_failed_is_a_finding_never_no_events(tmp_path):
     orphan section read clean."""
     e = LW.Estate(tmp_path)
     build_estate(e)
+    # T404: THE VERB'S ANSWER WHERE THE BRANCH IS NOT THERE, declared in the
+    # spec as the fake's every answer is (lane 3's ruling, #165 6747281902).
+    e.extra_spec = LW.register_grep_spec("no-such-branch", {"rc": 69, "err": (
+        "fatal: unable to resolve revision: origin/no-such-branch\n"
+        "lanes-edit: the register could not be read: git grep on origin/no-such-branch "
+        f"in {e.workspace} exited 128 (above)\n")})
     proc = report(e, env={"LANES_BRANCH": "no-such-branch"})
     assert proc.returncode == 0, proc.stderr
     unread = section(proc.stdout, "Records the report could not read")
-    assert "the register's ENDED and RETIRED lines (origin/no-such-branch) \u00b7 git grep " \
-        "exited 128" in unread, unread
+    assert "the register's ENDED and RETIRED lines (origin/no-such-branch) \u00b7 " \
+        "`lanes-edit.sh register-grep` exited 69" in unread, unread
 
 
 def _latin1_clone(e) -> Path:
