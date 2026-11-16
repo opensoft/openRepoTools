@@ -104,7 +104,7 @@ subcommands add 69, 75 and 78, and 3 for a write in doubt, each named by an
 #: change that sets it True. A test that needs `primary` runs a copy of this
 #: file with it flipped, in its own temporary directory (FR-017). Never an
 #: environment variable, which any lane could set.
-RENDER_GIT_HALF = False
+RENDER_GIT_HALF = True
 
 
 #: THE BODY (feature 007, T124; FR-064): everything else `lanes-index` runs is
