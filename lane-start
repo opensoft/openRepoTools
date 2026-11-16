@@ -128,7 +128,14 @@
 #                    with --no-launch, never with --fresh or --agent, and a
 #                    <uuid> that is not this window's live session, or a window
 #                    named for another lane, is a refusal before anything is
-#                    written
+#                    written. IT IS IDEMPOTENT (feature 007, FR-039): where the
+#                    lane's binding already names this window and <uuid>, and
+#                    the session cell already ends on it, a rerun writes no
+#                    register line again (not the row's state, not the lane's
+#                    log line) and stamps the handoff only where it carries no
+#                    `RESUMED by <uuid> (lane <L>)` line. A line that is there
+#                    but not in origin's copy of the file (or whose copy cannot
+#                    be read here) is still an owed stamp, and one note says so
 #   -h, --help
 #   --               everything after it is passed through to claude
 #
@@ -802,6 +809,11 @@ dry_run=0; no_launch=0; estate=""; dir_override=""; confirm=0; take_yes=0
 agent_flag=""; fresh_flag=0; op_flag=""
 # THE NAME GUARD'S BINDING MODE (openRepoTools#70) — the transcript being bound.
 bind_sid=""
+# AND ITS RERUN (feature 007, T503, FR-039): `bind_cell_ends` is 1 where the
+# published session cell already ENDS on the bound uuid, and `bind_rerun` is 1
+# where the lane's binding also names this window and that uuid. Both are set
+# in step 3b(ii), below, and read by the three writes of steps 5, 5b and 5c.
+bind_cell_ends=0; bind_rerun=0
 # AMENDMENT 18(c)/(e) — the three words a second place has for a bound lane.
 request_handoff=0; force_why=""; handoff_wait=300
 positional=(); pass=()
@@ -2356,6 +2368,7 @@ if [ -n "$bind_sid" ]; then
   [ -z "$win_veto" ] ||
     die "this window is named '$win_veto', $win_veto_why — so the session live in it ($win_sid) is NOT bound as $LANE's (Amendment 11 clause (d) rule 1, veto 2, which --bind does not lift). Rename the window to $LANE first. Nothing has been renamed, written or launched." 2
   if [ "$bind_lc" = "$row_sid" ]; then
+    bind_cell_ends=1
     step "--bind: $win_sid is already the last id in $LANE's session cell — nothing to append"
   else
     harness_sid="$win_sid"
@@ -2739,6 +2752,47 @@ if [ "$bind_rc" = 0 ]; then
       2) die "the handoff was not obtained (the helper's own facts and its \`--force\` line are above), so lane $LANE is still bound elsewhere and NOTHING here has been renamed, written or launched." 2 ;;
       *) die "$LANES_EDIT request-handoff $LANE exited $ls_rh_rc, which is neither 'the lane is free' nor the refusal that says it is not — nothing here has been renamed, written or launched." 1 ;;
     esac
+  fi
+fi
+
+# ------------- 3b(iii). A RERUN OF THE BINDING MODE WRITES NO REGISTER LINE AGAIN
+#
+# FEATURE 007, T503 (FR-039; design.md, "Reruns", phase 1). The name guard's
+# choice `2` can be answered for the same session twice: the first bind's stamp
+# push failed and the person is offered the bind again, or the window was moved
+# away and back. Every write this run makes then lands a second time in files
+# that are append-only — the row's state cell, the lane's log line, and the
+# handoff's Rule 3 stamp, which counts resumes.
+#
+# THE RULE IS TWO READS AGREEING, BOTH ALREADY MADE ABOVE, AND NOTHING NEW IS
+# ASKED OF THE REGISTER. The published session cell ENDS on the bound uuid
+# (`bind_cell_ends`, step 3b(ii)), and the lane's binding — its last lane-kind
+# line, `lanes-edit.sh binding` — names THIS window, here, with that uuid as its
+# session: the lane is already bound to this session in this window, and the
+# earlier bind's log line is the proof that its other writes landed. Then the
+# row's state, the log line and the cell's append are not written again (the
+# append is the "nothing to append" of step 3b(ii)), and the stamp is written
+# only where the handoff carries no `RESUMED by <uuid> (lane <L>)` line (step
+# 5c). A binding that names another window or another session, or a cell that
+# ends on another id, is not a rerun, and every write is made as before.
+#
+# THE WINDOW IS COMPARED BY ITS TMUX ID, as `binding_is_this_window` compares it
+# in `lanes-edit.sh`: the record's `<session>:<index> <@id>` and `<@id>` is the
+# part that stays when windows are re-indexed. A record with no id is matched on
+# its whole `<session>:<index>` spelling instead, and an empty or `none` window
+# matches nothing.
+if [ -n "$bind_sid" ] && [ "$bind_cell_ends" = 1 ] && [ "$bind_rc" = 0 ] && [ "${b_where-}" = here ]; then
+  br_same=0
+  br_win_id="${b_win##* }"
+  case "$br_win_id" in
+    @[0-9]*)
+      if [ "$br_win_id" = "$this_window_id" ]; then br_same=1; fi ;;
+    *)
+      if [ -n "${b_win-}" ] && [ "$b_win" = "$record_window" ]; then br_same=1; fi ;;
+  esac
+  if [ "$br_same" = 1 ] && [ "$(printf '%s' "${b_sess-}" | tr 'A-F' 'a-f')" = "$bind_lc" ]; then
+    bind_rerun=1
+    step "--bind: a RERUN — lane $LANE's binding already names this window ($b_win) and $win_sid, and its session cell ends on that id, so the row's state, the lane's log line and the cell are not written again, and the handoff is stamped only if it carries no RESUMED by $win_sid (lane $LANE) line"
   fi
 fi
 
@@ -4192,7 +4246,11 @@ else
   # and not its licence — the same rule Amendment 6(c) and the handoff's Rule 3
   # stamp already take here — so a stamp that could not be written prints the
   # act that writes it and the lane still starts.
-  if (( dry_run )); then
+  if (( bind_rerun )); then
+    # A RERUN OF `--bind` (step 3b(iii)): the binding already names this window
+    # and this uuid, so the row's state is not set a second time.
+    step "--bind: a rerun, so the row's state is not set again"
+  elif (( dry_run )); then
     plan "lanes-edit.sh set-row-state $LANE \"LIVE · $state_line\""
   else
     srs_rc=0
@@ -4408,6 +4466,11 @@ if (( AGENT_EXPLICIT )); then ls_defer_agent=" $(quoted --agent "$AGENT")"; fi
 if (( ! lane_sid_known )); then
   note "no transcript uuid is knowable at this instant (the row's stamp says '${lane_sid:-unknown}'), so the lane's $lane_verb log line is NOT written: Amendment 7(b) makes that field a transcript uuid and only that, and the log is append-only. Nor is the handoff's Rule 3 stamp. BOTH are written by the first act that knows the uuid, which is this session's own:"
   note "  $prog --no-launch $self_args$ls_defer_agent"
+elif (( bind_rerun )); then
+  # A RERUN OF `--bind` (step 3b(iii)): the binding this run read IS the lane's
+  # last lane-kind line, naming this window and this uuid, so the log already
+  # carries the act and a second line would count a resume that did not happen.
+  step "--bind: a rerun, so the lane's $lane_verb log line is not written again"
 elif (( dry_run )); then
   plan "lanes-edit.sh log $lane_verb lane:$LANE → \"$lane_payload\""
 else
@@ -4506,8 +4569,63 @@ if [ "$lane_verb" = RESUMED ] && [ "$row_count" = 1 ] && (( stamp_ok )); then
   if [ "$ri_active" = 1 ]; then
     hs_args+=(--restart "$ri_op" "$ri_gen" "$ri_attempt" starting "$lane_sid" --expected-digest "${ri_expected_digest:-none}")
   fi
+  # A RERUN OF `--bind` (step 3b(iii)) STAMPS ONLY A HANDOFF THAT HAS NONE: the
+  # file this lane's writes go through (`$HS_PATH`, the one `write-handoff`
+  # splices into, with a kept local commit's line in it) is read for a line that
+  # carries `RESUMED by <uuid> (lane <L>)`, which is the head of every stamp this
+  # step writes. A file that cannot be read here is no answer, and the write
+  # below is made as it always was, and says for itself what it could not do.
+  hs_have=0
+  if (( bind_rerun )) && [ -n "$HS_PATH" ] && [ -f "$HS_PATH" ] &&
+     grep -qiF -- "RESUMED by $stamp_who (lane $LANE)" "$HS_PATH" 2>/dev/null; then
+    hs_have=1
+  fi
+  # AND A LINE THAT IS THERE IS NOT A LINE THAT IS PUBLISHED. The file `$HS_PATH`
+  # names carries the line of a kept local commit as well as a pushed one, and
+  # the bind record ends `bound` "with a `note=` for each act still owed: the
+  # stamp not written or not pushed" (design.md, "How it ends"), which the
+  # caller builds from the one note of this command that holds both "Rule 3's
+  # stamp" and "NOT". So a rerun that writes no second stamp still says the
+  # first one is owed wherever it is not on origin: READ-ONLY, with no fetch (the
+  # remote-tracking branch is as this run's own reads last fetched it), and a
+  # copy that cannot be read is no proof of anything, so it is owed too.
+  bind_stamp_published() {   # <file> <the stamp's head> — BSP_STATE published | unpublished | unreadable; BSP_WHY
+    BSP_STATE=unreadable; BSP_WHY=""
+    bsp_dir="$(dirname -- "$1")"; bsp_base="$(basename -- "$1")"
+    bsp_br="$(git -C "$bsp_dir" symbolic-ref -q --short HEAD 2>/dev/null || :)"
+    if [ -z "$bsp_br" ]; then
+      BSP_WHY="that checkout's HEAD is on no branch, or the file is in no git work tree"
+      return 0
+    fi
+    if ! bsp_copy="$(git -C "$bsp_dir" show "refs/remotes/origin/$bsp_br:./$bsp_base" 2>/dev/null)"; then
+      BSP_WHY="there is no origin/$bsp_br there to read it from, or it holds no such file"
+      return 0
+    fi
+    # A here-string, not a pipe: under pipefail a `grep -q` that stops at its
+    # first match would fail the pipeline of a large handoff.
+    if grep -qiF -- "$2" <<<"$bsp_copy"; then BSP_STATE=published; else BSP_STATE=unpublished; fi
+    return 0
+  }
   if [ -z "$hs_cell" ]; then
     step "the row names no handoff path, so there is no Rule 3 stamp to write"
+  elif (( hs_have )); then
+    step "--bind: a rerun, and $HS_PATH already carries a line for RESUMED by $stamp_who (lane $LANE), so no second one is stamped"
+    if [ "${LANES_NO_GIT:-0}" = 1 ]; then
+      note "Rule 3's stamp is in $HS_PATH (written by an earlier run: RESUMED by $stamp_who (lane $LANE)) and NOT committed by this run: LANES_NO_GIT=1 commits and pushes nothing, so whether origin has it is not known here, and no second stamp is written."
+    else
+      bind_stamp_published "$HS_PATH" "RESUMED by $stamp_who (lane $LANE)"
+      case "$BSP_STATE" in
+        published)
+          step "--bind: origin's copy of $HS_PATH, as this checkout last fetched it, carries that line too, so nothing about the stamp is owed" ;;
+        *)
+          if [ "$BSP_STATE" = unpublished ]; then
+            hs_why="origin's copy of that file, as this checkout last fetched it, has no such line"
+          else
+            hs_why="origin's copy of that file could not be read ($BSP_WHY), so it is not known to be there"
+          fi
+          note "Rule 3's stamp is in $HS_PATH (written by an earlier run: RESUMED by $stamp_who (lane $LANE)) and NOT published: $hs_why, and this run writes no second stamp. A commit kept unpushed in this lane's register checkout is published by no later write, and each write there refuses until it is (Amendment 23 S3): the publish act, which pushes it and writes nothing new, is LANES_LANE=$LANE $LANES_EDIT commit \"<what it is>\"; where origin moved it refuses (2), and S6.3's archive is the way out. A handoff in another repository (Amendment 8(d)) is committed and pushed in that repository, by hand." ;;
+      esac
+    fi
   elif (( dry_run )); then
     plan "LANES_LANE=$LANE $(quoted "$LANES_EDIT" "${hs_args[@]}")"
   else

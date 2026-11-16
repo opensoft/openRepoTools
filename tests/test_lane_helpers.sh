@@ -7947,6 +7947,65 @@ has   "…adjusting the session to the lane" "$err" "ADJUSTED SESSION TO LANE re
 has   "…by typing it into the pane" "$(tail -n1 "$FAKE_TMUX_LOG")" "send-keys -t %12 /rename repoGD-1 Enter"
 is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
 
+# ---- ANSWER 2 BINDS DETACHED (feature 007, T502; lane openRepoTools-2's T234).
+#
+# The bind measured 10.47 s in files mode, against a hook Claude Code stops at
+# 5 s, so the guard's answer 2 no longer moves the window inside the hook. It
+# renames the window, rewrites the offer to `mode=binding`, starts `guard-bind`
+# detached and exits 2 with "BINDING" (the bind record's contract, section 5,
+# case 1). The bind's outer writes the outcome into the same file, `mode=bound`
+# or `mode=bind-failed`, and the NEXT prompt hears it: after a success it says
+# "MOVED" once and removes the record, and the prompt after that is judged by
+# the table (case 5). So each answer-2 case below answers 2, waits for the
+# record to leave `binding`, takes the MOVED prompt, and then makes the checks
+# the answer itself used to carry. MOVED also names each act the bind still
+# owes, and that is not asserted here: these rows name handoff files this
+# sandbox never writes, so a resumed lane owes its Rule 3 stamp, which is
+# what `lane-start` said in the hook's own words before T502, unasserted too.
+#
+# THE WAIT IS INSIDE THE RECORD'S OWN BOUND: `deadline_epoch`, which the outer
+# sets to its start plus `bound_s` plus 5 s (505 s at the default), with 30 s
+# beside it for the outer's sweep and its last write. It reads `mode=` five
+# times a second, and every rewrite of the record is a temporary file and
+# `mv -f`, so a read sees the old record or the new one. NOTHING IS SENT TO THE
+# GUARD WHILE THE BIND RUNS: a prompt then is answered BINDING IN PROGRESS, and
+# which prompt that is would depend on how fast the host is.
+#
+# THE BIND'S OWN WORDS ARE IN ITS ATTEMPT'S OUTPUT FILE, the record's `out=`:
+# `lane-start`'s, and the body's notes, `guard_bound_check`'s "…session cell
+# now ends on …" among them, which the hook itself printed before T502. The
+# MOVED prompt removes that file with the record, so it is read here, first.
+#
+# AND EVERY ANSWER-2 CASE ENDS WITH ITS RECORD GONE. A record left `binding`
+# or `bound` answers the next prompts from the bind's branch, ahead of the
+# table, and ten cases further down assert the table (lane openRepoTools-5's
+# suite at 6050581, opensoft/openRepoTools#165 6756211522). The MOVED prompt
+# removes it; `gd_bind_clear` then removes whatever a failed case left, the
+# record with its `.bind.*` files, as the guard's own removal does.
+gd_bind_mode=""; gd_bind_end=""; gd_bind_said=""
+gd_bind_wait() {   # sets gd_bind_mode, gd_bind_end (`bound`, or what it is instead) and gd_bind_said
+  local bw_dl bw_left bw_t0 bw_out
+  bw_dl="$(sed -n 's/^deadline_epoch=//p' "$GD_OFFER" 2>/dev/null | head -n1)"
+  case "$bw_dl" in ''|*[!0-9]*) bw_dl=$(( $(date -u +%s) + 505 )) ;; esac
+  bw_left=$(( 10#$bw_dl + 30 - $(date -u +%s) ))
+  bw_t0=$SECONDS
+  gd_bind_mode="$(sed -n 's/^mode=//p' "$GD_OFFER" 2>/dev/null | head -n1)"
+  while [ "$gd_bind_mode" = binding ] && [ $(( SECONDS - bw_t0 )) -le "$bw_left" ]; do
+    sleep 0.2
+    gd_bind_mode="$(sed -n 's/^mode=//p' "$GD_OFFER" 2>/dev/null | head -n1)"
+  done
+  case "$gd_bind_mode" in
+    bound)   gd_bind_end=bound ;;
+    binding) gd_bind_end="still binding, 30 s past its deadline" ;;
+    '')      gd_bind_end="no record at $GD_OFFER" ;;
+    *)       gd_bind_end="$gd_bind_mode: $(sed -n 's/^why=//p' "$GD_OFFER" 2>/dev/null | head -n1)" ;;
+  esac
+  bw_out="$(sed -n 's/^out=//p' "$GD_OFFER" 2>/dev/null | head -n1)"
+  gd_bind_said="$(cat -- "$bw_out" 2>/dev/null || :)"
+  return 0
+}
+gd_bind_clear() { rm -f -- "$GD_OFFER" "$GD_OFFER".bind.*; return 0; }
+
 gd_rec "$GD_LANE_ID" repoGD-2 user "$GD_NEW_MS"
 gd_run "$GD_LANE_ID"
 is    "the offer is made again at the next prompt, because the rename still stands" "$rc" 2
@@ -7958,7 +8017,17 @@ export FAKE_TMUX_RENAME_STICKS=1 FAKE_TMUX_NAME_FILE="$SANDBOX/tmux-window-name"
 rm -f "$FAKE_TMUX_NAME_FILE"
 gd_run "$GD_LANE_ID" "2"
 is    "choice 2 is consumed and blocks that prompt" "$rc" 2
-has   "…and this window is the other lane now" "$err" "MOVED: this window is now lane repoGD-2"
+has   "…answered BINDING: the window renamed, and its bind to that lane started detached (T502)" \
+      "$err" "BINDING: this window is now named repoGD-2, and its bind to lane repoGD-2 runs detached"
+hasnt "…and not MOVED yet, which only the bind's end can say" "$err" "MOVED:"
+gd_bind_wait
+is    "…the bind's record ending \`bound\`, inside its own deadline" "$gd_bind_end" bound
+gd_run "$GD_LANE_ID"
+is    "…and the next prompt is the one that hears it, and is not sent" "$rc" 2
+has   "…and this window is the other lane now" "$err" "MOVED: this window is lane repoGD-2, bound to this session ($GD_LANE_ID)"
+gd_run "$GD_LANE_ID"
+is    "…said ONCE: the prompt after it is judged by the table, where the three names now agree" "$rc" 0
+hasnt "…and says nothing of the move again" "$err" "MOVED"
 has   "…the window renamed by lane-start's own act" "$(grep 'rename-window' "$FAKE_TMUX_LOG" | tail -n1)" "rename-window repoGD-2"
 has   "…this session appended to that lane's cell, which is what the next resume follows" \
       "$("$E" register-row repoGD-2 2>/dev/null || :)" "$GD_LANE_ID"
@@ -7969,7 +8038,8 @@ has   "…this session appended to that lane's cell, which is what the next resu
 # transcript, and the guard would refuse for ever on a state it created by
 # obeying the person. The guard used to make that write itself; `--bind` is the
 # person's choice 2 handed to `lane-start`, so the guard now only reads it back.
-has   "…lane-start having made that one write, on the person's choice 2" "$err" "session cell now ends on $GD_LANE_ID"
+# Since T502 that read is the bind's body's, so it is said in the bind's output.
+has   "…lane-start having made that one write, on the person's choice 2" "$gd_bind_said" "session cell now ends on $GD_LANE_ID"
 has   "…in a commit of its own that says which act it was" \
       "$(git -C "$WIP" log -n 12 --format=%s)" "session cell: bound $GD_LANE_ID on the person's choice 2 at the name guard"
 hasnt "…and with no register write of the guard's own" \
@@ -7980,6 +8050,7 @@ has   "…naming the lane this window moved to (Amendment 13(a): the cell is SET
       "$("$E" register-row repoGD-1 2>/dev/null || :)" "this window moved to lane repoGD-2"
 is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
 unset FAKE_TMUX_RENAME_STICKS FAKE_TMUX_NAME_FILE
+gd_bind_clear
 
 # ---- THE DESTINATION ALREADY RECORDS A TRANSCRIPT (openRepoTools#70).
 #
@@ -8036,7 +8107,17 @@ is    "a rename to a lane that already records a transcript is the offer" "$rc" 
 has   "…naming that lane's own last session" "$err" "2) adjust the lane to session repoGD-6 (existing lane; last session $GD_ROW6_ID)"
 gd_run "$GD_LANE_ID" "2"
 is    "…and \`yes\` moves the window" "$rc" 2
-has   "…saying so" "$err" "MOVED: this window is now lane repoGD-6"
+has   "…by a bind that runs detached, answered BINDING (T502)" \
+      "$err" "BINDING: this window is now named repoGD-6, and its bind to lane repoGD-6 runs detached"
+gd6_told="$err"
+gd_bind_wait
+is    "…whose record ends \`bound\`, inside its own deadline" "$gd_bind_end" bound
+gd_run "$GD_LANE_ID"
+is    "…and the next prompt hears it, and is not sent" "$rc" 2
+has   "…saying so" "$err" "MOVED: this window is lane repoGD-6, bound to this session ($GD_LANE_ID)"
+gd6_told="$gd6_told$err"
+gd_run "$GD_LANE_ID"
+is    "…once: the prompt after it is judged by the table, where the three names now agree" "$rc" 0
 gd6_log="$(cat "$LOGD/repoGD-6.md" 2>/dev/null || :)"
 has   "…and the destination's log records a RESUMED by the transcript BOUND" \
       "$(printf '%s\n' "$gd6_log" | grep '^RESUMED')" "session $GD_LANE_ID@"
@@ -8046,15 +8127,16 @@ is    "…and that RESUMED is the log's one lane-kind line, so nothing stamped i
 gd6_row="$("$E" register-row repoGD-6 2>/dev/null || :)"
 has   "…the row's stamp names the bound transcript too" "$gd6_row" "RESUMED by $GD_LANE_ID"
 hasnt "…and not the old one" "$gd6_row" "RESUMED by $GD_ROW6_ID"
-hasnt "…nor does any stamp lane-start wrote or owed on the way through" "$err" "RESUMED by $GD_ROW6_ID"
+hasnt "…nor does any stamp lane-start wrote or owed on the way through" "$gd_bind_said" "RESUMED by $GD_ROW6_ID"
 is    "…and the session cell ENDS on it, which is what the next resume follows" \
       "$(printf '%s\n' "$gd6_row" | awk -F'|' '{print $3}' | grep -oiE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tail -n1)" \
       "$GD_LANE_ID"
 has   "…keeping the id it had, in front of it, as the cell's history" "$gd6_row" "$GD_ROW6_ID"
-has   "…which the guard reads back and says" "$err" "repoGD-6's session cell now ends on $GD_LANE_ID"
-hasnt "…and the guard-only flag is in no command printed for a person to type" "$err" "--bind $GD_LANE_ID"
+has   "…which the bind reads back and says" "$gd_bind_said" "repoGD-6's session cell now ends on $GD_LANE_ID"
+hasnt "…and the guard-only flag is in no command printed for a person to type" "$gd6_told$gd_bind_said" "--bind $GD_LANE_ID"
 is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
 unset FAKE_TMUX_RENAME_STICKS FAKE_TMUX_NAME_FILE
+gd_bind_clear
 export FAKE_TMUX_WINDOW_NAME=repoGD-1
 export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
 
@@ -8082,7 +8164,15 @@ is    "a rename to a lane with no row is the offer" "$rc" 2
 has   "…offering to create it" "$err" "2) adjust the lane to session repoGD-8 (create or move to this lane)"
 gd_run "$GD_LANE_ID" "2"
 is    "…and \`yes\` moves the window" "$rc" 2
-has   "…saying so" "$err" "MOVED: this window is now lane repoGD-8"
+has   "…by a bind that runs detached, answered BINDING (T502)" \
+      "$err" "BINDING: this window is now named repoGD-8, and its bind to lane repoGD-8 runs detached"
+gd_bind_wait
+is    "…whose record ends \`bound\`, inside its own deadline" "$gd_bind_end" bound
+gd_run "$GD_LANE_ID"
+is    "…and the next prompt hears it, and is not sent" "$rc" 2
+has   "…saying so" "$err" "MOVED: this window is lane repoGD-8, bound to this session ($GD_LANE_ID)"
+gd_run "$GD_LANE_ID"
+is    "…once: the prompt after it is judged by the table, where the three names now agree" "$rc" 0
 gd8_row="$("$E" register-row repoGD-8 2>/dev/null || :)"
 has   "…into a row created with the bound transcript in its session cell" \
       "$(printf '%s\n' "$gd8_row" | awk -F'|' '{print $3}')" "harness $GD_LANE_ID"
@@ -8093,10 +8183,11 @@ gd8_log="$(cat "$LOGD/repoGD-8.md" 2>/dev/null || :)"
 has   "…and the new lane's log records a STARTED by the transcript BOUND" \
       "$(printf '%s\n' "$gd8_log" | grep '^STARTED')" "session $GD_LANE_ID@"
 is    "…as that log's one lane-kind line" "$(printf '%s\n' "$gd8_log" | grep -cE '^(STARTED|RESUMED) ' || :)" 1
-has   "…which the guard reads back as lane-start's own write" "$err" "repoGD-8's session cell now ends on $GD_LANE_ID, written by lane-start's binding mode"
-hasnt "…and nothing minted an id on the way through" "$err" "minted session id"
+has   "…which the bind reads back as lane-start's own write" "$gd_bind_said" "repoGD-8's session cell now ends on $GD_LANE_ID, written by lane-start's binding mode"
+hasnt "…and nothing minted an id on the way through" "$gd_bind_said" "minted session id"
 is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
 unset FAKE_TMUX_RENAME_STICKS FAKE_TMUX_NAME_FILE
+gd_bind_clear
 export FAKE_TMUX_WINDOW_NAME=repoGD-1
 export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
 
@@ -8432,10 +8523,20 @@ is    "a rename to a lane whose cell carries no uuid at all is the offer" "$rc" 
 has   "…naming the lane it would move to" "$err" "2) adjust the lane to session repoGD-4"
 gd_run "$GD_LANE_ID" "2"
 is    "…and \`yes\` moves the window" "$rc" 2
-has   "…saying so" "$err" "MOVED: this window is now lane repoGD-4"
-has   "…with lane-start's binding mode anchored on the cell's \`pending\` text" "$err" "session cell now ends on $GD_LANE_ID"
+has   "…by a bind that runs detached, answered BINDING (T502)" \
+      "$err" "BINDING: this window is now named repoGD-4, and its bind to lane repoGD-4 runs detached"
+gd_bind_wait
+is    "…whose record ends \`bound\`, inside its own deadline" "$gd_bind_end" bound
+gd_run "$GD_LANE_ID"
+is    "…and the next prompt hears it, and is not sent" "$rc" 2
+has   "…saying so" "$err" "MOVED: this window is lane repoGD-4, bound to this session ($GD_LANE_ID)"
+gd_run "$GD_LANE_ID"
+is    "…once: the prompt after it is judged by the table, where the three names now agree" "$rc" 0
+has   "…with lane-start's binding mode anchored on the cell's \`pending\` text" "$gd_bind_said" "session cell now ends on $GD_LANE_ID"
 has   "…which the register carries" "$("$E" register-row repoGD-4 2>/dev/null || :)" "$GD_LANE_ID"
+is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
 unset FAKE_TMUX_RENAME_STICKS FAKE_TMUX_NAME_FILE
+gd_bind_clear
 export FAKE_TMUX_WINDOW_NAME=repoGD-1
 export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
 
