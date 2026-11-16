@@ -130,7 +130,7 @@ SQL_REGISTER_GATE_TABLE = {
     "test_an_expired_or_foreign_declaration_changes_nothing": ("T117", "T304", "T409", "T507"),  # T219; tasks:2082
     "test_claude_no_lane_lets_a_session_through_before_any_input": ("T117", "T304", "T409", "T507"),  # T219; tasks:2082
     "test_outage_declare_is_refused_where_the_probe_reads_primary": ("T117", "T304", "T409", "T507"),  # T219; tasks:2082
-    "test_outage_declare_on_a_persons_word_during_a_rollback_is_refused_and_prints_the_rollback_form": ("T304",),  # T219; tasks:2082
+    "test_outage_declare_on_a_persons_word_during_a_rollback_is_refused_and_prints_the_rollback_form": ("T304", "T327"),  # T219; tasks:2082, and T327 (T219j)
     "test_outage_declare_refuses_while_the_database_answers_or_without_until": ("T117", "T304", "T409", "T507"),  # T219; tasks:2082
     "test_outage_declare_rollback_is_refused_for_a_wrong_k_a_missing_mirror_seq_or_a_switch_it_cannot_read": ("T117", "T304", "T409", "T507"),  # T219; tasks:2082
     "test_outage_declare_takes_mirror_seq_from_a_fetch_or_the_flag_and_refuses_with_neither": ("T504", "T505", "T506", "T507"),  # T215; tasks:2022
@@ -150,7 +150,7 @@ SQL_REGISTER_GATE_TABLE = {
     "test_without_a_declaration_the_same_age_still_starts_the_direct_read": ("T504", "T505", "T506", "T507"),  # T215; tasks:2022
     "test_writes_and_deciding_reads_still_refuse_during_a_declared_outage": ("T117", "T304", "T409", "T415", "T507"),  # T219; tasks:2082
     "test_outage_declare_rollback_is_refused_for_a_wrong_k_a_missing_mirror_seq_or_a_switch_it_cannot_read[not-a-rollback-entry]": ("T304",),  # T219; tasks:2082
-    "test_outage_declare_rollback_is_refused_for_a_wrong_k_a_missing_mirror_seq_or_a_switch_it_cannot_read[wrong-k]": ("T304",),  # T219; tasks:2082
+    "test_outage_declare_rollback_is_refused_for_a_wrong_k_a_missing_mirror_seq_or_a_switch_it_cannot_read[wrong-k]": ("T304", "T327"),  # T219; tasks:2082, and T327 (T219j)
 }
 
 INDEXER = REPO / "lanes-index"
