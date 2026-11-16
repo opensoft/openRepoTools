@@ -2627,17 +2627,41 @@ def test_the_deadlines_lookup_waits_past_the_largest_not_after(estates):
     passes `<n>`, then waiting on the head row's lock (lane 1's v2.6,
     behaviour 1); its script calls `find_write` with the write id, `<n>`,
     and the generation, lane, verb and `args_sha256` the commit calls sent.
-    The session then rolls back, and the writer exits 75."""
+    The session then rolls back, and the writer exits 75. Where the client's
+    own wait ends with the database's clock already past `<n>`, as the code
+    reads today, `find_write` does not sleep, and the try is seen first
+    waiting on the lock, with the clock past `<n>` (T246h)."""
     e = estates()
     h = HalfOpen(e, hold_lookup=False)
-    slept = until_seen("the lookup in PgSleep", lambda: e.c.value(
-        "SELECT count(*) FROM pg_stat_activity WHERE query LIKE '%find_write%' "
-        "AND wait_event = 'PgSleep' AND pid <> pg_backend_pid();") != "0", h.w)
-    assert slept and not db_past(e, h.n)
-    until_seen("the lookup waiting on a Lock", lambda: e.c.value(
-        "SELECT count(*) FROM pg_stat_activity WHERE query LIKE '%find_write%' "
-        "AND wait_event_type = 'Lock' AND pid <> pg_backend_pid();") != "0", h.w)
-    assert db_past(e, h.n)
+    # THE CLIENT CAN WAKE PAST `<n>` (T246h; lane 4, #165 6892092571). `journal`
+    # calls once its estimate puts `<n>` at most 2 s ahead
+    # (`9990baf0:lanes-index:16211`). That estimate is the snapshot's clock,
+    # floored to the second (`:3443`), plus whole `SECONDS` since its call
+    # ended (`9990baf0:lanes-edit.sh:9974`), so it only lags the database.
+    # Where it lags by about 2 s, `find_write` has no wait left
+    # (`9990baf0:lanes-index:11167-11168`), and every try goes straight to the
+    # head row the replay holds: a case that waited for `PgSleep` alone saw
+    # none, and the writer exited 3 at the window's end (3 runs in 9 of P25's
+    # T417#1 call). So the replay is released once the try is seen in
+    # `PgSleep` or waiting on the lock, and a try seen on the lock first still
+    # shows the wait: the database's clock is already past `<n>`. The wait and
+    # the clock are read in ONE statement, so the clock is the sighting's own,
+    # not a later statement's, after which a short `PgSleep` may have ended.
+    def seen(*waits: str) -> Optional[Tuple[str, float]]:
+        said = e.c.value(
+            "SELECT CASE WHEN wait_event = 'PgSleep' THEN 'PgSleep' ELSE wait_event_type END, "
+            f"extract(epoch FROM clock_timestamp() - '{h.n}'::timestamptz) FROM pg_stat_activity "
+            "WHERE query LIKE '%find_write%' AND (wait_event = 'PgSleep' OR wait_event_type = 'Lock') "
+            "AND pid <> pg_backend_pid() LIMIT 1;")
+        wait, _, past = said.partition("|")
+        return (wait, float(past)) if wait in waits else None
+
+    first, past = until_seen("the lookup in PgSleep or waiting on a Lock", lambda: seen("PgSleep", "Lock"), h.w)
+    print(f"[T246 wait] first seen {first}, the database's clock {past:+.3f} s past <n>")
+    if first == "PgSleep":
+        assert past < 0, f"the lookup was seen in PgSleep {past:.3f} s past <n>"
+        _, past = until_seen("the lookup waiting on a Lock", lambda: seen("Lock"), h.w)
+    assert past >= 0, f"the lookup was seen waiting on a Lock {-past:.3f} s before <n>"
     script = lookups(h.w)[0]["stdin"]
     entry = json.loads(ENTRY_IN_SCRIPT.search(h.w.commit_calls()[0]["stdin"]).group(1).replace("''", "'"))
     for value in (h.write_id, entry["journal"]["lane"], entry["journal"]["verb"],
