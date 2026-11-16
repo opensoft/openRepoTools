@@ -550,6 +550,19 @@
 #      carry both without the caller guessing, so the newer reads spend a number
 #      of their own and the older half of this file keeps 2 where it always was.
 #      Clause (h)'s table is the contract for which read uses which.
+#
+#  69  EX_UNAVAILABLE — THE REGISTER IS IN A MODE THIS WRITER CANNOT WRITE IN,
+#      AND NOTHING WAS WRITTEN (feature 007, T409; FR-002, FR-003). The write
+#      guard's verbs ask `lanes-index mode` once, where a configuration
+#      exists, before any routing, clone, fetch or lock, and exit 69 on two
+#      answers: 78, `lanes-index`'s refusal of `mode=primary` while the
+#      renderer's git half is not installed, whose text they repeat (agreement
+#      test 14); and `primary` itself, for which this file has no SQL write
+#      path yet (phase 2's T415 replaces that arm). Never files mode instead.
+#      Every other failure of the question — a configuration `lanes-index`
+#      refuses, a `lanes-index` too old to know `mode`, none to run, a crash,
+#      no answer within 2 s — runs the verb in files mode with one warning,
+#      and is never 69.
 #   3  PUSHED, NOT CONFIRMED: <sha> (Amendment 23 S4, its one cause). The write
 #      committed and pushed — or its push timed out, and a hung push often
 #      lands — and the read-back could not confirm the commit on origin: the
@@ -707,6 +720,16 @@
 #                      them as this process's own). Never set either: with any
 #                      other pid they are read as inherited from a parent and
 #                      dropped, with the LANES_REPO/DIR/FILE they came beside
+#   LANES__MODE        INTERNAL — a writer's answer to `lanes-index mode`,
+#                      exported by this file so that the same re-run asks
+#                      nothing again; taken only beside a `LANES__PID` or
+#                      `LANES__REPLAY_PID` equal to `$$`, and dropped otherwise
+#                      (feature 007). Never set it
+#   LANES_INDEX_CONFIG `lanes-index`'s configuration file, which only
+#                      `lanes-index` parses. Where it is set and non-empty, or
+#                      a file exists at its default path, a writer asks
+#                      `lanes-index mode` once (feature 007); where neither,
+#                      nothing is started
 #   AGENT_PROTOCOL_ROOT  dir holding workspace.yaml  (default: ~/.agents)
 #   LANES_PATH         pathspec of the register RELATIVE to LANES_REPO
 #                                           (default: `lanes/LANES.md`, derived
@@ -771,7 +794,8 @@
 #   LANES_DEBUG        non-empty: a refusal also prints its exit code
 #   LANES_INDEX=off    no `lanes-index sync` after a write, and `--index` reads
 #                      the sources (Amendment 14). It never turns a read ON:
-#                      only a typed `--index` does
+#                      only a typed `--index` does. It never skips a writer's
+#                      `lanes-index mode` question (feature 007)
 #
 # Dependencies: bash, git, coreutils. No sed/awk substitution on the payload —
 # every edit is computed with bash string operations, so `/`, `&`, `\` and `|`
@@ -1215,6 +1239,33 @@ if [ -n "${LANES__CHECKOUT_LANE:-}${LANES__PID:-}" ] && [ "${LANES__PID:-}" != "
   unset LANES__CHECKOUT_LANE LANES__PID LANES_REPO LANES_DIR LANES_FILE
 fi
 LANES_ROUTED="${LANES__CHECKOUT_LANE:-}"   # the lane, in the re-run process only
+# FEATURE 007, T409 — THE REGISTER'S MODE, ONE ANSWER PER PROCESS (lane 3's
+# R17 and R45; contract §3.1). `REG_MODE` is the one main-shell variable that
+# holds it: assigned empty here, whatever the environment says, and set once,
+# by assignment from the one answer: by the writers' question at the
+# dispatcher (`reg_mode_ask`), or here, from the answer a writer carried
+# across the routing's `exec` (`lane_checkout_enter`) as `LANES__MODE`. The
+# carry is taken ONLY where `LANES__PID` is `$$`, the check the routing's own
+# markers pass above, or where `LANES__REPLAY_PID` is `$$`, read here before
+# the replay's markers below are unset: S3's and S4's replay (`cs_recheck`,
+# `cp_replay`) is an `exec` too, which keeps the pid, and an unrouted write
+# has no `LANES__PID` (lane 3's ruling on T409's item 9, #165 6747281902).
+# Either way it is this process's answer from before its `exec`, and it is
+# never asked twice. Any other value was inherited from a process that ran
+# this file, and is dropped, so a child of a routed write asks for itself.
+# Its values: `index` and `primary`, the words `lanes-index mode` prints;
+# `files`, where no configuration exists or the question failed; `refused`,
+# for `lanes-index`'s 78, set just before this file exits 69 on it, so never
+# carried (`reg_mode_ask`; lane 5's answer 11, #165 6746507353). Empty: not
+# asked. Consumers test `= primary` only. Never exported: `LANES__MODE` is the
+# carry. `REG_ASK` is set by the write guard's arm at the dispatcher.
+REG_MODE=""
+REG_ASK=0
+if [ -n "${LANES__MODE:-}" ] &&
+   { [ "${LANES__PID:-}" = "$$" ] || [ "${LANES__REPLAY_PID:-}" = "$$" ]; }; then
+  case "$LANES__MODE" in index|primary|files) REG_MODE="$LANES__MODE" ;; esac
+fi
+[ -n "$REG_MODE" ] || unset LANES__MODE
 # AMENDMENT 23 S4 — THE REPLAY'S OWN MARKERS. A refused push drops this write's
 # commit and runs this file again with the same argv (`commit_publish`), and
 # `exec` keeps the pid: `LANES__REPLAY_PID` equal to `$$` is that re-run, and
@@ -1671,8 +1722,10 @@ rename_undo() {
 # at the state-event cache below, so a signal before that line removed what it
 # inherited. Every other path `cleanup`, `rename_undo` and `release_lock`
 # remove is set above, before the trap: `RL_*`, `LANES_IDX_DIR`,
-# `LANES_WT_IDX_DIR`, `LOCK` and `LOCK_HELD`.
-TMPD=""; pbh_tmp=""; rl_htmp=""; SE_CACHE_FILE=""
+# `LANES_WT_IDX_DIR`, `LOCK` and `LOCK_HELD`. `rmq_dir`, the mode question's
+# answer files (T409), is assigned only in `reg_mode_query`, so it starts empty
+# here too.
+TMPD=""; pbh_tmp=""; rl_htmp=""; SE_CACHE_FILE=""; rmq_dir=""
 # `write-handoff`'s ONE LINE ON STDOUT, `<file><TAB><sha256>`, printed by
 # `cleanup` once this process has written the handoff — committed or not, so a
 # refusal after the bytes (S3's for `--prepend` and `--whole`, a push not
@@ -1702,6 +1755,10 @@ cleanup() {
   [ -n "${SE_CACHE_FILE:-}" ] && rm -f -- "$SE_CACHE_FILE" "$SE_CACHE_FILE".* 2>/dev/null
   [ -n "${LANES_IDX_DIR:-}" ] && [ -d "${LANES_IDX_DIR:-}" ] && rm -rf -- "$LANES_IDX_DIR"
   [ -n "${LANES_WT_IDX_DIR:-}" ] && [ -d "${LANES_WT_IDX_DIR:-}" ] && rm -rf -- "$LANES_WT_IDX_DIR"
+  # THE MODE QUESTION'S ANSWER FILES, where a signal stopped the question
+  # (T409): `reg_mode_query` empties `rmq_dir` once it has removed them itself,
+  # so this removes only the directory this run's `mktemp` made, by its name.
+  [ -n "${rmq_dir:-}" ] && [ -d "${rmq_dir:-}" ] && [ ! -L "${rmq_dir:-}" ] && rm -rf -- "$rmq_dir"
   # `claim`'s whole reads (706) cross a re-run's `exec`, which runs no EXIT
   # trap, and go when the last run of the claim ends, however it ends.
   [ -z "${CP_CLAIM_READS_FILE:-}" ] || rm -f -- "$CP_CLAIM_READS_FILE"
@@ -3856,6 +3913,23 @@ index_nudge() {
   return 0
 }
 
+# THE ONE RESOLVER OF A `lanes-index` TO RUN (feature 007, T409; the review's
+# M9; contract §2.1, O11, closed): `$SCRIPT_DIR/lanes-index` first, then PATH,
+# the rule `index_open` has always used. A test's stand-in goes where it looks
+# first, beside a COPY of this file that also has the `repos.tsv` and
+# `lane-start` this file reads from `$SCRIPT_DIR`, so nothing installed runs.
+# Prints the path, or nothing where there is none. It resolves every
+# `lanes-index` call on the mode and SQL paths: `index_open` and the writers'
+# mode question here. `index_nudge` above keeps PATH alone, for the reason its
+# comment gives (lane 3's ruling on T409's item 8, #165 6747281902).
+lanes_index_bin() {
+  if [ -x "$SCRIPT_DIR/lanes-index" ]; then
+    printf '%s\n' "$SCRIPT_DIR/lanes-index"
+  else
+    command -v lanes-index 2>/dev/null || :
+  fi
+}
+
 # THE READ FLAG'S ONE DOOR. 0 with `LANES_IDX_DIR` set and `read: index (...)`
 # said; 1 with `read: sources (index <why>)` said and NOTHING set, so the caller
 # runs the source read exactly as it would have without the flag — and exits as
@@ -3880,10 +3954,7 @@ index_open() {   # [worktrees]
     printf 'read: sources (index off: LANES_INDEX=off)\n' >&2
     return 1
   fi
-  io_bin=""
-  if [ -x "$SCRIPT_DIR/lanes-index" ]; then io_bin="$SCRIPT_DIR/lanes-index"
-  else io_bin="$(command -v lanes-index 2>/dev/null || :)"
-  fi
+  io_bin="$(lanes_index_bin)"
   if [ -z "$io_bin" ]; then
     printf 'read: sources (index missing: no lanes-index beside %s or on PATH)\n' "$SCRIPT_DIR/lanes-edit.sh" >&2
     return 1
@@ -3942,6 +4013,136 @@ index_open() {   # [worktrees]
   state_events_flush
   printf 'read: index (%s) at register@%s; %s commits behind\n' "${io_store:-unknown}" "${io_sha:0:12}" "$io_behind" >&2
   return 0
+}
+
+# FEATURE 007, T409 — THE WRITERS' MODE QUESTION (FR-002; D3 and F8; contract
+# §3.1). Asked by the write guard's verbs only, once per writer process, at the
+# dispatcher, before the routing. It sets `REG_MODE` (file scope, above):
+#   index | primary  `lanes-index mode`'s own answer, word for word;
+#   files            no configuration, so nothing is started (D3); or a failure
+#                    of the question, said in ONE warning line, after which the
+#                    verb runs as it does with no configuration (F8);
+#   refused          a 78, `lanes-index`'s refusal of `mode=primary` while the
+#                    renderer's git half is not installed (Q6(c)): exit 69
+#                    here, repeating the one line it printed, with nothing
+#                    written and no files written instead (agreement test 14).
+# The question is `lanes-index mode` with no argument and no stdin, never
+# `-h` (lane 1's T105, #165 6747929926: 0 with `index` or `primary`, 78, 2 for
+# a refused configuration, 64 for an argument or a build with no `mode`). A
+# `REG_MODE` already set is the answer carried across the routing's `exec`:
+# nothing is asked again. `LANES_INDEX=off` never skips the question;
+# `lane-worktrees` sets it on every call it makes. The answer is exported as
+# `LANES__MODE` for the routing's `exec`, and a process of any other pid drops
+# it at file scope.
+reg_mode_ask() {
+  [ -z "$REG_MODE" ] || return 0
+  if reg_config_present; then reg_mode_query; else REG_MODE=files; fi
+  LANES__MODE="$REG_MODE"; export LANES__MODE
+}
+
+# A CONFIGURATION EXISTS where `lanes-index` would read one: the path its
+# `config_path` computes (`lanes-index:161–170`), tested as its `load_config`
+# tests it, `os.path.lexists`, so a link that leads nowhere counts and
+# `lanes-index` says what is wrong with it. `LANES_INDEX_CONFIG` counts only
+# set and non-empty, and is then asked whether or not its file exists: a named
+# file that is missing is `lanes-index`'s refusal, 2, so files mode with a
+# warning. Otherwise `$XDG_CONFIG_HOME`, or `<home>/.config`, then
+# `openRepoTools/lanes-index.conf`; an empty variable counts as unset, an unset
+# `HOME` is the password database's home (bash's `~`, as `_home`'s
+# `expanduser` reads it), and an empty `HOME` is `/`, as Python's is. Nothing
+# is parsed here: `lanes-index` stays the one parser (D3).
+reg_config_present() {
+  [ -z "${LANES_INDEX_CONFIG:-}" ] || return 0
+  rcp_base="${XDG_CONFIG_HOME:-}"
+  if [ -z "$rcp_base" ]; then
+    if [ -n "${HOME:-}" ]; then rcp_home="$HOME"
+    elif [ -z "${HOME+set}" ]; then rcp_home=~
+    else rcp_home=/
+    fi
+    rcp_base="${rcp_home%/}/.config"
+  fi
+  rcp_path="${rcp_base%/}/openRepoTools/lanes-index.conf"
+  [ -e "$rcp_path" ] || [ -L "$rcp_path" ]
+}
+
+# THE QUESTION, under this file's own 2 s timer (contract §2.4: "2 s, the
+# caller's"), which `timeout` holds where it is installed, as it holds
+# `git_net`'s and `index_open`'s; where it is not, the question runs unbounded,
+# as theirs do. Its stdout and stderr go to files, so a stand-in that leaves a
+# child behind holds no pipe open here, and stdout is compared whole: exactly
+# one line, `index` or `primary`, its newline optional (`cat -v`, so a NUL
+# cannot vanish from it). THE ONE FORM, with `timeout` and without it:
+# `( <call> <in >out 2>err; exit "$?" ) 2>/dev/null || rmq_rc=$?` (lane 3,
+# #165 6755027994, as 6755641373's point 2 corrects it). The call runs in a
+# subshell whose own stderr is /dev/null, so the job notice bash prints when it
+# reaps a call a signal ended ("Killed", "Terminated", "Segmentation fault"),
+# a `timeout` that had to KILL included, is printed there and never reaches
+# this file's stderr; the code is the same, and the call's own stderr stays in
+# its file. `exit "$?"` keeps the subshell a subshell: bash 5 runs a lone
+# command in `( )`, or `( …; )`, in place, which would put the notice back
+# here. Its one cost: bash's message for a redirection that fails goes to
+# /dev/null too, and `$rmq_dir` is a fresh `mktemp`. A signal that stops the
+# question leaves it to `cleanup`, which removes it while `rmq_dir` holds it.
+reg_mode_query() {
+  rmq_bin="$(lanes_index_bin)"
+  if [ -z "$rmq_bin" ]; then
+    reg_mode_files "could not be run: there is no lanes-index beside $SCRIPT_DIR/lanes-edit.sh or on PATH"
+    return 0
+  fi
+  rmq_dir="$(mktemp -d "${TMPDIR:-/tmp}/lanes-edit-mode.XXXXXX" 2>/dev/null || printf '')"
+  if [ -z "$rmq_dir" ]; then
+    reg_mode_files "could not be asked: no temporary directory could be made under ${TMPDIR:-/tmp} to hold its answer"
+    return 0
+  fi
+  rmq_rc=0; rmq_timer=bare
+  if command -v timeout >/dev/null 2>&1; then
+    rmq_timer=timed
+    ( timeout -k 1 2 "$rmq_bin" mode </dev/null >"$rmq_dir/out" 2>"$rmq_dir/err"; exit "$?" ) 2>/dev/null || rmq_rc=$?
+  else
+    ( "$rmq_bin" mode </dev/null >"$rmq_dir/out" 2>"$rmq_dir/err"; exit "$?" ) 2>/dev/null || rmq_rc=$?
+  fi
+  rmq_out="$(cat -v -- "$rmq_dir/out" 2>/dev/null; printf .)"; rmq_out="${rmq_out%.}"
+  # WHAT IT SAID, AS ONE LINE, for the warning or the refusal to repeat: its
+  # lines joined, control characters dropped, at most 1000 bytes.
+  rmq_said="$(head -c 1000 -- "$rmq_dir/err" 2>/dev/null | tr '\n\r\t' '   ' | tr -d '\000-\037' || :)"
+  while [ "${rmq_said% }" != "$rmq_said" ]; do rmq_said="${rmq_said% }"; done
+  rm -rf -- "$rmq_dir"; rmq_dir=""
+  case "${rmq_rc}:${rmq_timer}" in
+    0:*)
+      case "$rmq_out" in
+        index|"index"$'\n') REG_MODE=index ;;
+        primary|"primary"$'\n') REG_MODE=primary ;;
+        *) reg_mode_files "exited 0 without answering one line, index or primary" ;;
+      esac ;;
+    78:*)
+      REG_MODE=refused
+      [ -n "$rmq_said" ] || rmq_said="lanes-index printed no text"
+      die "$rmq_said (\`lanes-index mode\` exited 78, EX_CONFIG: lanes-index refuses this workstation's mode=primary in this build. \`$cmd\` wrote nothing, and wrote no files instead.)" 69 ;;
+    # 124 AND 137 EACH SAY WHAT THEY CAN MEAN, in `classify`'s words (T424).
+    # Under the timer, a 124 is its stop, and a 137 is its KILL a second after
+    # a stop that was ignored, or a kill that was not the timer's. Where the
+    # call ran bare, with no `timeout`, no timer ran: a 124 is the call's own
+    # code and takes the `*)` arm, "exited 124 (…)", and a 137 is a signal's
+    # (lane 3, #165 6767463594, item 1). Every one still runs files mode with
+    # one warning, as F8 runs every failure but 78 (Y:5712–5713; FR-002;
+    # contract §3.1; lane 3, #165 6755641373, point 1).
+    124:timed)
+      reg_mode_files "did not answer within 2 s, and was stopped (exit 124)" ;;
+    137:timed)
+      reg_mode_files "was killed (exit 137): by its 2 s timer after it ignored the stop, or by a signal" ;;
+    137:bare)
+      reg_mode_files "was killed by a signal (exit 137)" ;;
+    *)
+      reg_mode_files "exited $rmq_rc${rmq_said:+ ($rmq_said)}" ;;
+  esac
+  return 0
+}
+
+# A FAILED QUESTION: one warning line on stderr naming the failure, then files
+# mode, as with no configuration (F8; the design's S1, "Entry and mode").
+reg_mode_files() {   # <why>
+  note "WARNING: \`lanes-index mode\` $1, so \`$cmd\` runs in files mode, as on a workstation with no lanes-index configuration (feature 007, D3)."
+  REG_MODE=files
 }
 
 # Prints, to stdout, a comma-joined, de-duplicated list of the lane(s) whose
@@ -17979,6 +18180,7 @@ case "$cmd" in
   # same reason: each is ONE commit over several rows and logs, and every
   # `RETIRED` line it appends carries `session <uuid>@<ws>`.
   replace-in-row|append-session-id|append-line|add-row|set-row-state|migrate-state-cells|retire-rows|archive-rows|commit|log|claim|release|request-handoff|rename-lane)
+    REG_ASK=1   # feature 007, T409: these verbs ask the register's mode, after the workspace check
     ws_why="$(lanes_workstation_why "$WS_SOURCE")"
     [ -z "$ws_why" ] || die "$ws_why" 2 ;;
 esac
@@ -18021,6 +18223,26 @@ case "$cmd" in
     has one; re-run it (it is idempotent) or pull that checkout." 1
     ;;
 esac
+
+# FEATURE 007, T409 — THE WRITERS' MODE QUESTION AND PHASE 1'S MODE ARM
+# (FR-002, FR-003; lane 3's R17). Asked after the two guards above, so a
+# container with no workstation name and a W with no register refuse first,
+# and BEFORE THE ROUTING below, so a refusal here comes before any clone,
+# fetch, lock or `exec`. The write guard's verbs only (`REG_ASK`), and once
+# (`reg_mode_ask`). Under a flag T413 honours nothing is asked; T409 tests no
+# flag itself (lane 3, #165 6755005268): a stray `LANES_REGISTER_SCRATCH`
+# export skips nothing here, so a primary register still meets the 69 below
+# and never a files-mode write (Y:5034).
+# PHASE 1'S ARM: `primary` exits 69 here and never writes the files instead,
+# the placeholder that phase 2's T415 replaces (only a `lanes-index` newer than
+# this file answers it). `index` and `files` run the verb as it runs today.
+if [ "$REG_ASK" = 1 ]; then
+  reg_mode_ask
+  case "$REG_MODE" in
+    primary)
+      die "this lanes-edit.sh has no SQL write path: \`lanes-index mode\` answered primary, which only a lanes-index newer than this lanes-edit.sh answers. \`$cmd\` wrote nothing, and wrote no files instead. Install the lanes-edit.sh that ships with that lanes-index." 69 ;;
+  esac
+fi
 
 # AMENDMENT 23 S2 — UNDER `LANES_ROUTE_WRITES=1`, EVERY WRITE GOES THROUGH ITS
 # LANE'S CHECKOUT. Asked after the two guards above, so a container with no
