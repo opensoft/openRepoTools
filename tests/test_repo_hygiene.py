@@ -2907,6 +2907,33 @@ _EXIT_3_CAUSES = (
         re.compile(r"\bpushed\W+(?:but\W+)?not\W+confirmed\b", re.I),
         re.compile(r"\bnot\W+confirmed\s*:\W*(?:<sha>|\$\{?[A-Za-z_0-9@]+\}?)",
                    re.I)),
+    # FEATURE 007, ON PRIMARY (T417; D8; Y:2661-2665; R22, Q-L2-3 (a)): a
+    # register write in doubt that F3's lookup could not settle. Its die is
+    # `pw_lookup_3`'s; it names the write id, which the rerun reuses.
+    _Exit3Cause(
+        "a register write in doubt that F3's lookup could not settle",
+        "pw_lookup_3", None,
+        re.compile(r"\bcannot\W+confirm\W+whether\W+register\W+write\b", re.I),
+        re.compile(r"\bregister\W+write\W+(?:<id>|\$\{?[A-Za-z_0-9@]+\}?)",
+                   re.I)),
+    # FEATURE 007, ON PRIMARY (T417; Y:5216-5218; open point 42, under R26):
+    # an identical write's owner still live at D7's deadline, with a pending
+    # record or with none yet. Every die in `pw_owner_live_end` names the pid.
+    _Exit3Cause(
+        "an identical write's owner still live at the deadline",
+        "pw_owner_live_end", None,
+        re.compile(r"\bidentical\W+write\W+is\W+(?:still\W+running|being\W+started)\b",
+                   re.I),
+        re.compile(r"\bpid\W+(?:<p>|\$\{?[A-Za-z_0-9@]+\}?)", re.I)),
+    # FEATURE 007, ON PRIMARY (T417; DEC-25, #165 6750702819): the highest
+    # claim's owner cannot be tested here, and D7's deadline came before the
+    # seam's cap. Its die names the claim file.
+    _Exit3Cause(
+        "an identical write's claim whose owner cannot be tested here",
+        "pw_owner_untested_end", None,
+        re.compile(r"\bcannot\W+be\W+tested\W+here\b", re.I),
+        re.compile(r"\bclaim\W+(?:<state>/register-pending/<d>\.take\.<k>"
+                   r"|\$\{?[A-Za-z_0-9@]+\}?)", re.I)),
 )
 
 #: THE CAUSES AMENDMENT 23 S3-S4 WITHDREW, each with the words a die or a row
@@ -3193,6 +3220,10 @@ EXIT_3_SOURCE = '''\
 #   3  PUSHED, NOT CONFIRMED: <sha>. The push was sent, or it timed out, and
 #      the read-back could not confirm the commit on origin. Never success;
 #      the commit stays on HEAD, so look for it by content.
+#      On primary: cannot confirm whether register write <id> committed; the
+#      pending record is kept.
+#      Or an identical write is still running in pid <p>; or the claim
+#      <state>/register-pending/<d>.take.<k> cannot be tested here.
 #   4  the mutex could not be taken within 60s
 #   6  the commit is kept on HEAD after six attempts
 # --no-sweep is not an exit code
@@ -3213,6 +3244,15 @@ commit_publish() {
 cp_replay() {
   [ "$CP_ATTEMPT" -ge 6 ] && die "could not push origin/main after six attempts; the commit is kept on HEAD: $1" 6
 }
+pw_lookup_3() {   # <the end's code>
+  die "cannot confirm whether register write $WR_ID committed; nothing else was written" 3
+}
+pw_owner_live_end() {
+  die "an identical write is still running in pid $po_p (write $id); this run sent nothing" 3
+}
+pw_owner_untested_end() {
+  die "an identical write holds the claim $pu_f, whose owner cannot be tested here; this run sent nothing" 3
+}
 '''
 
 EXIT_3_MANUAL = '''\
@@ -3221,7 +3261,7 @@ EXIT_3_MANUAL = '''\
 | code | meaning |
 |---|---|
 | 0 | done, and for a write confirmed by a read-back |
-| 3 | **pushed, not confirmed: `<sha>`**. The push was sent, or it timed out, and the read-back could not confirm the commit on origin. Never success; the commit stays on HEAD |
+| 3 | **pushed, not confirmed: `<sha>`**. The push was sent, or it timed out, and the read-back could not confirm the commit on origin. On primary, cannot confirm whether register write `<id>` committed, and the pending record is kept; or an identical write is still running in pid `<p>`; or the claim `<state>/register-pending/<d>.take.<k>` cannot be tested here. Never success; the commit stays on HEAD |
 | 4 | the mutex could not be taken within 60s |
 
 3 to 6 are the codes this helper already used; 7 and 8 were free.
