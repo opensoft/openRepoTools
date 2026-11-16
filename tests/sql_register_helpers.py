@@ -10,7 +10,9 @@ Test modules import it from `tests/`, as three modules import
   `value`, True or False. It takes the constant in either state, so test 14's
   refusing copy still builds once lane 3's T328 sets it True (T277). There is
   no environment override, which would be a production bypass of Q6(c)'s
-  refusal (the test plan's open point 3; PC-5). `dest` is a directory, so a
+  refusal (the test plan's open point 3; PC-5). Since T124 the constant is
+  the launcher's, and the copy has the launcher's module,
+  `lanes_index_main.py`, beside it. `dest` is a directory, so a
   test copies `lanes-edit.sh` and what it reads beside the copy, where
   `lanes-index` and `lanes-edit.sh` each look for the other.
 - `primary_stub(directory)`: a stub `lanes-index` for the bash tests, at
@@ -204,6 +206,10 @@ LANES_INDEX = REPO / "lanes-index"
 #: `RENDER_GIT_HALF = False` until lane 3's T328 sets it True.
 RENDER_GIT_HALF_LINE = re.compile(rb"^RENDER_GIT_HALF = (True|False)$", re.M)
 
+#: T124'S MODULE (tasks:2850-2854; FR-064): `lanes-index` is a launcher that
+#: runs its body from this file beside it, so a copy needs it beside the copy.
+LANES_INDEX_MODULE = "lanes_index_main.py"
+
 #: The name of each stub's argv log, beside the stub.
 ARGV_LOG = "lanes-index.argv"
 
@@ -227,8 +233,11 @@ def flipped_copy(source, dest, value) -> Path:
     `RENDER_GIT_HALF` line rewritten to `value`, and return the copy's path.
 
     The copy is the source's bytes but that one line, with the executable bit.
-    `dest` is made if it is missing. A source with no such line, or with more
-    than one, is refused, so a test never runs a copy it did not flip."""
+    Where the source has T124's module, `lanes_index_main.py`, beside it, the
+    module's bytes are placed beside the copy, which runs them (tasks:2853),
+    and no bytecode of it. `dest` is made if it is missing. A source with no
+    such line, or with more than one, is refused, so a test never runs a copy
+    it did not flip."""
     if not isinstance(value, bool):
         raise TypeError(f"flipped_copy: value must be True or False, not {value!r}")
     text = Path(source).read_bytes()
@@ -241,6 +250,9 @@ def flipped_copy(source, dest, value) -> Path:
     copy = directory / "lanes-index"
     copy.write_bytes(RENDER_GIT_HALF_LINE.sub(b"RENDER_GIT_HALF = " + str(value).encode(), text))
     copy.chmod(0o755)
+    module = Path(source).with_name(LANES_INDEX_MODULE)
+    if module.is_file():
+        (directory / LANES_INDEX_MODULE).write_bytes(module.read_bytes())
     return copy
 
 

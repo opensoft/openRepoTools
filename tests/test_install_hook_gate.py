@@ -174,8 +174,9 @@ def test_deferred_install_places_29_and_writes_29_receipt_rows(tmp_path):
     """TWENTY-NINE ARTIFACTS ALWAYS: the seventeen files, the six skill copies
     and the six command files are placed whether or not the pair can be, and
     the receipt — which never had hook rows — says the same twenty-nine. A
-    second run reports exactly those twenty-nine `unchanged`, and no line of
-    the deferred pair claims to be one of them."""
+    second run reports exactly those twenty-nine `unchanged`, and `lanes-index`'s
+    cached module, which is no artifact of the count and has no receipt row
+    (007 T347), and no line of the deferred pair claims to be one of them."""
     assert ALWAYS == ARTIFACTS - HOOK_ENTRIES == 29
     first = install(tmp_path)
     assert first.returncode == 0, first.stdout + first.stderr
@@ -185,7 +186,7 @@ def test_deferred_install_places_29_and_writes_29_receipt_rows(tmp_path):
     assert len(receipt_rows(tmp_path)) == ALWAYS
     second = install(tmp_path)
     assert second.returncode == 0, second.stdout + second.stderr
-    assert second.stdout.count("unchanged") == ALWAYS, second.stdout
+    assert second.stdout.count("unchanged") == ALWAYS + 1, second.stdout
     assert "deferred, not added" in second.stdout
 
 
@@ -583,8 +584,9 @@ def test_wip_init_dry_run_names_the_hook_merge(tmp_path, where):
 @NEEDS_TEMPLATE
 def test_repeat_install_after_init_is_unchanged_one_entry_each(tmp_path):
     """ONCE THE TARGET ANSWERS, `--install` IS WHAT IT WAS: a repeat after
-    `wip init` reports all thirty-one artifacts `unchanged`, rewrites nothing,
-    and leaves exactly one entry of each."""
+    `wip init` reports all thirty-one artifacts `unchanged`, and `lanes-index`'s
+    cached module (007 T347), rewrites nothing, and leaves exactly one entry
+    of each."""
     home, env = wip_world(tmp_path)
     (home / "projects" / "xFactory").mkdir()
     assert run_with(env, "--install").returncode == 0
@@ -592,7 +594,7 @@ def test_repeat_install_after_init_is_unchanged_one_entry_each(tmp_path):
     written = settings_of(home).read_bytes()
     again = run_with(env, "--install")
     assert again.returncode == 0, again.stdout + again.stderr
-    assert again.stdout.count("unchanged") == ARTIFACTS, again.stdout
+    assert again.stdout.count("unchanged") == ARTIFACTS + 1, again.stdout
     assert settings_of(home).read_bytes() == written
     assert session_start_commands(home) == [HOOK_COMMAND]
     assert user_prompt_commands(home) == [GUARD_COMMAND]

@@ -97,9 +97,18 @@ SKILL_PATH = SKILL_PATHS[0]
 COMMAND_NAMES = ("handoff", "ctx", "swap")
 COMMAND_PATHS = tuple(f"commands/{n}.md" for n in COMMAND_NAMES)
 
-#: Everything a stdin install has to fetch: the seventeen files, the three skills
-#: and the three command files.
-FETCHED = INSTALLED + SKILL_PATHS + COMMAND_PATHS
+#: `lanes-index`'s CACHED MODULE (007 T347; FR-064): since T124 `lanes-index`
+#: runs its body from it, so `--install` places it beside the seventeen, by a
+#: step of its own, with its checked-hash bytecode. It is a payload file and
+#: not an installable: it has no receipt row and is no artifact of the count,
+#: and its lines begin `openRepoTools:`, so its one `(unchanged)` on a second
+#: run is the only line it adds to a count of them.
+CACHED_MODULE = "lanes_index_main.py"
+
+#: Everything a stdin install has to fetch: the seventeen files, `lanes-index`'s
+#: cached module (007 T347), the three skills and the three command files, in
+#: `payload_names`' order.
+FETCHED = INSTALLED + (CACHED_MODULE,) + SKILL_PATHS + COMMAND_PATHS
 
 #: THIRTY-ONE ARTIFACTS, AND THE COUNT IS THE INVARIANT: seventeen files in the
 #: bin directory, three skills in the shared skills directory, their three
@@ -457,7 +466,12 @@ def test_installing_twice_changes_nothing(tmp_path):
     # entry, which is the `HOOK_ENTRIES` term above — and the two count only
     # because `link_xfactory` gave them a target that answers `guard` (#237);
     # without it the count is `ALWAYS` (`tests/test_install_hook_gate.py`).
-    assert second.stdout.count("unchanged") == ARTIFACTS
+    # And one line more since 007 T347, which is no artifact of the count:
+    # `lanes-index`'s cached module, found in place, says `(unchanged)` too.
+    module = f"openRepoTools: `lanes-index`'s cached module already at " \
+             f"{tmp_path / '.local' / 'bin' / CACHED_MODULE} (unchanged)"
+    assert second.stdout.splitlines().count(module) == 1, second.stdout
+    assert second.stdout.count("unchanged") == ARTIFACTS + 1
 
 
 @pytest.mark.parametrize("name", INSTALLED)

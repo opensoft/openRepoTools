@@ -16575,6 +16575,8 @@ A14_BIN="$SANDBOX/a14bin"; A14_FAKE="$SANDBOX/a14fake"; A14_CONF="$SANDBOX/a14co
 mkdir -p "$A14_BIN" "$A14_FAKE" "$A14_CONF"
 cp -p "$SRC_DIR/lanes-index" "$A14_BIN/lanes-index"
 chmod 755 "$A14_BIN/lanes-index"
+# T124: the launcher runs its body from lanes_index_main.py, beside it.
+cp -p "$SRC_DIR/lanes_index_main.py" "$A14_BIN/lanes_index_main.py"
 A14_PSQL_LOG="$SANDBOX/a14-psql.log"
 : > "$A14_PSQL_LOG"
 cat > "$A14_FAKE/psql" <<FAKE

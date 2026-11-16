@@ -1313,18 +1313,22 @@ jobs:
       # FR-055; section 10 of the SQL register's contract).
       # `lanes-index ready`'s check 1 reads `openRepoTools-<release>.sha256`
       # beside the `lanes-index` that PATH names, in `sha256sum`'s own form,
-      # and fails a list that does not name `lanes-index` and
-      # `lanes-edit.sh`. This
+      # and fails a list that does not name `lanes-index`, `lanes-edit.sh`
+      # and, since 007 T347, `lanes_index_main.py`. This
       # writes the release's: one `<sha256>  <name>` line for each file
       # `openRepoTools --install` places beside `lanes-index` from the
       # payload, which is every name of the one-line `INSTALLABLES` array in
       # the wheel's own `payload/openRepoTools`, in its order, but
       # `openRepoTools` itself, whose place in a pipx install is pipx's link
-      # to pip's console script, not the payload's file. Each digest is of
+      # to pip's console script, not the payload's file; then
+      # `lanes_index_main.py`, the module `lanes-index` runs its body from,
+      # named by the installer's one-line `LANES_INDEX_MODULE` (007 T347),
+      # and never its bytecode, which the interpreter makes and check 1
+      # compares with its own compilation instead. Each digest is of
       # the verified wheel's own member, the bytes pip installs and
       # `--install` copies, so `--install` in this release's package writes
       # the same file, byte for byte (`digest_list_place` in
-      # `openRepoTools`). A list that would not name both of check 1's two,
+      # `openRepoTools`). A list that would not name each name check 1 requires,
       # a name that is not one file name, and a member the wheel lacks each
       # refuse, naming it. The list is kept as an artifact and its sha256
       # recorded, for the `asset` job.
@@ -1347,9 +1351,10 @@ jobs:
           payload = "openrepotools/payload/"
           listed = f"openRepoTools-{version}.sha256"
           # check 1's own reading of a name (`_READY_DIGEST_LINE_RE`), and the
-          # two names it requires
+          # names it requires (`_READY_DIGEST_NAMES`, which since 007 T347
+          # names `lanes-index`'s cached module too)
           one_name = re.compile(r"[A-Za-z0-9_+-][A-Za-z0-9._+-]*")
-          required = ("lanes-index", "lanes-edit.sh")
+          required = ("lanes-index", "lanes-edit.sh", "lanes_index_main.py")
           try:
               wheel = zipfile.ZipFile(wheel_path)
           except (OSError, zipfile.BadZipFile) as error:
@@ -1373,10 +1378,20 @@ jobs:
                            f"one-line array: {opening} INSTALLABLES=(")
               names = [name for name in arrays[0][len("INSTALLABLES=("):-1].split()
                        if name != "openRepoTools"]
+              # `lanes-index`'s cached module, after the commands, as
+              # `--install` lists it (007 T347)
+              modules = [line[len("LANES_INDEX_MODULE="):] for line in text.split("\n")
+                         if line.startswith("LANES_INDEX_MODULE=")]
+              if len(modules) != 1:
+                  sys.exit(f"::error::{payload}openRepoTools does not declare LANES_INDEX_MODULE "
+                           f"on one line: {len(modules)} lines do")
+              names += modules
               problems = [f"{name!r} is not one file name, as check 1 reads one"
                           for name in names if not one_name.fullmatch(name) or name in (".", "..")]
               problems += [f"{name} is named twice" for name in sorted(set(names))
                            if names.count(name) > 1]
+              problems += [f"{name} is bytecode, which the interpreter makes and no release lists"
+                           for name in names if name.endswith(".pyc")]
               problems += [f"the list would not name {name}, which check 1 requires"
                            for name in required if name not in names]
               for problem in problems:
@@ -2028,11 +2043,12 @@ jobs:
           fi
 
       # ON PYTHON 3.9, THE SHIPPED BYTES COMPILE (FR-032): the two payload
-      # commands written in Python, `lanes-index` and `lane-worktrees`, as
-      # the installed package holds them under its own `payload/`, compiled
-      # by this leg's python3, the oldest the package supports. Nothing is
-      # written: `compile()` keeps no bytecode.
-      - name: on Python 3.9, the installed payload's own lanes-index and lane-worktrees compile
+      # commands written in Python, `lanes-index` and `lane-worktrees`, and
+      # `lanes_index_main.py`, the module `lanes-index` runs its body from
+      # (007 T347), as the installed package holds them under its own
+      # `payload/`, compiled by this leg's python3, the oldest the package
+      # supports. Nothing is written: `compile()` keeps no bytecode.
+      - name: on Python 3.9, the installed payload's own lanes-index, lanes_index_main.py and lane-worktrees compile
         if: matrix.python == '3.9'
         run: |
           python3 -I - <<'PY'
@@ -2047,7 +2063,7 @@ jobs:
               sys.exit(f"::error::pipx's openrepotools environment at {venv} holds {found}, "
                        "not one payload directory")
           problems = []
-          for name in ("lanes-index", "lane-worktrees"):
+          for name in ("lanes-index", "lanes_index_main.py", "lane-worktrees"):
               path = os.path.join(found[0], name)
               try:
                   with open(path, "rb") as handle:

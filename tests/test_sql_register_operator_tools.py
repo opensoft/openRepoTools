@@ -69,7 +69,9 @@ a write is needed (lane 3's batch 7, "OTd's reading", #165 6780364102).
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
+import marshal
 import os
 import re
 import shlex
@@ -102,11 +104,14 @@ pytestmark = [WINDOWS_SKIP]
 #: `lanes-index` alone and lands with T119, so its row names T119. The "*" row
 #: holds T119 already, so the row adds no wait: it records the clause. The
 #: ready environment's count of 14 checks (tasks:2056) waits for it too.
+#: `[cache-payload]` fails until T124's check-1 comparison lands, and lands in
+#: T124's pull request (tasks:2072, :2850 and :2852), so its row names T124.
 SQL_REGISTER_GATE_TABLE = {
     "*": ("T104", "T109", "T119", "T120", "T229"),  # every id: the tasks all its rows share
     "test_the_readiness_check_fails_on_each_fault[outage-declared]": ("T121",),  # T218; tasks:2072
     "test_the_readiness_check_fails_on_each_fault[old-git]": ("T119",),  # T119's follow-up 2; tasks:2072
     "test_the_readiness_check_passes_a_ready_environment": ("T119",),  # its count of 14; tasks:2056
+    "test_the_readiness_check_fails_on_each_fault[cache-payload]": ("T124",),  # check 1; tasks:2072
 }
 
 #: The label `register_label=` names, and the one the second database's
@@ -544,6 +549,21 @@ def test_set_mode_primary_or_index_on_an_unwritable_file_that_already_says_it_ex
 # oracle). Its control is the same bench with the real git, whose check 14 is
 # `ok`. It fails until that follow-up lands: before it, `ready` prints no
 # check 14 line, and the control says so.
+#
+# CHECK 1'S COMPARISON (T218's follow-up for T124, tasks:2056, :2072 and :2854
+# at commit 24; lane 3's ruling, commit 20's post; lane 2, #165 6879048130):
+# since T124, check 1 also compiles the digest-checked cached module with the
+# interpreter `lanes-index` runs on, in checked-hash mode (PEP 552, flags
+# 0b11), and fails unless the result equals the installed bytecode byte for
+# byte. `[cache-payload]` keeps the installed cache's header, flags 0b11 and
+# the module's source hash, and puts another module's code after it, so check
+# 1 fails, naming the cached module. `ready` runs from a clean install off
+# `PATH`, since the bench's own copy would run that code at its start; check 1
+# reads the install `PATH` names, the bench's. Where T124's `flipped_copy`
+# places the module beside a copy (tasks:2853), the bench's list names it, as
+# the release's does (T347), and the bench writes the install's checked-hash
+# bytecode where none is there. It fails until T124 lands, and lands in
+# T124's pull request, whose verify's third call selects it.
 
 #: One check's line (T119's line form).
 CHECK_LINE = re.compile(r"^check (\d+): (ok|FAIL)\b:?[ \t]*(.*)$", re.M)
@@ -559,6 +579,18 @@ def _addresses(host: str) -> list:
     `getaddrinfo` with `SOCK_STREAM`, any family, no flags (check 13)."""
     return sorted({info[4][0] for info in
                    socket.getaddrinfo(host, 5432, 0, socket.SOCK_STREAM)})
+
+
+#: T124's cached module, beside `lanes-index` (tasks:2850; its name is lane
+#: 1's to fix, tasks:2853).
+CACHED_MODULE = "lanes_index_main.py"
+
+#: The install's compile of the cached module: checked-hash bytecode, as
+#: `openRepoTools --install` writes it (T347), at `py_compile`'s own place.
+#: Its `dfile` is the module's name, the filename check 1 compiles it under (T347).
+CHECKED_HASH_COMPILE = ("import py_compile, sys; py_compile.compile(sys.argv[1], doraise=True, "
+                        f"dfile={CACHED_MODULE!r}, "
+                        "invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH)")
 
 
 class ReadyBench(Estate):
@@ -581,7 +613,27 @@ class ReadyBench(Estate):
         self.env["LANES_WORKSTATION"] = "Eagle"
         self.tools = self.copy.parent
         self.env["PATH"] = self.path_with(self.tools)
+        self.module_caches()
         self.digests(stale=False)
+
+    def module_caches(self, tools: Path | None = None) -> list:
+        """The checked-hash bytecode of T124's cached module in `tools` (the
+        bench's tool directory by default), as the install leaves it beside
+        the module (T347). Where `tools` holds the module and no bytecode of
+        it, it is written as the install writes it, by `py_compile` in
+        checked-hash mode with the interpreter `lanes-index` runs on. Empty
+        where `tools` holds no cached module, as before T124."""
+        tools = tools or self.tools
+        module = tools / CACHED_MODULE
+        if not module.exists():
+            return []
+        found = sorted(tools.rglob(f"{module.stem}*.pyc"))
+        if not found:
+            subprocess.run([sys.executable, "-I", "-c", CHECKED_HASH_COMPILE, str(module)],
+                           check=True, capture_output=True, timeout=120,
+                           stdin=subprocess.DEVNULL)
+            found = [Path(importlib.util.cache_from_source(str(module)))]
+        return found
 
     def path_with(self, tools: Path, *, psql: bool = True) -> str:
         """`PATH`: the fake `psql`'s directory, then `tools`, then the inherited
@@ -602,11 +654,14 @@ class ReadyBench(Estate):
 
     def digests(self, *, stale: bool, tools: Path | None = None) -> None:
         """Check 1's list in `tools` (the bench's tool directory by default):
-        one `<sha256>  <name>` line, `sha256sum`'s form, for each of `TOOLS`.
-        With `stale`, `lanes-index`'s digest alone is another release's."""
+        one `<sha256>  <name>` line, `sha256sum`'s form, for each of `TOOLS`,
+        and for T124's cached module where `tools` holds it, as the release's
+        list names it (T347). With `stale`, `lanes-index`'s digest alone is
+        another release's."""
         tools = tools or self.tools
         lines = []
-        for name in self.TOOLS:
+        cached = (CACHED_MODULE,) if (tools / CACHED_MODULE).exists() else ()
+        for name in self.TOOLS + cached:
             digest = hashlib.sha256((tools / name).read_bytes()).hexdigest()
             if stale and name == "lanes-index":
                 digest = hashlib.sha256(b"another release").hexdigest()
@@ -615,10 +670,12 @@ class ReadyBench(Estate):
 
     def install(self, directory: Path, *, refusing: bool) -> Path:
         """A second install in `directory`: `lanes-index` with `RENDER_GIT_HALF`
-        set to `not refusing`, `lanes-edit.sh`, and check 1's list naming both;
+        set to `not refusing`, `lanes-edit.sh`, and check 1's list naming both,
+        with T124's cached module and its bytecode where the copy has it;
         returns its `lanes-index`."""
         copy = flipped_copy(REPO / "lanes-index", directory, not refusing)
         shutil.copy2(self.tools / "lanes-edit.sh", directory / "lanes-edit.sh")
+        self.module_caches(directory)
         self.digests(stale=False, tools=directory)
         return copy
 
@@ -686,14 +743,22 @@ FAULTS = {
     "expect-primary-origin-another": (8, "RE"),
     "version-window": (9, "RE"),
     "old-git": (14, "FP"),
+    "cache-payload": (1, "FP"),
 }
 
 #: Words a fault's own `FAIL` line must hold, where AT-P8's oracle names them:
 #: `[old-git]`'s line names the shim's git 2.31.1 as older than 2.32
-#: (register-cli.md section 10's words).
+#: (register-cli.md section 10's words), and `[cache-payload]`'s names the
+#: cached module (tasks:2854).
 REASONS = {
     "old-git": ("git 2.31.1", "older than 2.32"),
+    "cache-payload": (Path(CACHED_MODULE).stem,),
 }
+
+#: `[cache-payload]`'s code: another module's, which exits at once, naming
+#: itself, if anything runs it.
+OTHER_MODULE = ("raise SystemExit(\"T218 [cache-payload]: another module's code, "
+                "not lanes-index's, was run\")\n")
 
 #: `[old-git]`'s answer to `git --version`: one minor below check 14's floor.
 OLD_GIT = "git version 2.31.1"
@@ -734,6 +799,29 @@ def _fp_fault(bench: ReadyBench, fault: str) -> subprocess.CompletedProcess:
         assert said.returncode == 0 and said.stdout == f"{OLD_GIT}\n", (
             f"[old-git] the shim does not answer {OLD_GIT!r}:\n{_said(said)}")
         return bench.ready(config, "--expect", "index", path=path)
+    if fault == "cache-payload":
+        module = bench.tools / CACHED_MODULE
+        assert module.exists(), (
+            f"[cache-payload] there is no {CACHED_MODULE} beside the bench's lanes-index: lane "
+            f"1's T124, which runs lanes-index's body from that cached module and gives check 1 "
+            f"its comparison, has not landed, so there is no cached module to check")
+        source_hash = importlib.util.source_hash(module.read_bytes())
+        payload = marshal.dumps(compile(OTHER_MODULE, str(module), "exec"))
+        caches = bench.module_caches()
+        assert caches, f"[cache-payload] {CACHED_MODULE} has no bytecode beside it"
+        for cache in caches:
+            data = cache.read_bytes()
+            # PEP 552's header: the magic, the flags, then the source's hash.
+            assert (int.from_bytes(data[4:8], "little") == 0b11
+                    and data[8:16] == source_hash and data[16:] != payload), (
+                f"[cache-payload] {cache} is not the module's checked-hash bytecode (flags "
+                f"0b11 and its source hash), so the fault would not be the code alone")
+            cache.write_bytes(data[:16] + payload)
+        # `ready` runs from a clean install off PATH, since the bench's own copy
+        # would run the other module's code at its start; check 1 reads the
+        # install PATH names, the bench's, whose cache now carries that code.
+        runner = bench.install(bench.root / "runner", refusing=False)
+        return bench.ready(config, "--expect", "index", copy=runner)
     raise AssertionError(f"no FP fault {fault}")
 
 
@@ -799,6 +887,17 @@ def _re_fault(env: ReadyEnvironment, fault: str) -> subprocess.CompletedProcess:
     raise AssertionError(f"no RE fault {fault}")
 
 
+#: WHETHER T124'S LAUNCHER READS THE MODULE'S BYTECODE AT ALL: on Python 3.11
+#: and later (T282c's constant, in the build-flip module). Lane 1's gate (#165
+#: 6894131980; its prototype version 3, 6894948278) adds `sys.version_info >=
+#: (3, 11)` beside the launcher's cache-tag and `-O` tests, and check 1 compares
+#: bytecode on the same interpreters, so on 3.9 and 3.10 check 1 compares no
+#: bytes, names the module's source path and passes: `[cache-payload]` is no
+#: fault there (tasks:2056, :2058 and :2854; TP:3056, :3133 and :3181; lane 3's
+#: ruling 2, #165 6885378657).
+LAUNCHER_READS_BYTECODE = sys.version_info >= (3, 11)
+
+
 @pytest.mark.parametrize("fault", list(FAULTS))
 def test_the_readiness_check_fails_on_each_fault(tmp_path, request, fault):
     number, kind = FAULTS[fault]
@@ -812,6 +911,27 @@ def test_the_readiness_check_fails_on_each_fault(tmp_path, request, fault):
             f"[{fault}] the control, with the fault taken away, does not pass check "
             f"{number}{missing}:\n{_said(control)}")
         proc = _fp_fault(bench, fault)
+        if fault == "cache-payload" and not LAUNCHER_READS_BYTECODE:
+            # ON 3.9 AND 3.10 THE PAYLOAD IS NO FAULT (`LAUNCHER_READS_BYTECODE`):
+            # check 1 compares no bytes, so its line passes, naming the module's
+            # source path, and `ready` answers as it does for the control. TP:3133's
+            # exit 0 is the ready environment's, and this bench is none (its checks
+            # that read the database fail on the fake `psql`), so the case asserts
+            # the control's exit and the control's state on each check line.
+            source = str(bench.tools / CACHED_MODULE)
+            checks = _checks(proc.stdout)
+            line = checks.get(number, ("", ""))
+            assert line[0] == "ok" and source in line[1], (
+                f"[{fault}] below Python 3.11 check {number} is not ok naming the module's "
+                f"source path {source}:\n{_said(proc)}")
+            control_checks = _checks(control.stdout)
+            answer = (proc.returncode, {n: state for n, (state, _) in checks.items()})
+            control_answer = (control.returncode,
+                              {n: state for n, (state, _) in control_checks.items()})
+            assert answer == control_answer, (
+                f"[{fault}] below Python 3.11 the payload changed ready's answer from the "
+                f"control's:\n{_said(control)}\n{_said(proc)}")
+            return
     else:
         proc = _re_fault(ReadyEnvironment(request, tmp_path), fault)
     checks = _checks(proc.stdout)

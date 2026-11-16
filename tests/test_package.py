@@ -73,8 +73,10 @@ BUILD_LOCK = REPO / ".github" / "release-build-requirements.txt"
 
 #: THE ONE PAYLOAD FILE THAT IS NOT ON THE INSTALLER'S LIST. `wip init` reads
 #: the openRepoShape pin from beside the installer (`wip_shape_ref`), so the
-#: wheel carries it as the force-include map's 24th entry, after the
-#: installer's own 23.
+#: wheel carries it as the force-include map's 25th entry, after the
+#: installer's own 24 (the seventeen `INSTALLABLES`, `lanes-index`'s cached
+#: module, `lanes_index_main.py`, since 007 T347, and the six skill and
+#: command files).
 PIN = "contracts/openreposhape-pin.yaml"
 
 #: contracts/wheel.md's `pyproject.toml`, as the tests below hold it.
@@ -515,7 +517,7 @@ def test_wheel_holds_its_member_list_and_nothing_else(built_wheel,
                                                       payload_list):
     """contracts/wheel.md's CHECK 6, AND ITS LIST HELD THE OTHER WAY TOO.
 
-    The members are the three modules, the 24 payload files and the five
+    The members are the three modules, the 25 payload files and the five
     `.dist-info` names, and "the wheel holds nothing else": a member outside
     the list is named, and so is one the list has and the wheel lacks, which
     checks 2, 3 and 5 alone would pass over. A wheel without `cli.py` has no
@@ -1041,7 +1043,7 @@ def test_entry_wip_shape_ref_reads_the_pin_packaged_beside_the_payload(
     the installer's own `wip_shape_ref`, cut out with `installer_function`,
     runs with `$SELF` set to that path, as the packaged `openRepoTools` sets
     it from `BASH_SOURCE`. It prints the commit of the pin packaged beside
-    the payload, the force-include map's 24th entry, and reaches nothing on
+    the payload, the force-include map's 25th entry, and reaches nothing on
     the fetch path to get it.
     """
     record = tmp_path / "bash-was-given"

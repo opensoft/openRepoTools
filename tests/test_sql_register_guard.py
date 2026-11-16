@@ -2558,15 +2558,19 @@ ANCHOR_ALLOW_WRITE = "{ printf 'mode=allow\\n'"
 
 def _bind_copy(est: Estate, edits) -> Path:
     """POINT 23's TEST-ONLY COPY (lane 3's ruling, #165 6879754335): the
-    checkout's `lanes-edit.sh`, with `repos.tsv`, `lane-start` and
-    `lanes-index` beside it as the checkout has them (the copy rule,
-    CLI4.5:885), and each of `edits`, an (anchor, text) pair, made once, as
+    checkout's `lanes-edit.sh`, with `repos.tsv`, `lane-start`, `lanes-index`
+    and T124's module `lanes_index_main.py` beside it as the checkout has them
+    (the copy rule, CLI4.5:885; T124's launcher runs its body from the module
+    beside its own `realpath`, and a launcher copied without it exits 1; a
+    name the checkout lacks is skipped, as the module is before T124), and
+    each of `edits`, an (anchor, text) pair, made once, as
     `[answer-2]` edits its stub (`_bound_through_answer_2_on_the_stub`): an
     anchor found other than once fails the case there, so a copy never runs
     without the edit it was made for. The shipped script is never changed."""
     code = est.root / "bind-copy"
     code.mkdir()
-    for name in ("lanes-edit.sh", "repos.tsv", "lane-start", "lanes-index"):
+    for name in ("lanes-edit.sh", "repos.tsv", "lane-start", "lanes-index",
+                 "lanes_index_main.py"):
         if (REPO / name).exists():
             shutil.copy2(REPO / name, code / name)
     copy = code / "lanes-edit.sh"
@@ -6250,25 +6254,50 @@ def _owner_lines(index: Path) -> list:
     """`register.owner`'s lines as the service writes them (T237zz; socket
     API section 2.4, "Its bytes", at draft 13 `fa613b9d`; T512's
     `register_serve_owner_text`, `register_serve_install` and
-    `register_serve_host`, `88b50886:lanes-index:8064-8097`), for a socket
-    of the case's own (`_Listener`), in the contract's order:
+    `register_serve_host` at `23cb3799:lanes-index:8116-8177`, with
+    `register_serve_install` at :8116-8151), for a socket of the case's own
+    (`_Listener`), in the contract's order:
 
     - `pid=` and `started=` name this process, the listener's, where the
       contract names the service's, its start UTC in whole seconds;
     - `install=` is the size, mtime in nanoseconds and inode of `index`,
       the `lanes-index` the case's client runs (`Estate.index`: the guard
-      runs the one beside its `lanes-edit.sh`, which is it), so the client
-      finds its own install and starts no service (section 8.1);
+      runs the one beside its `lanes-edit.sh`, which is it), then, where
+      T124's module `lanes_index_main.py` is beside `index`'s `realpath`,
+      the module's three, as lane 5's (a) has `register_serve_install`
+      state both files (opensoft/openRepoTools#165 6890303231; T237zzf).
+      With no module, as before T124, it is the three alone. So the client
+      finds its own install and starts no service (section 8.1). A
+      stand-in client that loads `index` by `SourceFileLoader` states the
+      same files, since its `__file__` is `index`;
     - `boot=` and `pidns=`, each where it can be read, are this host's, as
       the client reads its own, so the client finds its own boot and pid
       namespace.
 
-    Each key once, each line ending in `\\n`, and `install=` three decimals:
-    so the file is one a client can use under lane 3's OP-19 (b) too
-    (opensoft/openRepoTools#165 6880543448), not only under T512's reader."""
-    st = os.stat(index)
+    A `stat` that fails raises. T512's `register_serve_install` writes an
+    empty `install=` instead, which `_REGISTER_SERVE_INSTALL_RE` refuses, so
+    the file is unusable by rule (OP-19 (b), rule 7) and a client reads
+    directly and starts no service. Raising is sound here: the only caller
+    passes `est.index`, and no guard estate removes or blocks it, so no
+    case meets a failing `stat`, and one that did would end on the
+    exception, not on a file a client reads as another install. A missing
+    module (`FileNotFoundError`) is no failure, as before T124. `index` is
+    resolved once, as `register_serve_install` does: its `realpath` serves
+    the `stat` and the module's directory alike.
+
+    Each key once, each line ending in `\\n`, and `install=` three decimals,
+    or six with T124's module (rule 4's three or six runs, lane 5's T512
+    follow-up): so the file is one a client can use under lane 3's OP-19 (b)
+    too (opensoft/openRepoTools#165 6880543448), not only under T512's reader."""
+    real = Path(os.path.realpath(index))
+    found = [os.stat(real)]
+    try:
+        found.append(os.stat(real.with_name("lanes_index_main.py")))
+    except FileNotFoundError:
+        pass
     lines = [f"pid={os.getpid()}", f"started={_utc(time.time())}",
-             f"install={st.st_size} {st.st_mtime_ns} {st.st_ino}"]
+             "install=" + " ".join(f"{st.st_size} {st.st_mtime_ns} {st.st_ino}"
+                                   for st in found)]
     host = {}
     try:
         host["pidns"] = os.readlink("/proc/self/ns/pid")
