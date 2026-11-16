@@ -126,8 +126,9 @@ import pytest
 
 from conftest import REPO, git
 from pgcluster import Database
-from sql_register_helpers import (LANES_INDEX, PSQL_SHIM, PSQL_SHIM_CONTROL, PSQL_SHIM_LOG,
-                                  REGISTER_FAKE_PSQL, RENDER_GIT_HALF_LINE, flipped_copy)
+from sql_register_helpers import (LANES_INDEX, LANES_INDEX_MODULE, PSQL_SHIM, PSQL_SHIM_CONTROL,
+                                  PSQL_SHIM_LOG, REGISTER_FAKE_PSQL, RENDER_GIT_HALF_LINE,
+                                  flipped_copy)
 
 #: THE LANDING GATE'S TABLE (T280's reader, `tests/sql_register_gate.py`), TEMPORARY:
 #: T281 removes it in the last set. Where the gate is active, an id is skipped until
@@ -466,13 +467,15 @@ CONSTANT_LINE = re.compile(r"^REGISTER_SCHEMA_VERSION = [0-9]+$", re.M)
 
 def window_copy(tmp_path: Path, number: int) -> Path:
     """A flipped copy whose `REGISTER_SCHEMA_VERSION` is `number`: AT-VER's
-    client outside the window (open point 3), in the copy alone."""
+    client outside the window (open point 3), in the copy alone, whose body
+    is T124's module beside it."""
     copy = flipped(tmp_path, f"client-{number}")
-    text = copy.read_text(encoding="utf-8")
+    module = copy.with_name(LANES_INDEX_MODULE)
+    text = module.read_text(encoding="utf-8")
     assert len(CONSTANT_LINE.findall(text)) == 1, (
-        f"{LANES_INDEX} holds no single `REGISTER_SCHEMA_VERSION = <n>` line to rewrite")
-    copy.write_text(CONSTANT_LINE.sub(f"REGISTER_SCHEMA_VERSION = {number}", text),
-                    encoding="utf-8")
+        f"{LANES_INDEX_MODULE} holds no single `REGISTER_SCHEMA_VERSION = <n>` line to rewrite")
+    module.write_text(CONSTANT_LINE.sub(f"REGISTER_SCHEMA_VERSION = {number}", text),
+                      encoding="utf-8")
     return copy
 
 
@@ -1110,14 +1113,18 @@ def test_every_copy_of_register_schema_version_in_a_release_is_one_number():
     `migrations`. `lanes-index` carries it (CLI4.10 §2.8). Lane 1's T107
     relies on it. No engine: it reads files."""
     copies = {}
-    for path in release_files():
+    # T124's module, which `lanes-index` runs its body from, ships beside it;
+    # T347 adds it to the payload, which until then does not list it.
+    module = LANES_INDEX.with_name(LANES_INDEX_MODULE)
+    files = release_files()
+    for path in files + ([module] if module not in files else []):
         text = path.read_text(encoding="utf-8", errors="replace")
         for value in CONSTANT.findall(text):
             copies.setdefault(int(value), []).append(str(path.relative_to(REPO)))
-    index = LANES_INDEX.read_text(encoding="utf-8")
-    assert any("lanes-index" in where for found in copies.values() for where in found), (
-        f"lanes-index carries no `REGISTER_SCHEMA_VERSION = <n>` (CLI4.10 §2.8, design §1.5); "
-        f"the release's copies are {copies or 'none'}")
+    index = module.read_text(encoding="utf-8")
+    assert any(LANES_INDEX_MODULE in where for found in copies.values() for where in found), (
+        f"lanes-index's module carries no `REGISTER_SCHEMA_VERSION = <n>` (CLI4.10 §2.8, "
+        f"design §1.5); the release's copies are {copies or 'none'}")
     assert len(copies) == 1, f"the release's copies of REGISTER_SCHEMA_VERSION differ: {copies}"
     (number,) = copies
     recorded = [int(a or b) for a, b in SCHEMA_ROW.findall(index)]
@@ -1391,11 +1398,13 @@ def test_the_bootstrap_renders_register_schema_both_ways_and_refuses_the_rest(
         found = RENDER_GIT_HALF_LINE.search(LANES_INDEX.read_bytes())
         assert found, f"{LANES_INDEX} holds no RENDER_GIT_HALF line for T203's flipped_copy"
         copy = flipped_copy(LANES_INDEX, tmp_path / "leftover", found.group(1) == b"True")
-        text = copy.read_text(encoding="utf-8")
+        module = copy.with_name(LANES_INDEX_MODULE)
+        text = module.read_text(encoding="utf-8")
         sites = CREATE_SCHEMA_LINE.findall(text)
-        assert len(sites) == 1, f"{LANES_INDEX} holds {len(sites)} `CREATE SCHEMA lanes_register` lines"
-        copy.write_text(CREATE_SCHEMA_LINE.sub(lambda m: m.group(0) + "\n" + LEFTOVER, text),
-                        encoding="utf-8")
+        assert len(sites) == 1, (f"{LANES_INDEX_MODULE} holds {len(sites)} `CREATE SCHEMA "
+                                 f"lanes_register` lines")
+        module.write_text(CREATE_SCHEMA_LINE.sub(lambda m: m.group(0) + "\n" + LEFTOVER, text),
+                          encoding="utf-8")
         env, log = fake_admin(tmp_path, bootstrap_conf(tmp_path / "conf", f"register_schema={SCRATCH}\n"),
                               "run")
         refused_and_sent_nothing(run_index(copy, BOOTSTRAP, env), log, "the leftover's copy")

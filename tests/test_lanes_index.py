@@ -58,6 +58,8 @@ pytestmark = [WINDOWS_SKIP, pytest.mark.skipif(
 LANES_EDIT = REPO / "lanes-edit.sh"
 LANES = REPO / "lanes"
 INDEXER = REPO / "lanes-index"
+#: T124's module, which the `lanes-index` launcher runs its body from, beside it.
+INDEXER_MODULE = REPO / "lanes_index_main.py"
 
 UUID_A1 = "aaaaaaaa-0001-4000-8000-00000000a001"
 UUID_A1B = "aaaaaaaa-0002-4000-8000-00000000a002"
@@ -293,6 +295,7 @@ class Estate:
         target = self.indexbin / "lanes-index"
         shutil.copy2(INDEXER, target)
         target.chmod(0o755)
+        shutil.copy2(INDEXER_MODULE, self.indexbin / INDEXER_MODULE.name)
         return target
 
     def path_with(self, *dirs: Path) -> str:
@@ -699,7 +702,7 @@ def test_the_owner_column_is_managed_projections_answer(estate):
     asked = calls.read_text().splitlines()
     for lane in ("repoM-1", "repoM-2", "repoA-1"):
         assert f"managed-projection {lane}" in asked, asked
-    source = INDEXER.read_text(encoding="utf-8")
+    source = INDEXER.read_text(encoding="utf-8") + INDEXER_MODULE.read_text(encoding="utf-8")
     for vocabulary in ("mode=managed", "managed-owner", "bound-lane"):
         assert vocabulary not in source, (
             f"lanes-index carries `{vocabulary}`: a parser of the marker of its own, "
@@ -2047,7 +2050,7 @@ def test_the_inventory_owner_column_is_the_seams_answer(inv):
     assert ("repoA-2", "legacy", "SWAPPING") in owners
     rec = inv.e.edit("lane-reconcile", "repoM-1")
     assert "managed-owned" in rec.stdout
-    source = INDEXER.read_text(encoding="utf-8")
+    source = INDEXER.read_text(encoding="utf-8") + INDEXER_MODULE.read_text(encoding="utf-8")
     for vocabulary in ("mode=managed", "managed-owner", "bound-lane"):
         assert vocabulary not in source
 

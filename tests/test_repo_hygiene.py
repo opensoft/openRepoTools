@@ -4108,12 +4108,16 @@ def test_the_python_files_compile():
     pipx install, so a syntax error in one of its modules is a command that
     fails on every workstation the release reaches. `package_modules()` is the
     set the standard-library rule above reads, so the two cover the same files.
+
+    T124 (tasks:2850; FR-064): `lanes-index` is a launcher that runs its body
+    from `lanes_index_main.py` beside it, at the root, where neither glob
+    reaches, so the module is compiled by name with the two commands.
     """
     for path in sorted((REPO / "tests").glob("*.py")):
         compile(path.read_text(encoding="utf-8"), str(path), "exec")
     for path in package_modules():
         compile(path.read_text(encoding="utf-8"), str(path), "exec")
-    for name in ("lanes-index", "lane-worktrees"):
+    for name in ("lanes-index", "lanes_index_main.py", "lane-worktrees"):
         command = REPO / name
         compile(command.read_text(encoding="utf-8"), str(command), "exec")
 

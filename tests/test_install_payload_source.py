@@ -39,6 +39,12 @@ ROW 16 is not the matrix's: it is WHAT `--install` PLACES BESIDE `lanes-index`
 in the one mode whose payload is a release's, a stamped package (007 T346):
 check 1's digest list, `openRepoTools-<version>.sha256`, written offline from
 the payload it placed, and nothing at all in every other mode.
+
+AND `lanes-index`'S CACHED MODULE (007 T347; FR-064), which every mode places
+beside it, before the commands, with its checked-hash bytecode (PEP 552) on
+Python 3.11 and later: the module is a payload file, so `PAYLOAD` below
+carries it after `INSTALLABLES`, as `payload_names` does, and check 1's list
+names it and never its bytecode; its case asks `ready`'s own check 1 (T124).
 """
 
 from __future__ import annotations
@@ -134,8 +140,21 @@ SKILLS = one_line_array(SOURCE_TEXT, "SKILLS")
 COMMANDS = one_line_array(SOURCE_TEXT, "COMMANDS")
 SKILL_PATHS = [f"skills/{n}/SKILL.md" for n in SKILLS]
 COMMAND_PATHS = [f"commands/{n}.md" for n in COMMANDS]
-#: EVERY FILE `--install` READS, derived from the three lists and nothing else.
-PAYLOAD = INSTALLABLES + SKILL_PATHS + COMMAND_PATHS
+
+
+def one_line_value(text: str, name: str) -> str:
+    """`NAME=value` on ONE line, as `release.yml` reads the installer's
+    `LANES_INDEX_MODULE` out of the wheel's own `openRepoTools`."""
+    lines = [line for line in text.splitlines() if line.startswith(f"{name}=")]
+    assert len(lines) == 1, f"{name}= is not on one line: {lines}"
+    return lines[0][len(name) + 1:]
+
+
+#: `lanes-index`'s cached module (007 T347), which `payload_names` lists after
+#: the commands.
+LANES_INDEX_MODULE = one_line_value(SOURCE_TEXT, "LANES_INDEX_MODULE")
+#: EVERY FILE `--install` READS, derived from the lists and nothing else.
+PAYLOAD = INSTALLABLES + [LANES_INDEX_MODULE] + SKILL_PATHS + COMMAND_PATHS
 
 
 def destinations(home: Path, *, bin_dir: Path | None = None,
@@ -1385,7 +1404,7 @@ def test_r08_an_assembly_root_without_its_code_pin_refuses_as_a_single_repositor
     home = tmp_path / "home"
     result = run_stdin(world, home, network(world), "--install")
     assert_nothing_placed(home, result)
-    missing = [n for n in INSTALLABLES if n != "openRepoTools"]
+    missing = [n for n in INSTALLABLES if n != "openRepoTools"] + [LANES_INDEX_MODULE]
     assert result.stderr == "\nREFUSED: " + single_refusal(missing), result.stderr
     single_layout_requests_only(world)
 
@@ -1678,7 +1697,7 @@ def test_r11_a_single_repository_at_a_ref_it_lacks_refuses_in_the_words_it_alway
     result = run_stdin(world, home, network(world, gh=transport == "gh"), "--install",
                        OPENREPOTOOLS_REF="no-such-ref")
     assert_nothing_placed(home, result)
-    assert result.stderr == "\nREFUSED: " + single_refusal(list(INSTALLABLES), "no-such-ref"), \
+    assert result.stderr == "\nREFUSED: " + single_refusal(INSTALLABLES + [LANES_INDEX_MODULE], "no-such-ref"), \
         result.stderr
     single_layout_requests_only(world, "no-such-ref")
 
@@ -2045,14 +2064,16 @@ RELEASE_STAMP = {"VERSION": "1.3.0", "TAG": "v1.3.0",
                  "DIGEST": "89abcdef" * 8, "REPOSITORY": "opensoft/openRepoTools-code"}
 LISTED = "openRepoTools-1.3.0.sha256"
 #: Check 1's own reading of a line (`lanes-index`'s `_READY_DIGEST_LINE_RE`,
-#: lane 1's T119), and the two names a list must carry or fail
-#: (FR-055; section 10 of the SQL register's contract).
+#: lane 1's T119), and the names a list must carry or fail (FR-055; section
+#: 10 of the SQL register's contract; `lanes-index`'s cached module since 007
+#: T347).
 CHECK_1_LINE = re.compile(r"([0-9a-f]{64}) [ *]([A-Za-z0-9_+-][A-Za-z0-9._+-]*)")
-CHECK_1_NAMES = ("lanes-index", "lanes-edit.sh")
+CHECK_1_NAMES = ("lanes-index", "lanes-edit.sh", LANES_INDEX_MODULE)
 #: THE NAMES THE LIST CARRIES, in order: every one `--install` places beside
 #: `lanes-index` but `openRepoTools`, whose place in a pipx install is
-#: pipx's link to pip's console script.
-LISTED_NAMES = [name for name in INSTALLABLES if name != "openRepoTools"]
+#: pipx's link to pip's console script, and then `lanes-index`'s cached
+#: module (007 T347), never its bytecode.
+LISTED_NAMES = [name for name in INSTALLABLES if name != "openRepoTools"] + [LANES_INDEX_MODULE]
 
 
 def stamped_package(root: Path, stamp: dict | None = RELEASE_STAMP) -> Path:
@@ -2368,3 +2389,131 @@ def test_r16_a_list_of_another_release_is_left_alone(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     assert (bin_dir / "openRepoTools-1.2.0.sha256").read_bytes() == older
     assert check_1(bin_dir) == []
+
+
+# =========================================================================
+# `lanes-index`'S CACHED MODULE AND ITS BYTECODE (007 T347; FR-064; AT-14)
+# =========================================================================
+
+#: WHAT THE INTERPRETER `lanes-index` RUNS ON SAYS, asked of that interpreter
+#: itself and not of this test's: its version, its magic number and cache
+#: tag, and `importlib.util.source_hash` of the module's bytes.
+INTERPRETER_SAYS = """\
+import importlib.util, json, sys
+with open(sys.argv[1], "rb") as handle:
+    data = handle.read()
+print(json.dumps({"version": list(sys.version_info[:2]),
+                  "magic": importlib.util.MAGIC_NUMBER.hex(),
+                  "tag": sys.implementation.cache_tag,
+                  "source_hash": importlib.util.source_hash(data).hex()}))
+"""
+
+
+def interpreter_says(python: str, module: Path) -> dict:
+    done = subprocess.run([python, "-I", "-c", INTERPRETER_SAYS, str(module)],
+                          capture_output=True, text=True, check=False,
+                          stdin=subprocess.DEVNULL)
+    assert done.returncode == 0, f"{python} could not answer:\n{done.stdout}{done.stderr}"
+    return json.loads(done.stdout)
+
+
+def ready_check_1(bin_dir: Path, home: Path, path: str) -> str:
+    """`ready`'S OWN CHECK 1, never a copy of it: the line `check 1: …` that
+    `bin_dir`'s `lanes-index ready` prints, for release 1.3.0. That
+    `lanes-index` is T124's launcher, run as a person runs it, by the first
+    `python3` its `#!/usr/bin/env python3` finds on `bin_dir` then `path`,
+    which is the one the install compiled with, so its check 1 compiles the
+    digest-checked module with that interpreter and compares the bytecode
+    the install wrote (T124; tasks:2850). Its other checks fail here, with
+    no configuration and no database, and are not this case's."""
+    done = subprocess.run(
+        [str(bin_dir / "lanes-index"), "ready", "--expect", "index", "--release", "1.3.0",
+         "--env", "t347"], capture_output=True, text=True, check=False,
+        stdin=subprocess.DEVNULL, cwd=str(home), timeout=300,
+        env=env_for(home, f"{bin_dir}{os.pathsep}{path}", LANES_WORKSTATION="t347",
+                    LANES_INDEX_CONFIG=str(home / "no-configuration" / "lanes-index.conf")))
+    lines = [line for line in done.stdout.splitlines() if line.startswith("check 1: ")]
+    assert len(lines) == 1, (f"`lanes-index ready` printed no one check 1 line "
+                             f"(exit {done.returncode}):\n{done.stdout}{done.stderr}")
+    return lines[0]
+
+
+@NEEDS_JQ
+def test_install_places_the_cached_module_and_its_checked_hash_bytecode_beside_the_launcher(
+        tmp_path):
+    """`openRepoTools --install` SHIPS THE CACHED MODULE (007 T347; FR-064;
+    AT-14's T347 case, TP:2660). From a release's package, run offline, into
+    two different homes:
+
+    - `lanes_index_main.py` is beside `lanes-index`, a regular file at 0644,
+      byte for byte the payload's, placed before the launcher, and the
+      receipt carries no row for it, and check 1's list names it and no
+      bytecode;
+    - ON PYTHON 3.11 AND LATER, its bytecode is where T124's launcher reads
+      it, `__pycache__/lanes_index_main.<tag>.pyc` beside it, `<tag>` the
+      cache tag of the interpreter `lanes-index` runs on (the first `python3`
+      on the run's PATH, as its `#!/usr/bin/env python3` finds it), and its
+      header is PEP 552's checked-hash form: that interpreter's magic number,
+      flags 0b11, and `importlib.util.source_hash` of the module's bytes;
+      `ready`'s check 1, T124's own, then passes: its checked-hash
+      compilation of the installed module equals the installed bytecode byte
+      for byte, the positive case of T124's comparison; and the two installs'
+      bytecode is the same file, byte for byte, so its bytes do not depend on
+      where the install is;
+    - ON PYTHON 3.9 AND 3.10, whose bytecode is not byte-stable, or with no
+      cache tag, no bytecode is written, and check 1 passes, reporting the
+      module's source path (lane 3's ruling 2, #165 6885378657)."""
+    world = World(tmp_path)
+    payload = stamped_package(tmp_path)
+    path = network(world)
+    python = shutil.which("python3", path=path)
+    assert python, f"the case is wrong: no python3 on the run's PATH, {path}"
+    caches = []
+    for where in ("home-one", "home-two"):
+        home = tmp_path / where
+        result = run_file(payload / "openRepoTools", home, path, "--install",
+                          OPENREPOTOOLS_REPO="offline.invalid/sentinel")
+        assert result.returncode == 0, result.stdout + result.stderr
+        bin_dir = home / ".local" / "bin"
+        module = bin_dir / LANES_INDEX_MODULE
+        assert (bin_dir / "lanes-index").is_file(), result.stdout
+        assert module.is_file() and not module.is_symlink(), result.stdout
+        assert stat.S_IMODE(module.stat().st_mode) == 0o644, oct(module.stat().st_mode)
+        data = module.read_bytes()
+        assert data == (payload / LANES_INDEX_MODULE).read_bytes()
+        lines = result.stdout.splitlines()
+        placed = f"openRepoTools: `lanes-index`'s cached module installed at {module}"
+        assert lines.count(placed) == 1, result.stdout
+        assert lines.index(placed) < lines.index(
+            f"lanes-index: installed at {bin_dir / 'lanes-index'}"), result.stdout
+        assert str(module) not in {row[1] for row in receipt_rows(home)}
+        assert len(receipt_rows(home)) == len(destinations(home))
+        listed = [line.split("  ", 1)[1] for line in
+                  (bin_dir / LISTED).read_text(encoding="utf-8").splitlines()]
+        assert LANES_INDEX_MODULE in listed, listed
+        assert not [name for name in listed if name.endswith(".pyc")], listed
+
+        said = interpreter_says(python, module)
+        found = sorted(str(p) for p in bin_dir.glob("__pycache__/lanes_index_main.*"))
+        check = ready_check_1(bin_dir, home, path)
+        if tuple(said["version"]) < (3, 11) or said["tag"] is None:
+            assert found == [], f"bytecode was written for {python}: {found}"
+            assert [line for line in lines if line.startswith(
+                f"openRepoTools: no bytecode written for `lanes-index`'s cached module: "
+                f"{python} ")], result.stdout
+            assert check.startswith("check 1: ok") and str(module) in check, check
+            continue
+        cache = bin_dir / "__pycache__" / f"lanes_index_main.{said['tag']}.pyc"
+        assert found == [str(cache)], found
+        assert lines.count(f"openRepoTools: `lanes-index`'s cached module's checked-hash "
+                           f"bytecode written at {cache}, for {python}") == 1, result.stdout
+        assert cache.is_file() and not cache.is_symlink(), found
+        cached = cache.read_bytes()
+        assert cached[:4].hex() == said["magic"], cached[:16].hex()
+        assert int.from_bytes(cached[4:8], "little") == 0b11, cached[:16].hex()
+        assert cached[8:16].hex() == said["source_hash"], cached[:16].hex()
+        assert check == "check 1: ok", (
+            f"T124's check 1 does not pass the installed bytecode as its own checked-hash "
+            f"compilation of the installed module: {check}")
+        caches.append(cached)
+    assert len(set(caches)) <= 1, "the bytecode depends on where the install is"

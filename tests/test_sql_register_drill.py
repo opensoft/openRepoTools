@@ -36,7 +36,12 @@ THE ESTATE, `Drill` (the test plan's AT-13, "Fixture"):
   `cutover`, `rollback` and a write on primary take `lanes_register` while
   lane 3's T328 has not set the constant), with `lanes-edit.sh`, `lanes`,
   `lane-start` and `repos.tsv` beside it, and check 1's digest list naming
-  both tools.
+  both tools. Where T124's `flipped_copy` places the launcher's module,
+  `lanes_index_main.py`, beside the copy (tasks:2853), the list names it too,
+  as the release's does since T347, and its checked-hash bytecode is written
+  beside it, compiled under the bare name as check 1 compiles it, as
+  `ReadyBench` does since T218s and T218t (T276l). Before T124 there is no
+  module there, and nothing changes.
 - EACH LANE'S OWN REGISTER CHECKOUT, `<c>` (lane 3's batch g Q119, #165
   6813027223): on primary a write reads its author, its pending hand edits
   and its `repos.tsv` from `<W>-lanes/<lane>`, W being the real path of its
@@ -162,7 +167,8 @@ READINGS, NOT FOUND IN A CONTRACT:
 HELPERS COPIED, NEVER SHARED (a module's own): `_rows`, `_renders`,
 `RENDER_SET`, `REGISTER_SEQ` and `LAG_0` from `test_sql_register_import.py`
 (T211's and T272's, in this base); `CHECK_LINE` and `_checks` from
-`test_sql_register_operator_tools.py` (T218); the hook's path rule and its
+`test_sql_register_operator_tools.py` (T218), and `CACHED_MODULE` and
+`CHECKED_HASH_COMPILE` from it (T218s, T218t); the hook's path rule and its
 `changed` from T271's `GATE_HOOK` (`test_sql_register_divergence.py`, line
 DV's `92fbaf27`); the guard's run and `_label` from T215's outage module
 (line W4a); `MIRROR_LINE` from the readers module (line N1); the holders'
@@ -248,6 +254,16 @@ DRAINED = "repoD-1"
 #: The release `ready` checks the installed tools against (check 1's list).
 RELEASE, ENV_NAME = "0.0.0-t276", "drill"
 DIGEST_LIST = f"openRepoTools-{RELEASE}.sha256"
+#: T124's module, which `flipped_copy` places beside a copy of `lanes-index`
+#: (tasks:2853), and which check 1's list names since T347.
+CACHED_MODULE = "lanes_index_main.py"
+#: The install's compile of the module: checked-hash bytecode, as
+#: `openRepoTools --install` writes it (T347), at `py_compile`'s own place.
+#: Its `dfile` is the module's name, the filename check 1 compiles it under
+#: (T347). `ReadyBench`'s, byte for byte (T218s, T218t).
+CHECKED_HASH_COMPILE = ("import py_compile, sys; py_compile.compile(sys.argv[1], doraise=True, "
+                        f"dfile={CACHED_MODULE!r}, "
+                        "invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH)")
 
 #: The objects the drill claims: on primary from each workstation (step 5),
 #: then in files mode after the rollback (step 9).
@@ -575,9 +591,19 @@ class Workstation:
         for companion in ("lanes-edit.sh", "lanes", "lane-start", "repos.tsv"):
             if (REPO / companion).exists():
                 shutil.copy2(REPO / companion, self.tools / companion)
+        # T124's module, where `flipped_copy` placed it beside the copy: check
+        # 1's list names it, as the release's does since T347, and its
+        # checked-hash bytecode is written as the install writes it, with the
+        # interpreter `lanes-index` runs on here, as `ReadyBench` does (T218s,
+        # T218t). Before T124 there is no module, and nothing changes (T276l).
+        cached = (CACHED_MODULE,) if (self.tools / CACHED_MODULE).exists() else ()
+        if cached:
+            subprocess.run([sys.executable, "-I", "-c", CHECKED_HASH_COMPILE,
+                            str(self.tools / CACHED_MODULE)], check=True, capture_output=True,
+                           timeout=120, stdin=subprocess.DEVNULL)
         (self.tools / DIGEST_LIST).write_text("".join(
             f"{hashlib.sha256((self.tools / tool).read_bytes()).hexdigest()}  {tool}\n"
-            for tool in ("lanes-index", "lanes-edit.sh")), encoding="utf-8")
+            for tool in ("lanes-index", "lanes-edit.sh") + cached), encoding="utf-8")
         self.fakebin = self.root / "fakebin"
         _script(self.fakebin / "tmux", "#!/bin/sh\nexit 1\n")
         for directory in ("state", "config", "tmp"):

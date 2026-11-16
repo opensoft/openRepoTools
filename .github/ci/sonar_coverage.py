@@ -113,31 +113,49 @@ def probe_python_copy_attribution(root, out, manifest, env):
     os.environ["ORT_SONAR_ROOT"] = str(root)
     os.environ["ORT_SONAR_INVENTORY"] = str(out / INVENTORY)
     source = (root / "code/lanes-index").read_bytes()
+    # T124 (tasks:2850; FR-064): `lanes-index` is a launcher that runs its
+    # body from `lanes_index_main.py` beside it, so each copy has the module.
+    module = (root / "code/lanes_index_main.py").read_bytes()
     checksum = hashlib.sha256(source).hexdigest()
     canonical = next(root / item["path"] for item in manifest["files"]
                      if item["language"] == "py" and not item["test"]
                      and item["sha256"] == checksum)
-    results = {}
-    for kind in ("exact", "modified"):
+    module_canonical = next(root / item["path"] for item in manifest["files"]
+                            if item["language"] == "py" and not item["test"]
+                            and item["sha256"] == hashlib.sha256(module).hexdigest())
+    results, module_results = {}, {}
+    # "module-modified" runs an exact launcher with a changed module from the
+    # checkout's own directory, where the exact module is: the module's code
+    # carries the bare name `lanes_index_main.py`, and its credit follows the
+    # module that ran, never the one the working directory holds.
+    for kind in ("exact", "modified", "module-modified"):
         directory = out / "provenance-probe" / kind
         directory.mkdir(parents=True)
         command = directory / "copied-python-command"
-        command.write_bytes(source if kind == "exact" else source + b"\n# changed copy\n")
+        command.write_bytes(source + b"\n# changed copy\n" if kind == "modified" else source)
+        (directory / "lanes_index_main.py").write_bytes(
+            module + b"\n# changed copy\n" if kind == "module-modified" else module)
         config = directory / COVERAGE_CONFIG
         settings = (out / COVERAGE_CONFIG).read_text()
         config.write_text(settings.replace(str(out / COVERAGE_DATA), str(directory / COVERAGE_DATA)))
         child_env = {**os.environ, **env, "COVERAGE_PROCESS_START": str(config),
                      "COVERAGE_FILE": str(directory / COVERAGE_DATA)}
-        result = subprocess.run([sys.executable, str(command), "--help"], cwd=directory,
+        result = subprocess.run([sys.executable, str(command), "--help"],
+                                cwd=root / "code" if kind == "module-modified" else directory,
                                 env=child_env, capture_output=True, text=True, timeout=30,
                                 check=True)
         if result.stderr:
             raise RuntimeError("coverage provenance probe emitted diagnostics: " + result.stderr)
         measured = Coverage(config_file=str(config), data_file=str(directory / COVERAGE_DATA))
         measured.combine(data_paths=[str(directory)], strict=True, keep=True)
-        results[kind] = len(measured.get_data().lines(str(canonical)) or [])
+        data = measured.get_data()
+        module_results[kind] = len(data.lines(str(module_canonical)) or [])
+        if kind != "module-modified":
+            results[kind] = len(data.lines(str(canonical)) or [])
     if results["exact"] <= 0 or results["modified"] != 0:
         raise RuntimeError("Python source-copy attribution failed: " + json.dumps(results))
+    if module_results["exact"] <= 0 or module_results["module-modified"] != 0:
+        raise RuntimeError("Python module attribution failed: " + json.dumps(module_results))
     # Diagnostic probe data stays in its own nested directories; it is never
     # combined into the suite's coverage or credited toward the quality gate.
     (out / "provenance-probe.json").write_text(json.dumps(results, indent=2) + "\n")

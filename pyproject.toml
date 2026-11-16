@@ -67,8 +67,9 @@ packages = ["src/openrepotools"]
 
 # THE WHOLE PAYLOAD, BYTE FOR BYTE: each payload path P at
 # `openrepotools/payload/P`. First the installer's `payload_names`, in its
-# own order (the seventeen INSTALLABLES, then the three skills, then the
-# three command files), and then the openRepoShape pin, which `wip init`
+# own order (the seventeen INSTALLABLES, then `lanes_index_main.py`, the
+# module `lanes-index` runs its body from (007 T347), then the three skills,
+# then the three command files), and then the openRepoShape pin, which `wip init`
 # reads from beside the installer (`wip_shape_ref`). `payload_names` stays
 # the only list: a test compares it, plus the pin, with these keys and with
 # the built wheel, both ways round. A payload file joins both lists in one
@@ -91,6 +92,7 @@ packages = ["src/openrepotools"]
 "claude-restart-check" = "openrepotools/payload/claude-restart-check"
 "lanes-index" = "openrepotools/payload/lanes-index"
 "lane-worktrees" = "openrepotools/payload/lane-worktrees"
+"lanes_index_main.py" = "openrepotools/payload/lanes_index_main.py"
 "skills/handoff/SKILL.md" = "openrepotools/payload/skills/handoff/SKILL.md"
 "skills/lane-swap/SKILL.md" = "openrepotools/payload/skills/lane-swap/SKILL.md"
 "skills/restart/SKILL.md" = "openrepotools/payload/skills/restart/SKILL.md"

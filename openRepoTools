@@ -405,10 +405,13 @@ ORT_CR="$(printf '\r')"
 ORT_TREE_JQ='.tree[] | [.path, .type, .sha] | @tsv'
 
 # EVERY FILE `--install` READS, derived from the three lists and from nothing
-# else: the commands at the root, then each skill's and each command file's path.
+# else: the commands at the root, then `lanes-index`'s cached module beside them
+# (007 T347; search "THE CACHED MODULE"), then each skill's and each command
+# file's path.
 payload_names() {
 	local name
 	for name in "${INSTALLABLES[@]}"; do printf '%s\n' "$name"; done
+	printf '%s\n' "$LANES_INDEX_MODULE"
 	for name in "${SKILLS[@]}"; do skill_source_path "$name"; done
 	for name in "${COMMANDS[@]}"; do command_source_path "$name"; done
 }
@@ -1301,6 +1304,17 @@ payload_select() {
 # Python like `lanes-index`, and at the END for the same reason.
 INSTALLABLES=(openRepoTools park resume status lane lanes lane-handoff lane-rename lanes-edit.sh lane-start lane-end link-estates repos.tsv claude-current claude-restart-check lanes-index lane-worktrees)
 
+# `lanes-index`'S CACHED MODULE (007 T347; FR-064): since T124, `lanes-index`
+# is a short launcher that runs its body from this module, beside it, by the
+# module's checked-hash bytecode. It is a payload file and NOT an eighteenth
+# installable, so the seventeen above and every count of them stay as they
+# are: `payload_names` lists it after them, `pyproject.toml`'s `force-include`
+# carries it at the same place (a payload file joins both lists in one
+# commit), and one step of its own places it and writes its bytecode (search
+# "THE CACHED MODULE"). ONE LINE, as `INSTALLABLES` is, because `release.yml`
+# reads both from the wheel's own `openRepoTools` for check 1's list.
+LANES_INDEX_MODULE=lanes_index_main.py
+
 # ------------------------------------------ THE RECEIPT OF WHAT IT PLACED
 #
 # opensoft/openRepoTools#57, and it descends from COPILOT'S ROUND-3 FINDING ON
@@ -1936,7 +1950,9 @@ collect_commands() {
 	workdir
 	STAGED="$WORKDIR/staged"
 	mkdir -p "$STAGED"
-	for name in "${INSTALLABLES[@]}"; do
+	# `lanes-index`'s cached module is staged with the commands (007 T347): a
+	# launcher without its module runs nothing, so it is all or none as they are.
+	for name in "${INSTALLABLES[@]}" "$LANES_INDEX_MODULE"; do
 		if [ -n "$PAYLOAD_DIR" ] && [ -f "$PAYLOAD_DIR/$name" ]; then
 			cp -- "$PAYLOAD_DIR/$name" "$STAGED/$name"
 			continue
@@ -2079,7 +2095,8 @@ place_by_rename() {   # <staged source> <target> <mode> <what a refusal adds>
 # `sha256sum`'s own form, in the directory of the `lanes-index` that PATH
 # names, and fails a list that does not name `lanes-index` and
 # `lanes-edit.sh` (FR-055; section 10 of the SQL register's contract, in the
-# spec leg's 007). Brett Heap chose who makes it, "Release + installer
+# spec leg's 007), and since 007 T347 `lanes_index_main.py`, the module
+# `lanes-index` runs its body from. Brett Heap chose who makes it, "Release + installer
 # (Recommended)": `release.yml` publishes it as a release asset, and
 # `--install` places it next to `lanes-index` (as lane openRepoTools-3
 # relays it, opensoft/openRepoTools#165 6773444302).
@@ -2091,7 +2108,8 @@ place_by_rename() {   # <staged source> <target> <mode> <what a refusal adds>
 # against the tag's commit, and this writes them by the build's own rule:
 # one `<sha256>  <name>` line for each name in `INSTALLABLES`, in its
 # order, but `openRepoTools` — pipx's link holds that name in a pipx
-# install, and check 1 would hash pip's console script there. So the file
+# install, and check 1 would hash pip's console script there — and then
+# `LANES_INDEX_MODULE`, never its bytecode (007 T347). So the file
 # here and the release's asset are one file, byte for byte, and a
 # package's `--install` still asks no network for anything. The digests are
 # of the STAGED copies, which are what was just placed.
@@ -2131,7 +2149,10 @@ digest_list_place() {   # <bin directory>
 		digest_list_note "$target" "this run's work directory took no file"
 		return 0
 	fi
-	for entry in "${INSTALLABLES[@]}"; do
+	# The commands but `openRepoTools`, then `lanes-index`'s cached module,
+	# which holds the code the launcher runs (007 T347), and never its
+	# bytecode, which the interpreter makes and check 1 compares instead.
+	for entry in "${INSTALLABLES[@]}" "$LANES_INDEX_MODULE"; do
 		[ "$entry" != openRepoTools ] || continue
 		if ! digest="$(sha256_of "$STAGED/$entry")"; then
 			digest_list_note "$target" "the sha256 of ${entry} could not be taken: this machine has neither sha256sum nor shasum, or the copy cannot be read"
@@ -2169,6 +2190,114 @@ digest_list_place() {   # <bin directory>
 	digest_list_note "$target" "it could not be written there, and what was there is untouched"
 }
 
+# ------------------------------------------ THE CACHED MODULE (007 T347)
+#
+# SINCE T124 `lanes-index` IS A SHORT LAUNCHER (FR-064; PC-2, which Brett
+# Heap's "(d) Both (a) and (c) (Recommended)" takes into 007): it runs its
+# body from `lanes_index_main.py` beside it, by that module's checked-hash
+# cached bytecode (PEP 552), so that a start no longer compiles the whole
+# script. "The install ships the cached module": this step places the module
+# beside `lanes-index` and writes its bytecode, in the form lane
+# openRepoTools-1 fixed (#165 6881658031, with its answers 1 to 7, #165
+# 6882454897, and lane openRepoTools-3's ruling 2, #165 6885378657):
+#
+#   * THE MODULE is a payload file, staged with the commands and all or none
+#     with them, and placed by rename as they are (#167), at 0644: it is read,
+#     never executed. It is not an installable and has no receipt row, so the
+#     seventeen and every count of them stay; check 1's list names it.
+#   * ITS BYTECODE is `__pycache__/lanes_index_main.<tag>.pyc` beside it,
+#     where `<tag>` is `sys.implementation.cache_tag`. The path is built here
+#     as the launcher and check 1 build it, and never by
+#     `importlib.util.cache_from_source`, which follows `-X pycache_prefix`.
+#     It is written with the `python3` on PATH, which is the interpreter
+#     `lanes-index`'s `#!/usr/bin/env python3` finds there, by `py_compile` in
+#     checked-hash mode, with `optimize` 0 and the fixed `dfile`
+#     `lanes_index_main.py`, so its bytes do not depend on where the install
+#     is. `ready`'s check 1 compiles the digest-checked module the same way
+#     and compares byte for byte; the launcher runs it only where its hash is
+#     the module's, never writes it, and otherwise runs the source.
+#   * ON PYTHON 3.9 AND 3.10 NO BYTECODE IS WRITTEN, nor where the
+#     interpreter has no cache tag: their compiler's output is not byte-stable,
+#     so the launcher reads none there and runs the module's source, and check
+#     1 compares no bytes. That is one line saying so, and no note.
+#
+# THE MODULE GOES FIRST, BEFORE THE COMMANDS: a launcher placed before its
+# module would run nothing until the module followed, and one placed with no
+# module after a refusal would run nothing at all. An older `lanes-index`
+# never reads the module, and stale bytecode is never run, so the module may
+# arrive first. A module that cannot be placed is a refusal, as a command is.
+#
+# ITS LINES ARE NOT A COMMAND'S: each begins `openRepoTools:`, as the digest
+# list's do, and none is `<name>: installed at <dir>/<name>`, so the per-file
+# lines of the commands stay the commands' alone, which `release.yml`'s macOS
+# rerun counts (sixteen placed, then sixteen unchanged) and its tests too.
+#
+# BYTECODE THAT CANNOT BE WRITTEN IS A NOTE AND NEVER A REFUSAL: no `python3`
+# on PATH, a `__pycache__` that is not a directory this user can write, or an
+# interpreter that cannot compile it. The launcher then runs the module's
+# source, which is slower to start and otherwise the same, and a later
+# `--install` writes the bytecode again, which is also how a stale or corrupt
+# cache that check 1 refuses is put right. Its exits: 0 written, and the line
+# is its path; 3 not written by rule, and the line is why; any other, a
+# failure, and the last line is why.
+LANES_INDEX_COMPILE='import os, py_compile, sys
+source = sys.argv[1]
+tag = sys.implementation.cache_tag
+if sys.version_info < (3, 11) or tag is None:
+    print("is Python %d.%d, whose bytecode is not byte-stable" % sys.version_info[:2]
+          if tag is not None else "has no cache tag")
+    sys.exit(3)
+cache = os.path.join(os.path.dirname(source), "__pycache__", "lanes_index_main." + tag + ".pyc")
+try:
+    py_compile.compile(source, cfile=cache, dfile="lanes_index_main.py",
+                       doraise=True, optimize=0,
+                       invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH)
+except Exception as error:
+    print(" ".join(str(error).split()) or type(error).__name__)
+    sys.exit(1)
+print(cache)'
+
+lanes_index_bytecode_write() {   # <the placed module>
+	local module="$1" python="" said="" rc=0
+	if ! python="$(command -v python3 2>/dev/null)" || [ -z "$python" ]; then
+		say "openRepoTools: \`lanes-index\`'s cached module's bytecode NOT written — no python3 is on PATH. \`lanes-index\` runs the module's source until a later \`--install\` writes it."
+		return 0
+	fi
+	said="$("$python" -I -c "$LANES_INDEX_COMPILE" "$module" 2>/dev/null)" || rc=$?
+	said="$(printf '%s\n' "$said" | sed -n '$p')"
+	case "$rc" in
+	0)
+		say "openRepoTools: \`lanes-index\`'s cached module's checked-hash bytecode written at $said, for $python"
+		;;
+	3)
+		say "openRepoTools: no bytecode written for \`lanes-index\`'s cached module: $python $said, so \`lanes-index\` runs the module's source there"
+		;;
+	*)
+		say "openRepoTools: \`lanes-index\`'s cached module's bytecode NOT written by $python — ${said:-it exited non-zero}. \`lanes-index\` runs the module's source until a later \`--install\` writes it."
+		;;
+	esac
+}
+
+lanes_index_module_place() {   # <bin directory>
+	local source="$STAGED/$LANES_INDEX_MODULE" target="$1/$LANES_INDEX_MODULE" verb=""
+	if [ -e "$target" ] && cmp -s "$source" "$target"; then
+		if mode_is 644 "$target"; then
+			verb="already at $target (unchanged)"
+		else
+			verb="already at $target (mode restored to 644)"
+		fi
+		chmod 644 "$target" ||
+			die "could not set mode 644 on $target, \`lanes-index\`'s cached module.
+    NOTHING else was installed and nothing already installed was replaced."
+	else
+		if [ -e "$target" ]; then verb="updated at $target"; else verb="installed at $target"; fi
+		place_by_rename "$source" "$target" 644 "It is \`lanes-index\`'s cached module, placed before the commands, so NOTHING else
+    was installed and nothing already installed was replaced."
+	fi
+	say "openRepoTools: \`lanes-index\`'s cached module $verb"
+	lanes_index_bytecode_write "$target"
+}
+
 install_commands() {
 	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
 	local name target source verb placed=0
@@ -2204,6 +2333,10 @@ install_commands() {
 	# exits 1, which reads as a report of findings from a run that placed none.
 	mkdir -p -- "$dir" || die "could not create $dir for the ${#INSTALLABLES[@]} commands.
     NOTHING was installed and nothing already installed was replaced."
+	# `lanes-index`'S CACHED MODULE AND ITS BYTECODE, a step of their own and
+	# BEFORE the commands, so the launcher never lands without its module
+	# (007 T347): search "THE CACHED MODULE".
+	lanes_index_module_place "$dir"
 	for name in "${INSTALLABLES[@]}"; do
 		source="$STAGED/$name"
 		target="$dir/$name"
@@ -3178,7 +3311,10 @@ plan_install_targets() {
 		die "\`--install\` places the ${#INSTALLABLES[@]} commands in $dir, and $kind.
     NOTHING was installed and nothing already installed was replaced."
 	fi
-	for name in "${INSTALLABLES[@]}"; do
+	# `lanes-index`'S CACHED MODULE IS ASKED ABOUT WITH THE COMMANDS (007
+	# T347): it is placed beside them, so a target there that is not a regular
+	# file this user can write refuses before anything is placed.
+	for name in "${INSTALLABLES[@]}" "$LANES_INDEX_MODULE"; do
 		target="$dir/$name"
 		# PIPX'S LINK IS ASKED ABOUT BEFORE ANY LINK IS REFUSED (FR-015), at the
 		# one command pipx places. It is no bad target: the placement loop skips

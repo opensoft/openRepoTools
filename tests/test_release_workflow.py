@@ -2000,7 +2000,8 @@ def wheel_release(version: str) -> dict:
 def wheel_members(release_: dict) -> Tuple[Dict[str, Tuple[bytes, int]], str]:
     """THE WHEEL THE RELEASE BUILD WRITES FOR HEAD, laid out as hatchling
     1.27.0 lays it out, from git's own blobs: the package's modules, the
-    stamp with the release's five values, the 24 payload files, and the five
+    stamp with the release's five values, the payload files (every one the
+    force-include table names, `layout.payload_paths()`), and the five
     `.dist-info` names. Each has the whole mode hatchling gives it, as
     TestPyPI's 1.1.0rc1 wheel has them: a payload file is a regular file at
     0755 or 0644 as HEAD records it, a module a regular file at 0644, and a
@@ -2951,9 +2952,10 @@ def test_release_build_the_wheel_check_and_tests_yml_s_refuse_a_payload_mode_not
 #: THE LIST CHECK 1 READS (FR-055; section 10 of the SQL register's contract):
 #: `openRepoTools-<release>.sha256`, in `sha256sum`'s own form. Check 1's own
 #: reading of a line (`lanes-index`'s `_READY_DIGEST_LINE_RE`, lane 1's T119),
-#: and the two names a list must carry or fail.
+#: and the names a list must carry or fail (`_READY_DIGEST_NAMES`, which since
+#: 007 T347 names `lanes-index`'s cached module too).
 CHECK_1_LINE = re.compile(r"([0-9a-f]{64}) [ *]([A-Za-z0-9_+-][A-Za-z0-9._+-]*)")
-CHECK_1_NAMES = ("lanes-index", "lanes-edit.sh")
+CHECK_1_NAMES = ("lanes-index", "lanes-edit.sh", "lanes_index_main.py")
 LIST_VERSION = "1.3.0"
 LISTED = f"openRepoTools-{LIST_VERSION}.sha256"
 
@@ -2966,14 +2968,30 @@ def installables(command: bytes) -> List[str]:
     return lines[0][len("INSTALLABLES=("):-1].split()
 
 
+def lanes_index_module(command: bytes) -> str:
+    """`LANES_INDEX_MODULE=…`, the one-line name of `lanes-index`'s cached
+    module (007 T347), out of an `openRepoTools`."""
+    lines = [line for line in command.decode("utf-8").split("\n")
+             if line.startswith("LANES_INDEX_MODULE=")]
+    assert len(lines) == 1, lines
+    return lines[0][len("LANES_INDEX_MODULE="):]
+
+
+def listed_names(command: bytes) -> List[str]:
+    """THE NAMES THE LIST CARRIES, in order: the payload's own `INSTALLABLES`
+    but `openRepoTools`, whose place in a pipx install is pipx's link to
+    pip's console script, and then `lanes-index`'s cached module (007 T347),
+    never its bytecode."""
+    return ([name for name in installables(command) if name != "openRepoTools"]
+            + [lanes_index_module(command)])
+
+
 def the_rule(payload: Callable[[str], bytes]) -> str:
     """THE LIST BY ITS RULE, from `payload(<name>)`'s bytes: one `<sha256>
-    <name>` line, two spaces between, for every name of the payload's own
-    `INSTALLABLES` in its order but `openRepoTools`, whose place in a pipx
-    install is pipx's link to pip's console script."""
+    <name>` line, two spaces between, for every name `listed_names` gives
+    of the payload's own `openRepoTools`."""
     return "".join(f"{hashlib.sha256(payload(name)).hexdigest()}  {name}\n"
-                   for name in installables(payload("openRepoTools"))
-                   if name != "openRepoTools")
+                   for name in listed_names(payload("openRepoTools")))
 
 
 def run_digest_list_step(tmp_path: Path,
@@ -3053,13 +3071,85 @@ def test_release_build_the_digest_list_step_writes_check_1_s_list_from_the_wheel
     names = [match.group(2) for match in found]
     assert "openRepoTools" not in names, names
     assert set(CHECK_1_NAMES) <= set(names), names
-    assert names == [name for name in installables(head_blob("openRepoTools"))
-                     if name != "openRepoTools"]
+    assert names == listed_names(head_blob("openRepoTools"))
     recorded = runner.recorded()
     assert ("digest-list", LISTED) in recorded, recorded
     assert ("digest-list-sha256",
             hashlib.sha256(text.encode("utf-8")).hexdigest()) in recorded, recorded
     assert runner.asked() == "", runner.asked()
+
+
+def a_module_line(line: Optional[str]) -> Callable[[dict, str], None]:
+    """The payload's `openRepoTools` with its one `LANES_INDEX_MODULE=` line
+    replaced by `line`, or taken out where `line` is None, every other byte
+    as it was."""
+    def change(members: dict, info: str) -> None:
+        key = layout.PAYLOAD_PREFIX + "openRepoTools"
+        data, mode = members[key]
+        old = f"LANES_INDEX_MODULE={lanes_index_module(data)}\n".encode("utf-8")
+        assert data.count(old) == 1, "the case is wrong: the line is spelt otherwise"
+        made = b"" if line is None else (line + "\n").encode("utf-8")
+        members[key] = (data.replace(old, made), mode)
+    return change
+
+
+@NEEDS_UPSTREAM
+@NEEDS_BASH
+@WINDOWS_SKIP
+def test_the_release_digest_list_names_the_cached_module_and_not_its_bytecode(tmp_path):
+    """CHECK 1'S LIST NAMES `lanes-index`'S CACHED MODULE AND NEVER ITS
+    BYTECODE (007 T347; FR-064; AT-14's T347 case, TP:2660). Step 15, run on
+    the wheel as built:
+
+    - the list names `lanes_index_main.py` beside `lanes-index` and
+      `lanes-edit.sh`, after the commands, at the digest of HEAD's module,
+      and names no `.pyc` and nothing under `__pycache__`;
+    - a wheel that also carries the module's bytecode lists the same file,
+      byte for byte, since the names are the installer's and not the
+      wheel's;
+    - and a list that would name bytecode, or an installer that does not
+      declare the module on one line, is refused with an `::error::` line
+      naming the cause, no traceback and no list written."""
+    command = head_blob("openRepoTools")
+    module = lanes_index_module(command)
+    assert module == "lanes_index_main.py", module
+
+    done, runner = run_digest_list_step(tmp_path / "as-built")
+    assert done.returncode == 0, transcript(done)
+    text = (Path(runner.env["RUNNER_TEMP"]) / "digest-list" / LISTED).read_text(
+        encoding="utf-8")
+    assert text == the_rule(lambda name: head_blob(name)), text
+    found = [CHECK_1_LINE.fullmatch(line) for line in text.splitlines()]
+    assert found and all(found), f"a line check 1 does not read:\n{text}"
+    names = [match.group(2) for match in found]
+    assert {"lanes-index", "lanes-edit.sh", module} <= set(names), names
+    assert names.count(module) == 1 and names[-1] == module, names
+    assert names.index(module) > names.index("lanes-index"), names
+    assert (dict((match.group(2), match.group(1)) for match in found)[module]
+            == hashlib.sha256(head_blob(module)).hexdigest())
+    assert not [name for name in names if name.endswith(".pyc") or "__pycache__" in name]
+
+    bytecode = layout.PAYLOAD_PREFIX + "__pycache__/lanes_index_main.cpython-39.pyc"
+    done, runner = run_digest_list_step(
+        tmp_path / "with-bytecode", an_extra_member(bytecode, b"\x61\x0d\x0d\x0a"))
+    assert done.returncode == 0, transcript(done)
+    assert (Path(runner.env["RUNNER_TEMP"]) / "digest-list" / LISTED).read_text(
+        encoding="utf-8") == text
+
+    for case, line, said in (
+            ("names-bytecode", "LANES_INDEX_MODULE=lanes_index_main.cpython-39.pyc",
+             "lanes_index_main.cpython-39.pyc is bytecode, which the interpreter makes "
+             "and no release lists"),
+            ("no-module-line", None,
+             "openrepotools/payload/openRepoTools does not declare LANES_INDEX_MODULE "
+             "on one line: 0 lines do")):
+        done, runner = run_digest_list_step(tmp_path / case, a_module_line(line))
+        assert done.returncode == 1, f"{case}:\n{transcript(done)}"
+        out = done.stdout + done.stderr
+        assert [found for found in out.splitlines()
+                if found.startswith("::error::") and said in found], f"{case}:\n{transcript(done)}"
+        assert "Traceback" not in out, transcript(done)
+        assert written_lists(runner) == [], written_lists(runner)
 
 
 def an_installables_line(make: Callable[[List[str]], str]) -> Callable[[dict, str], None]:
@@ -6197,12 +6287,14 @@ def test_release_install_check_the_macos_rerun_counts_only_the_contract_s_lines(
 @NEEDS_UPSTREAM
 def test_release_install_check_the_3_9_leg_compiles_the_two_python_commands():
     """FR-032: on Python 3.9 only, the installed package's own
-    `payload/lanes-index` and `payload/lane-worktrees` are compiled: the
-    shipped bytes are what must compile on 3.9."""
+    `payload/lanes-index` and `payload/lane-worktrees`, and the module
+    `lanes-index` runs its body from, `payload/lanes_index_main.py` (007
+    T347), are compiled: the shipped bytes are what must compile on 3.9."""
     steps = [s for s in install_steps(release())
              if condition_kind(s.get("if")) == "python-3.9"]
     assert [s for s in steps if "compile(" in run_text(s)
             and "lanes-index" in run_text(s) and "lane-worktrees" in run_text(s)
+            and "lanes_index_main.py" in run_text(s)
             and "payload" in run_text(s)], [label(s) for s in steps]
 
 
@@ -6292,6 +6384,12 @@ def with_lane_worktrees_missing(home: Path) -> None:
     (payload / "lane-worktrees").unlink()
 
 
+def with_lanes_index_module_broken(home: Path) -> None:
+    layout.pipx_venv(home, "1.11.1")
+    payload = home / "venvs/openrepotools/lib/python3.9/site-packages/openrepotools/payload"
+    (payload / "lanes_index_main.py").write_bytes(b"def broken(:\n")
+
+
 #: `(the Python the step is run as, the pipx home it reads, whether it
 #: passes, what its refusal names)`.
 COMPILE_CASES = {
@@ -6299,6 +6397,8 @@ COMPILE_CASES = {
                              True, None),
     "lanes-index-does-not-compile": ("3.9.25", with_lanes_index_broken, False,
                                      "lanes-index"),
+    "lanes-index-module-does-not-compile": ("3.9.25", with_lanes_index_module_broken,
+                                            False, "lanes_index_main.py"),
     "lane-worktrees-missing": ("3.9.25", with_lane_worktrees_missing, False,
                                "lane-worktrees"),
     "no-payload-directory": ("3.9.25", lambda home: home.mkdir(parents=True),
@@ -6316,9 +6416,11 @@ def test_release_install_check_the_3_9_step_refuses_a_payload_command_that_does_
         tmp_path, which):
     """THE 3.9 LEG'S STEP, RUN (FR-032), on a pipx home laid out as pipx
     1.11.1 leaves it: it passes the payload as built, and refuses, naming
-    why, a `lanes-index` that does not compile, a `lane-worktrees` that is
-    missing, no payload directory or two, and any Python but 3.9. The step
-    is run by this Python, reading as the Python the case names."""
+    why, a `lanes-index` that does not compile, `lanes_index_main.py`, the
+    module it runs its body from (007 T347), that does not compile, a
+    `lane-worktrees` that is missing, no payload directory or two, and any
+    Python but 3.9. The step is run by this Python, reading as the Python
+    the case names."""
     version, lay_out, passes, names = COMPILE_CASES[which]
     steps = [s for s in install_steps(release())
              if condition_kind(s.get("if")) == "python-3.9"]

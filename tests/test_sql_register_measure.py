@@ -1215,7 +1215,12 @@ class VerbEstate:
             self.reg, self.estate = None, Estate(root / "estate", files)
             self.bin = root / "bin"
             self.bin.mkdir(parents=True)
-            for name in ("lanes-edit.sh", "lanes-index", "lane-start"):
+            # The copy rule (CLI4.5 section 6), as the checkout has them: T124's
+            # launcher runs its body from `lanes_index_main.py` beside it, and
+            # exits 1 without it; a name the checkout lacks is skipped, as the
+            # module is before T124.
+            for name in ("lanes-edit.sh", "lanes-index", "lanes_index_main.py",
+                         "lane-start"):
                 if (REPO / name).exists():
                     shutil.copy2(str(REPO / name), str(self.bin / name))
             env = index_env(root, root / "no-config", self.estate.home)

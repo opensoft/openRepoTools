@@ -82,6 +82,21 @@ WHAT IT HOLDS, by task:
       the writer exits with the verb's own code while the stand-in holds the
       `render` call on a FIFO, so no fork waits, and the flipped copy's
       answer to it, "git half not installed", is never read.
+  * T282 (lane 2's, with lane 1's T124 and in its pull request), T124's cached
+    module (tasks:2850-2878; AT-14, TP:2660; FR-064): a start of the refusing
+    copy's `lanes-index mode` runs `lanes_index_main.py`'s checked-hash cached
+    bytecode (PEP 552) where its hash matches the module's bytes
+    (`test_a_start_runs_the_cached_module_whose_checked_hash_matches_its_source`),
+    never bytecode whose source has changed
+    (`test_a_start_never_runs_cached_bytecode_whose_source_has_changed`), and
+    the module's source where it has no bytecode
+    (`test_a_start_runs_the_module_source_where_it_has_no_bytecode`); and every
+    subcommand in the usage answers alike from the cached module and from its
+    source, with the argv seen at the module's entry and at its dispatch equal
+    to the vector the test gave the launcher, `argv[0]` included
+    (`test_each_subcommand_answers_alike_from_the_cached_module_and_from_its_source`).
+    Each first asserts that `flipped_copy` placed the module beside the copy,
+    T124's hunk in `tests/sql_register_helpers.py`.
 
 THE CODES ARE READ FROM THE CONSTANTS (contracts/exit-codes.md section 1:
 "the tests read the constant, never a literal"): `EXIT_CONFIG` and
@@ -165,7 +180,9 @@ L1-A11 and L5-A5 land: lane 1's T105 (the constant and `mode`), T113
 on a build that never asks the mode. T256's real-engine cases fail until L4-B1
 and L4-B13 land, and on an engine they also need T227's template and lane 1's
 T107 functions. `[replay-keeps-pid]` fails until lane 4's T409 follow-up for
-its item 9, and needs Amendment 23's S4 replay and `NET_GIT`.
+its item 9, and needs Amendment 23's S4 replay and `NET_GIT`. T282's four
+cases fail until lane 1's T124 lands, whose launcher and module they start,
+and T124's verify selects them (tasks:2850, :2878).
 """
 
 from __future__ import annotations
@@ -173,6 +190,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import marshal
 import os
 import re
 import shlex
@@ -208,6 +226,10 @@ SQL_REGISTER_GATE_TABLE = {
     "test_register_read_exits_78_under_the_refusal": ("T104", "T105", "T113", "T504", "T505", "T506"),  # T212; tasks:1974
     "test_mode_primary_is_refused_until_the_git_half_and_goes_to_sql_once_flipped[flipped]": ("T409", "T415", "T416"),  # T256; tasks:2436
     "test_mode_primary_is_refused_until_the_git_half_and_goes_to_sql_once_flipped[replay-keeps-pid]": ("T409",),  # T256; tasks:2436
+    "test_a_start_runs_the_cached_module_whose_checked_hash_matches_its_source": ("T124",),  # T282; tasks:2877
+    "test_a_start_never_runs_cached_bytecode_whose_source_has_changed": ("T124",),  # T282; tasks:2877
+    "test_a_start_runs_the_module_source_where_it_has_no_bytecode": ("T124",),  # T282; tasks:2877
+    "test_each_subcommand_answers_alike_from_the_cached_module_and_from_its_source": ("T124",),  # T282; tasks:2877
 }
 
 LANES_EDIT = REPO / "lanes-edit.sh"
@@ -1195,3 +1217,321 @@ def test_a_primary_write_forks_render_checkout_on_the_lane_checkout_detached(est
     assert released, "no render call was held on the FIFO to let go"
     ended = within(FORK_SECONDS, lambda: (world.bin / ENDS_LOG).exists())
     assert ended, "the render call did not end once it was let go"
+
+
+# ------------------------------------- T282: T124's cached module (AT-14)
+#: T124's module (tasks:2853: "The module's name, `lanes_index_main.py` here,
+#: is lane 1's to fix"), which T124's hunk in `flipped_copy` places beside the
+#: copy (tasks:2876).
+CACHED_MODULE = "lanes_index_main.py"
+
+#: AT-14's marker module (tasks:2876): only cached bytecode built from it can
+#: print this and exit 0.
+MARKER_LINE = "cached-marker"
+MARKER_SOURCE = ("import sys\nsys.stdout.write(" + repr(MARKER_LINE + "\n") + ")\n"
+                 "sys.stdout.flush()\nsys.exit(0)\n")
+
+#: AN ARGUMENT NO SUBCOMMAND TAKES, for the parity case's refused-argument run.
+NOT_AN_ARGUMENT = "--t282-not-an-argument"
+
+#: THE PARITY CASE'S ARGV PROBE (RX-26's (a)), test code that the case puts in
+#: the launcher's own interpreter by a `.pth` in an overlay's site-packages,
+#: since `-I` ignores `PYTHONPATH` and the user site but not the interpreter's
+#: own site-packages; so T124's module carries no test seam. An audit hook
+#: (PEP 578) records `sys.argv` at the `exec` of a code object named for the
+#: module (its entry), and `[sys.argv[0]] + argv` at the first call of the
+#: module's own `main(argv)` (its dispatch); a `compile` naming the module
+#: tells the source form from the cached one. One record per process, by pid.
+ARGV_PROBE = r'''# T282's argv probe (feature 007, AT-14): test code in a test's overlay.
+import json, os, sys
+_RECORDS = os.environ.get("T282_ARGV_RECORDS")
+_NAME = "lanes_index_main.py"
+if _RECORDS:
+    _seen = {"entry": [], "dispatch": [], "compiled": False}
+
+    def _hexes(vector):
+        return [os.fsencode(item).hex() for item in vector]
+
+    def _save():
+        path = os.path.join(_RECORDS, "%d.json" % os.getpid())
+        with open(path + ".new", "w", encoding="utf-8") as handle:
+            json.dump(_seen, handle)
+        os.replace(path + ".new", path)
+
+    def _profile(frame, event, arg):
+        code = frame.f_code
+        if event == "call" and code.co_name == "main" and code.co_filename.endswith(_NAME):
+            sys.setprofile(None)
+            argv = frame.f_locals.get("argv")
+            _seen["dispatch"].append(_hexes([sys.argv[0]] + list(argv if argv is not None else [])))
+            _save()
+
+    def _hook(event, args):
+        try:
+            if event == "exec" and str(getattr(args[0], "co_filename", "")).endswith(_NAME):
+                _seen["entry"].append(_hexes(sys.argv))
+                _save()
+                sys.setprofile(_profile)
+            elif event == "compile" and len(args) > 1 and str(args[1]).endswith(_NAME):
+                _seen["compiled"] = True
+                _save()
+        except Exception:
+            pass
+
+    sys.addaudithook(_hook)
+'''
+
+
+def cached_module(state: Refusing) -> Path:
+    """The module beside the refusing copy, asserted there: T124's hunk in
+    `flipped_copy` places it (tasks:2853, :2876), so before T124 each T282
+    case fails here, never at collection."""
+    module = state.copy.parent / CACHED_MODULE
+    assert module.is_file(), (
+        f"no {CACHED_MODULE} beside the refusing copy {state.copy}: T124's launcher runs its "
+        f"body from that module, which T124's hunk in `flipped_copy` places beside the copy "
+        f"(tasks:2850-2854); T282's cases wait for T124")
+    return module
+
+
+def bytecode_path(module: Path) -> Path:
+    """Where the launcher reads the module's bytecode: the interpreter's own
+    `__pycache__` name for it (PEP 3147), as lane 1 measured "a launcher
+    importing from `__pycache__`" (tasks:2853). The place is lane 1's to fix.
+    It is built here as `lanes-index` builds it, never by `cache_from_source`,
+    which follows `sys.pycache_prefix`: `tests/run.sh` exports
+    `PYTHONPYCACHEPREFIX`, and under it that name is in the run's bytecode
+    cache, where no launcher reads, so the cached runs ran the source."""
+    tag = sys.implementation.cache_tag
+    assert tag is not None, "this interpreter has no cache tag, so no launcher reads bytecode"
+    return module.parent / "__pycache__" / f"{module.stem}.{tag}.pyc"
+
+
+def checked_hash_pyc(code, source: bytes) -> bytes:
+    """A checked-hash `.pyc` of `code` (PEP 552, flags 0b11) that carries the
+    hash of `source`."""
+    return (importlib.util.MAGIC_NUMBER + (0b11).to_bytes(4, "little")
+            + importlib.util.source_hash(source) + marshal.dumps(code))
+
+
+def module_code(module: Path, source=None):
+    """`source` (the module's own bytes by default) compiled under the
+    module's path, as the interpreter compiles a module."""
+    text = module.read_bytes() if source is None else source
+    return compile(text, str(module), "exec", dont_inherit=True)
+
+
+def place_bytecode(module: Path, code) -> Path:
+    """`code` as the module's checked-hash bytecode, with the hash of the
+    module's bytes as they are now."""
+    pyc = bytecode_path(module)
+    pyc.parent.mkdir(parents=True, exist_ok=True)
+    pyc.write_bytes(checked_hash_pyc(code, module.read_bytes()))
+    return pyc
+
+
+def set_aside(pyc: Path) -> None:
+    """No bytecode at the module's place: what is there is moved aside, in
+    the test's own estate."""
+    if pyc.exists():
+        os.replace(pyc, pyc.with_name(f"{pyc.name}.aside-{uuid.uuid4().hex}"))
+    assert not pyc.exists(), pyc
+
+
+def probe_python(state: Refusing) -> Path:
+    """A `pyvenv.cfg` overlay of the interpreter the tests run on, in the
+    estate, whose site-packages loads `ARGV_PROBE` by a `.pth`, under `-I`
+    too. Returns its `bin`, which holds `python3`."""
+    overlay = state.root / "argv-probe-python"
+    bin_dir = overlay / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    real = Path(os.path.realpath(sys.executable))
+    (overlay / "pyvenv.cfg").write_text(
+        f"home = {real.parent}\ninclude-system-site-packages = false\n", encoding="utf-8")
+    python = bin_dir / "python3"
+    if not python.is_symlink():
+        python.symlink_to(real)
+    asked = subprocess.run([str(python), "-I", "-c", "import site; print(site.getsitepackages()[0])"],
+                           capture_output=True, text=True, timeout=60)
+    assert asked.returncode == 0, shown(asked)
+    site_dir = Path(asked.stdout.strip())
+    site_dir.mkdir(parents=True, exist_ok=True)
+    (site_dir / "t282_argv_probe.py").write_text(ARGV_PROBE, encoding="utf-8")
+    (site_dir / "t282_argv_probe.pth").write_text("import t282_argv_probe\n", encoding="utf-8")
+    loaded = subprocess.run([str(python), "-I", "-c", "import sys; print('t282_argv_probe' in sys.modules)"],
+                            capture_output=True, text=True, timeout=60)
+    assert loaded.stdout.strip() == "True", ("the overlay does not load the argv probe under -I",
+                                             shown(loaded))
+    return bin_dir
+
+
+def start_by_path(state: Refusing, vector: list, env: dict) -> tuple:
+    """`vector` started as `lanes-edit.sh` starts `lanes-index`, by its path,
+    in the estate's root, with `env` over the estate's environment; returns
+    the started process's pid, exit, stdout and stderr."""
+    child = dict(state.e.env)
+    for key, value in env.items():
+        if value is None:
+            child.pop(key, None)
+        else:
+            child[key] = value
+    proc = subprocess.Popen([str(a) for a in vector], cwd=str(state.e.root), env=child,
+                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True)
+    try:
+        out, err = proc.communicate(timeout=120)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        out, err = proc.communicate()
+        raise AssertionError(f"{vector} did not end in 120 s", out[-2000:], err[-2000:])
+    return proc.pid, proc.returncode, out, err
+
+
+def usage_subcommands(usage: str) -> list:
+    """Each subcommand `lanes-index`'s usage lists, in its order: a form's
+    first word, or its first two for `register`'s."""
+    found = []
+    for line in usage.splitlines():
+        words = line.split()
+        if len(words) < 2 or words[0] != "lanes-index" or not re.fullmatch(r"[a-z][a-z-]*", words[1]):
+            continue
+        name = tuple(words[1:3]) if words[1] == "register" and len(words) > 2 else (words[1],)
+        if name not in found:
+            found.append(name)
+    return found
+
+
+def hexes(vector: list) -> list:
+    return [os.fsencode(str(item)).hex() for item in vector]
+
+
+#: WHETHER T124'S LAUNCHER READS THE MODULE'S BYTECODE AT ALL: on Python 3.11
+#: and later. Lane 1's gate (#165 6894131980) adds `sys.version_info >= (3, 11)`
+#: beside the launcher's cache-tag and `-O` tests, so on 3.9 and 3.10 it reads
+#: no bytecode and runs the source, as tasks:2876 and TP:2660 state (lane 3's
+#: ruling 2, #165 6885378657).
+LAUNCHER_READS_BYTECODE = sys.version_info >= (3, 11)
+
+
+def test_a_start_runs_the_cached_module_whose_checked_hash_matches_its_source(estate):
+    """T282's first case (AT-14; tasks:2876): with a checked-hash `.pyc` built
+    from a marker module that prints `cached-marker` and exits 0, carrying the
+    hash of the real module's bytes, where the launcher reads the module's
+    bytecode, the refusing copy's `lanes-index mode` prints `cached-marker`
+    and exits 0, which only the cached bytecode can do, on Python 3.11 and
+    later. On 3.9 and 3.10, where lane 1's gate has the launcher read no
+    bytecode (`LAUNCHER_READS_BYTECODE`; #165 6894131980), it never prints
+    `cached-marker`, and exits 78 with the text, as the source does
+    (tasks:2876, TP:2660)."""
+    state = Refusing(estate)
+    module = cached_module(state)
+    place_bytecode(module, module_code(module, MARKER_SOURCE))
+    proc = state.index(state.copy, "mode")
+    if LAUNCHER_READS_BYTECODE:
+        assert (proc.returncode, proc.stdout) == (0, MARKER_LINE + "\n"), (
+            "the start did not run the module's checked-hash cached bytecode", shown(proc))
+        return
+    assert MARKER_LINE not in proc.stdout + proc.stderr, (
+        "the start ran the module's cached bytecode below Python 3.11, where lane 1's gate "
+        "has the launcher read none", shown(proc))
+    assert proc.returncode == exit_code("EXIT_CONFIG"), shown(proc)
+    assert REFUSED_TEXT in proc.stderr, shown(proc)
+    assert proc.stdout == "", shown(proc)
+
+
+def test_a_start_never_runs_cached_bytecode_whose_source_has_changed(estate):
+    """T282's second case (AT-14; tasks:2876): the same marker `.pyc`, and
+    then one byte added to the module that leaves the source's behaviour
+    unchanged, a trailing newline: the start never prints `cached-marker`,
+    and exits 78 with the text, as the source does."""
+    state = Refusing(estate)
+    module = cached_module(state)
+    config_code = exit_code("EXIT_CONFIG")
+    place_bytecode(module, module_code(module, MARKER_SOURCE))
+    with module.open("ab") as handle:
+        handle.write(b"\n")
+    proc = state.index(state.copy, "mode")
+    assert MARKER_LINE not in proc.stdout + proc.stderr, (
+        "the start ran cached bytecode whose source has changed", shown(proc))
+    assert proc.returncode == config_code, shown(proc)
+    assert REFUSED_TEXT in proc.stderr, shown(proc)
+    assert proc.stdout == "", shown(proc)
+
+
+def test_a_start_runs_the_module_source_where_it_has_no_bytecode(estate):
+    """T282's third case (AT-14; tasks:2876): with no bytecode there, the
+    start exits 78 with the text, its stdout, stderr and exit equal to those
+    of a start with the module's own valid checked-hash bytecode."""
+    state = Refusing(estate)
+    module = cached_module(state)
+    config_code = exit_code("EXIT_CONFIG")
+    set_aside(bytecode_path(module))
+    source_run = state.index(state.copy, "mode")
+    assert source_run.returncode == config_code, shown(source_run)
+    assert REFUSED_TEXT in source_run.stderr, shown(source_run)
+    place_bytecode(module, module_code(module))
+    cached_run = state.index(state.copy, "mode")
+    assert ((source_run.returncode, source_run.stdout, source_run.stderr)
+            == (cached_run.returncode, cached_run.stdout, cached_run.stderr)), (
+        "with no bytecode", shown(source_run), "with its own", shown(cached_run))
+
+
+def test_each_subcommand_answers_alike_from_the_cached_module_and_from_its_source(estate):
+    """T282's parity case (AT-14; tasks:2876, TP:2566 and :2574): each
+    subcommand in the usage, with `--help`, with an argument it refuses and in
+    its plain form on the refusing state's configuration, is started by the
+    launcher's path as the test spells it, once with the module's own
+    checked-hash bytecode in place and once with none. In each run the argv is
+    seen exactly once at the module's entry and once at its dispatch, each
+    the exact vector given to the launcher, `argv[0]` included, byte for
+    byte, never the interpreter or its options; the cached run compiles no
+    module and the source run does; and each pair's argv, stdout, stderr and
+    exit are equal, byte for byte. On Python 3.9 and 3.10, where lane 1's gate
+    has the launcher read no bytecode (`LAUNCHER_READS_BYTECODE`; #165
+    6894131980), both runs are the source's, so both compile the module, and
+    the equalities still hold (tasks:2876, TP:2660). The list is read from the
+    usage, so a subcommand added later is covered."""
+    state = Refusing(estate)
+    module = cached_module(state)
+    pyc = bytecode_path(module)
+    own = checked_hash_pyc(module_code(module), module.read_bytes())
+    bin_dir = probe_python(state)
+    records = state.root / "argv-records"
+    records.mkdir(parents=True, exist_ok=True)
+    env = state.env(PATH=state.e.path_with(bin_dir, state.psql_dir),
+                    T282_ARGV_RECORDS=str(records))
+    launcher = os.path.relpath(state.copy, state.e.root)
+
+    def start(vector: list, form: str) -> tuple:
+        if form == "cached":
+            pyc.parent.mkdir(parents=True, exist_ok=True)
+            pyc.write_bytes(own)
+        else:
+            set_aside(pyc)
+        pid, code, out, err = start_by_path(state, vector, env)
+        record = records / f"{pid}.json"
+        assert record.is_file(), (
+            f"{form}: nothing saw the argv of {vector}: the launcher runs the module's code by "
+            f"`exec` of a code object named for it, which dispatches through its own `main(argv)` "
+            f"(tasks:2853)", code, out[-2000:], err[-2000:])
+        seen = json.loads(record.read_text(encoding="utf-8"))
+        given = hexes(vector)
+        assert len(seen["entry"]) == 1 and len(seen["dispatch"]) == 1, (form, vector, seen)
+        assert seen["entry"][0] == given, (form, "entry", vector, seen)
+        assert seen["dispatch"][0] == given, (form, "dispatch", vector, seen)
+        assert seen["compiled"] is (form == "source" or not LAUNCHER_READS_BYTECODE), (
+            f"{form}: the module was {'' if seen['compiled'] else 'not '}compiled", vector)
+        return seen["entry"][0], code, out, err
+
+    _argv, _code, usage, _err = start([launcher, "--help"], "source")
+    subcommands = usage_subcommands(usage)
+    assert ("mode",) in subcommands, ("the usage lists no `mode`", usage[-3000:])
+    compared = 0
+    for name in subcommands:
+        for extra in (["--help"], [NOT_AN_ARGUMENT], []):
+            vector = [launcher, *name, *extra]
+            cached = start(vector, "cached")
+            source = start(vector, "source")
+            assert cached == source, (vector, "cached", cached, "source", source)
+            compared += 1
+    assert compared == 3 * len(subcommands), (compared, subcommands)
