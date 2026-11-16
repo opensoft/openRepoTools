@@ -92,15 +92,22 @@
 #
 # EXIT CODES, in this family's convention (clause (f)'s, which excludes 3
 # because `lanes-edit.sh` already spends it on an unpushed commit and a code
-# that means two things is a code a caller cannot act on):
+# that means two things is a code a caller cannot act on), except a 3 passed
+# on from `lanes-edit.sh`, which keeps that writer's meaning:
 #
 #   0  the lane was reached — this process replaced by the launcher, or the
 #      attach performed — or the listing printed, or the pick declined
 #   8  NO LANE TO PICK: nothing in scope that this word would offer
 #   2  REFUSED — no such lane, a lane bound elsewhere, no directory or profile
 #      recorded yet, no launcher on PATH, an answer that is not one of the
-#      choices, a recorded window that no longer resolves
+#      choices, a recorded window that no longer resolves, or, at the attach to
+#      a live lane, a register row (its own, or its window name's) that could
+#      not be read, with any code but 69, 75 and 3
 #   1  a read failed, which is never "there are no lanes" (Amendment 7(d))
+#   69, 75 or 3: the register's own code, passed on, where a read of the register
+#      failed with one of them; any other code of a read keeps that arm's own
+#      exit (1, or the 2 of a refusal, or the 64 of a `lanes` too old for
+#      `--decide`)
 #   64 usage — an unknown option, or a flag with no value
 #
 #   $LANES_EDIT      the register's reader (default: lanes-edit.sh beside this)
@@ -130,6 +137,15 @@ die()  { printf '\n%s: REFUSED: %s\n' "$prog" "$1" >&2; exit "${2:-2}"; }
 # read back unquoted — so `cd /p/my projects` is a line that cd's into `/p/my`.
 quoted() { printf '%q ' "$@" | sed 's/ $//'; }
 lc() { printf '%s' "${1-}" | tr 'A-Z' 'a-z'; }
+# THE REGISTER'S OWN CODES ARE PASSED ON, AND NO OTHER (feature 007, the design's
+# "callers' default arms", as lane 3's ruling (a) of 2026-11-09 narrows them):
+# where a read of the register failed with 69 (its store could not be read), 75
+# or 3, the refusal exits with that code, so that a caller can tell it from any
+# other failure. EVERY OTHER CODE KEEPS THE EXIT OF TODAY: 1, or the arm's own
+# where that is not 1, which it passes as the second word (`go_live`'s four
+# reads, whose refusal is a 2). Files mode emits none of the three, so what it
+# prints and exits with does not change there.
+register_code() { case "${1-}" in 69 | 75 | 3) printf '%s' "$1" ;; *) printf '%s' "${2:-1}" ;; esac; }
 
 usage() {
 	cat <<'USAGE'
@@ -173,7 +189,7 @@ stdin is not a terminal. `f` at the question opens a NEW lane at the next free
 position; `q` picks none.
 
 Exit: 0 reached, listed or declined · 8 nothing to pick · 2 refused ·
-1 a read failed · 64 usage.
+1 a read failed · 69, 75 or 3: the register's own code, passed on · 64 usage.
 
   $LANES_EDIT   the register's reader   (default: lanes-edit.sh beside this file)
   $PCLAUDE      the launcher            (default: lclaude, else pclaude, else claude-profile)
@@ -363,8 +379,18 @@ ws_notice() {
 #
 # AND THE CODE DECIDES, NOT THE EMPTINESS OF THE OUTPUT (Amendment 7(d), the
 # fail-closed family): `0` rows · `8` none · `2` A HELPER PREDATING THE READ ·
-# `64` a usage error of the read's own · anything else A READ THAT FAILED, which
-# is never "there are no lanes" and never a pick this word prints empty.
+# `64` a usage error of the read's own, or a helper too old to take `--decide` ·
+# anything else A READ THAT FAILED, which is never "there are no lanes" and
+# never a pick this word prints empty — and which exits 1, except for the
+# register's own 69, 75 and 3, which leave as they are (feature 007, the design's
+# "callers' default arms", as lane 3's ruling (a) narrows them): a 69, a store
+# that could not be read, reaches the caller as a 69.
+#
+# AND `--decide`, BECAUSE THIS WORD ACTS ON THE LISTING (feature 007, R38): it
+# launches, attaches and binds on the rows below, so where the register's store
+# cannot decide them it must refuse with 69 and never act on the mirror's
+# answer. Both calls pass it. A `lanes-edit.sh` older than the arm that takes
+# the flag refuses it with 64, and the `64)` arm says so.
 ROWS_OUT=""
 # AND WHETHER THE PROOF WAS MADE AT ALL. `lanes_rows` says on STDERR — and goes
 # on answering — that this workstation's session records could not be read, in
@@ -386,7 +412,7 @@ read_rows() {   # <args for `lanes-edit.sh lanes`>
 	local rr_rc=0 rr_err_file
 	rr_err_file="$(mktemp "${TMPDIR:-/tmp}/lane-read.XXXXXX" 2>/dev/null || printf '')"
 	if [ -n "$rr_err_file" ]; then
-		ROWS_OUT="$(LANES_NO_FETCH=1 "$LANES_EDIT" lanes "$@" 2>"$rr_err_file")" || rr_rc=$?
+		ROWS_OUT="$(LANES_NO_FETCH=1 "$LANES_EDIT" lanes --decide "$@" 2>"$rr_err_file")" || rr_rc=$?
 		# The one expected sentence is dropped out of the stream rather than the
 		# stream being dropped for its sake: the helper also says HERE that this
 		# workstation's session records could not be read, which is the line
@@ -403,19 +429,23 @@ read_rows() {   # <args for `lanes-edit.sh lanes`>
 		# blindness as an answer: whether the liveness proof was made is UNKNOWN
 		# from here, and `go_available` treats unknown as unproved.
 		LIVENESS_UNREAD=2
-		ROWS_OUT="$(LANES_NO_FETCH=1 "$LANES_EDIT" lanes "$@")" || rr_rc=$?
+		ROWS_OUT="$(LANES_NO_FETCH=1 "$LANES_EDIT" lanes --decide "$@")" || rr_rc=$?
 	fi
 	case "$rr_rc" in
 	0) return 0 ;;
 	8) ROWS_OUT=""; return 8 ;;
-	64) die "bad arguments for the lane read — see $prog --help" 64 ;;
+	64) die "bad arguments for the lane read — see $prog --help — or a \`lanes-edit.sh\` too
+    old for \`lanes --decide\`, which this command passes and an older one refuses
+    with 64. The second is not a failure and nothing is wrong with the register —
+    this workstation has not taken the install yet. Take it:
+      openRepoTools --install" 64 ;;
 	2) die "the \`lanes-edit.sh\` on this workstation has no \`lanes\` subcommand, so it
     predates lane-collision-protocol Amendment 11. That is not a failure and
     nothing is wrong with the register — this workstation has not taken the
     install yet. Take it:  openRepoTools --install" 2 ;;
 	*) die "$LANES_EDIT lanes failed (exit $rr_rc). That is NOT 'there are no lanes', and
     this command will not offer a pick — or a lane — on an answer it did not get
-    (Amendment 7(d)). Run it by hand to see what it says, then re-run." 1 ;;
+    (Amendment 7(d)). Run it by hand to see what it says, then re-run." "$(register_code "$rr_rc")" ;;
 	esac
 }
 
@@ -443,7 +473,7 @@ group_rows() {   # rows in $ROWS_OUT → `<group><TAB><row>`
     Until then the same rows are a read:  lanes" 2 ;;
 	*) die "$LANES_EDIT lane-groups failed (exit $gr_rc). That is NOT 'no lane is
     available' (Amendment 7(d)), and this command will not print a pick with a
-    group missing from it. Run it by hand to see what it says, then re-run." 1 ;;
+    group missing from it. Run it by hand to see what it says, then re-run." "$(register_code "$gr_rc")" ;;
 	esac
 }
 
@@ -839,8 +869,20 @@ go_live() {
 	# switch can leave a live transcript newer than the row, and a renamed
 	# session can belong to another lane. The prompt guard would refuse both;
 	# do not conceal either mismatch by renaming the window on the way in.
-	gl_row="$(LANES_NO_FETCH=1 "$LANES_EDIT" register-row "$R_LANE" 2>/dev/null)" ||
-		die "lane $R_LANE has no readable register row, so its live window cannot be bound safely. Read it with: lanes --all" 2
+	#
+	# THE FOUR REGISTER READS BELOW PASS 69, 75 AND 3, AND KEEP THEIR 2 FOR EVERY
+	# OTHER CODE (feature 007, T408; lane 3's ruling on question 102, opensoft/
+	# openRepoTools#165, comment 6808937880: "`go_live`'s four register reads
+	# (...) pass 69, 75 and 3 and keep their 2 for every other code"). They are
+	# this one, the local row of the lane, and the window's name's published and
+	# local rows. The design's readers table (Y@a6497d00:3014) gives `lane` a 69 with
+	# the register's store unreachable, and a 2 there says "refused", which an
+	# outage is not. Their refusal prints on stderr and nothing on stdout, and
+	# the code that leaves is `register_code`'s, with 2 as its other.
+	gl_rc=0
+	gl_row="$(LANES_NO_FETCH=1 "$LANES_EDIT" register-row "$R_LANE" 2>/dev/null)" || gl_rc=$?
+	[ "$gl_rc" = 0 ] ||
+		die "lane $R_LANE has no readable register row (exit $gl_rc), so its live window cannot be bound safely. Read it with: lanes --all" "$(register_code "$gl_rc" 2)"
 	gl_cell="$(printf '%s\n' "$gl_row" | awk -F'|' 'NR == 1 { print $3 }')"
 	gl_last="$(printf '%s\n' "$gl_cell" | grep -Eoi '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tail -n1 || :)"
 	gl_pub_ids="$(printf '%s\n' "$gl_cell" | grep -Eoi '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tr 'A-F' 'a-f' | tr '\n' ' ' || :)"
@@ -852,7 +894,7 @@ go_live() {
 		gl_local_last="$(printf '%s\n' "$gl_local_cell" | grep -Eoi '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tail -n1 || :)"
 		gl_local_ids="$(printf '%s\n' "$gl_local_cell" | grep -Eoi '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tr 'A-F' 'a-f' | tr '\n' ' ' || :)" ;;
 	8) gl_local_last=""; gl_local_ids="" ;;
-	*) die "lane $R_LANE's local register row could not be read (exit $gl_local_rc). Nothing was renamed or attached." 2 ;;
+	*) die "lane $R_LANE's local register row could not be read (exit $gl_local_rc). Nothing was renamed or attached." "$(register_code "$gl_local_rc" 2)" ;;
 	esac
 	gl_rc=0
 	gl_record="$("$LANES_EDIT" window-session "$W_SESS:$W_ID" 2>/dev/null)" || gl_rc=$?
@@ -913,7 +955,7 @@ EOF
 				case "$gl_rc" in
 				0) die "window $W_SESS:$W_ID is named $gl_name, which has its own lane row. Renaming it to $R_LANE would take another lane's tmux address; nothing was renamed or attached." 2 ;;
 				8) : ;;
-				*) die "whether window name $gl_name belongs to another lane could not be read from the published or the local register (exit $gl_rc). Nothing was renamed or attached." 2 ;;
+				*) die "whether window name $gl_name belongs to another lane could not be read from the published or the local register (exit $gl_rc). Nothing was renamed or attached." "$(register_code "$gl_rc" 2)" ;;
 				esac ;;
 			esac
 		fi
@@ -1090,7 +1132,7 @@ go_elsewhere() {
     $ge_rc. That is NOT 'it is bound nowhere' (Amendment 7(d)), and this command
     will not ask a place it cannot name for a handoff — nor bind a lane on an
     answer it did not get. Run it by hand to see what it says:
-      $LANES_EDIT binding $R_LANE" 1 ;;
+      $LANES_EDIT binding $R_LANE" "$(register_code "$ge_rc")" ;;
 	esac
 	IFS="$TAB" read -r ge_host ge_cont ge_win ge_utc ge_sess ge_os ge_where ge_wstate <<EOF
 $ge_out
@@ -1214,7 +1256,7 @@ go_new() {   # <repo>
 		die "the next free position of $gn_repo could not be read: \`lanes-edit.sh next-free\`
     exited $gn_rc. This command will not open a lane at a position it did not
     get (Amendment 7(d)) — a number printed by a read that then failed is not an
-    answer. Read it:  lanes --prefix $gn_repo" 1
+    answer. Read it:  lanes --prefix $gn_repo" "$(register_code "$gn_rc")"
 	fi
 	case "${gn_next:-}" in
 	'' | *[!0-9]*) die "the next free position of $gn_repo could not be read, and this command will not
@@ -1349,7 +1391,7 @@ if [ -n "$name" ]; then
     this command will not bind a lane under a spelling nothing has established
     (Amendment 7(d)). Nothing was launched and nothing was attached.
       run it by hand to see what it says:  $LANES_EDIT canon-lane $name
-      what the register says now:          lanes --all" 1
+      what the register says now:          lanes --all" "$(register_code "$cl_rc")"
 	fi
 	if [ "$cl_rc" = 0 ] && [ -n "$cl_out" ] && [ "$cl_out" != "$name" ]; then
 		note "lane $name → $cl_out (Amendment 15: the register row's spelling is canonical)"
@@ -1400,6 +1442,43 @@ rows_rc=0
 read_rows ${scope_args[@]+"${scope_args[@]}"} || rows_rc=$?
 grouped_all=""
 if [ "$rows_rc" = 0 ]; then grouped_all="$(group_rows)" || exit $?; fi
+
+# AND WHEN IT CANNOT BE READ THE PICK SAYS SO (Copilot round 3 on #45,
+# `lane:960`). `|| :` collapsed every status of this read into an empty string
+# and the `f` answer then vanished from the question with nothing on screen to
+# say why — the same defect `lanes`'s footer had one file over, and the same
+# answer: `2` is an un-upgraded workstation and says so, anything else names the
+# code it got, and neither is a position of 1.
+#
+# AND IT IS READ HERE, BEFORE THE LISTING'S FIRST LINE, AND NOT AFTER THE ROWS
+# (feature 007, lane 3's ruling on T408's `next-free`, option B: opensoft/
+# openRepoTools#165, comment 6754439281, item 1). The design's reader table
+# makes `next-free` and `lane` readers whose answer, with the register's store
+# unreachable, is "69; no answer on stdout" (Y:3014, spec:599–600), and rows
+# printed before a 69 would be an answer on stdout. So where this read ends in
+# 69, 75 or 3 the command leaves with that code, prints nothing on stdout, and
+# says why on stderr. Every other code keeps the note under the rows, as it was.
+# NO READ MOVES PAST ANOTHER: the register reads stay `lanes`, then `lane-groups`,
+# then this one, and the rendering below them calls `$LANES_EDIT` nowhere.
+next_free=""; next_free_rc=0
+if [ -n "$here_repo" ]; then
+	next_free="$(printf '%s\n' "$ROWS_OUT" | "$LANES_EDIT" next-free "$here_repo" 2>/dev/null)" || next_free_rc=$?
+	case "$next_free_rc" in
+	69 | 75 | 3)
+		die "the next free position of $here_repo could not be read: \`lanes-edit.sh next-free\`
+    exited $next_free_rc, the register's own code, so this command prints no
+    listing and leaves with that code rather than list rows with a position
+    missing from them (Amendment 7(d)). Read it:  lanes --prefix $here_repo" "$next_free_rc" ;;
+	esac
+	# THE STATUS DECIDES BEFORE THE TEXT DOES (Copilot round 5 on #45,
+	# `lane:1000`). A read that printed digits AND THEN FAILED passes the shape
+	# test below on its own output, so the fail-closed arm under it was skipped
+	# and `f` was offered at a position nothing answered for — which is the very
+	# thing `go_new` stopped doing one round earlier (round 3, `lane:751`). The
+	# offer and the answer read the same status now.
+	[ "$next_free_rc" = 0 ] || next_free=""
+	case "${next_free:-}" in '' | *[!0-9]*) next_free="" ;; esac
+fi
 
 PICK_GROUP=(); PICK_ROW=()
 n=0
@@ -1482,25 +1561,6 @@ if [ "$LIVENESS_UNREAD" != 0 ] && [ "$avail_n" != 0 ]; then
 fi
 render_group live "LIVE HERE — attach, never a second process"
 render_group elsewhere "BOUND ELSEWHERE — ask that workstation for the handoff"
-
-# AND WHEN IT CANNOT BE READ THE PICK SAYS SO (Copilot round 3 on #45,
-# `lane:960`). `|| :` collapsed every status of this read into an empty string
-# and the `f` answer then vanished from the question with nothing on screen to
-# say why — the same defect `lanes`'s footer had one file over, and the same
-# answer: `2` is an un-upgraded workstation and says so, anything else names the
-# code it got, and neither is a position of 1.
-next_free=""; next_free_rc=0
-if [ -n "$here_repo" ]; then
-	next_free="$(printf '%s\n' "$ROWS_OUT" | "$LANES_EDIT" next-free "$here_repo" 2>/dev/null)" || next_free_rc=$?
-	# THE STATUS DECIDES BEFORE THE TEXT DOES (Copilot round 5 on #45,
-	# `lane:1000`). A read that printed digits AND THEN FAILED passes the shape
-	# test below on its own output, so the fail-closed arm under it was skipped
-	# and `f` was offered at a position nothing answered for — which is the very
-	# thing `go_new` stopped doing one round earlier (round 3, `lane:751`). The
-	# offer and the answer read the same status now.
-	[ "$next_free_rc" = 0 ] || next_free=""
-	case "${next_free:-}" in '' | *[!0-9]*) next_free="" ;; esac
-fi
 
 if [ "$n" = 0 ]; then
 	say ""

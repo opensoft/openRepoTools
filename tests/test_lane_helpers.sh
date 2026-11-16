@@ -2337,7 +2337,7 @@ is   "…as is a lane whose every recorded session has ended" "$rc" 8
 cat > "$SANDBOX/failedit" <<'WRAP'
 #!/usr/bin/env bash
 case "${1-}" in
-  live-holder|lane-objects) printf '%s: simulated failure\n' "$1" >&2; exit 3 ;;
+  live-holder|lane-objects) printf '%s: simulated failure\n' "$1" >&2; exit 6 ;;
 esac
 exec "$REAL_LANES_EDIT" "$@"
 WRAP
@@ -2346,7 +2346,7 @@ chmod +x "$SANDBOX/failedit"
 before_renames="$(grep -c 'rename-window repoB-1' "$FAKE_TMUX_LOG" || :)"
 run env REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/failedit" "$START" repoB 1 --no-launch
 is   "lane-start REFUSES when live-holder fails, rather than taking the name" "$rc" 1
-has  "…naming the helper and its exit code" "$err" "live-holder repoB-1 failed (exit 3)"
+has  "…naming the helper and its exit code" "$err" "live-holder repoB-1 failed (exit 6)"
 has  "…passing the helper's own stderr through instead of swallowing it" "$err" "live-holder: simulated failure"
 hasnt "…and never saying the lane is free" "$err" "this is a resume of a lane whose sessions have all ended"
 is   "…and renaming no window on an answer it did not get" "$(grep -c 'rename-window repoB-1' "$FAKE_TMUX_LOG" || :)" "$before_renames"
@@ -2355,7 +2355,7 @@ run "$E" lane-objects repoP-2
 is   "lane-objects on a lane with no log exits 8 — the same 8 who uses for no record" "$rc" 8
 run env REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/failedit" "$END" repoG-2
 is   "lane-end REFUSES when lane-objects fails, rather than calling the lane pre-cutover" "$rc" 1
-has  "…naming the helper and its exit code" "$err" "lane-objects repoG-2 failed (exit 3)"
+has  "…naming the helper and its exit code" "$err" "lane-objects repoG-2 failed (exit 6)"
 has  "…passing the helper's own stderr through" "$err" "lane-objects: simulated failure"
 hasnt "…and never asserting the lane is pre-cutover" "$err" "pre-cutover"
 hasnt "…while writing no closing line to its row" "$(grep '^| `repoG-2`' "$LANES")" "window closing"
@@ -9347,8 +9347,15 @@ hasnt "…never calling that a helper failure" "$err" "register-row repolate-1 f
 # says nothing about any amendment, so the relay above must not fire for it —
 # and `lane-end`'s own row scan is then the whole of the refusal, which is what
 # it was written to be.
+#
+# ONE VERB IS ANSWERED. `register-text <path>` prints `$LANES_FILE`, the working
+# tree's register, and exits 0, so a `lane-end` that reads its rows through
+# `register-text` (spec 007 T403) gets the register it read before, and meets
+# the helper's 2 on `canon-lane` alone, as this case means it to. Every other
+# verb keeps the unknown-subcommand 2.
 A15_OLD="$SANDBOX/old-lanes-edit.sh"
 { printf '#!/bin/sh\n'
+  printf 'case "$1" in register-text) cat "$LANES_FILE"; exit 0 ;; esac\n'
   printf 'printf "lanes-edit.sh: unknown subcommand '\''%%s'\''\\n" "$1" >&2\n'
   printf 'exit 2\n'
 } > "$A15_OLD"
