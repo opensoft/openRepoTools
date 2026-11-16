@@ -92,7 +92,10 @@ from test_lane_start_claude_current import Sandbox, _write
 #: row, since its waits share no task. The table is lane 2's GP-24 plan's
 #: (`GP-24-gate-tables-plan.md`, sha256 `16d738b9`), with T415 added to two
 #: T233 rows ahead of T233's Order, since each writes on primary through
-#: T415's `pw_run` (lane 4, opensoft/openRepoTools#165 6879601079; T223c).
+#: T415's `pw_run` (lane 4, opensoft/openRepoTools#165 6879601079; T223c),
+#: and T115 to fifteen T232 rows ahead of T232's Order, since each clones
+#: `tmpl_imported`, which only T115's `import --at` builds (lane 1,
+#: opensoft/openRepoTools#165 6899134636; T223e).
 #: Only where the gate is active (`tests/sql_register_gate.py`) does it skip
 #: an id until all its tasks have landed; elsewhere it changes nothing.
 SQL_REGISTER_GATE_TABLE = {
@@ -103,15 +106,15 @@ SQL_REGISTER_GATE_TABLE = {
     "test_a_landing_expired_for_a_stale_landing_commits_and_frees_main_in_main_slots": ("T107", "T108", "T115", "T118", "T227", "T228"),  # T223; tasks:2140
     "test_a_landing_expired_that_names_no_stale_landing_is_lr005_and_writes_nothing": ("T107", "T108", "T115", "T118", "T227", "T228"),  # T223; tasks:2140
     "test_a_line_deriving_a_key_that_is_not_a_scope_exits_2_on_lr010_once": ("T107", "T108", "T111", "T112", "T410", "T415"),  # T252; tasks:2397
-    "test_a_malformed_act_is_refused_lr004_before_the_head_lock": ("T107", "T108", "T227", "T228"),  # T232; tasks:2239
+    "test_a_malformed_act_is_refused_lr004_before_the_head_lock": ("T107", "T108", "T115", "T227", "T228"),  # T232; tasks:2239, and T115 ahead of its Order (lane 1, opensoft/openRepoTools#165 6899134636)
     "test_a_refresh_or_a_line_of_no_kind_with_no_utc_commits_and_a_take_with_none_loads_at_files": ("T107", "T108", "T115", "T118", "T227", "T228"),  # T223; tasks:2140
     "test_a_refused_writer_replays_its_output_then_the_refusal": ("T413", "T414", "T415", "T423"),  # T248; tasks:2384
     "test_a_second_reach_of_the_seam_in_one_run_exits_2": ("T413", "T414", "T415", "T423"),  # T248; tasks:2384
     "test_a_serialization_failure_is_retried_never_reported_as_69": ("T107", "T108", "T227", "T228", "T302", "T413", "T414", "T415", "T421", "T422"),  # T243; tasks:2341
     "test_a_side_effect_runs_once_after_commit_and_never_for_a_refusal": ("T413", "T414", "T415", "T423"),  # T248; tasks:2384
     "test_a_slot_line_of_another_shape_commits_0": ("T107", "T108", "T227", "T228", "T302", "T413", "T414", "T415", "T421", "T422"),  # T243; tasks:2341
-    "test_a_star_key_after_the_base_is_reported_as_the_first_listed_scope": ("T107", "T108", "T227", "T228"),  # T232; tasks:2239
-    "test_a_stray_import_stores_its_keys_and_a_stray_revert_none": ("T107", "T108", "T227", "T228"),  # T232; tasks:2239
+    "test_a_star_key_after_the_base_is_reported_as_the_first_listed_scope": ("T107", "T108", "T115", "T227", "T228"),  # T232; tasks:2239, and T115 ahead of its Order (lane 1, opensoft/openRepoTools#165 6899134636)
+    "test_a_stray_import_stores_its_keys_and_a_stray_revert_none": ("T107", "T108", "T115", "T227", "T228"),  # T232; tasks:2239, and T115 ahead of its Order (lane 1, opensoft/openRepoTools#165 6899134636)
     "test_a_write_that_cannot_get_its_turn_exits_75_register_busy": ("T107", "T108", "T227", "T228", "T302", "T413", "T414", "T415", "T421", "T422"),  # T243; tasks:2341
     "test_a_writer_prints_its_output_once_however_many_attempts_it_made": ("T413", "T414", "T415", "T421"),  # T248; tasks:2384
     "test_act_begin_on_primary_prints_id_seq_and_generation": ("T111", "T410", "T411"),  # T233; tasks:2247
@@ -120,34 +123,34 @@ SQL_REGISTER_GATE_TABLE = {
     "test_act_begin_rebase_refuses_with_2": ("T111", "T410", "T411"),  # T233; tasks:2247
     "test_act_id_is_the_acts_id_on_a_write_and_null_on_every_other_entry": ("T107", "T108", "T227", "T228", "T304"),  # T232; tasks:2239
     "test_act_variables_change_nothing_in_files_mode": ("T107", "T108", "T111", "T112", "T410", "T415"),  # T252; tasks:2397
-    "test_an_aborted_cutover_and_a_reimport_leave_no_scopes_at_a_deleted_seq": ("T107", "T108", "T227", "T228"),  # T232; tasks:2239
+    "test_an_aborted_cutover_and_a_reimport_leave_no_scopes_at_a_deleted_seq": ("T107", "T108", "T115", "T227", "T228"),  # T232; tasks:2239, and T115 ahead of its Order (lane 1, opensoft/openRepoTools#165 6899134636)
     "test_an_act_that_decided_on_canon_lane_is_refused_by_a_row_added_on_its_walk": ("T107", "T108", "T410", "T411", "T413", "T414", "T415", "T417"),  # T252; tasks:2397
     "test_an_act_whose_scope_changed_before_its_commit_writes_nothing": ("T107", "T108", "T410", "T411", "T413", "T414", "T415", "T417"),  # T252; tasks:2397
     "test_an_act_whose_scopes_held_commits": ("T107", "T108", "T410", "T411", "T413", "T414", "T415", "T417"),  # T252; tasks:2397
     "test_an_acts_own_earlier_write_never_refuses_its_later_one": ("T107", "T108", "T111", "T112", "T410", "T415"),  # T252; tasks:2397
     "test_an_alias_edit_racing_a_claim_cannot_let_two_claims_of_one_object_pass": ("T107", "T108", "T227", "T228", "T302", "T413", "T414", "T415", "T421", "T422"),  # T243; tasks:2341
-    "test_an_empty_expectation_records_act_id_and_checks_nothing": ("T107", "T108", "T227", "T228"),  # T232; tasks:2239
-    "test_an_entry_outside_any_act_refuses_an_acts_write_lr009": ("T107", "T108", "T227", "T228"),  # T232; tasks:2239
+    "test_an_empty_expectation_records_act_id_and_checks_nothing": ("T107", "T108", "T115", "T227", "T228"),  # T232; tasks:2239, and T115 ahead of its Order (lane 1, opensoft/openRepoTools#165 6899134636)
+    "test_an_entry_outside_any_act_refuses_an_acts_write_lr009": ("T107", "T108", "T115", "T227", "T228"),  # T232; tasks:2239, and T115 ahead of its Order (lane 1, opensoft/openRepoTools#165 6899134636)
     "test_an_import_a_cutover_and_a_rollback_store_only_the_star_key": ("T107", "T108", "T227", "T228", "T304"),  # T232; tasks:2239
     "test_canon_lane_walk_prints_each_hop_with_canon_lanes_exit_code": ("T411",),  # T233; tasks:2247
     "test_canon_lane_walk_whose_register_read_fails_off_primary_exits_1_and_prints_nothing": ("T411",),  # T233; tasks:2247
     "test_claim_prints_its_register_seq": ("T107", "T108", "T227", "T228", "T302", "T413", "T414", "T415", "T421", "T422"),  # T243; tasks:2341
-    "test_each_claim_and_main_rule_lr005_carries_its_detail_token": ("T107", "T108", "T227", "T228"),  # T232; tasks:2239
-    "test_each_entry_stores_the_keys_its_lines_derive": ("T107", "T108", "T227", "T228"),  # T232; tasks:2239
+    "test_each_claim_and_main_rule_lr005_carries_its_detail_token": ("T107", "T108", "T115", "T227", "T228"),  # T232; tasks:2239, and T115 ahead of its Order (lane 1, opensoft/openRepoTools#165 6899134636)
+    "test_each_entry_stores_the_keys_its_lines_derive": ("T107", "T108", "T115", "T227", "T228"),  # T232; tasks:2239, and T115 ahead of its Order (lane 1, opensoft/openRepoTools#165 6899134636)
     "test_each_line_kind_takes_or_releases_main_as_q17_b_says": ("T107", "T108", "T227", "T228", "T302", "T413", "T414", "T415", "T421", "T422"),  # T243; tasks:2341
     "test_each_of_the_three_conditions_holds": ("T107", "T108", "T410", "T411", "T413", "T414", "T415", "T417"),  # T252; tasks:2397
     "test_lanes_act_is_unset_before_a_launch": ("T107", "T108", "T410", "T411", "T413", "T414", "T415", "T417"),  # T252; tasks:2397
     "test_lr002_comes_before_lr009_after_a_rollback": ("T107", "T108", "T227", "T228", "T304"),  # T232; tasks:2239
-    "test_lr005_does_not_fire_on_a_released_claims_spellings": ("T107", "T108", "T227", "T228"),  # T232; tasks:2239
-    "test_lr005_refuses_a_claim_whose_spellings_meet_another_lanes_live_claim": ("T107", "T108", "T227", "T228"),  # T232; tasks:2239
-    "test_lr005_refuses_a_hold_over_another_lanes_open_taker": ("T107", "T108", "T227", "T228"),  # T232; tasks:2239
-    "test_lr005_rolls_back_the_head_and_every_row": ("T107", "T108", "T227", "T228"),  # T232; tasks:2239
-    "test_lr009_names_the_first_changed_scope_its_seq_lane_and_verb": ("T107", "T108", "T227", "T228"),  # T232; tasks:2239
+    "test_lr005_does_not_fire_on_a_released_claims_spellings": ("T107", "T108", "T115", "T227", "T228"),  # T232; tasks:2239, and T115 ahead of its Order (lane 1, opensoft/openRepoTools#165 6899134636)
+    "test_lr005_refuses_a_claim_whose_spellings_meet_another_lanes_live_claim": ("T107", "T108", "T115", "T227", "T228"),  # T232; tasks:2239, and T115 ahead of its Order (lane 1, opensoft/openRepoTools#165 6899134636)
+    "test_lr005_refuses_a_hold_over_another_lanes_open_taker": ("T107", "T108", "T115", "T227", "T228"),  # T232; tasks:2239, and T115 ahead of its Order (lane 1, opensoft/openRepoTools#165 6899134636)
+    "test_lr005_rolls_back_the_head_and_every_row": ("T107", "T108", "T115", "T227", "T228"),  # T232; tasks:2239, and T115 ahead of its Order (lane 1, opensoft/openRepoTools#165 6899134636)
+    "test_lr009_names_the_first_changed_scope_its_seq_lane_and_verb": ("T107", "T108", "T115", "T227", "T228"),  # T232; tasks:2239, and T115 ahead of its Order (lane 1, opensoft/openRepoTools#165 6899134636)
     "test_on_primary_a_take_with_no_readable_utc_is_lr005_take_no_utc_and_writes_nothing": ("T107", "T108", "T115", "T118", "T227", "T228"),  # T223; tasks:2140
     "test_register_commit_refuses_an_unrenderable_path_with_2_before_the_store_opens": ("T107", "T108", "T112", "T227", "T228", "T302", "T413", "T414", "T415", "T421", "T422"),  # T243; tasks:2341
     "test_seam_out_is_written_once_before_the_child_acts": ("T413", "T414", "T415", "T423"),  # T248; tasks:2384
     "test_ten_writers_released_together_all_commit_in_order": ("T107", "T108", "T227", "T228", "T302", "T413", "T414", "T415", "T421", "T422"),  # T243; tasks:2341
-    "test_the_act_id_checks_refuse_an_act_id_on_another_kind_and_a_malformed_one": ("T107", "T108", "T227", "T228"),  # T232; tasks:2239
+    "test_the_act_id_checks_refuse_an_act_id_on_another_kind_and_a_malformed_one": ("T107", "T108", "T115", "T227", "T228"),  # T232; tasks:2239, and T115 ahead of its Order (lane 1, opensoft/openRepoTools#165 6899134636)
     "test_the_burst_window_is_effective_a_short_deadline_sends_writers_busy": ("T107", "T108", "T227", "T228", "T302", "T413", "T414", "T415", "T421", "T422"),  # T243; tasks:2341
     "test_the_claim_behind_the_alias_is_refused_by_lr005_on_its_spellings": ("T107", "T108", "T227", "T228", "T302", "T413", "T414", "T415", "T421", "T422"),  # T243; tasks:2341
     "test_the_client_refuses_a_bad_act_with_2_before_any_call": ("T111", "T410", "T411", "T415"),  # T233; tasks:2247, and T415 ahead of its Order (lane 4, opensoft/openRepoTools#165 6879601079)
@@ -162,7 +165,7 @@ SQL_REGISTER_GATE_TABLE = {
     "test_the_scratch_flag_never_reaches_git_gh_or_tmux": ("T413", "T414", "T415", "T423"),  # T248; tasks:2384
     "test_two_claimants_one_claimed_and_the_other_exits_2": ("T107", "T108", "T227", "T228", "T302", "T413", "T414", "T415", "T421", "T422"),  # T243; tasks:2341
     "test_two_spellings_of_one_object_claimed_at_once_leave_one_claimed_and_exit_2": ("T107", "T108", "T227", "T228", "T302", "T413", "T414", "T415", "T421", "T422"),  # T243; tasks:2341
-    "test_two_spellings_of_one_repository_hold_one_main": ("T107", "T108", "T227", "T228"),  # T232; tasks:2239
+    "test_two_spellings_of_one_repository_hold_one_main": ("T107", "T108", "T115", "T227", "T228"),  # T232; tasks:2239, and T115 ahead of its Order (lane 1, opensoft/openRepoTools#165 6899134636)
     "test_an_act_whose_scope_changed_before_its_commit_writes_nothing[guard-answer-2-child]": ("T107", "T108", "T410", "T411", "T413", "T414", "T415", "T417", "T502", "T510"),  # T252; tasks:2397
     "test_an_act_whose_scope_changed_before_its_commit_writes_nothing[lane-end-retire-rows]": ("T107", "T108", "T410", "T411", "T413", "T414", "T415", "T417", "T430"),  # T252; tasks:2397
     "test_an_act_whose_scope_changed_before_its_commit_writes_nothing[lane-end-w13-set-row-state]": ("T107", "T108", "T410", "T411", "T413", "T414", "T415", "T417", "T430"),  # T252; tasks:2397
@@ -3955,8 +3958,8 @@ def test_a_line_deriving_a_key_that_is_not_a_scope_exits_2_on_lr010_once(estates
 # keys they derive are asserted. `rename-lane` and `archive-rows` need step 6's
 # derived deletes (ERR-48), which R-merge6 has and T112-fu2 alone has not.
 # Every case FAILS UNTIL L1-A6 (T107's `commit_write`, its steps 3b, 5a, 7 and
-# 8a) and lane 2's T227 and T228 land, as T223's do; without PostgreSQL 16
-# each skips.
+# 8a), L1-A13 (T115's `import --at`, which builds `tmpl_imported`) and lane
+# 2's T227 and T228 land, as T223's do; without PostgreSQL 16 each skips.
 
 LA5, LB5, LC5, LD5 = "L1-t232", "L2-t232", "L3-t232", "L4-t232"
 LB5_NEW = "L2b-t232"

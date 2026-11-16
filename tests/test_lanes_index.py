@@ -933,8 +933,13 @@ def test_offline_no_read_every_act_is_byte_identical_against_an_unreachable_inde
     fake = indexed.root / "pgfake"
     fake.mkdir()
     psql_log = indexed.root / "psql.log"
+    # THE STORE IT REACHED FOR, rebuilt from the `PG*` variables as FAKE_PSQL
+    # rebuilds it (Question 11; L2-0c), so `lanes_writer` below can only have
+    # come from `PGUSER`, never from an argument.
     (fake / "psql").write_text(
-        f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> {psql_log}\n"
+        "#!/bin/sh\n"
+        "printf 'postgresql://%s@%s%s/%s\\n' \"$PGUSER\" \"$PGHOST\" \"${PGPORT:+:$PGPORT}\" "
+        f"\"$PGDATABASE\" >> {psql_log}\n"
         "echo 'psql: error: connection to server at \"lanes-index.invalid\" failed' >&2\nexit 2\n")
     (fake / "psql").chmod(0o755)
     pw = indexed.config / "pgpass"
@@ -1072,7 +1077,19 @@ log = os.environ["FAKE_PSQL_LOG"]
 vfile = os.environ.get("FAKE_PSQL_VERSION_FILE", "")
 version = open(vfile).read().strip() if vfile else "1"
 args = sys.argv[1:]
-url = args[args.index("-d") + 1] if "-d" in args else ""
+# THE CONNECTION IN `PG*` VARIABLES ALONE (Question 11; L2-0c): an argument
+# that is `-d` or `--dbname`, or that carries a URL, is refused with psql's own
+# fatal-error 1 before anything is recorded, since `/proc` shows a process's
+# arguments for its life. The URL recorded is rebuilt from `PGUSER`, `PGHOST`,
+# `PGPORT` and `PGDATABASE`, with no port where `PGPORT` is unset, so each URL
+# a test configures reads back unchanged.
+if any(a.startswith(("-d", "--dbname")) or "://" in a for a in args):
+    sys.stderr.write("FAKE psql: an argument carries the connection (-d, --dbname or a URL);"
+                     " psql takes it from PG* variables only (Question 11)\n")
+    sys.exit(1)
+port = os.environ.get("PGPORT", "")
+url = ("postgresql://" + os.environ.get("PGUSER", "") + "@" + os.environ.get("PGHOST", "")
+       + (":" + port if port else "") + "/" + os.environ.get("PGDATABASE", ""))
 stdin = sys.stdin.read()
 with open(log, "a") as handle:
     handle.write(json.dumps({"url": url, "passfile": os.environ.get("PGPASSFILE", ""),
@@ -1143,9 +1160,10 @@ def test_the_fake_psql_decodes_echo_as_psql_does(tmp_path):
         "\\echo 'a\\tb\\x41\\101\\q'",
         "\\echo plain",
         ""])
-    res = subprocess.run([sys.executable, str(fake), "-d", "postgresql://x@db.invalid/qa"],
+    res = subprocess.run([sys.executable, str(fake)],
                          input=script, capture_output=True, text=True, check=False,
-                         env=dict(os.environ, FAKE_PSQL_LOG=str(tmp_path / "log")))
+                         env=dict(os.environ, FAKE_PSQL_LOG=str(tmp_path / "log"),
+                                  PGHOST="db.invalid", PGDATABASE="qa", PGUSER="x"))
     assert res.returncode == 0, res.stderr
     assert res.stdout.split("\n") == ["\x1eLANES-INDEX-NEXT", "it's two words", "a\tbAAq",
                                       "plain", ""], res.stdout
@@ -2148,8 +2166,12 @@ def test_offline_no_read_the_inventory_acts_are_byte_identical_against_an_unreac
         fake = indexed.root / "pgfake"
         fake.mkdir()
         psql_log = indexed.root / "psql.log"
+        # THE STORE IT REACHED FOR, from the `PG*` variables alone, as in the
+        # acts' offline test above (Question 11; L2-0c).
         (fake / "psql").write_text(
-            f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> {psql_log}\n"
+            "#!/bin/sh\n"
+            "printf 'postgresql://%s@%s%s/%s\\n' \"$PGUSER\" \"$PGHOST\" \"${PGPORT:+:$PGPORT}\" "
+            f"\"$PGDATABASE\" >> {psql_log}\n"
             "echo 'psql: error: connection to server at \"lanes-index.invalid\" failed' >&2\nexit 2\n")
         (fake / "psql").chmod(0o755)
         pw = indexed.e.config / "pgpass"
@@ -3137,3 +3159,223 @@ def test_the_round_cap_hands_back_a_mark_it_took(estate, monkeypatch):
     assert os.path.exists(lock.rerun_path("register")), \
         "the register's mark was taken at the cap and never handed back"
     assert os.path.exists(lock.rerun_path("inventory"))
+
+
+# ======================================================= the bootstrap's arguments
+#
+# T109's follow-up, on Codex's exact-head review of P10 (opensoft/openRepoTools#165
+# 6889426463): `bootstrap` refused a connection string only in its four flags' values,
+# after its usage, so a positional argument or an unknown option that carried one
+# ended 64 with the whole argument echoed on stderr. Its usage texts now echo no
+# argument's value: an unknown argument is named in `ready`'s form, as `login`'s is
+# (lane 3's ruling, #165 6894208108), so a bare secret that no rule can tell from a
+# word is not echoed either.
+
+
+@pytest.mark.parametrize("where", ["positional", "unknown-option", "bare-positional",
+                                   "bare-unknown-option", "control"])
+def test_the_bootstrap_refuses_a_secret_in_any_argument_and_never_echoes_it(estate, where):
+    """NO ARGUMENT ECHOES A SECRET (operations.md section 2.4's refusals; T109):
+    an argument that carries a connection string or a password is refused with 2
+    wherever it stands, before the usage is read, as `login`'s are; and a bare
+    secret, positional or as an unknown option's value, is usage (64), named in
+    `ready`'s form, which quotes an unknown argument only where all of it is
+    letters and '-' after one or two '-', so not at all. The value reaches
+    neither stdout nor stderr, and no `psql` is run. Every other flag is in
+    order: `[control]`, with no extra argument, does run `psql` (the fake's exit
+    1 is 69), so in the other ids it is the extra argument, refused or usage,
+    that keeps `psql` from running (lane 3's NIT 1 on PR 89 at 4a8b7b8b)."""
+    secret = f"t109-FAKE-{where}-not-a-secret"
+    argument, code, words = {
+        "positional": (f"postgresql://lanes_register_admin:{secret}@db.invalid:5432/register",
+                       2, "carries a connection string or a password"),
+        "unknown-option": (f"--dsn=host=db.invalid user=lanes_register_admin password={secret}",
+                           2, "carries a connection string or a password"),
+        "bare-positional": (secret, 64,
+                            "bootstrap: unknown argument that is not one of its flags"),
+        "bare-unknown-option": (f"--dsn={secret}", 64,
+                                "bootstrap: unknown argument that is not one of its flags"),
+        "control": (None, 69, "psql exited 1"),
+    }[where]
+    fake = estate.root / "pgfake"
+    fake.mkdir()
+    ran = estate.root / "psql-ran.txt"
+    (fake / "psql").write_text(f"#!/bin/sh\necho ran >> {shlex.quote(str(ran))}\nexit 1\n")
+    (fake / "psql").chmod(0o755)
+    res = estate.index("bootstrap", "--admin-service", "t109admin", "--label", "t109-label",
+                       "--repository", "opensoft/t109-workspace", "--lane", "t109-operator",
+                       "--no-passwords", *([] if argument is None else [argument]),
+                       env={"PATH": estate.path_with(fake)})
+    said = f"stdout:\n{res.stdout}\nstderr:\n{res.stderr}".replace(secret, "<the secret>")
+    assert res.returncode == code, f"[{where}] exit {res.returncode}, not {code}:\n{said}"
+    assert secret not in res.stdout and secret not in res.stderr, (
+        f"[{where}] the secret was echoed:\n{said}")
+    assert words in res.stderr, said
+    if where == "control":
+        assert ran.exists(), f"[control] psql was not run:\n{said}"
+    else:
+        assert not ran.exists(), f"[{where}] psql was run:\n{said}"
+
+
+# ================================================= the argument-naming form, ready's
+#
+# Lane 3's ruling (opensoft/openRepoTools#165 6894208108) on lane 1's two forms
+# (6894177366): `bootstrap` and `login` name an unknown argument as `ready` does,
+# quoted only where all of it matches `--?[A-Za-z][A-Za-z-]{0,30}`, and otherwise as
+# "unknown argument that is not one of its flags". One row for each example line of
+# lane 1's post, for each command. `login` has no `s3cret` row: a word that does not
+# start with '-' is its action or its engineer, never an unknown argument.
+
+#: (id, the argument, what the usage line shows in its place)
+UNKNOWN_ARGUMENTS = [
+    ("dash-secret", "-s3cret", "that is not one of its flags"),
+    ("flag-word", "--frob", "'--frob'"),
+    ("flag-value", "--pw=s3cret", "that is not one of its flags"),
+    ("positional", "s3cret", "that is not one of its flags"),
+    ("dash-letters", "-abcdef", "'-abcdef'"),
+]
+
+#: Each command with every other argument in order, so that only the unknown one is
+#: usage.
+UNKNOWN_ARGUMENT_COMMANDS = {
+    "bootstrap": ("bootstrap", "--admin-service", "t109admin", "--label", "t109-label",
+                  "--repository", "opensoft/t109-workspace", "--lane", "t109-operator",
+                  "--no-passwords"),
+    "login": ("login", "rotate", "--dump-job", "--admin-service", "t110admin"),
+}
+
+
+@pytest.mark.parametrize("command, argument, shown", [
+    pytest.param(command, argument, shown, id=f"{command}-{case}")
+    for command in UNKNOWN_ARGUMENT_COMMANDS
+    for case, argument, shown in UNKNOWN_ARGUMENTS
+    if not (command == "login" and case == "positional")])
+def test_bootstrap_and_login_name_an_unknown_argument_as_ready_does(estate, command,
+                                                                    argument, shown):
+    """READY'S FORM (lane 3's ruling, #165 6894208108): an unknown argument is
+    usage (64), quoted only where all of it is letters and '-' after one or two
+    '-', and otherwise not shown, so no argument that holds a digit, a symbol or
+    '=' reaches stderr. The usage line is all that is printed, and no `psql` is
+    run."""
+    fake = estate.root / "pgfake"
+    fake.mkdir()
+    ran = estate.root / "psql-ran.txt"
+    (fake / "psql").write_text(f"#!/bin/sh\necho ran >> {shlex.quote(str(ran))}\nexit 1\n")
+    (fake / "psql").chmod(0o755)
+    res = estate.index(*UNKNOWN_ARGUMENT_COMMANDS[command], argument,
+                       env={"PATH": estate.path_with(fake)})
+    said = f"stdout:\n{res.stdout}\nstderr:\n{res.stderr}"
+    assert res.returncode == 64, f"exit {res.returncode}, not 64:\n{said}"
+    assert res.stderr == (f"lanes-index: {command}: unknown argument {shown} - see "
+                          f"lanes-index {command} --help\n"), said
+    assert res.stdout == "", said
+    assert "s3cret" not in res.stderr, f"the argument was echoed:\n{said}"
+    assert not ran.exists(), f"psql was run:\n{said}"
+
+
+# ========================================== an existing indexer that cannot log in
+#
+# T109's follow-up 2, on Codex's SHOULD at lanes-index:4303 in the same review
+# (#165 6889426463), as lane 3 ruled it in lane 1's words (#165 6894116246): an
+# existing `lanes_indexer` that cannot log in (`rolcanlogin` false) is refused with 2
+# and named, before any write, under `--roles-only` too, and the bootstrap never
+# grants LOGIN itself. RE: roles are global to a cluster, so each case takes a
+# cluster of its own, with an empty template, from `tests/pgcluster.py` (P01's engine
+# plugin), and skips in a tree that does not carry it yet.
+
+#: What a refused bootstrap must leave as it found it: the roles whose names begin
+#: `lanes` and whether each can log in, their memberships, the schemas whose names
+#: begin `lanes`, the database's ACL, and the count of default privileges.
+T109_CATALOG = (
+    "SELECT 'role ' || rolname || ' login ' || rolcanlogin::text FROM pg_catalog.pg_roles "
+    "WHERE rolname LIKE 'lanes%' "
+    "UNION ALL SELECT 'member ' || r.rolname || ' of ' || g.rolname "
+    "FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles r ON r.oid = m.member "
+    "JOIN pg_catalog.pg_roles g ON g.oid = m.roleid "
+    "WHERE r.rolname LIKE 'lanes%' OR g.rolname LIKE 'lanes%' "
+    "UNION ALL SELECT 'schema ' || nspname FROM pg_catalog.pg_namespace "
+    "WHERE nspname LIKE 'lanes%' "
+    "UNION ALL SELECT 'database ' || coalesce(datacl::text, 'default') "
+    "FROM pg_catalog.pg_database WHERE datname = current_database() "
+    "UNION ALL SELECT 'default privileges ' || count(*) FROM pg_catalog.pg_default_acl "
+    "ORDER BY 1;\n")
+
+#: The full bootstrap's three inputs.
+T109_FULL = ("--label", "t109-label", "--repository", "opensoft/t109-workspace",
+             "--lane", "t109-operator")
+
+
+@pytest.fixture
+def t109_engine(request, tmp_path):
+    """A started cluster of the case's own with an empty template, a database
+    `t109_db` made from `template0`, and an estate whose `~/.pg_service.conf`
+    names the cluster's socket and superuser as the service `t109admin`. Yields
+    `(cluster, bootstrap)`: `bootstrap(*flags)` runs `lanes-index bootstrap
+    --admin-service t109admin <flags> --no-passwords`, the cluster's tools first
+    on PATH."""
+    try:
+        import pgcluster
+    except ImportError:
+        pytest.skip("real PostgreSQL 16: tests/pgcluster.py, P01's engine plugin, is not "
+                    "in this tree")
+    found = request.getfixturevalue("pg_engine")
+    cluster = pgcluster.Cluster(found.bindir, "")
+    try:
+        cluster.start()
+        cluster.psql("CREATE DATABASE t109_db TEMPLATE template0;")
+        estate = Estate(tmp_path / "e")
+        service = estate.home / ".pg_service.conf"
+        service.write_text(f"[t109admin]\nhost={cluster.root}\nport={pgcluster.PORT}\n"
+                           f"user={pgcluster.SUPERUSER}\ndbname=t109_db\n", encoding="utf-8")
+        service.chmod(0o600)
+        path = os.pathsep.join([str(cluster.bindir), estate.env["PATH"]])
+
+        def bootstrap(*flags: str) -> subprocess.CompletedProcess:
+            return estate.index("bootstrap", "--admin-service", "t109admin", *flags,
+                                "--no-passwords", env={"PATH": path}, timeout=300)
+
+        yield cluster, bootstrap
+    finally:
+        cluster.destroy()
+
+
+@pytest.mark.parametrize("flags", [T109_FULL, ("--roles-only",)], ids=["full", "roles-only"])
+def test_the_bootstrap_refuses_an_existing_nologin_indexer_with_2_before_any_write(
+        t109_engine, flags):
+    """AN INDEXER THAT CANNOT LOG IN IS REFUSED (lane 3's ruling, #165
+    6894116246, in lane 1's words): where `lanes_indexer` exists NOLOGIN, the
+    full bootstrap and `--roles-only` each exit 2, naming `lanes_indexer` and
+    that it cannot log in, and print nothing on stdout. The catalog is as it
+    was, so nothing was written, and the role is still NOLOGIN: the bootstrap
+    never grants LOGIN."""
+    cluster, bootstrap = t109_engine
+    cluster.psql("CREATE ROLE lanes_indexer NOLOGIN;")
+    before = cluster.psql(T109_CATALOG, dbname="t109_db").stdout
+    assert "role lanes_indexer login false" in before.splitlines(), before
+    res = bootstrap(*flags)
+    said = f"stdout:\n{res.stdout}\nstderr:\n{res.stderr}"
+    assert res.returncode == 2, f"exit {res.returncode}, not 2:\n{said}"
+    assert ("REFUSED: bootstrap: the role lanes_indexer exists and cannot log in (NOLOGIN)"
+            in res.stderr), said
+    assert res.stdout == "", f"the refused bootstrap printed on stdout:\n{said}"
+    after = cluster.psql(T109_CATALOG, dbname="t109_db").stdout
+    assert after == before, (f"the refused bootstrap wrote:\nbefore:\n{before}\n"
+                             f"after:\n{after}\n{said}")
+
+
+@pytest.mark.parametrize("flags", [T109_FULL, ("--roles-only",)], ids=["full", "roles-only"])
+def test_the_bootstrap_takes_an_existing_indexer_that_can_log_in(t109_engine, flags):
+    """THE REFUSAL IS FOR NOLOGIN ALONE: where `lanes_indexer` exists and can
+    log in, the full bootstrap and `--roles-only` each exit 0, say `role
+    lanes_indexer: unchanged`, and make the other three roles."""
+    cluster, bootstrap = t109_engine
+    cluster.psql("CREATE ROLE lanes_indexer LOGIN;")
+    res = bootstrap(*flags)
+    said = f"stdout:\n{res.stdout}\nstderr:\n{res.stderr}"
+    assert res.returncode == 0, f"exit {res.returncode}, not 0:\n{said}"
+    assert "role lanes_indexer: unchanged" in res.stdout.splitlines(), said
+    after = cluster.psql(T109_CATALOG, dbname="t109_db").stdout.splitlines()
+    for line in ("role lanes_indexer login true", "role lanes_register_owner login false",
+                 "role lanes_register_reader login false",
+                 "role lanes_register_writer login false"):
+        assert line in after, f"{line!r} is not in the catalog after the run: {after}\n{said}"
