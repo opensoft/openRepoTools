@@ -534,15 +534,44 @@ ws_notice() {
 # now" over it. The temporary file is a CONVENIENCE for reading the notice back;
 # without one the notice still belongs to the person, so it is PASSED THROUGH to
 # the terminal and the footer stops asserting a freshness this run cannot check.
+#
+# AND THE FOOTER NAMES THE STORE THAT ANSWERED (feature 007, T509; R43). The
+# read is asked for the store's line with `--store-line`, and the line is read
+# back out of the stderr captured here, as the fallback sentence is: `read:
+# register at seq <n>` where the register answered, on primary only, and the
+# door's `read: mirror at …` where the mirror did. An older `lanes-edit.sh`
+# refuses the flag with 64, so the read is made once more without it before
+# anything it said reaches the person, and the listing is then today's,
+# footer included. With no capture file there is nothing to read the line
+# back from, so the flag is not passed and the footer is today's.
+store_seq=""        # the register's seq, where the register answered
+store_mirror=0      # 1 where the mirror answered
+store_said() {   # <the read's captured stderr>
+	while IFS= read -r ss_line; do
+		case "$ss_line" in
+		'read: register at seq '*)
+			ss_n="${ss_line#read: register at seq }"
+			case "$ss_n" in '' | *[!0-9]*) : ;; *) store_seq="$ss_n" ;; esac ;;
+		'read: mirror at '*) store_mirror=1 ;;
+		esac
+	done <<EOF
+$1
+EOF
+}
 rc=0
 fetch_err=""
 fetch_unchecked=0
 if [ "$do_fetch" = 1 ]; then
 	fetch_err_file="$(mktemp "${TMPDIR:-/tmp}/lanes-fetch.XXXXXX" 2>/dev/null || printf '')"
 	if [ -n "$fetch_err_file" ]; then
-		out="$("$LANES_EDIT" lanes --fetch ${idx_args[@]+"${idx_args[@]}"} ${args[@]+"${args[@]}"} 2>"$fetch_err_file")" || rc=$?
+		out="$("$LANES_EDIT" lanes --fetch --store-line ${idx_args[@]+"${idx_args[@]}"} ${args[@]+"${args[@]}"} 2>"$fetch_err_file")" || rc=$?
+		if [ "$rc" = 64 ]; then
+			rc=0
+			out="$("$LANES_EDIT" lanes --fetch ${idx_args[@]+"${idx_args[@]}"} ${args[@]+"${args[@]}"} 2>"$fetch_err_file")" || rc=$?
+		fi
 		fetch_err="$(cat "$fetch_err_file" 2>/dev/null || printf '')"
 		rm -f -- "$fetch_err_file"
+		store_said "$fetch_err"
 		# THE ONE LINE THAT SAYS WHICH WAS READ reaches the person on this path
 		# too: the rest of this stream is rendered below only where the fetch
 		# fell back, and `read: …` is not about the fetch.
@@ -567,7 +596,12 @@ else
 	# stream being dropped for the sake of that sentence.
 	local_err_file="$(mktemp "${TMPDIR:-/tmp}/lanes-local.XXXXXX" 2>/dev/null || printf '')"
 	if [ -n "$local_err_file" ]; then
-		out="$("$LANES_EDIT" lanes ${idx_args[@]+"${idx_args[@]}"} ${args[@]+"${args[@]}"} 2>"$local_err_file")" || rc=$?
+		out="$("$LANES_EDIT" lanes --store-line ${idx_args[@]+"${idx_args[@]}"} ${args[@]+"${args[@]}"} 2>"$local_err_file")" || rc=$?
+		if [ "$rc" = 64 ]; then
+			rc=0
+			out="$("$LANES_EDIT" lanes ${idx_args[@]+"${idx_args[@]}"} ${args[@]+"${args[@]}"} 2>"$local_err_file")" || rc=$?
+		fi
+		store_said "$(cat -- "$local_err_file" 2>/dev/null || printf '')"
 		# `-e` BEFORE THE `--` (#54, the shape #53 fixed at `skills/restart/SKILL.md`):
 		# with the pattern as a bare operand a getopt that does not permute —
 		# BSD's, so every macOS shell, and GNU's under `POSIXLY_CORRECT` — takes
@@ -810,7 +844,21 @@ if [ -n "$here_repo" ]; then
 fi
 
 say ""
-if [ "$do_fetch" = 1 ] && [ "$fetch_fell_back" = 1 ]; then
+# THE STORE THAT ANSWERED FIRST (feature 007, T509; tasks:839-840). Where the
+# mirror answered, its `read:` line is already on stderr and the footer says
+# so; where the register answered, the listing is as of its seq, which no
+# fetch moves, so no `fetch-age` is asked and no local read is claimed. The
+# mirror comes first: a listing any part of which the mirror answered is never
+# called the register's. Where neither line was said, the footer is today's.
+if [ "$store_mirror" = 1 ]; then
+	say "$n lane(s)${here_repo:+ of $here_repo}, read from the register's mirror and not from the register: the \`read: mirror\` line above says why."
+	if [ "$fetch_fell_back" = 1 ]; then
+		say "  and the fetch did not answer, so the mirror is this checkout's own copy. What the helper said:"
+		printf '%s\n' "$fetch_err" | sed -n 's/^/  /p'
+	fi
+elif [ -n "$store_seq" ]; then
+	say "$n lane(s)${here_repo:+ of $here_repo}, as of the register at seq $store_seq."
+elif [ "$do_fetch" = 1 ] && [ "$fetch_fell_back" = 1 ]; then
 	# THE PHRASE THE FOOTER MUST NOT CARRY IS NOT QUOTED HERE EITHER: the suite
 	# asserts that a fallen-back fetch never prints the fresh-fetch sentence, and
 	# a message that QUOTED it to disown it failed that assertion on its own
