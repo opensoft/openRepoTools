@@ -459,6 +459,8 @@
 #      deleted, moved or repaired; `refresh-workspace` with no W; a checkout,
 #      or the directory its lock lives in, removed while the write waited for
 #      that lock (360: lane-end's sweep of a CLOSED lane), said at once;
+#      `canon-lane --walk`, where its walk's read of the register failed off
+#      primary, with nothing printed (R22: never "no row"; 69 on primary);
 #      `handoff-path` and `write-handoff`, a register that could not be read
 #      (R22: never 8), and `write-handoff`'s target under a repository that
 #      git could not read (R22: never "no repository")
@@ -530,6 +532,12 @@
 #      rewrite the record at its start and so ran nothing; its body,
 #      `guard-bind --body`, exits `lane-start`'s own code, which the outer
 #      reads as that `rc`.
+#      AND FEATURE 007'S ACTS (T410; Y:5595, Y:5597–5601), each with nothing
+#      sent: `act-begin --rebase`'s refusals of a `LANES_ACT` that is missing
+#      or malformed, of a `files` base on primary, and of a register
+#      generation other than the base's; and the client's checks on
+#      `LANES_ACT` and `LANES_EXPECT` (`act_checks`) that the primary branch
+#      makes before its first snapshot.
 #  64  usage — a caller's bad arguments to one of the reads Amendment 11 added
 #      (`window-lane`, `lane-dir`, `lane-profile`, `last-session`, `forks`,
 #      `duplicate-holder` (issue #39), `workstation`, `fetch-age`, `lanes`,
@@ -539,6 +547,7 @@
 #      contract because its four callers sit in front of a launch as those do. IT WAS IN NO TABLE AT ALL until this round (F-X16), while
 #      being the code the contract gives every one of those reads.
 #      Amendment 23's `lane-checkout` and `refresh-workspace` spend it too.
+#      So does feature 007's `act-begin` (T410).
 #
 #  66  EX_NOINPUT — AMENDMENT 16(e)'s ALIAS TABLE COULD NOT BE READ, and
 #      `canon-lane` is the one verb that spends it. `lanes/aliases.tsv` is what
@@ -571,6 +580,17 @@
 #      refuses, a `lanes-index` too old to know `mode`, none to run, a crash,
 #      no answer within 2 s — runs the verb in files mode with one warning,
 #      and is never 69.
+#      AND FEATURE 007'S ACTS (T410; FR-035; Y:5573): AN ACT'S BASE THAT
+#      COULD NOT BE READ. `act-begin` on primary makes one `lanes-index
+#      register snapshot` and exits 69 where it fails in any way — its own 69
+#      (a register that could not be read, or a switch that is not `primary`
+#      with the marker `present`), any other code, or an answer it cannot read
+#      — and where `lanes-index mode` answered 78. Every write of the act would
+#      be refused with 69 as well, so the act stops before its first read.
+#      Nothing is printed on stdout, never a base. Off primary it is never 69.
+#      AND `canon-lane --walk` (feature 007, T411; FR-035) exits 69 where its
+#      walk's read of the register, or an alias hop, answers 69, and prints no
+#      walk; off primary that failed read is 1 (see 1).
 #   3  PUSHED, NOT CONFIRMED: <sha> (Amendment 23 S4, its one cause). The write
 #      committed and pushed — or its push timed out, and a hung push often
 #      lands — and the read-back could not confirm the commit on origin: the
@@ -791,6 +811,11 @@
 #                      (default: `lanes/aliases.tsv`)
 #   LANES_SESSION      this session's TRANSCRIPT uuid, for the event lines
 #                      (default: the last uuid in the lane's row — Amendment 6(b))
+#   LANES_ACT          an act's base, as `act-begin` printed it: read by
+#                      `act-begin --rebase`, and on primary by every write of
+#                      the act; ignored in files mode (feature 007)
+#   LANES_EXPECT       the scopes ONE write of an act rests on, a prefix on that
+#                      call, never exported; read on primary only (feature 007)
 #   LANES_LANE_DIR     the lane's checkout, for project.yaml leg detection
 #                      (default: $PROJECTS_ROOT/<repo part of the home repo>)
 #   LANES_NO_GITHUB=1  skip every `gh` call (tests, offline); same as --no-github
@@ -5691,6 +5716,297 @@ lower_into() {   # <string>
   return 0
 }
 
+# ------------------------------------------ FEATURE 007, T410: AN ACT'S BASE
+#
+# THE ACTS AND THEIR EXPECTATIONS (D5, F5; FR-035; the design's "The acts and
+# their expectations", Y:5567–5609; contract §3.2). `Y:<n>` is line `<n>` of the
+# add-sql-register change's `design.md` at spec commit `a6497d00`; "the
+# contract" is feature 007's `contracts/register-cli.md`.
+#
+# An act (`lane-start`, `lane-end`, `lane-handoff`, the handoff skill, `lane`'s
+# `request-handoff`) takes a base with `act-begin` before its first deciding
+# read, and exports the line it prints as `LANES_ACT`. Each of its writes names
+# the scopes it rests on in `LANES_EXPECT`, a prefix on that one call and never
+# exported. On primary the commit refuses with 2 a write one of whose scopes a
+# journal entry outside the act changed after the base (LR009). In files mode
+# both variables are ignored and nothing is checked (Y:5596, Y:5609).
+#
+#   LANES_ACT     `<act-id>@files`, or `<act-id>@<seq>:<generation>` (Y:5577):
+#                 `<act-id>` is 32 lower-case hex digits from 16 random bytes,
+#                 new for every act and minted by `act-begin` (Y:5575); `<seq>`
+#                 is 1 to 18 digits with no leading zero but `0` itself, and
+#                 `<generation>` a lower-case 8-4-4-4-12 uuid: the head seq and
+#                 the register generation, read in one snapshot (Y:5578).
+#   LANES_EXPECT  scopes separated by white space: `row:`, `bind:`, `objects:`,
+#                 `alias:` or `archive:` and a name `check_lane_name` accepts,
+#                 or `sid:` and a uuid; sent in lower case, in the order given
+#                 (Y:5581–5587).
+#
+# THE HELPERS RUN IN A SUBSHELL UNDER NOGLOB (Y:5586), so a lone `*` can never
+# expand to file names, and split with bash 3.2's parameter expansions,
+# `${LANES_ACT%%@*}`, `${LANES_ACT#*@}`, `${rest%%:*}` and `${rest#*:}`, each
+# part tested by a `case` pattern of spelled-out bracket lists (Y:5579). Each
+# prints the lines of the attempt directory's `act` file (contract §3.3:
+# `id=`, `base=`, `generation=`, and one `expect=<scope>` per scope), or exits 2
+# naming the variable, with nothing sent. They are the client's checks of
+# Y:5597–5601, which the primary branch makes before its first snapshot:
+#   act_parse <plain | --primary | --rebase> <value>
+#                                   1, a malformed `LANES_ACT`; and, with
+#                                   `--primary`, 4, a `files` base (Y:5601's
+#                                   text, word for word). `--rebase` refuses a
+#                                   `files` base too, with `act-begin
+#                                   --rebase`'s own text, since that is a read
+#                                   and no write (lane 3's ruling on T410's
+#                                   question 7, #165 6754294841). The mode
+#                                   word is always given, `plain` for neither,
+#                                   so a value that is itself `--primary` or
+#                                   `--rebase` is read as the value, and the
+#                                   refusal quotes it (REV-W9e N1)
+#   expect_parse <expect> <act>     2, a `LANES_EXPECT` with no `LANES_ACT`;
+#                                   3, a scope outside the six forms, `*` and
+#                                   `row:*` included (Y:5587's text, word for
+#                                   word). A token is never dropped: dropping
+#                                   one under-checks.
+#   act_checks                      the four, in Y's order. Inert until T415's
+#                                   primary branch calls it.
+# The checks at each attempt's snapshot (Y:5603–5605: the act's generation is
+# the switch's, its base is not past `n`) are T415's, with `ACT_GEN` and
+# `ACT_BASE` below.
+ACT_NL='
+'
+ACT_ID=""; ACT_BASE=""; ACT_GEN=""; ACT_LINES=""
+
+act_parse() (   # <plain | --primary | --rebase> <LANES_ACT's value>
+  set -f
+  ap_on="${1-}"; ap_v="${2-}"; ap_ok=1; ap_seq=""; ap_gen=""
+  ap_h='[0123456789abcdef]'
+  ap_id="${ap_v%%@*}"; ap_rest="${ap_v#*@}"
+  case "$ap_v" in *@*) : ;; *) ap_ok=0 ;; esac
+  case "$ap_id" in ''|*[!0123456789abcdef]*) ap_ok=0 ;; esac
+  [ "${#ap_id}" -eq 32 ] || ap_ok=0
+  if [ "$ap_rest" = files ]; then
+    ap_seq=files
+  else
+    case "$ap_rest" in *:*) : ;; *) ap_ok=0 ;; esac
+    ap_seq="${ap_rest%%:*}"; ap_gen="${ap_rest#*:}"
+    case "$ap_seq" in
+      0) : ;;
+      [123456789]*)
+        case "$ap_seq" in *[!0123456789]*) ap_ok=0 ;; esac
+        [ "${#ap_seq}" -le 18 ] || ap_ok=0 ;;
+      *) ap_ok=0 ;;
+    esac
+    case "$ap_gen" in
+      $ap_h$ap_h$ap_h$ap_h$ap_h$ap_h$ap_h$ap_h-$ap_h$ap_h$ap_h$ap_h-$ap_h$ap_h$ap_h$ap_h-$ap_h$ap_h$ap_h$ap_h-$ap_h$ap_h$ap_h$ap_h$ap_h$ap_h$ap_h$ap_h$ap_h$ap_h$ap_h$ap_h) : ;;
+      *) ap_ok=0 ;;
+    esac
+  fi
+  [ "$ap_ok" = 1 ] ||
+    die "LANES_ACT is \"${ap_v}\", which is not <act-id>@files or <act-id>@<seq>:<generation>: 32 lower-case hex digits, an @, then files, or a seq of 1 to 18 digits with no leading zero, a colon and a lower-case uuid. Nothing was sent." 2
+  if [ "$ap_seq" = files ]; then
+    case "$ap_on" in
+      --primary)
+        die "LANES_ACT was taken off primary (\`${ap_id}@files\`) and this write runs on primary: run the act again from its start" 2 ;;
+      --rebase)
+        die "\`act-begin --rebase\`: LANES_ACT was taken off primary (\`${ap_id}@files\`) and the register is now primary, so the act has no base to move: run the act again from its start. Nothing was sent." 2 ;;
+    esac
+  fi
+  printf 'id=%s\nbase=%s\ngeneration=%s\n' "$ap_id" "$ap_seq" "$ap_gen"
+)
+
+# `IFS` IS UNSET IN THE SUBSHELL, so the split is at spaces, tabs and newlines
+# whatever the caller's `IFS` is, and runs of them make one separator. A name
+# is accepted exactly where `check_lane_name` accepts it, by asking it. Nothing
+# is printed until every token has passed, so a refusal leaves no partial list.
+expect_parse() (   # <LANES_EXPECT's value> <LANES_ACT's value>
+  set -f
+  unset IFS
+  ep_v="${1-}"
+  [ -z "$ep_v" ] || [ -n "${2-}" ] ||
+    die "LANES_EXPECT is \"${ep_v}\" and LANES_ACT is unset or empty: a write's expectations are checked against its act's base, which \`lanes-edit.sh act-begin\` prints and the act exports as LANES_ACT. Nothing was sent." 2
+  ep_x='[0123456789abcdefABCDEF]'; ep_out=""
+  for ep_t in $ep_v; do
+    ep_ok=0
+    case "$ep_t" in
+      row:*|bind:*|objects:*|alias:*|archive:*)
+        ( check_lane_name "${ep_t#*:}" ) >/dev/null 2>&1 && ep_ok=1 ;;
+      sid:*)
+        case "${ep_t#sid:}" in
+          $ep_x$ep_x$ep_x$ep_x$ep_x$ep_x$ep_x$ep_x-$ep_x$ep_x$ep_x$ep_x-$ep_x$ep_x$ep_x$ep_x-$ep_x$ep_x$ep_x$ep_x-$ep_x$ep_x$ep_x$ep_x$ep_x$ep_x$ep_x$ep_x$ep_x$ep_x$ep_x$ep_x) ep_ok=1 ;;
+        esac ;;
+    esac
+    [ "$ep_ok" = 1 ] ||
+      die "LANES_EXPECT carries \"${ep_t}\", which is not row:, bind:, objects:, alias: or archive: and a lane name, or sid: and a session uuid. Nothing was sent." 2
+    lower_into "$ep_t"
+    ep_out="${ep_out}expect=${LOWER_OUT}${ACT_NL}"
+  done
+  printf '%s' "$ep_out"
+)
+
+# `ACT_ID`, `ACT_BASE` and `ACT_GEN` from `act_parse`'s three lines, with no
+# process: `ACT_BASE` is a seq or `files`, and `ACT_GEN` is empty for `files`.
+act_fields() {   # <act_parse's output>
+  af_t="${1-}"
+  ACT_ID="${af_t%%"$ACT_NL"*}"; ACT_ID="${ACT_ID#id=}"
+  af_t="${af_t#*"$ACT_NL"}"
+  ACT_BASE="${af_t%%"$ACT_NL"*}"; ACT_BASE="${ACT_BASE#base=}"
+  ACT_GEN="${af_t#*"$ACT_NL"}"; ACT_GEN="${ACT_GEN#generation=}"
+  return 0
+}
+
+# THE CLIENT'S CHECKS ON PRIMARY, BEFORE THE FIRST SNAPSHOT (Y:5597–5601), in
+# Y's order, each exiting 2 with nothing sent. With no `LANES_ACT` and no
+# `LANES_EXPECT` the write is outside any act: 0, and `ACT_LINES` empty, so it
+# sends no `act`. Otherwise `ACT_LINES` is the `act` file's content and
+# `ACT_ID`, `ACT_BASE` and `ACT_GEN` are set; an empty `LANES_EXPECT` sends
+# `expect: []`, which records the act's id and checks nothing (Y:5609).
+act_checks() {
+  ACT_ID=""; ACT_BASE=""; ACT_GEN=""; ACT_LINES=""
+  ack_act=""; ack_expect=""
+  if [ -n "${LANES_ACT:-}" ]; then
+    ack_act="$(act_parse plain "$LANES_ACT")" || exit $?
+  fi
+  ack_expect="$(expect_parse "${LANES_EXPECT-}" "${LANES_ACT-}")" || exit $?
+  [ -n "$ack_act" ] || return 0
+  act_parse --primary "$LANES_ACT" >/dev/null || exit $?
+  act_fields "$ack_act"
+  ACT_LINES="$ack_act"
+  [ -z "$ack_expect" ] || ACT_LINES="$ACT_LINES$ACT_NL$ack_expect"
+  return 0
+}
+
+# THE ACT ID: 32 lower-case hex digits from 16 random bytes, new for every act
+# (Y:5575). `od` and `/dev/urandom` are POSIX and on every platform the lanes
+# run on; 1 where they give anything else.
+act_mint_id() {
+  am_id="$(od -An -tx1 -N16 /dev/urandom 2>/dev/null | tr -d ' \t\n')"
+  case "$am_id" in ''|*[!0123456789abcdef]*) return 1 ;; esac
+  [ "${#am_id}" -eq 32 ] || return 1
+  printf '%s\n' "$am_id"
+}
+
+# THE BASE ON PRIMARY: ONE `lanes-index register snapshot`, with no identity
+# flags and no `--tree`, so it checks no write id and mints none (contract
+# §3.2, "For `act-begin`"). It reads the head `n` and the switch's `generation`
+# in one REPEATABLE READ READ ONLY transaction (Y:5572). Its client timer, `S`,
+# runs inside `lanes-index`, and this file sets none of its own around it
+# (contract §2.4). What `lanes-index` printed on stderr is passed on first,
+# verbatim. Sets `AS_N` and `AS_GEN`, or exits 69 (Y:5573):
+#   - its 69: a register that could not be read, a schema outside the window,
+#     or its check 4, a switch that is not `primary` with the marker `present`;
+#   - any other end but 0, its 2 (a refused configuration) and the 64 of a
+#     `lanes-index` with no `register snapshot` included: a failed read
+#     (contract §2.7, "No other code");
+#   - an exit 0 whose answer is not `format=1` (contract §2.8), names a key
+#     twice, does not read `switch=primary` and `marker=present`, or whose
+#     `n=` and `generation=` do not make a base `act_parse` accepts.
+# The answer is read through `cat -v`, so a NUL or a carriage return cannot
+# vanish from a value; it is parsed by key, never by position.
+act_snapshot() {
+  AS_N=""; AS_GEN=""
+  as_bin="$(lanes_index_bin)"
+  [ -n "$as_bin" ] ||
+    die "act-begin took no base: there is no lanes-index beside $SCRIPT_DIR/lanes-edit.sh or on PATH to read the register with. Every write of this act would be refused with 69 as well." 69
+  TMPD="$(mktemp -d "${TMPDIR:-/tmp}/lanes-edit-act.XXXXXX" 2>/dev/null || printf '')"
+  [ -n "$TMPD" ] ||
+    die "act-begin took no base: no temporary directory could be made under ${TMPDIR:-/tmp} to hold the register's answer." 69
+  as_rc=0
+  "$as_bin" register snapshot </dev/null >"$TMPD/out" 2>"$TMPD/err" || as_rc=$?
+  [ ! -s "$TMPD/err" ] || cat -- "$TMPD/err" >&2
+  case "$as_rc" in
+    0) : ;;
+    69)
+      die "act-begin took no base: \`lanes-index register snapshot\` exited 69: the register could not be read, or its switch is not primary with the marker present. Every write of this act would be refused with 69 as well." 69 ;;
+    *)
+      die "act-begin took no base: \`lanes-index register snapshot\` exited ${as_rc}, which act-begin reads as a failed read. Every write of this act would be refused as well." 69 ;;
+  esac
+  as_out="$(cat -v -- "$TMPD/out" 2>/dev/null; printf .)"; as_out="${as_out%.}"
+  as_format=""; as_switch=""; as_marker=""; as_seen=" "; as_twice=""
+  while [ -n "$as_out" ]; do
+    as_line="${as_out%%"$ACT_NL"*}"
+    if [ "$as_line" = "$as_out" ]; then as_out=""; else as_out="${as_out#*"$ACT_NL"}"; fi
+    as_key="${as_line%%=*}"; as_val="${as_line#*=}"
+    [ "$as_key" != "$as_line" ] || continue
+    case "$as_key" in
+      format|generation|switch|marker|n)
+        case "$as_seen" in *" $as_key "*) as_twice="$as_key" ;; esac
+        as_seen="$as_seen$as_key " ;;
+      *) continue ;;
+    esac
+    case "$as_key" in
+      format) as_format="$as_val" ;;
+      generation) AS_GEN="$as_val" ;;
+      switch) as_switch="$as_val" ;;
+      marker) as_marker="$as_val" ;;
+      n) AS_N="$as_val" ;;
+    esac
+  done
+  [ -z "$as_twice" ] ||
+    die "act-begin took no base: \`lanes-index register snapshot\` exited 0 and answered ${as_twice}= twice, which act-begin reads as a failed read." 69
+  [ "$as_format" = 1 ] ||
+    die "act-begin took no base: \`lanes-index register snapshot\` exited 0 and answered format=${as_format}, not format=1, which act-begin reads as a failed read (a lanes-index from another release)." 69
+  case "$as_switch $as_marker" in
+    "primary present") : ;;
+    *) die "act-begin took no base: the register's switch reads switch=${as_switch} with marker=${as_marker}, not primary with the marker present. Every write of this act would be refused with 69 as well." 69 ;;
+  esac
+  act_parse plain "00000000000000000000000000000000@${AS_N}:${AS_GEN}" >/dev/null 2>&1 ||
+    die "act-begin took no base: \`lanes-index register snapshot\` exited 0 and answered n=${AS_N} and generation=${AS_GEN}, which make no base (a seq of 1 to 18 digits and a lower-case uuid), so act-begin reads it as a failed read." 69
+  return 0
+}
+
+# `act-begin [--rebase]` (Y:5571–5576, Y:5593–5595), the verb's body.
+#   Off primary — `lanes-index mode` answered `index`, no configuration exists,
+#   or the question failed (files mode with T409's one warning) — it prints
+#   `<act-id>@files` and touches no database (review M10).
+#   IT TESTS NO `LANES_REGISTER_SCRATCH`. A flag honoured on its presence
+#   alone would let a stray export skip the mode ask, and `act-begin` would
+#   print `@files` on primary, against Y:5034 and YT:6869–6873 (lane 3's
+#   ruling, #165 6755005268). T413 adds the flag's own path at its landing,
+#   on the flag it has honoured.
+#   On primary it makes one snapshot and prints `<act-id>@<n>:<generation>`.
+#   `lanes-index mode`'s 78 is T409's 69, before anything else is read.
+# `--rebase` KEEPS `LANES_ACT`'s id and takes a new seq and generation from one
+# snapshot, only after the act's deliberate wait for another place's write, and
+# before the act re-reads the scopes it keeps (Y:5593–5594). It refuses with 2
+# where `LANES_ACT` is malformed (in every mode, since it has no id to keep),
+# where its base is `files` on primary (with its own text, not check 4's,
+# which speaks of a write: `act_parse --rebase`), and where the register's
+# generation is not the base's. Off primary it prints the kept id with
+# `@files`.
+# The mode is T409's answer, `REG_MODE`, and only `primary` means primary, as
+# T409 has every consumer test it.
+act_begin() {   # <1 for --rebase, else 0>
+  ab_id=""
+  if [ "$1" = 1 ]; then
+    [ -n "${LANES_ACT:-}" ] ||
+      die "act-begin --rebase keeps the act's id, and LANES_ACT is unset or empty, so there is no act to re-base: run act-begin without --rebase to begin one. Nothing was sent." 2
+    ab_parsed="$(act_parse plain "$LANES_ACT")" || exit $?
+    act_fields "$ab_parsed"
+    ab_id="$ACT_ID"
+  else
+    ab_id="$(act_mint_id)" ||
+      die "act-begin could not mint an act id: od gave no 16 random bytes from /dev/urandom. No base was taken." 1
+  fi
+  # THE MODE NEEDS NO ARM HERE: `reg_mode_ask` returns 0 on every path. A
+  # question that cannot be answered sets `REG_MODE=files` after T409's one
+  # warning line, and a 78 exits 69 inside it, so whatever is left is files
+  # mode unless it is `primary`.
+  reg_mode_ask
+  if [ "${REG_MODE-}" != primary ]; then
+    printf '%s@files\n' "$ab_id"
+    return 0
+  fi
+  if [ "$1" = 1 ]; then
+    act_parse --rebase "$LANES_ACT" >/dev/null || exit $?
+  fi
+  act_snapshot
+  if [ "$1" = 1 ] && [ "$AS_GEN" != "$ACT_GEN" ]; then
+    die "act-begin --rebase: LANES_ACT's generation, ${ACT_GEN}, is not the register's, ${AS_GEN}: the register was re-imported or restored after the act began, so its base cannot move. Nothing was written; run the act again from its start." 2
+  fi
+  printf '%s@%s:%s\n' "$ab_id" "$AS_N" "$AS_GEN"
+  return 0
+}
+
 # COLUMN 7 OF THE LANE LISTING, ESCAPED AND DECODED (#301). `lanes_rows` prints
 # a lane's `dir` into a row whose columns are TAB-separated, one row a line, and
 # every reader of that row splits it with a tab-IFS `read` and takes each column
@@ -7114,6 +7430,13 @@ lane_alias_keys() {
 # `lane_shaped` and sends a running session to bind a row it already has. That
 # is the fail-OPEN direction on the one promise clause (e) makes, so the status
 # is propagated and each caller decides what to do with it.
+#
+# `canon_lane_walk`, below `canon_lane`, walks THIS loop again to print the
+# names it visits (`canon-lane --walk`, 007 T411): a change to one is a change
+# to both, but for one difference, ruled: a failed read other than 69, which
+# this loop still reads as no row, ends the walk 1 (lane openRepoTools-3, #165
+# 6827722997, Q-A; Amendment 7(d)). Closing it here is a follow-up item, since
+# four callers read `canon-lane`'s codes by number (`canon_lane`'s 66 note).
 rows_named_ci_alias() {   # <typed name>
   rna_hits="$(rows_named_ci "$1" 2>/dev/null || :)"
   if [ -n "$rna_hits" ]; then printf '%s\n' "$rna_hits"; return 0; fi
@@ -7220,6 +7543,66 @@ canon_lane() {   # <typed name>
     note "'$cl_want' is a FORMER name of lane $cl_out (${LANES_ALIASES_PATH:-lanes/aliases.tsv}, Amendment 16(e)) — reading and writing $cl_out."
   fi
   printf '%s' "$cl_out"
+  return 0
+}
+
+# canon_lane_walk <typed> — THE NAMES `canon_lane`'S WALK VISITS, one per line,
+# the typed name first and the last hop last: `canon-lane --walk` (007 T411,
+# FR-035; the SQL register's design, "The acts and their expectations"). An act
+# that decides on `canon-lane` lists `row:<n>` and `alias:<n>` for every name on
+# it, because the answer changes when a row or an alias line appears for ANY
+# name on the walk, not only for the answer.
+#
+# IT IS `rows_named_ci_alias`'S LOOP, STEP FOR STEP: the same row test on the
+# typed name and after every hop (a row wins at every hop), the same
+# `lane_alias_hop` (the last line for a key wins), and the same `seen` list,
+# which ends the walk BEFORE a name it has already visited. Where no name on it
+# has a row, `lane_alias_target` follows the same hops over the same map to the
+# same end, so this is `canon_lane`'s whole walk in both of its branches. A
+# CYCLE lists each name it visited once: `canon_lane` then answers the typed
+# name with its note, and a row or an alias line for any of those names would
+# change that answer. It reads through `canon_lane`'s own two reads
+# (`register_text_checked`, `lane_alias_text`), which keep what they read for
+# the life of the process where it has its cache file.
+#
+# A READ THAT FAILED ENDS THE WALK WITH ITS OWN STATUS, NEVER 0 (lane
+# openRepoTools-3, #165 6814837872, Question 126; Amendment 7(d)). The walk
+# read `rows_named_ci` with `|| :`, so a register nobody could read was "no
+# row": the walk went on past a name whose row was never read, and ended 0 on
+# a list that could under-list an act's scopes. `rows_named_ci` answers 0 and
+# nothing for "no row", and 1 where the register could not be read (69 on
+# primary, feature 007 T505 Q3), so any status but 0 ends the walk with that
+# status. The hop's 69 is passed on too, as T505's `rows_named_ci_alias` does;
+# the hop's 1 is still "no alias", the walk's end. Where every read works, the
+# names and the 0 are what they were.
+#   0 + the names · 5 the alias table could not be read · the register read's
+#   own status where it failed (1, or 69 on primary) · 69 the hop's, on
+#   primary — and on every one but 0, nothing is printed
+canon_lane_walk() {   # <typed name>
+  clwk_cur="${1-}"
+  [ -n "$clwk_cur" ] || return 0
+  clwk_out="$clwk_cur"
+  clwk_hrc=0; clwk_hits="$(rows_named_ci "$clwk_cur" 2>/dev/null)" || clwk_hrc=$?
+  [ "$clwk_hrc" = 0 ] || return "$clwk_hrc"
+  if [ -z "$clwk_hits" ]; then
+    clwk_seen="$US$(lc "$clwk_cur")$US"
+    while :; do
+      clwk_rc=0
+      clwk_next="$(lane_alias_hop "$clwk_cur" 2>/dev/null)" || clwk_rc=$?
+      [ "$clwk_rc" != 69 ] || return 69
+      [ "$clwk_rc" = 5 ] && return 5
+      [ "$clwk_rc" = 0 ] && [ -n "$clwk_next" ] || break
+      case "$clwk_seen" in *"$US$(lc "$clwk_next")$US"*) break ;; esac
+      clwk_seen="$clwk_seen$(lc "$clwk_next")$US"
+      clwk_out="$clwk_out
+$clwk_next"
+      clwk_hrc=0; clwk_hits="$(rows_named_ci "$clwk_next" 2>/dev/null)" || clwk_hrc=$?
+      [ "$clwk_hrc" = 0 ] || return "$clwk_hrc"
+      [ -z "$clwk_hits" ] || break
+      clwk_cur="$clwk_next"
+    done
+  fi
+  printf '%s\n' "$clwk_out"
   return 0
 }
 
@@ -22255,6 +22638,26 @@ EOF
     lane_objects "$lane" || exit $?
     ;;
 
+  # FEATURE 007, T410 — AN ACT'S BASE (FR-035; Y:5571–5595), a read verb. One
+  # line on stdout: `<act-id>@<n>:<generation>` on primary, from one
+  # `lanes-index register snapshot`; `<act-id>@files` off primary, touching no
+  # database. `--rebase` keeps `LANES_ACT`'s id (`act_begin`, above).
+  # It makes no `log_sync` and reads no file of the register: on primary the
+  # snapshot is its one read, and off primary it reads nothing. Its read-door
+  # class is `none`, a row of lane openRepoTools-5's T504 table (Q-L5-5): it
+  # asks the mode itself and makes its own snapshot.
+  #   0   the line
+  #   2   `--rebase`'s refusals, with nothing sent or written
+  #   69  no base could be read on primary, or `lanes-index mode` answered 78
+  #   1   no act id could be minted; and the dispatcher's workspace refusal
+  #   64  usage, as every newer read (clause (h))
+  act-begin)
+    ab_rebase=0
+    if [ "${1-}" = --rebase ]; then ab_rebase=1; shift; fi
+    [ "$#" = 0 ] || die "usage: act-begin [--rebase]   (it prints <act-id>@<seq>:<generation> on primary and <act-id>@files off it; --rebase keeps LANES_ACT's id)" 64
+    act_begin "$ab_rebase"
+    ;;
+
   # The lane's ROW as it has LANDED — fetched, and read from
   # `origin/<branch>:lanes/LANES.md` like every other state read (R19). 0 with
   # the row, 8 when the published register has none. `lane-end`'s pre-cutover
@@ -22355,7 +22758,23 @@ EOF
   # every other read here is; the four callers fall through to the typed
   # spelling there, and each has its own refusal for a register that really does
   # hold two such rows.
+  #
+  # `--walk <lane>` (007 T411, FR-035) prints the names `canon_lane`'s walk
+  # visits in place of its answer, one per line, the typed name first and the
+  # last hop last (`canon_lane_walk`), and exits with these same codes, or with
+  # 69 or 1 where its own read of the register failed (below). The walk
+  # is asked only after `canon_lane` has answered 0, so every refusal and every
+  # note but its own failed read's is `canon-lane`'s own, and a refusal prints
+  # no walk at all: part of one would under-list an act's scopes. The form is
+  # `canon-lane --walk <lane>` alone; `canon-lane <lane> --walk` stays the usage
+  # 64 it always was.
   canon-lane)
+    cl_walk=0
+    if [ "${1-}" = --walk ]; then
+      shift; cl_walk=1
+      [ -n "${1-}" ] || die "usage: canon-lane --walk <lane>" 64
+      [ "$#" -le 1 ] || die "canon-lane --walk takes one lane: canon-lane --walk <lane>" 64
+    fi
     cl_in="${1-}"; [ -n "$cl_in" ] || die "usage: canon-lane <lane>" 64
     [ "$#" -le 1 ] || die "canon-lane takes one lane: canon-lane <lane>" 64
     check_lane_name "$cl_in"
@@ -22363,7 +22782,31 @@ EOF
     # THE CODE IS CARRIED, not flattened to 2: 66 is the alias table that could
     # not be read and its four callers tell it from 2 by that number alone.
     cl_res="$(canon_lane "$cl_in")" || exit $?
-    printf '%s\n' "$cl_res"
+    if [ "$cl_walk" = 1 ]; then
+      # 66, IN `canon_lane`'S OWN WORDS FOR ITS SECOND READER OF THE TABLE: the
+      # walk reads again the table `canon_lane` has just read (from this
+      # process's cache, where it has one), so a failure here is a read that
+      # failed the second time, and it is never an answer.
+      # AND A REGISTER READ THAT FAILED IS NOT THE TABLE'S (#165 6814837872,
+      # Question 126): the walk ends with that read's own status, and the
+      # table's words and 66 would name the wrong file. On primary it is 69,
+      # `canon_lane`'s own code for the same failure (feature 007, T505 Q3),
+      # with nothing on stdout, and `lane-handoff`'s act holds on it (T429);
+      # elsewhere it is 1, a register that could not be read (R22), in
+      # `write-handoff`'s words.
+      cl_wrc=0
+      cl_names="$(canon_lane_walk "$cl_in")" || cl_wrc=$?
+      [ "$cl_wrc" != 69 ] || exit 69
+      if [ "$cl_wrc" = 5 ]; then
+        note "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read ($(lane_alias_err))."
+        exit 66
+      fi
+      [ "$cl_wrc" = 0 ] ||
+        die "the register could not be read, so the names canon-lane's walk visits for '$cl_in' cannot be listed — a read that failed is never 'no row' (R22). Nothing was printed." 1
+      printf '%s\n' "$cl_names"
+    else
+      printf '%s\n' "$cl_res"
+    fi
     ;;
 
   # `--home`'s validation, WITHOUT a write — the same `resolve_home` the writers
@@ -24030,6 +24473,6 @@ EOF
     ;;
 
   *)
-    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|retire-rows|archive-rows|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|guard-bind|idle-holders|live-holder|window-session|transcript-holders|binding|request-handoff|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|duplicate-holder|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|register-row-local|retired-identity|canon-lane|resolve-home|managed-projection|lane-state|set-lane-state|lane-trees|set-lane-tree|lane-tree-now|project-legs|lane-reconcile|lane-holders|legacy-restart-check|publish-handoff|restart-intent|set-restart-intent|worktrees|pathspec-check|lane-checkout|refresh-workspace|write-handoff|handoff-path)" 2
+    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|retire-rows|archive-rows|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|guard-bind|idle-holders|live-holder|window-session|transcript-holders|binding|request-handoff|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|duplicate-holder|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|register-row-local|retired-identity|canon-lane|act-begin|resolve-home|managed-projection|lane-state|set-lane-state|lane-trees|set-lane-tree|lane-tree-now|project-legs|lane-reconcile|lane-holders|legacy-restart-check|publish-handoff|restart-intent|set-restart-intent|worktrees|pathspec-check|lane-checkout|refresh-workspace|write-handoff|handoff-path)" 2
     ;;
 esac
