@@ -1410,6 +1410,12 @@ fi
 # and never read from the environment, as `REG_MODE` (lane 5's answer 11, #165
 # 6746507353).
 REG_STORE=""
+# FEATURE 007, T507 - THE GUARD'S MIRROR PATH'S ONE TIP (`reg_guard_mirror`):
+# `mirror_tip=` from form 2's `.outage`, the commit form C walked, which every
+# read on that path is pinned to (lane 3's T507 ruling (4)(a)). Empty
+# everywhere else, the door's mirror arms included; never read from the
+# environment.
+REG_MIRROR_TIP=""
 # AMENDMENT 23 S4 — THE REPLAY'S OWN MARKERS. A refused push drops this write's
 # commit and runs this file again with the same argv (`commit_publish`), and
 # `exec` keeps the pid: `LANES__REPLAY_PID` equal to `$$` is that re-run, and
@@ -4493,7 +4499,15 @@ reg_config_present() {
 # here. Its one cost: bash's message for a redirection that fails goes to
 # /dev/null too, and `$rmq_dir` is a fresh `mktemp`. A signal that stops the
 # question leaves it to `cleanup`, which removes it while `rmq_dir` holds it.
-reg_mode_query() {
+# THE MIRROR FORM, `reg_mode_query mirror` (T508), is `session-start`'s
+# (`reg_session_read`), where a 78 is a failed read and never a refusal: it sets
+# `REG_MODE=refused`, `RO_WHY` and `RO_FAILED`, as the prefetch's 78 sets them,
+# and returns 0, so the block reads the mirror with a note (W:4833). It is keyed
+# on the argument, never on `REG_CLASS`: the writers ask before any door sets
+# that, and an inherited `REG_CLASS=mirror` would turn a writer's 78 into a
+# files-mode write. The writers' form (`reg_mode_ask`) passes none and keeps
+# its 69.
+reg_mode_query() {   # [mirror]
   rmq_bin="$(lanes_index_bin)"
   if [ -z "$rmq_bin" ]; then
     reg_mode_files "could not be run: there is no lanes-index beside $SCRIPT_DIR/lanes-edit.sh or on PATH"
@@ -4526,6 +4540,11 @@ reg_mode_query() {
       esac ;;
     78:*)
       REG_MODE=refused
+      if [ "${1-}" = mirror ]; then
+        RO_WHY="lanes-index refuses mode=primary in this build (exit 78)${rmq_said:+: ${rmq_said:0:300}}"
+        RO_FAILED="the register's mode could not be read: \`lanes-index mode\` exited 78, EX_CONFIG, so lanes-index refuses this workstation's mode=primary in this build${rmq_said:+ ($rmq_said)}"
+        return 0
+      fi
       [ -n "$rmq_said" ] || rmq_said="lanes-index printed no text"
       die "$rmq_said (\`lanes-index mode\` exited 78, EX_CONFIG: lanes-index refuses this workstation's mode=primary in this build. \`$cmd\` wrote nothing, and wrote no files instead.)" 69 ;;
     # 124 AND 137 EACH SAY WHAT THEY CAN MEAN, in `classify`'s words (T424).
@@ -4581,8 +4600,9 @@ reg_mode_files() {   # <why>
 # 6859801732). Every other arm ignores the variable, `who` among them; the
 # variable is set per call, so `lane-handoff --late`'s own `lane-last` read and
 # `lane-start`'s, which set none, still end 69. `REG_NO_CALL=1`
-# is `session-start`'s: a mirror arm with no register call (R39), whose read
-# T508 gives it. `lanes --decide` is decide, `reg_open`'s one flag rule (R38).
+# is `session-start`'s: a mirror arm with no register call (R39), whose read is
+# its block's own, `reg_session_read` (T508), never `reg_open`'s.
+# `lanes --decide` is decide, `reg_open`'s one flag rule (R38).
 # T504's own tree had no rows for the five arms it lacked: T401's
 # `register-text` and `register-grep`, T410's `act-begin`, T427's
 # `start-record` and T502's `guard-bind`. Whichever of T504 and an arm's task
@@ -4701,7 +4721,8 @@ reg_class_of() {   # <arm>: sets REG_CLASS, REG_MIRROR_VAR and REG_NO_CALL
 #      there or the read of it failed.
 # `REG_STORE` then says which store answers the read sites: `sql` (the family at
 # `n`), `files`, or `mirror`; empty where no door ran (a none, writer or guard
-# arm, `session-start`). `REG_MODE` and `REG_STORE` differ under
+# arm), and for `session-start` until its block's own read, `reg_session_read`
+# (T508), sets it. `REG_MODE` and `REG_STORE` differ under
 # `LANES_READ_MIRROR=1` and in T413's child; the read sites test `REG_STORE`, and
 # the mode-keyed lines `REG_MODE` (lane 5's answer 11). `lanes-index` is
 # `lanes_index_bin`'s (Q-L5-2). No timer is set around the call: a register
@@ -4733,13 +4754,60 @@ reg_open() {   # <arm> [<its arguments>...]
   return 0
 }
 
+# FEATURE 007, T508 - THE `SessionStart` BLOCK'S READ (FR-033; R39; W:3001,
+# W:4443-4455, W:4896). `session-start` is the mirror class with no register
+# call (`reg_class_of`'s `REG_NO_CALL=1`), so `reg_open` opens no door for it,
+# and `session_start_block` calls this instead, after a compact's return and
+# before its first read. The block decides nothing, and a database in its path
+# would add a failure mode to a hook that must exit 0 (W:4443-4446), so this
+# makes no prefetch and no register call, prints nothing on stdout, and reaches
+# no `die`: the class is set here from the table's own row, so a failed read
+# and the marker take their `mirror` arms, each of which reads on. It sets
+# `REG_STORE`, never `sql`:
+#   1. Under T413's honoured flag (`REG_SCRATCH` non-empty), files, as
+#      `reg_open` answers it.
+#   2. THE MODE, one answer per process: one this process already holds is
+#      kept. Otherwise, where no configuration exists (`reg_config_present`,
+#      D3) nothing is started and the mode is files; where one does, ONE
+#      `lanes-index mode`, under the 2 s timer (`reg_mode_query mirror`), which
+#      reads only the configuration (contract 3.1): no network, and no register
+#      call. A question that fails is files mode with one warning, as for a
+#      writer.
+#   3. 78, Q6(c)'s refusal: a failed read, so the mirror, with its line naming
+#      the cause (W:4833).
+#   4. PRIMARY: the mirror, with its line on stderr in the words below, since
+#      nothing was unreachable where nothing was asked.
+#   5. OFF PRIMARY, files mode and `mode index`: F17 (`reg_marker_check`,
+#      W:4896), whose `mirror` arm reads on with its line under the marker.
+reg_session_read() {
+  reg_class_of session-start
+  REG_STORE=""; RO_FAILED=""; RO_WHY=""
+  if [ -n "${REG_SCRATCH:-}" ]; then REG_STORE=files; return 0; fi
+  case "$REG_MODE" in
+    index|primary|files) : ;;
+    *) if reg_config_present; then reg_mode_query mirror; else REG_MODE=files; fi ;;
+  esac
+  if [ -n "$RO_FAILED" ]; then reg_read_failed "$RO_FAILED" "$RO_WHY"; return 0; fi
+  if [ "$REG_MODE" = primary ]; then
+    reg_mirror_say "the SessionStart block reads the mirror offline and makes no register call, R39"
+    REG_STORE=mirror
+    return 0
+  fi
+  REG_STORE=files
+  reg_marker_check
+  return 0
+}
+
 # THE ONE CALL, form 1 (contract 3.6). Its stdout and stderr go to files beside
 # the cache, so a call that leaves a child behind holds no pipe open here, in
 # T409's one wrap form, whose subshell drops bash's job notice for a call a
 # signal ended (lane 3, #165 6755027994). Sets `REG_MODE`, and `RO_FAILED` (what
 # failed, for the refusal) and `RO_WHY` (the cause, for the mirror line) on a
-# failed read.
-reg_prefetch() {
+# failed read. The door asks `--all`; the post-bind refill (T507,
+# `guard_bind_refill`) names its members, `--files register,aliases`, and keeps
+# the same ends.
+reg_prefetch() {   # [<--files set>; --all where none is given]
+  rp_sel=(--all); [ -z "${1-}" ] || rp_sel=(--files "$1")
   RO_FAILED=""; RO_WHY=""
   rp_bin="$(lanes_index_bin)"
   if [ -z "$rp_bin" ]; then
@@ -4751,7 +4819,7 @@ reg_prefetch() {
     return 0
   fi
   rp_rc=0
-  ( "$rp_bin" register read --prefetch --cache "$SE_CACHE_FILE" --all </dev/null >"$SE_CACHE_FILE.door-out" 2>"$SE_CACHE_FILE.door-err"; exit "$?" ) 2>/dev/null || rp_rc=$?
+  ( "$rp_bin" register read --prefetch --cache "$SE_CACHE_FILE" "${rp_sel[@]}" </dev/null >"$SE_CACHE_FILE.door-out" 2>"$SE_CACHE_FILE.door-err"; exit "$?" ) 2>/dev/null || rp_rc=$?
   rp_out="$(cat -v -- "$SE_CACHE_FILE.door-out" 2>/dev/null; printf .)"; rp_out="${rp_out%.}"
   # WHAT IT SAID: its first line, the cause (contract 2.6), for the mirror line;
   # all of it as one line, for a refusal or a warning. Control characters are
@@ -4798,6 +4866,13 @@ reg_read_files() {   # <why>
 # names no commit git can resolve, no sha is claimed. This door never knows how
 # far behind it is, so `<k>` is `unknown`.
 reg_mirror_line() {   # <why>
+  reg_mirror_say "sql unreachable: $1"
+}
+
+# THE LINE ITSELF, with what its parenthesis says (T508): the door's `sql
+# unreachable: <why>` above, and the `SessionStart` block's primary label
+# (`reg_session_read`), where nothing was unreachable, since nothing was asked.
+reg_mirror_say() {   # <what the parenthesis says>
   rml_sha=""
   if [ -n "$LANES_REPO" ]; then
     if have_remote_ref; then
@@ -4808,7 +4883,7 @@ reg_mirror_line() {   # <why>
   fi
   rml_show="no commit this checkout can name"
   [ -z "$rml_sha" ] || rml_show="${rml_sha:0:12}"
-  printf 'read: mirror at %s, unknown (sql unreachable: %s)\n' "$rml_show" "$1" >&2
+  printf 'read: mirror at %s, unknown (%s)\n' "$rml_show" "$1" >&2
 }
 
 # A FAILED READ, BY CLASS (W:4841-4847; contract 3.6's table): decide 69, with
@@ -4840,8 +4915,8 @@ reg_read_failed() {   # <what failed> <the cause, for the mirror line>
 # T506 Q7). 1, absent, says nothing and changes
 # nothing. 0, present, and 2, a tip git could not read, which is a failed read
 # and never "no marker" (ERR-47), end by class alike (Y:4948): decide 69 with
-# Amendment 22's text; mirror reads on with its line; projection 1. The guard's
-# is T507's. Where the workspace check did not run (`$LANES_REPO` or
+# Amendment 22's text; mirror reads on with its line; projection 1; the guard
+# 2, with the same text, returned (T507). Where the workspace check did not run (`$LANES_REPO` or
 # `$LANES_DIR` empty), nothing is read: an empty `git -C` reads the current
 # directory, and the arm's own read answers (lane 5, #165 6746507353, item 10).
 reg_marker_check() {
@@ -4876,6 +4951,16 @@ reg_marker_check() {
       REG_STORE=mirror ;;
     projection)
       die "$rmc_where. This workstation reads in $rmc_mode, where the files are only the register's mirror, so whether the managed ledger owns lane ${RO_LANE:-?} is UNKNOWN: \`$cmd\` answers 1 (feature 007, F17; FR-004)." 1 ;;
+    # THE GUARD'S (T507; W:4896; tasks.md T507): 2, the hook's one refusal,
+    # printed by `guard_refuse` and returned to `guard_run`, never `die`, whose
+    # 69 or 1 the `guard` arm would report as the guard's own failure.
+    guard)
+      if [ "$rmc_rc" = 0 ]; then
+        guard_refuse "this estate's register is SQL; configure \`mode=primary\` (Amendment 22; feature 007, F17; FR-004): $rmc_where. This workstation reads in $rmc_mode, where the files are only the register's mirror, so the triple is not verified from them."
+      else
+        guard_refuse "$rmc_where. This workstation reads in $rmc_mode, so whether this estate's register is SQL could not be read, and an indeterminate read refuses (Amendment 12(d); feature 007, F17). $(guard_bypass)"
+      fi
+      return 2 ;;
     *)
       note "$rmc_where. This workstation reads in $rmc_mode, where the files are only the register's mirror, so \`$cmd\`, a read that decides, refuses and answers nothing (feature 007, F17; FR-004)."
       if [ "$rmc_rc" = 0 ]; then die "this estate's register is SQL; configure \`mode=primary\`" 69; fi
@@ -4937,7 +5022,7 @@ reg_flush() {
 # refetches the whole family. Where anything cached changed in `(n, n']`, form 3
 # rewrites the whole family at `n'`, so the family stays one snapshot. It is
 # made in the prefetch's call form, with no timer around it (contract 2.4). The
-# guard's second read, form 4, is T507's.
+# guard's second read is form 4 (`reg_guard_second_read`, T507).
 #
 # A FAILED SECOND READ (C3, B9) - any end but 0 with `mode primary` - is the
 # class's failed read, never the files instead. The site returns 69 and never
@@ -5011,7 +5096,13 @@ reg_fail_again() {
 # #165 6780364102); with no copy kept, it waits beside the cache (`.rmirror`)
 # for `cleanup`. A decide or projection arm's refusal (`reg_fail_end`) carries
 # what failed, and where no arm ended by its class, `cleanup` notes it.
+# IN THE GUARD CLASS NOTHING IS RECORDED (feature 007, T507; tasks.md T507,
+# B4): the read site returns 69 and the guard ends as its own rules say, a
+# failed log read noted and never refused. A `.rfail` there would make every
+# later `.register` and `.aliases` read in the hook answer 69 after one noted
+# form-4 failure, so the guard would refuse over a read that only advises.
 reg_fail() {   # <what failed> <the cause, for the mirror line>
+  [ "${REG_CLASS:-}" != guard ] || return 69
   if [ ! -e "$SE_CACHE_FILE.rfail" ]; then
     if [ "${REG_CLASS:-}" = mirror ]; then
       rfl_line="$(reg_mirror_line "$2" 2>&1)"
@@ -5069,6 +5160,15 @@ reg_exit() {   # <rc> <code>
 }
 reg_second_read() {   # <--files set, or empty> <--log-key= key, or empty>
   if [ -e "$SE_CACHE_FILE.rfail" ]; then reg_fail_again; return; fi
+  if [ "${REG_CLASS:-}" = guard ]; then
+    case "${1-}" in
+      "") reg_guard_second_read "${2-}" ;;
+      log:*,* | *,*) return 69 ;;
+      log:*) reg_guard_second_read "${1#log:}" ;;
+      *) return 69 ;;
+    esac
+    return
+  fi
   rsr_n="$(reg_head_n)"
   rsr_ask="--since $rsr_n${1:+ --files $1}${2:+ --log-key=$2}"
   rsr_bin="$(lanes_index_bin)"
@@ -5091,6 +5191,33 @@ reg_second_read() {   # <--files set, or empty> <--log-key= key, or empty>
   [ "$rsr_rc" != 0 ] || rsr_said="it answered no mode primary line${rsr_said:+; $rsr_said}"
   reg_fail "the register could not be read: its second read, \`lanes-index register read $rsr_ask\`, exited $rsr_rc${rsr_said:+ ($rsr_said)}, and a read that failed is never answered from the files instead (feature 007, T505; C3)" "${rsr_why:-lanes-index printed no cause (exit $rsr_rc)}"
 }
+# FEATURE 007, T507 - THE GUARD'S SECOND READ, form 4 (contract 3.6; B9; O17;
+# L1-D1): `lanes-index register read --for guard --at <n> --pid $$ --cache
+# "$SE_CACHE_FILE" --lane=<key>`, for one log, the key as `lane_log_events`
+# received it, in the class or outside it. `<n>` is `.head`'s `n=`, the
+# prefetch's, never form 3's `n'`, and 0 where `.head` is absent: form 4 then
+# ends 69 in `lanes-index`, and no fresh read stands in for it. It takes no
+# `--repo` (it runs no form C), always reads directly, and is cut at `T0` +
+# 3.75 s whatever a declaration says (B4, B5, B7). Made in the prefetch's call
+# form, with no timer around it (contract 2.4). ITS ENDS (B4, lane 3's ruling,
+# #165 6738474549): 0 with `mode primary` is a read the caller then checks for
+# the log's files; every other end, "too late" (2), 69, 78, 1, 64 or a crash,
+# is a log that could not be read, 69, which the guard notes and never refuses
+# for, and nothing is recorded (`reg_fail`).
+reg_guard_second_read() {   # <key>
+  rgs_k="${1-}"
+  [ -n "$rgs_k" ] || return 69
+  rgs_bin="$(lanes_index_bin)"
+  [ -n "$rgs_bin" ] || return 69
+  rgs_n="$(reg_head_n)"
+  rgs_o="$SE_CACHE_FILE.door-out.${BASHPID:-$$}"; rgs_e="$SE_CACHE_FILE.door-err.${BASHPID:-$$}"
+  rgs_rc=0
+  ( "$rgs_bin" register read --for guard --at "$rgs_n" --pid "$$" --cache "$SE_CACHE_FILE" "--lane=$rgs_k" </dev/null >"$rgs_o" 2>"$rgs_e"; exit "$?" ) 2>/dev/null || rgs_rc=$?
+  rgs_first="$(head -n 1 -- "$rgs_o" 2>/dev/null || :)"
+  rm -f -- "$rgs_o" "$rgs_e"
+  if [ "$rgs_rc" = 0 ] && [ "$rgs_first" = "mode primary" ]; then return 0; fi
+  return 69
+}
 # 0 where every named member is cached, or the second read brought them; 1
 # read the mirror; 69 a failed read.
 reg_member() {   # <member>...
@@ -5100,6 +5227,11 @@ reg_member() {   # <member>...
     [ -f "$SE_CACHE_FILE.$rme_m" ] || rme_want="${rme_want:+$rme_want,}$rme_m"
   done
   [ -n "$rme_want" ] || return 0
+  # IN THE GUARD CLASS A MEMBER NOT CACHED IS 69, WITH NO SECOND READ (feature
+  # 007, T507; C9): form 2 always writes `.register` and `.aliases`, so a miss
+  # is a cache that is not whole, and `.paths` is no member of the guard's.
+  # Form 4 reads a log alone (`reg_log`).
+  [ "${REG_CLASS:-}" != guard ] || return 69
   reg_second_read "$rme_want" ""
 }
 # The logs `.paths` lists, the paths directly under the log prefix, in its
@@ -5120,12 +5252,15 @@ reg_log_hits() {   # <key>
 # failed read; otherwise form 3 `--files log:<key>` brings it. A key outside the
 # class is asked each time as `--log-key=<key>`, never counted as cached, and is
 # read from `.log.%<hex>`. A log is there where its `.logpath` names a file.
+# IN THE GUARD CLASS (feature 007, T507; tasks.md T507, C9) `.paths` is never
+# consulted: a log not cached, or a key outside the class, is one form-4 read
+# (`reg_second_read`), never form 3.
 reg_log() {   # <key>
   if [ -e "$SE_CACHE_FILE.rfail" ]; then reg_fail_again; return; fi
   rlg_k="${1-}"
   if reg_in_class "$rlg_k"; then
     if [ ! -f "$SE_CACHE_FILE.log.$rlg_k" ]; then
-      if [ -f "$SE_CACHE_FILE.paths" ]; then
+      if [ "${REG_CLASS:-}" != guard ] && [ -f "$SE_CACHE_FILE.paths" ]; then
         rlg_hits=""
         rlg_hits="$(reg_log_hits "$rlg_k")" || { reg_fail "the register could not be read: its cached .paths could not be read" "the cache family could not be read"; return; }
         rlg_n="$(printf '%s' "$rlg_hits" | grep -c . || :)"
@@ -7224,7 +7359,24 @@ lane_log_events() {   # <lane> [checked]
       parse_log_stream "$(sed -n -e 1p "$SE_CACHE_FILE.logpath.$lev_s")" < "$SE_CACHE_FILE.log.$lev_s"
       return
     fi
+    # IN THE GUARD CLASS EVERY OTHER END IS PASSED ON (feature 007, T507; B4):
+    # a log form 4 could not read is a log that could not be read, never
+    # `log_path_ci`'s or git's answer instead.
+    [ "${REG_CLASS:-}" != guard ] || return "$lev_m"
     [ "$lev_m" != 69 ] || return 69
+  fi
+  # FEATURE 007, T507 - THE GUARD'S MIRROR PATH (`reg_guard_mirror`): every log
+  # is read at the one tip it is pinned to, `REG_MIRROR_TIP`, never at
+  # `origin/$LANES_BRANCH` (lane 3's T507 ruling (4)(a)), through
+  # `parse_log_stream` with the path it resolved to. No log there is no lines
+  # and 0; 1 where git could not read it, and 2 for two logs that differ only
+  # by case, as below.
+  if [ -z "$LANES_IDX_DIR" ] && [ -n "${REG_MIRROR_TIP:-}" ]; then
+    lev_m=0; lev_s="$(reg_mirror_log "${1-}")" || lev_m=$?
+    [ "$lev_m" = 0 ] || return "$lev_m"
+    [ -n "$lev_s" ] || return 0
+    parse_log_stream "$(sed -n -e 1p "$SE_CACHE_FILE.logpath.$lev_s")" < "$SE_CACHE_FILE.log.$lev_s"
+    return
   fi
   ll_rel="$(log_path_ci "$1")" || { [ "$?" != 69 ] || return 69; return 2; }
   if [ -n "$LANES_IDX_DIR" ]; then
@@ -13845,6 +13997,13 @@ row_stamp_is_unknown() {   # <lane>
   rsu_lane="${1-}"; rsu_n=""; rsu_row=""; rsu_last=""
   [ "${REG_STORE:-}" != sql ] || return 1
   [ -n "$rsu_lane" ] || return 1
+  # FEATURE 007, T508 - ON PRIMARY IT READS NOTHING AND ANSWERS 1 (lane 3, #165
+  # 6807910478, T506 Q4): the stamp is never read from the register, and the
+  # one caller, `session_start_block`, may make no register call (R39), so
+  # there the cure is the relaunch. The key is this path's own test of primary,
+  # `REG_MODE` as `reg_session_read` set it, since `REG_STORE` is never `sql`
+  # here.
+  [ "${REG_MODE:-}" != primary ] || return 1
   rsu_n="$(row_line "$rsu_lane" 2>/dev/null)" || return 1
   case "$rsu_n" in ''|*[!0-9]*) return 1 ;; esac
   rsu_row="$(sed -n -e "${rsu_n}p" "$LANES_FILE" 2>/dev/null || :)"
@@ -13868,11 +14027,24 @@ row_stamp_is_unknown() {   # <lane>
 # DIRECTORY CONFERS NO LANE (Amendment 6(a)) — two lanes share one all day, and
 # every nested checkout in the xFactory estate shares its parent's. The WINDOW
 # and the REGISTER decide, in that order.
+#
+# FEATURE 007, T508 — ITS READ (`reg_session_read`; R39; W:4896) comes after a
+# compact's return and before the first read below. On primary, and under
+# `lanes-index`'s 78, the block reads the mirror, with the `read: mirror` line
+# on stderr and no prefetch and no register call; off primary it runs F17,
+# which reads on with its line under the marker. Every read below reads the
+# files either way, since `REG_STORE` is never `sql` here. On primary
+# `row_stamp_is_unknown` reads nothing, and `lane_forks`' fence takes no local
+# half (lane 3, #165 6814531692).
 session_start_block() {
   ssb_json="${1-}"; ssb_win="${2-}"
   ssb_id="$(lc "$(jstr "$ssb_json" session_id)")"
   ssb_src="$(jstr "$ssb_json" source)"
   case "$ssb_src" in compact) return 0 ;; esac
+  # FEATURE 007, T508: the block's read, before its first read, so a compact
+  # still prints nothing and the `read: mirror` line comes first
+  # (`reg_session_read`; R39; F17 off primary, W:4896).
+  reg_session_read
 
   # AMENDMENT 15 — THE WINDOW NAME, THE SESSION NAME AND THE ROW KEY ARE
   # COMPARED CASE-INSENSITIVELY, AND EVERY LINE BELOW PRINTS THE ROW'S OWN
@@ -14007,7 +14179,19 @@ session_start_block() {
   # retirement is a person's act (Amendment 8(f)), so the line NAMES and does
   # nothing.
   ssb_fk=""; ssb_fkrc=0
-  ssb_fk="$(lane_forks "$ssb_lane" 2>/dev/null)" || ssb_fkrc=$?
+  # FEATURE 007, T508 - ON PRIMARY THE FENCE'S LOCAL HALF IS SKIPPED (lane 3,
+  # #165 6814531692; W:4865: "the local half is skipped: no local row can be
+  # ahead of SQL", D11), under `row_stamp_is_unknown`'s test of primary: the
+  # block hands `lane_forks` the fence from `session_ids_of_lane` alone, built
+  # as `lane_forks` builds its own, so no working-tree row is read for it. Off
+  # primary, under a 78 and under F17's marker, `lane_forks` builds its fence
+  # as it always has.
+  if [ "${REG_MODE:-}" = primary ]; then
+    ssb_fids=" $( { session_ids_of_lane "$ssb_lane" 2>/dev/null || :; } | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
+    ssb_fk="$(lane_forks "$ssb_lane" "$ssb_fids" 2>/dev/null)" || ssb_fkrc=$?
+  else
+    ssb_fk="$(lane_forks "$ssb_lane" 2>/dev/null)" || ssb_fkrc=$?
+  fi
   # AND THE SAME HERE, for the same reason: this block is the first thing a
   # session that starts into a lane reads, and "no fork" is a fact it acts on.
   case "$ssb_fkrc" in
@@ -15128,6 +15312,27 @@ guard_bind_bound_s() {   # <offer file>
   printf '%s\n' "$(( (437000 + 28000 * gbs_n * gbs_c + 19 * gbs_w + 9999) / 10000 * 10 ))"
 }
 
+# FEATURE 007, T507 - `.head`'s `c`, `n_a` AND `w_s_ms` INTO THE BIND RECORD
+# (contract 3.6's `.head`; tasks.md T507; O15; R05): the guard reads them from
+# the prefetch's `.head` and never writes `.head` (forms 1 to 3 do), and
+# `guard-bind` sums `bound_s` from the record, so they are copied before the
+# first `guard_bind_bound_s`. Each is copied as `.head` gives it, where it is a
+# whole number; a missing `.head` (files mode, `mode index`, the mirror path)
+# writes nothing, and the defaults give 500 s. Through `guard_bind_rewrite`, so
+# every later rewrite keeps them.
+#   0 copied, or nothing to copy · 1 the record could not be rewritten
+guard_bind_head_copy() {   # <offer file>
+  [ -n "${SE_CACHE_FILE:-}" ] && [ -f "$SE_CACHE_FILE.head" ] || return 0
+  ghc_kv=()
+  for ghc_k in c n_a w_s_ms; do
+    ghc_v="$(sed -n -e "s/^$ghc_k=//p" "$SE_CACHE_FILE.head" 2>/dev/null | head -n 1)"
+    case "$ghc_v" in ''|*[!0-9]*) continue ;; esac
+    ghc_kv+=("$ghc_k=$ghc_v")
+  done
+  [ "${#ghc_kv[@]}" -gt 0 ] || return 0
+  guard_bind_rewrite "${1-}" "" "${ghc_kv[@]}"
+}
+
 # `lane-start`, found the way every word in this toolset finds its siblings:
 # beside this file first — `--install` places them in one directory — then on
 # PATH. One resolution, so a workstation with two copies never reads one and
@@ -15144,6 +15349,27 @@ guard_lane_start() {
   if [ -x "$SCRIPT_DIR/lane-start" ]; then printf '%s\n' "$SCRIPT_DIR/lane-start"; return 0; fi
   command -v lane-start 2>/dev/null || printf ''
 }
+
+# FEATURE 007, T507 - SVC-8's BUDGET LINES, ONE SET OF CONSTANTS (the design's
+# SVC-8 budget table; tasks.md T507). Each is a time after `T0`, the hook's own
+# start, which the guard hands `lanes-index` as `--pid $$`:
+#   START   the parse's start line: a register read has ended by then, or it is
+#           cut, and `lanes-index` answers "too late to verify" (form 2's cap,
+#           and form 4's cut whatever a declaration says; under an unexpired
+#           declaration the direct read is capped 0.1 s earlier, so the mirror
+#           path has started by this line);
+#   MIRROR  the parses and the decision, or the mirror path's reads and parse,
+#           are done: the 0.5 s reserve, which lane 2 measured;
+#   LAST    the guard has printed its answer and exited, 0.1 s inside the
+#           test's "under 4.5 s".
+# LAST is below the installer's `GUARD_TIMEOUT=5` (`openRepoTools`), which the
+# hook string keeps, and a test holds it there. The reserves are measured
+# shares, not bounds bash can enforce (it has no clock finer than `SECONDS`), so
+# nothing below times itself against them: the cut runs inside `lanes-index`
+# (contract 2.4). One line each, at column 0, as the test reads them.
+GUARD_BUDGET_START_MS=3750
+GUARD_BUDGET_MIRROR_MS=4250
+GUARD_BUDGET_LAST_MS=4400
 
 # ------------------------------------------------------- the triple, printed
 #
@@ -15213,6 +15439,262 @@ guard_refuse() {
   note "$1"
   [ -n "${2-}" ] && note "run: $2"
   return 2
+}
+
+# FEATURE 007, T507 - THE GUARD'S ONE PREFETCH, form 2 (contract 3.6; tasks.md
+# T507; the design's SVC-8): `lanes-index register read --for guard --prefetch
+# --cache "$SE_CACHE_FILE" --pid $$ --repo "$LANES_REPO" --lane=<window>`, made
+# once, after the guard's session-record check and before its first register
+# read, with no git read ahead of it (lane 3's T507 rulings (1) and (2), #165
+# 6783977598). `$$` is the hook's own pid, whose start is `T0`, inside `(
+# guard_run )` and any `$( )` alike. `--lane=` is left out where the window has
+# no name, since an empty one is 64 (L1-D1). Only on a configured workstation
+# (`reg_config_present`, D3): with none, nothing is started and the mode is
+# files. It is made in the door's call form (`reg_prefetch`): stdout and stderr
+# in files beside the cache, and no timer around it, since the cut runs inside
+# `lanes-index` (contract 2.4). It sets `REG_MODE`, and `REG_STORE` for the
+# read sites, and maps form 2's exits (W:4291-4299; contract 3.6's table):
+#   0, `mode primary`  REG_STORE=sql: the guard's reads take the family it
+#                      wrote at one `n` (`.register`, `.aliases`,
+#                      `.log.<window>`; C9), and a log it did not cache is one
+#                      form-4 read (`reg_second_read`)
+#   0, `mode index`    today's guard, on the files
+#   69                 the store's failed read (`reg_guard_outage`)
+#   2                  "too late to verify": refused, 2
+#   78                 Q6(c)'s refusal of `mode=primary`: refused, 2
+#   any other          1 among them (a refused configuration cannot be told
+#                      from a crash's 1, O14), 64, a signal, or a 0 it cannot
+#                      read: one warning, then files mode
+# A refusal is printed here, by `guard_refuse`, and returns 2 for `guard_run`
+# to pass on; every other end is 0, and `REG_MODE` says which way to read on.
+reg_guard_prefetch() {
+  REG_STORE=files; RG_SAID=""
+  if ! reg_config_present; then REG_MODE=files; return 0; fi
+  rgp_bin="$(lanes_index_bin)"
+  if [ -z "$rgp_bin" ]; then
+    reg_guard_files "could not be run: there is no lanes-index beside $SCRIPT_DIR/lanes-edit.sh or on PATH"
+    return 0
+  fi
+  if [ -z "$SE_CACHE_FILE" ]; then
+    reg_guard_files "could not be asked: no cache file could be made under ${TMPDIR:-/tmp} to hold its answer"
+    return 0
+  fi
+  rgp_argv=(register read --for guard --prefetch --cache "$SE_CACHE_FILE" --pid "$$" --repo "$LANES_REPO")
+  [ -z "$G_WINNAME" ] || rgp_argv+=("--lane=$G_WINNAME")
+  rgp_rc=0
+  ( "$rgp_bin" "${rgp_argv[@]}" </dev/null >"$SE_CACHE_FILE.door-out" 2>"$SE_CACHE_FILE.door-err"; exit "$?" ) 2>/dev/null || rgp_rc=$?
+  rgp_out="$(cat -v -- "$SE_CACHE_FILE.door-out" 2>/dev/null; printf .)"; rgp_out="${rgp_out%.}"
+  # WHAT IT SAID: all of it as one line for a refusal or a warning, the cause
+  # first (contract 3.6: under `--for guard` a 69's first stderr line is the
+  # cause the guard quotes). Its first 1000 bytes, newline, CR and tab made
+  # spaces and every other C0 byte dropped, as `reg_prefetch` keeps them, and
+  # then CUT ON A CHARACTER BOUNDARY (lane 3's ruling on item 31, (a), #165
+  # 6826938656; lane 1's 4.23, register-cli.md:768). Where the 1000th byte
+  # falls inside a UTF-8 character, `rgp_cut` leaves that character out whole:
+  # a lead byte at the end with fewer continuation bytes after it than its
+  # character takes (C0 to DF starts two bytes, E0 to EF three, F0 and up
+  # four). So the quote is the longest prefix of at most 1000 bytes that ends
+  # where a character ends, and ASCII is quoted as before. `tr` and `sed` run
+  # under `LC_ALL=C`, on bytes: under a UTF-8 locale the `tr` of macOS refuses
+  # a split character ("Illegal byte sequence").
+  # THE FALLBACK LINE (svc:104: with the service unavailable the hook "SHALL
+  # print `guard: direct (service unavailable)` on stderr, with the same exit
+  # code"; contract 5.4 and 11.2; AT-10). Form 2 prints it once, on a line of
+  # its own, wherever the service was unavailable and it then read directly,
+  # whatever its exit (T512's client). The guard relays that one line as it
+  # stands, once, on a line of its own, before it says anything of form 2's
+  # end, and quotes the rest of what form 2 said without it, so no refusal or
+  # warning carries it a second time. Where form 2 printed none, the service
+  # having answered or not been asked, the guard prints nothing more.
+  rgp_fb='guard: direct (service unavailable)'; rgp_fell=0
+  rgp_cut=$'s/([\xc0-\xff]|[\xe0-\xff][\x80-\xbf]|[\xf0-\xff][\x80-\xbf][\x80-\xbf])$//'
+  if LC_ALL=C grep -a -q -x -F -- "$rgp_fb" "$SE_CACHE_FILE.door-err" 2>/dev/null; then rgp_fell=1; fi
+  if [ "$rgp_fell" = 1 ]; then
+    RG_SAID="$(LC_ALL=C grep -a -v -x -F -- "$rgp_fb" "$SE_CACHE_FILE.door-err" 2>/dev/null | head -c 1000 | LC_ALL=C tr '\n\r\t' '   ' | LC_ALL=C tr -d '\000-\037' | LC_ALL=C sed -E -e "$rgp_cut" || :)"
+  else
+    RG_SAID="$(head -c 1000 -- "$SE_CACHE_FILE.door-err" 2>/dev/null | LC_ALL=C tr '\n\r\t' '   ' | LC_ALL=C tr -d '\000-\037' | LC_ALL=C sed -E -e "$rgp_cut" || :)"
+  fi
+  while [ "${RG_SAID% }" != "$RG_SAID" ]; do RG_SAID="${RG_SAID% }"; done
+  rm -f -- "$SE_CACHE_FILE.door-out" "$SE_CACHE_FILE.door-err"
+  [ "$rgp_fell" = 0 ] || printf '%s\n' "$rgp_fb" >&2
+  case "$rgp_rc" in
+    0)
+      case "$rgp_out" in
+        "mode primary"|"mode primary"$'\n') REG_MODE=primary; REG_STORE=sql; return 0 ;;
+        "mode index"|"mode index"$'\n') REG_MODE=index; reg_flush; return 0 ;;
+      esac
+      reg_guard_files "exited 0 without answering one line, mode index or mode primary"
+      return 0 ;;
+    69)
+      REG_MODE=primary
+      reg_guard_outage
+      return ;;
+    2)
+      REG_MODE=primary
+      guard_refuse "it is too late in the hook's 5 s to verify the triple: the guard's register read would have started at or past its start line, T0 + ${GUARD_BUDGET_START_MS} ms, or was cut there (\`lanes-index register read --for guard --prefetch\` exited 2${RG_SAID:+: $RG_SAID}). A triple that cannot be verified is not a triple that agrees, so this prompt is refused, and the next one is read afresh (Amendment 12(d); feature 007, SVC-8)."
+      return 2 ;;
+    78)
+      REG_MODE=refused
+      guard_refuse "the register could not be read: \`lanes-index register read --for guard --prefetch\` exited 78, EX_CONFIG, so lanes-index refuses this workstation's mode=primary in this build${RG_SAID:+ ($RG_SAID)}, and the ROW cannot be read nor the triple verified (Amendment 12(d); feature 007, Q6(c)). Install the lanes-edit.sh and lanes-index that ship together. $(guard_bypass)"
+      return 2 ;;
+  esac
+  reg_guard_files "exited $rgp_rc${RG_SAID:+ ($RG_SAID)}"
+  return 0
+}
+
+# A PREFETCH THAT FAILED, which is not a failed read: one warning line naming
+# it, then files mode, as on a workstation with no configuration (W:4299;
+# F8). Whatever a call that failed may have left beside the cache is dropped
+# first, so files mode never reads it.
+reg_guard_files() {   # <why>
+  note "WARNING: \`lanes-index register read --for guard --prefetch\` $1, so the guard reads in files mode, as on a workstation with no lanes-index configuration (feature 007, D3)."
+  REG_MODE=files; REG_STORE=files
+  reg_flush
+}
+
+# FORM 2's 69, THE STORE'S FAILED READ (W:4294; contract 3.6; the design's
+# SVC-12). `.outage`, which `lanes-index` writes beside the cache, by a
+# temporary file and a rename, only where an unexpired declaration names this
+# database (and on E1's cut at the declared cap, lane 3's ruling 6807694145),
+# gives SVC-12's verdict, read here and never the declaration itself, which the
+# client read once, at the prefetch:
+#   open     the mirror path (`reg_guard_mirror`), pinned to `mirror_tip=`
+#   behind   the mirror's seq is below the declaration's: 2, lane 5's text
+#            (Y:4472-4474)
+#   no-seq   none of form C's 200 commits carries a `Register-Seq`: 2, S3's
+#            outage text
+# No file, or one that is not `format=1` with a verdict whose fields read as
+# they must, opens nothing: 2, S3's outage text. Returns 0 on the mirror path,
+# else 2, the refusal printed.
+reg_guard_outage() {
+  if [ -z "${SE_CACHE_FILE:-}" ] || [ ! -f "$SE_CACHE_FILE.outage" ]; then
+    reg_guard_s3 ""
+    return 2
+  fi
+  rgo_v="$(reg_outage_field verdict)"; rgo_label="$(reg_outage_field label)"
+  rgo_d="$(reg_outage_field declared_seq)"; rgo_s="$(reg_outage_field mirror_seq)"
+  rgo_tip="$(reg_outage_field mirror_tip)"
+  [ -n "$rgo_label" ] || rgo_label="(declared outage)"
+  rgo_bad="Its verdict on a declared outage (.outage, beside the cache) could not be read, so it opens nothing."
+  [ "$(reg_outage_field format)" = 1 ] || rgo_v=""
+  case "$rgo_v" in
+    open)
+      case "$rgo_tip" in "" | *[!0-9a-f]*) rgo_v="" ;; esac
+      case "${#rgo_tip}" in 40|64) : ;; *) rgo_v="" ;; esac
+      if [ "$rgo_v" = open ]; then reg_guard_mirror "$rgo_tip" "$rgo_label"; return; fi ;;
+    behind)
+      case "$rgo_d" in "" | *[!0-9]*) rgo_v="" ;; esac
+      case "$rgo_s" in "" | *[!0-9]*) rgo_v="" ;; esac
+      if [ "$rgo_v" = behind ]; then
+        guard_refuse "the mirror here is at seq $rgo_s, behind the declared outage's seq $rgo_d; fetch it once origin carries seq $rgo_d, or wait for the outage to end. The register's SQL store did not answer the guard's read, and an outage is declared for it $rgo_label, but origin/$LANES_BRANCH as this checkout last fetched it lacks writes the store committed, so the triple is not verified from it (feature 007, SVC-12)."
+        return 2
+      fi ;;
+    no-seq)
+      reg_guard_s3 "An outage is declared for it $rgo_label, but none of the 200 newest commits of origin/$LANES_BRANCH, as this checkout last fetched it, carries a Register-Seq trailer, so how current that copy is cannot be known, and it is not read (SVC-12, form C)."
+      return 2 ;;
+  esac
+  reg_guard_s3 "$rgo_bad"
+  return 2
+}
+# One field of `.outage`, `key=value` per line, the first of a key winning,
+# on one line with its control characters dropped.
+reg_outage_field() {   # <key>
+  sed -n -e "s/^$1=//p" "$SE_CACHE_FILE.outage" 2>/dev/null | head -n 1 | tr -d '\000-\037\177'
+}
+
+# SVC-12's MIRROR PATH, PINNED TO `mirror_tip` (lane 3's T507 ruling (4)(a),
+# #165 6783977598): the tip form C walked answers every read the guard makes
+# after this, and no other ref does, so another process's fetch cannot move
+# it. Before the guard's first read of them, `.register`, `.aliases` and the
+# window's log are filled from `git show <mirror_tip>:<path>`, in the forms the
+# files-mode reads cache them in: the register's text and the alias table's,
+# each ending in one newline, `# no lane aliases` where the tip has no table,
+# and `.log.<slot>` with `.logpath.<slot>` (`reg_mirror_log`). THE FILL IS THE
+# MIRROR'S, never the SQL image's, and whole (addendum 3, section 4): the
+# family is flushed first, so no `.head` or member of the failed read stays
+# beside it, and `REG_STORE=mirror`, so no read site takes its SQL branch or
+# reads `.head`, whose `file=` rows (T505's SHOULD-3) describe the database's
+# images, not this tip. `register_text_checked` and `lane_alias_text` read the
+# two caches; `lane_log_events` reads every log at the same tip
+# (`REG_MIRROR_TIP`), so a log the fill did not bring is read there too. It
+# prints `read: mirror at <sha12>, unknown (declared outage <utc>: <why>)`,
+# the label in place of the cause; the guard then runs today's parser on the
+# mirror's text and exits 0 or 2 as it gives. F17 is not asked: the mode is
+# primary, and the marker on the tip is the estate's own. Returns 0, or 2 with
+# the refusal printed where git could not read the tip.
+reg_guard_mirror() {   # <mirror_tip> <label>
+  rgm_tip="${1-}"
+  reg_flush
+  REG_STORE=mirror; REG_MIRROR_TIP="$rgm_tip"
+  printf 'read: mirror at %s, unknown %s\n' "${rgm_tip:0:12}" "${2-}" >&2
+  rgm_txt=""
+  if ! rgm_txt="$(git -C "$LANES_REPO" show "$rgm_tip:$LANES_PATH" 2>/dev/null)"; then
+    guard_refuse "the register could not be read from the mirror at ${rgm_tip:0:12}: git could not show $LANES_PATH at that commit, so the ROW cannot be read and the triple cannot be verified, and an indeterminate read refuses (Amendment 12(d); feature 007, SVC-12). $(guard_bypass)"
+    return 2
+  fi
+  rgm_al=""
+  if ! rgm_al="$(git -C "$LANES_REPO" ls-tree --full-tree --name-only "$rgm_tip" -- "$LANES_ALIASES_PATH" 2>/dev/null)"; then
+    rgm_al="-"
+  fi
+  rgm_atx=""
+  if [ "$rgm_al" = "-" ] ||
+     { [ -n "$rgm_al" ] && ! rgm_atx="$(git -C "$LANES_REPO" show "$rgm_tip:$LANES_ALIASES_PATH" 2>/dev/null)"; }; then
+    guard_refuse "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read from the mirror at ${rgm_tip:0:12}, so whether this window's name is a FORMER name of a lane could not be established, and an indeterminate read refuses (Amendment 12(d), Amendment 16(e); feature 007, SVC-12). $(guard_bypass)"
+    return 2
+  fi
+  rgm_w="$SE_CACHE_FILE.mfill.${BASHPID:-$$}"
+  if ! { printf '%s\n' "$rgm_txt" > "$rgm_w" && mv -f -- "$rgm_w" "$SE_CACHE_FILE.register" &&
+         printf '%s\n' "${rgm_atx:-# no lane aliases}" > "$rgm_w" && mv -f -- "$rgm_w" "$SE_CACHE_FILE.aliases"; } 2>/dev/null; then
+    rm -f -- "$rgm_w" "$SE_CACHE_FILE.register" "$SE_CACHE_FILE.aliases" 2>/dev/null
+    guard_refuse "the mirror at ${rgm_tip:0:12} could not be kept beside $SE_CACHE_FILE for this prompt's reads, so the triple cannot be verified (Amendment 12(d); feature 007, SVC-12). $(guard_bypass)"
+    return 2
+  fi
+  # THE WINDOW'S LOG, as form 2 asks for it: a log git cannot read here is
+  # read once more by `lane_log_events`, and noted as unreadable there.
+  [ -z "$G_WINNAME" ] || reg_mirror_log "$G_WINNAME" >/dev/null 2>&1 || :
+  return 0
+}
+
+# A KEY'S LOG ON THE GUARD'S MIRROR PATH (T507; `reg_guard_mirror`): its slot
+# on stdout where the key has a log at `REG_MIRROR_TIP`, nothing where it has
+# none; 0, 1 where git could not list or show it, 2 where two logs differ from
+# <key> only by case (C11; `log_path_ci`'s 2, with its note). The log is found
+# case-insensitively among the tip's `lanes/log/` paths, as `log_path_ci`
+# finds it on `origin/$LANES_BRANCH`, and kept as `.log.<slot>` and
+# `.logpath.<slot>` (`reg_slot`), so a second read of it reads the same bytes.
+reg_mirror_log() {   # <key>
+  gml_k="${1-}"; gml_s="$(reg_slot "$gml_k")"
+  if [ ! -f "$SE_CACHE_FILE.log.$gml_s" ] || [ ! -f "$SE_CACHE_FILE.logpath.$gml_s" ]; then
+    gml_ls=""
+    gml_ls="$(git -C "$LANES_REPO" ls-tree --full-tree --name-only "$REG_MIRROR_TIP" -- "$LANES_LOG_PREFIX" 2>/dev/null)" || return 1
+    gml_hits="$(printf '%s\n' "$gml_ls" | awk -v want="$(log_path_for "$gml_k")" 'BEGIN { w = tolower(want) } tolower($0) == w')"
+    gml_n="$(printf '%s' "$gml_hits" | grep -c . || :)"
+    if [ "$gml_n" -gt 1 ]; then
+      note "lane $gml_k has $gml_n object logs in the mirror at ${REG_MIRROR_TIP:0:12} whose names differ only by case: $(printf '%s\n' "$gml_hits" | tr '\n' ' ')"
+      note "one lane is ONE lane under any case and its log is ONE file (Amendment 15), so no read of it is unambiguous and nothing here picks one of them."
+      return 2
+    fi
+    gml_w="$SE_CACHE_FILE.mlog.${BASHPID:-$$}"
+    if [ "$gml_n" = 1 ]; then
+      git -C "$LANES_REPO" show "$REG_MIRROR_TIP:$gml_hits" > "$gml_w" 2>/dev/null || { rm -f -- "$gml_w"; return 1; }
+      printf '%s\n' "$gml_hits" > "$gml_w.p" 2>/dev/null || { rm -f -- "$gml_w" "$gml_w.p"; return 1; }
+    else
+      { : > "$gml_w" && : > "$gml_w.p"; } 2>/dev/null || { rm -f -- "$gml_w" "$gml_w.p"; return 1; }
+    fi
+    { mv -f -- "$gml_w" "$SE_CACHE_FILE.log.$gml_s" && mv -f -- "$gml_w.p" "$SE_CACHE_FILE.logpath.$gml_s"; } 2>/dev/null ||
+      { rm -f -- "$gml_w" "$gml_w.p"; return 1; }
+  fi
+  [ -s "$SE_CACHE_FILE.logpath.$gml_s" ] || return 0
+  printf '%s\n' "$gml_s"
+}
+
+# S3'S OUTAGE TEXT (Y:4343, Y:4475; contract 3.6): the store, the cause and the
+# two ways out, as one refusal. The store is named as `lanes-index` named it,
+# its whole stderr quoted with the cause first: this file never parses the
+# configuration (D3), so it names the store no other way. <why> says why no
+# declaration opened the mirror path, where one was in place.
+reg_guard_s3() {   # [<why the mirror path did not open>]
+  guard_refuse "the register's SQL store did not answer the guard's read, so the ROW cannot be read and the triple cannot be verified, and an indeterminate read refuses (Amendment 12(d); feature 007, S3). \`lanes-index register read --for guard --prefetch\` exited 69: ${RG_SAID:-it printed no cause}.${1:+ $1} The two ways out: wait for the database, and send the prompt again once \`lanes-index status\`, which says whether this workstation reaches the database and what is in place for it, shows that it does; or, on Brett's word, \`lanes-index rollback\`, which takes the estate back to the files; run either command from a shell or a \`CLAUDE_NO_LANE=1\` session. $(guard_bypass)"
 }
 
 # ============================== `guard` ==============================
@@ -15352,6 +15834,23 @@ guard_run() {   # <the hook's JSON, on stdin already read>
     case "$gr_tgt" in *.%*) gr_pane="${gr_tgt##*.}" ;; esac
   fi
 
+  # ---- FEATURE 007, T507 - THE GUARD'S ONE PREFETCH (`reg_guard_prefetch`),
+  # HERE: after the session-record check, so a session with no window or no
+  # record has been refused before any read (lane 3's T507 ruling (1), #165
+  # 6783977598), and before the guard's FIRST register read, the text test
+  # below, with no git read ahead of it (ruling (2)). On primary every read
+  # below takes the cache family it wrote at one `n`; a refusal it has printed
+  # is this prompt's 2.
+  reg_guard_prefetch || return 2
+  # F17 OFF PRIMARY (feature 007, T507; W:4896; tasks.md T507): in files mode,
+  # with no configuration or after a prefetch that failed, and in `mode index`,
+  # the marker read on the ref the guard reads; under `lanes/STORE`, or where
+  # that read failed, 2 (`reg_marker_check`). Never on primary, and never on
+  # the mirror path, where the marker is the estate's own.
+  case "$REG_MODE" in
+    files|index) reg_marker_check || return 2 ;;
+  esac
+
   # ---- THE REGISTER'S TEXT, TESTED POSITIVELY, ONCE, BEFORE THE ROW IS READ
   # (openRepoTools#60). `register_text` prefers `origin/<branch>` and falls back
   # to this checkout's file, and where both come back empty — a file this
@@ -15371,8 +15870,14 @@ guard_run() {   # <the hook's JSON, on stdin already read>
   # render the first read below would have made, moved here — `GIT_TRACE` counts
   # one `git show` of the register per prompt with this test and without it. It
   # is streamed and not captured: `$( )` of the same megabyte measured ~30 ms.
+  # ON PRIMARY (feature 007, T507) the text is the prefetch's `.register`, and
+  # the refusal names that read, never git or this checkout's file.
   if ! register_text 2>/dev/null | awk 'NF { t = 1 } END { exit !t }'; then
-    guard_refuse "the register's TEXT could not be read — neither \`origin/$LANES_BRANCH:$LANES_PATH\` nor $LANES_FILE rendered a line — so the ROW cannot be read and the triple cannot be verified. A register that could not be read is not a register with no row for this lane, and an indeterminate read refuses (Amendment 12(d)). $(guard_bypass)"
+    if [ "${REG_STORE:-}" = sql ]; then
+      guard_refuse "the register's TEXT could not be read from the guard's register read at seq $(reg_head_n) — $LANES_PATH rendered no line from the cache beside $SE_CACHE_FILE, or that cache is not whole — so the ROW cannot be read and the triple cannot be verified. A register that could not be read is not a register with no row for this lane, and an indeterminate read refuses (Amendment 12(d); feature 007, T507). $(guard_bypass)"
+    else
+      guard_refuse "the register's TEXT could not be read — neither \`origin/$LANES_BRANCH:$LANES_PATH\` nor $LANES_FILE rendered a line — so the ROW cannot be read and the triple cannot be verified. A register that could not be read is not a register with no row for this lane, and an indeterminate read refuses (Amendment 12(d)). $(guard_bypass)"
+    fi
     return 2
   fi
 
@@ -15398,8 +15903,14 @@ guard_run() {   # <the hook's JSON, on stdin already read>
   # one name for two questions in one function is the kind of thing that only
   # stays harmless until somebody moves a block. It pairs with `gr_sarc`, the
   # session-name read below.
+  # ON PRIMARY A FAILED READ IS 69 (feature 007, T507): the prefetch's family is
+  # not whole, and the guard refuses rather than read it as "no lane".
   gr_warc=0
   gr_hits="$(rows_named_ci_alias "$G_WINNAME" 2>/dev/null)" || gr_warc=$?
+  if [ "$gr_warc" = 69 ]; then
+    guard_refuse "the register could not be read from the guard's register read at seq $(reg_head_n) (its cache beside $SE_CACHE_FILE is not whole), so whether this window's name '$G_WINNAME' names a lane could not be established — and an indeterminate read refuses (Amendment 12(d); feature 007, T507). $(guard_bypass)"
+    return 2
+  fi
   if [ "$gr_warc" = 5 ]; then
     guard_refuse "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read ($(lane_alias_err)), so whether this window's name '$G_WINNAME' is a FORMER name of a lane could not be established — and an indeterminate read refuses (Amendment 12(d), Amendment 16(e)). $(guard_bypass)"
     return 2
@@ -15439,6 +15950,10 @@ guard_run() {   # <the hook's JSON, on stdin already read>
 
   gr_sarc=0
   gr_snhits="$(rows_named_ci_alias "$G_NAME" 2>/dev/null)" || gr_sarc=$?
+  if [ "$gr_sarc" = 69 ]; then
+    guard_refuse "the register could not be read from the guard's register read at seq $(reg_head_n) (its cache beside $SE_CACHE_FILE is not whole), so whether this session's name '${G_NAME:-none}' names a lane could not be established — and an indeterminate read refuses (Amendment 12(d); feature 007, T507). $(guard_bypass)"
+    return 2
+  fi
   if [ "$gr_sarc" = 5 ]; then
     guard_refuse "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read ($(lane_alias_err)), so whether this session's name '${G_NAME:-none}' is a FORMER name of a lane could not be established — and an indeterminate read refuses (Amendment 12(d), Amendment 16(e)). $(guard_bypass)"
     return 2
@@ -15877,6 +16392,36 @@ guard_allow_active() {   # <offer file>
   return 0
 }
 
+# FEATURE 007, T507 - THE POST-BIND REFILL (contract 3.6, C1; tasks.md T507;
+# Y:4940): `reg_flush`, then, on a configured workstation, ONE form-1 read,
+# `lanes-index register read --prefetch --cache "$SE_CACHE_FILE" --files
+# register,aliases`, with a reader's row (`reg_prefetch`'s call and its ends):
+# never `--for guard`, since `guard-bind`'s child runs after `lane-start`, where
+# no hook `T0` exists, never `--all`, and never git. On primary the store is
+# then SQL (`REG_STORE=sql`), so the child's tail reads take that family
+# (contract 3.6: "After `committed`, the child's tail reads take D17's path
+# through the read family that `reg_flush` drops"); a read that failed (69, or
+# 78) is recorded as any failed read is (`reg_fail`, `.rfail`), so each later
+# read answers 69 and none asks again. `mode index`, or a call that failed
+# with its warning, reads the files as today. With no configuration it only
+# flushes, and today's git read follows. On primary it is made once per
+# process (`GB_REFILLED`); off primary it flushes at each call, as before.
+GB_REFILLED=0
+guard_bind_refill() {
+  [ "$GB_REFILLED" = 0 ] || return 0
+  reg_flush
+  reg_config_present || return 0
+  REG_MODE=""
+  reg_prefetch register,aliases
+  if [ -n "$RO_FAILED" ]; then
+    GB_REFILLED=1; REG_STORE=sql
+    reg_fail "$RO_FAILED" "$RO_WHY" || :
+    return 0
+  fi
+  if [ "$REG_MODE" = primary ]; then GB_REFILLED=1; REG_STORE=sql; fi
+  return 0
+}
+
 # ------------ THE UUID IN THE NEW LANE'S CELL, WHICH `lane-start --bind` WRITES
 #
 # CLAUSE (h) RULE 2 NAMES THE END STATE AND RULE 3 REPEATS IT: after choice 2,
@@ -15918,7 +16463,8 @@ guard_allow_active() {   # <offer file>
 # against a published ref that never moved — the uuid in the cell twice.
 #
 #   0  the cell ends on this uuid
-#   1  it does not, and the act that fixes it has been printed
+#   1  it does not, or the register could not be read after the bind, and the
+#      act that fixes it has been printed
 guard_bound_check() {   # <the lane moved to>
   gbc_to="${1-}"
   # THE CACHED REGISTER IS THE ONE FROM BEFORE `lane-start` RAN, and this is the
@@ -15928,8 +16474,15 @@ guard_bound_check() {   # <the lane moved to>
   # dropped — the variable this shell holds and the file every subshell reads
   # (A11 Addendum 4 ruling 12) — exactly as `log_sync` drops them after a fetch,
   # and for the same reason: the ref has moved under them. The alias table goes
-  # with them, as `log_sync`'s does (`reg_flush`, feature 007, T505).
-  reg_flush
+  # with them, as `log_sync`'s does (`reg_flush`, feature 007, T505). ON PRIMARY
+  # THE REFILL IS ONE `register read`, NEVER GIT (feature 007, T507; C1):
+  # `guard_bind_refill`.
+  guard_bind_refill
+  if reg_read_lost; then
+    note "…but whether $gbc_to's session cell now ends on $G_ID is NOT known: the register could not be read after the bind (${RO_FAILED:-its read failed}). Read it with \`lanes-edit.sh last-session $gbc_to\`, and where it does not end on $G_ID, stamp it as this session's first act, which is Amendment 6(c)'s own remedy:"
+    note "   LANES_LANE=$gbc_to lanes-edit.sh append-session-id $gbc_to \"<the session cell's last id>\" \"→ harness $G_ID (transcript uuid; profile ${G_PROF:-unknown})\""
+    return 1
+  fi
   gbc_last="$(last_session_id_of_lane "$gbc_to" 2>/dev/null || :)"
   if [ "$(lc "$gbc_last")" = "$(lc "$G_ID")" ]; then
     note "…and $gbc_to's session cell now ends on $G_ID, written by lane-start's binding mode — which is what the next \`lane-start $gbc_to\` resumes."
@@ -16435,6 +16988,13 @@ guard_answer() {   # <offer file> <the prompt> <pane>
     # file, and the outer and its body find the facts file beside it.
     ga_k=$((ga_k + 1))
     ga_out="$ga_f.bind.$(guard_bind_next_index "$ga_f").out"
+    # THE PREFETCH'S `c`, `n_a` AND `w_s_ms` FIRST (feature 007, T507;
+    # `guard_bind_head_copy`), so this bound and the outer's are summed from them.
+    if ! guard_bind_head_copy "$ga_f"; then
+      guard_refuse "the bind could not be recorded in $ga_f, so it was NOT started: NOTHING has been written to the register, and the offer is KEPT. Answer \`2\` again once that directory is writable, or choose \`1\` or \`3\`."
+      [ "$ga_ren" = 0 ] || guard_window_back "$ga_from" "$ga_to" || :
+      return 2
+    fi
     ga_bs="$(guard_bind_bound_s "$ga_f")"
     ga_bd=no
     command -v timeout >/dev/null 2>&1 && ga_bd=yes
@@ -16861,25 +17421,37 @@ guard_bind_body() {   # <session uuid>
   # and goes on; the bind is not undone for it.
   gbb_st="$(printf '%s\n' "$gbb_said" | grep -F "Rule 3's stamp" | grep -F 'NOT' | tail -n 1 || :)"
   [ -z "$gbb_st" ] || gbb_notes+=("note=lane $gbb_to's Rule 3 stamp is owed: $(guard_bind_oneline "$gbb_st")")
-  if [ -n "$(row_of_lane "$gbb_from" 2>/dev/null || :)" ]; then
+  # THE LINE IS BOUNDED (Copilot round 5 on openRepoTools#82). A lane name is
+  # bounded in its CHARACTERS by `check_lane_name` and not in its length, and
+  # this line carried it twice: a long enough name makes `set-row-state`
+  # refuse the very write that records where the work went — after the window
+  # has already been renamed and moved. The name is said ONCE, and cut where
+  # even once does not fit, so the act always records something true.
+  gbb_line="this window moved to lane $gbb_to on the person's choice 2 at the guard"
+  if [ "${#gbb_line}" -gt 230 ]; then
+    gbb_line="${gbb_line:0:230}"
+    case "$gbb_line" in *' '*) gbb_line="${gbb_line% *}" ;; esac
+    gbb_line="$gbb_line ..."
+  fi
+  # FEATURE 007, T507 - THE POST-BIND REFILL COMES BEFORE THE TAIL'S FIRST READ
+  # (`guard_bind_refill`; contract 3.6, C1: "After `committed`, the child's
+  # tail reads take D17's path through the read family that `reg_flush`
+  # drops"). This child read nothing before `lane-start`, so on primary the row
+  # of the lane the window left is read from the refill too, and nothing after
+  # `lane-start` reads git; `guard_bound_check` below finds the refill made. A
+  # read that failed marks nothing, and the act is owed.
+  guard_bind_refill
+  gbb_rrc=0; gbb_row="$(row_of_lane "$gbb_from" 2>/dev/null)" || gbb_rrc=$?
+  if [ "$gbb_rrc" = 69 ] || reg_read_lost; then
+    note "…but $gbb_from's row could NOT be read after the bind (${RO_FAILED:-the register read failed}), so it has NOT been marked. Run: lanes-edit.sh set-row-state $gbb_from \"PAUSED · $gbb_line\""
+    gbb_notes+=("note=lane $gbb_from's row was not marked PAUSED: run LANES_LANE=$gbb_from lanes-edit.sh set-row-state $gbb_from \"PAUSED · $gbb_line\"")
+  elif [ -n "$gbb_row" ]; then
     # AMENDMENT 13(a) — THE STATE IS SET, NOT APPENDED. This window has just
     # moved to another lane, so the lane it LEFT is not running in it any
     # more: `PAUSED` is where that lane now is, and the line says where it
     # went. It used to be an `append-row-status` of `MOVED → <lane>`, which
     # left the cell saying two things at once — whatever state it opened with,
     # and this.
-    # THE LINE IS BOUNDED (Copilot round 5 on openRepoTools#82). A lane name is
-    # bounded in its CHARACTERS by `check_lane_name` and not in its length, and
-    # this line carried it twice: a long enough name makes `set-row-state`
-    # refuse the very write that records where the work went — after the window
-    # has already been renamed and moved. The name is said ONCE, and cut where
-    # even once does not fit, so the act always records something true.
-    gbb_line="this window moved to lane $gbb_to on the person's choice 2 at the guard"
-    if [ "${#gbb_line}" -gt 230 ]; then
-      gbb_line="${gbb_line:0:230}"
-      case "$gbb_line" in *' '*) gbb_line="${gbb_line% *}" ;; esac
-      gbb_line="$gbb_line ..."
-    fi
     # THROUGH `LANES_EDIT` WHERE IT IS SET, else this file (R48): the copy
     # `lane-start`'s own writes already use.
     if "${LANES_EDIT:-$RESOLVED}" set-row-state "$gbb_from" "PAUSED · $gbb_line" >&2; then
@@ -24231,7 +24803,10 @@ EOF
   # and it must be fast and offline-safe instead. It reads the checkout AS LAST
   # FETCHED and says how old that is, so a reader can tell a current answer from
   # a stale one. `git_net` is the only door to the network in this file, and
-  # nothing on this path opens it.
+  # nothing on this path opens it. FEATURE 007, T508: its one `lanes-index`
+  # call is `lanes-index mode`, asked once, only where a configuration exists,
+  # under its 2 s timer (`reg_session_read`), and it reads only the
+  # configuration (contract 3.1): no network, and no register call (R39).
   session-start)
     if [ -t 0 ]; then ss_json=""; else ss_json="$(cat 2>/dev/null || :)"; fi
     ss_win=""
