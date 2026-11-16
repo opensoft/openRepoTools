@@ -1334,6 +1334,21 @@ class Estate:
         return False
 
 
+def kill_running_writers(writers: Sequence[Writer]) -> None:
+    """SIGKILL the process group of each of `writers` that still runs, as the
+    fixtures' teardown does. A writer can end between `poll()` and `killpg`:
+    its own thread (`Writer._wait`) reaps it, no group is left to signal, and
+    `killpg` raises `ProcessLookupError`. That is a writer already gone, not a
+    failure, and it must not cut a teardown short of closing the guard
+    sessions and dropping the databases (lane 5, #165 6932056536)."""
+    for w in writers:
+        if w.ended is None and w.proc.poll() is None:
+            try:
+                os.killpg(w.proc.pid, 9)
+            except ProcessLookupError:
+                pass
+
+
 @pytest.fixture()
 def estates(pg_cluster, tmp_path):
     """Test 4's estates, each on a clone of `tmpl` of its own."""
@@ -1355,12 +1370,12 @@ def estates(pg_cluster, tmp_path):
         return alive[-1]
 
     yield make
-    for e in alive:
-        for w in e.writers:
-            if w.ended is None and w.proc.poll() is None:
-                os.killpg(w.proc.pid, 9)
-    for name in made:
-        pg_cluster.drop_database(name)
+    try:
+        for e in alive:
+            kill_running_writers(e.writers)
+    finally:
+        for name in made:
+            pg_cluster.drop_database(name)
 
 
 def hold_point(fifo: Path, writer: Writer, timeout: float = 90):
@@ -3238,14 +3253,16 @@ def act_worlds(pg_cluster, tmp_path):
         return alive[-1]
 
     yield make
-    for world in alive:
-        for w in world.writers:
-            if w.ended is None and w.proc.poll() is None:
-                os.killpg(w.proc.pid, 9)
-        for live in world.sessions:
-            live.close()
-    for name in made:
-        pg_cluster.drop_database(name)
+    try:
+        for world in alive:
+            try:
+                kill_running_writers(world.writers)
+            finally:
+                for live in world.sessions:
+                    live.close()
+    finally:
+        for name in made:
+            pg_cluster.drop_database(name)
 
 
 def race(world: ActWorld, write: ActWrite, rival_lane: str,
