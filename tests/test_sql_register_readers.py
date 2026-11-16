@@ -2449,8 +2449,15 @@ def hook_pid():
     try:
         yield str(standin.pid)
     finally:
+        # Kill it, then a reap bounded at 10 s, as `GuardSession.close()` does: a
+        # stand-in that a kill does not take fails the case and never hangs the
+        # run (lane 5, #165 6932056536).
         standin.kill()
-        standin.wait()
+        try:
+            standin.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            standin.kill()
+            standin.wait(timeout=10)
 
 
 #: The render set lane 1's three read: two lanes, their logs and the aliases.
