@@ -475,6 +475,116 @@ def test_the_estate_commands_carry_the_same_flag_value_byte_for_byte():
         "flag_value no longer refuses a value that begins with `-`")
 
 
+#: THE TWO ANSWERS TO "WHERE IS `<state>`" (feature 007's write path, T412 and
+#: T123). `lanes-edit.sh`'s `wr_state_dir` writes the pending records, their
+#: claims, the done marks and the attempt directories there, in bash, with no
+#: Python start for each write; `lanes-index`'s `state_dir()` is where
+#: `lanes-index status` looks (`pending-record.md`'s `<state>`). The two are
+#: written twice and must be one answer. Each row is `(id, the WHOLE
+#: environment each side gets, the answer)`; the answer is None where it is
+#: the password entry's home, which the test reads from `pwd` for the user it
+#: runs as. The values are made up, so no real `HOME` or `XDG_STATE_HOME`
+#: reaches either side.
+STATE_DIR_CASES = [
+    ("xdg-set",
+     {"XDG_STATE_HOME": "/made/up/state-home", "HOME": "/made/up/home"},
+     "/made/up/state-home/openRepoTools"),
+    ("xdg-set-ends-in-a-slash",
+     {"XDG_STATE_HOME": "/made/up/state-home/", "HOME": "/made/up/home"},
+     "/made/up/state-home/openRepoTools"),
+    ("xdg-unset",
+     {"HOME": "/made/up/home"},
+     "/made/up/home/.local/state/openRepoTools"),
+    ("xdg-empty-reads-as-unset",
+     {"XDG_STATE_HOME": "", "HOME": "/made/up/home"},
+     "/made/up/home/.local/state/openRepoTools"),
+    ("xdg-unset-home-ends-in-a-slash",
+     {"HOME": "/made/up/home/"},
+     "/made/up/home/.local/state/openRepoTools"),
+    ("xdg-unset-home-is-the-root",
+     {"HOME": "/"},
+     "/.local/state/openRepoTools"),
+    ("xdg-unset-home-set-and-empty",
+     {"HOME": ""},
+     "/.local/state/openRepoTools"),
+    ("xdg-unset-home-unset",
+     {},
+     None),
+]
+
+#: `lanes-index` loaded as a module, as `tests/test_lanes_index.py` loads it
+#: (the file has no `.py`), to print `state_dir()` and nothing else.
+_STATE_DIR_OF_LANES_INDEX = (
+    "import importlib.util, sys\n"
+    "from importlib.machinery import SourceFileLoader\n"
+    "loader = SourceFileLoader('lanes_index_state_dir', sys.argv[1])\n"
+    "spec = importlib.util.spec_from_loader('lanes_index_state_dir', loader)\n"
+    "module = importlib.util.module_from_spec(spec)\n"
+    "loader.exec_module(module)\n"
+    "sys.stdout.write(module.state_dir() + '\\n')\n")
+
+
+@WINDOWS_SKIP
+@pytest.mark.parametrize("case_id, env, expected", STATE_DIR_CASES,
+                         ids=[row[0] for row in STATE_DIR_CASES])
+def test_wr_state_dir_agrees_with_the_indexers_state_dir(case_id, env, expected):
+    """`wr_state_dir` and `state_dir()` name the same directory, with
+    `XDG_STATE_HOME` set and unset.
+
+    BOTH SIDES ARE RUN, each as its own file has it and each in an
+    environment that holds only the variables the case names, so the
+    developer's own `HOME` and `XDG_STATE_HOME` cannot reach either one and
+    make them agree, or disagree, by accident. The bash side is the file's
+    own function cut out and run in `bash -u`, as `lanes-edit.sh` runs it; the
+    Python side is `state_dir()` of the file's own module.
+
+    The two are held EQUAL, and each is held to the answer the case says (the
+    password entry's, for the case with no `HOME`), because two sides that
+    both print nothing agree. The cases
+    are the ones `wr_state_dir`'s comment lists: no second slash where the
+    base ends in one, the password entry's home where `HOME` is unset, and
+    the root where it is set and empty; an `XDG_STATE_HOME` set and empty is
+    unset, as `os.environ.get(...) or` reads it. A write that landed in a
+    directory `lanes-index status` does not read is one nobody would see.
+    """
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash is not installed")
+    text = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
+    function = re.search(r"^wr_state_dir\(\) \{[^\n]*\n.*?^\}\n", text,
+                         re.M | re.S)
+    assert function, "`wr_state_dir() {` ... `}` is no longer in lanes-edit.sh"
+    # `-B` AND NOT `-I` ALONE: `-I` ignores `PYTHONPYCACHEPREFIX` and
+    # `PYTHONDONTWRITEBYTECODE`, which this `env=` does not pass in any case, so
+    # loading `lanes-index` would write `__pycache__/lanes-indexcpython-3NN.pyc`
+    # into the checkout, which `tests/run.sh` keeps clean (#162). `stdin` is
+    # closed so that `bash -c` reads nothing a terminal could hand it.
+    in_bash = subprocess.run(
+        [bash, "-u", "-c", function.group(0) + "\nwr_state_dir\n"],
+        env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+        check=False)
+    in_python = subprocess.run(
+        [sys.executable, "-I", "-B", "-c", _STATE_DIR_OF_LANES_INDEX,
+         str(REPO / "lanes-index")],
+        env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+        check=False)
+    assert in_bash.returncode == 0, in_bash.stderr
+    assert in_python.returncode == 0, in_python.stderr
+    assert in_bash.stdout == in_python.stdout, (
+        f"{case_id}: lanes-edit.sh's wr_state_dir says {in_bash.stdout!r} and "
+        f"lanes-index's state_dir() says {in_python.stdout!r}: a pending record "
+        "would be written where `lanes-index status` does not look")
+    if expected is None:
+        # The password entry's home, where `HOME` is unset: both sides read
+        # it. A home of `/` gives `/.local/state/...`, and a trailing slash is
+        # not doubled. `pwd` is POSIX only, as this test is.
+        import pwd
+        expected = (pwd.getpwuid(os.getuid()).pw_dir.rstrip("/")
+                    + "/.local/state/openRepoTools")
+    answer = in_bash.stdout.rstrip("\n")
+    assert answer == expected, (case_id, answer)
+
+
 def code_lines(path: Path) -> str:
     """The file with its whole-line comments dropped.
 
