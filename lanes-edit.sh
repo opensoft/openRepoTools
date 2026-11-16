@@ -5147,7 +5147,9 @@ reg_mode_files() {   # <why>
 # variable is set per call, so `lane-handoff --late`'s own `lane-last` read and
 # `lane-start`'s, which set none, still end 69. `REG_NO_CALL=1`
 # is `session-start`'s: a mirror arm with no register call (R39), whose read is
-# its block's own, `reg_session_read` (T508), never `reg_open`'s.
+# its block's own, `reg_session_read` (T508), never `reg_open`'s. Its one other
+# `lanes-index` call, `serve --start` on primary (T513), is no register call
+# either.
 # `lanes --decide` is decide, `reg_open`'s one flag rule (R38).
 # T504's own tree had no rows for the five arms it lacked: T401's
 # `register-text` and `register-grep`, T410's `act-begin`, T427's
@@ -5325,6 +5327,9 @@ reg_open() {   # <arm> [<its arguments>...]
 #      nothing was unreachable where nothing was asked.
 #   5. OFF PRIMARY, files mode and `mode index`: F17 (`reg_marker_check`,
 #      W:4896), whose `mirror` arm reads on with its line under the marker.
+# `REG_MODE=primary` from this one answer is also the key of the arm's start
+# of the service after the block (T513, `reg_service_start`), so no second
+# mode question is asked.
 reg_session_read() {
   reg_class_of session-start
   REG_STORE=""; RO_FAILED=""; RO_WHY=""
@@ -5341,6 +5346,44 @@ reg_session_read() {
   fi
   REG_STORE=files
   reg_marker_check
+  return 0
+}
+
+# FEATURE 007, T513 - THE `SessionStart` BLOCK STARTS THE SERVICE (SVC-4 item
+# 1, SVC-12; W:3843-3848, W:4443-4455; R50; socket API §8.1 and §9). The
+# `session-start` arm calls this once `session_start_block` has returned, so
+# after the block's whole answer, and only where the block's own one mode
+# answer (`reg_session_read`) was primary: there is no second mode question.
+# A compact returns before that question, so it starts nothing; so do files
+# mode, `mode index` and the 78. T413's flag does not stop it: an honoured flag
+# sets `REG_MODE=primary`, `reg_session_read` returns on the flag without
+# changing that, and the arm tests `REG_MODE` alone. That is harmless, because
+# no write path runs `session-start` as an attempt's child, and the mode is
+# primary anyway. Its one call is `lanes-index
+# serve --start`, which loads the configuration, checks the run directory and
+# the socket path's length, holds back where a failure stamp is younger than
+# 60 s, and otherwise starts `serve` from Python, detached in a session of its
+# own with the reduced environment, and returns at once. So no bash code here
+# detaches anything (W:3857-3858; R50): no `&`, `setsid`, `nohup` or `disown`.
+# It asks the service nothing and never waits for it: `serve --start` makes no
+# socket try, and the service's connect is the service's own (socket API §7).
+# It is no register call (R39): like `mode`, it reads only the configuration
+# and the run directory. T409's one wrap form, under a 1 s timer, `timeout -k 1
+# 1`, so at most 2 s where the call ignores the stop (the arm's comment says
+# why 1 s), which `timeout` holds where it is installed; where it is not, the
+# call runs unbounded, as the mode question does. Its stdout and stderr go to
+# /dev/null, so neither a refusal's note nor a child left behind reaches the
+# hook's output or holds its pipe, and `lanes-index status` reports a stamp or
+# a failed directory. Its exit is ignored: the block always exits 0, and never
+# branches on the start (svc:93; R36).
+reg_service_start() {
+  rss_bin="$(lanes_index_bin)"
+  [ -n "$rss_bin" ] || return 0
+  if command -v timeout >/dev/null 2>&1; then
+    ( timeout -k 1 1 "$rss_bin" serve --start </dev/null >/dev/null 2>&1; exit "$?" ) 2>/dev/null || :
+  else
+    ( "$rss_bin" serve --start </dev/null >/dev/null 2>&1; exit "$?" ) 2>/dev/null || :
+  fi
   return 0
 }
 
@@ -15993,6 +16036,12 @@ row_stamp_is_unknown() {   # <lane>
 # files either way, since `REG_STORE` is never `sql` here. On primary
 # `row_stamp_is_unknown` reads nothing, and `lane_forks`' fence takes no local
 # half (lane 3, #165 6814531692).
+#
+# FEATURE 007, T513 — THE START OF THE SERVICE IS THE CALLER'S, never this
+# function's: on primary, once this has returned its whole answer, the
+# `session-start` arm runs `lanes-index serve --start` (`reg_service_start`),
+# keyed on the one mode answer `reg_session_read` set here. A compact returns
+# above that read, so it starts nothing.
 session_start_block() {
   ssb_json="${1-}"; ssb_win="${2-}"
   ssb_id="$(lc "$(jstr "$ssb_json" session_id)")"
@@ -16117,8 +16166,10 @@ session_start_block() {
   ssb_ho="$(handoff_of_lane "$ssb_lane" 2>/dev/null || :)"
   # AMENDMENT 11 CLAUSE (h) — THE BOUND LINE GAINS THE WINDOW, and gains
   # nothing else: `session-start` keeps all three of its safety properties, it
-  # never writes, it never touches the network and it always exits 0 (R-A8-1),
-  # and this is a field the block has already read out of the lane's own log.
+  # never writes, it never touches the network and it always exits 0 (R-A8-1;
+  # on primary, the arm's start of the register service after the block is the
+  # one qualification, T513, which the arm's comment states), and this is a
+  # field the block has already read out of the lane's own log.
   # It is here because the window is what clause (b)'s precedence 3 and clause
   # (f)'s step 2(c) bind from, and a reader who cannot see what the record says
   # the window is cannot tell a lane that will bind with no question from one
@@ -21940,7 +21991,9 @@ managed_local_remedy() {
 # WHO WRITES `RUNNING`. The confirming act, and never the SessionStart hook:
 # `session-start` NEVER WRITES, never touches the network and ALWAYS EXITS 0
 # (Amendment 8, R-A8-1), which is what makes it safe in front of every session
-# on the workstation. The act that actually proves lane, transcript, agent,
+# on the workstation; on primary, the arm's start of the register service
+# after the block (T513) is the one qualification, and it writes no state of a
+# lane. The act that actually proves lane, transcript, agent,
 # directory and binding is `lane-start` (with or without `--no-launch`), and
 # the proof it leaves is its `STARTED`/`RESUMED` line — so the snapshot follows
 # THAT line, in `write_event`, from any caller. `ENDED`/`RETIRED` become
@@ -24871,9 +24924,11 @@ if [ "$SWEEP_MODE" = sweep ]; then
     *) die "--sweep is withdrawn (Amendment 23 S3 step 4, ratified choice 9): a pending hand edit of the register is committed by its own act and never swept into another write. Commit it first — LANES_LANE=<lane> $SELF commit \"<what the edit is>\" — then run \`$cmd\` without --sweep. Nothing was written." 2 ;;
   esac
 fi
-# `session-start` is EXEMPT. It is a hook: it never writes, and it must exit 0
-# even where there is no register to read at all — a hook that dies is a hook
-# that breaks the session it was meant to orient.
+# `session-start` is EXEMPT. It is a hook: it never writes the register (on
+# primary its start of the service, T513, touches only the service's run
+# directory), and it must exit 0 even where there is no register to read at
+# all — a hook that dies is a hook that breaks the session it was meant to
+# orient.
 # EVERY WRITER REFUSES WHERE THIS CONTAINER HAS NO CONFIGURED WORKSTATION
 # (Amendment 11, decision 8(d), `R-A11-14`). ONE GUARD AT THE DISPATCHER rather
 # than one per writer: `WS` is built into every event line's `session <uuid>@<ws>`
@@ -26769,7 +26824,15 @@ EOF
 
   # The SessionStart hook. IT NEVER WRITES, IT NEVER TOUCHES THE NETWORK, AND
   # IT ALWAYS EXITS 0 — the three properties that make it safe to put in front
-  # of every session on this workstation. Its stdin is the hook's JSON; with a
+  # of every session on this workstation. FEATURE 007, T513: on primary, the
+  # arm's last act, after the block's whole answer, is `lanes-index serve
+  # --start` (`reg_service_start`; R50), which starts the register service from
+  # Python, detached, and is never waited for. The first two properties stay
+  # the block's own: the block writes nothing and opens no door to the network.
+  # The start makes the service's run directory and opens `register.log` in
+  # it, and the service it starts makes its own connection (SVC-4 item 1;
+  # socket API §7 and §9). The third is unchanged: the start's exit is
+  # ignored; off primary nothing starts. Its stdin is the hook's JSON; with a
   # terminal on stdin nobody piped one, and it is read as empty rather than
   # waited for, because a hook that blocks is worse than a hook that says
   # nothing.
@@ -26786,14 +26849,31 @@ EOF
   # FETCHED and says how old that is, so a reader can tell a current answer from
   # a stale one. `git_net` is the only door to the network in this file, and
   # nothing on this path opens it. FEATURE 007, T508: its one `lanes-index`
-  # call is `lanes-index mode`, asked once, only where a configuration exists,
-  # under its 2 s timer (`reg_session_read`), and it reads only the
+  # question is `lanes-index mode`, asked once, only where a configuration
+  # exists, under its 2 s timer (`reg_session_read`), and it reads only the
   # configuration (contract 3.1): no network, and no register call (R39).
+  # T513's `serve --start`, on primary only and after the answer, is no
+  # register call either: it reads the configuration and the run directory,
+  # and asks the service nothing (socket API §9).
   session-start)
+    # FEATURE 007, T513: the block's own clock, for the start's skip rule
+    # below. Reset here, so an inherited `SECONDS` counts for nothing.
+    SECONDS=0
     if [ -t 0 ]; then ss_json=""; else ss_json="$(cat 2>/dev/null || :)"; fi
     ss_win=""
     command -v tmux >/dev/null 2>&1 && ss_win="$(tmux display-message -p '#W' 2>/dev/null || :)"
     session_start_block "$ss_json" "$ss_win" || :
+    # FEATURE 007, T513 - THE START, LAST (`reg_service_start`): on primary,
+    # after the block's whole answer, keyed on the block's own one mode answer,
+    # and never branched on. THE HOOK'S 5 s, WITH MARGIN: the block stays
+    # under about 4.5 s at worst on primary (lane 5's bound). `mode`'s timer
+    # can take 3 s, `timeout -k 1 2`, and a start under the same timer 3 more,
+    # so the start runs under a 1 s timer, at most 2 s, and is skipped where
+    # `SECONDS` shows 2 s or more spent in this arm. `SECONDS` counts whole
+    # seconds, so a reading of 1 or less means under 2 s, and the block then
+    # ends within about 4 s. A skipped start costs only the warm start: a
+    # client that finds no socket starts the service (socket API §8.1).
+    [ "${REG_MODE:-}" != primary ] || [ "$SECONDS" -ge 2 ] || reg_service_start || :
     exit 0
     ;;
 
