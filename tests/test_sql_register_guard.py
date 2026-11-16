@@ -33,7 +33,8 @@ wait on pipes a child inherits.
 EVERY CASE BUT TWO IS RED TODAY by its own assertion: today's answer 2 runs
 `lane-start` inside the hook, so no "BINDING" is printed and the runner stops
 the hook at 5 s; today's guard has no bind modes, no `guard-bind` and no
-`pid_start_of`. They fail until L5-A1, lane 5's T502. Case 22's
+`pid_start_of`. They fail until L5-A1, lane 5's T502, and nine of them also
+until T514, T502's parts 8 to 63, S6 also until T510 (table below). Case 22's
 `test_guard_bind_computes_bound_s_from_c_n_a_and_the_service` and lane 5's
 `test_the_post_bind_refill_is_one_register_read_and_never_git` also fail until
 L5-A3, lane 5's T507, which copies `c`, `n_a` and `w_s_ms` from `.head` and
@@ -95,11 +96,15 @@ pytestmark = [WINDOWS_SKIP, pytest.mark.skipif(
 #: from the same Order (lane 2, #165 6882026139, Part B). T254zw's row, its
 #: :376, is from T254's Order (tasks:2419; K1). T214t's
 #: row, for T502's part 21 (lane 5, opensoft/openRepoTools#165 6885608994),
-#: is keyed by the same Order: its case fails until T502 lands. T214v's
+#: is keyed by the same Order: its case fails until T514 lands. T214v's
 #: and T214w's rows, for T502's part 22 and its rule for the hook's writes
 #: (lane 3's ruling 5, (A), opensoft/openRepoTools#165 6885771975, and its
 #: confirmation, 6886113842), are keyed by the same Order, and so is
-#: T214x's, for the back-out of the same rule (6dd8bbbd:23333-23384). T213r's
+#: T214x's, for the back-out of the same rule (6dd8bbbd:23333-23384). T214z
+#: keys nine of T214's rows to T514 as well, so they wait for it: T214n's S1,
+#: S3, S4 and S6, T214o's rewrites case, and T214t's, T214v's, T214w's and
+#: T214x's. T514 is T502's parts 8 to 63, parts 21 and 22 among them (lane 3's
+#: ruling (d'), #165 6903070719), and S6 also waits for T510. T213r's
 #: row for `test_no_session_environment_carries_a_database_url_or_password`
 #: adds T512 to T213's Order: its `PGPASSFILE` assertions read the
 #: service's own held `psql` child (TP:1952 at `f9d6069e`), which only
@@ -136,7 +141,7 @@ SQL_REGISTER_GATE_TABLE = {
     "test_a_guard_that_starts_too_late_refuses_2_without_a_read": ("T103", "T113", "T507"),  # T213; tasks:1992
     "test_a_live_bind_past_its_bound_that_timeout_has_not_ended_answers_2_and_names_the_pid_to_kill": ("T502",),  # T214; tasks:2013
     "test_a_malformed_bind_pid_waits_for_the_deadline_then_is_stale": ("T502",),  # T214; tasks:2013
-    "test_a_noncanonical_out_names_no_facts_file_and_no_words": ("T502",),  # T214; tasks:2013
+    "test_a_noncanonical_out_names_no_facts_file_and_no_words": ("T502", "T514"),  # T214; tasks:2013, and T514 (T214z)
     "test_a_prompt_mid_bind_is_not_passed_and_leaves_the_record": ("T502",),  # T214; tasks:2013
     "test_a_rerun_after_a_failed_stamp_push_writes_one_stamp": ("T427", "T428", "T502", "T510"),  # T254; tasks:2419
     "test_a_reused_bind_pid_gives_no_outcome_with_no_session_test": ("T502",),  # T214; tasks:2013
@@ -149,15 +154,15 @@ SQL_REGISTER_GATE_TABLE = {
     "test_after_bound_one_moved_then_the_next_prompt_passes": ("T502",),  # T214; tasks:2013
     "test_an_outer_that_wrote_pid_alone_still_writes_its_outcome": ("T502",),  # T214; tasks:2013
     "test_an_owner_file_from_another_namespace_or_boot_is_no_service": ("T512", "T513"),  # T237; tasks:2302
-    "test_answer_2_binds_nothing_where_its_offer_is_gone_or_no_longer_the_one_answered": ("T502",),  # T214; tasks:2013
+    "test_answer_2_binds_nothing_where_its_offer_is_gone_or_no_longer_the_one_answered": ("T502", "T514"),  # T214; tasks:2013, and T514 (T214z)
     "test_answer_2_exits_2_binding_before_t0_plus_1_s_and_the_runner_sees_eof": ("T502",),  # T214; tasks:2013
     "test_answer_2_survives_a_group_sigterm_at_the_hooks_timeout": ("T502",),  # T214; tasks:2013
-    "test_answer_2s_back_out_writes_nothing_where_its_binding_is_gone_or_no_longer_binding": ("T502",),  # T214; tasks:2013
+    "test_answer_2s_back_out_writes_nothing_where_its_binding_is_gone_or_no_longer_binding": ("T502", "T514"),  # T214; tasks:2013, and T514 (T214z)
     "test_case_11_with_a_live_outer_drops_the_record_and_keeps_its_files": ("T502",),  # T214; tasks:2013
-    "test_choice_1_allows_nothing_where_its_offer_is_gone_or_no_longer_the_one_answered": ("T502",),  # T214; tasks:2013
+    "test_choice_1_allows_nothing_where_its_offer_is_gone_or_no_longer_the_one_answered": ("T502", "T514"),  # T214; tasks:2013, and T514 (T214z)
     "test_claude_no_lane_still_skips_before_any_input": ("T103", "T113", "T507"),  # T213; tasks:1992
     "test_each_service_request_is_one_query": ("T229", "T512", "T513"),  # T237; tasks:2302
-    "test_every_bind_rewrite_is_0600_and_a_failed_one_leaves_the_record": ("T502",),  # T214; tasks:2013
+    "test_every_bind_rewrite_is_0600_and_a_failed_one_leaves_the_record": ("T502", "T514"),  # T214; tasks:2013, and T514 (T214z)
     "test_guard_bind_computes_bound_s_from_c_n_a_and_the_service": ("T502", "T507"),  # T214; tasks:2013
     "test_guard_bind_exits_as_section_7_gives": ("T502",),  # T214; tasks:2013
     "test_kill_of_the_bind_outer_ends_the_record_with_the_signals_code": ("T502",),  # T214; tasks:2013
@@ -179,7 +184,7 @@ SQL_REGISTER_GATE_TABLE = {
     "test_the_database_unreachable_with_the_service_up_is_2_never_a_cached_ok": ("T512", "T513"),  # T237; tasks:2302
     "test_the_direct_read_connects_as_its_engineers_reader_login": ("T103", "T113", "T507"),  # T213; tasks:1992
     "test_the_facts_file_is_made_empty_first_and_its_absence_is_reported": ("T502",),  # T214; tasks:2013
-    "test_the_files_index_passes_six_digits": ("T502",),  # T214; tasks:2013
+    "test_the_files_index_passes_six_digits": ("T502", "T514"),  # T214; tasks:2013, and T514 (T214z)
     "test_the_first_call_starts_the_service_with_no_supervisor": ("T512", "T513"),  # T237; tasks:2302
     "test_the_guard_answer_time_is_recorded_beside_todays_direct_guard": ("T512", "T513"),  # T237; tasks:2302
     "test_the_guard_maps_69_75_and_3_to_2": ("T103", "T113", "T507"),  # T213; tasks:1992
@@ -188,11 +193,11 @@ SQL_REGISTER_GATE_TABLE = {
     "test_the_guards_register_parse_is_timed_on_a_real_sized_register_beside_todays_six_reads_through_git": ("T111", "T112", "T507"),  # T226; tasks:2177
     "test_the_guards_request_carries_only_file_names": ("T512", "T513"),  # T237; tasks:2302
     "test_the_next_offers_files_index_runs_above_a_case_11_leftover": ("T502",),  # T214; tasks:2013
-    "test_the_outcome_rewrite_has_three_results": ("T502",),  # T214; tasks:2013
-    "test_the_outer_gathers_its_copies_before_its_last_ownership_read": ("T502",),  # T214; tasks:2013
+    "test_the_outcome_rewrite_has_three_results": ("T502", "T514"),  # T214; tasks:2013, and T514 (T214z)
+    "test_the_outer_gathers_its_copies_before_its_last_ownership_read": ("T502", "T510", "T514"),  # T214; tasks:2013, and T510 and T514 (T214z)
     "test_the_outer_leaves_a_record_no_longer_its_own": ("T502",),  # T214; tasks:2013
     "test_the_outer_matches_host_and_container_without_regard_to_case": ("T502",),  # T214; tasks:2013
-    "test_the_outer_runs_nothing_where_its_record_is_not_binding_at_its_start": ("T502",),  # T214; tasks:2013
+    "test_the_outer_runs_nothing_where_its_record_is_not_binding_at_its_start": ("T502", "T514"),  # T214; tasks:2013, and T514 (T214z)
     "test_the_post_bind_refill_is_one_register_read_and_never_git": ("T502", "T507"),  # T214; tasks:2013
     "test_the_service_reaches_the_database_only_through_psql": ("T512", "T513"),  # T237; tasks:2302
     "test_the_service_stops_after_its_idle_time_and_unlinks_its_socket": ("T512", "T513"),  # T237; tasks:2302
