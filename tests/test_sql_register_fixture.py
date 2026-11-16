@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -49,6 +50,25 @@ from pathlib import Path
 import pytest
 
 from conftest import REPO
+
+#: THE LANDING GATE'S TABLE (T280's reader, `tests/sql_register_gate.py`), TEMPORARY:
+#: T281 removes it in the last set. Where the gate is active, an id is skipped until
+#: every task its row names has landed, and the skip names them. Two ids start a
+#: cluster on the session's template, T227's `Bootstrap()` with T228's logins:
+#: `[tls-untouched]`, by T229's `tls_cluster`, and `[psql-on-the-socket]`, by `pg` on
+#: `pg_cluster`. That template is built by `lanes-index bootstrap --admin-service`,
+#: L1-A7 (T109), which applies L1-A6's migration 1 and role block (T107 and T108),
+#: then by `lanes-index login add --admin-service`, L1-A8 (T110). So each waits for
+#: T107, T108, T109 and T110, as T221's and T231's Orders read a case on `pg`
+#: (tasks:2127 and :2231 at lane 3's commit 17, 204145ae): it takes "the logins step
+#: of the session template", and fails until L1-A6, L1-A7 and L1-A8 (lane 1,
+#: opensoft/openRepoTools#165 6897250155; lane 3's ruling, 6897276895). Each row is
+#: its id's own, since no other id of either function starts a cluster. The module's
+#: other 22 ids have no row, so they always run, and there is no `"*"` row.
+SQL_REGISTER_GATE_TABLE = {
+    "test_the_delayed_loopback_relay_delays_each_direction_and_passes_tls_through[tls-untouched]": ("T107", "T108", "T109", "T110"),  # T229; tasks:2127, :2231
+    "test_the_silent_after_startup_relay_forwards_the_startup_then_nothing_and_holds_both_sockets[psql-on-the-socket]": ("T107", "T108", "T109", "T110"),  # T229 (T229c); tasks:2127, :2231
+}
 
 #: The variable, as `tests/pgcluster.py` and `tests.yml` spell it.
 SWITCH = "OPENREPOTOOLS_REQUIRE_PG"
@@ -256,6 +276,457 @@ def test_no_real_engine_test_is_selected_by_the_launch_jobs_filter(tmp_path):
         f"no part of its id holds either word: {offenders}")
 
 
+# ---------------------------------------------------------------- T229's relay
+#: THE DELAYED-LOOPBACK RELAY'S OWN TEST (T229; R-P23), before the cases that
+#: use it: `tests/pgcluster.py`'s `delayed_loopback(target_port, delay_s)`.
+#: `[each-direction]`, `[clean-close]` and `[no-root]` run on a loopback
+#: peer of the standard library, so they need no engine; `[tls-untouched]`
+#: checks the bytes on such a peer, then asks for T229's TLS cluster for its
+#: `verify-full` connect and query, and skips with T205's banner without one.
+RELAY_DELAY = 0.2
+RELAY_CASES = ["each-direction", "tls-untouched", "clean-close", "no-root"]
+
+
+def _peer(handler):
+    """A loopback server for one connection: `handler(conn, seen)` in a
+    thread. Returns (port, thread, seen)."""
+    server = socket.create_server(("127.0.0.1", 0))
+    seen: dict = {}
+
+    def run():
+        try:
+            conn, _ = server.accept()
+            with conn:
+                handler(conn, seen)
+        finally:
+            server.close()
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return server.getsockname()[1], thread, seen
+
+
+def _read_all(sock, size: int) -> bytes:
+    data = b""
+    while len(data) < size:
+        chunk = sock.recv(size - len(data))
+        if not chunk:
+            break
+        data += chunk
+    return data
+
+
+def _relay_each_direction(relay_of):
+    def handler(conn, seen):
+        conn.recv(1)
+        seen["up"] = time.monotonic()
+        seen["sent"] = time.monotonic()
+        conn.sendall(b"d")
+    port, thread, seen = _peer(handler)
+    with relay_of(port, RELAY_DELAY) as relay:
+        with socket.create_connection(("127.0.0.1", relay.port), timeout=10) as client:
+            sent = time.monotonic()
+            client.sendall(b"u")
+            assert client.recv(1) == b"d"
+            down = time.monotonic()
+        thread.join(10)
+    assert seen["up"] - sent >= RELAY_DELAY, f"the first byte up came {seen['up'] - sent:.3f} s after it was sent"
+    assert down - seen["sent"] >= RELAY_DELAY, f"the first byte down came {down - seen['sent']:.3f} s after it was sent"
+    assert seen["up"] - sent < RELAY_DELAY + 5 and down - seen["sent"] < RELAY_DELAY + 5, seen
+
+
+def _relay_tls_untouched(relay_of, request):
+    up, down = os.urandom(200_000), os.urandom(100_000)
+
+    def handler(conn, seen):
+        seen["up"] = _read_all(conn, len(up))
+        conn.sendall(down)
+    port, thread, seen = _peer(handler)
+    with relay_of(port, 0.01) as relay:
+        with socket.create_connection(("127.0.0.1", relay.port), timeout=30) as client:
+            client.sendall(up)
+            got = _read_all(client, len(down))
+        thread.join(30)
+    assert seen.get("up") == up, "the bytes the relay delivered up are not the bytes it was sent"
+    assert got == down, "the bytes the relay delivered down are not the bytes it was sent"
+    tls = request.getfixturevalue("tls_cluster")
+    with relay_of(tls.port, 0.01) as relay:
+        env = dict(tls.client_env(), PGPORT=str(relay.port))
+        proc = subprocess.run([tls.tool("psql"), "-X", "-A", "-t", "-c",
+                               "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()"],
+                              capture_output=True, text=True, env=env, timeout=60, check=False)
+    assert (proc.returncode, proc.stdout.strip()) == (0, "t"), (
+        f"a verify-full connect and query through the relay: {shown(proc)}")
+
+
+def _relay_clean_close(relay_of):
+    for first in ("client", "peer"):
+        def handler(conn, seen, first=first):
+            if first == "peer":
+                conn.close()
+                return
+            seen["eof"] = conn.recv(1)
+        port, thread, seen = _peer(handler)
+        with relay_of(port, RELAY_DELAY) as relay:
+            client = socket.create_connection(("127.0.0.1", relay.port), timeout=10)
+            if first == "client":
+                client.close()
+                thread.join(10)
+                assert seen.get("eof") == b"", "the client's close did not reach the peer"
+            else:
+                assert client.recv(1) == b"", "the peer's close did not reach the client"
+                client.close()
+            end = time.monotonic() + 5
+            while relay.sockets and time.monotonic() < end:
+                time.sleep(0.05)
+            assert not relay.sockets, f"[{first} first] the relay still holds {len(relay.sockets)} socket(s)"
+        assert relay.alive() == [], f"[{first} first] the relay's threads outlive it: {relay.alive()}"
+
+
+NO_ROOT_CHILD = """
+import json, os, socket, sys, threading
+sys.path.insert(0, sys.argv[1])
+import pgcluster
+server = socket.create_server(("127.0.0.1", 0))
+def echo():
+    conn, _ = server.accept()
+    with conn:
+        conn.sendall(conn.recv(16))
+threading.Thread(target=echo, daemon=True).start()
+with pgcluster.delayed_loopback(server.getsockname()[1], 0.05) as relay:
+    with socket.create_connection(("127.0.0.1", relay.port), timeout=10) as client:
+        client.sendall(b"no-root")
+        said = client.recv(16)
+# T229e: where there is no /proc, as on macOS, there is no capability set to read
+status = open(sys.argv[2] + "/self/status").read() if os.path.isdir(sys.argv[2]) else ""
+cap = [line.split()[1] for line in status.splitlines() if line.startswith("CapEff:")]
+print(json.dumps({"uid": os.geteuid(), "cap": cap[0] if cap else None, "said": said.decode()}))
+"""
+
+
+def _relay_no_root():
+    if os.geteuid() == 0:
+        pytest.skip("[no-root] shows the relay needs no capability, and this run is root")
+    import pgcluster
+    proc = subprocess.run([sys.executable, "-I", "-B", "-c", NO_ROOT_CHILD, str(SUITE),
+                           str(pgcluster._PROC)],
+                          capture_output=True, text=True, timeout=60, check=False)
+    assert proc.returncode == 0, shown(proc)
+    said = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert said["said"] == "no-root", said
+    assert said["uid"] == os.getuid(), f"the relay ran as uid {said['uid']}, not the job's {os.getuid()}"
+    if said["cap"] is not None:
+        assert int(said["cap"], 16) == 0, f"the relay's process holds capabilities {said['cap']}"
+
+
+@pytest.mark.parametrize("case", RELAY_CASES)
+def test_the_delayed_loopback_relay_delays_each_direction_and_passes_tls_through(request, case):
+    """T229's relay (R-P23): `[each-direction]`, each direction's first byte
+    arrives no sooner than the delay after it was sent, on a monotonic
+    clock; `[tls-untouched]`, the bytes it delivers each way equal the bytes
+    it was sent, and a `verify-full` connect and a query through it to the
+    TLS cluster succeed (R2f-S11); `[clean-close]`, a close on either side
+    closes the other, and leaves no thread or socket of the relay's;
+    `[no-root]`, a process with no added capability, under the job's own
+    uid, starts and uses it."""
+    import pgcluster
+    relay_of = getattr(pgcluster, "delayed_loopback", None)
+    assert relay_of is not None, "tests/pgcluster.py has no delayed_loopback: T229 builds it"
+    if case == "each-direction":
+        _relay_each_direction(relay_of)
+    elif case == "tls-untouched":
+        _relay_tls_untouched(relay_of, request)
+    elif case == "clean-close":
+        _relay_clean_close(relay_of)
+    else:
+        _relay_no_root()
+
+
+# ---------------------------------------------------------------- T229c's relay
+#: THE SILENT-AFTER-STARTUP RELAY'S OWN TEST (T229c; lane 3's batch 8, "Lane
+#: 2's relay: T229 builds it", #165 6780753157, and its text change 8;
+#: TP:7682-7684), before the cases that connect through it: D9's F2, AT-F7's
+#: silent host, the service's timer and the guard's `[2-service-down]`.
+#: `tests/pgcluster.py`'s `silent_after_startup(target_port)`.
+#: `[forwards-the-startup]`, `[then-nothing]` and `[holds-both-sockets]` run on
+#: a loopback peer of the standard library that answers a startup as
+#: PostgreSQL does on trust, so they need no engine; `[psql-on-the-socket]`
+#: runs the engine's `psql` through it to the session cluster's Unix socket,
+#: and skips with T205's banner without one.
+SILENT_CASES = ["forwards-the-startup", "then-nothing", "holds-both-sockets", "psql-on-the-socket"]
+#: How long a case waits to see that nothing arrives.
+SILENT_WAIT = 1.0
+
+
+def _message(kind: bytes, body: bytes) -> bytes:
+    return kind + (len(body) + 4).to_bytes(4, "big") + body
+
+
+#: A startup as libpq sends it (protocol 3.0), and PostgreSQL's answer on
+#: trust: AuthenticationOk, a ParameterStatus, BackendKeyData, whose key here
+#: ends like a ReadyForQuery's head, and ReadyForQuery (`Z`, length 5, idle).
+_STARTUP_BODY = (196608).to_bytes(4, "big") + b"user\x00fx\x00database\x00fx\x00\x00"
+STARTUP = (len(_STARTUP_BODY) + 4).to_bytes(4, "big") + _STARTUP_BODY
+STARTUP_ANSWER = (_message(b"R", (0).to_bytes(4, "big"))
+                  + _message(b"S", b"server_version\x0016.15\x00")
+                  + _message(b"K", (4242).to_bytes(4, "big") + b"Z\x00\x00\x00")
+                  + _message(b"Z", b"I"))
+QUERY = _message(b"Q", b"SELECT 1;\x00")
+
+
+def _within(sock, wait: float):
+    """What reaches `sock` within `wait` seconds: None for nothing, b"" for a
+    close, else the bytes."""
+    sock.settimeout(wait)
+    try:
+        return sock.recv(65536)
+    except socket.timeout:
+        return None
+
+
+def _startup_peer(after):
+    """A loopback peer for one connection: it reads a startup, answers it,
+    its ReadyForQuery 0.2 s after the rest, then runs `after(conn, seen)`."""
+    def handler(conn, seen):
+        seen["startup"] = _read_all(conn, len(STARTUP))
+        cut = len(STARTUP_ANSWER) - 6
+        conn.sendall(STARTUP_ANSWER[:cut])
+        time.sleep(0.2)
+        conn.sendall(STARTUP_ANSWER[cut:])
+        after(conn, seen)
+    return _peer(handler)
+
+
+def _started(relay):
+    client = socket.create_connection(("127.0.0.1", relay.port), timeout=10)
+    client.sendall(STARTUP)
+    return client, _read_all(client, len(STARTUP_ANSWER))
+
+
+def _silent_forwards_the_startup(relay_of):
+    port, thread, seen = _startup_peer(lambda conn, seen: None)
+    with relay_of(port) as relay:
+        assert relay.port != port, "the relay listens on its target's own port"
+        client, got = _started(relay)
+        with client:
+            assert client.getpeername() == ("127.0.0.1", relay.port), client.getpeername()
+            thread.join(10)
+            assert seen.get("startup") == STARTUP, "the startup the peer read is not the one the client sent"
+            assert got == STARTUP_ANSWER, (
+                f"the client read {got!r}, not the peer's answer up to its ReadyForQuery")
+            assert len(relay.silenced) == 1, f"one startup silenced the relay {len(relay.silenced)} time(s)"
+
+
+def _silent_then_nothing(relay_of):
+    def after(conn, seen):
+        seen["up"] = _within(conn, SILENT_WAIT)
+        conn.sendall(_message(b"N", b"SNOTICE\x00\x00"))
+        seen["down"] = True
+        _within(conn, SILENT_WAIT)
+    port, thread, seen = _startup_peer(after)
+    with relay_of(port) as relay:
+        client, got = _started(relay)
+        with client:
+            assert got == STARTUP_ANSWER, got
+            client.sendall(QUERY)
+            heard = _within(client, 2 * SILENT_WAIT)
+            thread.join(10)
+    assert seen.get("up") is None, f"after the startup the client's query reached the peer: {seen.get('up')!r}"
+    assert seen.get("down"), "the peer did not speak after the startup"
+    assert heard is None, f"after the startup the peer's bytes reached the client: {heard!r}"
+
+
+def _silent_holds_both_sockets(relay_of):
+    def after(conn, seen):
+        seen["eof"] = _within(conn, SILENT_WAIT)
+    port, thread, seen = _startup_peer(after)
+    with relay_of(port) as relay:
+        client, got = _started(relay)
+        with client:
+            assert got == STARTUP_ANSWER, got
+            client.shutdown(socket.SHUT_WR)
+            thread.join(10)
+            assert seen.get("eof") is None, (
+                f"after the startup the client's close reached the peer: {seen.get('eof')!r}")
+            held = _within(client, SILENT_WAIT)
+            assert held is None, f"after the startup the peer's close reached the client: {held!r}"
+            assert len(relay.sockets) == 2, f"the relay holds {len(relay.sockets)} socket(s), not both"
+            relay.close()
+            assert _within(client, 5) == b"", "the relay's close did not close the client's end"
+    assert not relay.sockets and relay.alive() == [], (relay.sockets, relay.alive())
+
+
+def _silent_psql_on_the_socket(relay_of, request):
+    pg = request.getfixturevalue("pg")
+    marker = f"silent-relay-{os.getpid()}"
+    activity = (f"SELECT state || '|' || query FROM pg_stat_activity "
+                f"WHERE application_name = '{marker}';")
+    with relay_of(pg.port, socket_dir=pg.host) as relay:
+        env = dict(pg.env(appname=marker), PGHOST="127.0.0.1", PGPORT=str(relay.port))
+        psql = subprocess.Popen([pg.psql_bin, "-X", "-A", "-t", "-c", "SELECT 'through the relay'"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+        try:
+            row, end = "", time.monotonic() + 15
+            while not row and time.monotonic() < end and psql.poll() is None:
+                row = pg.psql(activity).stdout.strip()
+                time.sleep(0.05)
+            assert row, f"no session logged in through the relay, so the startup did not complete: {psql.poll()}"
+            time.sleep(SILENT_WAIT)
+            row = pg.psql(activity).stdout.strip()
+            assert row == "idle|", f"the session through the silent relay is not idle with no query: {row!r}"
+            assert psql.poll() is None, f"psql was answered through the silent relay: {psql.communicate()}"
+            assert len(relay.silenced) == 1, relay.silenced
+        finally:
+            psql.kill()
+            psql.communicate()
+
+
+@pytest.mark.parametrize("case", SILENT_CASES)
+def test_the_silent_after_startup_relay_forwards_the_startup_then_nothing_and_holds_both_sockets(
+        request, case):
+    """T229c's relay (lane 3's batch 8; TP:7682-7684), a relay of the
+    standard library on 127.0.0.1 at a free port: `[forwards-the-startup]`,
+    the client's startup and the server's answer, up to and including its
+    first ReadyForQuery, arrive byte for byte; `[then-nothing]`, after it
+    nothing is forwarded either way; `[holds-both-sockets]`, after it a close
+    on either side reaches neither, and both ends stay open until the relay
+    closes; `[psql-on-the-socket]`, the engine's `psql`, through it to the
+    session cluster's Unix socket, logs in and is never answered, its
+    session idle with no query."""
+    import pgcluster
+    relay_of = getattr(pgcluster, "silent_after_startup", None)
+    assert relay_of is not None, (
+        "tests/pgcluster.py has no silent_after_startup: T229 builds it (lane 3's batch 8)")
+    if case == "forwards-the-startup":
+        _silent_forwards_the_startup(relay_of)
+    elif case == "then-nothing":
+        _silent_then_nothing(relay_of)
+    elif case == "holds-both-sockets":
+        _silent_holds_both_sockets(relay_of)
+    else:
+        _silent_psql_on_the_socket(relay_of, request)
+
+
+# ---------------------------------------------------------------- T229f's races
+#: THE RELAYS' SHUTDOWN RACES (T229f; Codex's SHOULD 5 on f060619c,
+#: opensoft/openRepoTools#165 6882190927). Each case opens its window with a
+#: hook on the relay's seam, `tests/pgcluster.py`'s `_seam`, which holds one
+#: of the relay's threads on an event where a concurrent `close()` meets it,
+#: never with a sleep. Both relays, in front of a loopback listener of the
+#: standard library that never accepts, so no engine is needed.
+RACE_RELAYS = ["delayed-loopback", "silent-after-startup"]
+#: The bound on each wait for a held thread to arrive, or for a relay's
+#: thread to end: only a failure waits it out.
+RACE_WAIT = 30.0
+
+
+def _race_relay(kind: str):
+    """A relay of `kind` in front of a listener that never accepts, whose
+    backlog completes the relay's upstream connect: (relay, listener)."""
+    import pgcluster
+    server = socket.create_server(("127.0.0.1", 0))
+    port = server.getsockname()[1]
+    if kind == "delayed-loopback":
+        return pgcluster.delayed_loopback(port, 0.0), server
+    return pgcluster.silent_after_startup(port), server
+
+
+def _race_end(relay) -> list:
+    """The relay closed once more, since a red case's `close()` may have
+    stopped short, and each of its threads, found by its name, given until
+    RACE_WAIT to end, so that no leak outlives its case: the names of those
+    still alive."""
+    try:
+        relay.close(wait=0.0)
+    except RuntimeError:
+        pass
+    prefixes = tuple(f"{kind}-{relay.port}-" for kind in RACE_RELAYS)
+    end = time.monotonic() + RACE_WAIT
+    while True:
+        live = [t for t in threading.enumerate() if t.name.startswith(prefixes) and t.is_alive()]
+        if not live or time.monotonic() >= end:
+            return sorted(t.name for t in live)
+        live[0].join(max(0.0, end - time.monotonic()))
+
+
+@pytest.mark.parametrize("kind", RACE_RELAYS)
+def test_a_relay_closed_while_it_connects_upstream_relays_nothing_and_leaves_no_thread(kind):
+    """T229f (Codex's SHOULD 5 on f060619c): a client the relay has accepted,
+    whose upstream connect is still under way when `close()` takes its
+    snapshot, is closed, never relayed. The seam holds `_accept`, with the
+    client and its upstream in hand, until `close()` has its snapshot, as a
+    slow upstream connect would; when `close()` returns, no thread of the
+    relay's is alive, and the client's end is closed.
+    `[silent-after-startup]` passed before T229f, on its `done` flag;
+    `[delayed-loopback]`, with no closing flag, registered the pair after the
+    snapshot and started its readers, which `close()` never saw."""
+    relay, server = _race_relay(kind)
+    arrived, snapshot = threading.Event(), threading.Event()
+
+    def hook(point, name):
+        if point == "accepted":
+            arrived.set()
+            snapshot.wait(RACE_WAIT)
+        elif point == "snapshot":
+            snapshot.set()
+    relay.seam = hook
+    client = socket.create_connection(("127.0.0.1", relay.port), timeout=RACE_WAIT)
+    try:
+        assert arrived.wait(RACE_WAIT), f"[{kind}] the relay's accept never reached its seam"
+        relay.close()
+        left = relay.alive()
+        assert left == [], f"[{kind}] close() has returned, and the relay's threads are alive: {left}"
+        assert _within(client, RACE_WAIT) == b"", (
+            f"[{kind}] the client accepted as close() began was not closed")
+    finally:
+        snapshot.set()
+        client.close()
+        server.close()
+        _race_end(relay)
+
+
+@pytest.mark.parametrize("kind", RACE_RELAYS)
+def test_a_relay_closed_while_it_starts_a_thread_never_joins_one_not_yet_started(kind):
+    """T229f (Codex's SHOULD 5 on f060619c): `close()` meets threads the
+    relay is spawning, each listed by `_spawn` under the lock `close()`
+    snapshots under, and held by the seam as `_spawn` leaves that lock:
+    `[delayed-loopback]`'s two readers, each as it spawns its deliverer, and
+    `[silent-after-startup]`'s acceptor as it spawns the pump.
+    `close(wait=0)`, as when an earlier join has spent the deadline, joins
+    each thread of its snapshot and raises nothing, and once the hold is
+    released every thread of the relay's ends. Before T229f, `_spawn` started
+    the thread only after it left the lock, so `close()` joined a thread not
+    yet started, and `Thread.join` raised RuntimeError."""
+    relay, server = _race_relay(kind)
+    name, count = ("deliver", 2) if kind == "delayed-loopback" else ("pump", 1)
+    arrived, release, lock, held = threading.Event(), threading.Event(), threading.Lock(), []
+
+    def hook(point, spawned):
+        if point != "listed" or spawned != name:
+            return
+        with lock:
+            held.append(threading.current_thread().name)
+            if len(held) == count:
+                arrived.set()
+        release.wait(RACE_WAIT)
+    relay.seam = hook
+    client = socket.create_connection(("127.0.0.1", relay.port), timeout=RACE_WAIT)
+    raised = None
+    try:
+        assert arrived.wait(RACE_WAIT), f"[{kind}] the seam holds {held}, not {count} {name} spawn(s)"
+        try:
+            relay.close(wait=0.0)
+        except RuntimeError as error:
+            raised = error
+        assert raised is None, (
+            f"[{kind}] close() joined a thread `_spawn` had listed and not yet started: {raised!r}")
+    finally:
+        release.set()
+        client.close()
+        server.close()
+        left = _race_end(relay)
+    assert left == [], f"[{kind}] the relay's threads outlive it: {left}"
+
+
 #: THE STALE SWEEP'S CASES (T205c). Every pid is fake, above any system's pid
 #: limit, and every signal goes to a recorder through the module's seam.
 SWEEP_CASES = ["no-proc", "pid-not-positive", "malformed", "does-not-stop", "reused-pid", "orphan"]
@@ -316,6 +787,16 @@ def test_the_stale_sweep_signals_and_removes_only_what_it_proves_is_a_dead_sessi
     assert sent == want_sent, f"[{case}] the sweep signalled {sent}, not {want_sent}"
     assert root.is_dir() == kept, f"[{case}] the sweep {'removed' if kept else 'kept'} {root}"
     assert swept == ([] if kept else [str(root)]), f"[{case}] the sweep reports {swept}"
+
+
+def test_the_delayed_loopback_relay_needs_no_proc_for_its_no_root_case(monkeypatch, tmp_path):
+    """T229e (Codex's BLOCKING 3 on f060619c): T229's `[no-root]` case, run
+    with the module's `/proc` a directory that does not exist, as on macOS,
+    still starts and uses the relay under the job's own uid, and reads no
+    capability set where there is none to read."""
+    import pgcluster
+    monkeypatch.setattr(pgcluster, "_PROC", tmp_path / "no-proc")
+    _relay_no_root()
 
 
 class _HeldChild:
