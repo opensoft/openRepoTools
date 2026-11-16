@@ -59,15 +59,38 @@
 #
 # EXIT CODES ARE THE HELPER'S, passed straight through: `0` done · `1` no
 # register, or a read that failed · `2` a refusal (clause (a), bad arguments, or
-# a `lanes-edit.sh` predating this amendment) · `3` the commit is local and this
-# attempt cannot confirm it reached origin · `4` the mutex · `5` a move refused
-# · `6` git. Never this file's own numbers: every one of them is decided in the
-# writer, and two tables of codes for one act is how they come to disagree.
+# a `lanes-edit.sh` predating this amendment) · `3` in doubt: on primary the
+# rename "may not be written; run the printed `LANES_WRITE_ID` rerun, which
+# writes it once or finds it", and where the writer printed no such rerun (off
+# primary) the commit is local and may already be on origin · `4` the mutex ·
+# `5` a move refused · `6` git · `69` the register cannot be reached, or
+# refuses: nothing was written, and a lane stops and tells Brett · `75` the
+# register is busy, a lost turn with nothing written. Never this file's own
+# numbers: every one of them is decided in the writer, and two tables of codes
+# for one act is how they come to disagree.
+#
+# THE TEXTS FOR 3, 75 AND 69 ARE THE SQL REGISTER'S (feature 007, T433; design
+# D8, D7 and D10, Y:468-469, Y:455-456 and Y:511-512; Y:5738). On primary a 3 is
+# a write in doubt: the rename "may not be written", and the rerun that settles
+# it is the writer's, printed above, never this file's. 75 and 69 are refusals
+# that wrote nothing. This file reads no register before the write, so it
+# cannot tell the two modes apart: it says D8's words and, beside them, the
+# files-mode meaning of 3.
 #
 #   $LANES_EDIT          the writer (default: lanes-edit.sh beside this file)
 #   $LANE_RENAME_NO_TMUX 1: the same as --no-tmux (the test seam)
 
 set -uo pipefail
+
+# AN INHERITED `LANES_READ_MIRROR` IS NO ANSWER (feature 007, T433; lane 3's #165
+# 6866808028, and 6861148117: ERR-30 widens PER CALL). This command names the
+# variable on no call of its own, so a value the caller exported would lower its
+# two `canon-lane` reads, the one that asks whether this window is the lane's and
+# the one that asks whether a refused rename has already landed, to the mirror
+# where an outage must end them 69, and would reach every other call it makes.
+# So it is dropped here, before any read and before anything that could pass the
+# environment on, as `lane-handoff` does at its entry.
+unset LANES_READ_MIRROR
 
 prog="${0##*/}"
 SELF="${BASH_SOURCE[0]:-$0}"
@@ -116,8 +139,12 @@ and --verbatim was not given; a LIVE session holds <old> in another window; two
 rows for <old> differ only by case; the alias table would gain a cycle; or a
 read could not be made.
 
-Exit: the writer's own codes — 0 done · 1 environment · 2 refused · 3 committed,
-not confirmed pushed · 4 mutex · 5 a move refused · 6 git.
+Exit: the writer's own codes — 0 done · 1 environment · 2 refused · 3 in doubt:
+on primary the rename "may not be written; run the printed `LANES_WRITE_ID`
+rerun, which writes it once or finds it", and where the writer printed no such
+rerun (off primary) the commit is local and may already be on origin · 4 mutex
+· 5 a move refused · 6 git · 69 the register cannot be reached, or refuses
+(nothing written) · 75 the register is busy (nothing written).
 USAGE
 }
 
@@ -236,9 +263,19 @@ if [ "$rc" != 0 ]; then
 	# take. Saying it again in different words is how two surfaces come to
 	# disagree about one refusal; the only thing added here is that NOTHING of
 	# this window's was touched, which is this file's own fact.
+	#
+	# 3, 75 AND 69 CARRY D8's TEXTS (feature 007, T433; Y:468-469, Y:5738), each in
+	# an arm of its own so that no other code reads one of them. A 3's words are
+	# D8's, verbatim, and the rerun they name is the writer's, printed above with
+	# `LANES_WRITE_ID` and the generation: this file prints none of its own, which
+	# is how a hint comes to differ from the line that settles the write. 75 and
+	# 69 wrote nothing, so a retry cannot double a write.
 	case "$rc" in
 	2) note "nothing was renamed here either: the window still carries '${win_name:-none}' and no pane was typed into." ;;
-	*) note "the write exited $rc (the writer's own code, above). This window was NOT touched — read what it said before re-running: a 3 means the commit is local and may already be on origin." ;;
+	3) note "the write exited 3 (the writer's own code, above). This window was NOT touched. On primary the rename may not be written; run the printed \`LANES_WRITE_ID\` rerun, which writes it once or finds it. Where the writer printed no such rerun (off primary), the commit is local and may already be on origin." ;;
+	75) note "the write exited 75 (the writer's own code, above): the register is busy, and this rename lost its turn with nothing written. This window was NOT touched. A retry in seconds is safe." ;;
+	69) note "the write exited 69 (the writer's own code, above): the register could not be reached, or refused the write, and nothing was written. This window was NOT touched. Stop and tell Brett." ;;
+	*) note "the write exited $rc (the writer's own code, above). This window was NOT touched — read what it said before re-running." ;;
 	esac
 	exit "$rc"
 fi
