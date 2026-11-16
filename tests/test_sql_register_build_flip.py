@@ -203,6 +203,8 @@ SQL_REGISTER_GATE_TABLE = {
     "test_mode_primary_is_refused_until_the_git_half_and_goes_to_sql_once_flipped": ("T104", "T105", "T113", "T504", "T505", "T506"),  # T212; tasks:1974
     "test_mode_primary_with_sqlite_is_refused": ("T104", "T105", "T113", "T504", "T505", "T506"),  # T212; tasks:1974
     "test_readers_under_the_refusal_answer_the_78_as_a_failed_read": ("T104", "T105", "T113", "T504", "T505", "T506"),  # T212; tasks:1974
+    "test_readers_under_the_refusal_answer_the_78_as_a_failed_read[guard]": ("T104", "T105", "T113", "T504", "T505", "T506", "T507"),  # T212; tasks:1974, and T507 (T212h)
+    "test_readers_under_the_refusal_answer_the_78_as_a_failed_read[session-start]": ("T104", "T105", "T113", "T504", "T505", "T506", "T508"),  # T212; tasks:1974, and T508 (T212h)
     "test_register_read_exits_78_under_the_refusal": ("T104", "T105", "T113", "T504", "T505", "T506"),  # T212; tasks:1974
     "test_mode_primary_is_refused_until_the_git_half_and_goes_to_sql_once_flipped[flipped]": ("T409", "T415", "T416"),  # T256; tasks:2436
     "test_mode_primary_is_refused_until_the_git_half_and_goes_to_sql_once_flipped[replay-keeps-pid]": ("T409",),  # T256; tasks:2436
