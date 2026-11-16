@@ -290,6 +290,21 @@
 #      that `exec`s this script would otherwise leave the operator in an exited
 #      pane with no Claude in it. Under `--no-launch` the bare command is
 #      printed on stdout, so a launcher can exec it itself.
+#   69, 75, 3  a register read this command cannot do without, refused with
+#      the reading verb's own code (feature 007, T402; FR-036): 69, the
+#      register could not be read; 75, register busy; 3, in doubt. This
+#      launch has written no row, no STARTED or RESUMED line and no stamp,
+#      and launched nothing; a refusal after this window's rename gives it
+#      its name back. One line of the handoff may stand: where a
+#      `lane-transcript` read refuses after `request-handoff` answered 0, the
+#      HANDOFF-REQUESTED line or the forced PAUSED it wrote stands, written
+#      whole to the append-only log (R-A11-11), and the refusal names it. The
+#      default read arms see these codes only from a SQL register;
+#      `register-text`, the read of the lane's row, spends 69 in every mode
+#      where the register cannot be read, and any code it exits with is passed
+#      on, never read as an empty register. The ownership seam's read,
+#      `managed-projection`, is the exception: it exits 1, UNKNOWN, for these
+#      codes too (research.md ERR-46).
 #
 # ENVIRONMENT
 #   PROJECTS_ROOT        default ~/projects
@@ -368,6 +383,16 @@
 # off $HOME.
 
 set -euo pipefail
+
+# AN INHERITED `LANES_READ_MIRROR` IS NO ANSWER (feature 007, T402; lane 3's #165
+# 6861148117: ERR-30 widens PER CALL; lane 5's #165 6861222075). This command
+# names the variable on no call of its own. Under T504, which marks `lane-last`
+# for every caller, a value the caller exported would lower the RETIRED check's
+# `lane-last` read, which decides, to the mirror where an outage must end it 69,
+# and it lowers every other marked read this command makes. So it is dropped
+# here, before any read and before anything that could pass the environment on,
+# as `lane-handoff` does at its entry.
+unset LANES_READ_MIRROR
 
 prog=lane-start
 
@@ -1249,6 +1274,52 @@ ls_refresh "before this launch reads it"
 # names neither spelling. So the refusal is asked for by its own words — no old
 # helper emits them from an unknown subcommand — and relayed, with the fallback
 # for a genuinely old helper left exactly as it was.
+#
+# FEATURE 007, T402 - THE BUSY, IN-DOUBT AND UNREADABLE CODES AT A READ ARM
+# ("The callers' default arms", design Y:5720-5747; spec:663-690; FR-036). On
+# a SQL register a read verb can answer 69 (the register could not be read),
+# 75 (register busy) or 3 (in doubt), and none of the three is an answer about
+# the lane. Where that table has an arm refuse one, `ls_read_refuse` refuses
+# with the verb's own code ("pass the code", Y:5722), naming it, before this
+# launch makes any write of its own. Where a read's arm already refused, it
+# keeps its words and exits with these three codes instead of its own
+# (`ls_read_code`); every other code keeps that arm's exit. Two arms are the
+# exception. The ownership seam's (`seam_refuse`) exits 1, UNKNOWN, for every
+# code but 0 and 8, these three included: an ownership nobody established is
+# refused as UNKNOWN, never passed on (S4; DEC-27; research.md ERR-46). And
+# `request-handoff`'s arm is a write's (Y:5731) and keeps 1 until T428. No
+# read verb emits any of the three in files mode (Y:5746), so neither changes
+# anything there.
+ls_read_code() {   # <the verb's exit> <the arm's own exit for any other code>
+  case "$1" in 69 | 75 | 3) printf '%s\n' "$1" ;; *) printf '%s\n' "$2" ;; esac
+}
+ls_read_refuse() {   # <the read, as run> <its exit> <what it would have told> [<what this run has done>]
+  local lrr_why lrr_retry
+  case "$2" in
+    75) lrr_why="the register is busy"; lrr_retry="A retry in seconds is safe." ;;
+    3)  lrr_why="the register's answer is in doubt"; lrr_retry="A retry in seconds is safe." ;;
+    *)  lrr_why="the register could not be read"; lrr_retry="A retry is safe once the register can be read." ;;
+  esac
+  die "\`$1\` exited $2: ${lrr_why}, so $3 is NOT known, and that is not an answer. This launch refuses rather than carry on without it. ${4:-Nothing was launched, renamed or written.} ${lrr_retry}" "$2"
+}
+# A REFUSAL AFTER STEP 4's RENAME (lane 3's ruling 6747281902, T402 item 5):
+# it gives this window back its name and its automatic-rename, as #138 item
+# 3's refusal does (`ls_window_name_back`, defined at step 4), and it names
+# what `request-handoff` wrote where it answered 0, which stands whole
+# (R-A11-11). None of this launch's own register writes is made by then.
+# Under --dry-run nothing was renamed or written.
+ls_late_refuse() {   # <the read, as run> <its exit> <what it would have told>
+  local llr_done
+  if (( dry_run )); then
+    llr_done="Nothing was launched, renamed or written."
+  else
+    ls_window_name_back
+    llr_done="${rb_undo}. This launch has written no row, no STARTED or RESUMED line and no stamp, and launched nothing."
+    [ -z "$ls_rh_wrote" ] ||
+      llr_done="${llr_done} One line of the handoff stands: ${ls_rh_wrote}, written whole to the append-only log (R-A11-11)."
+  fi
+  ls_read_refuse "$1" "$2" "$3" "$llr_done"
+}
 cl_out=""; cl_rc=0
 cl_out="$("$LANES_EDIT" canon-lane "$LANE" 2>/dev/null)" || cl_rc=$?
 cl_why=""; cl_pair=0
@@ -1275,6 +1346,9 @@ case "$cl_rc" in
     # all day, which is the duplicate Amendment 15(a) exists to refuse.
     printf '%s\n' "$cl_why" >&2
     die "lane $LANE's name could not be resolved: ${LANES_EDIT##*/} could not read the lane alias table (above, exit 66). Amendment 16(e) makes a renamed lane's old name resolve through that file for ever, so a name it cannot answer for may be a lane that is already running under another one — and this command would add a second row for it. Fix the read and re-run. Nothing was launched, renamed or written." 2 ;;
+  # 007 (T402; Y:5726; spec:663, spec:688): carrying on with the typed name
+  # here is a second row for a lane already running under its row's spelling.
+  69 | 75 | 3) ls_read_refuse "$LANES_EDIT canon-lane $LANE" "$cl_rc" "the register's spelling of lane $LANE" ;;
   *) note "$LANES_EDIT canon-lane $LANE failed (exit $cl_rc) — carrying on with the name as typed, which the register may spell differently" ;;
 esac
 
@@ -1309,9 +1383,27 @@ ls_rows_source() {
   return 0
 }
 ls_rows_source
+# FEATURE 007, T402 - THE WORKING TREE'S REGISTER IS READ THROUGH THE VERB
+# (FR-036; design Y:4924). `rows_for_lane` and `row_names_for_lane` keep their
+# awk, and the text it runs over is `lanes-edit.sh register-text
+# lanes/LANES.md`, asked once and held, as the ref's text above is. That verb
+# prints `$LANES_FILE` as `lanes-edit.sh` resolves it from the environment, so
+# the file this command means is passed on the call: in files mode the text
+# is then this file's bytes, as `cat` read them. A non-zero answer refuses
+# with that code, here, in this shell: it is never an empty register, and
+# no row is added and no session is resumed on an answer that was not got.
+# The `origin/<branch>` read above stays as it is: the verb reads no ref.
+ls_register_load() {
+  [ "$LS_ROWS_FROM" = file ] || return 0
+  lrl_rc=0
+  LS_ROWS_TEXT="$(LANES_FILE="$LANES_FILE" "$LANES_EDIT" register-text lanes/LANES.md)" || lrl_rc=$?
+  [ "$lrl_rc" = 0 ] ||
+    die "the register could not be read: \`LANES_FILE=$LANES_FILE $LANES_EDIT register-text lanes/LANES.md\` exited $lrl_rc (its words are above). That is NOT an empty register, and this script decides nothing about lane ${LANE}'s row on an answer it did not get: a lane taken for new on it would be a second row. A \`lanes-edit.sh\` with no \`register-text\` exits 2; install the one beside this script. Nothing was launched, renamed or written." "$lrl_rc"
+  return 0
+}
 # The register text the row is counted in: the one source above, for both reads.
 ls_register_text() {
-  if [ "$LS_ROWS_FROM" = ref ]; then printf '%s\n' "$LS_ROWS_TEXT"; else cat -- "$LANES_FILE"; fi
+  printf '%s\n' "$LS_ROWS_TEXT"
 }
 
 # ----------------------------------------- 1b. THE LANE'S DIRECTORY
@@ -1416,6 +1508,8 @@ if [ -z "$DIR" ]; then
         esac
       fi ;;
     8|2) : ;;
+    # 007 (T402; Y:5727; spec:688): busy and in doubt refuse; 69 stays a note.
+    75 | 3) ls_read_refuse "$LANES_EDIT swapped" "$ld_rc" "lane ${LANE}'s directory from its swap record" ;;
     *) note "$LANES_EDIT swapped failed (exit $ld_rc) — carrying on to the lane's log for its directory" ;;
   esac
 fi
@@ -1425,6 +1519,8 @@ if [ -z "$DIR" ]; then
   case "$ld_rc" in
     0) case "$ld_out" in /*) DIR="$ld_out"; DIR_SOURCE="the lane's log" ;; esac ;;
     8|2) : ;;
+    # 007 (T402; Y:5727; spec:688): busy and in doubt refuse; 69 stays a note.
+    75 | 3) ls_read_refuse "$LANES_EDIT lane-dir $LANE" "$ld_rc" "lane ${LANE}'s directory from its log" ;;
     *) note "$LANES_EDIT lane-dir $LANE failed (exit $ld_rc) — carrying on to the default for its directory" ;;
   esac
 fi
@@ -1441,6 +1537,12 @@ fi
 if [ -z "$DIR" ]; then
   ls_home=""; ls_rc=0
   ls_home="$("$LANES_EDIT" resolve-home "$LANE" 2>/dev/null)" || ls_rc=$?
+  # 007 (T402; Y:5728; spec:688): busy and in doubt refuse; every other code,
+  # 69 among them, stays silent, as it was (Y:5728; lane 3's 6752010154, R2's
+  # N8). Rungs 5 and 6 are skipped on any failure.
+  case "$ls_rc" in
+    75 | 3) ls_read_refuse "$LANES_EDIT resolve-home $LANE" "$ls_rc" "lane ${LANE}'s recorded home" ;;
+  esac
   [ "$ls_rc" = 0 ] || ls_home=""
   case "$ls_home" in */*) : ;; *) ls_home="" ;; esac
 fi
@@ -1737,6 +1839,8 @@ esac
 # where ownership could not be established. ANY other status — a helper that
 # predates the verb included — is UNKNOWN as well, and refused the same way:
 # a fence that opens because its read failed is no fence (Amendment 7(d)).
+# A 69, 75 or 3 is UNKNOWN too, and exits 1, never the code passed on
+# (feature 007, T402; S4; DEC-27; research.md ERR-46).
 seam_refuse() {   # <lane> <the act>
   sr_out=""; sr_rc=0
   sr_out="$("$LANES_EDIT" managed-projection "$1" 2>/dev/null)" || sr_rc=$?
@@ -1779,6 +1883,7 @@ row_names_for_lane() {
     }'
 }
 
+ls_register_load
 row="$(rows_for_lane "$LANE" || :)"
 row_count=0
 [ -n "$row" ] && row_count="$(printf '%s\n' "$row" | grep -c . || :)"
@@ -1870,7 +1975,7 @@ if [ "$row_count" = 0 ]; then
       die "refusing to add a second row for $LANE" 2 ;;
     *)
       note "the helper's own output is above."
-      die "$LANES_EDIT register-row $LANE failed (exit $pub_rc). That is NOT 'the register has no row for $LANE', and this script will not add a row on an answer it did not get — a duplicate row is a register no helper can edit. Fix the helper (or run it by hand: $LANES_EDIT register-row $LANE), then re-run." 1 ;;
+      die "$LANES_EDIT register-row $LANE failed (exit $pub_rc). That is NOT 'the register has no row for $LANE', and this script will not add a row on an answer it did not get — a duplicate row is a register no helper can edit. Fix the helper (or run it by hand: $LANES_EDIT register-row $LANE), then re-run." "$(ls_read_code "$pub_rc" 1)" ;;
   esac
 else
   case "$pub_rc" in
@@ -1898,7 +2003,7 @@ else
       fi ;;
     *)
       note "the helper's own output is above."
-      die "$LANES_EDIT register-row $LANE failed (exit $pub_rc). That is NOT 'the register has no row for $LANE', and this script will not pick a resume target on an answer it did not get: resuming the working tree's id lands the operator in the lane's previous conversation and stamps that uuid on an append-only line. Fix the helper (or run it by hand: $LANES_EDIT register-row $LANE), then re-run." 1 ;;
+      die "$LANES_EDIT register-row $LANE failed (exit $pub_rc). That is NOT 'the register has no row for $LANE', and this script will not pick a resume target on an answer it did not get: resuming the working tree's id lands the operator in the lane's previous conversation and stamps that uuid on an append-only line. Fix the helper (or run it by hand: $LANES_EDIT register-row $LANE), then re-run." "$(ls_read_code "$pub_rc" 1)" ;;
   esac
 fi
 
@@ -2421,6 +2526,11 @@ elif [ -n "$win_sid" ] && [ "$holder_here" = 0 ]; then
     # is another lane's uuid on an append-only line.
     win_owner=""; wo_rc=0
     win_owner="$("$LANES_EDIT" session-lane "$win_sid" 2>/dev/null)" || wo_rc=$?
+    # 007 (T402; Y:5729; spec:688): 69, busy and in doubt refuse the launch;
+    # every other failed code keeps the note below.
+    case "$wo_rc" in
+      69 | 75 | 3) ls_read_refuse "$LANES_EDIT session-lane $win_sid" "$wo_rc" "whose session is live in this window" ;;
+    esac
     if [ "$wo_rc" != 0 ] && [ "$wo_rc" != 8 ]; then
       note "$LANES_EDIT session-lane $win_sid failed (exit $wo_rc), so whose session is live in this window is NOT known — leaving $LANE's session cell and resume target alone. A helper with no 'session-lane' exits 2; install the one beside this script."
     elif [ "$wo_rc" = 0 ] && [ -n "$win_owner" ] && [ "$win_owner" != "$LANE" ]; then
@@ -2541,7 +2651,7 @@ retired_hits="$(LANES_NO_FETCH=1 "$LANES_EDIT" retired-identity "$LANE" 2>/dev/n
 case "$retired_rc" in
   8) : ;;
   0) die "lane $LANE is RETIRED (archive: $retired_hits). Nothing was renamed or written; choose a free position." 2 ;;
-  *) die "the lane archive could not be checked for $LANE (exit $retired_rc). Nothing was renamed or written." 1 ;;
+  *) die "the lane archive could not be checked for $LANE (exit $retired_rc). Nothing was renamed or written." "$(ls_read_code "$retired_rc" 1)" ;;
 esac
 
 # AND A RETIRED ROW THAT IS STILL IN THE REGISTER (opensoft/openRepoTools#138
@@ -2571,7 +2681,7 @@ case "$retired_last_rc:$retired_verb" in
   0:RETIRED)
     die "lane $LANE's object log ends on its RETIRED line, though the archive does not hold it yet: a retired lane is not coming back (opensoft/openRepoTools#138 item 14). Nothing was renamed or written; choose a free position." 2 ;;
   0:* | 8:*) : ;;
-  *) die "\`$LANES_EDIT lane-last $LANE\` exited $retired_last_rc, so whether lane $LANE's log ends on RETIRED could NOT be read — and that is not 'it does not' (Amendment 7(d)). Nothing was renamed or written." 1 ;;
+  *) die "\`$LANES_EDIT lane-last $LANE\` exited $retired_last_rc, so whether lane $LANE's log ends on RETIRED could NOT be read — and that is not 'it does not' (Amendment 7(d)). Nothing was renamed or written." "$(ls_read_code "$retired_last_rc" 1)" ;;
 esac
 
 # A lane name is a tmux-window address. tmux itself allows two distinct
@@ -2671,7 +2781,7 @@ lane_check_local_fences
 # that did not happen, and this one fails CLOSED — a binding that could not be
 # read is not a lane that is free, and the cost of guessing here is two sessions
 # writing one append-only log.
-bind_out=""; bind_rc=0; bind_recheck=0
+bind_out=""; bind_rc=0; bind_recheck=0; ls_rh_wrote=""
 : > "$LS_TMP"
 bind_out="$("$LANES_EDIT" binding "$LANE" 2>"$LS_TMP")" || bind_rc=$?
 case "$bind_rc" in
@@ -2681,7 +2791,7 @@ case "$bind_rc" in
   2) [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
      note "this \`lanes-edit.sh\` has no \`binding\` (exit 2), so whether lane $LANE is bound somewhere else is NOT known here. Install the one beside this script (\`openRepoTools --install\`); carrying on with step 3's liveness read alone, which cannot see another container." ;;
   *) [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
-     die "$LANES_EDIT binding $LANE exited $bind_rc, so where this lane is bound could NOT be read — and that is not 'it is bound nowhere'. A lane has ONE binding (Amendment 18(b)); nothing has been renamed, written or launched." 1 ;;
+     die "$LANES_EDIT binding $LANE exited $bind_rc, so where this lane is bound could NOT be read — and that is not 'it is bound nowhere'. A lane has ONE binding (Amendment 18(b)); nothing has been renamed, written or launched." "$(ls_read_code "$bind_rc" 1)" ;;
 esac
 if [ "$bind_rc" = 0 ]; then
   IFS=$'\t' read -r b_host b_cont b_win b_utc b_sess b_os b_where b_wstate <<<"$bind_out"
@@ -2747,9 +2857,24 @@ if [ "$bind_rc" = 0 ]; then
     # record, so the lane its write belongs to is said rather than derived.
     LANES_LANE="$LANE" "${ls_rh[@]}" || ls_rh_rc=$?
     case "$ls_rh_rc" in
-      0) bind_recheck=1; step "lane $LANE is free — binding it here (Amendment 18(c))" ;;
+      # 007 (T402): an answer of 0 is a line `request-handoff` WROTE to the
+      # lane's append-only log (not under --dry-run, which writes none): the
+      # forced PAUSED under --force, the HANDOFF-REQUESTED line otherwise. A
+      # refusal after the rename names it (lane 3's ruling 6747281902, T402
+      # item 5); it stands whole (R-A11-11).
+      0) bind_recheck=1; step "lane $LANE is free — binding it here (Amendment 18(c))"
+         if (( ! dry_run )); then
+           if [ "$ls_ask" = force ]; then
+             ls_rh_wrote="the forced PAUSED that \`request-handoff --force\` wrote to lane ${LANE}'s log above"
+           else
+             ls_rh_wrote="the HANDOFF-REQUESTED line that \`request-handoff\` wrote to lane ${LANE}'s log above"
+           fi
+         fi ;;
       8) bind_recheck=1; step "lane $LANE was already free by the time the request was made — binding it here" ;;
       2) die "the handoff was not obtained (the helper's own facts and its \`--force\` line are above), so lane $LANE is still bound elsewhere and NOTHING here has been renamed, written or launched." 2 ;;
+      # A WRITE'S ARM (Y:5731), so it keeps 1 in every mode until T428 passes
+      # the code and relays the writer's rerun (lane 3's ruling 6747281902,
+      # T402 item 2): no caller tells 3 from 1 here.
       *) die "$LANES_EDIT request-handoff $LANE exited $ls_rh_rc, which is neither 'the lane is free' nor the refusal that says it is not — nothing here has been renamed, written or launched." 1 ;;
     esac
   fi
@@ -2813,7 +2938,7 @@ read_recorded_agent() {
     # `claude` anyway — the one act in this whole command that no later refusal
     # can undo — so it refuses, and names the flag that goes past it, which is
     # a person naming the agent rather than this command guessing at one.
-    *) die "\`$LANES_EDIT lane-agent $LANE\` failed (exit $rra_rc), so which agent paused this lane is UNKNOWN — and launching the default over a lane another agent paused is what Amendment 7(d) has this read refuse rather than answer. Run it by hand to see what it says, or name the agent: $prog --agent <name> …" 2 ;;
+    *) die "\`$LANES_EDIT lane-agent $LANE\` failed (exit $rra_rc), so which agent paused this lane is UNKNOWN — and launching the default over a lane another agent paused is what Amendment 7(d) has this read refuse rather than answer. Run it by hand to see what it says, or name the agent: $prog --agent <name> …" "$(ls_read_code "$rra_rc" 2)" ;;
   esac
   return 0
 }
@@ -2917,15 +3042,16 @@ if [ "$bind_recheck" = 1 ]; then
     2) [ "$bind_expected_rc" = 2 ] ||
          die "the binding could not be rechecked after Claude resolution (exit 2). Nothing here was renamed or bound." 1
        note "this \`lanes-edit.sh\` has no \`binding\`, so whether the lane moved again while this run waited is not known here; carrying on." ;;
-    *) die "$LANES_EDIT binding $LANE exited $bind_again_rc on the re-read before the rename, so whether this lane is still free could NOT be established — and that is not 'it is'. Nothing has been renamed, written or launched." 1 ;;
+    *) die "$LANES_EDIT binding $LANE exited $bind_again_rc on the re-read before the rename, so whether this lane is still free could NOT be established — and that is not 'it is'. Nothing has been renamed, written or launched." "$(ls_read_code "$bind_again_rc" 1)" ;;
   esac
 fi
 
 if (( dry_run )); then
   plan "tmux rename-window $LANE   (also turns automatic-rename off for this window)"
 else
-  win_auto_was=""
-  [ "$row_count" != 0 ] || win_auto_was="$(tmux show-options -w -v automatic-rename 2>/dev/null || :)"
+  # Read for every rename now, not a new lane's alone: 007's two refusals
+  # after this rename give it back as #138 item 3's does (T402).
+  win_auto_was="$(tmux show-options -w -v automatic-rename 2>/dev/null || :)"
   tmux rename-window "$LANE"
   step "window renamed to $LANE (automatic-rename is now off for it)"
 fi
@@ -2941,6 +3067,26 @@ fi
 # fail-closed answer. A list that fails is not a name that is free. A refusal
 # gives THIS window back its name and its automatic-rename, so nothing of this
 # run is left behind it.
+# THE GIVING BACK IS ONE FUNCTION, shared with 007's two refusals after the
+# rename (T402; lane 3's ruling 6747281902, T402 item 5). It sets `rb_undo`.
+ls_window_name_back() {
+  # NO NAME TO GO BACK TO IS NO UNDO: where tmux answered `#W` with nothing,
+  # nothing here can name this window back, and the refusal says so rather
+  # than claiming an undo it did not make.
+  rb_undo="This window's rename could NOT be undone, because its earlier name is not known — rename it yourself: tmux rename-window <its name>"
+  if [ -n "$this_window_name" ]; then
+    if tmux rename-window "$this_window_name" 2>/dev/null; then
+      rb_undo="This window's rename is undone"
+    else
+      rb_undo="This window's rename could NOT be undone — rename it back yourself: tmux rename-window $this_window_name"
+    fi
+  fi
+  case "$win_auto_was" in
+    "") tmux set-option -w -u automatic-rename 2>/dev/null || : ;;
+    on) tmux set-option -w automatic-rename on 2>/dev/null || : ;;
+  esac
+  return 0
+}
 if (( ! dry_run )) && [ "$row_count" = 0 ]; then
   rb_why=""
   if ! window_named_lane; then
@@ -2949,21 +3095,7 @@ if (( ! dry_run )) && [ "$row_count" = 0 ]; then
     rb_why="after the rename another tmux window ($WNL_ID) is named $WNL_NAME too: a second start took this NEW lane's name between this run's check and its rename"
   fi
   if [ -n "$rb_why" ]; then
-    # NO NAME TO GO BACK TO IS NO UNDO: where tmux answered `#W` with nothing,
-    # nothing here can name this window back, and the refusal says so rather
-    # than claiming an undo it did not make.
-    rb_undo="This window's rename could NOT be undone, because its earlier name is not known — rename it yourself: tmux rename-window <its name>"
-    if [ -n "$this_window_name" ]; then
-      if tmux rename-window "$this_window_name" 2>/dev/null; then
-        rb_undo="This window's rename is undone"
-      else
-        rb_undo="This window's rename could NOT be undone — rename it back yourself: tmux rename-window $this_window_name"
-      fi
-    fi
-    case "$win_auto_was" in
-      "") tmux set-option -w -u automatic-rename 2>/dev/null || : ;;
-      on) tmux set-option -w automatic-rename on 2>/dev/null || : ;;
-    esac
+    ls_window_name_back
     die "$rb_why (opensoft/openRepoTools#138 item 3). $rb_undo, and nothing has been written or launched. Lane window names are unique in a tmux server; settle which window is $LANE and re-run there." 2
   fi
 fi
@@ -3358,6 +3490,10 @@ if [ "$AGENT" != claude ]; then
     case "$at_rc" in
       0) [ "$at_out" = none ] || AGENT_ID="$at_out" ;;
       8|2) : ;;
+      # 007 (T402; Y:5727; spec:688): busy and in doubt refuse; 69 stays a
+      # note. Step 4 has named the window by now, so the refusal gives the
+      # name back (lane 3's ruling 6747281902, T402 item 5).
+      75 | 3) ls_late_refuse "$LANES_EDIT lane-transcript $LANE" "$at_rc" "the agent's own id in lane ${LANE}'s last handoff" ;;
       *) note "$LANES_EDIT lane-transcript $LANE failed (exit $at_rc) — the row's session cell will record this launch without the agent's own id" ;;
     esac
   fi
@@ -3678,6 +3814,10 @@ if [ -z "$rec_file" ] && [ -z "$harness_sid" ] && [ -z "$bind_sid" ] && (( ! hol
         fi
       fi ;;
     8|2) : ;;
+    # 007 (T402; Y:5727; spec:688): busy and in doubt refuse; 69 stays a
+    # note. After step 4, so the refusal gives the name back (lane 3's ruling
+    # 6747281902, T402 item 5).
+    75 | 3) ls_late_refuse "$LANES_EDIT lane-transcript $LANE" "$paused_rc" "the resume id in lane ${LANE}'s last PAUSED record" ;;
     *) note "$LANES_EDIT lane-transcript $LANE failed (exit $paused_rc) — carrying on without the last PAUSED record's exact resume id" ;;
   esac
 fi

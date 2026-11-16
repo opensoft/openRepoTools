@@ -66,7 +66,9 @@ recorded, acts only on the writer count the coordinator states with `--live`
 
 "MERGED" is the register's LANDED line for the branch's pull request, or
 `gh`'s MERGED state for it - never `git branch --merged` alone, because a
-squash merge leaves no ancestry.
+squash merge leaves no ancestry. Where the register's LANDED lines could not
+be read, nothing is MERGED, whatever `gh` says: the tree and its branch are
+kept, and on a lane with a tree the sweep is refused, naming the read.
 
 The sweeps directory: ${XDG_STATE_HOME:-$HOME/.local/state}/openRepoTools/
 sweeps/<lane>/<UTC>/ with MANIFEST.sha256, DISPOSITION.md and rescues.tsv.
@@ -129,8 +131,9 @@ Exit codes:
   3  dry run: something to retire (the `lane-end` gate's answer, #163)
   2  refused: the lane is bound elsewhere, held by another live session,
      managed-owned, has trees but no #97 snapshot, or a read failed (a lane
-     root, a registration list, another lane's claim on a lane with a tree,
-     the register's fetch under --yes) - or an error no read caught -
+     root, a registration list, another lane's claim or the register's
+     LANDED lines on a lane with a tree, the register's fetch under --yes)
+     - or an error no read caught -
      nothing was changed; or, under --yes, the self-check refused a removal
      (what was done before it is recorded, nothing after it was acted on)
   1  --yes: an act failed part-way; what was done is recorded and the
@@ -149,6 +152,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import socket
 import stat
 import subprocess
@@ -259,6 +263,169 @@ def run(argv, cwd=None, env=None, timeout=GIT_TIMEOUT, input_text=None):
         return subprocess.CompletedProcess(argv, 124, "", f"timed out after {timeout}s")
     except OSError as exc:
         return subprocess.CompletedProcess(argv, 127, "", str(exc))
+
+
+#: How long a timed-out call's process group has to end on TERM, its own
+#: traps included, before it is sent KILL (`run_group`).
+GROUP_GRACE = 5
+
+
+class CallerSignal(BaseException):
+    """INT, TERM or HUP reached this command while a `run_group` call ran,
+    with that signal at `SIG_DFL` (RC-W10f N-b). A BaseException, as
+    KeyboardInterrupt is: `main`'s `except Exception` lets it through, and
+    every `finally` on the way runs. At the top this command then ends by
+    that signal itself (`__main__`), as it did before the handler."""
+
+    def __init__(self, signum: int):
+        super().__init__(signum)
+        self.signum = signum
+
+
+def _take_signals(handler, taken: dict) -> None:
+    """Point each of INT, TERM and HUP that is at `SIG_DFL` - each would end
+    this command with no `finally` run - at `handler`, and note in `taken`
+    what to give back. One with a handler of its own (Python's ^C), or one
+    ignored (`nohup`'s HUP), is left as it is.
+
+    OFF THE MAIN THREAD NOTHING IS TAKEN, AND NOTHING CAN BE (RC-W11d N-c).
+    Python runs a signal handler only on the main thread of the main
+    interpreter, so `signal.signal` raises ValueError anywhere else: the
+    first try ends this loop, and `taken` is left empty. What that leaves
+    such a call is in `run_group`."""
+    for name in ("SIGINT", "SIGTERM", "SIGHUP"):
+        sig = getattr(signal, name, None)
+        if sig is None or signal.getsignal(sig) != signal.SIG_DFL:
+            continue
+        # NOTED BEFORE IT IS SET, so a signal that comes in between is still
+        # given back.
+        taken[sig] = signal.SIG_DFL
+        try:
+            signal.signal(sig, handler)
+        except ValueError:
+            taken.pop(sig, None)
+            return
+
+
+def _give_back(taken: dict) -> None:
+    """The dispositions `_take_signals` took, back as they were. The signals
+    are blocked meanwhile, so none lands half-way; one that came in then is
+    delivered at the unblock, to the disposition given back."""
+    if not taken:
+        return
+    mask = signal.pthread_sigmask(signal.SIG_BLOCK, list(taken))
+    try:
+        for sig, old in taken.items():
+            signal.signal(sig, old)
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+
+
+def _end_group(proc) -> None:
+    """TERM to the call's process group, which its own traps answer, then
+    KILL to whatever is left after `GROUP_GRACE` seconds. An interrupt that
+    cuts the grace short (a second ^C) sends the KILL at once, and is raised
+    once it has gone."""
+    ended = False
+    try:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except OSError:
+            pass
+        try:
+            proc.communicate(timeout=GROUP_GRACE)
+            ended = True
+        except subprocess.TimeoutExpired:
+            pass
+    finally:
+        if not ended:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            try:
+                proc.communicate(timeout=GROUP_GRACE)
+            except subprocess.TimeoutExpired:
+                # A PIPE HELD PAST THE KILL is held from outside the group: it
+                # is no longer read, and the call's own process is reaped
+                # where it can be.
+                for pipe in (proc.stdout, proc.stderr):
+                    pipe.close()
+                try:
+                    proc.wait(timeout=GROUP_GRACE)
+                except subprocess.TimeoutExpired:
+                    pass
+
+
+def run_group(argv, env=None, timeout=GIT_TIMEOUT):
+    """`run`, with `argv` in a process group of its own, so A TIMEOUT ENDS THE
+    WHOLE CALL (REV-W9h N1). `subprocess.run` kills only the process it
+    started: a `lanes-edit.sh` killed that way left its `git grep` running,
+    and its `$TMPD` behind, since a KILL runs no trap.
+
+    On a timeout the group gets TERM, which ends the grep, and then
+    `lanes-edit.sh`'s TERM trap removes its `$TMPD`; whatever is left after
+    `GROUP_GRACE` seconds gets KILL (`_end_group`). Each signal goes before
+    this function reaps the call's own process, so the group's id names this
+    call's group and no other. (After a ^C, `communicate`'s own short wait
+    may reap it first; a group's id is not reused while a member lives.)
+    The exits are `run`'s: 124 a timeout, 127 a program that could not be
+    started.
+
+    AN INTERRUPT ENDS THE WHOLE CALL TOO (RC-W10f N-b). A group of its own is
+    out of reach of the caller's ^C, and of a TERM or HUP sent to the
+    caller's group. So whatever is raised in the wait, KeyboardInterrupt
+    included, ends the group the same way and is then raised again. On the
+    main thread, while the call runs, an INT, TERM or HUP at `SIG_DFL`
+    raises `CallerSignal` instead of ending this command at once
+    (`_take_signals`). The first one raises; a later one while the group
+    ends is the same end. The old dispositions are back before this returns
+    or raises.
+
+    OFF THE MAIN THREAD, ONLY THE TIMEOUT OR AN EXCEPTION ENDS THE CALL
+    (RC-W11d N-c). No handler can be installed there (`_take_signals`), so
+    a signal goes where it would without this call: a TERM or HUP at
+    `SIG_DFL` ends the process at once, and a ^C raises KeyboardInterrupt
+    on the main thread, not in this wait. Neither reaches the call's group,
+    in a session of its own: a process that ends while such a call runs
+    leaves the group running and `register_grep`'s directory behind. The
+    timeout, and anything raised in this thread's wait, still end the group
+    as above, TERM and then KILL after `GROUP_GRACE`. So a caller that runs
+    a call on another thread keeps the process up until the call returns,
+    which takes at most its timeout and then up to three `GROUP_GRACE`
+    waits in `_end_group`. On Python 3.12 a `join` that a ^C cut short no
+    longer waits for the thread, so such a caller waits on something of its
+    own, an Event the thread sets as it ends. This file starts no
+    thread."""
+    try:
+        proc = subprocess.Popen(
+            [str(a) for a in argv], env=env, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8",
+            errors="surrogateescape", start_new_session=True)
+    except OSError as exc:
+        return subprocess.CompletedProcess(argv, 127, "", str(exc))
+    fired: list = []
+
+    def on_signal(signum, _frame):
+        if not fired:
+            fired.append(signum)
+            raise CallerSignal(signum)
+
+    taken: dict = {}
+    try:
+        try:
+            _take_signals(on_signal, taken)
+            out, err = proc.communicate(timeout=timeout)
+            return subprocess.CompletedProcess(argv, proc.returncode, out, err)
+        except subprocess.TimeoutExpired:
+            pass
+        except BaseException:
+            _end_group(proc)
+            raise
+        _end_group(proc)
+        return subprocess.CompletedProcess(argv, 124, "", f"timed out after {timeout}s")
+    finally:
+        _give_back(taken)
 
 
 #: Repositories read as a git directory ALONE (#174, Copilot round 2): a
@@ -563,12 +730,15 @@ class Helper:
         self._wroot = None
 
     def call(self, *args: str, env_extra: dict | None = None, fetch: bool = False,
-             write: bool = False, timeout: int = 300):
+             write: bool = False, timeout: int = 300, group: bool = False):
         """`fetch` asks for one fetch per session; every later read is made
         with `LANES_NO_FETCH=1`. A `write` is never given it: for a writer, a
         fetch that did not run is a fetch that failed, and lanes-edit.sh's
         Amendment 23 S3 refuses it (2, ratified choice 2), so the sweep's
-        NOTED line was refused after its first removal (#198, slice 1b)."""
+        NOTED line was refused after its first removal (#198, slice 1b).
+        `group` runs the call in a process group of its own, which its
+        timeout, or an interrupt on the main thread, ends whole
+        (`run_group`)."""
         if not self.path:
             return subprocess.CompletedProcess(args, 127, "", "no lanes-edit.sh beside this "
                                                "command or on PATH")
@@ -578,7 +748,7 @@ class Helper:
             env["LANES_NO_FETCH"] = "1"
         if env_extra:
             env.update(env_extra)
-        proc = run([self.path, *args], env=env, timeout=timeout)
+        proc = (run_group if group else run)([self.path, *args], env=env, timeout=timeout)
         if fetch:
             self._fetched = True
         return proc
@@ -587,8 +757,12 @@ class Helper:
         """(canonical spelling, refusal) - Amendment 15's resolver, as
         `lane-end` reads it: 0 with the row's spelling; 66 the alias table
         unreadable and 2 with 15(d)'s words a published case pair, both
-        refusals; any other answer (a helper predating the subcommand) keeps
-        the typed spelling."""
+        refusals; 69, 75 and 3 refusals too (feature 007, T404; Y:5739): a
+        read that could not be made, a busy register and an answer in doubt
+        leave the row's spelling unknown, and an unknown spelling is never
+        the typed one. Files mode emits none of the three (Y:5746). Any other
+        answer (a helper predating the subcommand) keeps the typed
+        spelling."""
         proc = self.call("canon-lane", lane, fetch=True)
         out = proc.stdout.strip()
         if proc.returncode == 0 and out:
@@ -599,7 +773,51 @@ class Helper:
         if proc.returncode == 2 and "Amendment 15(d)" in (proc.stderr or ""):
             return lane, ("the published register spells this lane two ways (Amendment "
                           f"15(d)): {_first_line(proc.stderr)}")
+        if proc.returncode in (69, 75, 3):
+            return lane, (f"`lanes-edit.sh canon-lane {lane}` exited {proc.returncode}, so "
+                          "the register row's spelling is unknown and the typed one is not "
+                          f"taken for it: {_first_line(proc.stderr)}")
         return lane, ""
+
+    def register_grep(self, *args: str):
+        """FEATURE 007, T404 - THE REGISTER'S `git grep`, BEHIND A VERB
+        (FR-036; Y:4926): `lanes-edit.sh register-grep [-h] -E <ERE> --
+        <path>...`, T401's verb, where this file ran `git grep [-h] -E -e
+        <ERE> origin/<branch> -- <path>...` in the workspace root itself. In
+        files and `index` mode the verb runs that grep in `workspace-root`'s
+        answer, on `origin/$LANES_BRANCH` (an empty one read as `main`), under
+        `LC_ALL=C` and with no fetch, so its stdout is the bytes the grep
+        printed and each caller parses it as before (spec:59). Its `lanes/log`
+        is each `lanes/log/<lane>.md`, without `lanes/log/README.md`, which
+        holds no line the three greps match. Exits: 0; 1 no match; 2 usage or
+        a path outside its set; 69 a read that could not be made. Each caller
+        takes any exit but 0 and 1 as a register it could not read: the sweep
+        then takes no recorded directory from it and lets no tree or branch go
+        on `gh`'s word alone (lane 3's (L2-3)), and the report names it
+        unread. The bound stays the grep's own.
+
+        A TIMEOUT ENDS THE CALL AND LEAVES NOTHING BEHIND (REV-W9h N1), and
+        so does a ^C, TERM or HUP to this command while the call runs on
+        the main thread (RC-W10f N-b; off it, only the timeout or an
+        exception does, `run_group`, RC-W11d N-c): the verb runs in a
+        process group of its own (`run_group`), which is ended before the
+        interrupt goes on, with a `TMPDIR` this command made for that call
+        alone and removes after it however it ended, so a `$TMPD` the verb
+        could not remove goes too.
+        Where that directory cannot be made, the verb runs with the `TMPDIR`
+        it was given, and its own `mktemp -d` answers for it, as before."""
+        own = ""
+        try:
+            own = tempfile.mkdtemp(prefix="lane-worktrees-grep.",
+                                   dir=os.environ.get("TMPDIR") or "/tmp")
+        except OSError:
+            own = ""
+        try:
+            return self.call("register-grep", *args, timeout=GIT_TIMEOUT, group=True,
+                             env_extra={"TMPDIR": own} if own else None)
+        finally:
+            if own:
+                shutil.rmtree(own, ignore_errors=True)
 
     def lane_facts(self, lane: str) -> LaneFacts:
         facts = LaneFacts(lane)
@@ -790,15 +1008,16 @@ def payload_field(payload: str, name: str) -> str:
 
 def register_lane_dirs(helper) -> tuple:
     """({lane: its recorded dir}, why-not) - every lane log's last lane-kind
-    line that carries a `dir`, read from the workspace repository's
-    `origin/<branch>` in one `git grep`. Where #97 keeps that lane's control
-    root (`<parent of dir>/.lane-state/<lane>`) follows from it."""
+    line that carries a `dir`, read from the register's lane logs in one
+    `register-grep` (T404; in files mode, the workspace repository's
+    `origin/<branch>`). Where #97 keeps that lane's control root (`<parent
+    of dir>/.lane-state/<lane>`) follows from it."""
     root = helper.workspace_root() if helper.path else ""
     if not root:
         return {}, "the workspace repository could not be found"
     branch = os.environ.get("LANES_BRANCH", "") or "main"
-    proc = git(root, "grep", "-E", "-e", r"^(STARTED|PAUSED|RESUMED|ENDED|RETIRED) — lane ",
-               f"origin/{branch}", "--", "lanes/log")
+    proc = helper.register_grep("-E", r"^(STARTED|PAUSED|RESUMED|ENDED|RETIRED) — lane ",
+                                "--", "lanes/log")
     if proc.returncode not in (0, 1):
         return {}, (f"the register's lane logs on origin/{branch} could not be read: "
                     + _first_line(proc.stderr))
@@ -1067,7 +1286,11 @@ def slug_of(url: str) -> str:
 class MergeEvidence:
     """Whether a branch's work is MERGED, decided by the register's LANDED
     line for its pull request or by `gh`'s state for it - and never by
-    `git branch --merged` alone, which a squash merge defeats."""
+    `git branch --merged` alone, which a squash merge defeats.
+
+    `register_why` is '' until the `LANDED` read is made and fails; then it
+    names the read, and `judge()` lets no branch go on `gh`'s word alone
+    (lane 3's (L2-3), #165 6812490130)."""
 
     def __init__(self, helper: Helper):
         self.helper = helper
@@ -1087,11 +1310,15 @@ class MergeEvidence:
         if not root:
             self.register_why = "the workspace repository could not be found"
             return self._landed
-        branch = os.environ.get("LANES_BRANCH", "main")
-        proc = git(root, "grep", "-h", "-E", "-e", "^LANDED", f"origin/{branch}", "--",
-                   "lanes/LANES.md", "lanes/log")
+        proc = self.helper.register_grep("-h", "-E", "^LANDED", "--",
+                                         "lanes/LANES.md", "lanes/log")
         if proc.returncode not in (0, 1):
-            self.register_why = "the register could not be read: " + _first_line(proc.stderr)
+            # THE READ IS NAMED BY ITS VERB AND ITS CODE (lane 3's (L2-3)), as
+            # the estate report names its own (`Report._closed_lanes`): git's
+            # `fatal:` line alone said neither.
+            self.register_why = ("the register's LANDED lines could not be read: "
+                                 f"`lanes-edit.sh register-grep` exited {proc.returncode}: "
+                                 + _first_line(proc.stderr))
             return self._landed
         for line in proc.stdout.splitlines():
             m = LANDED_OBJ_RE.match(line)
@@ -1149,6 +1376,19 @@ class MergeEvidence:
         if not mine:
             return {"state": "none", "pr": 0, "source": "gh", "why": "no pull request names it"}
         landed = self.landed()
+        # A LANDED READ THAT FAILED LETS NOTHING GO, WHATEVER GH SAYS (lane 3's
+        # (L2-3), #165 6812490130; B15 tasks:897, T404's "On 69, the sweep
+        # deletes nothing"): the line the register holds for this branch's PR is
+        # unknown, so neither gh's MERGED nor its OPEN decides. `_decide` keeps
+        # the tree, `branch_items` lists the branch, and the sweep names the read.
+        if self.register_why:
+            newest = sorted(mine, key=lambda r: -int(r.get("number", 0)))
+            said = ", ".join(f"PR #{r.get('number')} {r.get('state') or '?'}" for r in newest)
+            return {"state": "unknown", "pr": int(newest[0].get("number", 0)),
+                    "source": "register", "landed_unread": True,
+                    "gh_open": [int(r.get("number", 0)) for r in mine if r.get("state") == "OPEN"],
+                    "why": f"{self.register_why}; whether its pull request landed is unknown, "
+                           f"whatever gh answers ({said})"}
         # AN OPEN PULL REQUEST PROTECTS ITS BRANCH BEFORE ANYTHING ELSE: an
         # older merged PR on the same branch says nothing about the work the
         # open one still carries - unless the register has LANDED that very PR.
@@ -2518,6 +2758,29 @@ class Sweep:
                 if tree.branch and not tree.unborn and tree.branch not in PROTECTED_BRANCHES:
                     tree.merge = self.evidence.judge(tree.path, slug_of(tree.origin_url),
                                                      tree.branch, tree.head)
+        self._landed_unread()
+
+    def _landed_unread(self) -> None:
+        """LANE 3'S (L2-3) (#165 6812490130): A `LANDED` READ THAT FAILED IS
+        NO "NOT LANDED". B15 tasks:897, T404's bullet: "On 69, the sweep
+        deletes nothing, and names the register as unreadable ... With no tree
+        the failed read is a note". On a lane with a tree it refuses, as an
+        unreadable claim does (`_other_lanes`), so `--yes` acts on nothing and
+        the dry run is 2, never "nothing to retire"; with no tree it is a
+        note. Either way the read is named by its verb and its code, on
+        stdout with the sweep's other unreadable reads. Asked again after
+        `--branches`, which may make the read first."""
+        why = self.evidence.register_why
+        if not why:
+            return
+        if self.trees:
+            self.refusal = self.refusal or (
+                f"{why}; whether this lane's pull requests landed is unknown, so no tree or "
+                "branch is let go on gh's word alone - read the register, then sweep again")
+            return
+        text = (f"{why}; this lane has no tree, and no branch is let go on gh's word alone")
+        if text not in self.notes:
+            self.notes.append(text)
 
     def _assembly(self) -> None:
         """T018: WHERE THE LANE'S CHECKOUT IS AN ASSEMBLY, its legs and the
@@ -3048,6 +3311,7 @@ class Sweep:
                                    "its branch's Lane: trailer"))
         if self.opts.branches:
             self._branches()
+            self._landed_unread()
         if self.opts.scratch:
             self._scratch()
         if self.opts.caches:
@@ -3149,6 +3413,12 @@ class Sweep:
             if state and state not in ("ok", "no origin remote"):
                 put("keep", f"origin could not be read ({state}), so what is published is unknown")
                 return
+        if (t.merge or {}).get("landed_unread"):
+            # LANE 3'S (L2-3): a failed `LANDED` read keeps the tree it would
+            # have let go, and its branch, whatever gh answers.
+            put("keep", t.merge["why"] + "; the tree and its branch are kept until the "
+                "register can be read")
+            return
         if not t.origin_url:
             if self.opts.bundle:
                 put("bundle+remove", "no origin remote: a bundle is its only rescue")
@@ -5729,16 +5999,19 @@ class Report:
                     closed[lane] = "its snapshot is CLOSED"
         wroot = self.helper.workspace_root() if self.helper.path else ""
         if wroot:
-            branch = os.environ.get("LANES_BRANCH", "main")
-            proc = git(wroot, "grep", "-E", "-e",
-                       "^(STARTED|RESUMED|PAUSED|ENDED|RETIRED) — lane ",
-                       f"origin/{branch}", "--", "lanes/log")
+            # THE BRANCH `register-grep` READS (T404): an empty LANES_BRANCH is
+            # `main` to the verb, as to every other read here.
+            branch = os.environ.get("LANES_BRANCH", "") or "main"
+            proc = self.helper.register_grep(
+                "-E", "^(STARTED|RESUMED|PAUSED|ENDED|RETIRED) — lane ", "--", "lanes/log")
             if proc.returncode not in (0, 1):
                 # A GREP THAT FAILED IS NO "NO EVENTS" (#170 G3): exit 1 is no
-                # match; anything else - a ref that is not there, a repository
-                # git cannot read - leaves every log-only ENDED lane unknown.
+                # match; anything else - the verb's 69 for a ref that is not
+                # there or a repository git cannot read - leaves every log-only
+                # ENDED lane unknown.
                 self._unread(f"the register's ENDED and RETIRED lines (origin/{branch})",
-                             f"git grep exited {proc.returncode}: " + _first_line(proc.stderr))
+                             f"`lanes-edit.sh register-grep` exited {proc.returncode}: "
+                             + _first_line(proc.stderr))
             last: dict = {}
             for line in proc.stdout.splitlines():
                 if line.startswith("Binary file ") and line.endswith(" matches"):
@@ -6390,6 +6663,18 @@ def main(argv: list) -> int:
     """The exit contract, whatever happens inside: an error no read caught is
     exit 2 on a dry run (nothing was changed), and under `--yes` the archive's
     DISPOSITION.md is written first and the exit is 1 (B2)."""
+    # AN INHERITED `LANES_READ_MIRROR` IS NO ANSWER (feature 007, T404; lane 3's
+    # #165 6866808028, and 6861148117: ERR-30 widens PER CALL). This command
+    # names the variable on no call of its own, and every child it starts takes
+    # this process's environment: `run` with no `env` inherits it, and
+    # `git_env`, `Helper.call`, `gh` and `status --all` each copy it. So a value
+    # the caller exported would lower the helper's marked reads, `canon-lane`
+    # and `managed-projection`, to the mirror, where an outage must end
+    # `canon-lane` 69 and `managed-projection` 1 (UNKNOWN; DEC-27), and would
+    # reach every other child. It is dropped here, at entry, before anything
+    # reads the environment or starts a child, as `lane-handoff` does at its
+    # own.
+    os.environ.pop("LANES_READ_MIRROR", None)
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(errors="surrogateescape")
@@ -6508,4 +6793,13 @@ def _main(argv: list) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except CallerSignal as _sig:
+        # ENDED BY THE SIGNAL ITSELF (RC-W10f N-b): once the call's group has
+        # ended and every `finally` has run, the signal is sent again at its
+        # default, so whatever ran this command sees it end by that signal,
+        # as it did before `run_group` took it.
+        signal.signal(_sig.signum, signal.SIG_DFL)
+        os.kill(os.getpid(), _sig.signum)
+        sys.exit(128 + _sig.signum)

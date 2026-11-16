@@ -75,6 +75,37 @@ with open(os.environ["FAKE_HELPER_LOG"], "a") as fh:
     fh.write(json.dumps({"argv": args, "lane": os.environ.get("LANES_LANE", ""),
                          "no_fetch": os.environ.get("LANES_NO_FETCH", ""),
                          "session": os.environ.get("LANES_SESSION", "")}) + "\n")
+if args[:1] == ["register-grep"]:
+    # T404: ANSWERED FROM THE TEST'S SPEC, as the other verbs are, and never by
+    # the real verb (lane 3's ruling, #165 6747281902). Lane 2's asks (#165
+    # 6746979269): a path outside the set is 2, `lanes/log/README.md` included,
+    # as is a call not in the verb's form; a declared answer with lines is 0 and
+    # one without is 1, unless it declares its exit; and `-- lanes/log` is
+    # declared from the lane logs alone (`Estate.register_grep_answers`). A call
+    # the spec does not declare, for this branch, fails loudly: 70.
+    form = args[1:]
+    tail = form[1:] if form[:1] == ["-h"] else form
+    paths = tail[3:] if len(tail) > 3 and tail[0] == "-E" and tail[2] == "--" else []
+    if not paths:
+        sys.stderr.write("lanes-edit: usage: register-grep [-h] -E <ERE> -- <path>...\n")
+        sys.exit(2)
+    for p in paths:
+        name = p[len("lanes/log/"):] if p.startswith("lanes/log/") else ""
+        if p not in ("lanes/LANES.md", "lanes/aliases.tsv", "lanes/log") and not (
+                len(name) > 3 and name.endswith(".md") and "/" not in name
+                and name != "README.md"):
+            sys.stderr.write("lanes-edit: register-grep reads lanes/LANES.md, lanes/aliases.tsv, "
+                             f"lanes/log and one lanes/log/<lane>.md, and '{p}' is none of them\n")
+            sys.exit(2)
+    branch = os.environ.get("LANES_BRANCH", "") or "main"
+    ans = spec.get("register-grep", {}).get(branch, {}).get(json.dumps(form))
+    if ans is None:
+        sys.stderr.write(f"FAKE lanes-edit.sh: UNDECLARED register-grep on origin/{branch}: "
+                         f"{json.dumps(form)} is in no answer this test's spec declares\n")
+        sys.exit(70)
+    sys.stdout.write(ans.get("out", ""))
+    sys.stderr.write(ans.get("err", ""))
+    sys.exit(ans.get("rc", 0 if ans.get("out") else 1))
 ans = spec.get(args[0] if args else "", {"rc": 2, "err": "unknown subcommand\n"})
 sys.stdout.write(ans.get("out", ""))
 sys.stderr.write(ans.get("err", ""))
@@ -102,6 +133,25 @@ FAKE_TMUX = """#!/bin/sh
 if [ -n "${FAKE_TMUX_PANES:-}" ] && [ -f "$FAKE_TMUX_PANES" ]; then cat "$FAKE_TMUX_PANES"; exit 0; fi
 exit 1
 """
+
+#: T404: the three `register-grep` calls `lane-worktrees` makes, as the argv
+#: after the verb (`register_lane_dirs`, `MergeEvidence.landed` and
+#: `Report._closed_lanes`). The fake answers each from the spec; a call not
+#: here is undeclared, and fails loudly.
+REGISTER_GREP_CALLS = (
+    ["-E", "^(STARTED|PAUSED|RESUMED|ENDED|RETIRED) — lane ", "--", "lanes/log"],
+    ["-h", "-E", "^LANDED", "--", "lanes/LANES.md", "lanes/log"],
+    ["-E", "^(STARTED|RESUMED|PAUSED|ENDED|RETIRED) — lane ", "--", "lanes/log"],
+)
+#: Lane 2's ask 2 (#165 6746979269): `-- lanes/log` greps only the lane logs
+#: (CLI4.5:811), by T401's pathspec.
+LANE_LOGS = (":(glob)lanes/log/*.md", ":(exclude)lanes/log/README.md")
+
+
+def register_grep_spec(branch: str, answer: dict) -> dict:
+    """An `extra_spec` declaring one `register-grep` answer for each of the
+    three calls on `origin/<branch>`."""
+    return {"register-grep": {branch: {json.dumps(c): dict(answer) for c in REGISTER_GREP_CALLS}}}
 
 
 def _clean_path() -> str:
@@ -271,10 +321,32 @@ class Estate:
                                else {"rc": 1, "err": "no workspace\n"}),
             "transcript-holders": {"rc": 8},
             "log": {"rc": self.log_rc, "err": "" if self.log_rc == 0 else "refused\n"},
+            "register-grep": self.register_grep_answers() if self.workspace else {},
         }
         spec.update(self.extra_spec)
         self.spec_file.write_text(json.dumps(spec))
         self.prs_file.write_text(json.dumps(self.prs))
+
+    def register_grep_answers(self) -> dict:
+        """T404: the fake's `register-grep` answers, DECLARED from this
+        estate's own register, as `lane-trees` is from its inventory: for each
+        of the three calls, `git grep` of the workspace's `origin/main`, with
+        `lanes/log` read as the lane logs alone (lane 2's ask 2). A grep git
+        could not make is declared as the verb answers it, 69. Keyed by branch,
+        then by the call's argv; a test reading another branch declares it."""
+        answers = {}
+        for call in REGISTER_GREP_CALLS:
+            h = call[:1] if call[0] == "-h" else []
+            ere, paths = call[len(h) + 1], call[len(h) + 3:]
+            specs = [s for p in paths for s in (LANE_LOGS if p == "lanes/log" else (p,))]
+            proc = subprocess.run(["git", "-C", self.workspace, "grep", *h, "-E", "-e", ere,
+                                   "origin/main", "--", *specs], capture_output=True,
+                                  encoding="utf-8", errors="surrogateescape",
+                                  env=dict(self.env, LC_ALL="C"), check=False)
+            answers[json.dumps(call)] = ({"rc": proc.returncode, "out": proc.stdout}
+                                         if proc.returncode in (0, 1) else
+                                         {"rc": 69, "err": proc.stderr})
+        return {"main": answers}
 
     def pr(self, number: int, branch: str, state: str, head: str, base: str = "main") -> None:
         self.prs.append({"number": number, "headRefName": branch, "state": state,
